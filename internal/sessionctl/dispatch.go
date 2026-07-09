@@ -67,7 +67,7 @@ func dispatchMain(args []string, stdout io.Writer) error {
 // `monitor` is the internal supervisor verb that `session start`
 // invokes against itself, not a user-facing subcommand — `man
 // workcell.1` and `README.md` document the user surface as
-// start|attach|send|stop|list|show|delete|logs|timeline|diff|export.
+// start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify.
 // A fresh slice is returned on every call so callers may mutate it
 // freely.
 func CanonicalSubcommands() []string {
@@ -83,6 +83,7 @@ func CanonicalSubcommands() []string {
 		"timeline",
 		"diff",
 		"export",
+		"verify",
 		"monitor",
 	}
 }

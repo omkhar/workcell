@@ -9,7 +9,7 @@ workcell \- bounded runtime launcher for coding agents
 [\fIoptions\fR]
 .br
 .B workcell session
-\fIstart|attach|send|stop|list|show|delete|logs|timeline|diff|export\fR [\fIoptions\fR]
+\fIstart|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify\fR [\fIoptions\fR]
 .br
 .B workcell auth
 \fIinit|set|unset|status\fR [\fIoptions\fR]
@@ -41,7 +41,7 @@ as the exec-capable temporary directory via
 .BR TMPDIR .
 The supported host platform is Apple Silicon macOS.
 .TP
-.B workcell session start|attach|send|stop|list|show|delete|logs|timeline|diff|export
+.B workcell session start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify
 Launch, control, inspect, diff, export, and delete durable detached sessions
 without starting a second Workcell runtime. Detached sessions default to an
 isolated clean git clone of the selected workspace, while the host-side
@@ -66,6 +66,15 @@ by the same rule-set as
 and free-form operator payloads (the detached-session message) are withheld
 entirely \(em their content is replaced with a fixed placeholder because regex
 redaction cannot sanitize arbitrary prose.
+.B workcell session verify
+.RB ( --id
+.IR SESSION_ID )
+recomputes the session's audit hash-chain from the authoritative durable profile
+log and verifies the host-side signature over the chain head. It is read-only
+and fails closed on any tampered, reordered, dropped, duplicate-key, or unsigned
+record. The signature is boundary/host-signed, not agent-signed; see
+.B docs/signed-session-audit-records.md
+for the trust model.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.

@@ -88,8 +88,8 @@ func TestCheckPublicContractRejectsMissingSessionRecordField(t *testing.T) {
 func TestCheckPublicContractRejectsBogusOutputPrefix(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	contractPath := mutatedContractCopy(t, root,
-		`"egress_enforcement="]`,
-		`"egress_enforcement=", "totally_bogus_prefix_zz="]`,
+		`"head_digest="]`,
+		`"head_digest=", "totally_bogus_prefix_zz="]`,
 	)
 
 	err := CheckPublicContract(root, contractPath)

@@ -168,7 +168,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export> [options]
+       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
@@ -2599,29 +2599,98 @@ append_audit_record() {
   append_audit_record_to_path "${audit_path}" "$@"
 }
 
+# acquire_audit_log_lock serializes audit-log appends. The hash chain reads the
+# current tail's record_digest as the next record's prev_digest, so two
+# concurrent detached-session control paths (start/send/stop) racing the
+# read+append would fork the chain and make the verifier reject a legitimate
+# later record. This reuses the atomic, crash-safe profile-lock primitive
+# (acquire-profile-lock + profile-lock-is-stale: an atomic mkdir-rename lock
+# whose owner PID lets a crashed holder be reclaimed) on a per-log lock dir, so
+# no external flock(1) is required (it is absent on the macOS host). The lock
+# HOLDER computes the record digest via go_hostutil, which routes through
+# `go run` and can take several seconds to compile the child on a cold/busy host;
+# a waiter must reliably outlast that or it would skip a legitimate terminal
+# audit/signing record and break the chain. So it uses a ~30s bounded backoff
+# (1500 x 20ms). Genuine exhaustion at ~30s means a real anomaly (a stuck
+# holder), not normal cold-start latency; there it fails closed (no append)
+# rather than fork the chain.
+acquire_audit_log_lock() {
+  local lock_dir="$1"
+  local attempts=0
+  local acquired_state=""
+  local stale_state=""
+  # Record the ACTUAL holder process so profile_lock_is_stale can reclaim the lock
+  # when that process dies. append_audit_record_to_path and the signer can take
+  # this lock from inside a backgrounded ( ) subshell, where $$ is still the parent
+  # launcher PID, not the worker that does the cleanup rm -rf. BASHPID is the
+  # current process's own PID on bash 4+; the macOS host runs under /bin/bash 3.2
+  # which lacks BASHPID, so fall back to $$ there (${BASHPID:-$$}) — no unbound
+  # error under set -u, and on the host every audit-lock holder is a top-level
+  # process (launch shell, detached-monitor process, session-stop/-control command)
+  # whose $$ IS the real holder, so reclaim still works. This MUST be captured here
+  # in the holder's own context, NOT inside the go_hostutil "$( )" below: BASHPID
+  # inside a command substitution is that transient subshell's PID (already dead by
+  # the stale check). (acquire_profile_lock deliberately keeps $$: its owner is the
+  # top-level launch shell for the whole session.)
+  local holder_pid="${BASHPID:-$$}"
+
+  mkdir -p "$(dirname "${lock_dir}")"
+  while true; do
+    if ! acquired_state="$(go_hostutil helper acquire-profile-lock "${lock_dir}" "${holder_pid}")"; then
+      return 1
+    fi
+    if [[ "${acquired_state}" == "1" ]]; then
+      return 0
+    fi
+    if stale_state="$(profile_lock_is_stale "${lock_dir}")" && [[ "${stale_state}" == "1" ]]; then
+      rm -rf "${lock_dir}"
+      continue
+    fi
+    attempts=$((attempts + 1))
+    if [[ "${attempts}" -ge 1500 ]]; then
+      return 1
+    fi
+    sleep 0.02
+  done
+}
+
 append_audit_record_to_path() {
   local audit_path="$1"
   shift
-  local timestamp
-  local prev_digest=""
-  local record_digest=""
+  local lock_dir=""
+  local rc=0
 
   mkdir -p "$(dirname "${audit_path}")"
   umask 077
   touch "${audit_path}"
   chmod 0600 "${audit_path}" 2>/dev/null || true
-  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  if [[ -s "${audit_path}" ]]; then
-    prev_digest="$(sed -n 's/.*record_digest=\([^ ]*\).*/\1/p' "${audit_path}" | tail -n1)"
+
+  lock_dir="${audit_path}.lock"
+  if ! acquire_audit_log_lock "${lock_dir}"; then
+    echo "Workcell: warning: could not acquire audit-log lock for ${audit_path}; skipped a record to keep the chain linear." >&2
+    return 1
   fi
-  record_digest="$(audit_record_digest "${prev_digest}" "${timestamp}" "$@")"
-  {
-    printf 'timestamp=%q ' "${timestamp}"
-    printf '%q ' "$@"
-    [[ -n "${prev_digest}" ]] && printf 'prev_digest=%q ' "${prev_digest}"
-    printf 'record_digest=%q ' "${record_digest}"
-    printf '\n'
-  } >>"${audit_path}"
+  # Run the read-prev-digest + append critical section under the lock, releasing
+  # on every path (including a set -e abort inside the subshell).
+  (
+    local timestamp
+    local prev_digest=""
+    local record_digest=""
+    timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    if [[ -s "${audit_path}" ]]; then
+      prev_digest="$(sed -n 's/.*record_digest=\([^ ]*\).*/\1/p' "${audit_path}" | tail -n1)"
+    fi
+    record_digest="$(audit_record_digest "${prev_digest}" "${timestamp}" "$@")"
+    {
+      printf 'timestamp=%q ' "${timestamp}"
+      printf '%q ' "$@"
+      [[ -n "${prev_digest}" ]] && printf 'prev_digest=%q ' "${prev_digest}"
+      printf 'record_digest=%q ' "${record_digest}"
+      printf '\n'
+    } >>"${audit_path}"
+  ) || rc=$?
+  rm -rf "${lock_dir}" 2>/dev/null || true
+  return "${rc}"
 }
 
 maybe_fail_after_profile_refresh_for_tests() {
@@ -3106,7 +3175,77 @@ finalize_session_audit() {
   fi
   append_exit_audit_record "${profile}" "${execution_path}" "${exit_status}" "${final_assurance}" "${downgraded}"
   write_session_record_final "${final_status}" "${exit_status}" "${final_assurance}"
+  sign_session_audit_head "${profile}"
   FINAL_SESSION_ASSURANCE="${final_assurance}"
+}
+
+# sign_session_audit_head signs the head of this session's audit hash-chain
+# host-side (A5). It is best-effort with respect to teardown: a signing failure
+# is warned and swallowed so it never wedges container cleanup, and an unsigned
+# session simply fails `session verify` closed. Signing itself is fail-closed in
+# the Go helper (it refuses to sign with an insecurely stored key).
+sign_session_audit_head() {
+  local profile="$1"
+
+  [[ "${SESSION_RECORD_FINALIZED}" -eq 1 ]] || return 0
+  sign_session_audit_head_explicit "${profile}" "${SESSION_ID}" "${SESSION_RECORD_PATH}"
+}
+
+# sign_session_audit_head_explicit signs a specific session's audit-chain head
+# given its profile, id, and durable record path, rather than the launch-path
+# globals sign_session_audit_head wraps. The detached stop-fallback path (monitor
+# no longer live) finalizes via session_write_stop_requested_terminal_record and
+# never runs finalize_session_audit, so it calls this directly — otherwise a
+# legitimately-stopped session would have no .audit-sig and `session verify`
+# would report it unsigned (a false negative). Best-effort like its wrapper: a
+# signing failure is warned and swallowed so it never wedges teardown.
+sign_session_audit_head_explicit() {
+  local profile="$1"
+  local session_id="$2"
+  local record_path="$3"
+  local audit_path=""
+  local target_provider=""
+  local lock_dir=""
+
+  [[ -n "${session_id}" ]] || return 0
+  [[ -n "${record_path}" ]] || return 0
+
+  # Recompute the head over the SAME audit log `workcell session verify` derives
+  # canonically: the grandparent of the durable record path + workcell.audit.log.
+  # For a modern session (<root>/targets/<kind>/<provider>/<profile>/sessions/
+  # <id>.json) this equals profile_audit_log_path; for a LEGACY session
+  # (<root>/<profile>/sessions/<id>.json) it is <root>/<profile>/workcell.audit.log
+  # — the log its records were actually appended to. Using profile_audit_log_path
+  # unconditionally would sign the (empty/wrong) target-state log for a legacy
+  # session, so verify (which reads the legacy log) would reject a genuine seal.
+  # Deriving it the same way as verify makes signer == verifier for every layout.
+  audit_path="$(dirname "$(dirname "${record_path}")")/workcell.audit.log"
+  [[ -s "${audit_path}" ]] || return 0
+  target_provider="$(target_provider_for_profile_state "${profile}")"
+
+  # Serialize the signer's READ against concurrent appends. A record is written by
+  # append_audit_record_to_path with multiple non-atomic printfs under
+  # <audit-log>.lock; a signer reading the log without that lock could observe a
+  # partially-appended (torn) record, so SignSessionHead would error and this
+  # best-effort caller would skip the seal, leaving a completed session
+  # unverifiable. Take the SAME lock (same dir, ~30s wait budget, stale reclaim)
+  # so the head is recomputed over a complete chain, and release on EVERY path.
+  # All callers invoke the signer AFTER the append helper has released this lock,
+  # so acquiring fresh here never self-deadlocks.
+  lock_dir="${audit_path}.lock"
+  if ! acquire_audit_log_lock "${lock_dir}"; then
+    echo "Workcell: warning: could not acquire audit-log lock to sign ${session_id}; session verify will report it unsigned." >&2
+    return 0
+  fi
+  if ! go_hostutil session-sign-head \
+    "--signing-dir=${WORKCELL_STATE_ROOT}/signing" \
+    "--audit-log=${audit_path}" \
+    "--session-id=${session_id}" \
+    "--record-path=${record_path}" \
+    "--provider=${target_provider}" 2>/dev/null; then
+    echo "Workcell: warning: could not sign session audit head for ${session_id}; session verify will report it unsigned." >&2
+  fi
+  rm -rf "${lock_dir}" 2>/dev/null || true
 }
 
 write_profile_image_marker() {
@@ -3844,6 +3983,7 @@ session_stop_main() {
         "exit_status=${stop_exit_status}" \
         "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
       session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}" || exit 1
+      sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
       load_session_runtime_metadata "${session_id}"
       printf 'session_id=%s\n' "${session_id}"
       printf 'stop_requested=1\n'
@@ -3860,6 +4000,19 @@ session_stop_main() {
       printf 'live_status=%s\n' "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS:-}}"
       printf 'control_mode=detached\n'
       emit_loaded_session_control_summary
+      # Seal-missing recheck (same TOCTOU coverage as the terminal path below):
+      # this already-stopped/live-monitor branch returns without falling through to
+      # that recheck, so if the monitor wrote the terminal record but exited before
+      # its finalize_session_audit signing step, sign here. Gate on the seal's
+      # absence (idempotent — a monitor that already signed is not double-signed)
+      # and only when the record is terminal.
+      case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+        stopped | exited | failed | aborted)
+          if [[ ! -e "${record_path%.json}.audit-sig" ]]; then
+            sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
+          fi
+          ;;
+      esac
       return 0
     fi
     echo "session stop requires a detached session that is still running: ${session_id}" >&2
@@ -3904,6 +4057,11 @@ session_stop_main() {
       if [[ "${SESSION_META_STATUS}" == "failed" ]]; then
         stop_exit_status="$(session_container_exit_code "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}")"
         session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
+        # Sign only when the monitor is not live; a live monitor still owns
+        # finalize_session_audit signing, so signing here would double-sign.
+        if ! session_monitor_pid_is_live; then
+          sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
+        fi
         load_session_runtime_metadata "${session_id}"
       fi
       ;;
@@ -3918,10 +4076,27 @@ session_stop_main() {
           "exit_status=${stop_exit_status}" \
           "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
         session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}"
+        sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
         load_session_runtime_metadata "${session_id}"
         ;;
     esac
   fi
+  # Seal-missing recheck (TOCTOU coverage): once the record is terminal, guarantee
+  # it is sealed even if the monitor was observed live at the checks above but
+  # exited in the window before its finalize_session_audit signing step (the
+  # monitor-dead fallback branch above no-ops for an already-terminal record, so
+  # nothing else would sign it). Gate on the SEAL's presence, not on monitor
+  # liveness: sign only when the .audit-sig sidecar is absent, so a live monitor
+  # that already signed (happy path) or a fallback branch above that signed is not
+  # double-signed and a re-run is a no-op. The signer helper is itself the
+  # no-chain fail-closed no-op and holds the audit-log lock during its read.
+  case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
+    stopped | exited | failed | aborted)
+      if [[ ! -e "${record_path%.json}.audit-sig" ]]; then
+        sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
+      fi
+      ;;
+  esac
   case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
     stopped | exited | failed | aborted)
       session_clear_stop_request_marker || exit 1
@@ -4012,6 +4187,8 @@ session_delete_main() {
   local remove_file_trace_log=0
   local remove_session_audit_dir=0
   local remove_transcript_log=0
+  local remove_audit_seal=0
+  local audit_seal_path=""
   local session_audit_dir=""
   local -a removed=()
   local -a kept=()
@@ -4147,6 +4324,19 @@ session_delete_main() {
       missing+=("transcript_log")
     fi
   fi
+  # The .audit-sig seal (host signature over the session's audit-chain head) sits
+  # beside the durable record and is session-owned evidence, so it is removed with
+  # the full delete and KEPT under --record-only (which preserves artifacts).
+  audit_seal_path="${record_path%.json}.audit-sig"
+  if [[ -e "${audit_seal_path}" ]]; then
+    if [[ "${record_only}" -eq 1 ]]; then
+      kept+=("audit_seal")
+    else
+      remove_audit_seal=1
+      planned_remove+=("audit_seal")
+    fi
+  fi
+
   if [[ "${#planned_remove[@]}" -eq 0 ]]; then
     planned_remove=("record")
   else
@@ -4195,6 +4385,12 @@ session_delete_main() {
       exit 1
     }
   fi
+  if [[ "${remove_audit_seal}" -eq 1 ]]; then
+    rm -f -- "${audit_seal_path}" || {
+      echo "session delete failed to remove the recorded audit_seal artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
   rm -f "${record_path}" || {
     echo "session delete failed to remove the durable session record: ${session_id}" >&2
     exit 1
@@ -4221,6 +4417,44 @@ session_logs_main() {
 session_timeline_main() {
   collect_session_lookup_roots || exit 1
   run_go_hostutil_preserve_exit session-timeline-cli "${SESSION_LOOKUP_ROOTS[@]}" "$@"
+  exit $?
+}
+
+session_verify_main() {
+  local -a args=()
+  # --root, --signing-dir, and --real-home are trusted-context flags this wrapper
+  # supplies from host-derived values (the session lookup roots prepended below,
+  # the host-owned signing key dir, and the OCSF redaction root). A user-supplied
+  # copy would redirect what verify treats as authoritative:
+  #   --root=DIR   sits in the leading --root= run that ConsumeRootArgs consumes
+  #                (user args follow the trusted roots), so it would add an
+  #                attacker-controlled state root and let a host-signed COPY under
+  #                that path verify instead of the Workcell-owned state.
+  #   --signing-dir/--real-home are last-wins in parseVerifyArgs, so a copy could
+  #                point verification at an attacker key dir.
+  # Reject all of them from user input outright (defense in depth: --signing-dir/
+  # --real-home are also appended AFTER "$@" so trusted context still wins). Both
+  # --flag=VALUE and bare --flag forms are rejected; the bare form would otherwise
+  # swallow an appended trusted flag as its value. Legitimate HOST config (the
+  # WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT env that DERIVES the trusted roots)
+  # stays honored — only a per-invocation CLI override is refused.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --root | --root=* | --signing-dir | --signing-dir=* | --real-home | --real-home=*)
+        echo "workcell: ${1%%=*} is not a user-configurable option for session verify." >&2
+        exit 2
+        ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
+  collect_session_lookup_roots || exit 1
+  run_go_hostutil_preserve_exit session-verify-cli "${SESSION_LOOKUP_ROOTS[@]}" \
+    "${args[@]}" \
+    "--signing-dir=${WORKCELL_STATE_ROOT}/signing" \
+    "--real-home=${REAL_HOME}"
   exit $?
 }
 
@@ -4456,6 +4690,9 @@ session_main() {
       ;;
     timeline)
       session_timeline_main "$@"
+      ;;
+    verify)
+      session_verify_main "$@"
       ;;
     diff)
       while [[ $# -gt 0 ]]; do

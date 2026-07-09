@@ -25,6 +25,7 @@ host-side inventory, observability, and detached-control commands:
 - `workcell session timeline --id ...`
 - `workcell session diff --id ...`
 - `workcell session export --id ...`
+- `workcell session verify --id ...`
 - `workcell session start`
 - `workcell session attach`
 - `workcell session send`

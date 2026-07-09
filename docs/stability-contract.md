@@ -116,6 +116,9 @@ The full stable output-line prefix set enforced by `policy/public-contract.toml`
 | `record_digest=` | `scripts/workcell` |
 | `prev_digest=` | `scripts/workcell` |
 | `egress_enforcement=` | `scripts/workcell` |
+| `session_verify=` | `internal/sessionctl` (`session verify`) |
+| `key_id=` | `internal/sessionctl` (`session verify`) |
+| `head_digest=` | `internal/sessionctl` (`session verify`) |
 
 The complete set of `key=` prefixes in the `session show --text` summary is
 enforced separately, by set-equality against `SessionShowLines`
