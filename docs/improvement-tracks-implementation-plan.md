@@ -50,7 +50,8 @@ The milestone ordering answers the current landscape directly:
 - upstream retires Gemini CLI personal-account tiers in June 2026 →
   the Antigravity Tier 1 adapter track runs inside the 1.0 window (v0.14)
 - enterprises evaluate against OWASP agentic guidance, SIEM-ready export,
-  and SLSA levels → A7, F1, B1/B2 sit on the critical path
+  and SLSA levels → A7, F1, and B1 sit on the 1.0 critical path; B2 is
+  deferred post-1.0 under the 2026-07-09 criterion-6 amendment
 - container-in-sandbox (C4) stays post-1.0: it is a differentiator response,
   not a 1.0 gate, and must not risk the outer boundary
 
@@ -60,10 +61,10 @@ The milestone ordering answers the current landscape directly:
 |---|---|---|
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
-| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E6, E7, G2, Antigravity Tier 1 adapter track |
-| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, C3, D5, D7, F1, G3 |
+| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
+| v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B6 (automated real-boundary lane), B7 (badge + audit completion), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Items inside a milestone are independently shippable and individually
 reviewable. Later-milestone items may start early when nothing earlier gates
@@ -413,6 +414,11 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
 
 ### E6: Adoption Growth Kit
 
+**Deferred to post-1.0 (2026-07-09 criterion-7 amendment).** 1.0 ships with
+in-repo markdown docs; C2 benchmark numbers remain required in
+`docs/session-startup-benchmarks.md` during Batch 3 local-operator
+certification. This detail section stays here for continuity of the E6 track.
+
 - Steps: publish a rendered docs site from the existing markdown; record
   asciinema demos for the 5-minute path and one provider quickstart; ship a
   Homebrew tap alongside the formula asset; write the "why a VM boundary"
@@ -482,6 +488,11 @@ shortcut to the Tier 1 evidence bar.
 - Size: M. Dependencies: A1 design informs the endpoint inventory.
 
 ### B2: Dual-Control Release Approval
+
+**Deferred to post-1.0 (2026-07-09 criterion-6 amendment).** Workcell has no
+second trusted maintainer today; 1.0 uses the single-maintainer compensating
+controls documented in `docs/releasing.md` instead. This detail section stays
+here for continuity of the B2 track.
 
 - Steps: add a second release approver identity; require two approvals on
   the release environment; update `docs/releasing.md` including the

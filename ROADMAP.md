@@ -143,9 +143,17 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    plus an explicit recorded scope decision instead of a support claim.
 5. Operations: install, upgrade, uninstall, rollback, `--gc`, and support
    bundles (G2) are proven end to end on the release matrix (G3).
-6. Release assurance: dual-control releases (B2), mutation-score gating
-   (B3), and SLSA L3 gaps closed or explicitly dispositioned (B1) are in
-   place. **[Amended 2026-07-09, recorded maintainer decision:]** the automated
+6. Release assurance: mutation-score gating (B3) and SLSA L3 gaps closed or
+   explicitly dispositioned (B1) are in place. **[Amended 2026-07-09, recorded
+   maintainer decision:]** dual-control releases (B2) are **deferred to
+   post-1.0** because Workcell has no second trusted maintainer today. For
+   1.0, the documented single-maintainer controls in
+   [`docs/releasing.md`](docs/releasing.md) are the compensating release
+   control: signed commits, protected `main` with strict CI, required release
+   approval, admin-merge audit trail, and public single-maintainer release
+   comments recording the version, exact head SHA, timestamp, and merge path.
+   Tradeoff recorded honestly: 1.0 has no independent second approver.
+   **[Amended 2026-07-09, recorded maintainer decision:]** the automated
    real-boundary certification lane (B6, a self-hosted Apple-Silicon CI runner)
    and the OpenSSF Best Practices badge (B7 part 1) are **deferred to post-1.0**
    — no funding or hosting for a self-hosted runner is available, and the B7
@@ -156,9 +164,15 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    live Colima/Apple-Silicon boundary is exercised by the maintainer locally,
    not continuously in hosted CI (which runs only a Docker smoke lane on a
    `ubuntu-latest` runner).
-7. Adoption surface: tiered docs (E1), architecture diagrams (E2), a
-   rendered docs site with demos and reproducible benchmarks (E6), and the
-   support-tier and diagnostics guides (E3) are live.
+7. Adoption surface: tiered docs (E1), architecture diagrams (E2), and the
+   support-tier and diagnostics guides (E3) are live. **[Amended 2026-07-09,
+   recorded maintainer decision:]** the rendered docs site with demos and
+   externally published reproducible benchmarks (E6) is **deferred to post-1.0**.
+   1.0 ships with in-repo markdown docs; C2 benchmark numbers are still captured
+   and published in
+   [`docs/session-startup-benchmarks.md`](docs/session-startup-benchmarks.md)
+   during Batch 3 local-operator certification. Tradeoff recorded honestly:
+   1.0 ships without the external rendered site or demo package.
 8. Readiness review: a cross-lens 1.0 gate review (G4) — product,
    enterprise/security, adapter-maintainer, validation, docs/contract, and
    release lenses — records no unresolved P0/P1 findings, and every support
@@ -168,11 +182,17 @@ The G4 evidence package and its go/no-go checklist live in
 [`docs/1.0-readiness-review-draft.md`](docs/1.0-readiness-review-draft.md); the
 B6 (item 6) real-boundary certification lane disposition options are in
 [`docs/b6-disposition-options-draft.md`](docs/b6-disposition-options-draft.md).
-**Recorded maintainer decisions (2026-07-09):** B6 — defer the automated
-Apple-Silicon runner (no funding); certify both boundaries by the local-operator
-discipline on the maintainer's host (criterion 6, amended above). B7 — defer the
-third-party boundary audit and OpenSSF badge to post-1.0 (criterion 2, amended
-above). See the readiness review for the recorded G4 checklist state.
+**Recorded maintainer decisions (2026-07-09):** B2 — defer dual-control
+releases because no second trusted maintainer exists; use the single-maintainer
+controls in [`docs/releasing.md`](docs/releasing.md) for 1.0 (criterion 6,
+amended above). B6 — defer the automated Apple-Silicon runner (no funding);
+certify both boundaries by the local-operator discipline on the maintainer's
+host (criterion 6, amended above). B7 — defer the third-party boundary audit and
+OpenSSF badge to post-1.0 (criterion 2, amended above). E6 — defer the rendered
+docs site, demos, and external benchmark publication; 1.0 ships with in-repo
+markdown docs while C2 benchmark numbers are captured and published through
+Batch 3 local-operator certification (criterion 7, amended above). See the
+readiness review for the recorded G4 checklist state.
 
 ### Milestone Train
 
@@ -185,10 +205,10 @@ live in
 |---|---|---|
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
-| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E6, E7, G2, Antigravity Tier 1 adapter track |
-| v0.15 | Enterprise evidence and release assurance | A5, A6, B2, C3, D5, D7, F1, G3 |
+| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
+| v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B6 (automated real-boundary lane), B7 (badge + audit completion), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Phase 13 (Linux `amd64` `local_compat` certification candidate) may land
 before or after 1.0 depending on certification evidence; it does not gate
@@ -478,7 +498,9 @@ the remaining gaps between that posture and the level enterprises will ask a
 security-boundary product to prove.
 
 - **B1 (now, M):** SLSA v1.0 gap analysis published in the provenance docs
-- **B2 (next, M):** dual-control release approval before 1.0
+- **B2 (post-1.0, M):** dual-control release approval — deferred by the
+  2026-07-09 criterion-6 amendment because no second trusted maintainer exists;
+  1.0 uses the documented single-maintainer controls in `docs/releasing.md`
 - **B3 (now, M):** scheduled mutation-score lane with published score and
   baseline regression gate, beyond today's release-preflight-only run
 - **B4 (now, S):** centralized tool pins and a permitted-GitHub-actions
@@ -548,8 +570,9 @@ monolithic Rust interception library, a 8,910-line launcher script, a
   labels, freshness markers
 - **E5 (next, M):** injection-policy annotated schema with complete
   per-provider examples
-- **E6 (next, M):** adoption growth kit — docs site, terminal demos, Homebrew
-  tap, isolation-model architecture post backed by benchmarks
+- **E6 (post-1.0, M):** adoption growth kit — docs site, terminal demos,
+  Homebrew tap, isolation-model architecture post backed by benchmarks;
+  deferred by the 2026-07-09 criterion-7 amendment
 - **E7 (next, S):** contributor runbook depth and substantive adapter READMEs
 
 ### Track F: Enterprise And Standards Alignment
