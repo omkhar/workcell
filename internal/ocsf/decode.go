@@ -70,19 +70,24 @@ func DecodeAuditLineStrict(line, targetProvider string) ([]AuditField, error) {
 // AuditLineClaimsSession reports whether an audit line carries a session_id
 // TOKEN equal to sessionID, using the provider's proper tokenizer so a bash-%q
 // argv value cannot forge a claim (its `\ ` spaces stay inside one argv token,
-// never a session_id token). It tolerates bare/duplicate tokens and never errors
-// — a structural claim test, paired by callers with DecodeAuditLineStrict to
-// decide member-vs-tamper for a claiming line.
+// never a session_id token). It tolerates bare/duplicate tokens — a structural
+// claim test, paired by callers with DecodeAuditLineStrict to decide
+// member-vs-tamper for a claiming line.
+//
+// A tokenizer error (a malformed quoted field) does NOT erase a matching
+// session_id FIELD token seen BEFORE it: splitQuotedTokens returns the fields it
+// completed before failing, so a corrupted record for the target session still
+// claims (and is then passed to strict decode to fail closed) rather than being
+// misclassified as an unrelated non-member. A match found only AFTER the error
+// point cannot exist (there are no completed tokens past it), and an
+// argv-embedded session_id remains a single argv token, never a claim.
 func AuditLineClaimsSession(line, targetProvider, sessionID string) bool {
 	var tokens []string
 	if auditEncodingForProvider(targetProvider) == encodingPercentPath {
 		tokens = strings.Fields(line)
 	} else {
-		toks, err := splitQuotedTokens(line)
-		if err != nil {
-			return false
-		}
-		tokens = toks
+		// Ignore the error: use whatever fields were completed before it.
+		tokens, _ = splitQuotedTokens(line)
 	}
 	for _, tok := range tokens {
 		if k, v, ok := strings.Cut(tok, "="); ok && k == "session_id" && v == sessionID {

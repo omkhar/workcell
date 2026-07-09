@@ -48,6 +48,29 @@ func TestAuditLineClaimsSessionIgnoresArgvSpoof(t *testing.T) {
 	}
 }
 
+func TestAuditLineClaimsSessionLatchesClaimBeforeTokenizerError(t *testing.T) {
+	// A matching session_id FIELD token BEFORE a malformed quoted field must
+	// still claim, so a corrupted target-session record reaches the tamper path
+	// instead of being dropped as unrelated. Pre-fix returned false.
+	line := `timestamp=t session_id=sess-A note=$'unterminated`
+	if !AuditLineClaimsSession(line, "colima", "sess-A") {
+		t.Fatal("a session_id field token before a tokenizer error must still claim")
+	}
+}
+
+func TestAuditLineClaimsSessionArgvSpoofWithMalformedTailStaysNonMember(t *testing.T) {
+	// The session_id appears only inside an argv value (one token); the record's
+	// real session_id is sess-B and a later field is malformed. Must NOT claim
+	// sess-A (no L280 regression), but must still claim its true sess-B.
+	line := `timestamp=t session_id=sess-B argv=hello\ session_id=sess-A note=$'unterminated`
+	if AuditLineClaimsSession(line, "colima", "sess-A") {
+		t.Fatal("an argv-embedded session_id must not claim, even with a malformed tail")
+	}
+	if !AuditLineClaimsSession(line, "colima", "sess-B") {
+		t.Fatal("the real session_id field before the error must claim")
+	}
+}
+
 func TestAuditLineClaimsSessionToleratesBareToken(t *testing.T) {
 	// A malformed line (bare token) that carries a genuine session_id token still
 	// structurally claims the session, so callers can treat it as tamper.

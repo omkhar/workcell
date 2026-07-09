@@ -289,7 +289,12 @@ func splitQuotedTokens(line string) ([]string, error) {
 		case r == '$' && i+1 < len(runes) && runes[i+1] == '\'':
 			decoded, next, err := decodeAnsiC(runes, i+2)
 			if err != nil {
-				return nil, err
+				// Return the tokens completed BEFORE the malformed field so a
+				// caller that only needs the delimited fields parsed so far (e.g.
+				// AuditLineClaimsSession checking for a session_id field token that
+				// preceded the corruption) can act on them. decodeAuditLine still
+				// treats any error as fail-closed and discards these.
+				return tokens, err
 			}
 			cur.WriteString(decoded)
 			inToken = true
