@@ -842,6 +842,184 @@ reclaim_waited="$(sed -n 's/^waited=//p' <<<"${reclaim_output}")"
   exit 1
 }
 
+# Slow-holder wait budget: the lock holder computes the digest via go_hostutil
+# (`go run`), which can take several seconds on a cold host. A waiter must outlast
+# that or it SKIPS its record and breaks the chain. To exercise the budget
+# deterministically, the lock-acquire attempts are stubbed instant (pure-bash
+# mkdir) so the wait budget is exactly cap x 20ms of SLEEP — the OLD 50x20ms (~1s)
+# budget would exhaust behind a ~2s holder and skip; the new 1500x20ms (~30s)
+# budget waits it out. The real go audit-digest is preserved so the chain is
+# valid. Assert the second writer SERIALIZES and both records chain linearly.
+SLOW_HOLDER_LOG="${TMP_DIR}/slow-holder-audit/workcell.audit.log"
+slow_holder_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    audit_path="$2"
+    orig_gh="$(declare -f go_hostutil)"
+    eval "real_go_hostutil() ${orig_gh#go_hostutil ()}"
+    # Instant, pure-bash lock-acquire attempts so the wait budget is pure sleep;
+    # everything else (audit-digest) still routes to the real helper.
+    go_hostutil() {
+      if [[ "${1:-} ${2:-}" == "helper acquire-profile-lock" ]]; then
+        if mkdir "$3" 2>/dev/null; then echo 1; else echo 0; fi
+        return 0
+      fi
+      if [[ "${1:-} ${2:-}" == "helper profile-lock-is-stale" ]]; then
+        echo 0
+        return 0
+      fi
+      real_go_hostutil "$@"
+    }
+    # Hold the lock ~2s inside the critical section (> the old 1s budget).
+    audit_record_digest() { sleep 2; real_go_hostutil helper audit-digest "$@"; }
+    append_audit_record_to_path "${audit_path}" event=slow session_id=holder >/dev/null &
+    holder_pid=$!
+    # Poll for the holder to actually acquire the lock (its dir exists) before
+    # starting the waiter — append_audit_record_to_path takes the lock BEFORE the
+    # injected audit_record_digest sleep, so this deterministically exercises the
+    # slow-holder path regardless of CI scheduling latency (a fixed sleep could let
+    # a delayed holder lose the race, passing spuriously even with a short budget).
+    lock_wait=0
+    while [[ ! -d "${audit_path}.lock" ]]; do
+      sleep 0.02
+      lock_wait=$((lock_wait + 1))
+      if [[ "${lock_wait}" -ge 500 ]]; then
+        echo "holder did not acquire the audit-log lock within the bound" >&2
+        exit 1
+      fi
+    done
+    append_audit_record_to_path "${audit_path}" event=fast session_id=waiter
+    waiter_rc=$?
+    wait "${holder_pid}"
+    printf "waiter_rc=%s\n" "${waiter_rc}"
+    printf "lines=%s\n" "$(wc -l <"${audit_path}" | tr -d " ")"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SLOW_HOLDER_LOG}"
+)"
+grep -q '^waiter_rc=0$' <<<"${slow_holder_output}" || {
+  echo "waiter behind a slow holder did not append (skipped): ${slow_holder_output}" >&2
+  exit 1
+}
+grep -q '^lines=2$' <<<"${slow_holder_output}" || {
+  echo "slow-holder log is missing a record (waiter skipped): ${slow_holder_output}" >&2
+  exit 1
+}
+awk '
+  {
+    d = ""; p = "";
+    for (i = 1; i <= NF; i++) {
+      if ($i ~ /^record_digest=/) { sub(/^record_digest=/, "", $i); d = $i }
+      if ($i ~ /^prev_digest=/) { sub(/^prev_digest=/, "", $i); p = $i }
+    }
+    if (d == "") { printf "slow-holder line %d missing record_digest\n", NR > "/dev/stderr"; bad = 1 }
+    if (NR > 1 && p != prev) { printf "slow-holder chain forked at line %d\n", NR > "/dev/stderr"; bad = 1 }
+    prev = d
+  }
+  END { if (bad) exit 1 }
+' "${SLOW_HOLDER_LOG}" || {
+  echo "slow-holder waiter did not serialize into a linear chain" >&2
+  exit 1
+}
+
+# Signer read-serialization: sign_session_audit_head_explicit recomputes the head
+# by reading the audit log, which must hold <audit-log>.lock so it never observes
+# a record mid-append (append writes multiple non-atomic printfs under that lock).
+# With a concurrent holder occupying the lock, the signer must BLOCK then sign a
+# complete head (seal created, verify=verified) rather than skip. This drives the
+# real signer + real go verify over a legacy-layout fixture.
+SIGNER_LOCK_ROOT="${TMP_DIR}/signer-lock"
+signer_lock_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    ROOT="$2"
+    WORKCELL_STATE_ROOT="${ROOT}/wstate"
+    SIGNING_DIR="${WORKCELL_STATE_ROOT}/signing"
+    PROFILE="wcl-signer"
+    SID="signer-sess"
+    SESSION_META_PROFILE="${PROFILE}"
+    SESSION_META_TARGET_PROVIDER="colima"
+    PROFILE_DIR="${ROOT}/${PROFILE}"
+    RECORD_PATH="${PROFILE_DIR}/sessions/${SID}.json"
+    AUDIT_LOG="${PROFILE_DIR}/workcell.audit.log"
+    LOCK_DIR="${AUDIT_LOG}.lock"
+    mkdir -p "$(dirname "${RECORD_PATH}")"
+    append_audit_record_to_path "${AUDIT_LOG}" event=launch session_id="${SID}" >/dev/null
+    append_audit_record_to_path "${AUDIT_LOG}" event=exit session_id="${SID}" >/dev/null
+    printf "{\"version\":1,\"session_id\":\"%s\",\"profile\":\"%s\",\"target_provider\":\"colima\",\"agent\":\"codex\",\"mode\":\"strict\",\"status\":\"exited\",\"workspace\":\"/tmp/ws\",\"started_at\":\"2026-07-08T00:00:00Z\",\"finished_at\":\"2026-07-08T00:00:09Z\",\"exit_status\":\"0\",\"final_assurance\":\"managed-mutable\",\"audit_log_path\":\"%s\"}\n" "${SID}" "${PROFILE}" "${AUDIT_LOG}" >"${RECORD_PATH}"
+    # Instrument the lock ACQUISITION so the proof does not depend on go/sign
+    # startup time: mock go_hostutil acquire-profile-lock to record each attempt
+    # (keeping real mkdir semantics), while session-sign-head and session-verify-cli
+    # stay real. The signer counts as BLOCKED once it has contended for the held
+    # lock at least twice; a regression that stopped taking the lock records no
+    # signer attempt (times out) or seals immediately (seal appears) and is caught.
+    orig_gh="$(declare -f go_hostutil)"
+    eval "real_go_hostutil() ${orig_gh#go_hostutil ()}"
+    attempts_marker="${ROOT}/acquire-attempts"
+    : >"${attempts_marker}"
+    go_hostutil() {
+      if [[ "${1:-} ${2:-}" == "helper acquire-profile-lock" ]]; then
+        printf x >>"${attempts_marker}"
+        if mkdir "$3" 2>/dev/null; then echo 1; else echo 0; fi
+        return 0
+      fi
+      if [[ "${1:-} ${2:-}" == "helper profile-lock-is-stale" ]]; then
+        echo 0
+        return 0
+      fi
+      real_go_hostutil "$@"
+    }
+    # Holder takes the lock (records 1 attempt).
+    go_hostutil helper acquire-profile-lock "${LOCK_DIR}" "$$" >/dev/null
+    sign_session_audit_head_explicit "${PROFILE}" "${SID}" "${RECORD_PATH}" &
+    signer_pid=$!
+    # Deterministic: wait until the signer has contended for the held lock at least
+    # twice (marker >= 3 bytes: holder + two signer retries), or fail if it seals
+    # first. Not tied to signing elapsed time.
+    blocked=0
+    for _ in $(seq 1 400); do
+      if [[ -e "${RECORD_PATH%.json}.audit-sig" ]]; then
+        blocked=0
+        break
+      fi
+      if [[ "$(wc -c <"${attempts_marker}" | tr -d " ")" -ge 3 ]]; then
+        blocked=1
+        break
+      fi
+      sleep 0.05
+    done
+    # Signer is provably blocked with no seal yet; release so it acquires and signs.
+    rm -rf "${LOCK_DIR}"
+    wait "${signer_pid}"
+    printf "blocked=%s\n" "${blocked}"
+    printf "seal=%s\n" "$([[ -s "${RECORD_PATH%.json}.audit-sig" ]] && echo 1 || echo 0)"
+    # Capture then match with a here-string: piping the go-run helper into
+    # `grep -q` lets grep close the pipe early, so the helper takes SIGPIPE and
+    # pipefail would spuriously report failure.
+    verify_out="$(go_hostutil session-verify-cli --root="${ROOT}" --id "${SID}" \
+      "--signing-dir=${SIGNING_DIR}" --real-home=/nonexistent 2>/dev/null || true)"
+    if grep -q "^session_verify=verified$" <<<"${verify_out}"; then
+      printf "verified=1\n"
+    else
+      printf "verified=0\n"
+    fi
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SIGNER_LOCK_ROOT}"
+)"
+grep -q '^blocked=1$' <<<"${signer_lock_output}" || {
+  echo "signer did not block on the held audit-log lock: ${signer_lock_output}" >&2
+  exit 1
+}
+grep -q '^seal=1$' <<<"${signer_lock_output}" || {
+  echo "signer did not create a seal after the lock cleared: ${signer_lock_output}" >&2
+  exit 1
+}
+grep -q '^verified=1$' <<<"${signer_lock_output}" || {
+  echo "signer seal (behind a held lock) did not verify: ${signer_lock_output}" >&2
+  exit 1
+}
+
 # Stop-fallback signing: a detached session finalized via the host-stop-fallback
 # path (monitor no longer live) writes its terminal record WITHOUT running
 # finalize_session_audit, so sign_session_audit_head_explicit is the only thing
@@ -3013,6 +3191,40 @@ PY
       echo "rejected verify with forged --signing-dir still reported verified" >&2
       exit 1
     fi
+
+    # Trust boundary: the lookup --root must not be user-overridable. A user
+    # --root would sit in the leading --root= run the helper consumes, so a
+    # host-signed COPY of the session under an attacker path would verify instead
+    # of the Workcell-owned state. Stage exactly such a copy (record + canonical
+    # log + seal, all genuine) under an evil root and confirm a user --root is
+    # REJECTED (exit 2) before the helper runs, never reporting "verified".
+    EVIL_ROOT="${PROFILE_DIR}/evil-root"
+    EVIL_PROFILE_DIR="${EVIL_ROOT}/wcl-copy"
+    mkdir -p "${EVIL_PROFILE_DIR}/sessions"
+    cp "${SESSIONS_DIR}/${SESSION_ID}.json" "${EVIL_PROFILE_DIR}/sessions/${SESSION_ID}.json"
+    cp "${SESSIONS_DIR}/${SESSION_ID}.audit-sig" "${EVIL_PROFILE_DIR}/sessions/${SESSION_ID}.audit-sig"
+    cp "${AUDIT_LOG}" "${EVIL_PROFILE_DIR}/workcell.audit.log"
+    for evil_root_flag in "--root=${EVIL_ROOT}" "--root ${EVIL_ROOT}"; do
+      # Cover BOTH the LEADING root-run position (before --id, where ConsumeRootArgs
+      # would otherwise consume the user root as a lookup root) and the trailing
+      # position after --id. The leading case is the one the reject exists to close.
+      for evil_args in "${evil_root_flag} --id ${SESSION_ID}" "--id ${SESSION_ID} ${evil_root_flag}"; do
+        set +e
+        # shellcheck disable=SC2086
+        verify_root_output="$("${ROOT_DIR}/scripts/workcell" session verify ${evil_args} 2>&1)"
+        verify_root_rc="$?"
+        set -e
+        [[ "${verify_root_rc}" -eq 2 ]] || {
+          echo "user-supplied root (${evil_args}) was not rejected (rc=${verify_root_rc})" >&2
+          exit 1
+        }
+        grep -q "root is not a user-configurable option" <<<"${verify_root_output}"
+        if grep -q "session_verify=verified" <<<"${verify_root_output}"; then
+          echo "rejected verify with attacker root still reported verified" >&2
+          exit 1
+        fi
+      done
+    done
 
     delete_output="$("${ROOT_DIR}/scripts/workcell" session delete --id "${SESSION_ID}")"
     grep -q "event=command session_id=${SESSION_ID} source=host-cli command=session-send argv=resume" "${AUDIT_LOG}"
