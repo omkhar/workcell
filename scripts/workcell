@@ -87,6 +87,15 @@ changelog_version() {
 }
 
 ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
+# Handle --version before sourcing any launcher module: printing the changelog
+# version must never require Go, Docker, or Colima on the host.  Later modules
+# resolve host tools at source time (go-hostutil.sh aborts on a missing
+# trusted-path go), so this early exit is what keeps `workcell --version`
+# usable on a bare operator host (P1 review finding on the --version PR).
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'workcell %s\n' "$(changelog_version "${ROOT_DIR}")"
+  exit 0
+fi
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/runtime/container/assurance.sh"
 # shellcheck source=/dev/null
@@ -8387,10 +8396,6 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       DRY_RUN=1
       shift
-      ;;
-    --version)
-      printf 'workcell %s\n' "$(changelog_version "${ROOT_DIR}")"
-      exit 0
       ;;
     -h | --help)
       usage
