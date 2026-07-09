@@ -227,6 +227,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/install-lifecycle",
+      "description": "Day-two install lifecycle mechanics in a sandboxed HOME that touches no real host state: install links the launcher, upgrade-in-place repoints it with no duplicate or orphaned link, rollback repoints back, and the --gc cleanup contract (function-level, injected sandbox root) reaps Workcell-owned stale scratch while preserving unrelated files; real /tmp and state-root sentinels prove nothing outside the sandbox is touched",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "copilot", "gemini"],
+      "persona": "release-engineer",
+      "test_file": "shared/test-install-lifecycle.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "claude-swe/hook-parametric",
       "description": "Claude guard-bash.sh blocks all commands in the fixture file",
       "lane": "secretless",

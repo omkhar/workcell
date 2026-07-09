@@ -401,11 +401,17 @@ tracked or accepted deliberately:
    install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or a
    hand-fetched bundle) still does not verify, so verification is not *forced*.
    Homebrew installs verify at checksum level via the pinned `sha256` in
-   `workcell.rb`. **Fully closing gap 1** requires making installer verification
-   the default/forced path across all documented install flows and exercising
-   `install-release.sh` end-to-end in CI (the `install-verification` lane today
-   drives the bundle's own `install.sh`, and an end-to-end verified install needs
-   a published release) — tracked under **G3**, install-lifecycle proof.
+   `workcell.rb`. **G3 progress:** `install-release.sh` is now exercised end to
+   end in CI against a locally built fixture release with stubbed `curl`/`cosign`
+   (`internal/testkit/install_release_e2e_test.go`), proving the full
+   download → verify → extract → handoff chain is fail-closed — a bad signature
+   or a digest mismatch aborts before the bundle installer runs. **Fully closing
+   gap 1** still requires (a) making installer verification the default/forced
+   path across all documented install flows, and (b) exercising the verified
+   path against a genuinely published, cosign-signed release (the offline fixture
+   proves the orchestration and fail-closed logic, not a real keyless Sigstore
+   signature). Both are tracked under **G3**, install-lifecycle proof; see
+   [install-lifecycle.md](install-lifecycle.md).
 2. **SLSA Build L3 not met (threat 6).** Build and provenance generation share a
    job/runner, so provenance is forgeable by a compromised build step. Closing
    it requires moving the build into an isolated trusted reusable workflow (or
