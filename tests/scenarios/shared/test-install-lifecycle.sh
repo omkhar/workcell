@@ -25,6 +25,7 @@ TMP_DIR="$(cd "${TMP_DIR}" && pwd -P)"
 # only self-contained function definitions, so it can live in the sandbox and
 # needs no relative-source resolution.
 FUNCTIONS_COPY="${TMP_DIR}/gc-cleanup-fns.sh"
+CHANGELOG_FUNCTIONS_COPY="${TMP_DIR}/changelog-version-fns.sh"
 
 cleanup() {
   rm -rf "${TMP_DIR}"
@@ -171,6 +172,64 @@ gc_fn_output="$(
 grep -q '^gc-cleanup-done$' <<<"${gc_fn_output}" || fail "--gc cleanup contract did not run"
 [[ ! -e "${GC_FN_ROOT}/workcell-docker.stale-fixture" ]] || fail "gc cleanup did not reap injected Workcell-owned stale scratch"
 [[ -f "${GC_FN_ROOT}/unrelated-keep.txt" ]] || fail "gc cleanup reaped an unrelated (non-Workcell) file"
+
+# ---------------------------------------------------------------------------
+# `workcell --version` changelog CONTRACT at the function level with injected
+# roots. We extract ONLY changelog_version and source just that helper, not the
+# whole launcher, so the version parser can be exercised against sandboxed
+# source, installed-layout, missing-changelog, and malformed-changelog roots.
+# ---------------------------------------------------------------------------
+sed -n '/^changelog_version() {/,/^}/p' "${ROOT_DIR}/scripts/workcell" >"${CHANGELOG_FUNCTIONS_COPY}"
+grep -q '^changelog_version() {' "${CHANGELOG_FUNCTIONS_COPY}" ||
+  fail "could not extract changelog_version from the launcher (renamed?)"
+
+source_checkout_version="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    changelog_version "$2"
+  ' _ "${CHANGELOG_FUNCTIONS_COPY}" "${ROOT_DIR}"
+)"
+[[ "${source_checkout_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
+  fail "source checkout changelog version was not semver: ${source_checkout_version}"
+
+BUNDLE_ROOT="${TMP_DIR}/bundle-root"
+mkdir -p "${BUNDLE_ROOT}"
+cp "${ROOT_DIR}/CHANGELOG.md" "${BUNDLE_ROOT}/CHANGELOG.md"
+installed_layout_version="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    changelog_version "$2"
+  ' _ "${CHANGELOG_FUNCTIONS_COPY}" "${BUNDLE_ROOT}"
+)"
+[[ "${installed_layout_version}" == "${source_checkout_version}" ]] ||
+  fail "installed-layout changelog version ${installed_layout_version} did not match source checkout ${source_checkout_version}"
+
+MISSING_CHANGELOG_ROOT="${TMP_DIR}/missing-changelog-root"
+mkdir -p "${MISSING_CHANGELOG_ROOT}"
+missing_changelog_version="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    changelog_version "$2"
+  ' _ "${CHANGELOG_FUNCTIONS_COPY}" "${MISSING_CHANGELOG_ROOT}"
+)"
+[[ "${missing_changelog_version}" == "unknown" ]] ||
+  fail "missing changelog returned ${missing_changelog_version}, want unknown"
+
+MALFORMED_CHANGELOG_ROOT="${TMP_DIR}/malformed-changelog-root"
+mkdir -p "${MALFORMED_CHANGELOG_ROOT}"
+printf '## Unreleased\n\n## Version 0.11.2\n' >"${MALFORMED_CHANGELOG_ROOT}/CHANGELOG.md"
+malformed_changelog_version="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    changelog_version "$2"
+  ' _ "${CHANGELOG_FUNCTIONS_COPY}" "${MALFORMED_CHANGELOG_ROOT}"
+)"
+[[ "${malformed_changelog_version}" == "unknown" ]] ||
+  fail "malformed changelog returned ${malformed_changelog_version}, want unknown"
 
 # ---------------------------------------------------------------------------
 # Real-state containment proof: nothing above touched the real host.

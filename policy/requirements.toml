@@ -110,11 +110,14 @@ workflows = [
   "launch_logs",
   "launch_auth_status",
   "launch_gc",
+  "print_version",
   "support_bundle",
 ]
 evidence = [
   "scripts/verify-invariants.sh",
   "internal/testkit/validation_entrypoints_test.go",
+  "tests/scenarios/shared/test-install-lifecycle.sh",
+  "tests/scenarios/shared/test-assurance-dry-run.sh",
   "tests/scenarios/shared/test-policy-commands.sh",
   "internal/authpolicy/manage_test.go",
   "tests/scenarios/shared/test-auth-commands.sh",

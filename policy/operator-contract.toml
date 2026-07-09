@@ -381,6 +381,16 @@ evidence = ["scripts/verify-invariants.sh", "tests/scenarios/shared/test-session
 requirements = ["functional.FR-006"]
 target_state = "retain"
 
+[workflows.print_version]
+title = "Print Workcell version"
+support = "supported"
+canonical = "--version"
+discoverability = ["top-level-help", "manpage"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-install-lifecycle.sh", "tests/scenarios/shared/test-assurance-dry-run.sh"]
+requirements = ["functional.FR-006"]
+target_state = "retain"
+
 [workflows.support_bundle]
 title = "Host-side support bundle"
 support = "supported"
