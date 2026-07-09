@@ -202,9 +202,17 @@ declare -a EXTRA_ARGS=()
 mkdir -p "\${DEBUG_DIR}"
 chmod 0700 "\${DEBUG_DIR}" 2>/dev/null || true
 
+# --version is positional: only a FIRST-argument --version is the operator
+# version query (matching the launcher's toolchain-free early handler).  A
+# --version elsewhere in argv can be a provider argument value (for example
+# --agent-arg --version), which must keep the automatic debug flags.
+if [[ "\${1:-}" == "--version" ]]; then
+  SKIP_AUTO_DEBUG=1
+fi
+
 for ARG in "\$@"; do
   case "\${ARG}" in
-    --auth-status | --doctor | --gc | --help | --inspect | --logs | --prepare-only | --version | -h | auth-status | doctor | gc | help | inspect | logs | publish-pr | support-bundle)
+    --auth-status | --doctor | --gc | --help | --inspect | --logs | --prepare-only | -h | auth-status | doctor | gc | help | inspect | logs | publish-pr | support-bundle)
       SKIP_AUTO_DEBUG=1
       ;;
     session)
