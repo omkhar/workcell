@@ -611,17 +611,6 @@ here for continuity of the B6 track.
   implementations with equal or better coverage; shell originals removed or
   reduced to thin shims.
 
-- Status (recorded 2026-07-08, evidence-based): the BULK of the
-  `verify-invariants` **static-invariant** scope is migrated to Go and the
-  real-repo test tail is closed, but the migration is NOT complete. Most static
-  file-content, regex, function-block, filesystem (`-d`/`-x`/`-f`), and
-  JSON-expression (`jq -e` scalar/array/index/truthiness/type) invariants live in
-  `internal/workcellhardening` behind `cmd/workcell-citools` subcommands, invoked
-  from `scripts/verify-invariants.sh` via 50 `go_verify_citools` delegations, and
-  every migrated static-file group now carries a `TestCheckXxxRealRepo` assertion
-  against the shipped artifacts (the five Claude/Gemini adapter-settings groups
-  were the last backfilled). A narrow `rg -q .*${ROOT_DIR}` / `grep -Fq` census
-  returns zero, but that census UNDERSTATES the remainder: a residual of static
 - Status (recorded 2026-07-09, evidence-based, scope narrowed): the bulk of the
   `verify-invariants` **static-invariant** scope is migrated to Go. Most static
   file-content, regex, function-block, filesystem (`-d`/`-x`/`-f`), and
@@ -640,6 +629,17 @@ here for continuity of the B6 track.
   `container-smoke` orchestration stay in bash by design, with the residual
   documented and accepted". Container-smoke.sh migration is a post-1.0 code-health
   item, not a D3-complete gate. This narrowing is evidence-based, not a gap.
+
+### D6: Split Oversized Go Validators
+
+- Steps: split `pinnedinputs.go` (1,546 lines) into per-format packages
+  (docker, node, rust, workflows, python) with focused tests; apply the same
+  pattern to the largest dispatcher mains.
+- Exit gates: behavior-identical validation results on the existing corpus;
+  per-package tests.
+- Validation: existing pin-hygiene lanes before/after; mutation coverage.
+- Size: M. Dependencies: none; scheduled late to avoid churn against B4.
+
 - Status (recorded 2026-07-08, evidence-based): PARTIAL. The GitHub Actions
   workflow format is already extracted into
   `internal/metadatautil/pinnedinputs_workflows.go` (PR #453). The remaining
@@ -664,8 +664,9 @@ here for continuity of the B6 track.
   split into their own files (GitHub Actions workflows already in
   `pinnedinputs_workflows.go`, now Node/npm in `pinnedinputs_node.go`); the small
   Rust (~129 lines) and Python (~7 lines) validators remain inline as an accepted,
-  non-oversized remainder. The D6 de-oversizing goal is met — `pinnedinputs.go` is
-  no longer oversized.
+  non-oversized remainder. This first split PR does not close D6 by itself; the
+  D6 gate remains open until the follow-up split lands and the G4 review records
+  any accepted dispatcher-main remainder.
 
 ## Post-1.0
 
