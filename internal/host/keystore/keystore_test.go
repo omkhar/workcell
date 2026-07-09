@@ -278,6 +278,65 @@ func TestPublishFailsOnDirFsyncError(t *testing.T) {
 	}
 }
 
+// TestExistingDirParentFsyncFailsClosed (L199): the EEXIST path (a dir that
+// already exists — exactly the concurrent first-use loser's path) must ALSO
+// fsync the parent, and fail closed if that fsync fails, so a loser never returns
+// a keyID before the dir is durably linked into its parent.
+func TestExistingDirParentFsyncFailsClosed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "signing")
+	if err := os.Mkdir(dir, 0o700); err != nil { // pre-create -> LoadOrCreate sees EEXIST
+		t.Fatalf("pre-create: %v", err)
+	}
+	failFsyncOnCall(t, 1) // the now-unconditional parent fsync
+	if _, _, err := LoadOrCreateSigningKey(dir); err == nil || !strings.Contains(err.Error(), "fsync parent") {
+		t.Fatalf("EEXIST-path parent fsync failure must fail closed, got %v", err)
+	}
+}
+
+// TestConcurrentFirstUseSucceeds (L199): two goroutines racing on the same fresh
+// dir both succeed and agree on the key id (the loser's EEXIST path completes,
+// including its parent fsync).
+func TestConcurrentFirstUseSucceeds(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "signing")
+	var wg sync.WaitGroup
+	ids := make([]string, 2)
+	errs := make([]error, 2)
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			defer wg.Done()
+			_, ids[i], errs[i] = LoadOrCreateSigningKey(dir)
+		}(i)
+	}
+	wg.Wait()
+	for i := 0; i < 2; i++ {
+		if errs[i] != nil {
+			t.Fatalf("goroutine %d: %v", i, errs[i])
+		}
+	}
+	if ids[0] != ids[1] {
+		t.Fatalf("racers disagree on key id: %s != %s", ids[0], ids[1])
+	}
+}
+
+// TestNestedCreateFsyncsAncestors (L160): when dir is nested below a missing
+// multi-level parent, every ancestor MkdirAll creates is fsynced — a fsync
+// failure on a deeper created ancestor fails closed, and a clean nested create
+// succeeds.
+func TestNestedCreateFsyncsAncestors(t *testing.T) {
+	base := t.TempDir()
+	// fsync order for base/a/b/c/signing: 1=c (parent of signing), 2=b, 3=a, 4=base.
+	failFsyncOnCall(t, 3) // the `a` ancestor
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(base, "a", "b", "c", "signing")); err == nil ||
+		!strings.Contains(err.Error(), "fsync ancestor directory") {
+		t.Fatalf("a created-ancestor fsync failure must fail closed, got %v", err)
+	}
+	// A clean nested create fsyncs every ancestor and succeeds.
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(base, "x", "y", "signing")); err != nil {
+		t.Fatalf("clean nested create must succeed: %v", err)
+	}
+}
+
 func TestReuseFsyncsAfterFailedPublish(t *testing.T) {
 	orig := fsyncDir
 	t.Cleanup(func() { fsyncDir = orig })

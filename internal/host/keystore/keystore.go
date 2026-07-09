@@ -148,20 +148,24 @@ func ensureSecureDir(dir string) (*os.File, error) {
 	// before O_NOFOLLOW takes effect, so a symlinked dir would be accepted. Clean
 	// leaves the real dir name as the final component.
 	dir = filepath.Clean(dir)
-	// Create atomically if absent. os.Mkdir is atomic; a symlink (or anything
-	// else) already at this name makes it fail EEXIST, which we treat as "exists,
-	// verify below" — never adopt a name we did not create without an fd check.
-	created := false
-	if err := os.Mkdir(dir, 0o700); err == nil {
-		created = true
-	} else if !errors.Is(err, os.ErrExist) {
+	// Record which ancestors do NOT yet exist, so after creating them we can fsync
+	// exactly those whose entry in a parent is new (L160: MkdirAll may create
+	// several levels). newDirs is deepest-first: [dir, dir/.., ...] up to but not
+	// including the first pre-existing ancestor.
+	newDirs, err := missingAncestors(dir)
+	if err != nil {
+		return nil, err
+	}
+	// Create the dir (and any missing parents) atomically. os.Mkdir is atomic; a
+	// symlink (or anything else) already at the dir name makes it fail EEXIST,
+	// which we treat as "exists, verify below" — never adopt a name we did not
+	// create without an fd check.
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		if parent := filepath.Dir(dir); parent != dir {
 			if merr := os.MkdirAll(parent, 0o700); merr != nil {
 				return nil, merr
 			}
-			if merr := os.Mkdir(dir, 0o700); merr == nil {
-				created = true
-			} else if !errors.Is(merr, os.ErrExist) {
+			if merr := os.Mkdir(dir, 0o700); merr != nil && !errors.Is(merr, os.ErrExist) {
 				return nil, merr
 			}
 		} else {
@@ -192,16 +196,59 @@ func ensureSecureDir(dir string) (*os.File, error) {
 		_ = f.Close()
 		return nil, err
 	}
-	if created {
-		// Durably record the new signing-dir entry in its PARENT; without this the
-		// directory (and the keys inside it) may not survive a crash. Anchored to
-		// the validated dir fd via openat("..") so it needs no path re-traversal.
-		if err := fsyncParentOfDir(int(f.Fd())); err != nil {
+	// Durability of the directory ENTRIES. Always fsync the immediate parent (via
+	// the validated dir fd): this makes dir's entry durable on a fresh create AND
+	// covers a concurrent first-use EEXIST-loser (fsync is idempotent), so no
+	// caller returns a keyID before dir is durably linked into its parent (L144,
+	// L199). Then fsync each deeper directory that gained a new child entry when
+	// MkdirAll created multiple ancestors, so a multi-level create is fully durable
+	// (L160). Any fsync failure fails the call closed.
+	if err := fsyncParentOfDir(int(f.Fd())); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	for i := 1; i < len(newDirs); i++ {
+		if err := fsyncDirByPath(filepath.Dir(newDirs[i])); err != nil {
 			_ = f.Close()
 			return nil, err
 		}
 	}
 	return f, nil
+}
+
+// missingAncestors returns the ancestor paths of dir that do not yet exist,
+// deepest-first, stopping at the first existing ancestor — what MkdirAll creates.
+func missingAncestors(dir string) ([]string, error) {
+	var missing []string
+	for p := dir; ; {
+		if _, err := os.Lstat(p); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		missing = append(missing, p)
+		parent := filepath.Dir(p)
+		if parent == p {
+			break
+		}
+		p = parent
+	}
+	return missing, nil
+}
+
+// fsyncDirByPath opens dir O_NOFOLLOW|O_DIRECTORY and fsyncs it, to make a newly
+// created child entry durable. Used for the deeper ancestors of a multi-level
+// create (the immediate parent is fsynced fd-relative via fsyncParentOfDir).
+func fsyncDirByPath(dir string) error {
+	f, err := os.OpenFile(dir, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("keystore: open ancestor directory %s for fsync: %w", dir, err)
+	}
+	defer f.Close()
+	if err := fsyncDir(int(f.Fd())); err != nil {
+		return fmt.Errorf("keystore: fsync ancestor directory %s: %w", dir, err)
+	}
+	return nil
 }
 
 // fsyncParentOfDir fsyncs the parent of the directory referred to by dirFd,
