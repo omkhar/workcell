@@ -70,30 +70,41 @@
 // semantics, exit codes, and stderr messages match the shell byte-for-byte.
 // Regex kinds are per-line for rg parity; the go-function-block and JSON-expr
 // kinds are validated by differential tests that shell out to the real awk/jq.
-// Most groups also carry a real-repo assertion (a TestCheckXxxRealRepo that
-// runs the check against the actual repo files) plus a count guard, so a
-// mistranscribed needle or path is caught by CI. The earliest groups
-// (CheckConfigSafety, CheckRuntimeInvariants, CheckManagedProfileStaging,
-// CheckBootstrapEgress, and a couple of their peers) predate that pattern and
-// currently rely only on synthetic happy/negative fixtures; backfilling their
-// real-repo assertions is part of the remaining D3 tail.
+// Every static-file group carries a real-repo assertion (a TestCheckXxxRealRepo
+// that runs the check against the actual repo files) plus a count guard, so a
+// mistranscribed needle or path is caught by CI against the shipped artifact,
+// not just synthetic happy/negative fixtures. The Claude and Gemini
+// adapter-settings groups (CheckClaudeMcpProjectServers, CheckClaudeGuardBashHook,
+// CheckClaudeManagedBypass, CheckGeminiSettingsBaseline, CheckGeminiSettingsGuards)
+// were the last groups to gain that assertion, closing the D3 real-repo backfill
+// tail.
 //
 // # Scope and residual
 //
-// A large set of scripts/verify-invariants.sh's static file-content,
+// The BULK of scripts/verify-invariants.sh's static file-content,
 // JSON-structural, and filesystem invariants are implemented here (see the
-// CheckXxx functions), but the migration is INCOMPLETE: scripts/verify-invariants.sh
-// remains the source of truth and still runs a residual of inline checks. The
-// residual has two distinct groups.
+// CheckXxx functions), and every static-file group here carries a real-repo
+// assertion. But the migration is NOT complete: scripts/verify-invariants.sh
+// remains the orchestration entrypoint and still runs a residual of inline
+// checks, and that residual is NOT entirely non-static. It splits into two
+// groups.
 //
-// (1) Still-migratable static checks not yet ported — these CAN move here in
-// future increments and should not be read as "done":
-//
-//   - None remaining for the adapter-settings `jq -e` guards: the static
-//     settings-file expressions that went beyond `.<path> == <scalar>` (array
-//     equality `== []`, array index `[0]`, bare-path truthiness, and `| type`)
-//     are now ported (see CheckClaudeGuardBashHook, CheckGeminiSettingsBaseline,
-//     and CheckGeminiSettingsGuards).
+// (1) Static repo-file assertions that REMAIN in bash and are still migratable
+// — these read a static repo file and assert on its content, so they CAN move
+// here in a further increment and must NOT be read as "done". The literal
+// D3-complete exit gate is migrating (or thin-shimming) this remainder; it is a
+// remaining lane, not already-drained. A concrete example: the run_in_vm
+// awk-ordering block in scripts/verify-invariants.sh (kept inline next to the
+// migrated workcell-dualstack-apply-plan check) `sed`-extracts the run_in_vm()
+// function from ${ROOT_DIR}/scripts/colima-egress-allowlist.sh and awk-asserts
+// its initialize-order — a static repo-file content assertion still outside the
+// Go engine. A narrow `rg -q`/`grep -Fq` census understates this remainder
+// because such probes use sed/awk rather than rg/grep. The adapter-settings
+// `jq -e` guards that went beyond `.<path> == <scalar>` (array equality `== []`,
+// array index `[0]`, bare-path truthiness, and `| type`) ARE ported (see
+// CheckClaudeGuardBashHook, CheckGeminiSettingsBaseline, and
+// CheckGeminiSettingsGuards), each now with a real-repo assertion — but they are
+// not the whole static residual.
 //
 // (2) Checks that are NOT expressible as a static-file invariant and are
 // intentionally left in bash:
@@ -109,11 +120,14 @@
 //   - awk/sed helper FUNCTIONS (toml-section and disk-space parsing) that are
 //     procedural infrastructure used by other checks, not invariants
 //     themselves.
+//   - HOST_GATE_SCRIPTS self-entrypoint/BASH_ENV harnesses and mktemp-capture
+//     runtime-execution assertions that actually run the launcher or a script.
 //
-// Group (2) would require re-introducing a jq/awk dependency in Go (defeating
-// the migration) or refactoring the runtime fixtures into static inputs — a
-// separate workstream, or (for the any/endswith guard) is a permanent bash
-// residual. Group (1) is exhausted for the adapter-settings jq -e guards.
+// Group (1) is a remaining migration lane (maintainer-scoped: migrate the static
+// remainder or thin-shim it, preserving first-failure order). Group (2) would
+// require re-introducing a jq/awk dependency in Go or refactoring the runtime
+// fixtures into static inputs — a separate workstream, or (for the any/endswith
+// guard) is a permanent bash residual.
 package workcellhardening
 
 import (
