@@ -234,17 +234,61 @@ func TestLoadFailsOnSymlinkSigningDirTrailingSlash(t *testing.T) {
 // its dir fsync fails (call errored, .pub live but maybe non-durable), the next
 // successful call must fsync the directory on the reuse fast-path before
 // returning success.
+// failFsyncOnCall makes the Nth call to fsyncDir (1-based) fail with EIO; other
+// calls pass through. On a fresh signing dir the fsync order is: 1 = parent (dir
+// creation), 2 = private-key publish, 3 = .pub publish.
+func failFsyncOnCall(t *testing.T, target int) {
+	t.Helper()
+	orig := fsyncDir
+	t.Cleanup(func() { fsyncDir = orig })
+	var n int
+	fsyncDir = func(fd int) error {
+		n++
+		if n == target {
+			return unix.EIO
+		}
+		return orig(fd)
+	}
+}
+
+// TestPublishFailsOnParentFsyncError (L144): creating a fresh signing dir must
+// fsync its PARENT (so the new dir entry is durable) and fail closed if that
+// fsync fails.
+func TestPublishFailsOnParentFsyncError(t *testing.T) {
+	failFsyncOnCall(t, 1)
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
+		!strings.Contains(err.Error(), "fsync parent after creating signing directory") {
+		t.Fatalf("parent fsync failure on dir creation must fail closed, got %v", err)
+	}
+}
+
+// TestPublishFailsOnDirFsyncError (L224): a directory-fsync writeback failure in
+// the key or .pub publish must fail LoadOrCreateSigningKey closed.
+func TestPublishFailsOnDirFsyncError(t *testing.T) {
+	failFsyncOnCall(t, 2) // private-key publish fsync
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
+		!strings.Contains(err.Error(), "publishing signing.key") {
+		t.Fatalf("private-key dir fsync failure must fail closed, got %v", err)
+	}
+
+	failFsyncOnCall(t, 3) // .pub publish fsync
+	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
+		!strings.Contains(err.Error(), ".pub") {
+		t.Fatalf(".pub dir fsync failure must fail closed, got %v", err)
+	}
+}
+
 func TestReuseFsyncsAfterFailedPublish(t *testing.T) {
 	orig := fsyncDir
 	t.Cleanup(func() { fsyncDir = orig })
 	dir := filepath.Join(t.TempDir(), "signing")
 
-	// First call: key-publish fsync OK, .pub-publish fsync fails -> call errors,
-	// but signing.key and <keyID>.pub are both on disk.
+	// First call: parent+key fsyncs OK, .pub-publish fsync (call 3) fails -> call
+	// errors, but signing.key and <keyID>.pub are both on disk.
 	var n int
 	fsyncDir = func(fd int) error {
 		n++
-		if n == 2 {
+		if n == 3 {
 			return unix.EIO
 		}
 		return orig(fd)
@@ -253,8 +297,8 @@ func TestReuseFsyncsAfterFailedPublish(t *testing.T) {
 		t.Fatal("first call must fail on the .pub dir fsync")
 	}
 
-	// Second call: adopts the key and reuses the .pub; the reuse path must fsync
-	// the dir (count > 0) and succeed.
+	// Second call: dir already exists (no parent fsync); adopts the key and reuses
+	// the .pub — the reuse path must fsync the dir (count > 0) and succeed.
 	n = 0
 	fsyncDir = func(fd int) error { n++; return orig(fd) }
 	if _, _, err := LoadOrCreateSigningKey(dir); err != nil {
@@ -265,33 +309,25 @@ func TestReuseFsyncsAfterFailedPublish(t *testing.T) {
 	}
 }
 
-// TestPublishFailsOnDirFsyncError (L224): a directory-fsync writeback failure in
-// the publish path must fail LoadOrCreateSigningKey (never return a keyID for a
-// key/pub that may not be durable) — for both the private-key and the .pub fsync.
-func TestPublishFailsOnDirFsyncError(t *testing.T) {
-	orig := fsyncDir
-	t.Cleanup(func() { fsyncDir = orig })
-
-	// Fail the FIRST dir fsync (private-key publish).
-	fsyncDir = func(int) error { return unix.ENOSPC }
-	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
-		!strings.Contains(err.Error(), "fsync signing directory") {
-		t.Fatalf("private-key dir fsync failure must fail closed, got %v", err)
-	}
-
-	// Fail only the SECOND dir fsync (.pub publish): let the key publish fsync
-	// succeed, then fail the next fsync.
-	var calls int
-	fsyncDir = func(fd int) error {
-		calls++
-		if calls == 1 {
-			return orig(fd)
+// TestBlankDirGuardParity (L285): both entry points reject a blank/whitespace dir
+// (fail closed) rather than cleaning it to "." (the current working directory).
+func TestBlankDirGuardParity(t *testing.T) {
+	for _, d := range []string{"", "   "} {
+		if _, _, err := LoadOrCreateSigningKey(d); err == nil || !strings.Contains(err.Error(), "signing directory is required") {
+			t.Fatalf("LoadOrCreateSigningKey(%q) must fail closed, got %v", d, err)
 		}
-		return unix.EIO
+		if _, err := LoadPublicKey(d, "00000000000000000000000000000000"); err == nil || !strings.Contains(err.Error(), "signing directory is required") {
+			t.Fatalf("LoadPublicKey(%q) must fail closed, got %v", d, err)
+		}
 	}
-	if _, _, err := LoadOrCreateSigningKey(filepath.Join(t.TempDir(), "signing")); err == nil ||
-		!strings.Contains(err.Error(), "fsync signing directory") {
-		t.Fatalf(".pub dir fsync failure must fail closed, got %v", err)
+	// A non-blank store still works end to end.
+	dir := filepath.Join(t.TempDir(), "signing")
+	_, keyID, err := LoadOrCreateSigningKey(dir)
+	if err != nil {
+		t.Fatalf("non-blank dir must work: %v", err)
+	}
+	if _, err := LoadPublicKey(dir, keyID); err != nil {
+		t.Fatalf("LoadPublicKey on a real store must work: %v", err)
 	}
 }
 

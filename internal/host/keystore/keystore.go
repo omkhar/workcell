@@ -41,14 +41,24 @@ const signingKeyBasename = "signing.key"
 // writeback failure (ENOSPC/EIO) and confirm the publish fails closed.
 var fsyncDir = unix.Fsync
 
+// requireNonBlankDir rejects an empty or whitespace-only signing directory, so a
+// blank dir fails closed rather than being cleaned to "." (the current working
+// directory). Shared by both entry points so the guard cannot drift.
+func requireNonBlankDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return errors.New("keystore: signing directory is required")
+	}
+	return nil
+}
+
 // LoadOrCreateSigningKey returns the per-host ECDSA P-256 signing key under dir,
 // generating it on first use (dir 0700, key 0600, fail-closed if unsecurable;
 // keyID is the hex SHA-256 prefix of the PKIX public key). The key is published
 // atomically (temp file linked into place relative to the validated dir fd); the
 // create-race loser adopts the winner.
 func LoadOrCreateSigningKey(dir string) (*ecdsa.PrivateKey, string, error) {
-	if strings.TrimSpace(dir) == "" {
-		return nil, "", errors.New("keystore: signing directory is required")
+	if err := requireNonBlankDir(dir); err != nil {
+		return nil, "", err
 	}
 	dirFile, err := ensureSecureDir(dir)
 	if err != nil {
@@ -141,12 +151,17 @@ func ensureSecureDir(dir string) (*os.File, error) {
 	// Create atomically if absent. os.Mkdir is atomic; a symlink (or anything
 	// else) already at this name makes it fail EEXIST, which we treat as "exists,
 	// verify below" — never adopt a name we did not create without an fd check.
-	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+	created := false
+	if err := os.Mkdir(dir, 0o700); err == nil {
+		created = true
+	} else if !errors.Is(err, os.ErrExist) {
 		if parent := filepath.Dir(dir); parent != dir {
 			if merr := os.MkdirAll(parent, 0o700); merr != nil {
 				return nil, merr
 			}
-			if merr := os.Mkdir(dir, 0o700); merr != nil && !errors.Is(merr, os.ErrExist) {
+			if merr := os.Mkdir(dir, 0o700); merr == nil {
+				created = true
+			} else if !errors.Is(merr, os.ErrExist) {
 				return nil, merr
 			}
 		} else {
@@ -177,7 +192,31 @@ func ensureSecureDir(dir string) (*os.File, error) {
 		_ = f.Close()
 		return nil, err
 	}
+	if created {
+		// Durably record the new signing-dir entry in its PARENT; without this the
+		// directory (and the keys inside it) may not survive a crash. Anchored to
+		// the validated dir fd via openat("..") so it needs no path re-traversal.
+		if err := fsyncParentOfDir(int(f.Fd())); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+	}
 	return f, nil
+}
+
+// fsyncParentOfDir fsyncs the parent of the directory referred to by dirFd,
+// obtained via openat(dirFd, "..") so it is anchored to the validated fd rather
+// than a re-traversed (swappable) path.
+func fsyncParentOfDir(dirFd int) error {
+	pfd, err := unix.Openat(dirFd, "..", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("keystore: open parent directory for fsync: %w", err)
+	}
+	defer unix.Close(pfd)
+	if err := fsyncDir(pfd); err != nil {
+		return fmt.Errorf("keystore: fsync parent after creating signing directory: %w", err)
+	}
+	return nil
 }
 
 // openSecureDir opens dir as a directory fd, failing on a symlink (O_NOFOLLOW)
@@ -279,6 +318,11 @@ func ensurePublicKey(dirFd int, keyID string, pub *ecdsa.PublicKey) error {
 // verification is anchored to the validated directory and cannot be redirected
 // by a post-validation swap of the dir or the .pub name.
 func LoadPublicKey(dir, keyID string) (*ecdsa.PublicKey, error) {
+	// Guard parity with LoadOrCreateSigningKey: a blank dir must fail closed, not
+	// be cleaned to "." and read a .pub from the current working directory.
+	if err := requireNonBlankDir(dir); err != nil {
+		return nil, err
+	}
 	if err := validateKeyID(keyID); err != nil {
 		return nil, err
 	}
