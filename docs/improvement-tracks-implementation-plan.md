@@ -660,13 +660,13 @@ here for continuity of the B6 track.
   correctness — the validators already pass — it is a code-health split; the
   maintainer should decide whether D6 (complete) is required for the 1.0-rc gate
   or can carry into the rc window / post-1.0 as a code-health item.
-- Update (recorded 2026-07-09): the largest pinned-input ecosystems are being
-  split into their own files (GitHub Actions workflows already in
-  `pinnedinputs_workflows.go`, now Node/npm in `pinnedinputs_node.go`); the small
-  Rust (~129 lines) and Python (~7 lines) validators remain inline as an accepted,
-  non-oversized remainder. This first split PR does not close D6 by itself; the
-  D6 gate remains open until the follow-up split lands and the G4 review records
-  any accepted dispatcher-main remainder.
+- Update (recorded 2026-07-09): the largest pinned-input ecosystems are split
+  into their own files (GitHub Actions workflows in `pinnedinputs_workflows.go`,
+  Node/npm in `pinnedinputs_node.go`, and Docker in `pinnedinputs_docker.go`); the
+  small Rust (~129 lines) and Python (~7 lines) validators remain inline as an
+  accepted, non-oversized remainder. The D6 de-oversizing goal is met —
+  `pinnedinputs.go` is no longer oversized; the D6 gate closes once the G4
+  review records any accepted dispatcher-main remainder.
 
 ## Post-1.0
 
