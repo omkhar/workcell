@@ -6052,7 +6052,7 @@ func TestKindFunctionBlockRegexAbsent(t *testing.T) {
 	c := check{
 		kind:         kindFunctionBlockRegexAbsent,
 		functionName: "render_allowlist_apply_plan",
-		pattern:      `^[[:space:]]*clear_rules$`,
+		regex:        `^[[:space:]]*clear_rules$`,
 	}
 	inBlock := "render_allowlist_apply_plan() {\n  clear_rules\n}\n"
 	if c.holds(inBlock, "") {
