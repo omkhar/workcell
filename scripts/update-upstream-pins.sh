@@ -338,7 +338,11 @@ replace_line_with_prefix() {
     echo "Unable to replace ${prefix} in ${file}" >&2
     exit 1
   fi
-  mv "${tmp}" "${file}"
+  # Write through the existing inode instead of mv so the target keeps its
+  # mode (mktemp files are 0600; an mv here strips the executable bit from
+  # rewritten scripts and ships a spurious mode-only diff in the candidate).
+  cat "${tmp}" >"${file}"
+  rm -f "${tmp}"
 }
 
 replace_all_lines_with_prefix() {
@@ -365,7 +369,11 @@ replace_all_lines_with_prefix() {
     echo "Failed to update ${prefix} in ${file}" >&2
     exit 1
   fi
-  mv "${tmp}" "${file}"
+  # Write through the existing inode instead of mv so the target keeps its
+  # mode (mktemp files are 0600; an mv here strips the executable bit from
+  # rewritten scripts and ships a spurious mode-only diff in the candidate).
+  cat "${tmp}" >"${file}"
+  rm -f "${tmp}"
 }
 
 replace_line_after_marker_with_prefix() {
@@ -399,7 +407,11 @@ replace_line_after_marker_with_prefix() {
     echo "Unable to replace ${prefix} after ${marker} in ${file}" >&2
     exit 1
   fi
-  mv "${tmp}" "${file}"
+  # Write through the existing inode instead of mv so the target keeps its
+  # mode (mktemp files are 0600; an mv here strips the executable bit from
+  # rewritten scripts and ships a spurious mode-only diff in the candidate).
+  cat "${tmp}" >"${file}"
+  rm -f "${tmp}"
 }
 
 date_stamp_for_offset() {
