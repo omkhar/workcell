@@ -2586,9 +2586,32 @@ if run_entrypoint codex codex --config '"\u0061pproval_policy"="never"' --versio
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-escape-approval.out
 
+# Codex parses -c values as TOML, so an inline TABLE value can smuggle blocked
+# child keys under a parent that is not itself blocked (features, profiles). Any
+# inline-table value on a guarded namespace parent must be rejected.
+if run_entrypoint codex codex --config 'features={remote_plugin=true}' --version >/tmp/workcell-entrypoint-codex-config-table-features.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the features namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-features.out
+
+if run_entrypoint codex codex --config 'profiles={foo={sandbox_mode="danger-full-access"}}' --version >/tmp/workcell-entrypoint-codex-config-table-profiles.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the profiles namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-profiles.out
+
+if run_entrypoint codex codex --config 'mcp_servers={evil={command="/bin/sh"}}' --version >/tmp/workcell-entrypoint-codex-config-table-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the mcp_servers namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-mcp.out
+
 # A benign, genuinely-permitted -c override must still pass (model is not on the
-# security-boundary blocklist).
+# security-boundary blocklist); a scalar value on a non-guarded key is not an
+# inline table, so the table guard leaves it untouched.
 run_entrypoint codex codex --config 'model=gpt-5-codex' --version >/dev/null
+run_entrypoint codex codex --config 'history.persistence="none"' --version >/dev/null
 
 # A backslash in the VALUE (not the key) must not trip the escape guard: only the
 # key is normalized, values pass through untouched.

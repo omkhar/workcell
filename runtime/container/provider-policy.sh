@@ -93,6 +93,30 @@ codex_config_override_is_blocked() {
       ;;
   esac
 
+  # Codex parses a `-c` value as TOML, so an inline TABLE smuggles blocked child
+  # keys under a parent that is not itself blocked above — e.g.
+  # `features={remote_plugin=true}` or `profiles={foo={sandbox_mode="danger-full-access"}}`
+  # normalize to the bare parent (`features` / `profiles`), which no case matches.
+  # When the value (everything after the first `=`, whitespace-trimmed) is an
+  # inline table (begins with `{`), block it for every guarded namespace parent:
+  # such a table can set any of the banned children. The managed baseline owns
+  # these tables, so there is no legitimate `-c` whole-table override. Scalar
+  # values (no leading `{`, e.g. model=..., history.persistence="none") are
+  # untouched. Guarded parents cover both the gap namespaces (features, profiles,
+  # profiles.<name>) and the ones already blocked bare above (kept here so the
+  # guard stays robust if a bare-parent case is ever narrowed).
+  if [[ "${value}" == *=* ]]; then
+    local raw_value="${value#*=}"
+    raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
+    if [[ "${raw_value}" == '{'* ]]; then
+      case "${key_lower}" in
+        features | plugins | marketplaces | mcp* | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
+          return 0
+          ;;
+      esac
+    fi
+  fi
+
   return 1
 }
 
