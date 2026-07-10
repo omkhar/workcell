@@ -88,7 +88,7 @@ codex_config_override_is_blocked() {
   [[ "${key_lower}" == "__workcell_malformed__" ]] && return 0
 
   case "${key_lower}" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
       return 0
       ;;
   esac
@@ -110,7 +110,7 @@ codex_config_override_is_blocked() {
     raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
     if [[ "${raw_value}" == '{'* ]]; then
       case "${key_lower}" in
-        features | plugins | marketplaces | mcp* | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
+        features | plugins | marketplaces | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
           return 0
           ;;
       esac
@@ -197,7 +197,17 @@ reject_unsafe_codex_args() {
     fi
 
     case "${arg}" in
-      --dangerously-bypass-approvals-and-sandbox | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
+      # Every Codex `--dangerously-bypass-*` flag is DANGEROUS by codex's own docs
+      # (0.143 adds --dangerously-bypass-hook-trust alongside the existing
+      # --dangerously-bypass-approvals-and-sandbox); none is valid in managed
+      # mode. Glob-match the whole bypass family so future dangerously-bypass
+      # flags are covered without a code change (also catches any
+      # `--dangerously-bypass-*=value` form). Scope is `--dangerously-bypass-*`,
+      # NOT `--dangerously-*`, so it does not swallow non-codex tokens like
+      # Claude's `--dangerously-skip-permissions` when they appear as data passed
+      # to `codex execpolicy check <command…>`. Keep the remaining explicit unsafe
+      # flags in the same case/message.
+      --dangerously-bypass-* | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -p | --profile)

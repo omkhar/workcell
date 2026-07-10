@@ -2436,6 +2436,20 @@ if run_entrypoint codex codex --dangerously-bypass-approvals-and-sandbox >/tmp/w
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger.out
 
+# The whole --dangerously-* family is blocked (0.143 adds hook-trust); the glob
+# also future-proofs against new dangerously-flags.
+if run_entrypoint codex codex --dangerously-bypass-hook-trust --version >/tmp/workcell-entrypoint-codex-danger-hook-trust.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex dangerous hook-trust bypass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger-hook-trust.out
+
+if run_entrypoint codex codex --dangerously-bypass-future-badness --version >/tmp/workcell-entrypoint-codex-danger-future.out 2>&1; then
+  echo "expected Workcell entrypoint to reject any Codex --dangerously-bypass-* flag via the glob" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger-future.out
+
 if run_entrypoint codex codex -a never --version >/tmp/workcell-entrypoint-codex-approval.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex approval overrides" >&2
   exit 1
@@ -2606,6 +2620,21 @@ if run_entrypoint codex codex --config 'mcp_servers={evil={command="/bin/sh"}}' 
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-mcp.out
+
+# The hooks namespace is a code-execution/trust surface (see the dangerous
+# --dangerously-bypass-hook-trust flag); no legitimate managed -c override sets
+# it, so any hooks.* scalar or inline-table override is blocked.
+if run_entrypoint codex codex --config 'hooks.trust=false' --version >/tmp/workcell-entrypoint-codex-config-hooks-scalar.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a hooks.* config override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-hooks-scalar.out
+
+if run_entrypoint codex codex --config 'hooks={trust=false}' --version >/tmp/workcell-entrypoint-codex-config-hooks-table.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the hooks namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-hooks-table.out
 
 # A benign, genuinely-permitted -c override must still pass (model is not on the
 # security-boundary blocklist); a scalar value on a non-guarded key is not an
