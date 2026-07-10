@@ -173,14 +173,17 @@ reject_unsafe_codex_args() {
 
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
-      # plugin (remote marketplace/install) and remote-control (app-server
-      # pairing) are never part of the managed GUI backend — the only GUI launch
-      # is `codex app-server` (see entrypoint.sh) — so they are blocked on EVERY
-      # UI. Keeping them inside the AGENT_UI!=gui guard let an in-container
-      # `AGENT_UI=gui codex plugin list` bypass the fence, since AGENT_UI is not
-      # pinned/scrubbed at the wrapper boundary.
+      # plugin (remote marketplace/install), remote-control (app-server pairing),
+      # and exec-server (the experimental standalone exec-server daemon) are never
+      # part of the managed GUI backend — the only GUI launch is `codex app-server`
+      # (see entrypoint.sh) — so they are blocked on EVERY UI. Keeping them inside
+      # the AGENT_UI!=gui guard let an in-container `AGENT_UI=gui codex plugin list`
+      # bypass the fence, since AGENT_UI is not pinned/scrubbed at the wrapper
+      # boundary. These are exact-token matches (NOT globs): the legitimate `exec`
+      # runtime subcommand must stay permitted, so only the literal `exec-server`
+      # is rejected, never `exec` or its `e` alias.
       case "${arg}" in
-        plugin | remote-control)
+        plugin | remote-control | exec-server)
           workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
           ;;
       esac

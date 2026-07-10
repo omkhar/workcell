@@ -2480,6 +2480,19 @@ if run_entrypoint codex codex remote-control pair >/tmp/workcell-entrypoint-code
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-remote-control.out
 
+# exec-server is the experimental standalone exec daemon, not the managed GUI
+# backend, so it is blocked unconditionally. The exact-token match must not catch
+# the legitimate `exec` subcommand.
+if run_entrypoint codex codex exec-server >/tmp/workcell-entrypoint-codex-exec-server.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex exec-server daemon subcommand" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-exec-server.out
+
+# The exec-server exact-token block must not catch the legitimate `exec`
+# runtime subcommand: `codex exec --help` is permitted and runs.
+run_entrypoint codex codex exec --help >/dev/null
+
 # Value-taking global flags must not desynchronize first-subcommand detection:
 # the flag's value is not a command token, so the blocklist still applies.
 if run_entrypoint codex codex --model gpt-5 plugin list >/tmp/workcell-entrypoint-codex-model-plugin.out 2>&1; then
@@ -3345,6 +3358,16 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-remote-control.out
+    if codex exec-server >/tmp/codex-nested-exec-server.out 2>&1; then
+      echo "expected nested Codex invocation to reject the exec-server daemon subcommand" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-exec-server.out
+    if AGENT_UI=gui codex exec-server >/tmp/codex-nested-gui-exec-server.out 2>&1; then
+      echo "expected an in-container AGENT_UI=gui override to still reject the exec-server daemon subcommand" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-exec-server.out
     if codex --local-provider ollama plugin list >/tmp/codex-nested-local-provider-plugin.out 2>&1; then
       echo "expected the plugin surface behind the --local-provider global to be rejected" >&2
       exit 1
