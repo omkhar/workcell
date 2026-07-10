@@ -26,19 +26,12 @@ effective_codex_profile() {
   esac
 }
 
-# Normalize a Codex `-c key=value` KEY so equivalent TOML spellings collapse to
-# one canonical lowercase form before the blocklist match. TOML lets a dotted key
-# quote each segment (features."remote_plugin", features.'x') or pad the dots with
-# whitespace (features . plugins); without normalizing, those slip past every case
-# below. Only the KEY (before the first `=`) is touched: split on `.`, trim, strip
-# ONE surrounding quote pair per segment. Any residual quote (e.g. a quoted
-# segment that held a `.` and got split apart) FAILS CLOSED as blocked.
-#
-# We deliberately do NOT decode TOML basic-string escapes (a spec parser turns
-# `"\u0072emote_plugin"` into `remote_plugin`, `"\u0061pproval_policy"` into
-# `approval_policy`). Re-implementing TOML unescaping in bash is error-prone, so
-# any surviving backslash also FAILS CLOSED. Real blocklist keys never contain
-# backslashes, so this only rejects obfuscated keys. Emits the canonical key.
+# Canonicalize a Codex `-c key=value` KEY (before the first `=`) so equivalent TOML
+# spellings collapse to one lowercase form before the blocklist match: split on `.`,
+# trim whitespace (`features . plugins`), strip ONE surrounding quote pair per segment
+# (`features."remote_plugin"`). Any residual quote or backslash (a TOML basic-string
+# escape we refuse to decode in bash) FAILS CLOSED — real blocklist keys never contain
+# them, so this only rejects obfuscated keys. Emits the canonical key.
 codex_normalize_config_key() {
   local key="${1%%=*}"
   local -a segments=()
@@ -72,12 +65,11 @@ codex_normalize_config_key() {
   printf '%s\n' "${normalized,,}"
 }
 
-# Match a NORMALIZED (canonical, lowercase) Codex config key against the top-level
-# guarded-namespace blocklist. Split out from codex_config_override_is_blocked so
-# the profile-scoped path can re-test the post-prefix remainder against the SAME
-# set: a Codex profile-v2 layer (`[profiles.<name>.…]`) can set ANY key, so every
-# key dangerous at top level is equally dangerous scoped under a profile. Returns
-# 0 (guarded) / 1 (not).
+# Match a NORMALIZED (lowercase) Codex config key against the guarded-namespace
+# blocklist. Split out so the profile-scoped path can re-test the post-prefix
+# remainder against the SAME set: a profile-v2 layer (`[profiles.<name>.…]`) can
+# set any key, so every key dangerous at top level is equally dangerous scoped
+# under a profile. Returns 0 (guarded) / 1 (not).
 codex_config_key_is_guarded() {
   case "$1" in
     profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
@@ -98,13 +90,11 @@ codex_config_override_is_blocked() {
   # Top-level guarded key (features.remote_plugin, plugins.*, mcp*, hooks*, …).
   codex_config_key_is_guarded "${key_lower}" && return 0
 
-  # Profile-scoped override: a profile-v2 layer `[profiles.<name>.<rest>]` can set
-  # any key, so `profiles.<name>.features.remote_plugin` etc. re-enable surfaces
-  # the bare blocks reject. The normalizer guarantees `<name>` is exactly ONE
-  # segment (a `.` in a quoted name fails closed above), so strip the
-  # `profiles.<name>.` prefix and re-test the REMAINDER against the SAME blocklist.
-  # `profiles` / `profiles.<name>` with no remainder falls through to the inline-
-  # table guard below.
+  # Profile-scoped override: `[profiles.<name>.<rest>]` can set any key, re-enabling
+  # surfaces the bare blocks reject. The normalizer guarantees `<name>` is exactly ONE
+  # segment (a `.` in a quoted name fails closed above), so strip `profiles.<name>.`
+  # and re-test the REMAINDER against the SAME blocklist. `profiles`/`profiles.<name>`
+  # with no remainder falls through to the inline-table guard below.
   if [[ "${key_lower}" == profiles.?*.?* ]]; then
     local profile_remainder="${key_lower#profiles.}"
     profile_remainder="${profile_remainder#*.}"
@@ -112,13 +102,12 @@ codex_config_override_is_blocked() {
   fi
 
   # Codex parses a `-c` value as TOML, so an inline TABLE smuggles blocked children
-  # under an unblocked parent — `features={remote_plugin=true}` normalizes to the
-  # bare `features`, which no case matches. When the value (after the first `=`,
-  # trimmed) begins with `{`, block it for every guarded-namespace parent: such a
-  # table can set any banned child, and the managed baseline owns these tables so
-  # no legitimate `-c` whole-table override exists. Scalar values (no leading `{`)
-  # are untouched. Parents cover the gap namespaces and the bare-blocked ones (kept
-  # so the guard survives a later narrowing of a bare-parent case).
+  # under an unblocked parent: `features={remote_plugin=true}` normalizes to bare
+  # `features`, which no case matches. When the value (after the first `=`, trimmed)
+  # begins with `{`, block it for every guarded-namespace parent — the managed baseline
+  # owns these tables, so no legitimate whole-table `-c` override exists. Scalar values
+  # (no leading `{`) are untouched. Parents cover the gap namespaces plus the bare-
+  # blocked ones (kept so the guard survives a later narrowing of a bare-parent case).
   if [[ "${value}" == *=* ]]; then
     local raw_value="${value#*=}"
     raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
@@ -134,11 +123,10 @@ codex_config_override_is_blocked() {
   return 1
 }
 
-# Value-taking global Codex flags must be consumed before first-subcommand
-# detection, or their VALUE would be mistaken for the command token and the
-# subcommand blocklist below would never run (`--model gpt-5 plugin` would treat
-# gpt-5 as the command). Keep the value-taking globals here in lockstep with
-# codex_first_subcommand in runtime/container/provider-wrapper.sh.
+# Value-taking global Codex flags must be consumed before first-subcommand detection,
+# or their VALUE would be mistaken for the command token (`--model gpt-5 plugin` would
+# treat gpt-5 as the command). Keep in lockstep with codex_first_subcommand in
+# runtime/container/provider-wrapper.sh.
 reject_unsafe_codex_args() {
   local expect_value=""
   local arg
@@ -173,40 +161,30 @@ reject_unsafe_codex_args() {
       continue
     fi
 
-    # DENY-BY-DEFAULT after the permitted `app-server` subcommand (GUI path only):
-    # ANY user token following `app-server` dies, full stop. The managed GUI launch
-    # is EXACTLY `codex app-server` with NO trailing user args (entrypoint.sh sets
-    # `set -- codex app-server`); the sandbox/approval flags it needs are PREPENDED
-    # by provider-wrapper.sh AFTER this check, so they never appear in the argv
-    # scanned here. Thus a legitimate managed launch reaches this function as bare
-    # `app-server` with zero trailing tokens. A token denylist over pinned Codex
-    # 0.142.4 leaked: AppServerCommand also accepts `--listen ws://IP:PORT` (opens a
-    # listening socket), `--stdio`, `--strict-config`, `--analytics-default-enabled`,
-    # `-c …`, plus AppServerSubcommand/AppServerDaemonSubcommand control tokens —
-    # every one reachable via an AGENT_UI=gui override. Rejecting ANY token instead
-    # of enumerating them is stricter, simpler, and covers future flags without a
-    # hand-maintained list. This check runs BEFORE the `--` break below because
-    # `codex app-server` has NO `[PROMPT]` positional (usage: `app-server [OPTIONS]
-    # [COMMAND]`; `app-server -- foo` is parsed as the unrecognized subcommand
-    # `foo`, not prompt text), so a post-`--` token is still not the managed shape
-    # and must die too.
+    # DENY-BY-DEFAULT after the permitted `app-server` subcommand (GUI path only): ANY
+    # user token following `app-server` dies. The managed GUI launch is EXACTLY bare
+    # `codex app-server` with NO trailing user args (entrypoint.sh sets `set -- codex
+    # app-server`; the sandbox/approval flags it needs are PREPENDED by provider-
+    # wrapper.sh AFTER this check, so they never appear here). A token denylist over
+    # pinned 0.142.4 leaked `--listen ws://IP:PORT` (a listening socket), `--stdio`,
+    # `-c …`, and AppServer{,Daemon}Subcommand control tokens — all reachable via an
+    # AGENT_UI=gui override. Rejecting ANY token is stricter, simpler, and future-proof.
+    # Runs BEFORE the `--` break: `app-server` has no `[PROMPT]` positional (usage:
+    # `app-server [OPTIONS] [COMMAND]`), so a post-`--` token is still not the managed
+    # shape and must die too.
     if [[ "${saw_app_server}" -eq 1 ]]; then
       workcell_die "Workcell blocked unsupported Codex app-server argument: ${arg} (only the managed no-arg app-server launch is permitted)"
     fi
 
     # After the `features` subcommand, its ACTION token is the next bare token.
     # `features enable/disable <name>` persistently writes features.<name> into the
-    # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so
-    # both mutating actions are blocked. `features list` is a read-only inspect and
-    # stays permitted; the managed baseline sets features declaratively. This runs
-    # BEFORE the `--` break: a bare `--` MUST NOT let the pending action slip past
-    # the deny — while armed, a `--` is skipped WITHOUT disarming so the following
-    # token (enable/disable/list) is still classified. `codex features` has no
-    # `[PROMPT]` positional (usage: `features [OPTIONS] <COMMAND>`), so a post-`--`
-    # token is a subcommand slot, never prompt text; pinned 0.142.4 clap-errors on
-    # `features -- enable` today, but honoring the pending action here denies the
-    # mutating actions across a `--` even if a future pin dispatches the subcommand
-    # after `--` (as app-server's optional `[COMMAND]` already does).
+    # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so both
+    # mutating actions are blocked; `features list` is a read-only inspect and stays
+    # permitted. Runs BEFORE the `--` break: while armed a bare `--` is skipped WITHOUT
+    # disarming, so the following action token is still classified — denying the mutating
+    # actions across a `--` even if a future pin dispatches the subcommand after `--`
+    # (as app-server's optional `[COMMAND]` already does; pinned 0.142.4 clap-errors on
+    # `features -- enable` today).
     if [[ "${expect_features_action}" -eq 1 ]]; then
       # A `--` while armed is NOT the action and MUST NOT trip the general `--`
       # break below: skip it, stay armed, and keep scanning for the action token.
@@ -226,40 +204,35 @@ reject_unsafe_codex_args() {
       fi
     fi
 
-    # A bare `--` ends option/subcommand parsing: every following token is literal
-    # prompt text Codex forwards to the session, never a flag/subcommand (verified:
-    # `codex -- plugin` starts the TUI with prompt "plugin"). Stop here so the
-    # blocklists do not over-reject a prompt beginning with `plugin`/`mcp`. Mirrors
-    # codex_first_subcommand, which also returns at `--`. Flag/value checks BEFORE
-    # `--` have already run, so only post-`--` prompt text is exempt. Not reached
-    # while a features action is pending (handled above).
+    # A bare `--` ends option/subcommand parsing: every following token is literal prompt
+    # text Codex forwards (verified: `codex -- plugin` starts the TUI with prompt
+    # "plugin"). Stop here so the blocklists do not over-reject a prompt beginning with
+    # `plugin`/`mcp`. Mirrors codex_first_subcommand, which also returns at `--`. Flag/
+    # value checks before `--` have already run; only post-`--` prompt text is exempt.
+    # Not reached while a features action is pending (handled above).
     if [[ "${arg}" == "--" ]]; then
       break
     fi
 
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
-      # DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE. Codex's contract is
-      # `codex [OPTIONS] [PROMPT]` OR `codex [OPTIONS] <COMMAND> [ARGS]`: the first
-      # bare token is a SUBCOMMAND iff it exactly matches a known name, else it is
-      # literal PROMPT text (verified on 0.142.4: `codex "fix tests" --version`
-      # prints the version, treating "fix tests" as the prompt). So partition the
-      # COMPLETE subcommand set into ALLOW (permit — classified safe) and DENY (die
-      # — dangerous); a token in NEITHER is prompt text, permitted as Codex treats
-      # it. This preserves the bare-prompt invocation (Codex P2 review) while
-      # denying every known-dangerous subcommand by exact token.
+      # DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE. Codex's contract is `codex
+      # [OPTIONS] [PROMPT]` OR `codex [OPTIONS] <COMMAND> [ARGS]`: the first bare token is
+      # a SUBCOMMAND iff it exactly matches a known name, else it is literal PROMPT text
+      # (verified 0.142.4: `codex "fix tests" --version` prints the version). So partition
+      # the COMPLETE subcommand set into ALLOW (permit) and DENY (die); a token in NEITHER
+      # is prompt text, permitted as Codex treats it — preserving the bare-prompt
+      # invocation (Codex P2 review) while denying every dangerous subcommand by exact
+      # token.
       #
-      # ALLOW (read-only/session surface, verified against 0.142.4 `--help`): exec
-      # +`e`, review, login, logout, completion, doctor, apply +`a`, resume, fork,
-      # archive, unarchive, delete, help, debug. `execpolicy` is hidden but real: a
-      # pure read-only command classifier the managed autonomy path and
-      # verify-invariants invoke — it MUST stay permitted or session-rule
-      # enforcement breaks. Exact-token discipline (NOT globs) keeps the fence
-      # tight: `exec` != `exec-server`, `mcp` != `mcp-server`. Keep in lockstep
-      # with codex_managed_profile_applies, codex_first_subcommand, and the fixture
-      # tests/fixtures/codex-subcommands.txt (verify-invariants asserts the full
-      # subcommand list partitions into this ALLOW set plus the DENY set below, so
-      # a future pin adding an UNCLASSIFIED subcommand fails CI until classified).
+      # ALLOW (read-only/session surface, verified against 0.142.4 `--help`); `execpolicy`
+      # is hidden but real — a read-only command classifier the managed autonomy path and
+      # verify-invariants invoke, so it MUST stay permitted. Exact-token discipline (NOT
+      # globs) keeps the fence tight: `exec` != `exec-server`, `mcp` != `mcp-server`. Keep
+      # in lockstep with codex_managed_profile_applies, codex_first_subcommand, and the
+      # fixture tests/fixtures/codex-subcommands.txt (verify-invariants asserts the full
+      # subcommand list partitions into this ALLOW set plus the DENY set below, so a
+      # future pin adding an UNCLASSIFIED subcommand fails CI until classified).
       case "${arg}" in
         exec | e | review | login | logout | completion | doctor | \
           apply | a | resume | fork | archive | unarchive | delete | \
@@ -267,57 +240,54 @@ reject_unsafe_codex_args() {
           continue
           ;;
         features)
-          # `features`/`features list` are read-only inspects; arm the action
-          # check so the next bare token (enable/disable) is denied above.
+          # `features`/`features list` are read-only inspects; arm the action check so
+          # the next bare token (enable/disable) is denied above.
           expect_features_action=1
           continue
           ;;
         app | app-server)
-          # app-server is the managed GUI backend, permitted ONLY under
-          # AGENT_UI=gui; on the CLI path it is denied. (`app` is not a 0.142.4
-          # subcommand but is GUI-gated for the same class if a later pin
-          # reintroduces it.) The gate is scoped to these two tokens; every DENY
-          # subcommand below is denied on every UI, so an AGENT_UI=gui override
-          # cannot smuggle in plugin/mcp/remote-control.
+          # app-server is the managed GUI backend, permitted ONLY under AGENT_UI=gui;
+          # on the CLI path it is denied. (`app` is not a 0.142.4 subcommand but is GUI-
+          # gated for the same class if a later pin reintroduces it.) The gate is scoped
+          # to these two tokens; every DENY subcommand below is denied on every UI, so an
+          # AGENT_UI=gui override cannot smuggle in plugin/mcp/remote-control.
           [[ "${AGENT_UI:-cli}" != "gui" ]] &&
             workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
           # Arm the app-server surface scan (block near the top of the loop).
           saw_app_server=1
           continue
           ;;
-        # DENY set — every known-dangerous/unsupported subcommand, denied by EXACT
-        # token on every UI. Enumerated against 0.142.4 so ALLOW ∪ GUI-gated ∪ DENY
-        # equals the complete subcommand list (the fixture completeness check
-        # enforces this). Control-plane, daemon, marketplace, sandbox-escape, and
-        # self-update surfaces the managed session must never reach.
+        # DENY set — every known-dangerous/unsupported subcommand, denied by EXACT token
+        # on every UI. Enumerated against 0.142.4 so ALLOW ∪ GUI-gated ∪ DENY equals the
+        # complete subcommand list (the fixture completeness check enforces this).
+        # Control-plane, daemon, marketplace, sandbox-escape, and self-update surfaces
+        # the managed session must never reach.
         plugin | remote-control | exec-server | mcp | mcp-server | cloud | \
           cloud-tasks | responses-api-proxy | stdio-to-uds | sandbox | update)
-          # cloud-tasks is the 0.142.4 alias of `cloud`; responses-api-proxy and
-          # stdio-to-uds are HIDDEN daemon/bridge subcommands the clap enum still
-          # dispatches. `update` is not a 0.142.4 variant (lands in 0.143); kept as
-          # forward-compat and intentionally absent from the fixture, which the
-          # completeness check tolerates (it asserts fixture ⊆ classified only).
+          # cloud-tasks is the 0.142.4 alias of `cloud`; responses-api-proxy and stdio-to-
+          # uds are HIDDEN daemon/bridge subcommands the clap enum still dispatches.
+          # `update` is not a 0.142.4 variant (lands in 0.143); kept forward-compat and
+          # absent from the fixture (the completeness check asserts fixture ⊆ classified).
           workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
           ;;
       esac
-      # Not a known subcommand (neither ALLOW, GUI-gated, nor DENY): it is PROMPT
-      # text, permitted as Codex would. `saw_command=1` stops any later bare token
-      # from being re-checked — Codex dispatches only on the FIRST bare token.
-      # Deny-by-default holds because the fixture completeness check guarantees no
-      # UNCLASSIFIED subcommand falls through here undetected.
+      # Not a known subcommand (neither ALLOW, GUI-gated, nor DENY): it is PROMPT text,
+      # permitted as Codex would. `saw_command=1` stops any later bare token from being
+      # re-checked — Codex dispatches only on the FIRST bare token. Deny-by-default holds
+      # because the fixture completeness check guarantees no UNCLASSIFIED subcommand
+      # falls through here undetected.
       continue
     fi
 
     case "${arg}" in
-      # Every `--dangerously-bypass-*` flag is DANGEROUS (0.143 adds
-      # --dangerously-bypass-hook-trust); glob-match the whole family (incl.
-      # `=value`) so future bypass flags are covered without a code change. Scope
-      # is `--dangerously-bypass-*`, NOT `--dangerously-*`, so it does not swallow
-      # Claude's `--dangerously-skip-permissions` passed as data to `codex
-      # execpolicy check`. --yolo is Codex's hidden alias for
-      # --dangerously-bypass-approvals-and-sandbox (the glob does not reach a
-      # hidden alias, so block it and its =value form explicitly).
-      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
+      # Every `--dangerously-bypass-*` flag is DANGEROUS (0.143 adds --dangerously-bypass-
+      # hook-trust); glob the whole family (incl. `=value`) so future bypass flags need no
+      # code change. Scope is `--dangerously-bypass-*`, NOT `--dangerously-*`, so it does
+      # not swallow Claude's `--dangerously-skip-permissions` passed as data to `codex
+      # execpolicy check`. --yolo is Codex's hidden alias for --dangerously-bypass-
+      # approvals-and-sandbox (the glob does not reach a hidden alias, so block it and its
+      # =value form explicitly).
+      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -p | --profile)
@@ -326,17 +296,17 @@ reject_unsafe_codex_args() {
       -C | --cd)
         expect_value="cd"
         ;;
-      -m | --model | -i | --image | --local-provider | --remote-auth-token-env)
-        # Permitted value-taking globals: consume the value so it is never mistaken
-        # for the first subcommand. The other value-taking globals are consumed by
-        # their own cases above, and the unsafe ones die on sight before their
-        # value is reached, so none can desync subcommand detection.
+      -m | --model | -i | --image | --local-provider)
+        # Permitted value-taking globals: consume the value so it is never mistaken for
+        # the first subcommand. The other value-taking globals are consumed by their own
+        # cases above, and the unsafe ones die on sight before their value is reached, so
+        # none can desync subcommand detection.
         expect_value="safe"
         ;;
       --ask-for-approval=*)
         workcell_die "Workcell blocked unsafe Codex override: --ask-for-approval"
         ;;
-      --add-dir=* | --remote=* | --enable=* | --disable=*)
+      --add-dir=* | --remote=* | --remote-auth-token-env=* | --enable=* | --disable=*)
         workcell_die "Workcell blocked unsafe Codex override: ${arg%%=*}"
         ;;
       --cd=*)
@@ -358,12 +328,11 @@ reject_unsafe_codex_args() {
         codex_config_override_is_blocked "${arg#--config=}" && workcell_die "Workcell blocked unsafe Codex config override: ${arg#--config=}"
         ;;
       -c?*)
-        # Short config flag glued to its value: Codex accepts `-cKEY=VALUE` and
-        # `-c=KEY=VALUE` (clap's short-flag `=` separator). Without this case the
-        # attached form skipped the blocklist entirely (only `-c <value>` and
-        # `--config=<value>` were routed), letting `-cfeatures.remote_plugin=true`
-        # re-enable pinned-off surfaces (Codex P1 review). Strip the `-c` prefix
-        # and one optional `=`, then run the SAME check as the other config forms.
+        # Short config flag glued to its value: Codex accepts `-cKEY=VALUE` and `-c=KEY=
+        # VALUE` (clap's short-flag `=` separator). Without this case the attached form
+        # skipped the blocklist (only `-c <value>` and `--config=<value>` were routed),
+        # letting `-cfeatures.remote_plugin=true` re-enable pinned-off surfaces (Codex P1
+        # review). Strip the `-c` prefix and one optional `=`, then run the SAME check.
         codex_config_value="${arg#-c}"
         codex_config_value="${codex_config_value#=}"
         codex_config_override_is_blocked "${codex_config_value}" &&

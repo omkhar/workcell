@@ -68,8 +68,9 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
   [`tests/fixtures/codex-subcommands.txt`](../../tests/fixtures/codex-subcommands.txt)
   (a `CODEX_VERSION` bump fails CI until it is regenerated). The wrapper also
   blocks `--yolo`/`--dangerously-bypass-*`, autonomy/network flags
-  (`--full-auto`, `-a`, `--add-dir`, `--search`, `--remote`, `--enable`,
-  `--disable`, `--cd`, `--sandbox danger-full-access`), off-mode `--profile`
+  (`--full-auto`, `-a`, `--add-dir`, `--search`, `--remote`,
+  `--remote-auth-token-env`, `--enable`, `--disable`, `--cd`,
+  `--sandbox danger-full-access`), off-mode `--profile`
   values, and reserved `-c`/`--config` overrides of guarded namespaces
   (features/plugins/marketplaces/mcp/hooks/sandbox/approval, incl. glued,
   quoted/escaped, inline-table, and `profiles.<name>.<key>` spellings). All are

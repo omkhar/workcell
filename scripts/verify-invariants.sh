@@ -1452,26 +1452,22 @@ rm -rf "${codex_managed_config_tmpdir}"
 
 # Codex subcommand-namespace COMPLETENESS check.
 #
-# reject_unsafe_codex_args (runtime/container/provider-policy.sh) is deny-by-
-# default over the SUBCOMMAND NAMESPACE, not over all first tokens: a first bare
-# token that is NOT a known subcommand is permitted as [PROMPT] text. That design
-# only holds if EVERY real subcommand is explicitly classified ALLOW or DENY, or
-# an unclassified new one leaks through as a prompt. This check asserts every name
-# in the checked-in fixture (tests/fixtures/codex-subcommands.txt, derived from
-# the clap `enum Subcommand` source) appears as an EXACT case label in the gate.
-#
-# The `fixture subset-of classified` assertion is VACUOUS on a STALE fixture: a
-# CODEX_VERSION bump that adds an upstream subcommand but skips fixture regen
-# leaves the new name absent, never compared, leaking through as prompt text. So
-# the fixture carries a `# codex-version:` stamp and this check FIRST asserts it
-# EQUALS the Dockerfile `ARG CODEX_VERSION` before the (else-vacuous) subset check.
+# reject_unsafe_codex_args (runtime/container/provider-policy.sh) is deny-by-default
+# over the SUBCOMMAND NAMESPACE: a first bare token that is NOT a known subcommand is
+# permitted as [PROMPT] text, so the design only holds if EVERY real subcommand is
+# classified ALLOW or DENY. This asserts every name in the checked-in fixture
+# (tests/fixtures/codex-subcommands.txt, derived from the clap `enum Subcommand`
+# source) appears as an EXACT case label in the gate. That subset check is VACUOUS on
+# a STALE fixture (a CODEX_VERSION bump that skips fixture regen leaves the new name
+# absent and uncompared), so the fixture carries a `# codex-version:` stamp this check
+# FIRST asserts EQUALS the Dockerfile `ARG CODEX_VERSION` before the subset check.
 CODEX_POLICY_FILE="${ROOT_DIR}/runtime/container/provider-policy.sh"
 CODEX_SUBCOMMAND_FIXTURE="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"
 CODEX_DOCKERFILE="${ROOT_DIR}/runtime/container/Dockerfile"
 
-# Bind the fixture to the pinned Codex version: parse `ARG CODEX_VERSION=<v>` from
-# the Dockerfile and the `# codex-version: <v>` stamp from the fixture, assert
-# EQUAL, and fail closed with regeneration instructions on mismatch.
+# Bind the fixture to the pinned Codex version: parse `ARG CODEX_VERSION=<v>` from the
+# Dockerfile and the `# codex-version: <v>` stamp from the fixture, assert EQUAL, and
+# fail closed with regeneration instructions on mismatch.
 codex_dockerfile_version="$(
   sed -n 's/^ARG CODEX_VERSION=\([^ ]*\).*/\1/p' "${CODEX_DOCKERFILE}" | head -n 1
 )"
@@ -1499,12 +1495,11 @@ if [[ "${codex_dockerfile_version}" != "${codex_fixture_version}" ]]; then
   exit 1
 fi
 
-# Extract the exact case-label tokens the gate classifies. The case statement
-# lives strictly between the unique `DENY-BY-DEFAULT over the SUBCOMMAND
-# NAMESPACE` comment and the unique `Not a known subcommand` fall-through comment.
-# Inside that window only case-LABEL lines (`<tok>[ | <tok> ...])`, possibly `\`-
-# continued) are parsed; comments and case bodies are skipped, so prose cannot be
-# mistaken for a classification.
+# Extract the exact case-label tokens the gate classifies. The case statement lives
+# strictly between the unique `DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE` comment
+# and the unique `Not a known subcommand` fall-through comment. Inside that window
+# only case-LABEL lines (`<tok>[ | <tok> ...])`, possibly `\`-continued) are parsed;
+# comments and case bodies are skipped, so prose cannot be mistaken for a match.
 codex_classified_tokens="$(
   awk '
     /DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE/ { inblock = 1; next }
