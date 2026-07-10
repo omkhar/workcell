@@ -53,7 +53,49 @@ resolve_self_path() {
   printf '%s\n' "${source_path}"
 }
 
+# changelog_version extracts the first ## vX.Y.Z heading from CHANGELOG.md,
+# including semver pre-release suffixes (## vX.Y.Z-rc.1) so a release candidate
+# never reports itself as the final release, matching the same logic as
+# internal/supportbundle/collect.go's changelogVersion(). Returns the version
+# string (e.g., v0.11.2 or v1.0.0-rc.1) or "unknown" if the file is missing,
+# unreadable, or contains no matching heading; never fails.
+changelog_version() {
+  local repo_root="${1:-}"
+  local changelog_path
+
+  if [[ -z "${repo_root}" ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  changelog_path="${repo_root}/CHANGELOG.md"
+  if [[ ! -f "${changelog_path}" || ! -r "${changelog_path}" ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  local line
+  while IFS= read -r line; do
+    if [[ "${line}" =~ ^##[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?) ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done <"${changelog_path}"
+
+  printf 'unknown\n'
+  return 0
+}
+
 ROOT_DIR="$(cd -P "$(dirname "$(resolve_self_path)")/.." && pwd)"
+# Handle --version before sourcing any launcher module: printing the changelog
+# version must never require Go, Docker, or Colima on the host.  Later modules
+# resolve host tools at source time (go-hostutil.sh aborts on a missing
+# trusted-path go), so this early exit is what keeps `workcell --version`
+# usable on a bare operator host (P1 review finding on the --version PR).
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'workcell %s\n' "$(changelog_version "${ROOT_DIR}")"
+  exit 0
+fi
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/runtime/container/assurance.sh"
 # shellcheck source=/dev/null
@@ -228,6 +270,7 @@ Options:
   --vm-disk GIB                 Colima VM disk in GiB (default: profile value)
   --rebuild                     Rebuild the runtime image before launch
   --dry-run                     Print the selected runtime command and exit
+  --version                     Print Workcell version and exit
   -h, --help                    Show this help text
   --ack-control-plane-vcs       Required with --allow-control-plane-vcs
   --ack-repo-mcp=YYYY-MM-DD      Dated acknowledgement required with --allow-repo-mcp
@@ -8353,6 +8396,13 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       DRY_RUN=1
       shift
+      ;;
+    --version)
+      # Also handled before module sourcing (see the early ROOT_DIR handler)
+      # so the bare form stays toolchain-free; this case keeps --version
+      # honored after other global options on fully provisioned hosts.
+      printf 'workcell %s\n' "$(changelog_version "${ROOT_DIR}")"
+      exit 0
       ;;
     -h | --help)
       usage

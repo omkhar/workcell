@@ -228,7 +228,7 @@
     },
     {
       "id": "shared/install-lifecycle",
-      "description": "Day-two install lifecycle mechanics in a sandboxed HOME that touches no real host state: install links the launcher, upgrade-in-place repoints it with no duplicate or orphaned link, rollback repoints back, and the --gc cleanup contract (function-level, injected sandbox root) reaps Workcell-owned stale scratch while preserving unrelated files; real /tmp and state-root sentinels prove nothing outside the sandbox is touched",
+      "description": "Day-two install lifecycle mechanics in a sandboxed HOME that touches no real host state: install links the launcher, upgrade-in-place repoints it with no duplicate or orphaned link, rollback repoints back, the --gc cleanup contract (function-level, injected sandbox root) reaps Workcell-owned stale scratch while preserving unrelated files, and the changelog-derived --version contract (function-level, sandboxed fixtures) returns real versions for source and installed-layout roots while malformed or missing changelogs return unknown; real /tmp and state-root sentinels prove nothing outside the sandbox is touched",
       "lane": "secretless",
       "platform": "any",
       "manual": false,
