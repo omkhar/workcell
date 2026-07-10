@@ -55,16 +55,27 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
   copy only in explicit lower-assurance cases (see
   [../../docs/adapter-control-planes.md](../../docs/adapter-control-planes.md#codex-rules-mutability)).
 - Unsafe-argument policy (`reject_unsafe_codex_args` in
-  `runtime/container/provider-policy.sh`): the wrapper blocks
-  `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `-a`/
-  `--ask-for-approval`, `--add-dir`, `--search`, `--remote`, `--enable`/
-  `--disable`, `--cd`, `--sandbox danger-full-access`, reserved `--config`
-  overrides, off-mode `--profile` values, and `app`/`app-server`/`cloud`/`mcp`/
-  `sandbox` subcommands outside the managed GUI path. These are rejected in
-  **every** mode including `breakglass`: `provider-wrapper.sh` re-checks arguments
-  (`WORKCELL_WRAPPER_CONTEXT=1`), so `container-smoke.sh` confirms breakglass
-  overrides still fail. Breakglass raises the sandbox floor, not the unsafe-flag
-  policy.
+  `runtime/container/provider-policy.sh`): **subcommands are deny-by-default**
+  over the pinned Codex subcommand namespace — only the read-only/session
+  surface is permitted (exec, review, login/logout, completion, doctor, apply,
+  resume, fork, archive/unarchive/delete, help, debug, execpolicy, `features
+  list`); everything else is rejected (plugin, remote-control, exec-server,
+  mcp*, cloud*, responses-api-proxy, stdio-to-uds, update, sandbox, `features
+  enable`/`disable`, and any unclassified/new subcommand). `app-server` is the
+  managed GUI backend and is permitted only as the bare no-arg launch; an
+  unknown first token is Codex prompt text. The classified set is pinned to the
+  version by
+  [`tests/fixtures/codex-subcommands.txt`](../../tests/fixtures/codex-subcommands.txt)
+  (a `CODEX_VERSION` bump fails CI until it is regenerated). The wrapper also
+  blocks `--yolo`/`--dangerously-bypass-*`, autonomy/network flags
+  (`--full-auto`, `-a`, `--add-dir`, `--search`, `--remote`, `--enable`,
+  `--disable`, `--cd`, `--sandbox danger-full-access`), off-mode `--profile`
+  values, and reserved `-c`/`--config` overrides of guarded namespaces
+  (features/plugins/marketplaces/mcp/hooks/sandbox/approval, incl. glued,
+  quoted/escaped, inline-table, and `profiles.<name>.<key>` spellings). All are
+  rejected in **every** mode including `breakglass` (`provider-wrapper.sh`
+  re-checks with `WORKCELL_WRAPPER_CONTEXT=1`); breakglass raises the sandbox
+  floor, not the unsafe-argument policy.
 - Final branch publication stays on the host through `workcell publish-pr`, not
   from inside the container session.
 
