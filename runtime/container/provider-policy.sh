@@ -123,6 +123,18 @@ codex_config_override_is_blocked() {
   return 1
 }
 
+# Guard checks shared by the space-separated and attached/glued short-flag forms so
+# `-p val`/`-pval`/`--profile=val` (and the sandbox pair) apply the IDENTICAL check and
+# emit BYTE-IDENTICAL deny messages (tests + operators grep them). Each takes the raw
+# value plus the resolved allowed profile.
+codex_reject_unsafe_profile_value() {
+  [[ "$1" != "$2" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
+}
+
+codex_reject_unsafe_sandbox_value() {
+  [[ "$1" == "danger-full-access" ]] && workcell_die "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass."
+}
+
 # Value-taking global Codex flags must be consumed before first-subcommand detection,
 # or their VALUE would be mistaken for the command token (`--model gpt-5 plugin` would
 # treat gpt-5 as the command). Keep in lockstep with codex_first_subcommand in
@@ -145,13 +157,13 @@ reject_unsafe_codex_args() {
     if [[ -n "${expect_value}" ]]; then
       case "${expect_value}" in
         profile)
-          [[ "${arg}" != "${allowed_profile}" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
+          codex_reject_unsafe_profile_value "${arg}" "${allowed_profile}"
           ;;
         cd)
           workcell_die "Workcell blocked unsafe Codex override: --cd"
           ;;
         sandbox)
-          [[ "${arg}" == "danger-full-access" ]] && workcell_die "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass."
+          codex_reject_unsafe_sandbox_value "${arg}"
           ;;
         config)
           codex_config_override_is_blocked "${arg}" && workcell_die "Workcell blocked unsafe Codex config override: ${arg%%=*}"
@@ -290,6 +302,24 @@ reject_unsafe_codex_args() {
       --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
+      # ATTACHED/GLUED short value-flags (Codex P1 review). Codex (clap) also accepts a
+      # short flag glued to its value (`-pval`/`-sval`/`-Cval`/`-aval`); without these the
+      # glued form falls through as an unrecognized token and is FORWARDED, so
+      # `-pbreakglass`/`-sdanger-full-access`/`-anever`/`-C/state` bypass the guards the
+      # space-separated forms apply. Placed BEFORE the exact-token cases and matched by
+      # exact letter (case-sensitive: `-C?*` never catches `-c?*`), so they shadow nothing.
+      -a?*)
+        workcell_die "Workcell blocked unsafe Codex override: ${arg}"
+        ;;
+      -C?*)
+        workcell_die "Workcell blocked unsafe Codex override: --cd"
+        ;;
+      -p?*)
+        codex_reject_unsafe_profile_value "${arg#-p}" "${allowed_profile}"
+        ;;
+      -s?*)
+        codex_reject_unsafe_sandbox_value "${arg#-s}"
+        ;;
       -p | --profile)
         expect_value="profile"
         ;;
@@ -313,7 +343,7 @@ reject_unsafe_codex_args() {
         workcell_die "Workcell blocked unsafe Codex override: --cd"
         ;;
       --profile=*)
-        [[ "${arg#--profile=}" != "${allowed_profile}" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
+        codex_reject_unsafe_profile_value "${arg#--profile=}" "${allowed_profile}"
         ;;
       -s | --sandbox)
         expect_value="sandbox"

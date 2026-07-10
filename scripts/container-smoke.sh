@@ -2606,6 +2606,48 @@ assert_codex_entrypoint_denied "expected Workcell entrypoint to reject operator-
 
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex working-directory overrides" "Workcell blocked unsafe Codex override" --cd /state --version
 
+# Space-separated sandbox danger-full-access deny (regression lock for the reused check).
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex sandbox danger-full-access overrides" "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass." -s danger-full-access --version
+
+# ATTACHED/GLUED SHORT VALUE-FLAGS (Codex P1 review). Codex (clap) accepts short flags
+# glued to their value (`-pval`/`-sval`/`-Cval`/`-aval`); before the fix only glued `-c`
+# was routed through the guard, so these fell through as unrecognized tokens and were
+# FORWARDED. Each now applies the SAME check (and message) as its space-separated form.
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -pbreakglass profile override" "Workcell blocked unsafe Codex override: --profile" -pbreakglass --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -sdanger-full-access sandbox override" "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass." -sdanger-full-access --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -anever approval override" "Workcell blocked unsafe Codex override: -anever" -anever --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -C/state working-directory override" "Workcell blocked unsafe Codex override: --cd" -C/state --version
+
+# Long `--flag=value` glued forms of the same guarded flags are denied too.
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --profile=breakglass override" "Workcell blocked unsafe Codex override: --profile" --profile=breakglass --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --sandbox=danger-full-access override" "Workcell blocked unsafe Codex override: --sandbox=danger-full-access" --sandbox=danger-full-access --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --cd=/x working-directory override" "Workcell blocked unsafe Codex override: --cd" --cd=/x --version
+
+# PERMIT the in-mode glued profile at the GUARD: run_entrypoint pins strict, so glued
+# `-pstrict`/`--profile=strict` equals the allowed profile and the guard does NOT die
+# (like space-separated `--profile strict`). Codex then exits nonzero on the DUPLICATE
+# --profile (the wrapper also injects managed `--profile strict`), so assert the guard
+# verdict by the ABSENCE of the block message, not a clean exit.
+for codex_profile_permit in -pstrict --profile=strict; do
+  codex_profile_permit_out="/tmp/workcell-entrypoint-codex-profile-permit.out"
+  run_entrypoint codex codex "${codex_profile_permit}" --version >"${codex_profile_permit_out}" 2>&1 || true
+  if grep -q "Workcell blocked" "${codex_profile_permit_out}"; then
+    echo "expected the in-mode glued profile ${codex_profile_permit} to pass the guard" >&2
+    cat "${codex_profile_permit_out}" >&2
+    exit 1
+  fi
+done
+
+# PERMIT glued model/image: a glued `-mgpt-5-codex`/`-iImage` is a single safe flag token
+# with no separate value to consume, so it is harmless and forwarded (must not block).
+run_entrypoint codex codex -mgpt-5-codex --version >/dev/null
+run_entrypoint codex codex -iImage --version >/dev/null
+
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex profile config overrides" "Workcell blocked unsafe Codex config override" --config profile=breakglass --version
 
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex network_access config overrides" "Workcell blocked unsafe Codex config override" --config sandbox_workspace_write.network_access=true --version
