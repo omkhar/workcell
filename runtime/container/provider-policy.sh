@@ -128,11 +128,18 @@ codex_config_override_is_blocked() {
 # emit BYTE-IDENTICAL deny messages (tests + operators grep them). Each takes the raw
 # value plus the resolved allowed profile.
 codex_reject_unsafe_profile_value() {
-  [[ "$1" != "$2" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
+  # Strip a leading `=`: clap accepts the short-with-equals form (`-p=VALUE`),
+  # so the glued `-p?*` case passes `=VALUE`; the space-separated and
+  # `--profile=` callers pass a bare value (no-op here).
+  local value="${1#=}"
+  [[ "${value}" != "$2" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
 }
 
 codex_reject_unsafe_sandbox_value() {
-  [[ "$1" == "danger-full-access" ]] && workcell_die "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass."
+  # Strip a leading `=` for the short-with-equals form (`-s=danger-full-access`);
+  # space-separated and `--sandbox=` callers pass a bare value (no-op here).
+  local value="${1#=}"
+  [[ "${value}" == "danger-full-access" ]] && workcell_die "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass."
 }
 
 # Value-taking global Codex flags must be consumed before first-subcommand detection,

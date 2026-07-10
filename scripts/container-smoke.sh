@@ -2621,6 +2621,12 @@ assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued
 
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -C/state working-directory override" "Workcell blocked unsafe Codex override: --cd" -C/state --version
 
+# Short-with-equals form (`-p=VALUE`/`-s=VALUE`) is valid clap syntax too, so the
+# guarded value-flags strip a leading `=` before checking (Codex P1 review).
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the short-equals -p=breakglass profile override" "Workcell blocked unsafe Codex override: --profile" -p=breakglass --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the short-equals -s=danger-full-access sandbox override" "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass." -s=danger-full-access --version
+
 # Long `--flag=value` glued forms of the same guarded flags are denied too.
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --profile=breakglass override" "Workcell blocked unsafe Codex override: --profile" --profile=breakglass --version
 
