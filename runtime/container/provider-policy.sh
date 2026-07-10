@@ -132,6 +132,7 @@ reject_unsafe_codex_args() {
   local saw_command=0
   local allowed_profile=""
   local expect_features_action=0
+  local codex_config_value=""
 
   provider_policy_allows_breakglass && return 0
 
@@ -192,16 +193,23 @@ reject_unsafe_codex_args() {
 
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
-      # DENY-BY-DEFAULT subcommand gate. The first bare token is Codex's
-      # subcommand; permit it ONLY if it is on the classified-safe ALLOWLIST
-      # below, otherwise die. This replaces the historical blocklist that every
-      # CLI version bump silently reopened (a new dangerous subcommand shipped
-      # unlisted was permitted until someone noticed); with an allowlist, any
-      # new AND any unknown subcommand is denied until explicitly vetted.
+      # DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE. Codex's CLI contract is
+      # `codex [OPTIONS] [PROMPT]` OR `codex [OPTIONS] <COMMAND> [ARGS]`: the
+      # first bare token is a SUBCOMMAND iff it exactly matches one of Codex's
+      # known subcommand names, otherwise it is literal PROMPT text that Codex
+      # forwards to the session (empirically on pinned 0.142.4:
+      # `codex "fix tests" --version` prints the version and exits 0, treating
+      # "fix tests" as the prompt, never as a command). So we partition Codex's
+      # COMPLETE subcommand set into an ALLOW set (permit — classified safe) and
+      # a DENY set (die — dangerous/unsupported); a token in NEITHER set is not a
+      # subcommand at all and is permitted as prompt text, exactly as Codex
+      # treats it. This preserves the bare-prompt invocation
+      # `workcell --agent codex --agent-arg "fix tests"` (Codex P2 review) while
+      # still denying every known-dangerous subcommand by exact token.
       #
-      # The permit set is the read-only/session surface verified against real
-      # `codex --help` (0.144): exec + its `e` alias, review, login, logout,
-      # completion, doctor, apply + its `a` alias, resume, fork, archive,
+      # ALLOW (read-only/session surface, verified against the pinned runtime
+      # Codex 0.142.4 `codex --help`): exec + its `e` alias, review, login,
+      # logout, completion, doctor, apply + its `a` alias, resume, fork, archive,
       # unarchive, delete, help, debug. These take a fixed image and only read
       # state or drive an in-session/session-management flow. `execpolicy` is a
       # hidden (not in `--help`) but real subcommand present in the pinned
@@ -213,9 +221,14 @@ reject_unsafe_codex_args() {
       # container-smoke's execpolicy checks). Exact-token discipline (NOT globs)
       # keeps the fence tight: `exec` != `exec-server`, `mcp` != `mcp-server`,
       # so the daemon variants stay denied. Keep this list in lockstep with the
-      # non-runtime set in codex_managed_profile_applies and the value-taking
-      # globals in codex_first_subcommand
-      # (runtime/container/provider-wrapper.sh; same first-token detection).
+      # non-runtime set in codex_managed_profile_applies, the value-taking
+      # globals in codex_first_subcommand (runtime/container/provider-wrapper.sh;
+      # same first-token detection), and the classified subcommand fixture
+      # tests/fixtures/codex-subcommands.txt (verify-invariants asserts the
+      # pinned Codex's full subcommand list is fully partitioned into this ALLOW
+      # set plus the DENY set below, so a future pin that adds an UNCLASSIFIED
+      # subcommand — which would otherwise leak through as prompt text — fails
+      # CI until a human classifies it).
       case "${arg}" in
         exec | e | review | login | logout | completion | doctor | \
           apply | a | resume | fork | archive | unarchive | delete | \
@@ -232,20 +245,36 @@ reject_unsafe_codex_args() {
         app | app-server)
           # app-server is the managed GUI backend Workcell launches (see
           # entrypoint.sh), so it is permitted ONLY under AGENT_UI=gui; on the
-          # CLI path it is not a supported surface and is denied. The GUI gate is
-          # scoped to these two tokens; every other non-allowlisted subcommand is
-          # denied on every UI (below), so an in-container AGENT_UI=gui override
+          # CLI path it is not a supported surface and is denied. (`app` is not a
+          # subcommand on pinned 0.142.4 but is kept GUI-gated here for the same
+          # class so a later pin that reintroduces it stays covered.) The GUI
+          # gate is scoped to these two tokens; every DENY-set subcommand below
+          # is denied on every UI, so an in-container AGENT_UI=gui override
           # cannot smuggle in plugin/mcp/remote-control the way a GUI-gated
           # blocklist once let it.
           [[ "${AGENT_UI:-cli}" != "gui" ]] &&
             workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
           continue
           ;;
+        # DENY set — every known-dangerous/unsupported Codex subcommand, denied
+        # by EXACT token on every UI. Enumerated against pinned 0.142.4 so that
+        # ALLOW ∪ GUI-gated ∪ DENY equals the complete subcommand list (the
+        # fixture completeness check enforces this). These are the control-plane,
+        # daemon, marketplace, sandbox-escape, and self-update surfaces that the
+        # managed session must never reach.
+        plugin | remote-control | exec-server | mcp | mcp-server | cloud | \
+          sandbox | update)
+          workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
+          ;;
       esac
-      # Everything not on the allowlist above (plugin, remote-control,
-      # exec-server, mcp, mcp-server, cloud, sandbox, update, and any unknown or
-      # future subcommand) is denied — deny-by-default.
-      workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
+      # Not a known subcommand (neither ALLOW, GUI-gated, nor DENY): it is PROMPT
+      # text, so permit it exactly as Codex would. `saw_command=1` above stops
+      # any later bare token from being re-checked as a subcommand — Codex only
+      # dispatches on the FIRST bare token, and everything after a prompt is
+      # prompt/argument data. Deny-by-default safety is preserved because the
+      # fixture completeness check guarantees no UNCLASSIFIED subcommand exists to
+      # fall through here undetected.
+      continue
     fi
 
     case "${arg}" in
@@ -303,6 +332,21 @@ reject_unsafe_codex_args() {
         ;;
       --config=*)
         codex_config_override_is_blocked "${arg#--config=}" && workcell_die "Workcell blocked unsafe Codex config override: ${arg#--config=}"
+        ;;
+      -c?*)
+        # Short config flag glued to its value: Codex accepts both `-cKEY=VALUE`
+        # (`-cfeatures.remote_plugin=true`) and `-c=KEY=VALUE` (the `=` is clap's
+        # short-flag value separator, so `-c=model=x` carries value `model=x`).
+        # Without this case the attached form skipped the blocklist entirely —
+        # only separate `-c <value>` and `--config=<value>` were routed — letting
+        # `-cfeatures.remote_plugin=true` / `-cfeatures={remote_plugin=true}`
+        # re-enable the very surfaces this gate pins off (Codex P1 review). Strip
+        # the `-c` prefix and one optional leading `=`, then run the SAME
+        # codex_config_override_is_blocked check as the other config forms.
+        codex_config_value="${arg#-c}"
+        codex_config_value="${codex_config_value#=}"
+        codex_config_override_is_blocked "${codex_config_value}" &&
+          workcell_die "Workcell blocked unsafe Codex config override: ${codex_config_value}"
         ;;
     esac
   done

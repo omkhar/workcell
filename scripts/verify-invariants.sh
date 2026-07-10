@@ -1450,6 +1450,78 @@ fi
 
 rm -rf "${codex_managed_config_tmpdir}"
 
+# Codex subcommand-namespace COMPLETENESS check.
+#
+# reject_unsafe_codex_args (runtime/container/provider-policy.sh) is
+# deny-by-default over the SUBCOMMAND NAMESPACE, not over all first tokens: a
+# first bare token that is NOT a known Codex subcommand is permitted as [PROMPT]
+# text (so `codex "fix tests"` works). That safety-critical design only holds if
+# EVERY real Codex subcommand is explicitly classified ALLOW or DENY — an
+# unclassified new subcommand would fall through and be permitted as if it were a
+# prompt. This check enforces that invariant against the pinned runtime Codex:
+# it asserts every name in the checked-in fixture (tests/fixtures/
+# codex-subcommands.txt, the full pinned `codex --help` subcommand list) appears
+# as an EXACT case label in the ALLOW, GUI-gated, `features`, or DENY branch of
+# the gate. A pin bump that adds a subcommand must regenerate the fixture from
+# the new `codex --help` and classify the new name in provider-policy.sh, or this
+# fails CI (the fixture cannot be enumerated in-container during a host-side
+# static verify, so it is a checked-in fixture the refresh review updates).
+CODEX_POLICY_FILE="${ROOT_DIR}/runtime/container/provider-policy.sh"
+CODEX_SUBCOMMAND_FIXTURE="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"
+
+# Extract the exact case-label tokens the gate classifies. The classification
+# case statement lives strictly between the unique `DENY-BY-DEFAULT over the
+# SUBCOMMAND NAMESPACE` comment (its opening) and the unique `Not a known
+# subcommand` fall-through comment (its close). Inside that window, only
+# case-LABEL lines are parsed — a case label is `<tok>[ | <tok> ...])` possibly
+# continued with a trailing `\`. Comment lines (`#…`) and the case body/actions
+# are skipped, so prose words cannot be mistaken for subcommand classifications.
+codex_classified_tokens="$(
+  awk '
+    /DENY-BY-DEFAULT over the SUBCOMMAND NAMESPACE/ { inblock = 1; next }
+    inblock && /Not a known subcommand/ { inblock = 0 }
+    !inblock { next }
+    /^[[:space:]]*#/ { next }
+    {
+      label = $0
+      # A case label either ends the pattern with `)` or is a `\`-continued
+      # multi-line pattern (the ALLOW and DENY sets span two lines). Keep only
+      # the pattern portion up to `)`; for a continuation line there is no `)`
+      # yet, so keep the whole line. Lines with neither `)` nor a trailing `\`
+      # are case bodies/actions and are skipped.
+      if (label ~ /\)/) {
+        sub(/\).*/, "", label)
+      } else if (label !~ /\\[[:space:]]*$/) {
+        next
+      }
+      gsub(/[|\\]/, " ", label)
+      m = split(label, toks, /[ \t]+/)
+      for (i = 1; i <= m; i++) {
+        t = toks[i]
+        if (t ~ /^[a-z][a-z-]*$/) {
+          print t
+        }
+      }
+    }
+  ' "${CODEX_POLICY_FILE}" | sort -u
+)"
+
+codex_fixture_tokens="$(
+  grep -vE '^[[:space:]]*(#|$)' "${CODEX_SUBCOMMAND_FIXTURE}" | sort -u
+)"
+
+# Every fixture (pinned real) subcommand must be classified. `comm -23` prints
+# fixture names absent from the classified set: any output => an unclassified
+# subcommand that would leak through as prompt text.
+codex_unclassified="$(comm -23 <(printf '%s\n' "${codex_fixture_tokens}") <(printf '%s\n' "${codex_classified_tokens}"))"
+if [[ -n "${codex_unclassified}" ]]; then
+  echo 'Codex subcommand completeness check FAILED: the pinned Codex exposes subcommand(s) that reject_unsafe_codex_args does not classify as ALLOW or DENY.' >&2
+  echo 'Unclassified (would leak through the deny-by-default gate as prompt text):' >&2
+  printf '  %s\n' "${codex_unclassified}" >&2
+  echo 'Classify each in runtime/container/provider-policy.sh (ALLOW or DENY set) or, if a pin bump removed it, regenerate tests/fixtures/codex-subcommands.txt from the pinned codex --help.' >&2
+  exit 1
+fi
+
 # scripts/workcell host-launcher hardening invariants: run_host_colima
 # restores the real host HOME, the shebang clears the host environment,
 # the process/Perl/DYLD/Docker environment scrubbers are present,

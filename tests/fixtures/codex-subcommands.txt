@@ -1,0 +1,50 @@
+# Complete Codex subcommand namespace for the PINNED runtime Codex.
+#
+# Pinned version: 0.142.4 (runtime/container/Dockerfile CODEX_VERSION). This is
+# the EXACT set of first-token subcommand names Codex dispatches on — everything
+# in `codex --help` "Commands:" plus the hidden `execpolicy` subcommand and the
+# `e`/`a` aliases. It does NOT include prompt text: a first bare token not on
+# this list is treated by Codex as the [PROMPT] argument, not a command.
+#
+# The completeness check in scripts/verify-invariants.sh asserts that EVERY name
+# below is classified by reject_unsafe_codex_args
+# (runtime/container/provider-policy.sh) as either ALLOW (permitted),
+# GUI-gated (app-server, permitted only under AGENT_UI=gui), or DENY (rejected).
+# Because a token off this list is permitted as prompt text, an unclassified NEW
+# subcommand introduced by a future pin bump would otherwise silently leak
+# through as a "prompt". This fixture makes that fail CI: when the pin is bumped,
+# the refresh review MUST regenerate this list from the new pinned
+# `codex --help` and classify any new name in provider-policy.sh, or the build
+# stays red.
+#
+# Aliases (e -> exec, a -> apply) are listed because they are dispatchable
+# first-token names in their own right and must be classified too.
+#
+# One subcommand name per line; blank lines and `#` comments are ignored.
+exec
+e
+review
+login
+logout
+mcp
+plugin
+mcp-server
+app-server
+remote-control
+completion
+update
+doctor
+sandbox
+debug
+apply
+a
+resume
+archive
+delete
+unarchive
+fork
+cloud
+exec-server
+features
+help
+execpolicy

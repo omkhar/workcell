@@ -2547,18 +2547,46 @@ if grep -q "Workcell blocked" "${codex_help_permit_out}"; then
   exit 1
 fi
 
-# DENY-BY-DEFAULT REGRESSION LOCK. The whole point of the allowlist refactor:
-# a subcommand that is not on the permit set is denied even if it is unknown to
-# this policy — including MADE-UP future tokens a later CLI bump might add. A
-# blocklist would have silently permitted these; the allowlist denies them.
-for codex_denied_sub in frobnicate some-new-daemon cloud sandbox mcp; do
+# DENY-SET REGRESSION LOCK. Every KNOWN-dangerous Codex subcommand is denied by
+# exact token on the CLI path — deny-by-default over the classified subcommand
+# namespace. These are real pinned-Codex subcommands (not prompt text), so the
+# gate must reject them.
+for codex_denied_sub in cloud sandbox mcp plugin remote-control exec-server mcp-server update; do
   codex_deny_out="/tmp/workcell-entrypoint-codex-denydefault-${codex_denied_sub}.out"
   if run_entrypoint codex codex "${codex_denied_sub}" >"${codex_deny_out}" 2>&1; then
-    echo "expected the deny-by-default gate to reject the non-allowlisted subcommand: ${codex_denied_sub}" >&2
+    echo "expected the deny-set gate to reject the dangerous subcommand: ${codex_denied_sub}" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsupported Codex CLI subcommand" "${codex_deny_out}"
 done
+
+# BARE-PROMPT PRESERVATION (Codex P2 review). Codex's contract is
+# `codex [OPTIONS] [PROMPT]`: a first bare token that is NOT a known subcommand
+# is PROMPT text, which the gate must permit (an earlier deny-by-default-over-
+# all-tokens draft wrongly rejected the prompt's first word). A made-up token
+# that is not a Codex subcommand must therefore PASS the gate as a prompt, not
+# die. `--version` short-circuits Codex after the gate so the run exits 0.
+for codex_prompt_token in frobnicate some-new-daemon; do
+  codex_prompt_out="/tmp/workcell-entrypoint-codex-prompt-${codex_prompt_token}.out"
+  run_entrypoint codex codex "${codex_prompt_token}" --version >"${codex_prompt_out}" 2>&1 || true
+  if grep -q "Workcell blocked" "${codex_prompt_out}"; then
+    echo "expected a non-subcommand first token to pass the gate as prompt text: ${codex_prompt_token}" >&2
+    cat "${codex_prompt_out}" >&2
+    exit 1
+  fi
+done
+
+# A multi-word bare prompt (the real `--agent-arg "fix tests"` shape) must also
+# pass: only the FIRST bare token is ever a candidate subcommand, and "fix" is
+# not one, so the whole prompt is forwarded to Codex.
+codex_bare_prompt_out="/tmp/workcell-entrypoint-codex-bare-prompt.out"
+run_entrypoint codex codex "fix tests" --version >"${codex_bare_prompt_out}" 2>&1 || true
+if grep -q "Workcell blocked" "${codex_bare_prompt_out}"; then
+  echo 'expected the bare-prompt invocation codex "fix tests" to pass the deny-by-default gate' >&2
+  cat "${codex_bare_prompt_out}" >&2
+  exit 1
+fi
+grep -q "codex-cli" "${codex_bare_prompt_out}"
 
 # A permitted subcommand behind a value-taking global still passes the gate
 # (the global's value is consumed, not mistaken for the command token), while a
@@ -2730,10 +2758,42 @@ if run_entrypoint codex codex --config 'hooks={trust=false}' --version >/tmp/wor
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-hooks-table.out
 
+# ATTACHED SHORT `-c` CONFIG OVERRIDES (Codex P1 review). Codex accepts the short
+# config flag glued to its value (`-cKEY=VALUE`) and with clap's `=` separator
+# (`-c=KEY=VALUE`); before the fix only separate `-c <value>` and `--config=…`
+# were routed through the blocklist, so a glued form re-enabled the pinned-off
+# surfaces. The gate must run the SAME config blocker on the attached remainder.
+if run_entrypoint codex codex -cfeatures.remote_plugin=true --version >/tmp/workcell-entrypoint-codex-attached-c-scalar.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the glued -cfeatures.remote_plugin override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-attached-c-scalar.out
+
+if run_entrypoint codex codex '-cfeatures={remote_plugin=true}' --version >/tmp/workcell-entrypoint-codex-attached-c-table.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the glued -cfeatures={...} inline-table override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-attached-c-table.out
+
+if run_entrypoint codex codex -c=features.plugins=true --version >/tmp/workcell-entrypoint-codex-attached-c-eq.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the -c=KEY=VALUE (clap separator) plugins override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-attached-c-eq.out
+
+if run_entrypoint codex codex --config=features.plugins=true --version >/tmp/workcell-entrypoint-codex-config-eq-plugins.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the --config=features.plugins override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-eq-plugins.out
+
 # A benign, genuinely-permitted -c override must still pass (model is not on the
 # security-boundary blocklist); a scalar value on a non-guarded key is not an
-# inline table, so the table guard leaves it untouched.
+# inline table, so the table guard leaves it untouched. Both the separate and the
+# glued (`-cmodel=…`) forms of a permitted key must pass — the attached-`-c` fix
+# only blocks GUARDED keys, never a benign one.
 run_entrypoint codex codex --config 'model=gpt-5-codex' --version >/dev/null
+run_entrypoint codex codex -cmodel=gpt-5-codex --version >/dev/null
 run_entrypoint codex codex --config 'history.persistence="none"' --version >/dev/null
 
 # A backslash in the VALUE (not the key) must not trip the escape guard: only the
@@ -3459,19 +3519,27 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-auth-mcp.out
-    # DENY-BY-DEFAULT regression lock: a MADE-UP future subcommand that this
-    # policy has never heard of must be denied — the allowlist rejects anything
-    # off the permit set, so a later CLI bump cannot silently reopen a hole.
-    if codex frobnicate >/tmp/codex-nested-frobnicate.out 2>&1; then
-      echo "expected the deny-by-default gate to reject the unknown future subcommand frobnicate" >&2
+    # BARE-PROMPT PRESERVATION (Codex P2 review): a first bare token that is NOT
+    # a known Codex subcommand is PROMPT text and must pass the gate, not die.
+    # `--version` short-circuits Codex after the gate so the run exits 0.
+    codex frobnicate --version >/tmp/codex-nested-frobnicate.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-frobnicate.out; then
+      echo "expected a non-subcommand first token to pass the gate as prompt text: frobnicate" >&2
+      cat /tmp/codex-nested-frobnicate.out >&2
       exit 1
     fi
-    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-frobnicate.out
-    if codex some-new-daemon >/tmp/codex-nested-newdaemon.out 2>&1; then
-      echo "expected the deny-by-default gate to reject the unknown future subcommand some-new-daemon" >&2
+    codex "fix tests" --version >/tmp/codex-nested-newdaemon.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-newdaemon.out; then
+      echo "expected the multi-word bare prompt codex fix-tests to pass the gate" >&2
+      cat /tmp/codex-nested-newdaemon.out >&2
       exit 1
     fi
-    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-newdaemon.out
+    # Known-dangerous subcommands remain denied by exact token on the CLI path.
+    if codex plugin >/tmp/codex-nested-cli-plugin-deny.out 2>&1; then
+      echo "expected the deny-set gate to reject the plugin subcommand" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-cli-plugin-deny.out
     # cloud/sandbox are no longer GUI-gated: they are off the allowlist, so they
     # are denied on every UI (including AGENT_UI=gui).
     if AGENT_UI=gui codex cloud >/tmp/codex-nested-gui-cloud.out 2>&1; then
