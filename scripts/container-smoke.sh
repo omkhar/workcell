@@ -2786,6 +2786,68 @@ if run_entrypoint codex codex --config 'hooks={trust=false}' --version >/tmp/wor
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-hooks-table.out
 
+# PROFILE-SCOPED CONFIG OVERRIDES (Codex P1 review). A Codex profile-v2 layer
+# `[profiles.<name>.…]` can set ANY config key, and the wrapper injects the
+# active managed profile, so `-c profiles.<name>.features.remote_plugin=true`
+# re-enables the SAME surface the bare `features.remote_plugin` block rejects.
+# The gate strips the `profiles.<name>.` prefix and re-tests the remainder
+# against the same top-level blocklist, so every guarded key is blocked
+# profile-scoped too (features/plugins/marketplaces/mcp/hooks/sandbox_*/…).
+if run_entrypoint codex codex --config profiles.strict.features.remote_plugin=true --version >/tmp/workcell-entrypoint-codex-config-profile-remote-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a profile-scoped features.remote_plugin override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-remote-plugin.out
+
+if run_entrypoint codex codex --config profiles.development.features.plugins=true --version >/tmp/workcell-entrypoint-codex-config-profile-plugins.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a profile-scoped features.plugins override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-plugins.out
+
+if run_entrypoint codex codex --config profiles.x.plugins.y=1 --version >/tmp/workcell-entrypoint-codex-config-profile-plugins-tree.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a profile-scoped plugins.* override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-plugins-tree.out
+
+if run_entrypoint codex codex --config profiles.x.marketplaces.z=1 --version >/tmp/workcell-entrypoint-codex-config-profile-marketplaces.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a profile-scoped marketplaces.* override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-marketplaces.out
+
+# Inline TABLE smuggled under a profile-scoped mcp namespace must also die: the
+# prefix-strip yields `mcp_servers.e`, which matches the `mcp*` guard.
+if run_entrypoint codex codex --config 'profiles.x.mcp_servers.e={command="/bin/sh"}' --version >/tmp/workcell-entrypoint-codex-config-profile-mcp-table.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a profile-scoped mcp inline-table override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-mcp-table.out
+
+# Quoted profile name (`profiles."my env"...`) normalizes to a single `my env`
+# segment; the prefix-strip runs after quote normalization, so the remainder is
+# still re-tested and blocked. (A `.` INSIDE a quoted profile name splits the
+# key and fails closed as malformed — covered by the malformed-quote test above.)
+if run_entrypoint codex codex --config 'profiles."my env".features.plugins=true' --version >/tmp/workcell-entrypoint-codex-config-profile-quoted-name.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a quoted-profile-name features.plugins override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-quoted-name.out
+
+# REGRESSION: the previously-explicit profiles.*.sandbox_mode block is now
+# covered by the general prefix-strip mechanism and must still reject.
+if run_entrypoint codex codex --config profiles.strict.sandbox_mode=danger-full-access --version >/tmp/workcell-entrypoint-codex-config-profile-sandbox-mode.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a profile-scoped sandbox_mode override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-profile-sandbox-mode.out
+
+# PERMIT a genuinely benign profile-scoped override: `model` is not on the
+# security-boundary blocklist, so the prefix-strip remainder (`model`) is not
+# guarded and the override passes.
+run_entrypoint codex codex --config profiles.strict.model=gpt-5-codex --version >/dev/null
+
 # ATTACHED SHORT `-c` CONFIG OVERRIDES (Codex P1 review). Codex accepts the short
 # config flag glued to its value (`-cKEY=VALUE`) and with clap's `=` separator
 # (`-c=KEY=VALUE`); before the fix only separate `-c <value>` and `--config=…`

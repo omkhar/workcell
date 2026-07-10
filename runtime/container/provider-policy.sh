@@ -79,6 +79,23 @@ codex_normalize_config_key() {
   printf '%s\n' "${normalized,,}"
 }
 
+# Match a NORMALIZED (canonical, lowercase) Codex config key against the
+# top-level guarded-namespace blocklist. Split out from
+# codex_config_override_is_blocked so the profile-scoped path can re-test the
+# post-prefix remainder against the SAME set: a Codex profile-v2 layer
+# (`[profiles.<name>.…]`) can set ANY config key, so every key that is dangerous
+# at top level (features.remote_plugin, plugins.*, marketplaces.*, mcp*, hooks*,
+# sandbox_*, approval_policy, web_search, shell_environment_policy*, …) is
+# equally dangerous scoped under a profile. Returns 0 (guarded) / 1 (not).
+codex_config_key_is_guarded() {
+  case "$1" in
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 codex_config_override_is_blocked() {
   local value="$1"
   local key_lower
@@ -87,11 +104,24 @@ codex_config_override_is_blocked() {
   # Fail-closed sentinel for keys that stayed malformed after normalization.
   [[ "${key_lower}" == "__workcell_malformed__" ]] && return 0
 
-  case "${key_lower}" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
-      return 0
-      ;;
-  esac
+  # Top-level guarded key (features.remote_plugin, plugins.*, mcp*, hooks*, …).
+  codex_config_key_is_guarded "${key_lower}" && return 0
+
+  # Profile-scoped override: a Codex profile-v2 layer `[profiles.<name>.<rest>]`
+  # can set any config key, so `profiles.<name>.features.remote_plugin`,
+  # `profiles.<name>.plugins.*`, `profiles.<name>.mcp_servers.*`, etc. re-enable
+  # the same surfaces the bare `features.*`/`plugins.*`/… blocks reject. The
+  # normalizer guarantees `<name>` is exactly ONE dotted segment (a `.` inside a
+  # quoted profile name fails closed as `__workcell_malformed__`, caught above),
+  # so strip the `profiles.<name>.` prefix and re-test the REMAINDER against the
+  # SAME top-level blocklist — DRY, and it stays correct if that blocklist ever
+  # changes. `profiles` / `profiles.<name>` with no remainder falls through to
+  # the inline-table guard below.
+  if [[ "${key_lower}" == profiles.?*.?* ]]; then
+    local profile_remainder="${key_lower#profiles.}"
+    profile_remainder="${profile_remainder#*.}"
+    codex_config_key_is_guarded "${profile_remainder}" && return 0
+  fi
 
   # Codex parses a `-c` value as TOML, so an inline TABLE smuggles blocked child
   # keys under a parent that is not itself blocked above — e.g.
