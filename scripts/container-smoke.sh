@@ -2561,9 +2561,30 @@ if run_entrypoint codex codex --config 'features."remote_plugin=true' --version 
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-malformed-quote.out
 
+# TOML basic-string escapes decode to blocked keys under a spec-compliant parser
+# (the \u0072 escape below is 'r', so features."\u0072emote_plugin" decodes to
+# features.remote_plugin, and "\u0061pproval_policy" decodes to approval_policy).
+# We refuse to decode escapes in bash and fail closed on any backslash in a key
+# segment.
+if run_entrypoint codex codex --config 'features."\u0072emote_plugin"=true' --version >/tmp/workcell-entrypoint-codex-config-escape-feature.out 2>&1; then
+  echo "expected Workcell entrypoint to fail closed on backslash-escaped Codex feature config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-escape-feature.out
+
+if run_entrypoint codex codex --config '"\u0061pproval_policy"="never"' --version >/tmp/workcell-entrypoint-codex-config-escape-approval.out 2>&1; then
+  echo "expected Workcell entrypoint to fail closed on backslash-escaped Codex approval-policy config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-escape-approval.out
+
 # A benign, genuinely-permitted -c override must still pass (model is not on the
 # security-boundary blocklist).
 run_entrypoint codex codex --config 'model=gpt-5-codex' --version >/dev/null
+
+# A backslash in the VALUE (not the key) must not trip the escape guard: only the
+# key is normalized, values pass through untouched.
+run_entrypoint codex codex --config 'model=c:\bin\codex' --version >/dev/null
 
 if run_entrypoint codex codex --add-dir=/tmp --version >/tmp/workcell-entrypoint-codex-add-dir.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex add-dir overrides" >&2

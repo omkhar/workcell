@@ -37,12 +37,20 @@ effective_codex_profile() {
 # stripped of ONE matching pair of surrounding double or single quotes. If any
 # quote character survives (unbalanced or a quoted segment that itself contained a
 # `.` and was split apart), the key is malformed/adversarial and we FAIL CLOSED —
-# returning it as blocked rather than guessing its intent. Emits the canonical
-# lowercase key on stdout.
+# returning it as blocked rather than guessing its intent.
+#
+# We deliberately do NOT decode TOML basic-string escapes (a spec parser turns
+# `"\u0072emote_plugin"` into `remote_plugin`, `"\u0061pproval_policy"` into
+# `approval_policy`, etc.). Re-implementing TOML unescaping in bash would be
+# error-prone, so any backslash surviving in a segment is treated as
+# malformed/adversarial and FAILS CLOSED — the same posture as a residual quote.
+# Bare/quoted keys in the real blocklist never contain backslashes, so this only
+# rejects escape-obfuscated keys. Emits the canonical lowercase key on stdout.
 codex_normalize_config_key() {
   local key="${1%%=*}"
   local -a segments=()
   local segment normalized="" first=1
+  local backslash=$'\\'
   local IFS='.'
   read -r -a segments <<<"${key}"
   for segment in "${segments[@]}"; do
@@ -55,8 +63,9 @@ codex_normalize_config_key() {
     elif [[ ${#segment} -ge 2 && "${segment:0:1}" == "'" && "${segment: -1}" == "'" ]]; then
       segment="${segment:1:${#segment}-2}"
     fi
-    # Any residual quote => malformed/adversarial => fail closed.
-    if [[ "${segment}" == *'"'* || "${segment}" == *"'"* ]]; then
+    # Any residual quote, or any backslash (TOML escape we refuse to decode),
+    # => malformed/adversarial => fail closed.
+    if [[ "${segment}" == *'"'* || "${segment}" == *"'"* || "${segment}" == *"${backslash}"* ]]; then
       printf '%s\n' '__workcell_malformed__'
       return 0
     fi
