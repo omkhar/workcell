@@ -28,10 +28,6 @@
 # Subcommand enum source and classify any new name in provider-policy.sh, or the
 # build stays red.
 #
-# NOTE: 0.142.4 has NO `update` variant (that arrived in 0.143), so it is NOT
-# listed here even though provider-policy.sh keeps it in the DENY set as
-# harmless forward-compat.
-#
 # One subcommand name per line; blank lines and `#` comments are ignored.
 exec
 e
@@ -45,6 +41,7 @@ app-server
 remote-control
 app
 completion
+update
 doctor
 sandbox
 debug
