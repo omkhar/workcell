@@ -3303,6 +3303,28 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-auth-mcp.out
+    # A bare `--` makes every following token literal prompt text, so a prompt
+    # beginning with `plugin`/`remote-control`/`mcp` must NOT be blocked as a
+    # subcommand. Codex may still exit non-zero (the TUI needs a terminal), but
+    # the workcell subcommand block must be ABSENT.
+    codex -- plugin list </dev/null >/tmp/codex-nested-doubledash-plugin.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-plugin.out; then
+      echo "expected a post-'--' prompt starting with 'plugin' to skip the subcommand blocklist" >&2
+      cat /tmp/codex-nested-doubledash-plugin.out >&2
+      exit 1
+    fi
+    codex -- remote-control pair </dev/null >/tmp/codex-nested-doubledash-remote-control.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-remote-control.out; then
+      echo "expected a post-'--' prompt starting with 'remote-control' to skip the subcommand blocklist" >&2
+      cat /tmp/codex-nested-doubledash-remote-control.out >&2
+      exit 1
+    fi
+    codex -- mcp </dev/null >/tmp/codex-nested-doubledash-mcp.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-mcp.out; then
+      echo "expected a post-'--' prompt starting with 'mcp' to skip the subcommand blocklist" >&2
+      cat /tmp/codex-nested-doubledash-mcp.out >&2
+      exit 1
+    fi
     rm -f "$CODEX_HOME/config.toml"
     printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
     codex --version >/tmp/codex-version-after-tamper.out 2>/tmp/codex-version-after-tamper.err

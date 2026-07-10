@@ -134,6 +134,19 @@ reject_unsafe_codex_args() {
       continue
     fi
 
+    # A bare `--` ends option/subcommand parsing: every following token is
+    # literal prompt text that Codex forwards to the interactive/exec session,
+    # never a flag or subcommand (verified: `codex -- plugin` starts the TUI
+    # with prompt "plugin" rather than dispatching the plugin subcommand). Stop
+    # here so the blocklists do not over-reject a prompt that begins with words
+    # like `plugin`/`mcp`. This mirrors codex_first_subcommand in
+    # runtime/container/provider-wrapper.sh, which returns at `--`. Flag and
+    # value checks BEFORE `--` have already run, so dangerous flags are still
+    # rejected; only post-`--` prompt text is exempt.
+    if [[ "${arg}" == "--" ]]; then
+      break
+    fi
+
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
       # plugin (remote marketplace/install) and remote-control (app-server
