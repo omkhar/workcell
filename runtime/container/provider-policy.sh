@@ -27,10 +27,56 @@ effective_codex_profile() {
   esac
 }
 
+# Normalize a Codex `-c key=value` KEY so equivalent TOML spellings collapse to
+# one canonical form before the blocklist match: valid TOML lets a dotted key be
+# quoted per segment (features."remote_plugin"), single-quoted (features.'x'), or
+# padded with whitespace around the dots (features . plugins). Without this,
+# those spellings would slip past every case pattern below — including the
+# pre-existing mcp/sandbox/profile blocks. Only the KEY (before the first `=`) is
+# normalized; the value is never touched. Segments are split on `.`, trimmed, and
+# stripped of ONE matching pair of surrounding double or single quotes. If any
+# quote character survives (unbalanced or a quoted segment that itself contained a
+# `.` and was split apart), the key is malformed/adversarial and we FAIL CLOSED —
+# returning it as blocked rather than guessing its intent. Emits the canonical
+# lowercase key on stdout.
+codex_normalize_config_key() {
+  local key="${1%%=*}"
+  local -a segments=()
+  local segment normalized="" first=1
+  local IFS='.'
+  read -r -a segments <<<"${key}"
+  for segment in "${segments[@]}"; do
+    # Trim surrounding whitespace (handles `features . plugins`).
+    segment="${segment#"${segment%%[![:space:]]*}"}"
+    segment="${segment%"${segment##*[![:space:]]}"}"
+    # Strip one matching pair of surrounding quotes.
+    if [[ ${#segment} -ge 2 && "${segment:0:1}" == '"' && "${segment: -1}" == '"' ]]; then
+      segment="${segment:1:${#segment}-2}"
+    elif [[ ${#segment} -ge 2 && "${segment:0:1}" == "'" && "${segment: -1}" == "'" ]]; then
+      segment="${segment:1:${#segment}-2}"
+    fi
+    # Any residual quote => malformed/adversarial => fail closed.
+    if [[ "${segment}" == *'"'* || "${segment}" == *"'"* ]]; then
+      printf '%s\n' '__workcell_malformed__'
+      return 0
+    fi
+    if [[ "${first}" -eq 1 ]]; then
+      normalized="${segment}"
+      first=0
+    else
+      normalized="${normalized}.${segment}"
+    fi
+  done
+  printf '%s\n' "${normalized,,}"
+}
+
 codex_config_override_is_blocked() {
   local value="$1"
-  local key="${value%%=*}"
-  local key_lower="${key,,}"
+  local key_lower
+  key_lower="$(codex_normalize_config_key "${value}")"
+
+  # Fail-closed sentinel for keys that stayed malformed after normalization.
+  [[ "${key_lower}" == "__workcell_malformed__" ]] && return 0
 
   case "${key_lower}" in
     profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)

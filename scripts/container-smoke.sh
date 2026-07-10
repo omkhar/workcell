@@ -2536,6 +2536,35 @@ if run_entrypoint codex codex --config 'marketplaces.rogue.source=/tmp/evil' --v
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-marketplaces.out
 
+# Quoted/whitespace TOML key spellings must not bypass config-override blocking.
+if run_entrypoint codex codex --config 'features."remote_plugin"=true' --version >/tmp/workcell-entrypoint-codex-config-quoted-feature.out 2>&1; then
+  echo "expected Workcell entrypoint to reject quoted-segment Codex feature config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-quoted-feature.out
+
+if run_entrypoint codex codex --config '"mcp_servers".rogue.command=/bin/sh' --version >/tmp/workcell-entrypoint-codex-config-quoted-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject quoted-segment Codex mcp config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-quoted-mcp.out
+
+if run_entrypoint codex codex --config 'features . plugins=true' --version >/tmp/workcell-entrypoint-codex-config-spaced-feature.out 2>&1; then
+  echo "expected Workcell entrypoint to reject whitespace-padded Codex feature config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-spaced-feature.out
+
+if run_entrypoint codex codex --config 'features."remote_plugin=true' --version >/tmp/workcell-entrypoint-codex-config-malformed-quote.out 2>&1; then
+  echo "expected Workcell entrypoint to fail closed on malformed-quote Codex config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-malformed-quote.out
+
+# A benign, genuinely-permitted -c override must still pass (model is not on the
+# security-boundary blocklist).
+run_entrypoint codex codex --config 'model=gpt-5-codex' --version >/dev/null
+
 if run_entrypoint codex codex --add-dir=/tmp --version >/tmp/workcell-entrypoint-codex-add-dir.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex add-dir overrides" >&2
   exit 1

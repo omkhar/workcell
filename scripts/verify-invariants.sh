@@ -1381,6 +1381,20 @@ require_toml_assignment \
   exit 1
 }
 
+# The adapter AGENTS.md requires config.toml, managed_config.toml, and
+# requirements.toml to stay aligned on security-boundary config. Lock the
+# requirements [features] bans in lockstep with the managed baseline so the
+# plugin/marketplace surface cannot be re-enabled from the requirements contract.
+require_toml_exact_keys "${ROOT_DIR}/adapters/codex/requirements.toml" "features" \
+  "unified_exec" \
+  "plugins" \
+  "plugin_sharing" \
+  "remote_plugin" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "unified_exec" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugins" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugin_sharing" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "remote_plugin" "false" || exit 1
+
 codex_managed_config_tmpdir="$(mktemp -d)"
 
 quoted_key_config="${codex_managed_config_tmpdir}/quoted-key.toml"
