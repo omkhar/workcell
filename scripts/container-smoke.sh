@@ -2495,8 +2495,7 @@ fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-app-server.out
 
 # The app-server remote-control surface is denied on the CLI path too (bare
-# app-server is already denied outside the managed GUI path, so the daemon
-# enable-remote-control action never even reaches its own scan here).
+# app-server is already denied outside the managed GUI path).
 if run_entrypoint codex codex app-server daemon enable-remote-control >/tmp/workcell-entrypoint-codex-app-server-daemon.out 2>&1; then
   echo "expected Workcell entrypoint to reject the Codex app-server daemon remote-control surface on the CLI path" >&2
   exit 1
@@ -2515,9 +2514,8 @@ if run_entrypoint codex codex remote-control pair >/tmp/workcell-entrypoint-code
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-remote-control.out
 
-# exec-server is the experimental standalone exec daemon, not the managed GUI
-# backend, so it is blocked unconditionally. The exact-token match must not catch
-# the legitimate `exec` subcommand.
+# exec-server is the experimental standalone exec daemon (not the managed GUI
+# backend), blocked unconditionally; the exact-token match must not catch `exec`.
 if run_entrypoint codex codex exec-server >/tmp/workcell-entrypoint-codex-exec-server.out 2>&1; then
   echo "expected Workcell entrypoint to reject the Codex exec-server daemon subcommand" >&2
   exit 1
@@ -2557,13 +2555,12 @@ grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entryp
 run_entrypoint codex codex exec --help >/dev/null
 run_entrypoint codex codex features list >/dev/null
 
-# ALLOWLIST PERMIT COVERAGE. Every classified-safe read-only/session subcommand
-# on the deny-by-default allowlist (verified against real `codex --help` 0.144)
-# must pass the gate. `<sub> --help` prints Codex's own help and exits 0, so a
-# clean exit proves the token was permitted AND reached Codex. `help` does not
-# accept `--help`, so it is proven via the block-message-absent pattern below.
-# execpolicy is a hidden (not in top-level `--help`) but real read-only command
-# classifier the managed autonomy path invokes; it must stay on the allowlist.
+# ALLOWLIST PERMIT COVERAGE. Every classified-safe subcommand on the deny-by-
+# default allowlist must pass the gate: `<sub> --help` prints Codex's help and
+# exits 0, so a clean exit proves the token was permitted AND reached Codex.
+# `help` does not accept `--help`, so it uses the block-message-absent pattern
+# below. execpolicy is a hidden but real read-only classifier the managed
+# autonomy path invokes; it must stay on the allowlist.
 for codex_allowed_sub in e review login logout completion doctor apply a resume fork archive unarchive delete debug execpolicy; do
   run_entrypoint codex codex "${codex_allowed_sub}" --help >/dev/null
 done
@@ -2588,12 +2585,10 @@ for codex_denied_sub in cloud cloud-tasks responses-api-proxy stdio-to-uds sandb
   grep -q "Workcell blocked unsupported Codex CLI subcommand" "${codex_deny_out}"
 done
 
-# BARE-PROMPT PRESERVATION (Codex P2 review). Codex's contract is
-# `codex [OPTIONS] [PROMPT]`: a first bare token that is NOT a known subcommand
-# is PROMPT text, which the gate must permit (an earlier deny-by-default-over-
-# all-tokens draft wrongly rejected the prompt's first word). A made-up token
-# that is not a Codex subcommand must therefore PASS the gate as a prompt, not
-# die. `--version` short-circuits Codex after the gate so the run exits 0.
+# BARE-PROMPT PRESERVATION (Codex P2 review). In `codex [OPTIONS] [PROMPT]`, a
+# first bare token that is NOT a known subcommand is PROMPT text the gate must
+# permit (an earlier deny-over-all-tokens draft wrongly rejected it). A made-up
+# token must PASS as a prompt; `--version` short-circuits Codex so it exits 0.
 for codex_prompt_token in frobnicate some-new-daemon; do
   codex_prompt_out="/tmp/workcell-entrypoint-codex-prompt-${codex_prompt_token}.out"
   run_entrypoint codex codex "${codex_prompt_token}" --version >"${codex_prompt_out}" 2>&1 || true
@@ -2616,14 +2611,12 @@ if grep -q "Workcell blocked" "${codex_bare_prompt_out}"; then
 fi
 grep -q "codex-cli" "${codex_bare_prompt_out}"
 
-# A permitted subcommand behind a value-taking global still passes the gate
-# (the global's value is consumed, not mistaken for the command token), while a
-# denied one behind the same global is still denied (covered above for plugin).
+# A permitted subcommand behind a value-taking global still passes the gate (the
+# global's value is consumed, not mistaken for the command token).
 run_entrypoint codex codex --model gpt-5 exec --help >/dev/null
 # app/app-server are GUI-gated: denied on the CLI path (run_entrypoint pins
-# AGENT_UI=cli), so the CLI-path deny is covered here; the AGENT_UI=gui PERMIT
-# path is exercised in the nested-container block below, where AGENT_UI is not
-# pinned at the wrapper boundary.
+# AGENT_UI=cli); the AGENT_UI=gui PERMIT path is exercised in the nested-container
+# block below, where AGENT_UI is not pinned at the wrapper boundary.
 if run_entrypoint codex codex app >/tmp/workcell-entrypoint-codex-app-cli.out 2>&1; then
   echo "expected Workcell entrypoint to reject the Codex app subcommand on the CLI path" >&2
   exit 1

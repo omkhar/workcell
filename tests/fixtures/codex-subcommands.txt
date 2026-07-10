@@ -2,47 +2,29 @@
 #
 # codex-version: 0.142.4
 #
-# The `# codex-version:` stamp above is MACHINE-READABLE and load-bearing.
-# scripts/verify-invariants.sh parses it and asserts it EQUALS `ARG
-# CODEX_VERSION` in runtime/container/Dockerfile. A CODEX_VERSION bump (e.g. via
-# scripts/update-provider-pins.sh) that does NOT regenerate this fixture and
-# bump this stamp FAILS CI. This closes a completeness-check meta-gap: without
-# the stamp, `fixture subset-of classified` passes VACUOUSLY on a stale fixture,
-# so a NEW upstream subcommand absent from the stale list is never compared and
-# falls through the gate as prompt text. Format: exactly `# codex-version: X.Y.Z`
-# on its own line (leading `# `, single space after the colon).
+# The `# codex-version:` stamp above is MACHINE-READABLE and load-bearing:
+# scripts/verify-invariants.sh parses it and asserts it EQUALS `ARG CODEX_VERSION`
+# in runtime/container/Dockerfile, so a bump that does NOT regenerate this fixture
+# fails CI. Without it, `fixture subset-of classified` passes VACUOUSLY on a stale
+# fixture and a new upstream subcommand leaks through the gate as prompt text.
+# Format: exactly `# codex-version: X.Y.Z` on its own line (`# `, single space
+# after the colon).
 #
-# Pinned version: 0.142.4 (runtime/container/Dockerfile CODEX_VERSION). This is
-# the EXACT set of first-token subcommand names Codex dispatches on. It is
+# The tokens below are the EXACT first-token subcommand names Codex dispatches on,
 # derived from the AUTHORITATIVE clap `enum Subcommand` in the pinned source
-# (openai/codex tag rust-v0.142.4, codex-rs/cli/src/main.rs), NOT from
-# `codex --help`: clap kebab-cases each variant name and dispatches on aliases
-# and `#[command(hide = true)]` HIDDEN variants too, none of which `--help`
-# prints. The hidden/alias tokens that `--help` omits but Codex still dispatches
-# on are: the `e` alias (exec), the `a` alias (apply), `mcp-server`, `app`,
-# `execpolicy`, `cloud-tasks` (alias of cloud), `responses-api-proxy` (hidden
-# proxy daemon), `stdio-to-uds` (hidden socket bridge), and `exec-server`.
-# Deriving from `--help` alone silently omitted cloud-tasks/responses-api-proxy/
-# stdio-to-uds, which then fell through the gate as "prompt" text and let the
-# real Codex dispatch them — the fence bypass this fixture now closes.
+# (openai/codex tag rust-v0.142.4, codex-rs/cli/src/main.rs), NOT `codex --help`:
+# clap also dispatches on aliases and `#[command(hide = true)]` HIDDEN variants
+# that `--help` omits (e/a aliases, mcp-server, app, execpolicy, cloud-tasks,
+# responses-api-proxy, stdio-to-uds, exec-server). Deriving from `--help` alone
+# omitted several, which then leaked through as prompt text. A first bare token
+# NOT on this list is Codex's [PROMPT] argument, not a command.
 #
-# It does NOT include prompt text: a first bare token not on this list is
-# treated by Codex as the [PROMPT] argument, not a command.
-#
-# The completeness check in scripts/verify-invariants.sh asserts that EVERY name
-# below is classified by reject_unsafe_codex_args
-# (runtime/container/provider-policy.sh) as either ALLOW (permitted),
-# GUI-gated (app-server, permitted only under AGENT_UI=gui), or DENY (rejected).
-# Because a token off this list is permitted as prompt text, an unclassified NEW
-# subcommand introduced by a future pin bump would otherwise silently leak
-# through as a "prompt". This fixture makes that fail CI: when the pin is bumped,
-# the refresh review MUST regenerate this list from the new pinned clap
-# Subcommand enum source (including paren-less unit variants, aliases, and hidden
-# `#[clap(hide = true)]` tokens), classify any new name in provider-policy.sh,
-# AND bump the `# codex-version:` stamp above to the new CODEX_VERSION, or the
-# build stays red (the stamp-vs-Dockerfile equality check fails first).
-#
-# One subcommand name per line; blank lines and `#` comments are ignored.
+# The completeness check asserts EVERY name below is classified by
+# reject_unsafe_codex_args (runtime/container/provider-policy.sh) as ALLOW,
+# GUI-gated (app-server, AGENT_UI=gui only), or DENY. A pin bump MUST regenerate
+# this list from the new clap Subcommand enum (unit variants, aliases, hidden
+# tokens), classify any new name in provider-policy.sh, AND bump the stamp above,
+# or the build stays red. One name per line; blank/`#` lines are ignored.
 exec
 e
 review
