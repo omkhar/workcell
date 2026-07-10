@@ -173,6 +173,27 @@ reject_unsafe_codex_args() {
       continue
     fi
 
+    # DENY-BY-DEFAULT after the permitted `app-server` subcommand (GUI path only):
+    # ANY user token following `app-server` dies, full stop. The managed GUI launch
+    # is EXACTLY `codex app-server` with NO trailing user args (entrypoint.sh sets
+    # `set -- codex app-server`); the sandbox/approval flags it needs are PREPENDED
+    # by provider-wrapper.sh AFTER this check, so they never appear in the argv
+    # scanned here. Thus a legitimate managed launch reaches this function as bare
+    # `app-server` with zero trailing tokens. A token denylist over pinned Codex
+    # 0.142.4 leaked: AppServerCommand also accepts `--listen ws://IP:PORT` (opens a
+    # listening socket), `--stdio`, `--strict-config`, `--analytics-default-enabled`,
+    # `-c …`, plus AppServerSubcommand/AppServerDaemonSubcommand control tokens —
+    # every one reachable via an AGENT_UI=gui override. Rejecting ANY token instead
+    # of enumerating them is stricter, simpler, and covers future flags without a
+    # hand-maintained list. This check runs BEFORE the `--` break below because
+    # `codex app-server` has NO `[PROMPT]` positional (usage: `app-server [OPTIONS]
+    # [COMMAND]`; `app-server -- foo` is parsed as the unrecognized subcommand
+    # `foo`, not prompt text), so a post-`--` token is still not the managed shape
+    # and must die too.
+    if [[ "${saw_app_server}" -eq 1 ]]; then
+      workcell_die "Workcell blocked unsupported Codex app-server argument: ${arg} (only the managed no-arg app-server launch is permitted)"
+    fi
+
     # A bare `--` ends option/subcommand parsing: every following token is literal
     # prompt text Codex forwards to the session, never a flag/subcommand (verified:
     # `codex -- plugin` starts the TUI with prompt "plugin"). Stop here so the
@@ -181,32 +202,6 @@ reject_unsafe_codex_args() {
     # `--` have already run, so only post-`--` prompt text is exempt.
     if [[ "${arg}" == "--" ]]; then
       break
-    fi
-
-    # After the permitted `app-server` subcommand (GUI path only), scan its args
-    # for the control surface and DENY it. The managed GUI launch is exactly
-    # `codex app-server` with NO trailing user args; the sandbox/approval flags it
-    # needs are PREPENDED by provider-wrapper.sh AFTER this check. Pinned Codex
-    # 0.142.4 (codex-rs/cli/src/main.rs) hides a `--remote-control` flag plus
-    # AppServerSubcommand (daemon, proxy, generate-*) and AppServerDaemonSubcommand
-    # (bootstrap, start, restart, enable/disable-remote-control, stop, version,
-    # pid-update-loop) enums that all reach the remote-control surface the
-    # standalone `remote-control` deny blocks. Deny the known control tokens
-    # explicitly rather than allowlisting flags: the managed launch has no trailing
-    # args, so an empty scan permits it while every control token dies. This block
-    # only REJECTS (never `continue`s), so a smuggled `-c …` after `app-server`
-    # still falls through to the config check below.
-    if [[ "${saw_app_server}" -eq 1 ]]; then
-      case "${arg}" in
-        --remote-control | --remote-control=*)
-          workcell_die "Workcell blocked unsafe Codex app-server override: --remote-control"
-          ;;
-        daemon | proxy | generate-ts | generate-json-schema | generate-internal-json-schema | \
-          bootstrap | start | restart | enable-remote-control | disable-remote-control | \
-          stop | version | pid-update-loop)
-          workcell_die "Workcell blocked unsupported Codex app-server subcommand: ${arg}"
-          ;;
-      esac
     fi
 
     # After the `features` subcommand, its ACTION token is the next bare token.

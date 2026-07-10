@@ -3631,29 +3631,33 @@ test -f "$CODEX_HOME/config.toml"
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-cloud.out
     # app/app-server are the managed GUI backend: denied on cli, PERMITTED under
-    # AGENT_UI=gui. `app-server --help` prints Codex help and exits 0, proving the
-    # gui gate lets the token through (no workcell block message).
+    # AGENT_UI=gui. The gate now permits ONLY the bare managed launch `codex
+    # app-server` with NO trailing args (see reject_unsafe_codex_args). The bare
+    # launch passes the workcell check, then execs real codex app-server which opens
+    # its stdio transport; </dev/null delivers EOF so it exits without hanging. The
+    # PERMIT proof is the ABSENCE of any workcell block message (NOT --help: --help
+    # is a trailing token and is now correctly DENIED — asserted below).
     if codex app-server >/tmp/codex-nested-cli-app-server.out 2>&1; then
       echo "expected the app-server GUI backend to be denied on the CLI path" >&2
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path" /tmp/codex-nested-cli-app-server.out
-    AGENT_UI=gui codex app-server --help </dev/null >/tmp/codex-nested-gui-app-server-permit.out 2>&1 || true
+    AGENT_UI=gui timeout 20 codex app-server </dev/null >/tmp/codex-nested-gui-app-server-permit.out 2>&1 || true
     if grep -q "Workcell blocked" /tmp/codex-nested-gui-app-server-permit.out; then
-      echo "expected AGENT_UI=gui to permit the managed app-server GUI backend" >&2
+      echo "expected AGENT_UI=gui to permit the bare managed app-server GUI launch" >&2
       cat /tmp/codex-nested-gui-app-server-permit.out >&2
       exit 1
     fi
     # The managed GUI allowance for `app-server` permits ONLY the bare launch (plus
     # the sandbox/approval flags provider-wrapper.sh prepends, never in user argv).
-    # Pinned Codex 0.142.4 hides a `--remote-control` flag on AppServerCommand and
-    # dispatches an AppServerSubcommand (daemon/proxy/generate-*) plus an
-    # AppServerDaemonSubcommand (bootstrap/enable-remote-control/…), so
-    # `codex app-server --remote-control`, `codex app-server daemon`, and
-    # `codex app-server daemon enable-remote-control` reach the remote-control
-    # surface the standalone `remote-control` deny blocks. Under AGENT_UI=gui these
-    # app-server control tokens MUST be denied even though the bare app-server
-    # token is permitted.
+    # reject_unsafe_codex_args is DENY-BY-DEFAULT here: ANY user token after
+    # `app-server` (before or after `--`) dies. Pinned Codex 0.142.4 exposes not
+    # just the control tokens (`--remote-control`, daemon/proxy/generate-*,
+    # bootstrap/enable-remote-control/…) but network-listening/config flags on
+    # AppServerCommand — `--listen ws://IP:PORT` opens a listening socket, `--stdio`,
+    # `--strict-config`, `--analytics-default-enabled`, `-c …` — none of which the
+    # managed launch passes. Asserting a representative control token AND the
+    # network-listening/config flags proves the general rule, not a token denylist.
     # NOTE: this whole block runs inside a single-quoted `bash -lc '…'` above, so
     # it must contain NO single quotes. Each case is asserted explicitly (no loop,
     # no printf/tr) to stay single-quote-free.
@@ -3667,13 +3671,16 @@ test -f "$CODEX_HOME/config.toml"
       fi
       grep -q "Workcell blocked" "${out}"
     }
+    # Representative control tokens (regression: the old denylist targeted these).
     assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-remote-control.out --remote-control
-    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-daemon.out daemon
     assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-daemon-erc.out daemon enable-remote-control
-    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-bootstrap-rc.out bootstrap --remote-control
-    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-daemon-bootstrap-rc.out daemon bootstrap --remote-control
-    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-proxy.out proxy
-    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-generate-ts.out generate-ts
+    # Network-listening / config surface the old denylist LET THROUGH (P1 finding).
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-listen.out --listen ws://0.0.0.0:4500
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-stdio.out --stdio
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-strict-config.out --strict-config
+    # Deny-by-default: even a benign trailing flag (--help) dies — only the bare
+    # no-arg launch is the managed shape.
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-help.out --help
     # A permitted read-only subcommand from the allowlist passes the gate; the
     # block message must be ABSENT (review may exit non-zero without a repo, but
     # it is never blocked by workcell).
