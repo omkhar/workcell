@@ -1,5 +1,17 @@
 # Complete Codex subcommand namespace for the PINNED runtime Codex.
 #
+# codex-version: 0.142.4
+#
+# The `# codex-version:` stamp above is MACHINE-READABLE and load-bearing.
+# scripts/verify-invariants.sh parses it and asserts it EQUALS `ARG
+# CODEX_VERSION` in runtime/container/Dockerfile. A CODEX_VERSION bump (e.g. via
+# scripts/update-provider-pins.sh) that does NOT regenerate this fixture and
+# bump this stamp FAILS CI. This closes a completeness-check meta-gap: without
+# the stamp, `fixture subset-of classified` passes VACUOUSLY on a stale fixture,
+# so a NEW upstream subcommand absent from the stale list is never compared and
+# falls through the gate as prompt text. Format: exactly `# codex-version: X.Y.Z`
+# on its own line (leading `# `, single space after the colon).
+#
 # Pinned version: 0.142.4 (runtime/container/Dockerfile CODEX_VERSION). This is
 # the EXACT set of first-token subcommand names Codex dispatches on. It is
 # derived from the AUTHORITATIVE clap `enum Subcommand` in the pinned source
@@ -25,8 +37,10 @@
 # subcommand introduced by a future pin bump would otherwise silently leak
 # through as a "prompt". This fixture makes that fail CI: when the pin is bumped,
 # the refresh review MUST regenerate this list from the new pinned clap
-# Subcommand enum source and classify any new name in provider-policy.sh, or the
-# build stays red.
+# Subcommand enum source (including paren-less unit variants, aliases, and hidden
+# `#[clap(hide = true)]` tokens), classify any new name in provider-policy.sh,
+# AND bump the `# codex-version:` stamp above to the new CODEX_VERSION, or the
+# build stays red (the stamp-vs-Dockerfile equality check fails first).
 #
 # One subcommand name per line; blank lines and `#` comments are ignored.
 exec

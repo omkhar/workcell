@@ -1460,14 +1460,56 @@ rm -rf "${codex_managed_config_tmpdir}"
 # unclassified new subcommand would fall through and be permitted as if it were a
 # prompt. This check enforces that invariant against the pinned runtime Codex:
 # it asserts every name in the checked-in fixture (tests/fixtures/
-# codex-subcommands.txt, the full pinned `codex --help` subcommand list) appears
-# as an EXACT case label in the ALLOW, GUI-gated, `features`, or DENY branch of
-# the gate. A pin bump that adds a subcommand must regenerate the fixture from
-# the new `codex --help` and classify the new name in provider-policy.sh, or this
-# fails CI (the fixture cannot be enumerated in-container during a host-side
-# static verify, so it is a checked-in fixture the refresh review updates).
+# codex-subcommands.txt, the full pinned Codex subcommand list derived from the
+# clap `enum Subcommand` source) appears as an EXACT case label in the ALLOW,
+# GUI-gated, `features`, or DENY branch of the gate. A pin bump that adds a
+# subcommand must regenerate the fixture from the new pinned clap Subcommand
+# source and classify the new name in provider-policy.sh, or this fails CI (the
+# fixture cannot be enumerated in-container during a host-side static verify, so
+# it is a checked-in fixture the refresh review updates).
+#
+# The `fixture subset-of classified` assertion below is VACUOUS on a STALE
+# fixture: if a CODEX_VERSION bump adds an upstream subcommand but the fixture is
+# not regenerated, the new name is simply absent from the fixture, is never
+# compared, and falls through the gate as prompt text. To close that meta-gap the
+# fixture carries a `# codex-version:` stamp and this check FIRST asserts the
+# stamp EQUALS `ARG CODEX_VERSION` in the Dockerfile, so a bump that skips fixture
+# regeneration fails here before the subset check can pass vacuously.
 CODEX_POLICY_FILE="${ROOT_DIR}/runtime/container/provider-policy.sh"
 CODEX_SUBCOMMAND_FIXTURE="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"
+CODEX_DOCKERFILE="${ROOT_DIR}/runtime/container/Dockerfile"
+
+# Bind the fixture to the pinned Codex version so a CODEX_VERSION bump forces
+# fixture regeneration. Parse `ARG CODEX_VERSION=<v>` from the Dockerfile and the
+# `# codex-version: <v>` stamp from the fixture, then assert they are EQUAL. On
+# mismatch the subset check below could pass vacuously against a stale fixture, so
+# fail closed here with regeneration instructions.
+codex_dockerfile_version="$(
+  sed -n 's/^ARG CODEX_VERSION=\([^ ]*\).*/\1/p' "${CODEX_DOCKERFILE}" | head -n 1
+)"
+codex_fixture_version="$(
+  sed -n 's/^#[[:space:]]*codex-version:[[:space:]]*\([^[:space:]]*\).*/\1/p' "${CODEX_SUBCOMMAND_FIXTURE}" | head -n 1
+)"
+if [[ -z "${codex_dockerfile_version}" ]]; then
+  echo 'Codex subcommand completeness check FAILED: could not parse ARG CODEX_VERSION from runtime/container/Dockerfile.' >&2
+  exit 1
+fi
+if [[ -z "${codex_fixture_version}" ]]; then
+  echo 'Codex subcommand completeness check FAILED: tests/fixtures/codex-subcommands.txt is missing the "# codex-version: <v>" stamp.' >&2
+  echo 'Add a "# codex-version: <CODEX_VERSION>" header line matching runtime/container/Dockerfile ARG CODEX_VERSION.' >&2
+  exit 1
+fi
+if [[ "${codex_dockerfile_version}" != "${codex_fixture_version}" ]]; then
+  echo "Codex subcommand completeness check FAILED: fixture is stale versus the pinned Codex version." >&2
+  echo "  Dockerfile ARG CODEX_VERSION: ${codex_dockerfile_version}" >&2
+  echo "  fixture # codex-version:      ${codex_fixture_version}" >&2
+  echo 'A CODEX_VERSION bump MUST regenerate tests/fixtures/codex-subcommands.txt from the new pinned' >&2
+  echo 'codex-rs/cli/src/main.rs clap "enum Subcommand" source (include paren-less unit variants, aliases,' >&2
+  echo 'and hidden "#[clap(hide = true)]" tokens), reclassify any new name in runtime/container/provider-policy.sh,' >&2
+  echo "and bump the fixture's \"# codex-version:\" stamp to ${codex_dockerfile_version}. Otherwise a new upstream" >&2
+  echo 'subcommand falls through the deny-by-default gate as prompt text.' >&2
+  exit 1
+fi
 
 # Extract the exact case-label tokens the gate classifies. The classification
 # case statement lives strictly between the unique `DENY-BY-DEFAULT over the
@@ -1518,7 +1560,7 @@ if [[ -n "${codex_unclassified}" ]]; then
   echo 'Codex subcommand completeness check FAILED: the pinned Codex exposes subcommand(s) that reject_unsafe_codex_args does not classify as ALLOW or DENY.' >&2
   echo 'Unclassified (would leak through the deny-by-default gate as prompt text):' >&2
   printf '  %s\n' "${codex_unclassified}" >&2
-  echo 'Classify each in runtime/container/provider-policy.sh (ALLOW or DENY set) or, if a pin bump removed it, regenerate tests/fixtures/codex-subcommands.txt from the pinned codex --help.' >&2
+  echo 'Classify each in runtime/container/provider-policy.sh (ALLOW or DENY set) or, if a pin bump removed it, regenerate tests/fixtures/codex-subcommands.txt from the pinned clap enum Subcommand source.' >&2
   exit 1
 fi
 
