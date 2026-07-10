@@ -12,8 +12,10 @@ import (
 )
 
 func TestWorkcellVersionFlagReadsFirstChangelogVersion(t *testing.T) {
-	t.Parallel()
-
+	// Intentionally serial: writes-then-execs the launcher fixture on disk.
+	// Running these in parallel races against the Linux kernel's ETXTBSY
+	// check when concurrent goroutines exec freshly-written executables
+	// (observed as a pre-merge flake in the validator container).
 	changelog := "# Changelog\n\n## Unreleased\n\n## v9.8.7 - 2099-01-01\n\n## v9.9.9 - 2099-02-01\n"
 	workcellPath := writeWorkcellVersionFixture(t, &changelog)
 
@@ -24,8 +26,7 @@ func TestWorkcellVersionFlagReadsFirstChangelogVersion(t *testing.T) {
 }
 
 func TestWorkcellVersionFlagCapturesPreReleaseSuffix(t *testing.T) {
-	t.Parallel()
-
+	// Serial — see ETXTBSY note on TestWorkcellVersionFlagReadsFirstChangelogVersion.
 	changelog := "# Changelog\n\n## Unreleased\n\n## v1.2.3-rc.1 - 2099-01-01\n\n## v1.2.2 - 2098-12-01\n"
 	workcellPath := writeWorkcellVersionFixture(t, &changelog)
 
@@ -43,8 +44,7 @@ func TestWorkcellVersionFlagCapturesPreReleaseSuffix(t *testing.T) {
 }
 
 func TestWorkcellVersionFlagReportsUnknownWhenChangelogMissing(t *testing.T) {
-	t.Parallel()
-
+	// Serial — see ETXTBSY note on TestWorkcellVersionFlagReadsFirstChangelogVersion.
 	workcellPath := writeWorkcellVersionFixture(t, nil)
 
 	got := runWorkcellVersion(t, workcellPath)
@@ -54,8 +54,7 @@ func TestWorkcellVersionFlagReportsUnknownWhenChangelogMissing(t *testing.T) {
 }
 
 func TestWorkcellVersionFlagReportsUnknownWithoutVersionHeading(t *testing.T) {
-	t.Parallel()
-
+	// Serial — see ETXTBSY note on TestWorkcellVersionFlagReadsFirstChangelogVersion.
 	changelog := "# Changelog\n\n## Unreleased\n\n### Changed\n\n- no released version yet\n"
 	workcellPath := writeWorkcellVersionFixture(t, &changelog)
 
