@@ -27,25 +27,111 @@ effective_codex_profile() {
   esac
 }
 
+# Normalize a Codex `-c key=value` KEY so equivalent TOML spellings collapse to
+# one canonical form before the blocklist match: valid TOML lets a dotted key be
+# quoted per segment (features."remote_plugin"), single-quoted (features.'x'), or
+# padded with whitespace around the dots (features . plugins). Without this,
+# those spellings would slip past every case pattern below — including the
+# pre-existing mcp/sandbox/profile blocks. Only the KEY (before the first `=`) is
+# normalized; the value is never touched. Segments are split on `.`, trimmed, and
+# stripped of ONE matching pair of surrounding double or single quotes. If any
+# quote character survives (unbalanced or a quoted segment that itself contained a
+# `.` and was split apart), the key is malformed/adversarial and we FAIL CLOSED —
+# returning it as blocked rather than guessing its intent.
+#
+# We deliberately do NOT decode TOML basic-string escapes (a spec parser turns
+# `"\u0072emote_plugin"` into `remote_plugin`, `"\u0061pproval_policy"` into
+# `approval_policy`, etc.). Re-implementing TOML unescaping in bash would be
+# error-prone, so any backslash surviving in a segment is treated as
+# malformed/adversarial and FAILS CLOSED — the same posture as a residual quote.
+# Bare/quoted keys in the real blocklist never contain backslashes, so this only
+# rejects escape-obfuscated keys. Emits the canonical lowercase key on stdout.
+codex_normalize_config_key() {
+  local key="${1%%=*}"
+  local -a segments=()
+  local segment normalized="" first=1
+  local backslash=$'\\'
+  local IFS='.'
+  read -r -a segments <<<"${key}"
+  for segment in "${segments[@]}"; do
+    # Trim surrounding whitespace (handles `features . plugins`).
+    segment="${segment#"${segment%%[![:space:]]*}"}"
+    segment="${segment%"${segment##*[![:space:]]}"}"
+    # Strip one matching pair of surrounding quotes.
+    if [[ ${#segment} -ge 2 && "${segment:0:1}" == '"' && "${segment: -1}" == '"' ]]; then
+      segment="${segment:1:${#segment}-2}"
+    elif [[ ${#segment} -ge 2 && "${segment:0:1}" == "'" && "${segment: -1}" == "'" ]]; then
+      segment="${segment:1:${#segment}-2}"
+    fi
+    # Any residual quote, or any backslash (TOML escape we refuse to decode),
+    # => malformed/adversarial => fail closed.
+    if [[ "${segment}" == *'"'* || "${segment}" == *"'"* || "${segment}" == *"${backslash}"* ]]; then
+      printf '%s\n' '__workcell_malformed__'
+      return 0
+    fi
+    if [[ "${first}" -eq 1 ]]; then
+      normalized="${segment}"
+      first=0
+    else
+      normalized="${normalized}.${segment}"
+    fi
+  done
+  printf '%s\n' "${normalized,,}"
+}
+
 codex_config_override_is_blocked() {
   local value="$1"
-  local key="${value%%=*}"
-  local key_lower="${key,,}"
+  local key_lower
+  key_lower="$(codex_normalize_config_key "${value}")"
+
+  # Fail-closed sentinel for keys that stayed malformed after normalization.
+  [[ "${key_lower}" == "__workcell_malformed__" ]] && return 0
 
   case "${key_lower}" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
       return 0
       ;;
   esac
 
+  # Codex parses a `-c` value as TOML, so an inline TABLE smuggles blocked child
+  # keys under a parent that is not itself blocked above — e.g.
+  # `features={remote_plugin=true}` or `profiles={foo={sandbox_mode="danger-full-access"}}`
+  # normalize to the bare parent (`features` / `profiles`), which no case matches.
+  # When the value (everything after the first `=`, whitespace-trimmed) is an
+  # inline table (begins with `{`), block it for every guarded namespace parent:
+  # such a table can set any of the banned children. The managed baseline owns
+  # these tables, so there is no legitimate `-c` whole-table override. Scalar
+  # values (no leading `{`, e.g. model=..., history.persistence="none") are
+  # untouched. Guarded parents cover both the gap namespaces (features, profiles,
+  # profiles.<name>) and the ones already blocked bare above (kept here so the
+  # guard stays robust if a bare-parent case is ever narrowed).
+  if [[ "${value}" == *=* ]]; then
+    local raw_value="${value#*=}"
+    raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
+    if [[ "${raw_value}" == '{'* ]]; then
+      case "${key_lower}" in
+        features | plugins | marketplaces | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
+          return 0
+          ;;
+      esac
+    fi
+  fi
+
   return 1
 }
 
+# Value-taking global Codex flags must be consumed before first-subcommand
+# detection, or their VALUE would be mistaken for the first command token and
+# the subcommand blocklist below would never run (e.g. `--model gpt-5 plugin`
+# would treat gpt-5 as the command). Keep the set of value-taking globals in
+# this loop in lockstep with codex_first_subcommand in
+# runtime/container/provider-wrapper.sh.
 reject_unsafe_codex_args() {
   local expect_value=""
   local arg
   local saw_command=0
   local allowed_profile=""
+  local expect_features_action=0
 
   provider_policy_allows_breakglass && return 0
 
@@ -73,27 +159,126 @@ reject_unsafe_codex_args() {
       continue
     fi
 
-    if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
-      saw_command=1
-      if [[ "${AGENT_UI:-cli}" != "gui" ]]; then
-        case "${arg}" in
-          app | app-server | cloud | mcp | sandbox)
-            workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
-            ;;
-        esac
-      fi
+    # A bare `--` ends option/subcommand parsing: every following token is
+    # literal prompt text that Codex forwards to the interactive/exec session,
+    # never a flag or subcommand (verified: `codex -- plugin` starts the TUI
+    # with prompt "plugin" rather than dispatching the plugin subcommand). Stop
+    # here so the blocklists do not over-reject a prompt that begins with words
+    # like `plugin`/`mcp`. This mirrors codex_first_subcommand in
+    # runtime/container/provider-wrapper.sh, which returns at `--`. Flag and
+    # value checks BEFORE `--` have already run, so dangerous flags are still
+    # rejected; only post-`--` prompt text is exempt.
+    if [[ "${arg}" == "--" ]]; then
+      break
+    fi
+
+    # After the first subcommand `features`, its ACTION token (enable/disable/
+    # list) is the next bare token. `features enable/disable <name>` persistently
+    # writes features.<name>=true/false into the writable CODEX_HOME/config.toml
+    # (equivalent to the blocked `-c features.<name>=…`), re-enabling e.g.
+    # plugins/remote_plugin for the in-TUI browser, so both mutating actions are
+    # blocked. `features list` is a read-only inspect (used by the managed
+    # validation path) and stays permitted; the managed baseline sets features
+    # declaratively in config, so it never needs the imperative toggle.
+    if [[ "${expect_features_action}" -eq 1 ]] && [[ "${arg}" != -* ]]; then
+      expect_features_action=0
+      case "${arg}" in
+        enable | disable)
+          workcell_die "Workcell blocked unsupported Codex CLI subcommand: features ${arg}"
+          ;;
+      esac
       continue
     fi
 
+    if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
+      saw_command=1
+      # DENY-BY-DEFAULT subcommand gate. The first bare token is Codex's
+      # subcommand; permit it ONLY if it is on the classified-safe ALLOWLIST
+      # below, otherwise die. This replaces the historical blocklist that every
+      # CLI version bump silently reopened (a new dangerous subcommand shipped
+      # unlisted was permitted until someone noticed); with an allowlist, any
+      # new AND any unknown subcommand is denied until explicitly vetted.
+      #
+      # The permit set is the read-only/session surface verified against real
+      # `codex --help` (0.144): exec + its `e` alias, review, login, logout,
+      # completion, doctor, apply + its `a` alias, resume, fork, archive,
+      # unarchive, delete, help, debug. These take a fixed image and only read
+      # state or drive an in-session/session-management flow. `execpolicy` is a
+      # hidden (not in `--help`) but real subcommand present in the pinned
+      # runtime Codex: it is a pure read-only command classifier
+      # (`codex execpolicy check --rules … <cmd>` returns a JSON allow/prompt/
+      # forbid decision, mutating nothing) that the managed prompt-autonomy path
+      # and verify-invariants both invoke — it MUST stay permitted or the
+      # session-rule enforcement breaks (empirically: omitting it fails
+      # container-smoke's execpolicy checks). Exact-token discipline (NOT globs)
+      # keeps the fence tight: `exec` != `exec-server`, `mcp` != `mcp-server`,
+      # so the daemon variants stay denied. Keep this list in lockstep with the
+      # non-runtime set in codex_managed_profile_applies and the value-taking
+      # globals in codex_first_subcommand
+      # (runtime/container/provider-wrapper.sh; same first-token detection).
+      case "${arg}" in
+        exec | e | review | login | logout | completion | doctor | \
+          apply | a | resume | fork | archive | unarchive | delete | \
+          help | debug | execpolicy)
+          continue
+          ;;
+        features)
+          # `features` bare and `features list` are read-only inspects and stay
+          # permitted; arm the action check so the next bare token (enable/
+          # disable) is caught and denied by the block above.
+          expect_features_action=1
+          continue
+          ;;
+        app | app-server)
+          # app-server is the managed GUI backend Workcell launches (see
+          # entrypoint.sh), so it is permitted ONLY under AGENT_UI=gui; on the
+          # CLI path it is not a supported surface and is denied. The GUI gate is
+          # scoped to these two tokens; every other non-allowlisted subcommand is
+          # denied on every UI (below), so an in-container AGENT_UI=gui override
+          # cannot smuggle in plugin/mcp/remote-control the way a GUI-gated
+          # blocklist once let it.
+          [[ "${AGENT_UI:-cli}" != "gui" ]] &&
+            workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
+          continue
+          ;;
+      esac
+      # Everything not on the allowlist above (plugin, remote-control,
+      # exec-server, mcp, mcp-server, cloud, sandbox, update, and any unknown or
+      # future subcommand) is denied — deny-by-default.
+      workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
+    fi
+
     case "${arg}" in
-      --dangerously-bypass-approvals-and-sandbox | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
+      # Every Codex `--dangerously-bypass-*` flag is DANGEROUS by codex's own docs
+      # (0.143 adds --dangerously-bypass-hook-trust alongside the existing
+      # --dangerously-bypass-approvals-and-sandbox); none is valid in managed
+      # mode. Glob-match the whole bypass family so future dangerously-bypass
+      # flags are covered without a code change (also catches any
+      # `--dangerously-bypass-*=value` form). Scope is `--dangerously-bypass-*`,
+      # NOT `--dangerously-*`, so it does not swallow non-codex tokens like
+      # Claude's `--dangerously-skip-permissions` when they appear as data passed
+      # to `codex execpolicy check <command…>`. Keep the remaining explicit unsafe
+      # flags in the same case/message. --yolo is Codex's documented alias for
+      # --dangerously-bypass-approvals-and-sandbox (it is a hidden alias, so the
+      # --dangerously-bypass-* glob does not reach it — block the alias and its
+      # =value form explicitly).
+      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -p | --profile)
         expect_value="profile"
         ;;
-      --cd)
+      -C | --cd)
         expect_value="cd"
+        ;;
+      -m | --model | -i | --image | --local-provider | --remote-auth-token-env)
+        # Permitted value-taking globals: consume the value so it is never
+        # mistaken for the first subcommand (see the function comment). The other
+        # value-taking globals (-c/--config, -C/--cd, -s/--sandbox, -p/--profile)
+        # are consumed by their own cases above, and --add-dir/--remote/--enable/
+        # --disable/-a/--ask-for-approval die on sight before their value is
+        # reached, so no value-taking global can desync subcommand detection.
+        expect_value="safe"
         ;;
       --ask-for-approval=*)
         workcell_die "Workcell blocked unsafe Codex override: --ask-for-approval"

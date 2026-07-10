@@ -2436,6 +2436,27 @@ if run_entrypoint codex codex --dangerously-bypass-approvals-and-sandbox >/tmp/w
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger.out
 
+# The whole --dangerously-* family is blocked (0.143 adds hook-trust); the glob
+# also future-proofs against new dangerously-flags.
+if run_entrypoint codex codex --dangerously-bypass-hook-trust --version >/tmp/workcell-entrypoint-codex-danger-hook-trust.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex dangerous hook-trust bypass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger-hook-trust.out
+
+if run_entrypoint codex codex --dangerously-bypass-future-badness --version >/tmp/workcell-entrypoint-codex-danger-future.out 2>&1; then
+  echo "expected Workcell entrypoint to reject any Codex --dangerously-bypass-* flag via the glob" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger-future.out
+
+# --yolo is Codex's hidden alias for --dangerously-bypass-approvals-and-sandbox.
+if run_entrypoint codex codex --yolo --version >/tmp/workcell-entrypoint-codex-yolo.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex --yolo bypass alias" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-yolo.out
+
 if run_entrypoint codex codex -a never --version >/tmp/workcell-entrypoint-codex-approval.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex approval overrides" >&2
   exit 1
@@ -2453,6 +2474,135 @@ if run_entrypoint codex codex app-server >/tmp/workcell-entrypoint-codex-app-ser
   exit 1
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-app-server.out
+
+if run_entrypoint codex codex plugin list >/tmp/workcell-entrypoint-codex-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex plugin marketplace/install surface" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-plugin.out
+
+if run_entrypoint codex codex remote-control pair >/tmp/workcell-entrypoint-codex-remote-control.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex remote-control app-server pairing surface" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-remote-control.out
+
+# exec-server is the experimental standalone exec daemon, not the managed GUI
+# backend, so it is blocked unconditionally. The exact-token match must not catch
+# the legitimate `exec` subcommand.
+if run_entrypoint codex codex exec-server >/tmp/workcell-entrypoint-codex-exec-server.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex exec-server daemon subcommand" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-exec-server.out
+
+# mcp-server (Codex-as-an-MCP-server daemon) and update (self-update that would
+# defeat the pinned image) are blocked unconditionally, same class as exec-server.
+if run_entrypoint codex codex mcp-server >/tmp/workcell-entrypoint-codex-mcp-server.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex mcp-server daemon subcommand" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-mcp-server.out
+
+if run_entrypoint codex codex update >/tmp/workcell-entrypoint-codex-update.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex self-update subcommand" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-update.out
+
+# features enable/disable persistently write config.toml; both are blocked while
+# the read-only `features list` and the `exec` subcommand stay permitted.
+if run_entrypoint codex codex features enable plugins >/tmp/workcell-entrypoint-codex-features-enable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject persistent Codex feature enable" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-enable.out
+
+if run_entrypoint codex codex features disable unified_exec >/tmp/workcell-entrypoint-codex-features-disable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject persistent Codex feature disable" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-disable.out
+
+# The exec-server/features exact-token blocks must not catch the legitimate
+# `exec` runtime subcommand or the read-only `features list`.
+run_entrypoint codex codex exec --help >/dev/null
+run_entrypoint codex codex features list >/dev/null
+
+# ALLOWLIST PERMIT COVERAGE. Every classified-safe read-only/session subcommand
+# on the deny-by-default allowlist (verified against real `codex --help` 0.144)
+# must pass the gate. `<sub> --help` prints Codex's own help and exits 0, so a
+# clean exit proves the token was permitted AND reached Codex. `help` does not
+# accept `--help`, so it is proven via the block-message-absent pattern below.
+# execpolicy is a hidden (not in top-level `--help`) but real read-only command
+# classifier the managed autonomy path invokes; it must stay on the allowlist.
+for codex_allowed_sub in e review login logout completion doctor apply a resume fork archive unarchive delete debug execpolicy; do
+  run_entrypoint codex codex "${codex_allowed_sub}" --help >/dev/null
+done
+codex_help_permit_out="/tmp/workcell-entrypoint-codex-help-permit.out"
+run_entrypoint codex codex help >"${codex_help_permit_out}" 2>&1 || true
+if grep -q "Workcell blocked" "${codex_help_permit_out}"; then
+  echo "expected the allowlisted 'help' subcommand to pass the deny-by-default gate" >&2
+  cat "${codex_help_permit_out}" >&2
+  exit 1
+fi
+
+# DENY-BY-DEFAULT REGRESSION LOCK. The whole point of the allowlist refactor:
+# a subcommand that is not on the permit set is denied even if it is unknown to
+# this policy — including MADE-UP future tokens a later CLI bump might add. A
+# blocklist would have silently permitted these; the allowlist denies them.
+for codex_denied_sub in frobnicate some-new-daemon cloud sandbox mcp; do
+  codex_deny_out="/tmp/workcell-entrypoint-codex-denydefault-${codex_denied_sub}.out"
+  if run_entrypoint codex codex "${codex_denied_sub}" >"${codex_deny_out}" 2>&1; then
+    echo "expected the deny-by-default gate to reject the non-allowlisted subcommand: ${codex_denied_sub}" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked unsupported Codex CLI subcommand" "${codex_deny_out}"
+done
+
+# A permitted subcommand behind a value-taking global still passes the gate
+# (the global's value is consumed, not mistaken for the command token), while a
+# denied one behind the same global is still denied (covered above for plugin).
+run_entrypoint codex codex --model gpt-5 exec --help >/dev/null
+# app/app-server are GUI-gated: denied on the CLI path (run_entrypoint pins
+# AGENT_UI=cli), so the CLI-path deny is covered here; the AGENT_UI=gui PERMIT
+# path is exercised in the nested-container block below, where AGENT_UI is not
+# pinned at the wrapper boundary.
+if run_entrypoint codex codex app >/tmp/workcell-entrypoint-codex-app-cli.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex app subcommand on the CLI path" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path" /tmp/workcell-entrypoint-codex-app-cli.out
+
+# Value-taking global flags must not desynchronize first-subcommand detection:
+# the flag's value is not a command token, so the blocklist still applies.
+if run_entrypoint codex codex --model gpt-5 plugin list >/tmp/workcell-entrypoint-codex-model-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex plugin surface behind value-taking globals" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-plugin.out
+
+if run_entrypoint codex codex --model gpt-5 remote-control pair >/tmp/workcell-entrypoint-codex-model-remote-control.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex remote-control surface behind value-taking globals" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-remote-control.out
+
+if run_entrypoint codex codex --model gpt-5 mcp list >/tmp/workcell-entrypoint-codex-model-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex mcp surface behind value-taking globals" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-mcp.out
+
+# --local-provider is another value-taking global; its value must not be
+# mistaken for the subcommand token.
+if run_entrypoint codex codex --local-provider ollama plugin list >/tmp/workcell-entrypoint-codex-local-provider-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the plugin surface behind the --local-provider global" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-local-provider-plugin.out
+
+run_entrypoint codex codex --model gpt-5 --version >/dev/null
 
 if run_entrypoint codex codex --profile breakglass --version >/tmp/workcell-entrypoint-codex-profile.out 2>&1; then
   echo "expected Workcell entrypoint to reject operator-supplied Codex profiles" >&2
@@ -2489,6 +2639,106 @@ if run_entrypoint codex codex --config shell_environment_policy.set.BAD=1 --vers
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-shell.out
+
+if run_entrypoint codex codex --config 'plugins."evil@rogue".enabled=true' --version >/tmp/workcell-entrypoint-codex-config-plugins.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex plugin config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-plugins.out
+
+if run_entrypoint codex codex --config 'marketplaces.rogue.source=/tmp/evil' --version >/tmp/workcell-entrypoint-codex-config-marketplaces.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex marketplace config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-marketplaces.out
+
+# Quoted/whitespace TOML key spellings must not bypass config-override blocking.
+if run_entrypoint codex codex --config 'features."remote_plugin"=true' --version >/tmp/workcell-entrypoint-codex-config-quoted-feature.out 2>&1; then
+  echo "expected Workcell entrypoint to reject quoted-segment Codex feature config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-quoted-feature.out
+
+if run_entrypoint codex codex --config '"mcp_servers".rogue.command=/bin/sh' --version >/tmp/workcell-entrypoint-codex-config-quoted-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject quoted-segment Codex mcp config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-quoted-mcp.out
+
+if run_entrypoint codex codex --config 'features . plugins=true' --version >/tmp/workcell-entrypoint-codex-config-spaced-feature.out 2>&1; then
+  echo "expected Workcell entrypoint to reject whitespace-padded Codex feature config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-spaced-feature.out
+
+if run_entrypoint codex codex --config 'features."remote_plugin=true' --version >/tmp/workcell-entrypoint-codex-config-malformed-quote.out 2>&1; then
+  echo "expected Workcell entrypoint to fail closed on malformed-quote Codex config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-malformed-quote.out
+
+# TOML basic-string escapes decode to blocked keys under a spec-compliant parser
+# (the \u0072 escape below is 'r', so features."\u0072emote_plugin" decodes to
+# features.remote_plugin, and "\u0061pproval_policy" decodes to approval_policy).
+# We refuse to decode escapes in bash and fail closed on any backslash in a key
+# segment.
+if run_entrypoint codex codex --config 'features."\u0072emote_plugin"=true' --version >/tmp/workcell-entrypoint-codex-config-escape-feature.out 2>&1; then
+  echo "expected Workcell entrypoint to fail closed on backslash-escaped Codex feature config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-escape-feature.out
+
+if run_entrypoint codex codex --config '"\u0061pproval_policy"="never"' --version >/tmp/workcell-entrypoint-codex-config-escape-approval.out 2>&1; then
+  echo "expected Workcell entrypoint to fail closed on backslash-escaped Codex approval-policy config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-escape-approval.out
+
+# Codex parses -c values as TOML, so an inline TABLE value can smuggle blocked
+# child keys under a parent that is not itself blocked (features, profiles). Any
+# inline-table value on a guarded namespace parent must be rejected.
+if run_entrypoint codex codex --config 'features={remote_plugin=true}' --version >/tmp/workcell-entrypoint-codex-config-table-features.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the features namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-features.out
+
+if run_entrypoint codex codex --config 'profiles={foo={sandbox_mode="danger-full-access"}}' --version >/tmp/workcell-entrypoint-codex-config-table-profiles.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the profiles namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-profiles.out
+
+if run_entrypoint codex codex --config 'mcp_servers={evil={command="/bin/sh"}}' --version >/tmp/workcell-entrypoint-codex-config-table-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the mcp_servers namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-table-mcp.out
+
+# The hooks namespace is a code-execution/trust surface (see the dangerous
+# --dangerously-bypass-hook-trust flag); no legitimate managed -c override sets
+# it, so any hooks.* scalar or inline-table override is blocked.
+if run_entrypoint codex codex --config 'hooks.trust=false' --version >/tmp/workcell-entrypoint-codex-config-hooks-scalar.out 2>&1; then
+  echo "expected Workcell entrypoint to reject a hooks.* config override" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-hooks-scalar.out
+
+if run_entrypoint codex codex --config 'hooks={trust=false}' --version >/tmp/workcell-entrypoint-codex-config-hooks-table.out 2>&1; then
+  echo "expected Workcell entrypoint to reject an inline-table override of the hooks namespace" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-hooks-table.out
+
+# A benign, genuinely-permitted -c override must still pass (model is not on the
+# security-boundary blocklist); a scalar value on a non-guarded key is not an
+# inline table, so the table guard leaves it untouched.
+run_entrypoint codex codex --config 'model=gpt-5-codex' --version >/dev/null
+run_entrypoint codex codex --config 'history.persistence="none"' --version >/dev/null
+
+# A backslash in the VALUE (not the key) must not trip the escape guard: only the
+# key is normalized, values pass through untouched.
+run_entrypoint codex codex --config 'model=c:\bin\codex' --version >/dev/null
 
 if run_entrypoint codex codex --add-dir=/tmp --version >/tmp/workcell-entrypoint-codex-add-dir.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex add-dir overrides" >&2
@@ -3169,6 +3419,119 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-app-server.out
+    if codex plugin list >/tmp/codex-nested-plugin.out 2>&1; then
+      echo "expected nested Codex invocation to reject the plugin marketplace/install surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-plugin.out
+    if codex remote-control pair >/tmp/codex-nested-remote-control.out 2>&1; then
+      echo "expected nested Codex invocation to reject the remote-control app-server pairing surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-control.out
+    if AGENT_UI=gui codex plugin list >/tmp/codex-nested-gui-plugin.out 2>&1; then
+      echo "expected an in-container AGENT_UI=gui override to still reject the plugin surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-plugin.out
+    if AGENT_UI=gui codex remote-control pair >/tmp/codex-nested-gui-remote-control.out 2>&1; then
+      echo "expected an in-container AGENT_UI=gui override to still reject the remote-control surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-remote-control.out
+    if codex exec-server >/tmp/codex-nested-exec-server.out 2>&1; then
+      echo "expected nested Codex invocation to reject the exec-server daemon subcommand" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-exec-server.out
+    if AGENT_UI=gui codex exec-server >/tmp/codex-nested-gui-exec-server.out 2>&1; then
+      echo "expected an in-container AGENT_UI=gui override to still reject the exec-server daemon subcommand" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-exec-server.out
+    if codex --local-provider ollama plugin list >/tmp/codex-nested-local-provider-plugin.out 2>&1; then
+      echo "expected the plugin surface behind the --local-provider global to be rejected" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-local-provider-plugin.out
+    if codex --remote-auth-token-env FOO mcp list >/tmp/codex-nested-remote-auth-mcp.out 2>&1; then
+      echo "expected the mcp surface behind the --remote-auth-token-env global to be rejected" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-auth-mcp.out
+    # DENY-BY-DEFAULT regression lock: a MADE-UP future subcommand that this
+    # policy has never heard of must be denied — the allowlist rejects anything
+    # off the permit set, so a later CLI bump cannot silently reopen a hole.
+    if codex frobnicate >/tmp/codex-nested-frobnicate.out 2>&1; then
+      echo "expected the deny-by-default gate to reject the unknown future subcommand frobnicate" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-frobnicate.out
+    if codex some-new-daemon >/tmp/codex-nested-newdaemon.out 2>&1; then
+      echo "expected the deny-by-default gate to reject the unknown future subcommand some-new-daemon" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-newdaemon.out
+    # cloud/sandbox are no longer GUI-gated: they are off the allowlist, so they
+    # are denied on every UI (including AGENT_UI=gui).
+    if AGENT_UI=gui codex cloud >/tmp/codex-nested-gui-cloud.out 2>&1; then
+      echo "expected AGENT_UI=gui to still reject the non-allowlisted cloud subcommand" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-cloud.out
+    # app/app-server are the managed GUI backend: denied on cli, PERMITTED under
+    # AGENT_UI=gui. `app-server --help` prints Codex help and exits 0, proving the
+    # gui gate lets the token through (no workcell block message).
+    if codex app-server >/tmp/codex-nested-cli-app-server.out 2>&1; then
+      echo "expected the app-server GUI backend to be denied on the CLI path" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path" /tmp/codex-nested-cli-app-server.out
+    AGENT_UI=gui codex app-server --help </dev/null >/tmp/codex-nested-gui-app-server-permit.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-gui-app-server-permit.out; then
+      echo "expected AGENT_UI=gui to permit the managed app-server GUI backend" >&2
+      cat /tmp/codex-nested-gui-app-server-permit.out >&2
+      exit 1
+    fi
+    # A permitted read-only subcommand from the allowlist passes the gate; the
+    # block message must be ABSENT (review may exit non-zero without a repo, but
+    # it is never blocked by workcell).
+    codex review --help </dev/null >/tmp/codex-nested-review-permit.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-review-permit.out; then
+      echo "expected the allowlisted review subcommand to pass the deny-by-default gate" >&2
+      cat /tmp/codex-nested-review-permit.out >&2
+      exit 1
+    fi
+    # A post-`--` prompt whose first word is a MADE-UP subcommand is literal
+    # prompt text, not a command token, so it must NOT be denied by the allowlist.
+    codex -- frobnicate </dev/null >/tmp/codex-nested-doubledash-frobnicate.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-frobnicate.out; then
+      echo "expected a post-'--' prompt starting with an unknown word to skip the subcommand allowlist" >&2
+      cat /tmp/codex-nested-doubledash-frobnicate.out >&2
+      exit 1
+    fi
+    # A bare `--` makes every following token literal prompt text, so a prompt
+    # beginning with `plugin`/`remote-control`/`mcp` must NOT be blocked as a
+    # subcommand. Codex may still exit non-zero (the TUI needs a terminal), but
+    # the workcell subcommand block must be ABSENT.
+    codex -- plugin list </dev/null >/tmp/codex-nested-doubledash-plugin.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-plugin.out; then
+      echo "expected a post-'--' prompt starting with 'plugin' to skip the subcommand blocklist" >&2
+      cat /tmp/codex-nested-doubledash-plugin.out >&2
+      exit 1
+    fi
+    codex -- remote-control pair </dev/null >/tmp/codex-nested-doubledash-remote-control.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-remote-control.out; then
+      echo "expected a post-'--' prompt starting with 'remote-control' to skip the subcommand blocklist" >&2
+      cat /tmp/codex-nested-doubledash-remote-control.out >&2
+      exit 1
+    fi
+    codex -- mcp </dev/null >/tmp/codex-nested-doubledash-mcp.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-nested-doubledash-mcp.out; then
+      echo "expected a post-'--' prompt starting with 'mcp' to skip the subcommand blocklist" >&2
+      cat /tmp/codex-nested-doubledash-mcp.out >&2
+      exit 1
+    fi
     rm -f "$CODEX_HOME/config.toml"
     printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
     codex --version >/tmp/codex-version-after-tamper.out 2>/tmp/codex-version-after-tamper.err
@@ -3177,14 +3540,30 @@ test -f "$CODEX_HOME/config.toml"
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
     cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
-    codex features disable unified_exec >/tmp/codex-features-disable.out 2>/tmp/codex-features-disable.err
-    assert_codex_stderr_clean /tmp/codex-features-disable.err
-    test ! -L "$CODEX_HOME/config.toml"
+    # `codex features enable/disable` persistently writes features.<name> into the
+    # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so
+    # both mutating actions are rejected on the managed path; the block must also
+    # prevent the config mutation (unified_exec stays at its declared false).
+    if codex features enable unified_exec >/tmp/codex-features-enable.out 2>&1; then
+      echo "expected nested Codex invocation to reject persistent feature enable" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable.out
     test -w "$CODEX_HOME/config.toml"
     assert_codex_feature_value false
-    codex features enable unified_exec >/tmp/codex-features-enable.out 2>/tmp/codex-features-enable.err
-    assert_codex_stderr_clean /tmp/codex-features-enable.err
-    assert_codex_feature_value true
+    if codex features enable plugins >/tmp/codex-features-enable-plugins.out 2>&1; then
+      echo "expected nested Codex invocation to reject the plugin feature re-enable" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable-plugins.out
+    if codex features disable unified_exec >/tmp/codex-features-disable.out 2>&1; then
+      echo "expected nested Codex invocation to reject persistent feature disable" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-disable.out
+    # features list is a read-only inspect and stays permitted.
+    codex features list >/tmp/codex-features-list-permit.out 2>&1
+    grep -q "unified_exec" /tmp/codex-features-list-permit.out
   '
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2

@@ -1308,8 +1308,15 @@ verify_codex_managed_config_invariants() {
   require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "false" || return 1
   require_toml_assignment "${file}" "sandbox_workspace_write" "network_access" "false" || return 1
 
-  require_toml_exact_keys "${file}" "features" "unified_exec" || return 1
+  require_toml_exact_keys "${file}" "features" \
+    "unified_exec" \
+    "plugins" \
+    "plugin_sharing" \
+    "remote_plugin" || return 1
   require_toml_assignment "${file}" "features" "unified_exec" "false" || return 1
+  require_toml_assignment "${file}" "features" "plugins" "false" || return 1
+  require_toml_assignment "${file}" "features" "plugin_sharing" "false" || return 1
+  require_toml_assignment "${file}" "features" "remote_plugin" "false" || return 1
 
   # The base config must carry no inline `[profiles...]` tables (dotted-path
   # form). Quoted single-segment section names with literal dots normalize to a
@@ -1373,6 +1380,20 @@ require_toml_assignment \
   echo 'Expected adapters/codex/requirements.toml to allow workspace-write for managed sessions and danger-full-access only for breakglass' >&2
   exit 1
 }
+
+# The adapter AGENTS.md requires config.toml, managed_config.toml, and
+# requirements.toml to stay aligned on security-boundary config. Lock the
+# requirements [features] bans in lockstep with the managed baseline so the
+# plugin/marketplace surface cannot be re-enabled from the requirements contract.
+require_toml_exact_keys "${ROOT_DIR}/adapters/codex/requirements.toml" "features" \
+  "unified_exec" \
+  "plugins" \
+  "plugin_sharing" \
+  "remote_plugin" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "unified_exec" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugins" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugin_sharing" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "remote_plugin" "false" || exit 1
 
 codex_managed_config_tmpdir="$(mktemp -d)"
 
