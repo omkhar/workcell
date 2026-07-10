@@ -2454,6 +2454,18 @@ if run_entrypoint codex codex app-server >/tmp/workcell-entrypoint-codex-app-ser
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-app-server.out
 
+if run_entrypoint codex codex plugin list >/tmp/workcell-entrypoint-codex-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex plugin marketplace/install surface" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-plugin.out
+
+if run_entrypoint codex codex remote-control pair >/tmp/workcell-entrypoint-codex-remote-control.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex remote-control app-server pairing surface" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-remote-control.out
+
 if run_entrypoint codex codex --profile breakglass --version >/tmp/workcell-entrypoint-codex-profile.out 2>&1; then
   echo "expected Workcell entrypoint to reject operator-supplied Codex profiles" >&2
   exit 1
@@ -2489,6 +2501,18 @@ if run_entrypoint codex codex --config shell_environment_policy.set.BAD=1 --vers
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-shell.out
+
+if run_entrypoint codex codex --config 'plugins."evil@rogue".enabled=true' --version >/tmp/workcell-entrypoint-codex-config-plugins.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex plugin config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-plugins.out
+
+if run_entrypoint codex codex --config 'marketplaces.rogue.source=/tmp/evil' --version >/tmp/workcell-entrypoint-codex-config-marketplaces.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Codex marketplace config overrides" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex config override" /tmp/workcell-entrypoint-codex-config-marketplaces.out
 
 if run_entrypoint codex codex --add-dir=/tmp --version >/tmp/workcell-entrypoint-codex-add-dir.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex add-dir overrides" >&2
@@ -3169,6 +3193,16 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-app-server.out
+    if codex plugin list >/tmp/codex-nested-plugin.out 2>&1; then
+      echo "expected nested Codex invocation to reject the plugin marketplace/install surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-plugin.out
+    if codex remote-control pair >/tmp/codex-nested-remote-control.out 2>&1; then
+      echo "expected nested Codex invocation to reject the remote-control app-server pairing surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-control.out
     rm -f "$CODEX_HOME/config.toml"
     printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
     codex --version >/tmp/codex-version-after-tamper.out 2>/tmp/codex-version-after-tamper.err

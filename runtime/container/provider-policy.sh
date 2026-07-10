@@ -33,7 +33,7 @@ codex_config_override_is_blocked() {
   local key_lower="${key,,}"
 
   case "${key_lower}" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.* | profiles.*.sandbox_mode | profiles.*.approval_policy | profiles.*.web_search | profiles.*.shell_environment_policy | profiles.*.shell_environment_policy.* | profiles.*.sandbox_workspace_write | profiles.*.sandbox_workspace_write.*)
       return 0
       ;;
   esac
@@ -77,7 +77,7 @@ reject_unsafe_codex_args() {
       saw_command=1
       if [[ "${AGENT_UI:-cli}" != "gui" ]]; then
         case "${arg}" in
-          app | app-server | cloud | mcp | sandbox)
+          app | app-server | cloud | mcp | plugin | remote-control | sandbox)
             workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
             ;;
         esac

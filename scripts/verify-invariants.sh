@@ -1308,8 +1308,15 @@ verify_codex_managed_config_invariants() {
   require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "false" || return 1
   require_toml_assignment "${file}" "sandbox_workspace_write" "network_access" "false" || return 1
 
-  require_toml_exact_keys "${file}" "features" "unified_exec" || return 1
+  require_toml_exact_keys "${file}" "features" \
+    "unified_exec" \
+    "plugins" \
+    "plugin_sharing" \
+    "remote_plugin" || return 1
   require_toml_assignment "${file}" "features" "unified_exec" "false" || return 1
+  require_toml_assignment "${file}" "features" "plugins" "false" || return 1
+  require_toml_assignment "${file}" "features" "plugin_sharing" "false" || return 1
+  require_toml_assignment "${file}" "features" "remote_plugin" "false" || return 1
 
   # The base config must carry no inline `[profiles...]` tables (dotted-path
   # form). Quoted single-segment section names with literal dots normalize to a

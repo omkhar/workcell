@@ -122,7 +122,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "2fd96ca2373277b47e92a62bbfcd29c4e4d30369f08f97f3e368b559b3488ed5"
+      "sha256": "294e979a29a7023c3e0be229feebaf24a394f6d33ab9f25bacbc3a4b169e9ed3"
     },
     {
       "kind": "adapter-baseline",
@@ -146,7 +146,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "c893bda9d799981ef7604581e26bdd45cf0254ce72550fe7112bc25563bd7fce"
+      "sha256": "3c26a72b7f15ebd8eae2263721e52ddf94d8ae2a4036aa824b77ae57934fa996"
     },
     {
       "kind": "adapter-baseline",
@@ -248,7 +248,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "afb18a7bb018e97c3b6f324077c2eddf84d51311466813610a02198064405544"
+      "sha256": "e16f4416aaf5b20467a873cd6cdbf5a068af55dacd9b9e33a19a2f1d48f61519"
     },
     {
       "kind": "runtime-control-plane",
