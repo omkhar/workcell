@@ -2450,6 +2450,13 @@ if run_entrypoint codex codex --dangerously-bypass-future-badness --version >/tm
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-danger-future.out
 
+# --yolo is Codex's hidden alias for --dangerously-bypass-approvals-and-sandbox.
+if run_entrypoint codex codex --yolo --version >/tmp/workcell-entrypoint-codex-yolo.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex --yolo bypass alias" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-codex-yolo.out
+
 if run_entrypoint codex codex -a never --version >/tmp/workcell-entrypoint-codex-approval.out 2>&1; then
   echo "expected Workcell entrypoint to reject Codex approval overrides" >&2
   exit 1
@@ -2489,9 +2496,38 @@ if run_entrypoint codex codex exec-server >/tmp/workcell-entrypoint-codex-exec-s
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-exec-server.out
 
-# The exec-server exact-token block must not catch the legitimate `exec`
-# runtime subcommand: `codex exec --help` is permitted and runs.
+# mcp-server (Codex-as-an-MCP-server daemon) and update (self-update that would
+# defeat the pinned image) are blocked unconditionally, same class as exec-server.
+if run_entrypoint codex codex mcp-server >/tmp/workcell-entrypoint-codex-mcp-server.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex mcp-server daemon subcommand" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-mcp-server.out
+
+if run_entrypoint codex codex update >/tmp/workcell-entrypoint-codex-update.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex self-update subcommand" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-update.out
+
+# features enable/disable persistently write config.toml; both are blocked while
+# the read-only `features list` and the `exec` subcommand stay permitted.
+if run_entrypoint codex codex features enable plugins >/tmp/workcell-entrypoint-codex-features-enable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject persistent Codex feature enable" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-enable.out
+
+if run_entrypoint codex codex features disable unified_exec >/tmp/workcell-entrypoint-codex-features-disable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject persistent Codex feature disable" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-disable.out
+
+# The exec-server/features exact-token blocks must not catch the legitimate
+# `exec` runtime subcommand or the read-only `features list`.
 run_entrypoint codex codex exec --help >/dev/null
+run_entrypoint codex codex features list >/dev/null
 
 # Value-taking global flags must not desynchronize first-subcommand detection:
 # the flag's value is not a command token, so the blocklist still applies.
@@ -3408,14 +3444,30 @@ test -f "$CODEX_HOME/config.toml"
     test ! -L "$CODEX_HOME/config.toml"
     test -w "$CODEX_HOME/config.toml"
     cmp "$CODEX_HOME/config.toml" /opt/workcell/adapters/codex/.codex/config.toml
-    codex features disable unified_exec >/tmp/codex-features-disable.out 2>/tmp/codex-features-disable.err
-    assert_codex_stderr_clean /tmp/codex-features-disable.err
-    test ! -L "$CODEX_HOME/config.toml"
+    # `codex features enable/disable` persistently writes features.<name> into the
+    # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so
+    # both mutating actions are rejected on the managed path; the block must also
+    # prevent the config mutation (unified_exec stays at its declared false).
+    if codex features enable unified_exec >/tmp/codex-features-enable.out 2>&1; then
+      echo "expected nested Codex invocation to reject persistent feature enable" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable.out
     test -w "$CODEX_HOME/config.toml"
     assert_codex_feature_value false
-    codex features enable unified_exec >/tmp/codex-features-enable.out 2>/tmp/codex-features-enable.err
-    assert_codex_stderr_clean /tmp/codex-features-enable.err
-    assert_codex_feature_value true
+    if codex features enable plugins >/tmp/codex-features-enable-plugins.out 2>&1; then
+      echo "expected nested Codex invocation to reject the plugin feature re-enable" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable-plugins.out
+    if codex features disable unified_exec >/tmp/codex-features-disable.out 2>&1; then
+      echo "expected nested Codex invocation to reject persistent feature disable" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-disable.out
+    # features list is a read-only inspect and stays permitted.
+    codex features list >/tmp/codex-features-list-permit.out 2>&1
+    grep -q "unified_exec" /tmp/codex-features-list-permit.out
   '
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2

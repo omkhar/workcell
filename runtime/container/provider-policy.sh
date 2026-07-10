@@ -131,6 +131,7 @@ reject_unsafe_codex_args() {
   local arg
   local saw_command=0
   local allowed_profile=""
+  local expect_features_action=0
 
   provider_policy_allows_breakglass && return 0
 
@@ -171,19 +172,39 @@ reject_unsafe_codex_args() {
       break
     fi
 
+    # After the first subcommand `features`, its ACTION token (enable/disable/
+    # list) is the next bare token. `features enable/disable <name>` persistently
+    # writes features.<name>=true/false into the writable CODEX_HOME/config.toml
+    # (equivalent to the blocked `-c features.<name>=…`), re-enabling e.g.
+    # plugins/remote_plugin for the in-TUI browser, so both mutating actions are
+    # blocked. `features list` is a read-only inspect (used by the managed
+    # validation path) and stays permitted; the managed baseline sets features
+    # declaratively in config, so it never needs the imperative toggle.
+    if [[ "${expect_features_action}" -eq 1 ]] && [[ "${arg}" != -* ]]; then
+      expect_features_action=0
+      case "${arg}" in
+        enable | disable)
+          workcell_die "Workcell blocked unsupported Codex CLI subcommand: features ${arg}"
+          ;;
+      esac
+      continue
+    fi
+
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
       # plugin (remote marketplace/install), remote-control (app-server pairing),
-      # and exec-server (the experimental standalone exec-server daemon) are never
-      # part of the managed GUI backend — the only GUI launch is `codex app-server`
-      # (see entrypoint.sh) — so they are blocked on EVERY UI. Keeping them inside
-      # the AGENT_UI!=gui guard let an in-container `AGENT_UI=gui codex plugin list`
-      # bypass the fence, since AGENT_UI is not pinned/scrubbed at the wrapper
-      # boundary. These are exact-token matches (NOT globs): the legitimate `exec`
-      # runtime subcommand must stay permitted, so only the literal `exec-server`
-      # is rejected, never `exec` or its `e` alias.
+      # exec-server (the experimental standalone exec-server daemon), mcp-server
+      # (Codex-as-an-MCP-server daemon), and update (self-update that would defeat
+      # the pinned runtime image) are never part of the managed GUI backend — the
+      # only GUI launch is `codex app-server` (see entrypoint.sh) — so they are
+      # blocked on EVERY UI. Keeping them inside the AGENT_UI!=gui guard let an
+      # in-container `AGENT_UI=gui codex plugin list` bypass the fence, since
+      # AGENT_UI is not pinned/scrubbed at the wrapper boundary. These are
+      # exact-token matches (NOT globs): the legitimate `exec` runtime subcommand
+      # must stay permitted, so only the literal `exec-server` is rejected, never
+      # `exec` or its `e` alias.
       case "${arg}" in
-        plugin | remote-control | exec-server)
+        plugin | remote-control | exec-server | mcp-server | update)
           workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
           ;;
       esac
@@ -196,6 +217,9 @@ reject_unsafe_codex_args() {
             ;;
         esac
       fi
+      # `features` itself is permitted (its default/list is a read-only inspect);
+      # arm the action check so the next bare token (enable/disable) is caught.
+      [[ "${arg}" == "features" ]] && expect_features_action=1
       continue
     fi
 
@@ -209,8 +233,11 @@ reject_unsafe_codex_args() {
       # NOT `--dangerously-*`, so it does not swallow non-codex tokens like
       # Claude's `--dangerously-skip-permissions` when they appear as data passed
       # to `codex execpolicy check <command…>`. Keep the remaining explicit unsafe
-      # flags in the same case/message.
-      --dangerously-bypass-* | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
+      # flags in the same case/message. --yolo is Codex's documented alias for
+      # --dangerously-bypass-approvals-and-sandbox (it is a hidden alias, so the
+      # --dangerously-bypass-* glob does not reach it — block the alias and its
+      # =value form explicitly).
+      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --full-auto | -a | --ask-for-approval | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -p | --profile)
