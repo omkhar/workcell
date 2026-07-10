@@ -41,6 +41,12 @@ codex_config_override_is_blocked() {
   return 1
 }
 
+# Value-taking global Codex flags must be consumed before first-subcommand
+# detection, or their VALUE would be mistaken for the first command token and
+# the subcommand blocklist below would never run (e.g. `--model gpt-5 plugin`
+# would treat gpt-5 as the command). Keep the set of value-taking globals in
+# this loop in lockstep with codex_first_subcommand in
+# runtime/container/provider-wrapper.sh.
 reject_unsafe_codex_args() {
   local expect_value=""
   local arg
@@ -92,8 +98,13 @@ reject_unsafe_codex_args() {
       -p | --profile)
         expect_value="profile"
         ;;
-      --cd)
+      -C | --cd)
         expect_value="cd"
+        ;;
+      -m | --model | -i | --image)
+        # Permitted value-taking globals: consume the value so it is never
+        # mistaken for the first subcommand (see the function comment).
+        expect_value="safe"
         ;;
       --ask-for-approval=*)
         workcell_die "Workcell blocked unsafe Codex override: --ask-for-approval"

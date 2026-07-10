@@ -2466,6 +2466,28 @@ if run_entrypoint codex codex remote-control pair >/tmp/workcell-entrypoint-code
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-remote-control.out
 
+# Value-taking global flags must not desynchronize first-subcommand detection:
+# the flag's value is not a command token, so the blocklist still applies.
+if run_entrypoint codex codex --model gpt-5 plugin list >/tmp/workcell-entrypoint-codex-model-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex plugin surface behind value-taking globals" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-plugin.out
+
+if run_entrypoint codex codex --model gpt-5 remote-control pair >/tmp/workcell-entrypoint-codex-model-remote-control.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex remote-control surface behind value-taking globals" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-remote-control.out
+
+if run_entrypoint codex codex --model gpt-5 mcp list >/tmp/workcell-entrypoint-codex-model-mcp.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex mcp surface behind value-taking globals" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-mcp.out
+
+run_entrypoint codex codex --model gpt-5 --version >/dev/null
+
 if run_entrypoint codex codex --profile breakglass --version >/tmp/workcell-entrypoint-codex-profile.out 2>&1; then
   echo "expected Workcell entrypoint to reject operator-supplied Codex profiles" >&2
   exit 1

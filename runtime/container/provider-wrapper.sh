@@ -203,8 +203,11 @@ codex_args_include_profile() {
 # (empty for the default TUI: no subcommand, a bare prompt, or everything after
 # `--`). Global value-taking flags consume their value so the real subcommand
 # token is found, and `--*=*`/boolean flags (e.g. --version/--help) are skipped.
-# Both managed-injection decisions below classify this single token, so the
-# Codex global-flag table lives in exactly one place.
+# Both managed-injection decisions below classify this single token.
+# Keep the value-taking global list here in lockstep with the expect_value
+# handling in reject_unsafe_codex_args (runtime/container/provider-policy.sh):
+# the policy must consume the same values before its first-subcommand
+# blocklist, or a flag value would be mistaken for the command token.
 codex_first_subcommand() {
   CODEX_FIRST_SUBCOMMAND=""
   local arg="" skip_value=0
