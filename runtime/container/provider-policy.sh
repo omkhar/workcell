@@ -263,7 +263,16 @@ reject_unsafe_codex_args() {
         # daemon, marketplace, sandbox-escape, and self-update surfaces that the
         # managed session must never reach.
         plugin | remote-control | exec-server | mcp | mcp-server | cloud | \
-          sandbox | update)
+          cloud-tasks | responses-api-proxy | stdio-to-uds | sandbox | update)
+          # cloud-tasks is the pinned-0.142.4 alias of `cloud` (the hosted
+          # control-plane surface); responses-api-proxy and stdio-to-uds are
+          # HIDDEN (not in `codex --help`) daemon/bridge subcommands the pinned
+          # clap Subcommand enum still dispatches on — all denied by exact token
+          # on every UI. `update` is not a 0.142.4 variant (it lands in 0.143);
+          # it is kept here as harmless forward-compat and is intentionally
+          # absent from tests/fixtures/codex-subcommands.txt (that fixture lists
+          # only real 0.142.4 tokens), which the completeness check tolerates
+          # because it only asserts fixture ⊆ classified, not equality.
           workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
           ;;
       esac

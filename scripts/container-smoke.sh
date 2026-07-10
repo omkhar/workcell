@@ -2176,6 +2176,25 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
     exit 1
   fi
 
+  # P2 (managed-profile scan must stop at bare `--`). `codex -- --profile
+  # breakglass` puts "--profile breakglass" AFTER `--`, so it is PROMPT text,
+  # never an operator flag. codex_args_include_profile must therefore NOT treat
+  # it as an operator-supplied profile, so the managed `--profile strict` stays
+  # injected and the sandbox/approval contract is preserved. The post-`--` tokens
+  # are forwarded verbatim after the managed args.
+  CODEX_POSTDASH_PROFILE_ARGS="$(
+    run_entrypoint_with_autonomy_and_bind \
+      codex \
+      yolo \
+      /bin/echo \
+      /usr/local/libexec/workcell/real/codex \
+      codex -- --profile breakglass
+  )"
+  if [[ "${CODEX_POSTDASH_PROFILE_ARGS}" != "--profile strict --ask-for-approval never -- --profile breakglass" ]]; then
+    echo "expected managed --profile strict to stay injected when --profile follows a bare --: ${CODEX_POSTDASH_PROFILE_ARGS}" >&2
+    exit 1
+  fi
+
   cat <<'EOF' >"${ROOT_DIR}/tmp/workcell-codex-env-check.sh"
 #!/bin/sh
 printf '{"claude_config":"%s","aws":"%s","gh":"%s","ssh":"%s"}\n' \
@@ -2551,7 +2570,7 @@ fi
 # exact token on the CLI path — deny-by-default over the classified subcommand
 # namespace. These are real pinned-Codex subcommands (not prompt text), so the
 # gate must reject them.
-for codex_denied_sub in cloud sandbox mcp plugin remote-control exec-server mcp-server update; do
+for codex_denied_sub in cloud cloud-tasks responses-api-proxy stdio-to-uds sandbox mcp plugin remote-control exec-server mcp-server update; do
   codex_deny_out="/tmp/workcell-entrypoint-codex-denydefault-${codex_denied_sub}.out"
   if run_entrypoint codex codex "${codex_denied_sub}" >"${codex_deny_out}" 2>&1; then
     echo "expected the deny-set gate to reject the dangerous subcommand: ${codex_denied_sub}" >&2

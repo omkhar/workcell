@@ -186,6 +186,17 @@ codex_args_include_profile() {
     if [[ "${expect_value}" -eq 1 ]]; then
       return 0
     fi
+    # A bare `--` ends option parsing: every following token is literal PROMPT
+    # text, never an operator flag (e.g. `codex -- --profile breakglass` passes
+    # "--profile breakglass" to the session as the prompt). Stop here so a
+    # post-`--` `--profile` is NOT mistaken for an operator-supplied profile —
+    # otherwise managed-profile injection would be skipped and the sandbox/
+    # approval contract dropped. This mirrors codex_first_subcommand (above) and
+    # reject_unsafe_codex_args (runtime/container/provider-policy.sh), which both
+    # return/break at `--`.
+    if [[ "${arg}" == "--" ]]; then
+      return 1
+    fi
     case "${arg}" in
       -p | --profile)
         expect_value=1
