@@ -194,29 +194,47 @@ reject_unsafe_codex_args() {
       workcell_die "Workcell blocked unsupported Codex app-server argument: ${arg} (only the managed no-arg app-server launch is permitted)"
     fi
 
+    # After the `features` subcommand, its ACTION token is the next bare token.
+    # `features enable/disable <name>` persistently writes features.<name> into the
+    # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so
+    # both mutating actions are blocked. `features list` is a read-only inspect and
+    # stays permitted; the managed baseline sets features declaratively. This runs
+    # BEFORE the `--` break: a bare `--` MUST NOT let the pending action slip past
+    # the deny — while armed, a `--` is skipped WITHOUT disarming so the following
+    # token (enable/disable/list) is still classified. `codex features` has no
+    # `[PROMPT]` positional (usage: `features [OPTIONS] <COMMAND>`), so a post-`--`
+    # token is a subcommand slot, never prompt text; pinned 0.142.4 clap-errors on
+    # `features -- enable` today, but honoring the pending action here denies the
+    # mutating actions across a `--` even if a future pin dispatches the subcommand
+    # after `--` (as app-server's optional `[COMMAND]` already does).
+    if [[ "${expect_features_action}" -eq 1 ]]; then
+      # A `--` while armed is NOT the action and MUST NOT trip the general `--`
+      # break below: skip it, stay armed, and keep scanning for the action token.
+      if [[ "${arg}" == "--" ]]; then
+        continue
+      fi
+      # A flag (e.g. `features --json`) is a `features` option, not the action, so
+      # leave the arm intact and fall through to the flag/value cases below.
+      if [[ "${arg}" != -* ]]; then
+        expect_features_action=0
+        case "${arg}" in
+          enable | disable)
+            workcell_die "Workcell blocked unsupported Codex CLI subcommand: features ${arg}"
+            ;;
+        esac
+        continue
+      fi
+    fi
+
     # A bare `--` ends option/subcommand parsing: every following token is literal
     # prompt text Codex forwards to the session, never a flag/subcommand (verified:
     # `codex -- plugin` starts the TUI with prompt "plugin"). Stop here so the
     # blocklists do not over-reject a prompt beginning with `plugin`/`mcp`. Mirrors
     # codex_first_subcommand, which also returns at `--`. Flag/value checks BEFORE
-    # `--` have already run, so only post-`--` prompt text is exempt.
+    # `--` have already run, so only post-`--` prompt text is exempt. Not reached
+    # while a features action is pending (handled above).
     if [[ "${arg}" == "--" ]]; then
       break
-    fi
-
-    # After the `features` subcommand, its ACTION token is the next bare token.
-    # `features enable/disable <name>` persistently writes features.<name> into the
-    # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so
-    # both mutating actions are blocked. `features list` is a read-only inspect and
-    # stays permitted; the managed baseline sets features declaratively.
-    if [[ "${expect_features_action}" -eq 1 ]] && [[ "${arg}" != -* ]]; then
-      expect_features_action=0
-      case "${arg}" in
-        enable | disable)
-          workcell_die "Workcell blocked unsupported Codex CLI subcommand: features ${arg}"
-          ;;
-      esac
-      continue
     fi
 
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then

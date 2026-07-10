@@ -2550,8 +2550,31 @@ if run_entrypoint codex codex features disable unified_exec >/tmp/workcell-entry
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-disable.out
 
+# A `--` before the features action must not let the mutating action slip past
+# the deny (P1 review finding): the pending features-action check takes
+# precedence over the general `--` break, so both orderings are still denied.
+if run_entrypoint codex codex features -- enable plugins >/tmp/workcell-entrypoint-codex-features-dd-enable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject features -- enable plugins across the --" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-dd-enable.out
+
+if run_entrypoint codex codex features -- disable unified_exec >/tmp/workcell-entrypoint-codex-features-dd-disable.out 2>&1; then
+  echo "expected Workcell entrypoint to reject features -- disable unified_exec across the --" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-dd-disable.out
+
+if run_entrypoint codex codex features enable -- plugins >/tmp/workcell-entrypoint-codex-features-enable-dd.out 2>&1; then
+  echo "expected Workcell entrypoint to reject features enable -- plugins" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-features-enable-dd.out
+
 # The exec-server/features exact-token blocks must not catch the legitimate
-# `exec` runtime subcommand or the read-only `features list`.
+# `exec` runtime subcommand or the read-only `features list`. The normal prompt
+# `--` break (when NOT expecting a features action) is exercised by the nested
+# `codex -- plugin`/`codex -- frobnicate` permit cases below.
 run_entrypoint codex codex exec --help >/dev/null
 run_entrypoint codex codex features list >/dev/null
 
@@ -3749,9 +3772,41 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-disable.out
-    # features list is a read-only inspect and stays permitted.
+    # A `--` between `features` and its action MUST NOT let the mutating action
+    # slip past the deny: the pending features-action check now takes precedence
+    # over the general `--` break while armed (P1 review finding). The mutating
+    # action is denied across the `--` and the config stays unmutated.
+    if codex features -- enable plugins >/tmp/codex-features-dd-enable.out 2>&1; then
+      echo "expected nested Codex invocation to reject features -- enable plugins across the --" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-dd-enable.out
+    assert_codex_feature_value false
+    if codex features -- disable unified_exec >/tmp/codex-features-dd-disable.out 2>&1; then
+      echo "expected nested Codex invocation to reject features -- disable unified_exec across the --" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-dd-disable.out
+    assert_codex_feature_value false
+    # The action can also precede the `--` (features enable -- plugins): the arm
+    # catches enable before the -- is ever reached, so it is denied too.
+    if codex features enable -- plugins >/tmp/codex-features-enable-dd.out 2>&1; then
+      echo "expected nested Codex invocation to reject features enable -- plugins" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable-dd.out
+    assert_codex_feature_value false
+    # features list is a read-only inspect and stays permitted, with or without a
+    # `--` before the action (the normal prompt `--` break is unchanged: a bare
+    # prompt still stops parsing — see the codex -- plugin cases above).
     codex features list >/tmp/codex-features-list-permit.out 2>&1
     grep -q "unified_exec" /tmp/codex-features-list-permit.out
+    codex features -- list >/tmp/codex-features-dd-list-permit.out 2>&1 || true
+    if grep -q "Workcell blocked" /tmp/codex-features-dd-list-permit.out; then
+      echo "expected features -- list to stay permitted (read-only) after honoring the pending action" >&2
+      cat /tmp/codex-features-dd-list-permit.out >&2
+      exit 1
+    fi
   '
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2
