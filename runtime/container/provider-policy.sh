@@ -133,6 +133,7 @@ reject_unsafe_codex_args() {
   local allowed_profile=""
   local expect_features_action=0
   local codex_config_value=""
+  local saw_app_server=0
 
   provider_policy_allows_breakglass && return 0
 
@@ -171,6 +172,44 @@ reject_unsafe_codex_args() {
     # rejected; only post-`--` prompt text is exempt.
     if [[ "${arg}" == "--" ]]; then
       break
+    fi
+
+    # After the first subcommand `app-server` is permitted (GUI path only; the
+    # CLI path already died on the bare token above), scan its remaining args for
+    # the app-server control surface and DENY it. The managed GUI launch is
+    # exactly `codex app-server` with NO trailing user args (entrypoint.sh sets
+    # `set -- codex app-server`); the sandbox/approval flags the managed path
+    # needs (`-c sandbox_mode=…`, `--ask-for-approval …`) are PREPENDED by
+    # provider-wrapper.sh AFTER this check, so they never appear in this argv and
+    # need no allowance here. Pinned Codex 0.142.4 (openai/codex tag
+    # rust-v0.142.4, codex-rs/cli/src/main.rs) hides a `--remote-control` flag on
+    # AppServerCommand and exposes an AppServerSubcommand enum
+    # (daemon, proxy, generate-ts, generate-json-schema,
+    # generate-internal-json-schema) plus an AppServerDaemonSubcommand enum
+    # (bootstrap, start, restart, enable-remote-control, disable-remote-control,
+    # stop, version, pid-update-loop). `codex app-server daemon
+    # enable-remote-control`, `codex app-server --remote-control`, and
+    # `codex app-server daemon bootstrap --remote-control` all reach the
+    # remote-control surface the standalone `remote-control` subcommand deny is
+    # meant to block. Deny the KNOWN-dangerous surface explicitly (the hidden
+    # `--remote-control` flag and every app-server/daemon subcommand token) rather
+    # than allowlisting flags: the managed launch carries no trailing args, so an
+    # empty scan permits it while every control token dies. Post-`--` prompt text
+    # is already exempted by the `--` break above. This block only REJECTS and
+    # never `continue`s, so a non-control token (e.g. `-c features.remote_plugin=…`
+    # smuggled after `app-server`) still falls through to the global flag/config
+    # checks below and is caught by codex_config_override_is_blocked.
+    if [[ "${saw_app_server}" -eq 1 ]]; then
+      case "${arg}" in
+        --remote-control | --remote-control=*)
+          workcell_die "Workcell blocked unsafe Codex app-server override: --remote-control"
+          ;;
+        daemon | proxy | generate-ts | generate-json-schema | generate-internal-json-schema | \
+          bootstrap | start | restart | enable-remote-control | disable-remote-control | \
+          stop | version | pid-update-loop)
+          workcell_die "Workcell blocked unsupported Codex app-server subcommand: ${arg}"
+          ;;
+      esac
     fi
 
     # After the first subcommand `features`, its ACTION token (enable/disable/
@@ -254,6 +293,11 @@ reject_unsafe_codex_args() {
           # blocklist once let it.
           [[ "${AGENT_UI:-cli}" != "gui" ]] &&
             workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
+          # Permitted on the GUI path: arm the app-server surface scan so every
+          # subsequent arg is checked against the app-server control surface
+          # (--remote-control flag + app-server/daemon subcommand tokens) by the
+          # block near the top of the loop.
+          saw_app_server=1
           continue
           ;;
         # DENY set — every known-dangerous/unsupported Codex subcommand, denied

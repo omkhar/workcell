@@ -2494,6 +2494,15 @@ if run_entrypoint codex codex app-server >/tmp/workcell-entrypoint-codex-app-ser
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-app-server.out
 
+# The app-server remote-control surface is denied on the CLI path too (bare
+# app-server is already denied outside the managed GUI path, so the daemon
+# enable-remote-control action never even reaches its own scan here).
+if run_entrypoint codex codex app-server daemon enable-remote-control >/tmp/workcell-entrypoint-codex-app-server-daemon.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the Codex app-server daemon remote-control surface on the CLI path" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-app-server-daemon.out
+
 if run_entrypoint codex codex plugin list >/tmp/workcell-entrypoint-codex-plugin.out 2>&1; then
   echo "expected Workcell entrypoint to reject the Codex plugin marketplace/install surface" >&2
   exit 1
@@ -3580,6 +3589,36 @@ test -f "$CODEX_HOME/config.toml"
       cat /tmp/codex-nested-gui-app-server-permit.out >&2
       exit 1
     fi
+    # The managed GUI allowance for `app-server` permits ONLY the bare launch (plus
+    # the sandbox/approval flags provider-wrapper.sh prepends, never in user argv).
+    # Pinned Codex 0.142.4 hides a `--remote-control` flag on AppServerCommand and
+    # dispatches an AppServerSubcommand (daemon/proxy/generate-*) plus an
+    # AppServerDaemonSubcommand (bootstrap/enable-remote-control/…), so
+    # `codex app-server --remote-control`, `codex app-server daemon`, and
+    # `codex app-server daemon enable-remote-control` reach the remote-control
+    # surface the standalone `remote-control` deny blocks. Under AGENT_UI=gui these
+    # app-server control tokens MUST be denied even though the bare app-server
+    # token is permitted.
+    # NOTE: this whole block runs inside a single-quoted `bash -lc '…'` above, so
+    # it must contain NO single quotes. Each case is asserted explicitly (no loop,
+    # no printf/tr) to stay single-quote-free.
+    assert_gui_appserver_denied() {
+      local out="$1"
+      shift
+      if AGENT_UI=gui codex app-server "$@" </dev/null >"${out}" 2>&1; then
+        echo "expected AGENT_UI=gui to reject the app-server control surface: app-server $*" >&2
+        cat "${out}" >&2
+        exit 1
+      fi
+      grep -q "Workcell blocked" "${out}"
+    }
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-remote-control.out --remote-control
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-daemon.out daemon
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-daemon-erc.out daemon enable-remote-control
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-bootstrap-rc.out bootstrap --remote-control
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-daemon-bootstrap-rc.out daemon bootstrap --remote-control
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-proxy.out proxy
+    assert_gui_appserver_denied /tmp/codex-nested-gui-appserver-generate-ts.out generate-ts
     # A permitted read-only subcommand from the allowlist passes the gate; the
     # block message must be ABSENT (review may exit non-zero without a repo, but
     # it is never blocked by workcell).
