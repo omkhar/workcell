@@ -314,6 +314,28 @@ extract_workflow_env_value() {
   ' "${file}"
 }
 
+file_mode_octal() {
+  local path="$1"
+
+  if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
+    stat -f '%Lp' "${path}"
+  else
+    stat -c '%a' "${path}"
+  fi
+}
+
+# replace_tmp_over_file atomically replaces file with tmp while keeping the
+# original file mode (mktemp files are 0600; a bare mv strips the executable
+# bit from rewritten scripts and ships a spurious mode-only diff, while a
+# write-through would leave the target truncated on an interrupted write).
+replace_tmp_over_file() {
+  local tmp="$1"
+  local file="$2"
+
+  chmod "$(file_mode_octal "${file}")" "${tmp}"
+  mv "${tmp}" "${file}"
+}
+
 replace_line_with_prefix() {
   local file="$1"
   local prefix="$2"
@@ -338,11 +360,7 @@ replace_line_with_prefix() {
     echo "Unable to replace ${prefix} in ${file}" >&2
     exit 1
   fi
-  # Write through the existing inode instead of mv so the target keeps its
-  # mode (mktemp files are 0600; an mv here strips the executable bit from
-  # rewritten scripts and ships a spurious mode-only diff in the candidate).
-  cat "${tmp}" >"${file}"
-  rm -f "${tmp}"
+  replace_tmp_over_file "${tmp}" "${file}"
 }
 
 replace_all_lines_with_prefix() {
@@ -369,11 +387,7 @@ replace_all_lines_with_prefix() {
     echo "Failed to update ${prefix} in ${file}" >&2
     exit 1
   fi
-  # Write through the existing inode instead of mv so the target keeps its
-  # mode (mktemp files are 0600; an mv here strips the executable bit from
-  # rewritten scripts and ships a spurious mode-only diff in the candidate).
-  cat "${tmp}" >"${file}"
-  rm -f "${tmp}"
+  replace_tmp_over_file "${tmp}" "${file}"
 }
 
 replace_line_after_marker_with_prefix() {
@@ -407,11 +421,7 @@ replace_line_after_marker_with_prefix() {
     echo "Unable to replace ${prefix} after ${marker} in ${file}" >&2
     exit 1
   fi
-  # Write through the existing inode instead of mv so the target keeps its
-  # mode (mktemp files are 0600; an mv here strips the executable bit from
-  # rewritten scripts and ships a spurious mode-only diff in the candidate).
-  cat "${tmp}" >"${file}"
-  rm -f "${tmp}"
+  replace_tmp_over_file "${tmp}" "${file}"
 }
 
 date_stamp_for_offset() {
