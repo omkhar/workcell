@@ -204,10 +204,12 @@ codex_args_include_profile() {
 # `--`). Global value-taking flags consume their value so the real subcommand
 # token is found, and `--*=*`/boolean flags (e.g. --version/--help) are skipped.
 # Both managed-injection decisions below classify this single token.
-# Keep the value-taking global list here in lockstep with the expect_value
-# handling in reject_unsafe_codex_args (runtime/container/provider-policy.sh):
-# the policy must consume the same values before its first-subcommand
-# blocklist, or a flag value would be mistaken for the command token.
+# This list must cover EVERY value-taking top-level Codex global (from
+# `codex --help`), and stay in lockstep with reject_unsafe_codex_args
+# (runtime/container/provider-policy.sh): the policy must likewise consume or
+# reject each of these values before its first-subcommand blocklist, or a flag
+# value would be mistaken for the command token (e.g.
+# `codex --local-provider ollama plugin`).
 codex_first_subcommand() {
   CODEX_FIRST_SUBCOMMAND=""
   local arg="" skip_value=0
@@ -221,7 +223,9 @@ codex_first_subcommand() {
         return 0
         ;;
       -c | --config | -m | --model | -i | --image | -C | --cd | \
-        -a | --ask-for-approval | -s | --sandbox | -p | --profile)
+        -a | --ask-for-approval | -s | --sandbox | -p | --profile | \
+        --add-dir | --remote | --remote-auth-token-env | --local-provider | \
+        --enable | --disable)
         skip_value=1
         ;;
       --*=* | -*) ;;

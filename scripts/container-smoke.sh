@@ -2486,6 +2486,14 @@ if run_entrypoint codex codex --model gpt-5 mcp list >/tmp/workcell-entrypoint-c
 fi
 grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-model-mcp.out
 
+# --local-provider is another value-taking global; its value must not be
+# mistaken for the subcommand token.
+if run_entrypoint codex codex --local-provider ollama plugin list >/tmp/workcell-entrypoint-codex-local-provider-plugin.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the plugin surface behind the --local-provider global" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/workcell-entrypoint-codex-local-provider-plugin.out
+
 run_entrypoint codex codex --model gpt-5 --version >/dev/null
 
 if run_entrypoint codex codex --profile breakglass --version >/tmp/workcell-entrypoint-codex-profile.out 2>&1; then
@@ -3275,6 +3283,26 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-control.out
+    if AGENT_UI=gui codex plugin list >/tmp/codex-nested-gui-plugin.out 2>&1; then
+      echo "expected an in-container AGENT_UI=gui override to still reject the plugin surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-plugin.out
+    if AGENT_UI=gui codex remote-control pair >/tmp/codex-nested-gui-remote-control.out 2>&1; then
+      echo "expected an in-container AGENT_UI=gui override to still reject the remote-control surface" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-gui-remote-control.out
+    if codex --local-provider ollama plugin list >/tmp/codex-nested-local-provider-plugin.out 2>&1; then
+      echo "expected the plugin surface behind the --local-provider global to be rejected" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-local-provider-plugin.out
+    if codex --remote-auth-token-env FOO mcp list >/tmp/codex-nested-remote-auth-mcp.out 2>&1; then
+      echo "expected the mcp surface behind the --remote-auth-token-env global to be rejected" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-nested-remote-auth-mcp.out
     rm -f "$CODEX_HOME/config.toml"
     printf "web_search = \"enabled\"\n" >"$CODEX_HOME/config.toml"
     codex --version >/tmp/codex-version-after-tamper.out 2>/tmp/codex-version-after-tamper.err
