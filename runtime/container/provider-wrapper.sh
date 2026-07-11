@@ -186,6 +186,17 @@ codex_args_include_profile() {
     if [[ "${expect_value}" -eq 1 ]]; then
       return 0
     fi
+    # A bare `--` ends option parsing: every following token is literal PROMPT
+    # text, never an operator flag (e.g. `codex -- --profile breakglass` passes
+    # "--profile breakglass" to the session as the prompt). Stop here so a
+    # post-`--` `--profile` is NOT mistaken for an operator-supplied profile —
+    # otherwise managed-profile injection would be skipped and the sandbox/
+    # approval contract dropped. This mirrors codex_first_subcommand (above) and
+    # reject_unsafe_codex_args (runtime/container/provider-policy.sh), which both
+    # return/break at `--`.
+    if [[ "${arg}" == "--" ]]; then
+      return 1
+    fi
     case "${arg}" in
       -p | --profile)
         expect_value=1
@@ -203,8 +214,13 @@ codex_args_include_profile() {
 # (empty for the default TUI: no subcommand, a bare prompt, or everything after
 # `--`). Global value-taking flags consume their value so the real subcommand
 # token is found, and `--*=*`/boolean flags (e.g. --version/--help) are skipped.
-# Both managed-injection decisions below classify this single token, so the
-# Codex global-flag table lives in exactly one place.
+# Both managed-injection decisions below classify this single token.
+# This list must cover EVERY value-taking top-level Codex global (from
+# `codex --help`), and stay in lockstep with reject_unsafe_codex_args
+# (runtime/container/provider-policy.sh): the policy must likewise consume or
+# reject each of these values before its first-subcommand blocklist, or a flag
+# value would be mistaken for the command token (e.g.
+# `codex --local-provider ollama plugin`).
 codex_first_subcommand() {
   CODEX_FIRST_SUBCOMMAND=""
   local arg="" skip_value=0
@@ -218,7 +234,9 @@ codex_first_subcommand() {
         return 0
         ;;
       -c | --config | -m | --model | -i | --image | -C | --cd | \
-        -a | --ask-for-approval | -s | --sandbox | -p | --profile)
+        -a | --ask-for-approval | -s | --sandbox | -p | --profile | \
+        --add-dir | --remote | --remote-auth-token-env | --local-provider | \
+        --enable | --disable)
         skip_value=1
         ;;
       --*=* | -*) ;;

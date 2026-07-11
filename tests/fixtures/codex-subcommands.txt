@@ -1,0 +1,56 @@
+# Complete Codex subcommand namespace for the PINNED runtime Codex.
+#
+# codex-version: 0.142.4
+#
+# The `# codex-version:` stamp above is MACHINE-READABLE and load-bearing:
+# scripts/verify-invariants.sh asserts it EQUALS `ARG CODEX_VERSION` in
+# runtime/container/Dockerfile, so a bump that does NOT regenerate this fixture fails
+# CI (else `fixture subset-of classified` passes VACUOUSLY on a stale fixture and a new
+# upstream subcommand leaks through as prompt text). Format: exactly
+# `# codex-version: X.Y.Z` on its own line (`# `, single space after the colon).
+#
+# The tokens below are the EXACT first-token subcommand names Codex dispatches on,
+# derived from the AUTHORITATIVE clap `enum Subcommand` in the pinned source
+# (openai/codex tag rust-v0.142.4, codex-rs/cli/src/main.rs), NOT `codex --help`: clap
+# also dispatches on aliases and `#[command(hide = true)]` HIDDEN variants `--help`
+# omits (e/a aliases, mcp-server, app, execpolicy, cloud-tasks, responses-api-proxy,
+# stdio-to-uds, exec-server), which then leaked through as prompt text. A first bare
+# token NOT on this list is Codex's [PROMPT] argument, not a command.
+#
+# The completeness check asserts EVERY name below is classified by
+# reject_unsafe_codex_args (runtime/container/provider-policy.sh) as ALLOW, GUI-gated
+# (app-server, AGENT_UI=gui only), or DENY. A pin bump MUST regenerate this list from
+# the new clap Subcommand enum (unit variants, aliases, hidden tokens), classify any
+# new name in provider-policy.sh, AND bump the stamp above, or the build stays red.
+# One name per line; blank/`#` lines are ignored.
+exec
+e
+review
+login
+logout
+mcp
+plugin
+mcp-server
+app-server
+remote-control
+app
+completion
+update
+doctor
+sandbox
+debug
+execpolicy
+apply
+a
+resume
+archive
+delete
+unarchive
+fork
+cloud
+cloud-tasks
+responses-api-proxy
+stdio-to-uds
+exec-server
+features
+help

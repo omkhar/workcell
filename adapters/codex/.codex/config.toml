@@ -47,3 +47,10 @@ network_access = false
 # Codex's unified exec path currently fails inside Workcell managed mode with
 # "Failed to create unified exec process: Operation not permitted".
 unified_exec = false
+# Defense in depth for the 0.143+ plugin/marketplace surface: even though the
+# provider policy rejects the `plugin` subcommand outright, pin the plugin
+# feature flags off in the runtime baseline so no config layer can silently
+# reintroduce remote marketplace fetch/install or plugin sharing.
+plugins = false
+plugin_sharing = false
+remote_plugin = false

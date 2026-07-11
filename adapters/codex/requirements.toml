@@ -11,6 +11,13 @@ allowed_web_search_modes = ["disabled"]
 
 [features]
 unified_exec = false
+# Kept in lockstep with .codex/config.toml and managed_config.toml: pin the
+# 0.143+ plugin/marketplace feature flags off so the managed baseline cannot
+# fetch/install remote plugins or share them (defense in depth for the plugin
+# subcommand fence in runtime/container/provider-policy.sh).
+plugins = false
+plugin_sharing = false
+remote_plugin = false
 
 # No MCP identities are seeded in the managed baseline. Enable only pinned,
 # repo-reviewed local commands or immutable container/image references.

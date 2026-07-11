@@ -122,7 +122,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "2fd96ca2373277b47e92a62bbfcd29c4e4d30369f08f97f3e368b559b3488ed5"
+      "sha256": "294e979a29a7023c3e0be229feebaf24a394f6d33ab9f25bacbc3a4b169e9ed3"
     },
     {
       "kind": "adapter-baseline",
@@ -146,7 +146,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "c893bda9d799981ef7604581e26bdd45cf0254ce72550fe7112bc25563bd7fce"
+      "sha256": "3c26a72b7f15ebd8eae2263721e52ddf94d8ae2a4036aa824b77ae57934fa996"
     },
     {
       "kind": "adapter-baseline",
@@ -158,7 +158,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "e4dce7bcb8f06c546c3e55d8f8f6509e3ff0f597cfb68bc36c47d5f86ffae295"
+      "sha256": "16eaf696e8c920575c09d5616c4f77cc1110853abfa8b1f0a3075cd03c568ffd"
     },
     {
       "kind": "adapter-baseline",
@@ -248,13 +248,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "afb18a7bb018e97c3b6f324077c2eddf84d51311466813610a02198064405544"
+      "sha256": "e3f9bcc8c6b4b2f29d0c715aa071583891de5635b62446744261f0eb589579bd"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "d4ee3849e5a8873bf729f14c591ef34c382c522e5bb20421fd512c433cf957d8"
+      "sha256": "bdccf6057d7b72e0da90dff5c2629ce5e1a4b501051d5976363140a392ea83c4"
     },
     {
       "kind": "runtime-control-plane",
