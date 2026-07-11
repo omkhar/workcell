@@ -58,10 +58,10 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
   `runtime/container/provider-policy.sh`): **subcommands are deny-by-default**
   over the pinned Codex subcommand namespace — only the read-only/session
   surface is permitted (exec, review, login/logout, completion, doctor, apply,
-  resume, fork, archive/unarchive/delete, help, debug, execpolicy, `features
+  resume, fork, archive/unarchive/delete, help, execpolicy, `features
   list`); everything else is rejected (plugin, remote-control, exec-server,
-  mcp*, cloud*, responses-api-proxy, stdio-to-uds, update, sandbox, `features
-  enable`/`disable`, and any unclassified/new subcommand). `app-server` is the
+  mcp*, cloud*, responses-api-proxy, stdio-to-uds, update, sandbox, debug,
+  `features enable`/`disable`, and any unclassified/new subcommand). `app-server` is the
   managed GUI backend and is permitted only as the bare no-arg launch; an
   unknown first token is Codex prompt text. The classified set is pinned to the
   version by

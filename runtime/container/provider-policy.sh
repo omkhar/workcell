@@ -255,7 +255,7 @@ reject_unsafe_codex_args() {
       case "${arg}" in
         exec | e | review | login | logout | completion | doctor | \
           apply | a | resume | fork | archive | unarchive | delete | \
-          help | debug | execpolicy)
+          help | execpolicy)
           continue
           ;;
         features)
@@ -280,9 +280,12 @@ reject_unsafe_codex_args() {
         # on every UI. Enumerated against 0.142.4 so ALLOW ∪ GUI-gated ∪ DENY equals the
         # complete subcommand list (the fixture completeness check enforces this).
         # Control-plane, daemon, marketplace, sandbox-escape, and self-update surfaces
-        # the managed session must never reach.
+        # the managed session must never reach. `debug` is denied too: its
+        # second-level subcommands are not read-only (`debug app-server` reaches the
+        # app-server test client, `debug clear-memories` mutates local memory), and the
+        # managed path never uses it.
         plugin | remote-control | exec-server | mcp | mcp-server | cloud | \
-          cloud-tasks | responses-api-proxy | stdio-to-uds | sandbox | update)
+          cloud-tasks | responses-api-proxy | stdio-to-uds | sandbox | update | debug)
           # cloud-tasks is the 0.142.4 alias of `cloud`; responses-api-proxy and stdio-to-
           # uds are HIDDEN daemon/bridge subcommands the clap enum still dispatches.
           # `update` is not a 0.142.4 variant (lands in 0.143); kept forward-compat and

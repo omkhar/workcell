@@ -2522,9 +2522,14 @@ run_entrypoint codex codex features list >/dev/null
 # permitted AND reached Codex. `help` does not accept `--help`, so it uses the block-
 # message-absent pattern below. execpolicy is a hidden but real read-only classifier
 # the managed autonomy path invokes; it must stay on the allowlist.
-for codex_allowed_sub in e review login logout completion doctor apply a resume fork archive unarchive delete debug execpolicy; do
+for codex_allowed_sub in e review login logout completion doctor apply a resume fork archive unarchive delete execpolicy; do
   run_entrypoint codex codex "${codex_allowed_sub}" --help >/dev/null
 done
+# `debug` is denied on every UI: its second-level subcommands are not read-only
+# (`debug app-server` reaches the app-server test client, `debug clear-memories`
+# mutates local memory), so the deny-by-default gate rejects the whole subcommand.
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the Codex debug subcommand" "Workcell blocked unsupported Codex CLI subcommand" debug
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the Codex debug app-server test-client surface" "Workcell blocked unsupported Codex CLI subcommand" debug app-server send-message-v2
 codex_help_permit_out="/tmp/workcell-entrypoint-codex-help-permit.out"
 run_entrypoint codex codex help >"${codex_help_permit_out}" 2>&1 || true
 if grep -q "Workcell blocked" "${codex_help_permit_out}"; then
