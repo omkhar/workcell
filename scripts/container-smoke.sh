@@ -2994,6 +2994,16 @@ if (reject_unsafe_copilot_args --interactive --add-dir) >/tmp/workcell-copilot-p
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --interactive" /tmp/workcell-copilot-policy-interactive.out
+if (reject_unsafe_copilot_args --no-sandbox -p smoke) >/tmp/workcell-copilot-policy-no-sandbox.out 2>&1; then
+  echo "expected Copilot policy to reject session sandbox disablement" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --no-sandbox" /tmp/workcell-copilot-policy-no-sandbox.out
+if (reject_unsafe_copilot_args --sandbox -p smoke) >/tmp/workcell-copilot-policy-sandbox.out 2>&1; then
+  echo "expected Copilot policy to reject session sandbox toggles" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --sandbox" /tmp/workcell-copilot-policy-sandbox.out
 SCRIPT
 
 if run_entrypoint copilot copilot --allow-all --version >/tmp/workcell-entrypoint-copilot-allow-all.out 2>&1; then
