@@ -400,13 +400,13 @@ reject_unsafe_claude_args() {
     fi
 
     case "${arg}" in
-      --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --mcp-config | --plugin-dir | --settings | --setting-sources | --system-prompt | --append-system-prompt)
+      --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --mcp-config | --plugin-dir | --plugin-url | --settings | --setting-sources | --system-prompt | --system-prompt-file | --append-system-prompt | --append-system-prompt-file | --append-subagent-system-prompt | --agents)
         workcell_die "Workcell blocked unsafe Claude override: ${arg}"
         ;;
       --permission-mode | --permission-mode=*)
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
-      --add-dir=* | --allowedTools=* | --mcp-config=* | --plugin-dir=* | --settings=* | --setting-sources=* | --system-prompt=* | --append-system-prompt=*)
+      --add-dir=* | --allowedTools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --agents=*)
         workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
         ;;
     esac

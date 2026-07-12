@@ -3112,6 +3112,36 @@ if run_entrypoint claude claude --add-dir=/state --version >/tmp/workcell-entryp
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-add-dir.out
 
+if run_entrypoint claude claude --append-subagent-system-prompt evil --version >/tmp/workcell-entrypoint-claude-subagent-prompt.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude subagent prompt overrides outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt.out
+
+if run_entrypoint claude claude --system-prompt-file /workspace/evil.md --version >/tmp/workcell-entrypoint-claude-system-prompt-file.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude file-based system prompt overrides outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-system-prompt-file.out
+
+if run_entrypoint claude claude --append-system-prompt-file=/workspace/evil.md --version >/tmp/workcell-entrypoint-claude-append-prompt-file.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude file-based append prompt overrides outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-append-prompt-file.out
+
+if run_entrypoint claude claude --plugin-url https://example.invalid/evil.zip --version >/tmp/workcell-entrypoint-claude-plugin-url.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude session plugin URL fetches outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-plugin-url.out
+
+if run_entrypoint claude claude --agents='{"evil":{"prompt":"x"}}' --version >/tmp/workcell-entrypoint-claude-agents.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude inline custom agent definitions outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-agents.out
+
 if run_entrypoint claude claude --permission-mode default --version >/tmp/workcell-entrypoint-claude-permission-mode.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude autonomy overrides outside host policy" >&2
   exit 1
