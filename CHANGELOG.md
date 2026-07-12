@@ -8,6 +8,22 @@ Releases.
 
 ## Unreleased
 
+## v1.0.0-rc.2 - 2026-07-12
+
+Supersedes v1.0.0-rc.1, which was tagged but never published: its release
+workflow failed in the new arm64 Copilot runtime-image probe, whose build
+requested a manifest-list output (`BUILDKIT_MULTI_PLATFORM=1`) that the
+`--load` docker exporter rejects on the buildx `v0.35.0` pin, and release
+preflight then failed closed on that check. This release fixes the probe and
+carries the full v1.0.0-rc.1 content below.
+
+### Fixed
+
+- build the release-time arm64 Copilot help-probe image as a plain
+  single-platform image so it can be loaded and probed; the probe never
+  compared digests against the reproducible-build manifest, so manifest-list
+  packaging was never needed there.
+
 ## v1.0.0-rc.1 - 2026-07-09
 
 This entry reconstructs the v0.12 through v0.15 milestone train plus the 1.0
