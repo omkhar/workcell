@@ -2949,6 +2949,11 @@ if (reject_unsafe_copilot_args mcp) >/tmp/workcell-copilot-policy-mcp.out 2>&1; 
   exit 1
 fi
 grep -q "Workcell blocked Copilot lifecycle/control-plane command: mcp" /tmp/workcell-copilot-policy-mcp.out
+if (reject_unsafe_copilot_args logout) >/tmp/workcell-copilot-policy-logout.out 2>&1; then
+  echo "expected Copilot policy to reject the logout auth-state command" >&2
+  exit 1
+fi
+grep -q "Workcell blocked Copilot lifecycle/control-plane command: logout" /tmp/workcell-copilot-policy-logout.out
 if (reject_unsafe_copilot_args --model gpt-4.1 mcp) >/tmp/workcell-copilot-policy-model-mcp.out 2>&1; then
   echo "expected Copilot policy to reject lifecycle commands after model values" >&2
   exit 1
