@@ -100,6 +100,7 @@ inspect_target_state() {
     --target docker-desktop \
     --agent codex \
     --inspect \
+    --no-default-injection-policy \
     --workspace "${WORKSPACE}" \
     >"${TMP_DIR}/inspect.stdout" 2>"${TMP_DIR}/inspect.stderr"
 }
@@ -109,6 +110,7 @@ doctor_target() {
     --target docker-desktop \
     --agent codex \
     --doctor \
+    --no-default-injection-policy \
     --workspace "${WORKSPACE}" \
     >"${TMP_DIR}/doctor.stdout" 2>"${TMP_DIR}/doctor.stderr"
 }
