@@ -3112,6 +3112,12 @@ if run_entrypoint claude claude --add-dir=/state --version >/tmp/workcell-entryp
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-add-dir.out
 
+if run_entrypoint claude claude --allowed-tools "Bash(*)" --version >/tmp/workcell-entrypoint-claude-allowed-tools-kebab.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the kebab-case Claude allowed-tools alias outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-allowed-tools-kebab.out
+
 if run_entrypoint claude claude --append-subagent-system-prompt evil --version >/tmp/workcell-entrypoint-claude-subagent-prompt.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude subagent prompt overrides outside breakglass" >&2
   exit 1
