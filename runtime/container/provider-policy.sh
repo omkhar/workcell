@@ -400,13 +400,13 @@ reject_unsafe_claude_args() {
     fi
 
     case "${arg}" in
-      --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --mcp-config | --plugin-dir | --settings | --setting-sources | --system-prompt | --append-system-prompt)
+      --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --allowed-tools | --mcp-config | --plugin-dir | --plugin-url | --settings | --setting-sources | --system-prompt | --system-prompt-file | --append-system-prompt | --append-system-prompt-file | --append-subagent-system-prompt | --agents)
         workcell_die "Workcell blocked unsafe Claude override: ${arg}"
         ;;
       --permission-mode | --permission-mode=*)
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
-      --add-dir=* | --allowedTools=* | --mcp-config=* | --plugin-dir=* | --settings=* | --setting-sources=* | --system-prompt=* | --append-system-prompt=*)
+      --add-dir=* | --allowedTools=* | --allowed-tools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --agents=*)
         workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
         ;;
     esac
@@ -478,10 +478,10 @@ reject_unsafe_copilot_args() {
 
     arg_lower="${arg,,}"
     case "${arg_lower}" in
-      --acp | --add-dir | --add-github-mcp-tool | --add-github-mcp-toolset | --additional-mcp-config | --agent | --allow-all | --allow-all-mcp-server-instructions | --allow-all-paths | --allow-all-tools | --allow-all-urls | --allow-tool | --allow-url | --attachment | --autopilot | --available-tools | --bash-env | -c | --config-dir | --connect | --continue | --deny-tool | --deny-url | --disable-builtin-mcps | --disable-mcp-server | --disallow-temp-dir | --dynamic-retrieval | --enable-all-github-mcp-tools | --enable-memory | --excluded-tools | --experimental | --extension-sdk-path | --interactive | --log-dir | --max-autopilot-continues | --mode | --name | --no-ask-user | --no-auto-update | --no-bash-env | --no-custom-instructions | --no-remote | --no-remote-export | --output-format | --plan | --plugin-dir | --remote | --remote-export | --resume | --secret-env-vars | --session-id | --share | --share-gist | --worktree | --yolo)
+      --acp | --add-dir | --add-github-mcp-tool | --add-github-mcp-toolset | --additional-mcp-config | --agent | --allow-all | --allow-all-mcp-server-instructions | --allow-all-paths | --allow-all-tools | --allow-all-urls | --allow-tool | --allow-url | --attachment | --autopilot | --available-tools | --bash-env | -c | --config-dir | --connect | --continue | --deny-tool | --deny-url | --disable-builtin-mcps | --disable-mcp-server | --disallow-temp-dir | --dynamic-retrieval | --enable-all-github-mcp-tools | --enable-memory | --excluded-tools | --experimental | --extension-sdk-path | --interactive | --log-dir | --max-autopilot-continues | --mode | --name | --no-ask-user | --no-auto-update | --no-bash-env | --no-custom-instructions | --no-remote | --no-remote-export | --no-sandbox | --output-format | --plan | --plugin-dir | --remote | --remote-export | --resume | --sandbox | --secret-env-vars | --session-id | --share | --share-gist | --worktree | --yolo)
         workcell_die "Workcell blocked unsafe Copilot override: ${arg}"
         ;;
-      --acp=* | --add-dir=* | --add-github-mcp-tool=* | --add-github-mcp-toolset=* | --additional-mcp-config=* | --agent=* | --allow-all=* | --allow-all-mcp-server-instructions=* | --allow-all-paths=* | --allow-all-tools=* | --allow-all-urls=* | --allow-tool=* | --allow-url=* | --attachment=* | --autopilot=* | --available-tools=* | --bash-env=* | -c=* | --config-dir=* | --connect=* | --continue=* | --deny-tool=* | --deny-url=* | --disable-builtin-mcps=* | --disable-mcp-server=* | --disallow-temp-dir=* | --dynamic-retrieval=* | --enable-all-github-mcp-tools=* | --enable-memory=* | --excluded-tools=* | --experimental=* | --extension-sdk-path=* | --interactive=* | --log-dir=* | --max-autopilot-continues=* | --mode=* | --name=* | --no-ask-user=* | --no-auto-update=* | --no-bash-env=* | --no-custom-instructions=* | --no-remote=* | --no-remote-export=* | --output-format=* | --plan=* | --plugin-dir=* | --remote=* | --remote-export=* | --resume=* | --secret-env-vars=* | --session-id=* | --share=* | --share-gist=* | --worktree=* | --yolo=*)
+      --acp=* | --add-dir=* | --add-github-mcp-tool=* | --add-github-mcp-toolset=* | --additional-mcp-config=* | --agent=* | --allow-all=* | --allow-all-mcp-server-instructions=* | --allow-all-paths=* | --allow-all-tools=* | --allow-all-urls=* | --allow-tool=* | --allow-url=* | --attachment=* | --autopilot=* | --available-tools=* | --bash-env=* | -c=* | --config-dir=* | --connect=* | --continue=* | --deny-tool=* | --deny-url=* | --disable-builtin-mcps=* | --disable-mcp-server=* | --disallow-temp-dir=* | --dynamic-retrieval=* | --enable-all-github-mcp-tools=* | --enable-memory=* | --excluded-tools=* | --experimental=* | --extension-sdk-path=* | --interactive=* | --log-dir=* | --max-autopilot-continues=* | --mode=* | --name=* | --no-ask-user=* | --no-auto-update=* | --no-bash-env=* | --no-custom-instructions=* | --no-remote=* | --no-remote-export=* | --no-sandbox=* | --output-format=* | --plan=* | --plugin-dir=* | --remote=* | --remote-export=* | --resume=* | --sandbox=* | --secret-env-vars=* | --session-id=* | --share=* | --share-gist=* | --worktree=* | --yolo=*)
         workcell_die "Workcell blocked unsafe Copilot override: ${arg%%=*}"
         ;;
     esac

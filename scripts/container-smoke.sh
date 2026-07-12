@@ -2994,6 +2994,16 @@ if (reject_unsafe_copilot_args --interactive --add-dir) >/tmp/workcell-copilot-p
   exit 1
 fi
 grep -q "Workcell blocked unsafe Copilot override: --interactive" /tmp/workcell-copilot-policy-interactive.out
+if (reject_unsafe_copilot_args --no-sandbox -p smoke) >/tmp/workcell-copilot-policy-no-sandbox.out 2>&1; then
+  echo "expected Copilot policy to reject session sandbox disablement" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --no-sandbox" /tmp/workcell-copilot-policy-no-sandbox.out
+if (reject_unsafe_copilot_args --sandbox -p smoke) >/tmp/workcell-copilot-policy-sandbox.out 2>&1; then
+  echo "expected Copilot policy to reject session sandbox toggles" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Copilot override: --sandbox" /tmp/workcell-copilot-policy-sandbox.out
 SCRIPT
 
 if run_entrypoint copilot copilot --allow-all --version >/tmp/workcell-entrypoint-copilot-allow-all.out 2>&1; then
@@ -3111,6 +3121,42 @@ if run_entrypoint claude claude --add-dir=/state --version >/tmp/workcell-entryp
   exit 1
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-add-dir.out
+
+if run_entrypoint claude claude --allowed-tools "Bash(*)" --version >/tmp/workcell-entrypoint-claude-allowed-tools-kebab.out 2>&1; then
+  echo "expected Workcell entrypoint to reject the kebab-case Claude allowed-tools alias outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-allowed-tools-kebab.out
+
+if run_entrypoint claude claude --append-subagent-system-prompt evil --version >/tmp/workcell-entrypoint-claude-subagent-prompt.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude subagent prompt overrides outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt.out
+
+if run_entrypoint claude claude --system-prompt-file /workspace/evil.md --version >/tmp/workcell-entrypoint-claude-system-prompt-file.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude file-based system prompt overrides outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-system-prompt-file.out
+
+if run_entrypoint claude claude --append-system-prompt-file=/workspace/evil.md --version >/tmp/workcell-entrypoint-claude-append-prompt-file.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude file-based append prompt overrides outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-append-prompt-file.out
+
+if run_entrypoint claude claude --plugin-url https://example.invalid/evil.zip --version >/tmp/workcell-entrypoint-claude-plugin-url.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude session plugin URL fetches outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-plugin-url.out
+
+if run_entrypoint claude claude --agents='{"evil":{"prompt":"x"}}' --version >/tmp/workcell-entrypoint-claude-agents.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude inline custom agent definitions outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-agents.out
 
 if run_entrypoint claude claude --permission-mode default --version >/tmp/workcell-entrypoint-claude-permission-mode.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude autonomy overrides outside host policy" >&2

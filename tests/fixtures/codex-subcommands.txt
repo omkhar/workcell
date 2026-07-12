@@ -1,6 +1,6 @@
 # Complete Codex subcommand namespace for the PINNED runtime Codex.
 #
-# codex-version: 0.142.4
+# codex-version: 0.144.1
 #
 # The `# codex-version:` stamp above is MACHINE-READABLE and load-bearing:
 # scripts/verify-invariants.sh asserts it EQUALS `ARG CODEX_VERSION` in
@@ -11,7 +11,7 @@
 #
 # The tokens below are the EXACT first-token subcommand names Codex dispatches on,
 # derived from the AUTHORITATIVE clap `enum Subcommand` in the pinned source
-# (openai/codex tag rust-v0.142.4, codex-rs/cli/src/main.rs), NOT `codex --help`: clap
+# (openai/codex tag rust-v0.144.1, codex-rs/cli/src/main.rs), NOT `codex --help`: clap
 # also dispatches on aliases and `#[command(hide = true)]` HIDDEN variants `--help`
 # omits (e/a aliases, mcp-server, app, execpolicy, cloud-tasks, responses-api-proxy,
 # stdio-to-uds, exec-server), which then leaked through as prompt text. A first bare
