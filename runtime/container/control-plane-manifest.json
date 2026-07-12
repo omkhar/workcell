@@ -164,7 +164,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/copilot/README.md",
       "runtime_path": "/opt/workcell/adapters/copilot/README.md",
-      "sha256": "8152b7c1490787bed3b99b5dd20c072b6cf34e482ea99f3fb968a599c19c9aaa"
+      "sha256": "1f345163f7e3bece0b774b10440af608923e13aca1f2e1c6bf8dae5414ffb7d8"
     },
     {
       "kind": "adapter-baseline",

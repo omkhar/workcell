@@ -49,8 +49,8 @@ directories. In-container reserved session targets: `~/.copilot`,
   §3).
 - Unsafe-argument policy (`reject_unsafe_copilot_args` in
   `runtime/container/provider-policy.sh`): the wrapper blocks the
-  `init`/`login`/`mcp`/`plugin`/`skill`/`update` lifecycle and control-plane
-  subcommands and a broad set of trust-widening flags (MCP toolset/config,
+  `init`/`login`/`logout`/`mcp`/`plugin`/`skill`/`update` lifecycle and
+  control-plane subcommands and a broad set of trust-widening flags (MCP toolset/config,
   `--allow-all*`, `--allow-tool`/`--allow-url`, `--add-dir`, `--dynamic-retrieval`,
   `--no-custom-instructions`, `--remote`/`--share*`/`--worktree`, `--yolo`,
   bundled short options, and more). These are rejected in **every** mode
