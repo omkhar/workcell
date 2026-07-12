@@ -82,7 +82,13 @@ prerequisites sit outside this table entirely. Remote-preview backends probe ext
 `session-manager-plugin` for the `aws-ec2-ssm` backend, `gcloud` for `gcp-vm`.
 Image builds require a system `docker-buildx` plugin binary
 (`ensure_workcell_trusted_buildx`, `scripts/lib/trusted-docker-client.sh`), which
-aborts with `Missing trusted docker-buildx binary` when none is found. And the
+aborts with `Missing trusted docker-buildx binary` when none is found. A
+pre-set, executable `WORKCELL_TRUSTED_BUILDX_BIN` short-circuits that search and
+is honored as-is; the launcher's `env -i` shebang (line 1) clears it on any
+normal invocation, so this override survives only for shebang-bypassed
+invocations (`/bin/bash -p scripts/workcell`) that inherit an
+attacker-controlled value. Such invocations already run outside the pinned
+entrypoint and are out of the launcher's trust boundary. And the
 `workcell publish-pr` subcommand resolves `gh` on its non-dry-run path (required;
 via the Go publish helper `internal/publishpr`, `ResolveHostTool(ctx, "gh", true,
 …)`), failing with `Missing trusted host tool: gh` at publication time if it is

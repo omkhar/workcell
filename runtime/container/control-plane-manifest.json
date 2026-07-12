@@ -164,7 +164,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/copilot/README.md",
       "runtime_path": "/opt/workcell/adapters/copilot/README.md",
-      "sha256": "8152b7c1490787bed3b99b5dd20c072b6cf34e482ea99f3fb968a599c19c9aaa"
+      "sha256": "1f345163f7e3bece0b774b10440af608923e13aca1f2e1c6bf8dae5414ffb7d8"
     },
     {
       "kind": "adapter-baseline",
@@ -248,7 +248,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "c82e4837aaca7095dd01bf4dbcdcb3185eadd5624eb37b157691ce53f40ff3ca"
+      "sha256": "1e8c5e98828890f7c51c58e8f1d486cd8412b5b5b06d5cb55ddd1a910c05e8d1"
     },
     {
       "kind": "runtime-control-plane",

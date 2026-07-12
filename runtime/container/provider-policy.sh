@@ -469,7 +469,7 @@ reject_unsafe_copilot_args() {
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
       case "${arg}" in
-        init | login | mcp | plugin | skill | update)
+        init | login | logout | mcp | plugin | skill | update)
           workcell_die "Workcell blocked Copilot lifecycle/control-plane command: ${arg}"
           ;;
       esac
