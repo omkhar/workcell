@@ -234,9 +234,13 @@ jobs:
       - name: Build arm64 runtime image for Copilot help probe
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
+        # No BUILDKIT_MULTI_PLATFORM here: it forces a manifest-list output,
+        # which `--load` (the docker exporter) rejects on buildx v0.35.0+.
+        # This probe only runs the loaded image; it does not compare digests
+        # against the reproducible-build manifest, so list packaging is not
+        # needed.
         run: |
           docker buildx build \
-            --build-arg "BUILDKIT_MULTI_PLATFORM=1" \
             --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
             --load \
             --platform linux/arm64 \
