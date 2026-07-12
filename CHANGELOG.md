@@ -122,7 +122,10 @@ chronology.
   both the strict Colima and compat Docker Desktop boundaries on the
   maintainer host; each deferral is recorded with its tradeoff.
 - refresh pinned upstream inputs (toolchains, base images, provider pins) to
-  the newest reviewed versions.
+  the newest reviewed versions; at rc.1 cut the reviewed pins are Codex CLI
+  `0.144.1`, Claude CLI `2.1.207`, Copilot CLI `1.0.70`, Gemini CLI `0.50.0`,
+  Go `1.26.5`, and Rust `1.97.0`, with sigstore-verified provider tarball
+  digests updated in lockstep.
 
 ### Fixed
 
@@ -163,6 +166,24 @@ chronology.
   boundary of the trust model.
 - close the installer-side supply-chain gap: an unsigned or tampered
   release bundle is refused before its own installer ever runs.
+- harden the Codex adapter to a deny-by-default posture: managed sessions
+  now pass Codex subcommands through an explicit allowlist (with `debug`
+  denied wholesale because its second-level subcommands are not read-only),
+  guard every sandbox/profile/approval/cd value-flag in all clap-accepted
+  spellings (space-separated, `--flag=value`, glued short `-sVALUE`, and
+  short-with-equals `-s=VALUE`), and enforce a version-stamped subcommand
+  fixture so a Codex upstream bump cannot silently introduce an
+  unclassified subcommand.
+- deny the new Claude prompt-override and plugin surfaces that ship with
+  the 2.1.207 pin: `--append-subagent-system-prompt`, the file-based
+  `--system-prompt-file`/`--append-system-prompt-file` variants,
+  `--plugin-url` session plugin fetches, `--agents` inline agent
+  definitions, and the kebab-case `--allowed-tools` alias of the denied
+  `--allowedTools` pre-approval flag are all blocked in managed sessions,
+  each proven by a container-smoke denial assertion against the pinned
+  binary; the Copilot 1.0.70 session-local `--sandbox`/`--no-sandbox`
+  toggles are likewise denied so sandbox posture can only come from host
+  policy.
 
 ## v0.11.2 - 2026-06-15
 
