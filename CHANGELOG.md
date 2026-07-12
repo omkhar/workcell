@@ -8,6 +8,183 @@ Releases.
 
 ## Unreleased
 
+## v1.0.0-rc.1 - 2026-07-09
+
+This entry reconstructs the v0.12 through v0.15 milestone train plus the 1.0
+release-candidate gate work in one pass: those milestones shipped only as
+main progression, with no intermediate tags, so no fake per-version headings
+are recorded below. Grouped by user- and operator-facing theme, not
+chronology.
+
+### Added
+
+- add `workcell session verify --id`, which recomputes the session's audit
+  hash-chain from a per-host signing key, rejects duplicate-key and reordered
+  or dropped entries, and fails closed (exit `0`/`1`/`2`); session-stop now
+  signs the finalized audit chain automatically, and the trust model
+  (host-signed, not host-root re-signed) is documented.
+- add `workcell session export --format ocsf`, an OCSF-mapped (Application
+  Lifecycle, class `6002`) export of session and audit-record events as JSON
+  Lines, with per-writer audit-line decoding, duplicate-key rejection, a
+  known-field allowlist for audit keys, and hard redaction of free-form
+  operator messages.
+- deny repo-defined MCP server configuration (`.mcp.json`,
+  `.github/mcp.json`) by default in `strict` mode; a committed config is
+  neutralized before it reaches the provider unless the operator opts in
+  with a dated acknowledgement token.
+- publish `policy/hardening-profile.toml`, a reviewed artifact recording the
+  container hardening posture (capability drops, read-only rootfs, tmpfs
+  mount flags, egress inventory) with a conformance check that fails CI on
+  drift from the shipped launcher.
+- add a verified consumer install path: `install-release.sh` now verifies
+  the cosign signature and digest of a downloaded release bundle before
+  extraction, refusing a tampered or unsigned bundle by default; an explicit
+  offline bypass requires two separate flags and prints a loud warning.
+- add `workcell support-bundle`, which collects operator-facing diagnostics
+  with documented redaction rules; add an operator incident-response
+  runbook for suspected boundary breaches (agent escape, credential
+  exposure, workspace tamper) that walks detect, contain, preserve,
+  collect, and report using existing tooling.
+- add `workcell session list --parallel`, which groups concurrent sessions
+  by their shared source repository and renders each sibling's isolated
+  worktree, branch, and container, plus a scenario proof that same-repo
+  parallel sessions get distinct clone paths, branches, and containers with
+  no visible cross-writes.
+- evaluate an Apple `container` backend (`local_vm/apple-container`,
+  macOS 26+): go/no-go recorded as GO on the evaluation only; the backend
+  ships preview-only and support-invisible, Colima remains the default and
+  the only supported backend below macOS 26, and promotion to a supported
+  backend is deferred post-1.0 pending a funded real-boundary certification
+  lane.
+- add a session-start latency benchmarking harness (cold/warm/cache-hit,
+  median/p90/stddev) with a reproducible dry-run mode; live measurements are
+  deferred to local-operator certification and are not fabricated.
+- add a public contract inventory and drift check, a support-tier legend,
+  docs link/orphan CI checks, an OWASP Agentic Top-10 control mapping, a
+  SLSA v1.0 Build-track gap analysis, a CI/CD threat model, a standards
+  watchlist, and a unified exit-code contract across the CLI surface.
+- add a scheduled mutation-score CI lane with a published baseline and
+  regression gate, a reviewed GitHub Actions allowlist, and centralized CI
+  tool-pin policy.
+- add Go fuzz targets across parser and injection-boundary code plus Rust
+  `cargo-fuzz` targets for the exec-guard classifiers, wired into a
+  scheduled fuzz lane; add exec-guard syscall-shim performance baselines.
+- add a fail-closed GitHub Copilot Tier 1 adapter and a fail-closed
+  Antigravity adapter scaffold.
+- add `workcell --version`, which prints the first released version heading
+  from `CHANGELOG.md` using the same rule as the support bundle (so the two
+  version sources cannot disagree); it reports semver pre-release suffixes
+  such as `v1.0.0-rc.1` rather than overstating a final release (hyphenated
+  pre-release identifiers included), works toolchain-free as the bare first
+  argument on hosts without a Go toolchain, is honored after other global
+  options on provisioned hosts and through the debug-wrapper install, and
+  prints `unknown` rather than failing when no heading is present.
+
+### Changed
+
+- migrate the `verify-invariants.sh` static invariants (thousands of checks
+  across host, runtime, provider, and policy boundaries) from bash into a
+  typed Go validator suite (`internal/workcellhardening` and related
+  packages); the residual left in bash is provably non-static (real-repo
+  state, not fixed patterns) and is recorded as an intentional scope
+  boundary, not an oversight.
+- modularize the 8,900-line launcher script: extract host detection, trusted
+  host-command execution, Go/Colima host-utility wrappers, and
+  egress-endpoint assembly into `scripts/lib/launcher/`, and document the
+  full contract (required tools, environment expectations, exit codes, test
+  override flags) in `docs/launcher-contract.md`.
+- split the oversized pinned-input validator (`internal/metadatautil`) into
+  per-ecosystem files for GitHub Actions workflows, Node/npm, and Docker;
+  the remaining Rust and Python validators stay inline as an accepted,
+  non-oversized remainder.
+- extract the git-policy module from the Rust interception library's
+  monolithic `lib.rs` into its own file, with the shim's exported symbol set
+  and behavior byte-identical; further module splits are follow-up work.
+- add property-based (randomized-lifecycle) tests for the session lifecycle
+  covering encode/decode round-tripping, terminal-status monotonicity, and
+  log-injection defenses, using the standard library's `testing/quick`
+  rather than a new dependency.
+- restructure the README into tiered documentation entry points, add
+  maintained architecture diagrams, document the injection-policy schema
+  with per-provider examples, and deepen the contributor runbook and
+  adapter READMEs.
+- split regex-kind and fixed-string-kind check patterns onto separate
+  fields in `internal/workcellhardening` so literal patterns (such as a
+  pinned hostname) can never be misidentified as an unanchored regular
+  expression; closes all 10 open CodeQL hostname-regex alerts with no
+  suppressions and no behavior change.
+- amend the 1.0 release criteria: defer dual-control release approval (B2,
+  no second trusted maintainer), the funded third-party boundary audit and
+  OpenSSF Best Practices badge (B7), the automated real-boundary
+  certification lane (B6, no runner funding), and the adoption growth kit
+  and rendered docs site (E6) to post-1.0. 1.0 instead relies on documented
+  single-maintainer release controls and local-operator certification of
+  both the strict Colima and compat Docker Desktop boundaries on the
+  maintainer host; each deferral is recorded with its tradeoff.
+- refresh pinned upstream inputs (toolchains, base images, provider pins) to
+  the newest reviewed versions; at rc.1 cut the reviewed pins are Codex CLI
+  `0.144.1`, Claude CLI `2.1.207`, Copilot CLI `1.0.70`, Gemini CLI `0.50.0`,
+  Go `1.26.5`, and Rust `1.97.0`, with sigstore-verified provider tarball
+  digests updated in lockstep.
+
+### Fixed
+
+- harden security pins and direct mount staging, keep Colima staging cache
+  mounts correct, and keep pin hygiene green when the upstream Rust Docker
+  tag lags.
+- heal an audit-log append boundary that could produce a torn write, and
+  recover a write-only audit log on the read path.
+- pin the scheduled Rust fuzz lane to a dated nightly toolchain instead of
+  the moving `nightly` alias, so an upstream nightly release can no longer
+  silently change fuzz coverage or break the lane.
+- make the upstream-pins refresh helpers replace files atomically while
+  preserving their modes: rewriting a pinned script no longer strips its
+  executable bit (which shipped spurious mode-only diffs and broke the
+  refresh-PR parity run), and an interrupted write can no longer leave a
+  truncated target behind; also serialize the `--version` testkit fixtures
+  to remove an ETXTBSY flake.
+
+### Documentation
+
+- document the day-two install lifecycle (install, upgrade-in-place,
+  rollback, `--gc`, uninstall) with an explicit CI-automatable versus
+  local-operator-certification split, backed by an offline end-to-end test
+  of `install-release.sh` against a fixture release.
+- document the OCSF-mapped session export in the enterprise evidence
+  baseline, the Rust/Go/shell language-boundary doctrine, and the
+  syscall/filesystem hardening profile referenced above.
+
+### Security
+
+- close a boundary/exfiltration gap where a committed `.mcp.json` could
+  reach the agent provider even in `strict` mode.
+- add signed, tamper-evident session audit records: a per-host P-256 signing
+  key is generated and hardened under an owner-secured, symlink-resistant
+  directory, and audit-chain verification detects offline tampering,
+  reordering, drops, and duplicate-key injection; it does not protect
+  against host-root re-signing, which is documented as an explicit
+  boundary of the trust model.
+- close the installer-side supply-chain gap: an unsigned or tampered
+  release bundle is refused before its own installer ever runs.
+- harden the Codex adapter to a deny-by-default posture: managed sessions
+  now pass Codex subcommands through an explicit allowlist (with `debug`
+  denied wholesale because its second-level subcommands are not read-only),
+  guard every sandbox/profile/approval/cd value-flag in all clap-accepted
+  spellings (space-separated, `--flag=value`, glued short `-sVALUE`, and
+  short-with-equals `-s=VALUE`), and enforce a version-stamped subcommand
+  fixture so a Codex upstream bump cannot silently introduce an
+  unclassified subcommand.
+- deny the new Claude prompt-override and plugin surfaces that ship with
+  the 2.1.207 pin: `--append-subagent-system-prompt`, the file-based
+  `--system-prompt-file`/`--append-system-prompt-file` variants,
+  `--plugin-url` session plugin fetches, `--agents` inline agent
+  definitions, and the kebab-case `--allowed-tools` alias of the denied
+  `--allowedTools` pre-approval flag are all blocked in managed sessions,
+  each proven by a container-smoke denial assertion against the pinned
+  binary; the Copilot 1.0.70 session-local `--sandbox`/`--no-sandbox`
+  toggles are likewise denied so sandbox posture can only come from host
+  policy.
+
 ## v0.11.2 - 2026-06-15
 
 Supersedes v0.11.1, which was tagged but never published: its release-preflight
