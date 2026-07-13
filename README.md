@@ -158,16 +158,18 @@ from the repository over TLS (a trusted source) rather than the unverified
 bundle — clone the repo, then run it:
 
 ```bash
+brew install cosign gh   # verifier tools must exist before verification runs
 git clone https://github.com/omkhar/workcell.git
 cd workcell
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
-Both `install-release.sh` and the bundle's own `./scripts/install.sh` install
-only the missing required Homebrew formulas (`colima`, `docker`, `gh`, `git`,
-`go`) before linking the launcher; pass `-- --no-install-deps` for a
-launcher-only install. To verify and install straight from the release page
-without a clone, use the manual cosign flow in
+`cosign` (and `gh` for `--attestation`) must already be installed, because
+verification runs **before** the bundle installer that provides the other host
+packages. The bundle installer then installs only the remaining missing required
+formulas (`colima`, `docker`, `git`, `go`) before linking the launcher; pass
+`-- --no-install-deps` for a launcher-only install. To verify and install
+straight from the release page without a clone, use the manual cosign flow in
 [docs/getting-started.md](docs/getting-started.md); if you already have a
 verified, unpacked release tree, run `./scripts/install.sh` from inside it.
 

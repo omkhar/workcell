@@ -16,6 +16,14 @@ one-command verified path: it downloads the tagged release bundle plus its
 signed `SHA256SUMS`, verifies the cosign signature and digest **fail-closed
 before any bundle code runs**, and only then extracts and installs.
 
+The verifier tools must already be on the host, because verification runs
+**before** the bundle installer (which is what installs the other host packages)
+gets to run. Install `cosign`, and `gh` for `--attestation`, first:
+
+```bash
+brew install cosign gh
+```
+
 `install-release.sh` is not published as a standalone release asset, so obtain
 it from the repository over TLS (a trusted source for the installer) rather than
 from the not-yet-verified bundle — clone the repo, then run it:
@@ -26,15 +34,16 @@ cd workcell
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
-`--attestation` additionally requires `gh attestation verify` to pass. Arguments
-after `--` are forwarded to the bundle installer (e.g.
+`--attestation` additionally requires `gh attestation verify` to pass (hence
+`gh` above). Arguments after `--` are forwarded to the bundle installer (e.g.
 `-- --no-install-deps` for a launcher-only install). A tampered or unsigned
 bundle is refused before its (also-tampered) installer could run — this is why
 verifying before extraction is sound.
 
 **Manual equivalent** (from the release page directly, air-gapped, or to inspect
 each step): download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json`
-from GitHub Releases and verify before unpacking:
+from GitHub Releases and verify before unpacking. This mirrors the
+`--attestation` flow, so it includes the `gh attestation verify` gate:
 
 ```bash
 cosign verify-blob SHA256SUMS \
@@ -42,6 +51,8 @@ cosign verify-blob SHA256SUMS \
   --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
+gh attestation verify workcell-vX.Y.Z.tar.gz --repo omkhar/workcell \
+  --signer-workflow omkhar/workcell/.github/workflows/release.yml
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
 ./scripts/install.sh
