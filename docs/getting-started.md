@@ -18,10 +18,12 @@ before any bundle code runs**, and only then extracts and installs.
 
 The verifier tools must already be on the host, because verification runs
 **before** the bundle installer (which is what installs the other host packages)
-gets to run. Install `cosign`, and `gh` for `--attestation`, first:
+gets to run. Install `cosign`, `gh` (for `--attestation`), and `gnupg` plus
+`git` (for the `git clone` + `git tag -v` below — macOS ships neither `gnupg`
+nor, on a clean host, `git`) first:
 
 ```bash
-brew install cosign gh
+brew install cosign gh git gnupg
 ```
 
 `install-release.sh` is not published as a standalone release asset, so obtain

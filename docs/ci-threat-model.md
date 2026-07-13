@@ -276,12 +276,14 @@ digest fail-closed (via `scripts/verify-release-artifact.sh`) before installing,
 so on that path the guarantee no longer depends on a user remembering the manual
 `cosign verify` / `gh attestation verify` commands in
 [provenance.md](provenance.md). As of the 1.0 docs this verified path is the
-**documented default** install — the README and getting-started lead with
-`install-release.sh` (obtained via a repo clone over TLS, since the installer is
-not itself a standalone release asset) or, from the release page, the manual
-`cosign verify` flow. Verification is not yet *forced*, however: a user can
-still choose an unverified install (`tar … && ./scripts/install.sh`, the plain
-`install.sh`, or a hand-fetched bundle), and no standalone verified installer is
+**documented default for installing a tagged release** — the README Install
+section and getting-started recommend `install-release.sh` (obtained via a repo
+clone over TLS, since the installer is not itself a standalone release asset) or,
+from the release page, the manual `cosign verify` flow. Verification is not yet
+*forced*, however: the README's 5-minute quickstart still runs the plain
+`./scripts/install.sh` from an assumed local checkout, a user can otherwise
+choose an unverified install (`tar … && ./scripts/install.sh` or a hand-fetched
+bundle), and no standalone verified installer is
 published as a release asset — so the residual is a defaulting/bootstrap gap,
 not an absent capability (threat 8,
 [known gap 1](#known-gaps-and-future-work)). The verification identity that a consumer (or the installer) pins is the

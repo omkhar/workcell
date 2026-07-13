@@ -158,7 +158,7 @@ from the repository over TLS (a trusted source) rather than the unverified
 bundle — clone the repo, then run it:
 
 ```bash
-brew install cosign gh   # verifier tools must exist before verification runs
+brew install cosign gh git gnupg   # verifier tools must exist before verification runs (macOS ships neither gnupg nor, on a clean host, git)
 git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
 git tag -v vX.Y.Z        # verify the tag signature before running the installer
