@@ -56,8 +56,11 @@ cosign verify-blob SHA256SUMS \
   --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
+# needs network; pins the same anchored identity regex + OIDC issuer that
+# install-release.sh --attestation uses (not --signer-workflow, which can over-match).
 gh attestation verify workcell-vX.Y.Z.tar.gz --repo omkhar/workcell \
-  --signer-workflow omkhar/workcell/.github/workflows/release.yml  # needs network
+  --cert-identity-regex 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
 ./scripts/install.sh
