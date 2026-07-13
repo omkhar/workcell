@@ -133,10 +133,13 @@ Recorded local-operator certification on the maintainer host
 ## Relationship to forced consumer verification (CI threat model gap 1)
 
 [ci-threat-model.md](ci-threat-model.md) tracks, as known gap 1, that verified
-install is not yet the *forced* default across all documented install paths. The
-end-to-end fixture proof above closes the CI-automatable half of that gap's
-"exercise `install-release.sh` end to end" requirement — a tampered or
-unsigned bundle cannot reach the bundle installer. Fully closing the gap still
-requires making verification the forced default across all documented flows and
-exercising the verified path against a real published release; both are recorded
-in the remainder above.
+install — now the *documented default* — is not yet *forced* across all
+documented install paths. The end-to-end fixture proof above closes the
+CI-automatable half of that gap's "exercise `install-release.sh` end to end"
+requirement — a tampered or unsigned bundle cannot reach the bundle installer —
+and the "against a real published release" half is now done (the Certification
+record above: `install-release.sh --attestation` against the published
+`v1.0.0-rc.2`). Fully closing the gap now requires only making verification the
+*forced* default across all flows and shipping a standalone verified installer
+bootstrap (so consumers need not clone the repo to obtain a trusted
+`install-release.sh`).

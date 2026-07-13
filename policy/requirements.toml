@@ -276,6 +276,8 @@ evidence = [
   "internal/testkit/release_verify_test.go",
 ]
 docs = [
+  "README.md",
+  "docs/getting-started.md",
   "docs/install.md",
   "docs/provenance.md",
   "docs/ci-threat-model.md",

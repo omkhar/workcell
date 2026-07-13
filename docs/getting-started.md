@@ -9,24 +9,86 @@ GitHub-hosted Apple Silicon `macos-26` and `macos-15`.
 
 ## 1. Install Workcell
 
-### Option A: verified release bundle
+### Option A: verified release install (recommended)
 
-Download a tagged release bundle plus `SHA256SUMS` and
-`SHA256SUMS.sigstore.json` from GitHub Releases, verify the bundle, then
-unpack it and run the installer:
+Always verify a release before installing it. `install-release.sh` is the
+one-command verified path: it downloads the tagged release bundle plus its
+signed `SHA256SUMS`, verifies the cosign signature and digest **fail-closed
+before any bundle code runs**, and only then extracts and installs.
+
+The verifier tools must already be on the host, because verification runs
+**before** the bundle installer (which is what installs the other host packages)
+gets to run. Install `cosign` plus `gnupg` and `git` (for the `git clone` +
+`git tag -v` below — macOS ships neither `gnupg` nor, on a clean host, `git`)
+first:
+
+```bash
+brew install cosign git gnupg
+```
+
+`install-release.sh` is not published as a standalone release asset, so obtain
+it from the repository over TLS (a trusted source for the installer) rather than
+from the not-yet-verified bundle — clone the **release tag** (not the mutable
+default branch, since the pre-trust installer runs before any verification), then
+run it:
+
+```bash
+git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
+cd workcell
+git tag -v vX.Y.Z        # verify the tag signature before running the installer
+./scripts/install-release.sh --version vX.Y.Z
+```
+
+`git tag -v` authenticates the checked-out installer against the maintainer
+signing key **before** you run it — import and confirm the key fingerprint from
+[SECURITY.md](../SECURITY.md#signing-key) first. Arguments after `--` are
+forwarded to the bundle installer (e.g. `-- --no-install-deps` for a
+launcher-only install). A tampered or unsigned bundle is refused before its
+(also-tampered) installer could run — this is why verifying before extraction is
+sound.
+
+For an **additional** GitHub attestation check, append `--attestation`. That
+step runs `gh attestation verify`, which queries the GitHub API, so it also
+needs `gh` **installed and authenticated** (`brew install gh && gh auth login`)
+and network access:
+
+```bash
+./scripts/install-release.sh --version vX.Y.Z --attestation
+```
+
+**Manual equivalent** (from the release page directly, or to inspect each step):
+download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json` from GitHub
+Releases and verify before unpacking. The `cosign verify-blob` and `shasum`
+steps verify offline against the downloaded Sigstore bundle; the
+`gh attestation verify` step below mirrors the `--attestation` gate but
+**requires network access** (it fetches the attestation from the GitHub API by
+default). For a strictly offline/air-gapped install, omit that step — the cosign
+signature over `SHA256SUMS` plus the digest check is the offline-capable core
+guarantee — or pass a locally downloaded attestation with `--bundle`:
+
+The identity regex below is **anchored and escaped** (`^…\.…$`) so only the
+release tag is a wildcard — the exact pin `verify-release-artifact.sh` uses, not
+the illustrative unescaped form elsewhere in the docs (an unescaped `.` matches
+any character and can over-match the identity):
 
 ```bash
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
+# needs network; pins the same anchored/escaped identity regex + OIDC issuer that
+# install-release.sh --attestation uses (not --signer-workflow, which can over-match).
+gh attestation verify workcell-vX.Y.Z.tar.gz --repo omkhar/workcell \
+  --cert-identity-regex '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
 ./scripts/install.sh
 ```
 
-See [docs/provenance.md](provenance.md) for the full verification contract.
+See [docs/provenance.md](provenance.md) for the full verification contract and
+[docs/install-lifecycle.md](install-lifecycle.md) for the day-two lifecycle.
 
 On supported macOS hosts, the installer uses Homebrew to install only the
 missing required packages (`colima`, `docker`, `gh`, `git`, `go`). Use

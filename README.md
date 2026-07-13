@@ -114,7 +114,11 @@ links; the full index is in the [Docs map](#docs-map) below.
 ## 5-minute path
 
 Install Workcell, create the host-side auth policy, inspect the derived
-posture, then launch:
+posture, then launch. `./scripts/install.sh` below assumes you are in a
+verified or source tree; to install a tagged release instead, use the verified
+one-command path `./scripts/install-release.sh --version vX.Y.Z` (see
+[Install](#install) for the tag clone, signature checks, and the optional
+`--attestation` gate).
 
 ```bash
 ./scripts/install.sh
@@ -147,17 +151,38 @@ host support boundary that `--doctor` and `--inspect` report.
 
 ## Install
 
-On Apple Silicon macOS, download a tagged release bundle, unpack it, and run the
-supported installer:
+On Apple Silicon macOS, the recommended path is the one-command **verified
+release install**, which downloads a tagged release, verifies its cosign
+signature and digest fail-closed **before any bundle code runs**, and only then
+installs. `install-release.sh` is not a standalone release asset, so get it
+from the repository over TLS (a trusted source) rather than the unverified
+bundle — clone the repo, then run it:
 
 ```bash
-tar -xzf workcell-vX.Y.Z.tar.gz
-cd workcell-vX.Y.Z
-./scripts/install.sh
+brew install cosign git gnupg   # verifier tools must exist before verification runs (macOS ships neither gnupg nor, on a clean host, git)
+git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
+cd workcell
+git tag -v vX.Y.Z        # verify the tag signature before running the installer
+./scripts/install-release.sh --version vX.Y.Z
 ```
 
-`./scripts/install.sh` installs only the missing required Homebrew formulas
-(`colima`, `docker`, `gh`, `git`, `go`) before it links the launcher.
+Clone the **tag** (`--branch vX.Y.Z`), not the mutable default branch: the
+pre-trust installer runs before any release verification, so it must come from
+the signed, immutable release commit rather than whatever `main` currently
+holds. `git tag -v` authenticates that commit against the maintainer signing
+key **before** you execute the installer — import and confirm the key
+fingerprint from [SECURITY.md](SECURITY.md#signing-key) first.
+
+The verifier tools (`cosign`, and `git`/`gnupg` for the clone and tag check)
+must already be installed, because verification runs **before** the bundle
+installer that provides the other host packages (`colima`, `docker`, `go`); pass
+`-- --no-install-deps` for a launcher-only install. For an **additional** GitHub
+attestation check, append `--attestation` — that step needs `gh` installed and
+authenticated (`brew install gh && gh auth login`) and network access. To verify
+and install straight from the release page without a clone, use the manual
+cosign flow in [docs/getting-started.md](docs/getting-started.md); if you already
+have a verified, unpacked release tree, run `./scripts/install.sh` from inside
+it.
 
 For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
