@@ -116,8 +116,9 @@ links; the full index is in the [Docs map](#docs-map) below.
 Install Workcell, create the host-side auth policy, inspect the derived
 posture, then launch. `./scripts/install.sh` below assumes you are in a
 verified or source tree; to install a tagged release instead, use the verified
-one-command path `./scripts/install-release.sh --version vX.Y.Z --attestation`
-(see [Install](#install)).
+one-command path `./scripts/install-release.sh --version vX.Y.Z` (see
+[Install](#install) for the tag clone, signature checks, and the optional
+`--attestation` gate).
 
 ```bash
 ./scripts/install.sh
