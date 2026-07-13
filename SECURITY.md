@@ -19,6 +19,29 @@ Always verify a release before installing it: `scripts/install-release.sh`
 checks the release's cosign signature and digest fail-closed before any bundle
 code runs (see [`docs/install-lifecycle.md`](docs/install-lifecycle.md)).
 
+## Signing key
+
+Release tags and commits are GPG-signed by the maintainer. Confirm any key you
+import against this fingerprint before trusting a signature:
+
+```text
+Omkhar Arasaratnam <omkhar@gmail.com>
+ed25519  9055 4248 C4F7 CC08 6BB7  45D0 DA5A 8E9F 536C 42FD
+```
+
+When you obtain the installer from a checkout of a release tag (the verified
+install path in [`docs/getting-started.md`](docs/getting-started.md)), verify
+that tag's signature against this key **before** running any code from it:
+
+```bash
+# import the maintainer key (e.g. from a keyserver) and confirm the fingerprint above, then:
+git tag -v vX.Y.Z
+```
+
+This authenticates the installer source; the release *artifacts* are
+independently verified with keyless cosign signatures (no long-lived signing
+key), documented in [`docs/provenance.md`](docs/provenance.md).
+
 ## Reporting
 
 Do not disclose new sandbox escapes, credential leaks, signing bypasses, or

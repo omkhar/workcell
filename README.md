@@ -161,13 +161,16 @@ bundle — clone the repo, then run it:
 brew install cosign gh   # verifier tools must exist before verification runs
 git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
+git tag -v vX.Y.Z        # verify the tag signature before running the installer
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
 Clone the **tag** (`--branch vX.Y.Z`), not the mutable default branch: the
 pre-trust installer runs before any release verification, so it must come from
 the signed, immutable release commit rather than whatever `main` currently
-holds.
+holds. `git tag -v` authenticates that commit against the maintainer signing
+key **before** you execute the installer — import and confirm the key
+fingerprint from [SECURITY.md](SECURITY.md#signing-key) first.
 
 `cosign` (and `gh` for `--attestation`) must already be installed, because
 verification runs **before** the bundle installer that provides the other host

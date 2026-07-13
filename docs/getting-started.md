@@ -33,8 +33,13 @@ run it:
 ```bash
 git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
+git tag -v vX.Y.Z        # verify the tag signature before running the installer
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
+
+`git tag -v` authenticates the checked-out installer against the maintainer
+signing key **before** you run it — import and confirm the key fingerprint from
+[SECURITY.md](../SECURITY.md#signing-key) first.
 
 `--attestation` additionally requires `gh attestation verify` to pass (hence
 `gh` above). Arguments after `--` are forwarded to the bundle installer (e.g.
