@@ -40,10 +40,15 @@ cd workcell
 bundle is refused before its (also-tampered) installer could run — this is why
 verifying before extraction is sound.
 
-**Manual equivalent** (from the release page directly, air-gapped, or to inspect
-each step): download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json`
-from GitHub Releases and verify before unpacking. This mirrors the
-`--attestation` flow, so it includes the `gh attestation verify` gate:
+**Manual equivalent** (from the release page directly, or to inspect each step):
+download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json` from GitHub
+Releases and verify before unpacking. The `cosign verify-blob` and `shasum`
+steps verify offline against the downloaded Sigstore bundle; the
+`gh attestation verify` step below mirrors the `--attestation` gate but
+**requires network access** (it fetches the attestation from the GitHub API by
+default). For a strictly offline/air-gapped install, omit that step — the cosign
+signature over `SHA256SUMS` plus the digest check is the offline-capable core
+guarantee — or pass a locally downloaded attestation with `--bundle`:
 
 ```bash
 cosign verify-blob SHA256SUMS \
@@ -52,7 +57,7 @@ cosign verify-blob SHA256SUMS \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
 gh attestation verify workcell-vX.Y.Z.tar.gz --repo omkhar/workcell \
-  --signer-workflow omkhar/workcell/.github/workflows/release.yml
+  --signer-workflow omkhar/workcell/.github/workflows/release.yml  # needs network
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
 ./scripts/install.sh
