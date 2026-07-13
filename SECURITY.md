@@ -2,13 +2,13 @@
 
 ## Supported Versions
 
-Workcell operates in single-maintainer release mode. Security fixes are shipped
-only in the **latest released version**; there are no backports to earlier tags.
-A fix lands on `main` and is delivered as the next release cut from `main`
-(patch release, or the next release candidate while the line is pre-1.0), so
-any release older than the newest one stops receiving fixes as soon as a newer
-release exists — including earlier release candidates, which are superseded in
-place.
+Workcell operates in single-maintainer release mode. Security fixes are applied
+to `main` (there are no long-lived release branches) and shipped only in the
+**latest released version**; there are no backports to earlier tags. A fix is
+delivered as the next release cut from `main` (patch release, or the next
+release candidate while the line is pre-1.0), so any release older than the
+newest one stops receiving fixes as soon as a newer release exists — including
+earlier release candidates, which are superseded in place.
 
 | Version | Security fixes |
 | --- | --- |
@@ -85,10 +85,6 @@ through the reporting channel above.
 The [CI/CD threat model](docs/ci-threat-model.md) covers the build and release
 pipeline: runner trust tiers, secrets handling and rotation, attestation
 verification assumptions, and the signing-compromise incident response runbook.
-
-## Supported branch
-
-Security fixes are applied to `main`. There are no long-lived release branches.
 
 ## Disclosure
 
