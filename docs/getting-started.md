@@ -9,11 +9,26 @@ GitHub-hosted Apple Silicon `macos-26` and `macos-15`.
 
 ## 1. Install Workcell
 
-### Option A: verified release bundle
+### Option A: verified release install (recommended)
 
-Download a tagged release bundle plus `SHA256SUMS` and
-`SHA256SUMS.sigstore.json` from GitHub Releases, verify the bundle, then
-unpack it and run the installer:
+Use `install-release.sh`, the one-command verified path. It downloads the
+tagged release bundle plus its signed `SHA256SUMS`, verifies the cosign
+signature and digest **fail-closed before any bundle code runs**, and only then
+extracts and installs:
+
+```bash
+./scripts/install-release.sh --version vX.Y.Z --attestation
+```
+
+`--attestation` additionally requires `gh attestation verify` to pass. Arguments
+after `--` are forwarded to the bundle installer (e.g.
+`-- --no-install-deps` for a launcher-only install). A tampered or unsigned
+bundle is refused before its (also-tampered) installer could run — this is why
+verifying before extraction is sound.
+
+**Manual equivalent** (air-gapped, or to inspect each step): download the bundle
+plus `SHA256SUMS` and `SHA256SUMS.sigstore.json` from GitHub Releases and verify
+before unpacking:
 
 ```bash
 cosign verify-blob SHA256SUMS \
@@ -26,7 +41,8 @@ cd workcell-vX.Y.Z
 ./scripts/install.sh
 ```
 
-See [docs/provenance.md](provenance.md) for the full verification contract.
+See [docs/provenance.md](provenance.md) for the full verification contract and
+[docs/install-lifecycle.md](install-lifecycle.md) for the day-two lifecycle.
 
 On supported macOS hosts, the installer uses Homebrew to install only the
 missing required packages (`colima`, `docker`, `gh`, `git`, `go`). Use

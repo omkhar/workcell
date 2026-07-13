@@ -114,7 +114,10 @@ links; the full index is in the [Docs map](#docs-map) below.
 ## 5-minute path
 
 Install Workcell, create the host-side auth policy, inspect the derived
-posture, then launch:
+posture, then launch. `./scripts/install.sh` below assumes you are in a
+verified or source tree; to install a tagged release instead, use the verified
+one-command path `./scripts/install-release.sh --version vX.Y.Z --attestation`
+(see [Install](#install)).
 
 ```bash
 ./scripts/install.sh
@@ -147,17 +150,21 @@ host support boundary that `--doctor` and `--inspect` report.
 
 ## Install
 
-On Apple Silicon macOS, download a tagged release bundle, unpack it, and run the
-supported installer:
+On Apple Silicon macOS, the recommended path is the one-command **verified
+release install**, which downloads a tagged release, verifies its cosign
+signature and digest fail-closed **before any bundle code runs**, and only then
+installs:
 
 ```bash
-tar -xzf workcell-vX.Y.Z.tar.gz
-cd workcell-vX.Y.Z
-./scripts/install.sh
+./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
-`./scripts/install.sh` installs only the missing required Homebrew formulas
-(`colima`, `docker`, `gh`, `git`, `go`) before it links the launcher.
+Both `install-release.sh` and the bundle's own `./scripts/install.sh` install
+only the missing required Homebrew formulas (`colima`, `docker`, `gh`, `git`,
+`go`) before linking the launcher; pass `-- --no-install-deps` for a
+launcher-only install. If you already have a verified, unpacked release tree
+(see the manual steps in [docs/getting-started.md](docs/getting-started.md)),
+run `./scripts/install.sh` from inside it.
 
 For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
