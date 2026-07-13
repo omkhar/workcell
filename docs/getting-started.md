@@ -254,12 +254,14 @@ For team rollout patterns on today's local-first product, see
 
 ## 7. Clean up and uninstall
 
-- Reclaim stale runtime/cache/temp state without uninstalling: `workcell --gc`.
-- Remove Workcell after a **bundle or source install** (Option A or C, which
-  link into `~/.local/bin`): `./scripts/uninstall.sh` (run
-  `./scripts/uninstall.sh --dry-run` first to preview what it removes).
-- Remove Workcell after a **Homebrew formula install** (Option B):
-  `brew uninstall workcell`.
+- Reclaim stale runtime/cache/temp state at any time: `workcell --gc`.
+- **Bundle or source install** (Option A or C, linked into `~/.local/bin`):
+  `./scripts/uninstall.sh` removes the launcher link, man page, and the managed
+  host state under `~/.local/state/workcell` (run `--dry-run` first to preview).
+- **Homebrew formula install** (Option B): `brew uninstall workcell` removes the
+  formula, but not the managed host state a launched session leaves behind. For a
+  full teardown, run `workcell --gc` first and then remove
+  `~/.local/state/workcell` yourself.
 
 These are covered as repeatable day-two operations in
 [docs/install-lifecycle.md](install-lifecycle.md).
