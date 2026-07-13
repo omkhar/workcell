@@ -50,16 +50,21 @@ default). For a strictly offline/air-gapped install, omit that step — the cosi
 signature over `SHA256SUMS` plus the digest check is the offline-capable core
 guarantee — or pass a locally downloaded attestation with `--bundle`:
 
+The identity regex below is **anchored and escaped** (`^…\.…$`) so only the
+release tag is a wildcard — the exact pin `verify-release-artifact.sh` uses, not
+the illustrative unescaped form elsewhere in the docs (an unescaped `.` matches
+any character and can over-match the identity):
+
 ```bash
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
-# needs network; pins the same anchored identity regex + OIDC issuer that
+# needs network; pins the same anchored/escaped identity regex + OIDC issuer that
 # install-release.sh --attestation uses (not --signer-workflow, which can over-match).
 gh attestation verify workcell-vX.Y.Z.tar.gz --repo omkhar/workcell \
-  --cert-identity-regex 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --cert-identity-regex '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
   --cert-oidc-issuer https://token.actions.githubusercontent.com
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
