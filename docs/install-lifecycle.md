@@ -107,15 +107,15 @@ Recorded local-operator certification on the maintainer host
 (macOS 26.5.2, `arm64`; Colima Docker 29.2.1; Docker Desktop 29.5.3):
 
 - **Verified install against the published, cosign-signed `v1.0.0-rc.2`
-  release** (2026-07-13): `install-release.sh --version v1.0.0-rc.2` run
-  end-to-end into an isolated `HOME` completed exit `0` — it downloaded the
-  real release bundle, keyless-verified it against the release signing identity
-  (`Verified OK`, bundle
+  release** (2026-07-13): `install-release.sh --version v1.0.0-rc.2
+  --attestation` run end-to-end into an isolated `HOME` completed exit `0` — a
+  single command that downloaded the real release bundle, keyless-verified it
+  against the release signing identity (`Verified OK`, bundle
   `sha256:d1cc3bba197ab09b195ad6a98b674d79299d6c9eca2a151798127a9f0a83dba9`),
-  extracted, and installed a `workcell` that reports `workcell v1.0.0-rc.2`.
-  The verification engine (`verify-release-artifact.sh`) additionally passed
-  the optional `--attestation` gate (`gh attestation verify`), and a
-  **negative control** — the same bundle with appended bytes — was rejected
+  passed the GitHub attestation gate that `--attestation` requires
+  (`GitHub attestation verified`), then extracted and installed a `workcell`
+  that reports `workcell v1.0.0-rc.2`. A **negative control** — the same bundle
+  with appended bytes, checked via `verify-release-artifact.sh` — was rejected
   fail-closed with `digest mismatch` (the cosign signature on `SHA256SUMS`
   still verified; the tampered tarball digest did not match the signed value),
   confirming a tampered bundle cannot reach the installer.
