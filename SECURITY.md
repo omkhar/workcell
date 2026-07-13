@@ -1,5 +1,24 @@
 # Security Policy
 
+## Supported Versions
+
+Workcell operates in single-maintainer release mode. Security fixes are shipped
+only in the **latest released version**; there are no backports to earlier tags.
+A fix lands on `main` and is delivered as the next release cut from `main`
+(patch release, or the next release candidate while the line is pre-1.0), so
+any release older than the newest one stops receiving fixes as soon as a newer
+release exists — including earlier release candidates, which are superseded in
+place.
+
+| Version | Security fixes |
+| --- | --- |
+| Latest release | Yes |
+| Any earlier release / superseded pre-release | No — upgrade to the latest |
+
+Always verify a release before installing it: `scripts/install-release.sh`
+checks the release's cosign signature and digest fail-closed before any bundle
+code runs (see [`docs/install-lifecycle.md`](docs/install-lifecycle.md)).
+
 ## Reporting
 
 Do not disclose new sandbox escapes, credential leaks, signing bypasses, or
