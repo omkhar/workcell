@@ -101,6 +101,35 @@ with recorded evidence:
 - **A real cross-minor-version data migration**, which only becomes testable
   once a second on-disk format version ships.
 
+### Certification record
+
+Recorded local-operator certification on the maintainer host
+(macOS 26.5.2, `arm64`; Colima Docker 29.2.1; Docker Desktop 29.5.3):
+
+- **Verified install against the published, cosign-signed `v1.0.0-rc.2`
+  release** (2026-07-13): `install-release.sh --version v1.0.0-rc.2` run
+  end-to-end into an isolated `HOME` completed exit `0` — it downloaded the
+  real release bundle, keyless-verified it against the release signing identity
+  (`Verified OK`, bundle
+  `sha256:d1cc3bba197ab09b195ad6a98b674d79299d6c9eca2a151798127a9f0a83dba9`),
+  extracted, and installed a `workcell` that reports `workcell v1.0.0-rc.2`.
+  The verification engine (`verify-release-artifact.sh`) additionally passed
+  the optional `--attestation` gate (`gh attestation verify`), and a
+  **negative control** — the same bundle with appended bytes — was rejected
+  fail-closed with `digest mismatch` (the cosign signature on `SHA256SUMS`
+  still verified; the tampered tarball digest did not match the signed value),
+  confirming a tampered bundle cannot reach the installer.
+- **Live `workcell --gc`** from the verified `v1.0.0-rc.2` bundle completed
+  exit `0`, reporting the stale injection/session-audit/runtime-cache/
+  build-cache/temp state it cleaned.
+- **Live containerized launch on Apple Silicon** is certified by the two
+  boundary launch-smoke scenarios run on this host in the same session:
+  `tests/scenarios/shared/test-agent-launch-smoke.sh`
+  (`macos/arm64/local_vm/colima/strict`) and
+  `tests/scenarios/shared/test-docker-desktop-launch-smoke.sh`
+  (`macos/arm64/local_compat/docker-desktop/compat`), both passing against the
+  real runtime image on this hardware.
+
 ## Relationship to forced consumer verification (CI threat model gap 1)
 
 [ci-threat-model.md](ci-threat-model.md) tracks, as known gap 1, that verified
