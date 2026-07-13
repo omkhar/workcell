@@ -251,3 +251,12 @@ For team rollout patterns on today's local-first product, see
 - [Injection policy](injection-policy.md)
 - [Validation scenarios](validation-scenarios.md)
 - [Provenance and signing](provenance.md)
+
+## 7. Clean up and uninstall
+
+- Reclaim stale runtime/cache/temp state without uninstalling: `workcell --gc`.
+- Remove Workcell's install links and managed host state: `./scripts/uninstall.sh`
+  (run `./scripts/uninstall.sh --dry-run` first to preview what it removes).
+
+Both are covered as repeatable day-two operations in
+[docs/install-lifecycle.md](install-lifecycle.md).
