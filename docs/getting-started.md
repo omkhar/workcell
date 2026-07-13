@@ -11,12 +11,18 @@ GitHub-hosted Apple Silicon `macos-26` and `macos-15`.
 
 ### Option A: verified release install (recommended)
 
-Use `install-release.sh`, the one-command verified path. It downloads the
-tagged release bundle plus its signed `SHA256SUMS`, verifies the cosign
-signature and digest **fail-closed before any bundle code runs**, and only then
-extracts and installs:
+Always verify a release before installing it. `install-release.sh` is the
+one-command verified path: it downloads the tagged release bundle plus its
+signed `SHA256SUMS`, verifies the cosign signature and digest **fail-closed
+before any bundle code runs**, and only then extracts and installs.
+
+`install-release.sh` is not published as a standalone release asset, so obtain
+it from the repository over TLS (a trusted source for the installer) rather than
+from the not-yet-verified bundle — clone the repo, then run it:
 
 ```bash
+git clone https://github.com/omkhar/workcell.git
+cd workcell
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
@@ -26,9 +32,9 @@ after `--` are forwarded to the bundle installer (e.g.
 bundle is refused before its (also-tampered) installer could run — this is why
 verifying before extraction is sound.
 
-**Manual equivalent** (air-gapped, or to inspect each step): download the bundle
-plus `SHA256SUMS` and `SHA256SUMS.sigstore.json` from GitHub Releases and verify
-before unpacking:
+**Manual equivalent** (from the release page directly, air-gapped, or to inspect
+each step): download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json`
+from GitHub Releases and verify before unpacking:
 
 ```bash
 cosign verify-blob SHA256SUMS \

@@ -153,18 +153,23 @@ host support boundary that `--doctor` and `--inspect` report.
 On Apple Silicon macOS, the recommended path is the one-command **verified
 release install**, which downloads a tagged release, verifies its cosign
 signature and digest fail-closed **before any bundle code runs**, and only then
-installs:
+installs. `install-release.sh` is not a standalone release asset, so get it
+from the repository over TLS (a trusted source) rather than the unverified
+bundle — clone the repo, then run it:
 
 ```bash
+git clone https://github.com/omkhar/workcell.git
+cd workcell
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
 Both `install-release.sh` and the bundle's own `./scripts/install.sh` install
 only the missing required Homebrew formulas (`colima`, `docker`, `gh`, `git`,
 `go`) before linking the launcher; pass `-- --no-install-deps` for a
-launcher-only install. If you already have a verified, unpacked release tree
-(see the manual steps in [docs/getting-started.md](docs/getting-started.md)),
-run `./scripts/install.sh` from inside it.
+launcher-only install. To verify and install straight from the release page
+without a clone, use the manual cosign flow in
+[docs/getting-started.md](docs/getting-started.md); if you already have a
+verified, unpacked release tree, run `./scripts/install.sh` from inside it.
 
 For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).

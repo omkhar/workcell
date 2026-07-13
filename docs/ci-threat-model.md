@@ -270,15 +270,20 @@ the release workflow.) The plain installers (`install.sh` →
 `install-workcell.sh`) install from a local checkout and do **not** download or
 verify a signed release artifact — that is what `install-release.sh` adds.
 
-On the consumer side, `scripts/install-release.sh` now automates the
-trust-establishing step for consumers who **choose** it: it verifies the signed
-`SHA256SUMS` and the bundle digest fail-closed (via
-`scripts/verify-release-artifact.sh`) before installing, so on that path the
-guarantee no longer depends on a user remembering the manual `cosign verify` /
-`gh attestation verify` commands in [provenance.md](provenance.md). It is opt-in,
-not the default: a user who runs the documented default install (`tar … &&
-./scripts/install.sh`, the plain `install.sh`, or a hand-fetched bundle) still
-gets none — so verification is not yet *forced* (threat 8,
+On the consumer side, `scripts/install-release.sh` automates the
+trust-establishing step: it verifies the signed `SHA256SUMS` and the bundle
+digest fail-closed (via `scripts/verify-release-artifact.sh`) before installing,
+so on that path the guarantee no longer depends on a user remembering the manual
+`cosign verify` / `gh attestation verify` commands in
+[provenance.md](provenance.md). As of the 1.0 docs this verified path is the
+**documented default** install — the README and getting-started lead with
+`install-release.sh` (obtained via a repo clone over TLS, since the installer is
+not itself a standalone release asset) or, from the release page, the manual
+`cosign verify` flow. Verification is not yet *forced*, however: a user can
+still choose an unverified install (`tar … && ./scripts/install.sh`, the plain
+`install.sh`, or a hand-fetched bundle), and no standalone verified installer is
+published as a release asset — so the residual is a defaulting/bootstrap gap,
+not an absent capability (threat 8,
 [known gap 1](#known-gaps-and-future-work)). The verification identity that a consumer (or the installer) pins is the
 release workflow at a tag ref (`.../release.yml@refs/tags/.+`) with issuer
 `https://token.actions.githubusercontent.com`. What remains asymmetric is CI:
@@ -305,7 +310,7 @@ Residual risk is rated after the existing mitigation.
 | 5 | **Signing-key compromise** | **No long-lived cosign key exists** (keyless OIDC/Fulcio); the git tag/commit key lives off-CI on the maintainer host; releases are immutable (`immutable_github_releases = true`) | Low for cosign; see [incident response](#signing-compromise-incident-response) for the OIDC-identity and GPG-key cases |
 | 6 | **Provenance / attestation forgery** | Attestations bound to the release workflow identity via OIDC; consumers pin `--certificate-identity` / `--signer-workflow`; Rekor transparency; fail-closed attestation pinned by policy | Medium: **Build L2, not L3** — a compromised build step in the same job could get a genuine attestation over a forged digest; and no consumer is *forced* to verify (threat 8) |
 | 7 | **Cache poisoning** from a fork PR into trusted builds | PR-keyed buildx cache scope distinct from `validator-main`; `mode=max` writes gated to `push` events | Low |
-| 8 | **Unverified consumer install** — user runs an artifact that was never verified | An **opt-in** fail-closed verified path exists: `scripts/install-release.sh` downloads, verifies via `verify-release-artifact.sh` (`cosign verify-blob` of the signed `SHA256SUMS` against the pinned release-workflow identity, plus optional `gh attestation verify`), and only then installs; verification commands also documented in [provenance.md](provenance.md); immutable releases; `SHA256SUMS` signed | Medium: the verified path is fail-closed **but opt-in, not the default** — the documented default install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or any hand-fetched bundle) still does not verify, so a consumer is not *forced* to verify. Reduced from High, not eliminated, until installer verification is the default across all install paths (see [known gap 1](#known-gaps-and-future-work)) |
+| 8 | **Unverified consumer install** — user runs an artifact that was never verified | A fail-closed verified path is the **documented default**: `scripts/install-release.sh` downloads, verifies via `verify-release-artifact.sh` (`cosign verify-blob` of the signed `SHA256SUMS` against the pinned release-workflow identity, plus optional `gh attestation verify`), and only then installs; the README and getting-started lead with it (or the manual `cosign verify` flow from the release page); verification commands also documented in [provenance.md](provenance.md); immutable releases; `SHA256SUMS` signed | Medium: verified install is the documented default and fail-closed, **but not *forced*** — a user can still choose an unverified install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or any hand-fetched bundle), and the installer is obtained via a repo clone rather than a standalone signed release asset. Reduced from High, not eliminated, until verification is forced across all paths and a verified installer bootstrap ships (see [known gap 1](#known-gaps-and-future-work)) |
 | 9 | **Malicious change reaches a release** without review | Signed-commits + anti-rewrite branch ruleset; tag ruleset on `refs/tags/v*`; required status checks; `pr-base-policy.yml` forces `main` base; publish gated on tag-on-green-main and the `release` environment approval; the amd64 image is rebuilt from the archived source bundle (`context: dist/release-source`) | Medium: **single-maintainer** — the tag signer and the release approver are the same identity; no two-person review (a SLSA Source-track control, out of scope for v1.0 Build). The **arm64** image is built from the checked-out release tag (`context: .`), not the repackaged source archive, so only amd64 gets the archive-rebuild property; both platforms still derive from the same signed, immutable tag |
 | 10 | **Oversized/obfuscated PR** hides a malicious diff | `scripts/check-pr-shape.sh` caps PRs at ≤25 files, ≤1200 changed lines, ≤8 areas, 0 binaries (reviewed override raises limits for certified-adapter PRs only) | Low |
 | 11 | **Stored token leaks via script logging** | Token is environment-scoped read-only metadata; passed by env, never echoed by the workflow | Low: depends on `run-hosted-controls-audit.sh` never running `set -x` over the token |
@@ -382,8 +387,9 @@ restored. This is a residual risk, not a mitigated one.
 These are real weaknesses in the current CI/CD posture, stated so they can be
 tracked or accepted deliberately:
 
-1. **Forced consumer verification — PARTIALLY addressed (opt-in verified path
-   exists; not yet the default).** A fail-closed verified install path now
+1. **Forced consumer verification — PARTIALLY addressed (verified install is now
+   the documented default; not yet *forced*, and the installer bootstraps via a
+   repo clone).** A fail-closed verified install path now
    exists: `scripts/install-release.sh` downloads, verifies, and only then
    installs a tagged release via `scripts/verify-release-artifact.sh`, which by
    default `cosign verify-blob`s the signed `SHA256SUMS` against the pinned
@@ -395,22 +401,30 @@ tracked or accepted deliberately:
    acknowledged `--skip-verify` for documented air-gapped installs (see
    [install.md](install.md#verified-release-install-recommended)). The published
    SBOMs are for downstream SCA and are deliberately **not** an install-time gate
-   (the installer does not verify them). **This provides consumer signature
-   verification for the signed checksums and bundle, but does not yet fully close
-   the gap:** it is a separate, opt-in entrypoint — the documented default
+   (the installer does not verify them). The README and getting-started now lead
+   with this verified path (`install-release.sh`, obtained via a repo clone over
+   TLS, or the manual `cosign verify` flow from the release page). **This makes
+   verified install the documented default, but does not yet fully close the
+   gap:** verification is not *forced* — a user can still choose an unverified
    install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or a
-   hand-fetched bundle) still does not verify, so verification is not *forced*.
+   hand-fetched bundle) — and the installer is bootstrapped from a repo clone
+   rather than a standalone signed release asset.
    Homebrew installs verify at checksum level via the pinned `sha256` in
    `workcell.rb`. **G3 progress:** `install-release.sh` is now exercised end to
    end in CI against a locally built fixture release with stubbed `curl`/`cosign`
    (`internal/testkit/install_release_e2e_test.go`), proving the full
    download → verify → extract → handoff chain is fail-closed — a bad signature
-   or a digest mismatch aborts before the bundle installer runs. **Fully closing
-   gap 1** still requires (a) making installer verification the default/forced
-   path across all documented install flows, and (b) exercising the verified
-   path against a genuinely published, cosign-signed release (the offline fixture
-   proves the orchestration and fail-closed logic, not a real keyless Sigstore
-   signature). Both are tracked under **G3**, install-lifecycle proof; see
+   or a digest mismatch aborts before the bundle installer runs. Part (b) below
+   is now done: the verified path has been exercised end-to-end against the
+   genuinely published, cosign-signed `v1.0.0-rc.2` release (`install-release.sh
+   --attestation` exit 0 with cosign + digest + attestation verified, plus a
+   tamper negative control — see
+   [install-lifecycle.md](install-lifecycle.md) §"Certification record"), so the
+   real keyless Sigstore signature path is proven, not just the offline fixture.
+   **Fully closing gap 1** now requires only (a) making verification *forced*
+   across all documented install flows and shipping a standalone verified
+   installer bootstrap (so consumers need not clone the repo to get a trusted
+   `install-release.sh`); tracked under **G3**, install-lifecycle proof; see
    [install-lifecycle.md](install-lifecycle.md).
 2. **SLSA Build L3 not met (threat 6).** Build and provenance generation share a
    job/runner, so provenance is forgeable by a compromised build step. Closing
