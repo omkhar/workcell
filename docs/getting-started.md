@@ -18,12 +18,12 @@ before any bundle code runs**, and only then extracts and installs.
 
 The verifier tools must already be on the host, because verification runs
 **before** the bundle installer (which is what installs the other host packages)
-gets to run. Install `cosign`, `gh` (for `--attestation`), and `gnupg` plus
-`git` (for the `git clone` + `git tag -v` below — macOS ships neither `gnupg`
-nor, on a clean host, `git`) first:
+gets to run. Install `cosign` plus `gnupg` and `git` (for the `git clone` +
+`git tag -v` below — macOS ships neither `gnupg` nor, on a clean host, `git`)
+first:
 
 ```bash
-brew install cosign gh git gnupg
+brew install cosign git gnupg
 ```
 
 `install-release.sh` is not published as a standalone release asset, so obtain
@@ -36,18 +36,25 @@ run it:
 git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
 git tag -v vX.Y.Z        # verify the tag signature before running the installer
-./scripts/install-release.sh --version vX.Y.Z --attestation
+./scripts/install-release.sh --version vX.Y.Z
 ```
 
 `git tag -v` authenticates the checked-out installer against the maintainer
 signing key **before** you run it — import and confirm the key fingerprint from
-[SECURITY.md](../SECURITY.md#signing-key) first.
+[SECURITY.md](../SECURITY.md#signing-key) first. Arguments after `--` are
+forwarded to the bundle installer (e.g. `-- --no-install-deps` for a
+launcher-only install). A tampered or unsigned bundle is refused before its
+(also-tampered) installer could run — this is why verifying before extraction is
+sound.
 
-`--attestation` additionally requires `gh attestation verify` to pass (hence
-`gh` above). Arguments after `--` are forwarded to the bundle installer (e.g.
-`-- --no-install-deps` for a launcher-only install). A tampered or unsigned
-bundle is refused before its (also-tampered) installer could run — this is why
-verifying before extraction is sound.
+For an **additional** GitHub attestation check, append `--attestation`. That
+step runs `gh attestation verify`, which queries the GitHub API, so it also
+needs `gh` **installed and authenticated** (`brew install gh && gh auth login`)
+and network access:
+
+```bash
+./scripts/install-release.sh --version vX.Y.Z --attestation
+```
 
 **Manual equivalent** (from the release page directly, or to inspect each step):
 download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json` from GitHub

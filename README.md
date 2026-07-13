@@ -158,11 +158,11 @@ from the repository over TLS (a trusted source) rather than the unverified
 bundle — clone the repo, then run it:
 
 ```bash
-brew install cosign gh git gnupg   # verifier tools must exist before verification runs (macOS ships neither gnupg nor, on a clean host, git)
+brew install cosign git gnupg   # verifier tools must exist before verification runs (macOS ships neither gnupg nor, on a clean host, git)
 git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
 git tag -v vX.Y.Z        # verify the tag signature before running the installer
-./scripts/install-release.sh --version vX.Y.Z --attestation
+./scripts/install-release.sh --version vX.Y.Z
 ```
 
 Clone the **tag** (`--branch vX.Y.Z`), not the mutable default branch: the
@@ -172,14 +172,16 @@ holds. `git tag -v` authenticates that commit against the maintainer signing
 key **before** you execute the installer — import and confirm the key
 fingerprint from [SECURITY.md](SECURITY.md#signing-key) first.
 
-`cosign` (and `gh` for `--attestation`) must already be installed, because
-verification runs **before** the bundle installer that provides the other host
-packages. The bundle installer then installs only the remaining missing required
-formulas (`colima`, `docker`, `git`, `go`) before linking the launcher; pass
-`-- --no-install-deps` for a launcher-only install. To verify and install
-straight from the release page without a clone, use the manual cosign flow in
-[docs/getting-started.md](docs/getting-started.md); if you already have a
-verified, unpacked release tree, run `./scripts/install.sh` from inside it.
+The verifier tools (`cosign`, and `git`/`gnupg` for the clone and tag check)
+must already be installed, because verification runs **before** the bundle
+installer that provides the other host packages (`colima`, `docker`, `go`); pass
+`-- --no-install-deps` for a launcher-only install. For an **additional** GitHub
+attestation check, append `--attestation` — that step needs `gh` installed and
+authenticated (`brew install gh && gh auth login`) and network access. To verify
+and install straight from the release page without a clone, use the manual
+cosign flow in [docs/getting-started.md](docs/getting-started.md); if you already
+have a verified, unpacked release tree, run `./scripts/install.sh` from inside
+it.
 
 For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
