@@ -188,9 +188,10 @@ For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
 
 To reclaim stale runtime/cache/temp state without uninstalling, run
-`workcell --gc`. To remove Workcell's install links and managed host state,
-run `./scripts/uninstall.sh` (`--dry-run` first to preview). Both are detailed
-in [docs/install-lifecycle.md](docs/install-lifecycle.md).
+`workcell --gc`. To remove Workcell, run `./scripts/uninstall.sh` (`--dry-run`
+first to preview) for a bundle/source install, or `brew uninstall workcell` for
+a Homebrew formula install. Both are detailed in
+[docs/install-lifecycle.md](docs/install-lifecycle.md).
 
 ## Command reference
 
