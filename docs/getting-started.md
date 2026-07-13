@@ -26,10 +26,12 @@ brew install cosign gh
 
 `install-release.sh` is not published as a standalone release asset, so obtain
 it from the repository over TLS (a trusted source for the installer) rather than
-from the not-yet-verified bundle — clone the repo, then run it:
+from the not-yet-verified bundle — clone the **release tag** (not the mutable
+default branch, since the pre-trust installer runs before any verification), then
+run it:
 
 ```bash
-git clone https://github.com/omkhar/workcell.git
+git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
