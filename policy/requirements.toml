@@ -132,6 +132,7 @@ evidence = [
 ]
 docs = [
   "README.md",
+  "docs/getting-started.md",
   "docs/onboarding-and-auth.md",
   "man/workcell.1",
   "docs/injection-policy.md",
