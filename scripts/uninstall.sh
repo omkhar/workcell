@@ -263,6 +263,7 @@ delete_managed_profile() {
   local colima_bin="$2"
   local profile_root="${COLIMA_HOME}/${profile}"
   local lima_root="${COLIMA_HOME}/_lima/colima-${profile}"
+  local disk_root="${COLIMA_HOME}/_lima/_disks/colima-${profile}"
   local store_path="${COLIMA_HOME}/_store/colima-${profile}.json"
 
   validate_profile_name "${profile}" || {
@@ -285,6 +286,7 @@ delete_managed_profile() {
 
   remove_path "${profile_root}"
   remove_path "${lima_root}"
+  remove_path "${disk_root}"
   remove_path "${store_path}"
   remove_path "${COLIMA_HOME}/locks/${profile}.lock"
 }
@@ -301,7 +303,9 @@ profile_is_workcell_owned() {
 
   [[ -f "${COLIMA_HOME}/${profile}/workcell.managed" ]] && return 0
   [[ "${profile}" == workcell-* ]] && return 0
-  for marker in "${STATE_ROOT}"/targets/*/*/"${profile}"/workcell.managed; do
+  # Only a marker under a Colima-provider target proves this *Colima* profile is
+  # ours; a same-named marker under docker-desktop/remote_vm targets does not.
+  for marker in "${STATE_ROOT}"/targets/*/colima/"${profile}"/workcell.managed; do
     [[ -f "${marker}" ]] && return 0
   done
   return 1
