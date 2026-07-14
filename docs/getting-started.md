@@ -254,8 +254,11 @@ For team rollout patterns on today's local-first product, see
 
 ## 7. Clean up and uninstall
 
-- Reclaim stale runtime/cache/temp state at any time: `workcell --gc` (this does
-  **not** remove managed state or Colima profiles).
+- Reclaim stale runtime/cache/temp state with `workcell --gc` (this does **not**
+  remove managed state or Colima profiles). It reaps `session-audit` records
+  older than 12 hours, so do **not** run it before preserving evidence for a
+  suspected security incident — see the
+  [incident-response runbook](incident-response.md).
 - **Bundle or source install** (Option A or C): `./scripts/uninstall.sh` is the
   complete teardown — it removes the `~/.local/bin` launcher link and man page,
   the managed state under `~/.local/state/workcell`, and Workcell-owned Colima

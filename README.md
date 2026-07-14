@@ -188,7 +188,10 @@ For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
 
 To reclaim stale runtime/cache/temp state without uninstalling, run
-`workcell --gc`. `./scripts/uninstall.sh` (`--dry-run` first to preview) is the
+`workcell --gc` (it reaps aged `session-audit` records, so do not run it before
+preserving evidence for a suspected incident — see
+[docs/incident-response.md](docs/incident-response.md)).
+`./scripts/uninstall.sh` (`--dry-run` first to preview) is the
 complete teardown — it removes the launcher link, managed state under
 `~/.local/state/workcell`, and Workcell-owned Colima profiles/caches, leaving
 shared packages and unrelated profiles alone. After a Homebrew formula install,
