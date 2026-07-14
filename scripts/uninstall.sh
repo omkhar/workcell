@@ -15,7 +15,7 @@ Remove Workcell-owned local install links and managed host state:
   - ~/.local/share/man/man1/workcell.1
   - ~/.local/state/workcell
   - Workcell-owned build cache roots
-  - ~/.colima/workcell-* profiles, matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
+  - ~/.colima/workcell-* and wcl-* profiles (the current derived name), matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
   - ~/Library/Caches/colima/workcell-host-inputs
   - ~/Library/Caches/colima/workcell-shadow
   - ~/Library/Caches/colima/workcell-token-handoff
@@ -301,7 +301,7 @@ collect_profiles() {
           continue
           ;;
       esac
-      if [[ -f "${candidate}/workcell.managed" ]] || [[ "${name}" == workcell-* ]]; then
+      if [[ -f "${candidate}/workcell.managed" ]] || [[ "${name}" == workcell-* ]] || [[ "${name}" == wcl-* ]]; then
         append_unique_value "${name}"
       fi
     done < <(find "${COLIMA_HOME}" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
@@ -310,7 +310,7 @@ collect_profiles() {
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
         case "${name}" in
-          colima-workcell-*)
+          colima-workcell-* | colima-wcl-*)
             append_unique_value "${name#colima-}"
             ;;
         esac
@@ -321,7 +321,7 @@ collect_profiles() {
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
         case "${name}" in
-          workcell-*.lock)
+          workcell-*.lock | wcl-*.lock)
             append_unique_value "${name%.lock}"
             ;;
         esac
@@ -332,7 +332,7 @@ collect_profiles() {
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
         case "${name}" in
-          colima-workcell-*.json)
+          colima-workcell-*.json | colima-wcl-*.json)
             name="${name#colima-}"
             append_unique_value "${name%.json}"
             ;;

@@ -194,12 +194,12 @@ preserving evidence for a suspected incident — see
 `./scripts/uninstall.sh` (run `--dry-run` first — its output is the
 authoritative list) removes the launcher link, the managed state under the
 default state root (`~/.local/state/workcell`), and the Workcell-managed Colima
-profiles/caches it discovers, leaving shared packages and unrelated profiles
-alone; it does not reach a custom `WORKCELL_STATE_ROOT`/`XDG_STATE_HOME` or a
-leftover profile from a crashed session (remove those yourself). After a
-Homebrew formula install, `brew uninstall workcell` removes only the formula, so
-also run `./scripts/uninstall.sh` (from a bundle or checkout) to clear the
-runtime state. See [docs/install-lifecycle.md](docs/install-lifecycle.md).
+profiles/caches (legacy `workcell-*` and current `wcl-*` names), leaving shared
+packages and unrelated profiles alone; it does not reach a custom
+`WORKCELL_STATE_ROOT`/`XDG_STATE_HOME` (remove that yourself). After a Homebrew
+formula install, `brew uninstall workcell` removes only the formula, so also run
+`./scripts/uninstall.sh` (from a bundle or checkout) to clear the runtime state.
+See [docs/install-lifecycle.md](docs/install-lifecycle.md).
 
 ## Command reference
 

@@ -262,12 +262,11 @@ For team rollout patterns on today's local-first product, see
 - **Bundle or source install** (Option A or C): `./scripts/uninstall.sh` removes
   the `~/.local/bin` launcher link and man page, the managed host state under the
   default state root (`~/.local/state/workcell`), and the Workcell-managed Colima
-  profiles and caches it discovers, while leaving shared packages and unrelated
-  profiles alone. Always run `./scripts/uninstall.sh --dry-run` first — its
-  output is the authoritative list of what will be removed. It does **not** reach
-  state written under a custom `WORKCELL_STATE_ROOT`/`XDG_STATE_HOME`, or a
-  leftover Colima profile from a crashed session; remove those yourself (e.g.
-  `colima delete --profile <name>`).
+  profiles and caches (both the legacy `workcell-*` and the current `wcl-*`
+  names), while leaving shared packages and unrelated profiles alone. Always run
+  `./scripts/uninstall.sh --dry-run` first — its output is the authoritative list
+  of what will be removed. It does **not** reach state written under a custom
+  `WORKCELL_STATE_ROOT`/`XDG_STATE_HOME`; remove that yourself.
 - **Homebrew formula install** (Option B): `brew uninstall workcell` removes the
   formula tree, but not the runtime state a launched session created — so also
   run `./scripts/uninstall.sh` (from a release bundle or source checkout) to
