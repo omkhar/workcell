@@ -289,6 +289,24 @@ delete_managed_profile() {
   remove_path "${COLIMA_HOME}/locks/${profile}.lock"
 }
 
+# A Colima profile is Workcell-owned if it carries a managed ownership marker
+# (the legacy in-profile `workcell.managed`, or the current one under the
+# target-state root) or uses the legacy `workcell-*` name. The current derived
+# names are `wcl-*`, but an unrelated Colima profile could also start with
+# `wcl-`, so those are NOT trusted by name alone: they must carry a marker before
+# uninstall deletes them. This keeps the "leave unrelated profiles alone" promise.
+profile_is_workcell_owned() {
+  local profile="$1"
+  local marker=""
+
+  [[ -f "${COLIMA_HOME}/${profile}/workcell.managed" ]] && return 0
+  [[ "${profile}" == workcell-* ]] && return 0
+  for marker in "${STATE_ROOT}"/targets/*/*/"${profile}"/workcell.managed; do
+    [[ -f "${marker}" ]] && return 0
+  done
+  return 1
+}
+
 collect_profiles() {
   local candidate=""
   local name=""
@@ -301,7 +319,7 @@ collect_profiles() {
           continue
           ;;
       esac
-      if [[ -f "${candidate}/workcell.managed" ]] || [[ "${name}" == workcell-* ]] || [[ "${name}" == wcl-* ]]; then
+      if profile_is_workcell_owned "${name}"; then
         append_unique_value "${name}"
       fi
     done < <(find "${COLIMA_HOME}" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
@@ -311,7 +329,8 @@ collect_profiles() {
         name="$(basename "${candidate}")"
         case "${name}" in
           colima-workcell-* | colima-wcl-*)
-            append_unique_value "${name#colima-}"
+            name="${name#colima-}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
             ;;
         esac
       done < <(find "${COLIMA_HOME}/_lima" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
@@ -322,7 +341,8 @@ collect_profiles() {
         name="$(basename "${candidate}")"
         case "${name}" in
           workcell-*.lock | wcl-*.lock)
-            append_unique_value "${name%.lock}"
+            name="${name%.lock}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
             ;;
         esac
       done < <(find "${COLIMA_HOME}/locks" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
@@ -334,7 +354,8 @@ collect_profiles() {
         case "${name}" in
           colima-workcell-*.json | colima-wcl-*.json)
             name="${name#colima-}"
-            append_unique_value "${name%.json}"
+            name="${name%.json}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
             ;;
         esac
       done < <(find "${COLIMA_HOME}/_store" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null)
