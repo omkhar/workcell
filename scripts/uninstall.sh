@@ -15,7 +15,7 @@ Remove Workcell-owned local install links and managed host state:
   - ~/.local/share/man/man1/workcell.1
   - ~/.local/state/workcell
   - Workcell-owned build cache roots
-  - ~/.colima/workcell-* profiles, matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
+  - ~/.colima/workcell-* and wcl-* profiles (the current derived name), matching _lima dirs, matching _lima/_disks dirs, matching _store metadata, and Workcell locks
   - ~/Library/Caches/colima/workcell-host-inputs
   - ~/Library/Caches/colima/workcell-shadow
   - ~/Library/Caches/colima/workcell-token-handoff
@@ -263,6 +263,7 @@ delete_managed_profile() {
   local colima_bin="$2"
   local profile_root="${COLIMA_HOME}/${profile}"
   local lima_root="${COLIMA_HOME}/_lima/colima-${profile}"
+  local disk_root="${COLIMA_HOME}/_lima/_disks/colima-${profile}"
   local store_path="${COLIMA_HOME}/_store/colima-${profile}.json"
 
   validate_profile_name "${profile}" || {
@@ -285,8 +286,29 @@ delete_managed_profile() {
 
   remove_path "${profile_root}"
   remove_path "${lima_root}"
+  remove_path "${disk_root}"
   remove_path "${store_path}"
   remove_path "${COLIMA_HOME}/locks/${profile}.lock"
+}
+
+# A Colima profile is Workcell-owned if it carries a managed ownership marker
+# (the legacy in-profile `workcell.managed`, or the current one under the
+# target-state root) or uses the legacy `workcell-*` name. The current derived
+# names are `wcl-*`, but an unrelated Colima profile could also start with
+# `wcl-`, so those are NOT trusted by name alone: they must carry a marker before
+# uninstall deletes them. This keeps the "leave unrelated profiles alone" promise.
+profile_is_workcell_owned() {
+  local profile="$1"
+  local marker=""
+
+  [[ -f "${COLIMA_HOME}/${profile}/workcell.managed" ]] && return 0
+  [[ "${profile}" == workcell-* ]] && return 0
+  # Only a marker under a Colima-provider target proves this *Colima* profile is
+  # ours; a same-named marker under docker-desktop/remote_vm targets does not.
+  for marker in "${STATE_ROOT}"/targets/*/colima/"${profile}"/workcell.managed; do
+    [[ -f "${marker}" ]] && return 0
+  done
+  return 1
 }
 
 collect_profiles() {
@@ -301,7 +323,7 @@ collect_profiles() {
           continue
           ;;
       esac
-      if [[ -f "${candidate}/workcell.managed" ]] || [[ "${name}" == workcell-* ]]; then
+      if profile_is_workcell_owned "${name}"; then
         append_unique_value "${name}"
       fi
     done < <(find "${COLIMA_HOME}" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
@@ -310,19 +332,33 @@ collect_profiles() {
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
         case "${name}" in
-          colima-workcell-*)
-            append_unique_value "${name#colima-}"
+          colima-workcell-* | colima-wcl-*)
+            name="${name#colima-}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
             ;;
         esac
       done < <(find "${COLIMA_HOME}/_lima" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+    fi
+
+    if [[ -d "${COLIMA_HOME}/_lima/_disks" ]]; then
+      while IFS= read -r -d '' candidate; do
+        name="$(basename "${candidate}")"
+        case "${name}" in
+          colima-workcell-* | colima-wcl-*)
+            name="${name#colima-}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
+            ;;
+        esac
+      done < <(find "${COLIMA_HOME}/_lima/_disks" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
     fi
 
     if [[ -d "${COLIMA_HOME}/locks" ]]; then
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
         case "${name}" in
-          workcell-*.lock)
-            append_unique_value "${name%.lock}"
+          workcell-*.lock | wcl-*.lock)
+            name="${name%.lock}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
             ;;
         esac
       done < <(find "${COLIMA_HOME}/locks" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
@@ -332,9 +368,10 @@ collect_profiles() {
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
         case "${name}" in
-          colima-workcell-*.json)
+          colima-workcell-*.json | colima-wcl-*.json)
             name="${name#colima-}"
-            append_unique_value "${name%.json}"
+            name="${name%.json}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
             ;;
         esac
       done < <(find "${COLIMA_HOME}/_store" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null)

@@ -251,3 +251,26 @@ For team rollout patterns on today's local-first product, see
 - [Injection policy](injection-policy.md)
 - [Validation scenarios](validation-scenarios.md)
 - [Provenance and signing](provenance.md)
+
+## 7. Clean up and uninstall
+
+- Reclaim stale runtime/cache/temp state with `workcell --gc` (this does **not**
+  remove managed state or Colima profiles). It reaps `session-audit` records
+  older than 12 hours, so do **not** run it before preserving evidence for a
+  suspected security incident — see the
+  [incident-response runbook](incident-response.md).
+- **Bundle or source install** (Option A or C): `./scripts/uninstall.sh` removes
+  the `~/.local/bin` launcher link and man page, the managed host state under the
+  default state root (`~/.local/state/workcell`), and the Workcell-managed Colima
+  profiles and caches (both the legacy `workcell-*` and the current `wcl-*`
+  names), while leaving shared packages and unrelated profiles alone. Always run
+  `./scripts/uninstall.sh --dry-run` first — its output is the authoritative list
+  of what will be removed. It does **not** reach state written under a custom
+  `WORKCELL_STATE_ROOT`/`XDG_STATE_HOME`; remove that yourself.
+- **Homebrew formula install** (Option B): `brew uninstall workcell` removes the
+  formula tree, but not the runtime state a launched session created — so also
+  run `./scripts/uninstall.sh` (from a release bundle or source checkout) to
+  clear the managed state and Colima profiles.
+
+These are covered as repeatable day-two operations in
+[docs/install-lifecycle.md](install-lifecycle.md).
