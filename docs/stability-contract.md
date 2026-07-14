@@ -21,10 +21,13 @@ not a stability promise.
 ## Deprecation policy
 
 From 1.0 onward Workcell follows [semantic versioning](https://semver.org). The
-stable surfaces enumerated in this document and enforced by
-`policy/public-contract.toml` — the exit-code contract, the machine-readable
-output-line prefixes, the session-record/export field set, and the
-injection-policy table — carry a compatibility guarantee within a major version:
+stable surfaces enumerated in this document carry a compatibility guarantee
+within a major version: the exit-code contract, the machine-readable output-line
+prefixes, the session-record/export field set, and the injection-policy table
+(enforced by `policy/public-contract.toml`), together with the stable
+`scripts/workcell` CLI flags and subcommands documented under
+[CLI stability](#cli-stability) (enforced via `policy/operator-contract.toml`).
+The guarantee:
 
 - **No breaking change to a stable surface ships in a patch or minor release.**
   A new field or prefix may be *added*; an existing one is not renamed, removed,
