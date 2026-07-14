@@ -254,14 +254,18 @@ For team rollout patterns on today's local-first product, see
 
 ## 7. Clean up and uninstall
 
-- Reclaim stale runtime/cache/temp state at any time: `workcell --gc`.
-- **Bundle or source install** (Option A or C, linked into `~/.local/bin`):
-  `./scripts/uninstall.sh` removes the launcher link, man page, and the managed
-  host state under `~/.local/state/workcell` (run `--dry-run` first to preview).
+- Reclaim stale runtime/cache/temp state at any time: `workcell --gc` (this does
+  **not** remove managed state or Colima profiles).
+- **Bundle or source install** (Option A or C): `./scripts/uninstall.sh` is the
+  complete teardown — it removes the `~/.local/bin` launcher link and man page,
+  the managed state under `~/.local/state/workcell`, and Workcell-owned Colima
+  profiles and caches (`~/.colima/workcell-*`,
+  `~/Library/Caches/colima/workcell-*`); it leaves shared packages and unrelated
+  Colima profiles alone. Run `--dry-run` first to preview.
 - **Homebrew formula install** (Option B): `brew uninstall workcell` removes the
-  formula, but not the managed host state a launched session leaves behind. For a
-  full teardown, run `workcell --gc` first and then remove
-  `~/.local/state/workcell` yourself.
+  formula tree, but not the runtime state a launched session created — so also
+  run `./scripts/uninstall.sh` (from a release bundle or source checkout) to
+  clear the managed state and Colima profiles.
 
 These are covered as repeatable day-two operations in
 [docs/install-lifecycle.md](install-lifecycle.md).
