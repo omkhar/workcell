@@ -340,6 +340,18 @@ collect_profiles() {
       done < <(find "${COLIMA_HOME}/_lima" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
     fi
 
+    if [[ -d "${COLIMA_HOME}/_lima/_disks" ]]; then
+      while IFS= read -r -d '' candidate; do
+        name="$(basename "${candidate}")"
+        case "${name}" in
+          colima-workcell-* | colima-wcl-*)
+            name="${name#colima-}"
+            profile_is_workcell_owned "${name}" && append_unique_value "${name}"
+            ;;
+        esac
+      done < <(find "${COLIMA_HOME}/_lima/_disks" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+    fi
+
     if [[ -d "${COLIMA_HOME}/locks" ]]; then
       while IFS= read -r -d '' candidate; do
         name="$(basename "${candidate}")"
