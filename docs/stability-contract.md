@@ -18,6 +18,37 @@ whitelist in code.
 "Experimental" means it may change or be removed. Absence from this document is
 not a stability promise.
 
+## Deprecation policy
+
+From 1.0 onward Workcell follows [semantic versioning](https://semver.org). The
+stable surfaces enumerated in this document carry a compatibility guarantee
+within a major version: the exit-code contract, the machine-readable output-line
+prefixes, the session-record/export field set, and the injection-policy table
+(enforced by `policy/public-contract.toml`), together with the stable
+`scripts/workcell` CLI flags and subcommands documented under
+[CLI stability](#cli-stability) (enforced via `policy/operator-contract.toml`).
+The guarantee:
+
+- **No breaking change to a stable surface ships in a patch or minor release.**
+  A new field or prefix may be *added*; an existing one is not renamed, removed,
+  or given a changed meaning except across a major version bump.
+- **Deprecations are announced before removal.** A stable surface slated for
+  removal is first marked deprecated in [`CHANGELOG.md`](../CHANGELOG.md) and,
+  where it has a runtime presence, emits a documented deprecation notice. It
+  keeps working for at least one subsequent minor release, and its removal lands
+  only in a major version bump.
+- **Experimental surfaces** (labeled "Experimental" here, and anything absent
+  from this document) carry no such guarantee and may change or be removed in any
+  release.
+- **A security fix may override this policy** when a stable surface is itself the
+  vulnerability; any such change is called out in [`CHANGELOG.md`](../CHANGELOG.md)
+  and [`SECURITY.md`](../SECURITY.md).
+
+Workcell is currently in single-maintainer release mode
+([`SECURITY.md`](../SECURITY.md#supported-versions)), so only the latest release
+receives fixes; track it and read [`CHANGELOG.md`](../CHANGELOG.md) for
+deprecations before upgrading.
+
 ## Exit-code contract
 
 The canonical convention across every entrypoint:
