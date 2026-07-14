@@ -191,10 +191,10 @@ To reclaim stale runtime/cache/temp state without uninstalling, run
 `workcell --gc` (it reaps aged `session-audit` records, so do not run it before
 preserving evidence for a suspected incident — see
 [docs/incident-response.md](docs/incident-response.md)).
-`./scripts/uninstall.sh` (`--dry-run` first to preview) is the
-complete teardown — it removes the launcher link, managed state under
-`~/.local/state/workcell`, and Workcell-owned Colima profiles/caches, leaving
-shared packages and unrelated profiles alone. After a Homebrew formula install,
+`./scripts/uninstall.sh` (`--dry-run` first to preview) removes the launcher
+link, managed state under `~/.local/state/workcell`, and the Workcell-managed
+Colima profiles/caches it discovers, leaving shared packages and unrelated
+profiles alone. After a Homebrew formula install,
 `brew uninstall workcell` removes only the formula, so also run
 `./scripts/uninstall.sh` (from a bundle or checkout) to clear the runtime state.
 See [docs/install-lifecycle.md](docs/install-lifecycle.md).
