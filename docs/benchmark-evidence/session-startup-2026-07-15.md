@@ -20,6 +20,9 @@ teardown never reached the driver's sub-shell and did not run between samples
 (recorded as a confound below):
 
 ```sh
+export REPO="$HOME/src/workcell"    # the workspace under test
+export WCL_PROFILE="wcl-workcell-006e49ec"   # the derived managed colima profile
+
 # teardown: intended to run before each cold/cache-hit sample
 cleanup_sessions() {
   ./scripts/workcell session list 2>/dev/null | awk 'NR>1{print $1}' | while read -r id; do
