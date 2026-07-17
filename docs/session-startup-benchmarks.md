@@ -6,8 +6,9 @@ completing the supervisor handshake. **C2** measures that start latency and driv
 it down with cached images and an optional kept-warm lane — the sibling of
 [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5). Numbers are captured
 on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
-results tables below are **placeholders pending a live capture**
-([Filling in the numbers](#filling-in-the-numbers)) — not measured values.
+[results tables below](#results) hold a **preliminary live capture from 2026-07-15**
+— recorded with its raw evidence, but confounded by three methodology issues
+(documented there) and therefore not yet a certified C2 result.
 
 ## What is measured
 
@@ -86,25 +87,71 @@ includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
 
 ## Results
 
-**Status: numbers pending live capture.** Replace the `TODO` cells once a live run
-is captured (see [Filling in the numbers](#filling-in-the-numbers)); do not
-fabricate values.
+**Status: PRELIMINARY capture 2026-07-15 — recorded, but not yet a clean C2
+certification.** Captured on the maintainer host (Darwin 25.5.0 arm64, 12 online
+CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations × 2 runs,
+`codex` provider; the cross-run stability gate passed (exit 0) — its overall max
+cross-run median spread was **4.1%**, from the unpromoted `cache-hit` mode; the two
+promoted tiers below were each ≤0.6%. The **exact
+invocation (`WORKCELL_STARTUP_CMD` + all three prep hooks) and the complete raw
+report** are preserved verbatim in
+[`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md).
+Four methodology confounds (below) mean these numbers are a useful preliminary
+signal, **not** a certified C2 result; a clean capture remains for Batch-3.
 
-### Start latency by mode (median of N samples, R runs)
+### Measured start latency (5 samples per run, both runs shown)
 
-| Mode | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | vs cold |
-|---|---|---|---|---|---|
-| `cold` | TODO | TODO | TODO | TODO | — |
-| `cache-hit` | TODO | TODO | TODO | TODO | TODO |
-| `warm` | TODO | TODO | TODO | TODO | TODO |
+The two reported tiers are named for the **image state they actually exercise**, not
+for a kept-warm session lane (see caveat 1). Both runs are shown verbatim — the p90,
+mean, and stddev differ materially between runs (e.g. cold p90 21.9 s in Run 1 vs
+16.0 s in Run 2), so no single run's non-median statistics are representative; only
+the medians are stable cross-run (≤0.6%, see the stability table):
+
+| Tier (harness mode) | Run | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | median ≈ |
+|---|---|---|---|---|---|---|
+| image-evicted → tarball restore (`cold`) | 1 | 15863271000 | 21907998000 | 17088363200 | 2410769883 | 15.9 s |
+| image-evicted → tarball restore (`cold`) | 2 | 15958072000 | 15980669000 | 15888017600 | 149981479 | 16.0 s |
+| image-resident (`warm`) | 1 | 13457187000 | 13685462000 | 13497043600 | 99040400 | 13.5 s |
+| image-resident (`warm`) | 2 | 13543427000 | 13659044000 | 13489852400 | 139001557 | 13.5 s |
+
+The ~2.4 s median difference between the tiers is the **Docker-image
+restore-from-tarball cost**, not a kept-warm-session win.
 
 ### Cross-run stability (median)
 
-| Mode | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |
+| Tier | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |
 |---|---|---|---|---|---|
-| `cold` | TODO | TODO | TODO | TODO | TODO |
-| `cache-hit` | TODO | TODO | TODO | TODO | TODO |
-| `warm` | TODO | TODO | TODO | TODO | TODO |
+| `cold` | 15863271000 | 15958072000 | 94801000 | 0.6 | STABLE |
+| `warm` | 13457187000 | 13543427000 | 86240000 | 0.6 | STABLE |
+
+### Methodology confounds (why this is preliminary, not certified)
+
+1. **No kept-warm session was exercised.** The `warm` prep only prepares the image;
+   a detached `codex` session started with no task exits within seconds, so no
+   persistent kept-warm session existed during the `warm` samples. The `warm` tier
+   therefore measures an **image-resident start**, not the documented kept-warm lane,
+   and the delta above must **not** be read as a warm-lane win.
+2. **`cache-hit` shows a real, unexplained anomaly — not noise.** In the raw report
+   `cache-hit` medians are 23.75 s / 24.73 s versus 15.86 s / 15.96 s for `cold` —
+   roughly **50–55% slower with no overlapping sample range**. Running `--prepare-only`
+   before each sample (the `cache-hit` prep) demonstrably makes the subsequent start
+   *slower* than evicting the image, which is counter-intuitive and **unresolved**. It
+   is preserved in the raw report and flagged here for investigation; it is not dropped
+   as noise.
+3. **`cold` is a tarball restore, not a first-ever build.** The `cold` prep evicts only
+   the Docker image while Workcell's local image tarball remains, so `cold` reloads from
+   that tarball. A genuinely fresh host (no tarball) additionally runs the one-time
+   `buildx` build of `workcell:local` (minutes) — a provisioning cost excluded here.
+4. **Per-sample teardown never ran.** The teardown was a shell function exported via
+   `export -f` under zsh (a no-op there), so it did not reach the driver and no session
+   teardown ran between samples (see the raw evidence). Detached no-task sessions
+   self-terminate within seconds, so live sessions did not accumulate across the ~15 s
+   gaps — but the samples did not begin in the harness's intended clean state, and this
+   is a candidate contributor to the `cache-hit` anomaly.
+
+A clean C2 certification should run with **working per-sample teardown**, establish an
+actual persistent kept-warm session, resolve or explain the `cache-hit` anomaly, and
+decide whether to also capture a no-tarball first-start tier.
 
 ## Filling in the numbers
 
