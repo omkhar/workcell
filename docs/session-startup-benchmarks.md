@@ -6,8 +6,9 @@ completing the supervisor handshake. **C2** measures that start latency and driv
 it down with cached images and an optional kept-warm lane — the sibling of
 [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5). Numbers are captured
 on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
-results tables below are **placeholders pending a live capture**
-([Filling in the numbers](#filling-in-the-numbers)) — not measured values.
+[results tables below](#results) hold **measured values captured live on
+2026-07-15** (see that section for host, methodology, and why `cache-hit` is not a
+separate tier).
 
 ## What is measured
 
@@ -86,25 +87,46 @@ includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
 
 ## Results
 
-**Status: numbers pending live capture.** Replace the `TODO` cells once a live run
-is captured (see [Filling in the numbers](#filling-in-the-numbers)); do not
-fabricate values.
+**Status: captured live 2026-07-15** on the maintainer host (Darwin 25.5.0 arm64,
+12 online CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations ×
+2 runs, `codex` provider, stability gate passed (exit 0). Headline row values are
+from Run 1; both runs agree within 0.6% (see the cross-run stability table). Only
+the `warm` and `cold` tiers are reported — see [Why `cache-hit` is not a separate
+tier](#why-cache-hit-is-not-a-separate-tier) below.
 
-### Start latency by mode (median of N samples, R runs)
+### Start latency by mode (median of 5 samples, 2 runs)
 
 | Mode | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | vs cold |
 |---|---|---|---|---|---|
-| `cold` | TODO | TODO | TODO | TODO | — |
-| `cache-hit` | TODO | TODO | TODO | TODO | TODO |
-| `warm` | TODO | TODO | TODO | TODO | TODO |
+| `cold` | 15863271000 | 21907998000 | 17088363200 | 2410769883 | — |
+| `warm` | 13457187000 | 13685462000 | 13497043600 | 99040400 | −15.2% (faster) |
+
+In human units: `cold` ≈ **15.9 s**, `warm` ≈ **13.5 s** — a warm-lane win of about
+**2.4 s (~15%)** on this host. Absolute numbers are host- and backend-relative; treat
+the cold→warm delta as the portable signal.
 
 ### Cross-run stability (median)
 
 | Mode | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |
 |---|---|---|---|---|---|
-| `cold` | TODO | TODO | TODO | TODO | TODO |
-| `cache-hit` | TODO | TODO | TODO | TODO | TODO |
-| `warm` | TODO | TODO | TODO | TODO | TODO |
+| `cold` | 15863271000 | 15958072000 | 94801000 | 0.6 | STABLE |
+| `warm` | 13457187000 | 13543427000 | 86240000 | 0.6 | STABLE |
+
+Stability gate: STABLE (max cross-run median spread 0.6% ≤ 15%).
+
+### Why `cache-hit` is not a separate tier
+
+The documented `cache-hit` mode is **not separately reportable on this runtime**, and
+this is a structural property, not a capture defect. Workcell caches the built runtime
+image as a **local tarball** (`runtime-image-cache/<...>/<profile>.tar`), so there is no
+registry pull on the "cold" path: evicting the Docker image (`docker image rm`) makes the
+next start **reload the image from that local tarball**, which is nearly as fast as a start
+with the image already resident. `cold` and `cache-hit` therefore exercise almost the same
+work and are not cleanly separable — a captured `cache-hit` median lands in the noise band
+around `cold` rather than between `cold` and `warm`. The reported `cold` tier already
+reflects the realistic worst-case a user sees (image resolved from the local cache + full
+boot). Note the measured path **excludes the first-ever image build** (`buildx` build of
+`workcell:local`), which is a one-time provisioning cost, not a per-session startup cost.
 
 ## Filling in the numbers
 
