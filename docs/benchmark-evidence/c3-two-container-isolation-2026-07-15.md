@@ -24,7 +24,7 @@ export REPO="$HOME/src/workcell"   # a clean git worktree
 for id in <ID1> <ID2>; do ./scripts/workcell session show --id "$id"; done
 ```
 
-## Captured `session show` fields (verbatim)
+## Captured `session show` fields (verbatim; home path generalized to `$HOME`)
 
 Session A — `20260715T193632Z-f4226b4e`:
 
@@ -33,8 +33,8 @@ Session A — `20260715T193632Z-f4226b4e`:
 "target_provider":       "colima"
 "target_assurance_class":"strict"
 "status":                "failed"
-"workspace_root":        "/Users/omkharanarasaratnam/src/workcell"
-"worktree_path":         "/Users/omkharanarasaratnam/src/workcell/.git/workcell-sessions/20260715T193632Z-f4226b4e/repo"
+"workspace_root":        "$HOME/src/workcell"
+"worktree_path":         "$HOME/src/workcell/.git/workcell-sessions/20260715T193632Z-f4226b4e/repo"
 "git_branch":            "workcell/session-20260715T193632Z-f4226b4e"
 "container_name":        "workcell-codex-strict-repo-557c91b5"
 "started_at":            "2026-07-15T19:36:40Z"
@@ -47,8 +47,8 @@ Session B — `20260715T193705Z-2ae8e294`:
 "target_provider":       "colima"
 "target_assurance_class":"strict"
 "status":                "failed"
-"workspace_root":        "/Users/omkharanarasaratnam/src/workcell"
-"worktree_path":         "/Users/omkharanarasaratnam/src/workcell/.git/workcell-sessions/20260715T193705Z-2ae8e294/repo"
+"workspace_root":        "$HOME/src/workcell"
+"worktree_path":         "$HOME/src/workcell/.git/workcell-sessions/20260715T193705Z-2ae8e294/repo"
 "git_branch":            "workcell/session-20260715T193705Z-2ae8e294"
 "container_name":        "workcell-codex-strict-repo-0e6b0d64"
 "started_at":            "2026-07-15T19:37:13Z"
