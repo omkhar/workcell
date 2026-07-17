@@ -6,9 +6,9 @@ completing the supervisor handshake. **C2** measures that start latency and driv
 it down with cached images and an optional kept-warm lane — the sibling of
 [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5). Numbers are captured
 on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
-[results tables below](#results) hold **measured values captured live on
-2026-07-15** (see that section for host, methodology, and why `cache-hit` is not a
-separate tier).
+[results tables below](#results) hold a **preliminary live capture from 2026-07-15**
+— recorded with its raw evidence, but confounded by three methodology issues
+(documented there) and therefore not yet a certified C2 result.
 
 ## What is measured
 
@@ -87,58 +87,58 @@ includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
 
 ## Results
 
-**Status: captured live 2026-07-15** on the maintainer host (Darwin 25.5.0 arm64,
-12 online CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations ×
-2 runs, `codex` provider, stability gate passed (exit 0). Headline row values are
-from Run 1; both runs agree within 0.6% (see the cross-run stability table). Only
-the `warm` and `cold` tiers are reported — see [Why `cache-hit` is not a separate
-tier](#why-cache-hit-is-not-a-separate-tier) below. The **exact invocation (the
-`WORKCELL_STARTUP_CMD` and all three prep hooks) and the complete raw report,
-including the unpromoted `cache-hit` samples that participated in the stability
-gate**, are preserved verbatim in
-[`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md)
-so the result can be reproduced and audited.
+**Status: PRELIMINARY capture 2026-07-15 — recorded, but not yet a clean C2
+certification.** Captured on the maintainer host (Darwin 25.5.0 arm64, 12 online
+CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations × 2 runs,
+`codex` provider; the cross-run stability gate passed (exit 0). The **exact
+invocation (`WORKCELL_STARTUP_CMD` + all three prep hooks) and the complete raw
+report** are preserved verbatim in
+[`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md).
+Three methodology confounds (below) mean these numbers are a useful preliminary
+signal, **not** a certified C2 result; a clean capture remains for Batch-3.
 
-**What `cold` is here:** the `cold` prep evicts only the Docker image while
-Workcell's **local image tarball remains**, so the `cold` tier measures a
-**tarball restore + full boot** — the realistic worst case for a host that has
-run Workcell before. It is *not* a no-tarball, first-ever start: that path also
-runs the one-time `buildx` build of `workcell:local` (minutes, a provisioning
-cost), which is deliberately excluded here and is not a per-session startup cost.
+### Measured start latency (median of 5 samples, 2 runs)
 
-### Start latency by mode (median of 5 samples, 2 runs)
+The two reported tiers are named for the **image state they actually exercise**, not
+for a kept-warm session lane (see caveat 1):
 
-| Mode | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | vs cold |
+| Tier (harness mode) | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | ≈ |
 |---|---|---|---|---|---|
-| `cold` | 15863271000 | 21907998000 | 17088363200 | 2410769883 | — |
-| `warm` | 13457187000 | 13685462000 | 13497043600 | 99040400 | −15.2% (faster) |
+| image-evicted → tarball restore (`cold`) | 15863271000 | 21907998000 | 17088363200 | 2410769883 | **15.9 s** |
+| image-resident (`warm`) | 13457187000 | 13685462000 | 13497043600 | 99040400 | **13.5 s** |
 
-In human units: `cold` ≈ **15.9 s**, `warm` ≈ **13.5 s** — a warm-lane win of about
-**2.4 s (~15%)** on this host. Absolute numbers are host- and backend-relative; treat
-the cold→warm delta as the portable signal.
+Both are reproducible across runs at ≤0.6% median spread. The ~2.4 s difference is
+the **Docker-image restore-from-tarball cost**, not a kept-warm-session win.
 
 ### Cross-run stability (median)
 
-| Mode | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |
+| Tier | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |
 |---|---|---|---|---|---|
 | `cold` | 15863271000 | 15958072000 | 94801000 | 0.6 | STABLE |
 | `warm` | 13457187000 | 13543427000 | 86240000 | 0.6 | STABLE |
 
-Stability gate: STABLE (max cross-run median spread 0.6% ≤ 15%).
+### Methodology confounds (why this is preliminary, not certified)
 
-### Why `cache-hit` is not a separate tier
+1. **No kept-warm session was exercised.** The `warm` prep only prepares the image;
+   a detached `codex` session started with no task exits within seconds, so no
+   persistent kept-warm session existed during the `warm` samples. The `warm` tier
+   therefore measures an **image-resident start**, not the documented kept-warm lane,
+   and the delta above must **not** be read as a warm-lane win.
+2. **`cache-hit` shows a real, unexplained anomaly — not noise.** In the raw report
+   `cache-hit` medians are 23.75 s / 24.73 s versus 15.86 s / 15.96 s for `cold` —
+   roughly **50–55% slower with no overlapping sample range**. Running `--prepare-only`
+   before each sample (the `cache-hit` prep) demonstrably makes the subsequent start
+   *slower* than evicting the image, which is counter-intuitive and **unresolved**. It
+   is preserved in the raw report and flagged here for investigation; it is not dropped
+   as noise.
+3. **`cold` is a tarball restore, not a first-ever build.** The `cold` prep evicts only
+   the Docker image while Workcell's local image tarball remains, so `cold` reloads from
+   that tarball. A genuinely fresh host (no tarball) additionally runs the one-time
+   `buildx` build of `workcell:local` (minutes) — a provisioning cost excluded here.
 
-The documented `cache-hit` mode is **not separately reportable on this runtime**, and
-this is a structural property, not a capture defect. Workcell caches the built runtime
-image as a **local tarball** (`runtime-image-cache/<...>/<profile>.tar`), so there is no
-registry pull on the "cold" path: evicting the Docker image (`docker image rm`) makes the
-next start **reload the image from that local tarball**, which is nearly as fast as a start
-with the image already resident. `cold` and `cache-hit` therefore exercise almost the same
-work and are not cleanly separable — a captured `cache-hit` median lands in the noise band
-around `cold` rather than between `cold` and `warm`. The reported `cold` tier already
-reflects the realistic worst-case a user sees (image resolved from the local cache + full
-boot). Note the measured path **excludes the first-ever image build** (`buildx` build of
-`workcell:local`), which is a one-time provisioning cost, not a per-session startup cost.
+A clean C2 certification should establish an actual persistent kept-warm session,
+resolve or explain the `cache-hit` anomaly, and decide whether to also capture a
+no-tarball first-start tier.
 
 ## Filling in the numbers
 

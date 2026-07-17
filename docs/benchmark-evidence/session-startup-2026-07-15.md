@@ -17,23 +17,31 @@ Environment for this capture (paths generalized; `$REPO` = the workspace,
 WORKCELL_STARTUP_CMD='./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
 WORKCELL_STARTUP_COLD_PREP='<stop+delete all detached sessions>; DOCKER_HOST="unix://$HOME/.colima/$WCL_PROFILE/docker.sock" docker image rm -f workcell:local'
 WORKCELL_STARTUP_CACHE_HIT_PREP='<stop+delete all detached sessions>; ./scripts/workcell --prepare-only --agent codex --workspace $REPO'
-WORKCELL_STARTUP_WARM_PREP='./scripts/workcell --prepare-only --agent codex --workspace $REPO'
+WORKCELL_STARTUP_WARM_PREP='./scripts/workcell --prepare-only --agent codex --workspace $REPO; ./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
 WORKCELL_STARTUP_ITERATIONS=5
 WORKCELL_STARTUP_RUNS=2
 WORKCELL_STARTUP_STABILITY_PCT=15
 ```
 
-## Provenance caveats
+## Provenance caveats — this is a PRELIMINARY, confounded capture
 
 - The measured command is a detached `session start`, which returns once the
   session monitor is ready (a no-task `codex` then exits shortly after, in the
   background — it does not affect the start-to-ready latency the harness times).
-- `COLD_PREP` evicts only the Docker image; Workcell's **local image tarball**
-  remains, so the measured `cold` samples are a **tarball restore + boot**, not a
-  no-tarball first-ever build (the one-time `buildx` build is excluded).
-- `cache-hit` is retained below as raw data but is **not** a published tier: with
-  the tarball present it is degenerate with `cold` (it lands in the noise band
-  around `cold` rather than between `cold` and `warm`).
+- **No persistent kept-warm session.** `WARM_PREP` starts a detached session, but a
+  no-task `codex` exits within seconds, so no kept-warm session existed during the
+  `warm` samples. The `warm` tier therefore measures an **image-resident start**, not
+  the documented kept-warm lane — the `cold`→`warm` delta is an image-restore cost,
+  not a warm-lane win.
+- **`cold` is a tarball restore, not a first build.** `COLD_PREP` evicts only the
+  Docker image; Workcell's local image tarball remains, so `cold` reloads from the
+  tarball + boots. A no-tarball first-ever start additionally runs the one-time
+  `buildx` build (excluded here).
+- **`cache-hit` is a real, unresolved anomaly — not noise.** The `cache-hit` medians
+  below (23.75 s / 24.73 s) are ~50–55% **slower** than `cold` (15.86 s / 15.96 s)
+  with no overlapping range. Running `--prepare-only` before each sample makes the
+  next start slower than evicting the image — counter-intuitive and **unexplained**.
+  Preserved here for investigation; not used to draw a published conclusion.
 
 ## Generated report (verbatim)
 
