@@ -92,7 +92,19 @@ includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
 2 runs, `codex` provider, stability gate passed (exit 0). Headline row values are
 from Run 1; both runs agree within 0.6% (see the cross-run stability table). Only
 the `warm` and `cold` tiers are reported — see [Why `cache-hit` is not a separate
-tier](#why-cache-hit-is-not-a-separate-tier) below.
+tier](#why-cache-hit-is-not-a-separate-tier) below. The **exact invocation (the
+`WORKCELL_STARTUP_CMD` and all three prep hooks) and the complete raw report,
+including the unpromoted `cache-hit` samples that participated in the stability
+gate**, are preserved verbatim in
+[`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md)
+so the result can be reproduced and audited.
+
+**What `cold` is here:** the `cold` prep evicts only the Docker image while
+Workcell's **local image tarball remains**, so the `cold` tier measures a
+**tarball restore + full boot** — the realistic worst case for a host that has
+run Workcell before. It is *not* a no-tarball, first-ever start: that path also
+runs the one-time `buildx` build of `workcell:local` (minutes, a provisioning
+cost), which is deliberately excluded here and is not a per-session startup cost.
 
 ### Start latency by mode (median of 5 samples, 2 runs)
 
