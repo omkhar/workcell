@@ -1,10 +1,18 @@
-# C3 — live two-container isolation, raw capture (2026-07-15)
+# C3 — two-session isolation, raw capture (2026-07-15, PRELIMINARY)
 
-Auditable evidence for the C3 live two-container run recorded in
+Auditable evidence for the C3 isolation run recorded in
 [`../1.0-readiness-review-draft.md`](../1.0-readiness-review-draft.md) §6 Platform
-row. Two concurrent same-repo detached sessions were started with
-`--session-workspace isolated` on `macos/arm64/local_vm/colima/strict` (profile
-`wcl-workcell-006e49ec`), then `session show` was captured for each.
+row. Two same-repo detached sessions were started with `--session-workspace
+isolated` on `macos/arm64/local_vm/colima/strict` (profile `wcl-workcell-006e49ec`),
+then `session show` was captured for each.
+
+> **Not a concurrent run.** The two sessions started **33 s apart** (19:36:40 vs
+> 19:37:13, below) and each taskless `codex` session exits within seconds, so
+> session A had already exited before session B started — they did **not** overlap
+> in time. This evidence therefore shows that the isolation *scheme* assigns
+> **distinct** containers/worktrees/branches to two sessions, but it does **not**
+> establish a live **concurrent** two-container run. A concurrent capture needs
+> sessions that stay alive (e.g. a long-running task) and is left for Batch-3.
 
 ## Invocation
 

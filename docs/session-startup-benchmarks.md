@@ -90,7 +90,9 @@ includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
 **Status: PRELIMINARY capture 2026-07-15 — recorded, but not yet a clean C2
 certification.** Captured on the maintainer host (Darwin 25.5.0 arm64, 12 online
 CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations × 2 runs,
-`codex` provider; the cross-run stability gate passed (exit 0). The **exact
+`codex` provider; the cross-run stability gate passed (exit 0) — its overall max
+cross-run median spread was **4.1%**, from the unpromoted `cache-hit` mode; the two
+promoted tiers below were each ≤0.6%. The **exact
 invocation (`WORKCELL_STARTUP_CMD` + all three prep hooks) and the complete raw
 report** are preserved verbatim in
 [`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md).
