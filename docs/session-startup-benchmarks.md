@@ -97,18 +97,23 @@ report** are preserved verbatim in
 Three methodology confounds (below) mean these numbers are a useful preliminary
 signal, **not** a certified C2 result; a clean capture remains for Batch-3.
 
-### Measured start latency (median of 5 samples, 2 runs)
+### Measured start latency (5 samples per run, both runs shown)
 
 The two reported tiers are named for the **image state they actually exercise**, not
-for a kept-warm session lane (see caveat 1):
+for a kept-warm session lane (see caveat 1). Both runs are shown verbatim — the p90,
+mean, and stddev differ materially between runs (e.g. cold p90 21.9 s in Run 1 vs
+16.0 s in Run 2), so no single run's non-median statistics are representative; only
+the medians are stable cross-run (≤0.6%, see the stability table):
 
-| Tier (harness mode) | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | ≈ |
-|---|---|---|---|---|---|
-| image-evicted → tarball restore (`cold`) | 15863271000 | 21907998000 | 17088363200 | 2410769883 | **15.9 s** |
-| image-resident (`warm`) | 13457187000 | 13685462000 | 13497043600 | 99040400 | **13.5 s** |
+| Tier (harness mode) | Run | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | median ≈ |
+|---|---|---|---|---|---|---|
+| image-evicted → tarball restore (`cold`) | 1 | 15863271000 | 21907998000 | 17088363200 | 2410769883 | 15.9 s |
+| image-evicted → tarball restore (`cold`) | 2 | 15958072000 | 15980669000 | 15888017600 | 149981479 | 16.0 s |
+| image-resident (`warm`) | 1 | 13457187000 | 13685462000 | 13497043600 | 99040400 | 13.5 s |
+| image-resident (`warm`) | 2 | 13543427000 | 13659044000 | 13489852400 | 139001557 | 13.5 s |
 
-Both are reproducible across runs at ≤0.6% median spread. The ~2.4 s difference is
-the **Docker-image restore-from-tarball cost**, not a kept-warm-session win.
+The ~2.4 s median difference between the tiers is the **Docker-image
+restore-from-tarball cost**, not a kept-warm-session win.
 
 ### Cross-run stability (median)
 

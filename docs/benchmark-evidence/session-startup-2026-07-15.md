@@ -13,10 +13,18 @@ Driver: `scripts/bench/run-startup-bench.sh` (see
 Environment for this capture (paths generalized; `$REPO` = the workspace,
 `$WCL_PROFILE` = `wcl-workcell-006e49ec`):
 
+`$CLEAN` is the literal per-sample teardown (idempotent; runs before each `cold`
+and `cache-hit` sample). During the actual capture it was a shell function whose
+export into the harness sub-shell silently failed under zsh (`export -f` is a bash
+builtin), so teardown did not run between samples — this is noted as a further
+provenance caveat below. The intended/generalized command is:
+
 ```sh
+CLEAN='./scripts/workcell session list 2>/dev/null | awk "NR>1{print \$1}" | while read -r id; do ./scripts/workcell session stop --id "$id" >/dev/null 2>&1 || true; ./scripts/workcell session delete --id "$id" >/dev/null 2>&1 || true; done'
+
 WORKCELL_STARTUP_CMD='./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
-WORKCELL_STARTUP_COLD_PREP='<stop+delete all detached sessions>; DOCKER_HOST="unix://$HOME/.colima/$WCL_PROFILE/docker.sock" docker image rm -f workcell:local'
-WORKCELL_STARTUP_CACHE_HIT_PREP='<stop+delete all detached sessions>; ./scripts/workcell --prepare-only --agent codex --workspace $REPO'
+WORKCELL_STARTUP_COLD_PREP='$CLEAN; DOCKER_HOST="unix://$HOME/.colima/$WCL_PROFILE/docker.sock" docker image rm -f workcell:local'
+WORKCELL_STARTUP_CACHE_HIT_PREP='$CLEAN; ./scripts/workcell --prepare-only --agent codex --workspace $REPO'
 WORKCELL_STARTUP_WARM_PREP='./scripts/workcell --prepare-only --agent codex --workspace $REPO; ./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
 WORKCELL_STARTUP_ITERATIONS=5
 WORKCELL_STARTUP_RUNS=2
@@ -37,6 +45,12 @@ WORKCELL_STARTUP_STABILITY_PCT=15
   Docker image; Workcell's local image tarball remains, so `cold` reloads from the
   tarball + boots. A no-tarball first-ever start additionally runs the one-time
   `buildx` build (excluded here).
+- **Per-sample teardown did not actually run.** `$CLEAN` was exported as a shell
+  function via `export -f` under zsh (a bash-only builtin), so it did not reach the
+  harness sub-shell and no session teardown ran between samples. Detached no-task
+  sessions self-terminate within seconds, so live sessions did not accumulate across
+  the ~15 s inter-sample gaps — but this is an additional reason the capture is
+  preliminary, and a candidate contributor to the `cache-hit` anomaly.
 - **`cache-hit` is a real, unresolved anomaly — not noise.** The `cache-hit` medians
   below (23.75 s / 24.73 s) are ~50–55% **slower** than `cold` (15.86 s / 15.96 s)
   with no overlapping range. Running `--prepare-only` before each sample makes the
