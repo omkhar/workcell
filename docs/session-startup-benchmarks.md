@@ -94,7 +94,7 @@ CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations × 2 runs
 invocation (`WORKCELL_STARTUP_CMD` + all three prep hooks) and the complete raw
 report** are preserved verbatim in
 [`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md).
-Three methodology confounds (below) mean these numbers are a useful preliminary
+Four methodology confounds (below) mean these numbers are a useful preliminary
 signal, **not** a certified C2 result; a clean capture remains for Batch-3.
 
 ### Measured start latency (5 samples per run, both runs shown)
@@ -140,10 +140,16 @@ restore-from-tarball cost**, not a kept-warm-session win.
    the Docker image while Workcell's local image tarball remains, so `cold` reloads from
    that tarball. A genuinely fresh host (no tarball) additionally runs the one-time
    `buildx` build of `workcell:local` (minutes) — a provisioning cost excluded here.
+4. **Per-sample teardown never ran.** The teardown was a shell function exported via
+   `export -f` under zsh (a no-op there), so it did not reach the driver and no session
+   teardown ran between samples (see the raw evidence). Detached no-task sessions
+   self-terminate within seconds, so live sessions did not accumulate across the ~15 s
+   gaps — but the samples did not begin in the harness's intended clean state, and this
+   is a candidate contributor to the `cache-hit` anomaly.
 
-A clean C2 certification should establish an actual persistent kept-warm session,
-resolve or explain the `cache-hit` anomaly, and decide whether to also capture a
-no-tarball first-start tier.
+A clean C2 certification should run with **working per-sample teardown**, establish an
+actual persistent kept-warm session, resolve or explain the `cache-hit` anomaly, and
+decide whether to also capture a no-tarball first-start tier.
 
 ## Filling in the numbers
 

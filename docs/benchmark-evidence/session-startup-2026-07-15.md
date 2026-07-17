@@ -13,23 +13,37 @@ Driver: `scripts/bench/run-startup-bench.sh` (see
 Environment for this capture (paths generalized; `$REPO` = the workspace,
 `$WCL_PROFILE` = `wcl-workcell-006e49ec`):
 
-`$CLEAN` is the literal per-sample teardown (idempotent; runs before each `cold`
-and `cache-hit` sample). During the actual capture it was a shell function whose
-export into the harness sub-shell silently failed under zsh (`export -f` is a bash
-builtin), so teardown did not run between samples — this is noted as a further
-provenance caveat below. The intended/generalized command is:
+Shown **exactly as run** on 2026-07-15 (interactive zsh). The `WORKCELL_*`
+variables were `export`ed; the per-sample teardown was a shell **function**
+exported via `export -f` — a bash builtin that is a **no-op under zsh**, so the
+teardown never reached the driver's sub-shell and did not run between samples
+(recorded as a confound below):
 
 ```sh
-CLEAN='./scripts/workcell session list 2>/dev/null | awk "NR>1{print \$1}" | while read -r id; do ./scripts/workcell session stop --id "$id" >/dev/null 2>&1 || true; ./scripts/workcell session delete --id "$id" >/dev/null 2>&1 || true; done'
+# teardown: intended to run before each cold/cache-hit sample
+cleanup_sessions() {
+  ./scripts/workcell session list 2>/dev/null | awk 'NR>1{print $1}' | while read -r id; do
+    ./scripts/workcell session stop   --id "$id" >/dev/null 2>&1 || true
+    ./scripts/workcell session delete --id "$id" >/dev/null 2>&1 || true
+  done
+}
+export -f cleanup_sessions   # <-- silently a no-op under zsh; teardown never reached the driver
 
-WORKCELL_STARTUP_CMD='./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
-WORKCELL_STARTUP_COLD_PREP='$CLEAN; DOCKER_HOST="unix://$HOME/.colima/$WCL_PROFILE/docker.sock" docker image rm -f workcell:local'
-WORKCELL_STARTUP_CACHE_HIT_PREP='$CLEAN; ./scripts/workcell --prepare-only --agent codex --workspace $REPO'
-WORKCELL_STARTUP_WARM_PREP='./scripts/workcell --prepare-only --agent codex --workspace $REPO; ./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
-WORKCELL_STARTUP_ITERATIONS=5
-WORKCELL_STARTUP_RUNS=2
-WORKCELL_STARTUP_STABILITY_PCT=15
+export WORKCELL_STARTUP_CMD='./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
+export WORKCELL_STARTUP_COLD_PREP='cleanup_sessions; DOCKER_HOST="unix://$HOME/.colima/$WCL_PROFILE/docker.sock" docker image rm -f workcell:local'
+export WORKCELL_STARTUP_CACHE_HIT_PREP='cleanup_sessions; ./scripts/workcell --prepare-only --agent codex --workspace $REPO'
+export WORKCELL_STARTUP_WARM_PREP='./scripts/workcell --prepare-only --agent codex --workspace $REPO; ./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
+export WORKCELL_STARTUP_ITERATIONS=5
+export WORKCELL_STARTUP_RUNS=2
+export WORKCELL_STARTUP_STABILITY_PCT=15
 ```
+
+For a clean recapture the teardown must actually run: invoke the driver under
+**bash** (so `export -f` works), or — because the driver `eval`s each prep hook
+once, so pipe/loop operators produced by expanding a nested `$VAR` are **not**
+re-parsed as operators — **inline the teardown pipeline literally in each
+`*_PREP` hook** or call a committed script. A real persistent kept-warm session
+must also be established for the `warm` tier (see confounds).
 
 ## Provenance caveats — this is a PRELIMINARY, confounded capture
 
