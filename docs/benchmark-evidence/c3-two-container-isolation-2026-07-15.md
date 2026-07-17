@@ -28,7 +28,7 @@ for id in <ID1> <ID2>; do ./scripts/workcell session show --id "$id"; done
 
 Session A — `20260715T193632Z-f4226b4e`:
 
-```
+```text
 "session_id":            "20260715T193632Z-f4226b4e"
 "target_provider":       "colima"
 "target_assurance_class":"strict"
@@ -42,7 +42,7 @@ Session A — `20260715T193632Z-f4226b4e`:
 
 Session B — `20260715T193705Z-2ae8e294`:
 
-```
+```text
 "session_id":            "20260715T193705Z-2ae8e294"
 "target_provider":       "colima"
 "target_assurance_class":"strict"
