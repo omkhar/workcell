@@ -465,8 +465,8 @@ debian_snapshot_has_bootstrap_packages() {
   local path
 
   for path in \
-    "pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb" \
-    "pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb" \
+    "pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb" \
+    "pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb" \
     "pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; do
     if ! curl -fsSI "${base}/${path}" >/dev/null 2>&1; then
       return 1

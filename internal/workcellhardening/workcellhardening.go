@@ -3425,8 +3425,8 @@ type dockerfilePinSpec struct {
 // download/checksum/dpkg probes sharing another.
 var dockerfilePinSpecs = []dockerfilePinSpec{
 	{`ca-certificates_20250419_all\.deb`, "to pin a snapshot CA bundle bootstrap package before HTTPS apt"},
-	{`openssl_3\.5\.5-1~deb13u1_amd64\.deb`, "to pin the amd64 snapshot OpenSSL bootstrap package before HTTPS apt"},
-	{`openssl_3\.5\.5-1~deb13u1_arm64\.deb`, "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt"},
+	{`openssl_3\.5\.6-1~deb13u2_amd64\.deb`, "to pin the amd64 snapshot OpenSSL bootstrap package before HTTPS apt"},
+	{`openssl_3\.5\.6-1~deb13u2_arm64\.deb`, "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt"},
 	{`Acquire::Retries "5";`, "to pin apt retry count for snapshot fetch resilience"},
 	{`Acquire::http::Timeout "30";`, "to pin apt HTTP timeout for snapshot fetch resilience"},
 	{`Acquire::https::Timeout "30";`, "to pin apt HTTPS timeout for snapshot fetch resilience"},

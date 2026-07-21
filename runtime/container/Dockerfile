@@ -7,10 +7,10 @@ ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:366fdef91728b1b7fa18c84fba63b6e79
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-# Debian snapshot date for apt sources. Pinned for reproducibility.
-# To update: choose a newer snapshot date at https://snapshot.debian.org/,
-# verify packages are available, update this value, and re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260518T000000Z
+# Debian snapshot date and TLS-bootstrap packages are one reproducibility tuple.
+# Resolve the snapshot plus both architecture paths and all digests together,
+# update both Dockerfiles, and then re-run verify-reproducible-build.sh.
+ARG DEBIAN_SNAPSHOT=20260721T000000Z
 ARG RUST_TOOLCHAIN_IMAGE=rust:1.97.0-slim-trixie@sha256:14c4fe50ea427dc42381a1a09a9a839c1d2346a2e508cd491bf02c659dbc0ed7
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
@@ -49,12 +49,12 @@ RUN fetch_snapshot_bootstrap_package() { \
        local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
        case "$(dpkg --print-architecture)" in \
          amd64) \
-           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb"; \
-           openssl_sha256="233d6d1f6ff00509cba554365e7cfb3be36db1dea57291eeb248f2c04d62719d"; \
+           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb"; \
+           openssl_sha256="7b4270966255f0bad468ac889f4b090a6e10eb6ccbc2be0fa418560b24bdef5a"; \
            ;; \
          arm64) \
-           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb"; \
-           openssl_sha256="92dfcdc213cd7a5e6aa34a1ac9660a59e56838d12876f4b34599f8fea39cb432"; \
+           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb"; \
+           openssl_sha256="1ee735e2480519bd1fd5f6576a879243bc81b9773059e1fa1ec8b8943c84e77c"; \
            ;; \
          *) \
            echo "Unsupported dpkg architecture for snapshot TLS bootstrap: $(dpkg --print-architecture)" >&2; \

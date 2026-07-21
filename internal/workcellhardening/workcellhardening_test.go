@@ -4509,8 +4509,8 @@ func TestCheckHostutilEgressRgRealRepo(t *testing.T) {
 // property of one file.
 const dockerfilePinsHappyBody = `FROM debian:trixie-slim
 ARG CA_DEB=ca-certificates_20250419_all.deb
-ARG OPENSSL_AMD64=openssl_3.5.5-1~deb13u1_amd64.deb
-ARG OPENSSL_ARM64=openssl_3.5.5-1~deb13u1_arm64.deb
+ARG OPENSSL_AMD64=openssl_3.5.6-1~deb13u2_amd64.deb
+ARG OPENSSL_ARM64=openssl_3.5.6-1~deb13u2_arm64.deb
 RUN echo 'Acquire::Retries "5";' >>/etc/apt/apt.conf
 RUN echo 'Acquire::http::Timeout "30";' >>/etc/apt/apt.conf
 RUN echo 'Acquire::https::Timeout "30";' >>/etc/apt/apt.conf
@@ -4574,7 +4574,7 @@ func TestCheckDockerfilePins(t *testing.T) {
 			// fires, proving the Dockerfile-outer order.
 			name:        "validator missing arm64 OpenSSL pin",
 			runtimeDF:   dockerfilePinsHappyBody,
-			validatorDF: strings.Replace(dockerfilePinsHappyBody, "openssl_3.5.5-1~deb13u1_arm64.deb", "openssl_OLD_arm64.deb", 1),
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, "openssl_3.5.6-1~deb13u2_arm64.deb", "openssl_OLD_arm64.deb", 1),
 			wantRel:     validatorDockerfileRelPath,
 			wantSuffix:  "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt",
 		},

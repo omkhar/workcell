@@ -1,5 +1,5 @@
 ARG VALIDATOR_BASE_IMAGE=node:24-trixie-slim@sha256:366fdef91728b1b7fa18c84fba63b6e79ed77b7e10cc206878e9705da4d7b169
-ARG DEBIAN_SNAPSHOT=20260518T000000Z
+ARG DEBIAN_SNAPSHOT=20260721T000000Z
 ARG GO_VERSION=1.26.5
 ARG GO_LINUX_X86_64_SHA256=5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053
 ARG GO_LINUX_ARM64_SHA256=fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49
@@ -58,12 +58,12 @@ RUN fetch_snapshot_bootstrap_package() { \
        local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
        case "$(dpkg --print-architecture)" in \
          amd64) \
-           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb"; \
-           openssl_sha256="233d6d1f6ff00509cba554365e7cfb3be36db1dea57291eeb248f2c04d62719d"; \
+           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb"; \
+           openssl_sha256="7b4270966255f0bad468ac889f4b090a6e10eb6ccbc2be0fa418560b24bdef5a"; \
            ;; \
          arm64) \
-           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb"; \
-           openssl_sha256="92dfcdc213cd7a5e6aa34a1ac9660a59e56838d12876f4b34599f8fea39cb432"; \
+           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb"; \
+           openssl_sha256="1ee735e2480519bd1fd5f6576a879243bc81b9773059e1fa1ec8b8943c84e77c"; \
            ;; \
          *) \
            echo "Unsupported dpkg architecture for snapshot TLS bootstrap: $(dpkg --print-architecture)" >&2; \

@@ -600,8 +600,8 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"https://snapshot.debian.org/archive/debian/",
 		"https://snapshot.debian.org/archive/debian-security/",
 		"debian_snapshot_has_bootstrap_packages",
-		"openssl_3.5.5-1~deb13u1_amd64.deb",
-		"openssl_3.5.5-1~deb13u1_arm64.deb",
+		"openssl_3.5.6-1~deb13u2_amd64.deb",
+		"openssl_3.5.6-1~deb13u2_arm64.deb",
 		"ca-certificates_20250419_all.deb",
 		"scripts/check-pinned-inputs.sh",
 		"UPSTREAM_REFRESH_WORKFLOW_PATH",
@@ -668,13 +668,13 @@ curl() {
     */dists/trixie/Release | */dists/trixie-updates/Release | */dists/trixie-security/Release)
       return 0
       ;;
-    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
-    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb | \
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb | \
     */20260518T000000Z/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
       return 0
       ;;
-    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
-    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb | \
+    */pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb | \
     */pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
       return 22
       ;;
@@ -696,9 +696,9 @@ latest_debian_snapshot
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"https://snapshot.debian.org/archive/debian/20260526T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb",
-		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb",
-		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb",
+		"https://snapshot.debian.org/archive/debian/20260526T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb",
+		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb",
+		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb",
 		"https://snapshot.debian.org/archive/debian/20260518T000000Z/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb",
 	} {
 		if !strings.Contains(string(curlLog), want) {
@@ -735,13 +735,13 @@ curl() {
     */dists/trixie/Release | */dists/trixie-updates/Release | */dists/trixie-security/Release)
       return 0
       ;;
-    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
-    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb | \
+    */20260518T000000Z/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb | \
     */20260518T000000Z/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
       return 0
       ;;
-    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb | \
-    */pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb | \
+    */pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb | \
+    */pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb | \
     */pool/main/c/ca-certificates/ca-certificates_20250419_all.deb)
       return 22
       ;;
