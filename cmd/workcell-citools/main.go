@@ -78,6 +78,8 @@ func subcommands() []subcommand {
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 3, 4, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
+		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
+		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
 		{"generate-build-input-manifest", "DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", 7, 7, cmdGenerateBuildInputManifest},
 		{"generate-builder-environment-manifest", "OUTPUT BUILDKIT_IMAGE BUILDX_VERSION_TARGET COSIGN_VERSION_TARGET QEMU_IMAGE SYFT_VERSION_TARGET BUILDX_VERSION BUILDX_INSPECT DOCKER_VERSION_JSON QEMU_VERSION COSIGN_VERSION CURL_VERSION GIT_VERSION GZIP_VERSION SYFT_VERSION TAR_VERSION", 16, 16, cmdGenerateBuilderEnvironmentManifest},
 		{"check-pinned-inputs", "DOCKERFILE VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 15, 15, cmdCheckPinnedInputs},
@@ -327,6 +329,23 @@ func cmdResolveDebianBootstrap(args []string) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(pins)
+}
+
+func cmdInspectDebianBootstrap(args []string) error {
+	manifest, err := metadatautil.ReadDebianBootstrapManifest(args[0])
+	if err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", content)
+	return nil
+}
+
+func cmdApplyDebianBootstrap(args []string) error {
+	return metadatautil.ApplyDebianBootstrapPins(args[0], args[1])
 }
 
 func cmdManifestChecksum(args []string) error {
