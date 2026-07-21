@@ -218,10 +218,8 @@ func TestScanDebianPackageStanzasEnforcesResourceBounds(t *testing.T) {
 
 func TestApplyDebianBootstrapPinsAtomicallyUpdatesSharedManifest(t *testing.T) {
 	root, manifestPath := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
-	planPath := filepath.Join(root, "plan.json")
-	pins := testDebianBootstrapPins()
+	planPath, pins := filepath.Join(root, "plan.json"), testDebianBootstrapPins()
 	writeDebianPlan(t, planPath, pins)
-
 	if err := ApplyDebianBootstrapPins(planPath, root); err != nil {
 		t.Fatal(err)
 	}
@@ -304,8 +302,7 @@ func TestDebianBootstrapFileReadsRejectUnsafeInputs(t *testing.T) {
 			t.Fatalf("accepted unsafe manifest %s", path)
 		}
 	}
-	planLink := filepath.Join(root, "plan-link.json")
-	plan := filepath.Join(root, "plan.json")
+	planLink, plan := filepath.Join(root, "plan-link.json"), filepath.Join(root, "plan.json")
 	writeDebianPlan(t, plan, testDebianBootstrapPins())
 	repoRoot, _ := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
 	if err := os.Symlink(plan, planLink); err != nil {
@@ -338,8 +335,7 @@ func TestApplyDebianBootstrapPinsRejectsExecutableManifestWithoutMutation(t *tes
 
 func TestApplyDebianBootstrapPinsRetriesDirectorySyncForExistingContent(t *testing.T) {
 	root, manifestPath := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
-	planPath := filepath.Join(root, "plan.json")
-	pins := testDebianBootstrapPins()
+	planPath, pins := filepath.Join(root, "plan.json"), testDebianBootstrapPins()
 	writeDebianPlan(t, planPath, pins)
 	originalSync := syncDebianBootstrapDirectory
 	t.Cleanup(func() { syncDebianBootstrapDirectory = originalSync })

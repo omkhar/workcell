@@ -14,7 +14,7 @@ import (
 
 var aptInstallPattern = regexp.MustCompile(`apt-get install -y --no-install-recommends(?s:(.*?))&&`)
 
-func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerfile, validatorDockerfile, goModText, codexRequirementsText, codexMCPConfigText string) error {
+func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerfile, validatorDockerfile string, debianBootstrapManifest DebianBootstrapManifest, debianBootstrapManifestPath, goModText, codexRequirementsText, codexMCPConfigText string) error {
 	goModPath := filepath.Join(repoRoot, "go.mod")
 
 	runtimeBaseImage, err := requireArg(runtimeDockerfile, "NODE_BASE_IMAGE", cfg.RuntimeDockerfilePath)
@@ -22,14 +22,6 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 		return err
 	}
 	validatorBaseImage, err := requireArg(validatorDockerfile, "VALIDATOR_BASE_IMAGE", cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	runtimeSnapshot, err := requireArg(runtimeDockerfile, "DEBIAN_SNAPSHOT", cfg.RuntimeDockerfilePath)
-	if err != nil {
-		return err
-	}
-	validatorSnapshot, err := requireArg(validatorDockerfile, "DEBIAN_SNAPSHOT", cfg.ValidatorDockerfilePath)
 	if err != nil {
 		return err
 	}
@@ -61,10 +53,10 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 	if err := requirePinnedBaseImage(validatorBaseImage, "VALIDATOR_BASE_IMAGE", cfg.ValidatorDockerfilePath); err != nil {
 		return err
 	}
-	if err := verifySnapshotFreshness(runtimeSnapshot, cfg.RuntimeDockerfilePath, cfg.MaxDebianSnapshotAgeDays); err != nil {
+	if err := verifySnapshotFreshness(debianBootstrapManifest.Snapshot, debianBootstrapManifestPath, cfg.MaxDebianSnapshotAgeDays); err != nil {
 		return err
 	}
-	if err := verifySnapshotFreshness(validatorSnapshot, cfg.ValidatorDockerfilePath, cfg.MaxDebianSnapshotAgeDays); err != nil {
+	if err := validateDebianBootstrapDockerfilePins(runtimeDockerfile, cfg.RuntimeDockerfilePath, validatorDockerfile, cfg.ValidatorDockerfilePath); err != nil {
 		return err
 	}
 	if err := requireNoRegistryBootstrapMCP(codexRequirementsText, cfg.CodexRequirementsPath); err != nil {
@@ -209,16 +201,69 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 	return nil
 }
 
+func validateDebianBootstrapDockerfilePins(runtimeDockerfile, runtimePath, validatorDockerfile, validatorPath string) error {
+	requiredUses := []string{
+		`COPY --chmod=0444 runtime/container/debian-bootstrap.env /usr/local/share/workcell/debian-bootstrap.env`,
+		`mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap.env`,
+		`[[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`,
+		`[[ "${debian_bootstrap_pins[0]}" =~ ^DEBIAN_SNAPSHOT=[0-9]{8}T[0-9]{6}Z$ ]]`,
+		`[[ "${debian_bootstrap_pins[1]}" =~ ^DEBIAN_OPENSSL_AMD64_PATH=pool/main/o/openssl/openssl_[A-Za-z0-9.+~_-]+_amd64\.deb$ ]]`,
+		`[[ "${debian_bootstrap_pins[2]}" =~ ^DEBIAN_OPENSSL_AMD64_SHA256=[0-9a-f]{64}$ ]]`,
+		`[[ "${debian_bootstrap_pins[3]}" =~ ^DEBIAN_OPENSSL_ARM64_PATH=pool/main/o/openssl/openssl_[A-Za-z0-9.+~_-]+_arm64\.deb$ ]]`,
+		`[[ "${debian_bootstrap_pins[4]}" =~ ^DEBIAN_OPENSSL_ARM64_SHA256=[0-9a-f]{64}$ ]]`,
+		`[[ "${debian_bootstrap_pins[5]}" =~ ^DEBIAN_CA_CERTIFICATES_PATH=pool/main/c/ca-certificates/ca-certificates_[A-Za-z0-9.+~_-]+_all\.deb$ ]]`,
+		`[[ "${debian_bootstrap_pins[6]}" =~ ^DEBIAN_CA_CERTIFICATES_SHA256=[0-9a-f]{64}$ ]]`,
+		`DEBIAN_SNAPSHOT="${debian_bootstrap_pins[0]#*=}"`,
+		`DEBIAN_OPENSSL_AMD64_PATH="${debian_bootstrap_pins[1]#*=}"`,
+		`DEBIAN_OPENSSL_AMD64_SHA256="${debian_bootstrap_pins[2]#*=}"`,
+		`DEBIAN_OPENSSL_ARM64_PATH="${debian_bootstrap_pins[3]#*=}"`,
+		`DEBIAN_OPENSSL_ARM64_SHA256="${debian_bootstrap_pins[4]#*=}"`,
+		`DEBIAN_CA_CERTIFICATES_PATH="${debian_bootstrap_pins[5]#*=}"`,
+		`DEBIAN_CA_CERTIFICATES_SHA256="${debian_bootstrap_pins[6]#*=}"`,
+		`[[ "${DEBIAN_OPENSSL_AMD64_PATH%_amd64.deb}" == "${DEBIAN_OPENSSL_ARM64_PATH%_arm64.deb}" ]]`,
+		`openssl_path="${DEBIAN_OPENSSL_AMD64_PATH}"`,
+		`openssl_sha256="${DEBIAN_OPENSSL_AMD64_SHA256}"`,
+		`openssl_path="${DEBIAN_OPENSSL_ARM64_PATH}"`,
+		`openssl_sha256="${DEBIAN_OPENSSL_ARM64_SHA256}"`,
+		`openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/${openssl_path}"`,
+		`ca_url="archive/debian/${DEBIAN_SNAPSHOT}/${DEBIAN_CA_CERTIFICATES_PATH}"`,
+		`ca_sha256="${DEBIAN_CA_CERTIFICATES_SHA256}"`,
+		`echo "${openssl_sha256}  /tmp/workcell-bootstrap-openssl.deb" | sha256sum -c -`,
+		`echo "${ca_sha256}  /tmp/workcell-bootstrap-ca-certificates.deb" | sha256sum -c -`,
+		`dpkg -i /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb`,
+	}
+	for _, dockerfile := range []struct {
+		content string
+		path    string
+	}{{runtimeDockerfile, runtimePath}, {validatorDockerfile, validatorPath}} {
+		for _, required := range requiredUses {
+			if !regexp.MustCompile(`(?m)^[\t ]*(?:RUN[\t ]+|&&[\t ]+)?` + regexp.QuoteMeta(required) + `(?:[\t ;\\]|$)`).MatchString(dockerfile.content) {
+				return fmt.Errorf("%s must use reviewed Debian bootstrap pin %s", dockerfile.path, required)
+			}
+		}
+		if regexp.MustCompile(`(?m)(^|&&\s+)(RUN\s+)?(source|\.)\s+[^\n]*debian-bootstrap\.env`).MatchString(dockerfile.content) {
+			return fmt.Errorf("%s must not evaluate the Debian bootstrap manifest as shell code", dockerfile.path)
+		}
+	}
+	return nil
+}
+
 func verifySnapshotFreshness(snapshot, path string, maxAgeDays int) error {
+	if maxAgeDays < 0 || maxAgeDays > 60 {
+		return fmt.Errorf("maximum Debian snapshot age must be between 0 and 60 days, found %d", maxAgeDays)
+	}
 	ts, err := time.Parse("20060102T150405Z", snapshot)
 	if err != nil {
 		return fmt.Errorf("debian snapshot %s in %s is not valid", snapshot, path)
 	}
 	now := time.Now().UTC()
+	if ts.After(now.Add(5 * time.Minute)) {
+		return fmt.Errorf("debian snapshot %s in %s is in the future", snapshot, path)
+	}
 	ageDays := int(now.Sub(ts).Hours() / 24)
 	if ageDays > maxAgeDays {
 		return fmt.Errorf(
-			"debian snapshot %s in %s is %d days old; refresh it or raise WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS",
+			"debian snapshot %s in %s is %d days old; refresh it (the maximum accepted age is 60 days)",
 			snapshot,
 			path,
 			ageDays,

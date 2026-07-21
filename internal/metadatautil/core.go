@@ -745,10 +745,11 @@ func GenerateBuildInputManifest(
 	if err != nil {
 		return err
 	}
-	debianSnapshot, err := ExtractDockerfileArg(dockerfilePath, "DEBIAN_SNAPSHOT")
+	debianBootstrap, err := ReadDebianBootstrapManifest(filepath.Join(rootDir, filepath.FromSlash(DebianBootstrapManifestRelPath)))
 	if err != nil {
-		return err
+		return fmt.Errorf("read Debian bootstrap manifest: %w", err)
 	}
+	debianBootstrapManifestText := renderDebianBootstrapManifest(debianBootstrap)
 	claudeVersion, err := ExtractDockerfileArg(dockerfilePath, "CLAUDE_VERSION")
 	if err != nil {
 		return err
@@ -904,7 +905,16 @@ func GenerateBuildInputManifest(
 		"runtime": map[string]any{
 			"dockerfile_sha256": sha256HexString(dockerfile),
 			"node_base_image":   nodeBaseImage,
-			"debian_snapshot":   debianSnapshot,
+			"debian_snapshot":   debianBootstrap.Snapshot,
+			"debian_bootstrap": map[string]any{
+				"manifest_sha256":        sha256HexString(debianBootstrapManifestText),
+				"openssl_amd64_path":     debianBootstrap.OpenSSLAMD64Path,
+				"openssl_amd64_sha256":   debianBootstrap.OpenSSLAMD64SHA256,
+				"openssl_arm64_path":     debianBootstrap.OpenSSLARM64Path,
+				"openssl_arm64_sha256":   debianBootstrap.OpenSSLARM64SHA256,
+				"ca_certificates_path":   debianBootstrap.CACertificatesPath,
+				"ca_certificates_sha256": debianBootstrap.CACertificatesSHA256,
+			},
 			providerid.Claude: map[string]any{
 				"version": claudeVersion,
 				"assets":  claudeAssets,

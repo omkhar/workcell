@@ -74,6 +74,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"policy/allowed-actions.toml",
 		"policy/tool-pins.toml",
 		"runtime/container/Dockerfile",
+		"runtime/container/debian-bootstrap.env",
 		"runtime/container/providers/package.json",
 		"runtime/container/providers/package-lock.json",
 		"runtime/container/rust/Cargo.toml",
@@ -105,7 +106,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		HostedControlsPolicyPath: filepath.Join(dstRoot, "policy", "github-hosted-controls.toml"),
 		HostedControlsScriptPath: filepath.Join(dstRoot, "scripts", "verify-github-hosted-controls.sh"),
 		ProviderBumpPolicyPath:   filepath.Join(dstRoot, "policy", "provider-bumps.toml"),
-		MaxDebianSnapshotAgeDays: 3650,
+		MaxDebianSnapshotAgeDays: 60,
 	}
 }
 
@@ -159,6 +160,13 @@ func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInpu
 	if !strings.Contains(err.Error(), want) {
 		tb.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want %q", err, want)
 	}
+}
+
+func TestCheckPinnedInputsRejectsCommentedDebianBootstrapGuard(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "runtime/container/Dockerfile", func(content string) string {
+		return strings.Replace(content, `  && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, `  # && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "must use reviewed Debian bootstrap pin")
 }
 
 func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, directCollaborators []map[string]any) (string, string) {
