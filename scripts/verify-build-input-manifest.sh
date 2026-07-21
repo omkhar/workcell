@@ -86,9 +86,7 @@ if [[ "${digest_a}" != "${digest_b}" ]]; then
   exit 1
 fi
 
-diff -u \
-  <(sed 's/^[^=]*=//' "${ROOT_DIR}/runtime/container/debian-bootstrap.env"; shasum -a 256 "${ROOT_DIR}/runtime/container/debian-bootstrap.env" | awk '{print $1}') \
-  <(jq -r '[.runtime.debian_snapshot, .runtime.debian_bootstrap.openssl_amd64_path, .runtime.debian_bootstrap.openssl_amd64_sha256, .runtime.debian_bootstrap.openssl_arm64_path, .runtime.debian_bootstrap.openssl_arm64_sha256, .runtime.debian_bootstrap.ca_certificates_path, .runtime.debian_bootstrap.ca_certificates_sha256, .runtime.debian_bootstrap.manifest_sha256][]' "${TMP_ROOT}/a.json")
+jq -e --rawfile pins "${ROOT_DIR}/runtime/container/debian-bootstrap.env" --arg manifest_sha256 "$(shasum -a 256 "${ROOT_DIR}/runtime/container/debian-bootstrap.env" | awk '{print $1}')" '[.runtime.debian_snapshot, .runtime.debian_bootstrap.openssl_amd64_path, .runtime.debian_bootstrap.openssl_amd64_sha256, .runtime.debian_bootstrap.openssl_arm64_path, .runtime.debian_bootstrap.openssl_arm64_sha256, .runtime.debian_bootstrap.ca_certificates_path, .runtime.debian_bootstrap.ca_certificates_sha256, .runtime.debian_bootstrap.manifest_sha256] == (($pins | split("\n") | map(select(length > 0) | split("=")[1])) + [$manifest_sha256])' "${TMP_ROOT}/a.json" >/dev/null
 if safe_git -C "${ROOT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   NESTED_ROOT="$(mktemp -d "${TMP_ROOT}/nested-build-input.XXXXXX")"
   ARCHIVE_ROOT="${TMP_ROOT}/archived-source"

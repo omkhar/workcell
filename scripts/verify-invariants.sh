@@ -6149,7 +6149,8 @@ echo "${MCP_COMBINED_NOTICE}" | grep -q 'repo-defined MCP server configs' || {
   echo "control-plane-vcs-only must emit exactly its one notice" >&2
   exit 1
 }
-[[ "$(assurance_notice_for_label 'managed-mutable' | grep -c 'Workcell warning')" -eq 0 ]] || {
+MANAGED_MUTABLE_NOTICE="$(assurance_notice_for_label 'managed-mutable')"
+[[ "$(awk '/Workcell warning/ { count++ } END { print count + 0 }' <<<"${MANAGED_MUTABLE_NOTICE}")" -eq 0 ]] || {
   echo "Full-assurance sessions must emit no lower-assurance notice" >&2
   exit 1
 }
