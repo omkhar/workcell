@@ -4499,8 +4499,8 @@ func TestCheckHostutilEgressRgRealRepo(t *testing.T) {
 }
 
 // dockerfilePinsHappyBody is a minimal but structurally faithful Dockerfile
-// that satisfies all fifteen per-Dockerfile dockerfile-pin invariants: it pins
-// the snapshot CA bundle / amd64+arm64 OpenSSL bootstrap packages, the apt
+// that satisfies all fifteen per-Dockerfile dockerfile-pin invariants: it consumes
+// the shared Debian bootstrap manifest and pins the apt
 // retry/timeout settings, the retry-and-discard TLS bootstrap download loop, the
 // fail-closed download/checksum/dpkg chain, and the unprivileged `USER workcell`
 // default.  Each snippet sits on its own physical line so the per-line evaluator
@@ -4508,13 +4508,13 @@ func TestCheckHostutilEgressRgRealRepo(t *testing.T) {
 // fixture Dockerfiles use this baseline; individual negative cases mutate one
 // property of one file.
 const dockerfilePinsHappyBody = `FROM debian:trixie-slim
-ARG CA_DEB=ca-certificates_20250419_all.deb
-ARG OPENSSL_AMD64=openssl_3.5.6-1~deb13u2_amd64.deb
-ARG OPENSSL_ARM64=openssl_3.5.6-1~deb13u2_arm64.deb
+COPY --chmod=0444 runtime/container/debian-bootstrap.env /usr/local/share/workcell/debian-bootstrap.env
+RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap.env \
+  && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]
 RUN echo 'Acquire::Retries "5";' >>/etc/apt/apt.conf
 RUN echo 'Acquire::http::Timeout "30";' >>/etc/apt/apt.conf
 RUN echo 'Acquire::https::Timeout "30";' >>/etc/apt/apt.conf
-RUN for attempt in 1 2 3; do \
+RUN for attempt in 1 2 3 4 5 6 7 8; do \
       rm -f "${output}"; \
       sleep "$((attempt * 5))"; \
     done
@@ -4560,23 +4560,23 @@ func TestCheckDockerfilePins(t *testing.T) {
 			validatorDF: dockerfilePinsHappyBody,
 		},
 		{
-			// CA-pin probe missing from the runtime Dockerfile (first probe of
+			// Manifest-copy probe missing from the runtime Dockerfile (first probe of
 			// the first Dockerfile → first violation).
-			name:        "runtime missing CA bundle pin",
-			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "ca-certificates_20250419_all.deb", "ca-certificates_OLD_all.deb", 1),
+			name:        "runtime missing manifest copy",
+			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "COPY --chmod=0444 runtime/container/debian-bootstrap.env", "COPY removed", 1),
 			validatorDF: dockerfilePinsHappyBody,
 			wantRel:     dockerfileRelPath,
-			wantSuffix:  "to pin a snapshot CA bundle bootstrap package before HTTPS apt",
+			wantSuffix:  "to copy the canonical Debian bootstrap manifest read-only",
 		},
 		{
-			// arm64 OpenSSL pin missing from the validator Dockerfile: the runtime
+			// Manifest record-count check missing from the validator Dockerfile: the runtime
 			// Dockerfile passes entirely first, then the validator's third probe
 			// fires, proving the Dockerfile-outer order.
-			name:        "validator missing arm64 OpenSSL pin",
+			name:        "validator missing manifest record count",
 			runtimeDF:   dockerfilePinsHappyBody,
-			validatorDF: strings.Replace(dockerfilePinsHappyBody, "openssl_3.5.6-1~deb13u2_arm64.deb", "openssl_OLD_arm64.deb", 1),
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, `[[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, `[[ 0 -eq 7 ]]`, 1),
 			wantRel:     validatorDockerfileRelPath,
-			wantSuffix:  "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt",
+			wantSuffix:  "to require exactly seven Debian bootstrap manifest records",
 		},
 		{
 			// apt HTTPS timeout pin missing from the runtime Dockerfile.
@@ -4621,17 +4621,17 @@ func TestCheckDockerfilePins(t *testing.T) {
 			runtimeDF:   "",
 			validatorDF: dockerfilePinsHappyBody,
 			wantRel:     dockerfileRelPath,
-			wantSuffix:  "to pin a snapshot CA bundle bootstrap package before HTTPS apt",
+			wantSuffix:  "to copy the canonical Debian bootstrap manifest read-only",
 		},
 		{
-			// Both Dockerfiles broken: the runtime CA pin (first check overall)
+			// Both Dockerfiles broken: the runtime manifest copy (first check overall)
 			// wins over the validator USER pin, proving the runtime-before-validator
 			// ordering.
 			name:        "both broken runtime wins",
-			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "ca-certificates_20250419_all.deb", "ca-certificates_OLD_all.deb", 1),
+			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "COPY --chmod=0444 runtime/container/debian-bootstrap.env", "COPY removed", 1),
 			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER workcell", "USER root", 1),
 			wantRel:     dockerfileRelPath,
-			wantSuffix:  "to pin a snapshot CA bundle bootstrap package before HTTPS apt",
+			wantSuffix:  "to copy the canonical Debian bootstrap manifest read-only",
 		},
 	}
 

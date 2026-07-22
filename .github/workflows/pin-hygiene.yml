@@ -6,9 +6,8 @@ name: Pin Hygiene
 # release-preflight profile only) scripts/update-upstream-pins.sh --check.
 # This cron lane catches snapshot/digest drift independently of PR
 # activity.  The full update-upstream-pins --check is intentionally not
-# in the pr-parity profile yet: until that script handles the openssl
-# bootstrap pins atomically with the DEBIAN_SNAPSHOT bump it produces a
-# non-buildable Dockerfile, which would block routine PR work.
+# in PR parity because upstream-release availability drift would block routine
+# PR work; Debian bootstrap pins now update atomically.
 
 on:
   schedule:

@@ -3414,7 +3414,7 @@ type dockerfilePinSpec struct {
 //
 // Every probe is an `rg -q` regex (line-oriented, matched per line via
 // regexMatchesAnyLine for `rg` parity), kept verbatim as a regex: the
-// escaped-literal patterns (`ca-certificates_20250419_all\.deb`,
+// escaped-literal patterns (`debian-bootstrap\.env`,
 // `rm -f "\$\{output\}";`, `sleep "\$\(\(attempt \* 5\)\)";`, `\| sha256sum`,
 // ...) use the rg regex escapes `\. \$ \{ \} \( \) \* \|` to match the literal
 // chars; Go's regexp interprets the same escapes, so each pattern is used
@@ -3424,13 +3424,13 @@ type dockerfilePinSpec struct {
 // retry/discard-partial probes sharing one message, then five fail-closed
 // download/checksum/dpkg probes sharing another.
 var dockerfilePinSpecs = []dockerfilePinSpec{
-	{`ca-certificates_20250419_all\.deb`, "to pin a snapshot CA bundle bootstrap package before HTTPS apt"},
-	{`openssl_3\.5\.6-1~deb13u2_amd64\.deb`, "to pin the amd64 snapshot OpenSSL bootstrap package before HTTPS apt"},
-	{`openssl_3\.5\.6-1~deb13u2_arm64\.deb`, "to pin the arm64 snapshot OpenSSL bootstrap package before HTTPS apt"},
+	{`^COPY --chmod=0444 runtime/container/debian-bootstrap\.env /usr/local/share/workcell/debian-bootstrap\.env$`, "to copy the canonical Debian bootstrap manifest read-only"},
+	{`mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap\.env`, "to parse the Debian bootstrap manifest without shell evaluation"},
+	{`\[\[ "\$\{#debian_bootstrap_pins\[@\]\}" -eq 7 \]\]`, "to require exactly seven Debian bootstrap manifest records"},
 	{`Acquire::Retries "5";`, "to pin apt retry count for snapshot fetch resilience"},
 	{`Acquire::http::Timeout "30";`, "to pin apt HTTP timeout for snapshot fetch resilience"},
 	{`Acquire::https::Timeout "30";`, "to pin apt HTTPS timeout for snapshot fetch resilience"},
-	{`for attempt in 1 2 3; do`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
+	{`for attempt in 1 2 3 4 5 6 7 8; do`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
 	{`rm -f "\$\{output\}";`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
 	{`sleep "\$\(\(attempt \* 5\)\)";`, "snapshot TLS bootstrap downloads to retry and discard partial packages"},
 	{`fetch_snapshot_bootstrap_package "\$\{openssl_url\}" /tmp/workcell-bootstrap-openssl\.deb`, "snapshot TLS bootstrap to fail closed across download, checksum, and dpkg steps"},

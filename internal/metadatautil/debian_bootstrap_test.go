@@ -9,9 +9,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -212,6 +216,212 @@ func TestScanDebianPackageStanzasEnforcesResourceBounds(t *testing.T) {
 	}
 }
 
+func TestApplyDebianBootstrapPinsAtomicallyUpdatesSharedManifest(t *testing.T) {
+	root, manifestPath := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
+	planPath, pins := filepath.Join(root, "plan.json"), testDebianBootstrapPins()
+	writeDebianPlan(t, planPath, pins)
+	if err := ApplyDebianBootstrapPins(planPath, root); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != renderDebianBootstrapManifest(manifestFromPins(pins)) {
+		t.Fatalf("atomic manifest content mismatch:\n%s", content)
+	}
+	info, err := os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("manifest mode = %o, want 644", info.Mode().Perm())
+	}
+	for _, want := range []string{pins.Snapshot, pins.OpenSSLAMD64.Filename, pins.OpenSSLAMD64.SHA256, pins.OpenSSLARM64.Filename, pins.CACertificates.Filename} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("manifest does not contain %q after atomic apply:\n%s", want, content)
+		}
+	}
+}
+
+func TestApplyDebianBootstrapPinsValidationFailureDoesNotMutateManifest(t *testing.T) {
+	valid, _ := json.Marshal(testDebianBootstrapPins())
+	for _, tc := range []struct{ name, plan, want string }{
+		{"unknown", strings.Replace(string(valid), "{", `{"unknown":true,`, 1), "unknown field"},
+		{"trailing", string(valid) + `{}`, "multiple JSON values"},
+		{"duplicate top", strings.Replace(string(valid), `"snapshot":`, `"snapshot":"20260719T000000Z","snapshot":`, 1), "duplicate JSON key"},
+		{"duplicate nested", strings.Replace(string(valid), `"sha256":`, `"sha256":"`+strings.Repeat("f", 64)+`","sha256":`, 1), "duplicate JSON key"},
+		{"case alias top", strings.Replace(string(valid), `"snapshot":`, `"Snapshot":"20260719T000000Z","snapshot":`, 1), "unknown field"},
+		{"case alias nested", strings.Replace(string(valid), `"sha256":`, `"SHA256":"`+strings.Repeat("f", 64)+`","sha256":`, 1), "unknown field"},
+		{"wrong case only", strings.Replace(string(valid), `"snapshot":`, `"Snapshot":`, 1), "unknown field"},
+		{"excessive depth", strings.Repeat("[", maxBootstrapPlanJSONDepth+1) + "0" + strings.Repeat("]", maxBootstrapPlanJSONDepth+1), "JSON nesting exceeds"},
+		{"bad date", strings.Replace(string(valid), testDebianSnapshot, "20261399T999999Z", 1), "invalid Debian snapshot"},
+		{"mixed versions", strings.Replace(string(valid), "openssl_3.5.9-1~deb13u2_arm64.deb", "openssl_3.5.8-1~deb13u2_arm64.deb", 1), "filename versions must agree"},
+		{"traversal", strings.Replace(string(valid), "pool/main/o/openssl/openssl_3.5.9-1~deb13u2_amd64.deb", "pool/main/o/openssl/../../escape_amd64.deb", 1), "invalid openssl/amd64 Filename"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := testDebianBootstrapManifest()
+			root, manifestPath := writeDebianManifestRepo(t, original, 0o644)
+			planPath := filepath.Join(root, "plan.json")
+			if err := os.WriteFile(planPath, []byte(tc.plan), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := ApplyDebianBootstrapPins(planPath, root)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("atomic validation error = %v, want %q", err, tc.want)
+			}
+			if got, _ := os.ReadFile(manifestPath); string(got) != original {
+				t.Fatal("manifest mutated on failed atomic apply")
+			}
+		})
+	}
+}
+
+func TestParseDebianBootstrapManifestRejectsTrailingUnterminatedRecord(t *testing.T) {
+	_, err := parseDebianBootstrapManifest(testDebianBootstrapManifest() + "malicious-command")
+	if err == nil {
+		t.Fatal("manifest parser accepted an unterminated eighth record")
+	}
+}
+
+func TestDebianBootstrapFileReadsRejectUnsafeInputs(t *testing.T) {
+	root := t.TempDir()
+	valid := filepath.Join(root, "valid.env")
+	if err := os.WriteFile(valid, []byte(testDebianBootstrapManifest()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oversized, symlink := filepath.Join(root, "oversized.env"), filepath.Join(root, "symlink.env")
+	if err := os.WriteFile(oversized, bytes.Repeat([]byte("x"), 4097), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(valid, symlink); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{oversized, symlink, "/dev/null"} {
+		if _, err := ReadDebianBootstrapManifest(path); err == nil {
+			t.Fatalf("accepted unsafe manifest %s", path)
+		}
+	}
+	planLink, plan := filepath.Join(root, "plan-link.json"), filepath.Join(root, "plan.json")
+	writeDebianPlan(t, plan, testDebianBootstrapPins())
+	repoRoot, _ := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
+	if err := os.Symlink(plan, planLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyDebianBootstrapPins(planLink, repoRoot); err == nil {
+		t.Fatal("accepted symlink plan")
+	}
+	oversizedPlan := filepath.Join(root, "oversized-plan.json")
+	if err := os.WriteFile(oversizedPlan, bytes.Repeat([]byte(" "), maxBootstrapPlanBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyDebianBootstrapPins(oversizedPlan, repoRoot); err == nil {
+		t.Fatal("accepted oversized plan")
+	}
+}
+
+func TestApplyDebianBootstrapPinsRejectsExecutableManifestWithoutMutation(t *testing.T) {
+	original := testDebianBootstrapManifest()
+	root, manifest := writeDebianManifestRepo(t, original, 0o755)
+	plan := filepath.Join(root, "plan.json")
+	writeDebianPlan(t, plan, testDebianBootstrapPins())
+	if err := ApplyDebianBootstrapPins(plan, root); err == nil {
+		t.Fatal("accepted executable manifest")
+	}
+	if content, _ := os.ReadFile(manifest); string(content) != original {
+		t.Fatal("executable manifest mutated on rejection")
+	}
+}
+
+func TestApplyDebianBootstrapPinsRetriesDirectorySyncForExistingContent(t *testing.T) {
+	root, manifestPath := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
+	planPath, pins := filepath.Join(root, "plan.json"), testDebianBootstrapPins()
+	writeDebianPlan(t, planPath, pins)
+	originalSync := syncDebianBootstrapDirectory
+	t.Cleanup(func() { syncDebianBootstrapDirectory = originalSync })
+	var phases []string
+	syncDebianBootstrapDirectory = func(_ int, phase string) error {
+		phases = append(phases, phase)
+		if len(phases) == 1 {
+			return errors.New("injected directory sync failure")
+		}
+		return nil
+	}
+
+	if err := ApplyDebianBootstrapPins(planPath, root); err == nil || !strings.Contains(err.Error(), "durability is uncertain") {
+		t.Fatalf("first apply should fail closed after publish sync failure, got %v", err)
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != renderDebianBootstrapManifest(manifestFromPins(pins)) {
+		t.Fatal("first apply did not publish the complete new manifest before the injected sync failure")
+	}
+	if err := ApplyDebianBootstrapPins(planPath, root); err != nil {
+		t.Fatalf("retry should resync identical published content: %v", err)
+	}
+	if strings.Join(phases, ",") != "publish,reuse" {
+		t.Fatalf("directory sync phases = %v, want publish then reuse", phases)
+	}
+}
+
+func TestApplyDebianBootstrapPinsRejectsManifestSymlinkEscapes(t *testing.T) {
+	for _, parentSymlink := range []bool{false, true} {
+		name := "manifest"
+		if parentSymlink {
+			name = "parent"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			outside := t.TempDir()
+			outsideManifest := filepath.Join(outside, filepath.Base(DebianBootstrapManifestRelPath))
+			original := testDebianBootstrapManifest()
+			if err := os.WriteFile(outsideManifest, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(root, "runtime"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(root, DebianBootstrapManifestRelPath)
+			if parentSymlink {
+				if err := os.Symlink(outside, filepath.Dir(manifestPath)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outsideManifest, manifestPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			plan := filepath.Join(root, "plan.json")
+			writeDebianPlan(t, plan, testDebianBootstrapPins())
+			if err := ApplyDebianBootstrapPins(plan, root); err == nil {
+				t.Fatalf("accepted %s symlink escape", name)
+			}
+			if content, err := os.ReadFile(outsideManifest); err != nil || string(content) != original {
+				t.Fatalf("outside manifest changed through %s symlink: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestWriteDebianBootstrapTempPropagatesWriteFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "readonly")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDebianBootstrapTemp(file, "content", 0o644); err == nil {
+		t.Fatal("read-only staging file accepted a write")
+	}
+}
+
 func newDebianFixtureClient(t *testing.T, amd64Packages, arm64Packages []debianFixturePackage) *http.Client {
 	t.Helper()
 	artifacts := make(map[string][]byte)
@@ -262,4 +472,56 @@ func gzipDebianPackages(t *testing.T, packages []debianFixturePackage) []byte {
 		t.Fatal(err)
 	}
 	return body.Bytes()
+}
+
+func testDebianBootstrapPins() DebianBootstrapPins {
+	return DebianBootstrapPins{
+		Snapshot: testDebianSnapshot,
+		OpenSSLAMD64: DebianBootstrapPackage{
+			Version: "3.5.9-1~deb13u2", Architecture: "amd64", Filename: "pool/main/o/openssl/openssl_3.5.9-1~deb13u2_amd64.deb", SHA256: strings.Repeat("a", 64), Size: 100,
+		},
+		OpenSSLARM64: DebianBootstrapPackage{
+			Version: "3.5.9-1~deb13u2", Architecture: "arm64", Filename: "pool/main/o/openssl/openssl_3.5.9-1~deb13u2_arm64.deb", SHA256: strings.Repeat("b", 64), Size: 101,
+		},
+		CACertificates: DebianBootstrapPackage{
+			Version: "20260701", Architecture: "all", Filename: "pool/main/c/ca-certificates/ca-certificates_20260701_all.deb", SHA256: strings.Repeat("c", 64), Size: 102,
+		},
+	}
+}
+
+func writeDebianPlan(t *testing.T, path string, pins DebianBootstrapPins) {
+	t.Helper()
+	data, err := json.Marshal(pins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeDebianManifestRepo(t *testing.T, content string, mode os.FileMode) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, DebianBootstrapManifestRelPath)
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+	return root, manifestPath
+}
+
+func testDebianBootstrapManifest() string {
+	return strings.Join([]string{
+		"DEBIAN_SNAPSHOT=20260518T000000Z",
+		"DEBIAN_OPENSSL_AMD64_PATH=pool/main/o/openssl/openssl_3.5.5-1~deb13u1_amd64.deb",
+		"DEBIAN_OPENSSL_AMD64_SHA256=" + strings.Repeat("1", 64),
+		"DEBIAN_OPENSSL_ARM64_PATH=pool/main/o/openssl/openssl_3.5.5-1~deb13u1_arm64.deb",
+		"DEBIAN_OPENSSL_ARM64_SHA256=" + strings.Repeat("2", 64),
+		"DEBIAN_CA_CERTIFICATES_PATH=pool/main/c/ca-certificates/ca-certificates_20250419_all.deb",
+		"DEBIAN_CA_CERTIFICATES_SHA256=" + strings.Repeat("6", 64),
+		"",
+	}, "\n")
 }

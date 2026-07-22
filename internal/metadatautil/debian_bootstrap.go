@@ -5,20 +5,28 @@ package metadatautil
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -30,6 +38,8 @@ const (
 	maxPackagesStanzaFields   = 256
 	maxPackagesStanzaLines    = 4096
 	maxBootstrapPackageBytes  = 128 << 20
+	maxBootstrapPlanBytes     = 64 << 10
+	maxBootstrapPlanJSONDepth = 32
 )
 
 var (
@@ -41,6 +51,12 @@ var (
 	debianCACertificatesPattern = regexp.MustCompile(`^pool/main/c/ca-certificates/ca-certificates_[A-Za-z0-9.+~_-]+_all\.deb$`)
 )
 
+var syncDebianBootstrapDirectory = func(fd int, _ string) error {
+	return unix.Fsync(fd)
+}
+
+const DebianBootstrapManifestRelPath = "runtime/container/debian-bootstrap.env"
+
 // DebianBootstrapPackage is the immutable package record taken from a Debian
 // snapshot Packages.gz index and verified against the referenced .deb bytes.
 type DebianBootstrapPackage struct {
@@ -51,7 +67,8 @@ type DebianBootstrapPackage struct {
 	Size         int64  `json:"size"`
 }
 
-// DebianBootstrapPins is the complete resolved snapshot TLS bootstrap tuple.
+// DebianBootstrapPins is the complete snapshot TLS bootstrap tuple published
+// through the one manifest consumed by both Dockerfiles.
 type DebianBootstrapPins struct {
 	Snapshot       string                 `json:"snapshot"`
 	OpenSSLAMD64   DebianBootstrapPackage `json:"openssl_amd64"`
@@ -62,6 +79,16 @@ type DebianBootstrapPins struct {
 type debianPackageIndex struct {
 	OpenSSL        DebianBootstrapPackage
 	CACertificates DebianBootstrapPackage
+}
+
+type DebianBootstrapManifest struct {
+	Snapshot             string `json:"snapshot"`
+	OpenSSLAMD64Path     string `json:"openssl_amd64_path"`
+	OpenSSLAMD64SHA256   string `json:"openssl_amd64_sha256"`
+	OpenSSLARM64Path     string `json:"openssl_arm64_path"`
+	OpenSSLARM64SHA256   string `json:"openssl_arm64_sha256"`
+	CACertificatesPath   string `json:"ca_certificates_path"`
+	CACertificatesSHA256 string `json:"ca_certificates_sha256"`
 }
 
 // ResolveDebianBootstrapPins resolves and byte-verifies the package tuple for
@@ -118,7 +145,7 @@ func ResolveDebianBootstrapPins(ctx context.Context, client *http.Client, archiv
 }
 
 // ResolveDefaultDebianBootstrapPins uses the reviewed snapshot.debian.org
-// archive endpoint for the resolver command.
+// archive endpoint. It is the production entrypoint used by the pin updater.
 func ResolveDefaultDebianBootstrapPins(snapshot string) (DebianBootstrapPins, error) {
 	return ResolveDebianBootstrapPins(context.Background(), nil, debianSnapshotArchiveBase, snapshot)
 }
@@ -377,6 +404,166 @@ func verifyDebianPackageBytes(ctx context.Context, client *http.Client, archiveB
 	return nil
 }
 
+var debianBootstrapManifestFields = []struct {
+	Name  string
+	Value func(DebianBootstrapManifest) string
+}{
+	{"DEBIAN_SNAPSHOT", func(p DebianBootstrapManifest) string { return p.Snapshot }},
+	{"DEBIAN_OPENSSL_AMD64_PATH", func(p DebianBootstrapManifest) string { return p.OpenSSLAMD64Path }},
+	{"DEBIAN_OPENSSL_AMD64_SHA256", func(p DebianBootstrapManifest) string { return p.OpenSSLAMD64SHA256 }},
+	{"DEBIAN_OPENSSL_ARM64_PATH", func(p DebianBootstrapManifest) string { return p.OpenSSLARM64Path }},
+	{"DEBIAN_OPENSSL_ARM64_SHA256", func(p DebianBootstrapManifest) string { return p.OpenSSLARM64SHA256 }},
+	{"DEBIAN_CA_CERTIFICATES_PATH", func(p DebianBootstrapManifest) string { return p.CACertificatesPath }},
+	{"DEBIAN_CA_CERTIFICATES_SHA256", func(p DebianBootstrapManifest) string { return p.CACertificatesSHA256 }},
+}
+
+// ApplyDebianBootstrapPins validates a complete resolution plan and atomically
+// replaces the one manifest consumed by both shipped Dockerfiles. repoRoot must
+// be the trusted, physical repository root; every path below it is opened
+// descriptor-relatively without following symlinks.
+func ApplyDebianBootstrapPins(planPath, repoRoot string) error {
+	data, err := readRegularFileBounded(planPath, maxBootstrapPlanBytes)
+	if err != nil {
+		return err
+	}
+	if err := rejectDebianBootstrapDuplicateJSONKeys(data); err != nil {
+		return fmt.Errorf("decode Debian bootstrap plan: %w", err)
+	}
+	var pins DebianBootstrapPins
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&pins); err != nil {
+		return fmt.Errorf("decode Debian bootstrap plan: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return fmt.Errorf("decode Debian bootstrap plan: %w", err)
+	}
+	if err := validateDebianBootstrapPlanFields(data); err != nil {
+		return fmt.Errorf("decode Debian bootstrap plan: %w", err)
+	}
+	if err := validateDebianBootstrapPins(pins); err != nil {
+		return err
+	}
+	manifest := manifestFromPins(pins)
+	updated := renderDebianBootstrapManifest(manifest)
+	directoryFD, err := openDebianBootstrapManifestDirectory(repoRoot)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(directoryFD)
+	manifestName := filepath.Base(DebianBootstrapManifestRelPath)
+	manifestFD, err := unix.Openat(directoryFD, manifestName, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return fmt.Errorf("open Debian bootstrap manifest: %w", err)
+	}
+	original, mode, err := readRegularOpenFile(manifestFD, manifestName, 4096)
+	if err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(repoRoot, DebianBootstrapManifestRelPath)
+	if mode&0o111 != 0 {
+		return fmt.Errorf("Debian bootstrap manifest must not be executable: %s", manifestPath)
+	}
+	if _, err := parseDebianBootstrapManifest(string(original)); err != nil {
+		return fmt.Errorf("validate current Debian bootstrap manifest: %w", err)
+	}
+	if string(original) == updated {
+		if err := syncDebianBootstrapDirectory(directoryFD, "reuse"); err != nil {
+			return fmt.Errorf("sync Debian bootstrap manifest directory for existing content: %w", err)
+		}
+		return nil
+	}
+	temp, tempName, err := createDebianBootstrapTemp(directoryFD)
+	if err != nil {
+		return fmt.Errorf("stage %s: %w", manifestPath, err)
+	}
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = unix.Unlinkat(directoryFD, tempName, 0)
+		}
+	}()
+	if err := writeDebianBootstrapTemp(temp, updated, mode); err != nil {
+		return fmt.Errorf("stage %s: %w", manifestPath, err)
+	}
+	if err := unix.Renameat(directoryFD, tempName, directoryFD, manifestName); err != nil {
+		return fmt.Errorf("publish %s: %w", manifestPath, err)
+	}
+	removeTemp = false
+	if err := syncDebianBootstrapDirectory(directoryFD, "publish"); err != nil {
+		return fmt.Errorf("manifest published but directory durability is uncertain: %w", err)
+	}
+	return nil
+}
+
+func openDebianBootstrapManifestDirectory(repoRoot string) (int, error) {
+	if !filepath.IsAbs(repoRoot) || filepath.Clean(repoRoot) != repoRoot {
+		return -1, fmt.Errorf("repository root must be an absolute clean path: %s", repoRoot)
+	}
+	currentFD, err := unix.Open(repoRoot, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return -1, fmt.Errorf("open trusted repository root: %w", err)
+	}
+	for _, component := range strings.Split(filepath.Dir(DebianBootstrapManifestRelPath), string(filepath.Separator)) {
+		nextFD, openErr := unix.Openat(currentFD, component, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+		closeErr := unix.Close(currentFD)
+		if openErr != nil {
+			return -1, fmt.Errorf("open Debian bootstrap manifest directory component %q: %w", component, openErr)
+		}
+		if closeErr != nil {
+			_ = unix.Close(nextFD)
+			return -1, fmt.Errorf("close Debian bootstrap manifest directory parent: %w", closeErr)
+		}
+		currentFD = nextFD
+	}
+	return currentFD, nil
+}
+
+func createDebianBootstrapTemp(directoryFD int) (*os.File, string, error) {
+	for attempt := 0; attempt < 32; attempt++ {
+		var suffix [8]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return nil, "", err
+		}
+		name := fmt.Sprintf(".debian-bootstrap-%x.tmp", suffix[:])
+		fd, err := unix.Openat(directoryFD, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+		if err == nil {
+			file := os.NewFile(uintptr(fd), name)
+			if file == nil {
+				_ = unix.Close(fd)
+				return nil, "", errors.New("create Debian bootstrap staging file")
+			}
+			return file, name, nil
+		}
+		if !errors.Is(err, unix.EEXIST) {
+			return nil, "", err
+		}
+	}
+	return nil, "", errors.New("unable to allocate Debian bootstrap staging file")
+}
+
+func writeDebianBootstrapTemp(temp *os.File, content string, mode os.FileMode) (err error) {
+	defer func() {
+		if closeErr := temp.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	written, err := temp.WriteString(content)
+	if err != nil {
+		return err
+	}
+	if written != len(content) {
+		return io.ErrShortWrite
+	}
+	if err = temp.Chmod(mode); err != nil {
+		return err
+	}
+	return temp.Sync()
+}
+
 func validateDebianBootstrapPins(pins DebianBootstrapPins) error {
 	if err := validateDebianSnapshot(pins.Snapshot); err != nil {
 		return err
@@ -419,6 +606,84 @@ func validateDebianBootstrapPins(pins DebianBootstrapPins) error {
 	return nil
 }
 
+func manifestFromPins(pins DebianBootstrapPins) DebianBootstrapManifest {
+	return DebianBootstrapManifest{
+		Snapshot: pins.Snapshot, OpenSSLAMD64Path: pins.OpenSSLAMD64.Filename,
+		OpenSSLAMD64SHA256: pins.OpenSSLAMD64.SHA256, OpenSSLARM64Path: pins.OpenSSLARM64.Filename,
+		OpenSSLARM64SHA256: pins.OpenSSLARM64.SHA256, CACertificatesPath: pins.CACertificates.Filename,
+		CACertificatesSHA256: pins.CACertificates.SHA256,
+	}
+}
+
+func renderDebianBootstrapManifest(manifest DebianBootstrapManifest) string {
+	var builder strings.Builder
+	for _, field := range debianBootstrapManifestFields {
+		fmt.Fprintf(&builder, "%s=%s\n", field.Name, field.Value(manifest))
+	}
+	return builder.String()
+}
+
+func parseDebianBootstrapManifest(content string) (DebianBootstrapManifest, error) {
+	var zero DebianBootstrapManifest
+	if len(content) > 4096 {
+		return zero, errors.New("manifest exceeds the 4096-byte limit")
+	}
+	if strings.Contains(content, "\r") || !strings.HasSuffix(content, "\n") {
+		return zero, errors.New("manifest must use LF lines and end with a newline")
+	}
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	if len(lines) != len(debianBootstrapManifestFields) {
+		return zero, fmt.Errorf("manifest must contain exactly %d fields", len(debianBootstrapManifestFields))
+	}
+	values := make(map[string]string, len(lines))
+	for i, field := range debianBootstrapManifestFields {
+		name, value, ok := strings.Cut(lines[i], "=")
+		if !ok || name != field.Name || value == "" {
+			return zero, fmt.Errorf("manifest line %d must define %s", i+1, field.Name)
+		}
+		values[name] = value
+	}
+	manifest := DebianBootstrapManifest{
+		Snapshot: values["DEBIAN_SNAPSHOT"], OpenSSLAMD64Path: values["DEBIAN_OPENSSL_AMD64_PATH"],
+		OpenSSLAMD64SHA256: values["DEBIAN_OPENSSL_AMD64_SHA256"], OpenSSLARM64Path: values["DEBIAN_OPENSSL_ARM64_PATH"],
+		OpenSSLARM64SHA256: values["DEBIAN_OPENSSL_ARM64_SHA256"], CACertificatesPath: values["DEBIAN_CA_CERTIFICATES_PATH"],
+		CACertificatesSHA256: values["DEBIAN_CA_CERTIFICATES_SHA256"],
+	}
+	if err := validateDebianSnapshot(manifest.Snapshot); err != nil {
+		return zero, err
+	}
+	for _, check := range []struct {
+		name    string
+		value   string
+		pattern *regexp.Regexp
+	}{
+		{"DEBIAN_OPENSSL_AMD64_PATH", manifest.OpenSSLAMD64Path, debianOpenSSLAMD64Pattern},
+		{"DEBIAN_OPENSSL_AMD64_SHA256", manifest.OpenSSLAMD64SHA256, debianDigestPattern},
+		{"DEBIAN_OPENSSL_ARM64_PATH", manifest.OpenSSLARM64Path, debianOpenSSLARM64Pattern},
+		{"DEBIAN_OPENSSL_ARM64_SHA256", manifest.OpenSSLARM64SHA256, debianDigestPattern},
+		{"DEBIAN_CA_CERTIFICATES_PATH", manifest.CACertificatesPath, debianCACertificatesPattern},
+		{"DEBIAN_CA_CERTIFICATES_SHA256", manifest.CACertificatesSHA256, debianDigestPattern},
+	} {
+		if !check.pattern.MatchString(check.value) {
+			return zero, fmt.Errorf("manifest contains malformed %s", check.name)
+		}
+	}
+	if strings.TrimSuffix(manifest.OpenSSLAMD64Path, "_amd64.deb") != strings.TrimSuffix(manifest.OpenSSLARM64Path, "_arm64.deb") {
+		return zero, errors.New("manifest OpenSSL package filename versions must agree across architectures")
+	}
+	return manifest, nil
+}
+
+// ReadDebianBootstrapManifest validates and returns the canonical shared pin
+// manifest without evaluating it as shell code.
+func ReadDebianBootstrapManifest(manifestPath string) (DebianBootstrapManifest, error) {
+	content, err := readRegularFileBounded(manifestPath, 4096)
+	if err != nil {
+		return DebianBootstrapManifest{}, err
+	}
+	return parseDebianBootstrapManifest(string(content))
+}
+
 func validateDebianSnapshot(snapshot string) error {
 	if !debianSnapshotPattern.MatchString(snapshot) {
 		return fmt.Errorf("invalid Debian snapshot timestamp %q", snapshot)
@@ -427,4 +692,130 @@ func validateDebianSnapshot(snapshot string) error {
 		return fmt.Errorf("invalid Debian snapshot timestamp %q", snapshot)
 	}
 	return nil
+}
+
+func readRegularFileBounded(filePath string, maxBytes int64) ([]byte, error) {
+	fd, err := unix.Open(filePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	content, _, err := readRegularOpenFile(fd, filePath, maxBytes)
+	return content, err
+}
+
+func readRegularOpenFile(fd int, label string, maxBytes int64) ([]byte, os.FileMode, error) {
+	file := os.NewFile(uintptr(fd), label)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, 0, fmt.Errorf("unable to open file: %s", label)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("file must be regular: %s", label)
+	}
+	if info.Size() > maxBytes {
+		return nil, 0, fmt.Errorf("file exceeds %d-byte limit: %s", maxBytes, label)
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, 0, err
+	}
+	if int64(len(content)) > maxBytes {
+		return nil, 0, fmt.Errorf("file exceeds %d-byte limit: %s", maxBytes, label)
+	}
+	return content, info.Mode().Perm(), nil
+}
+
+func validateDebianBootstrapPlanFields(raw []byte) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return err
+	}
+	packageNames := []string{"openssl_amd64", "openssl_arm64", "ca_certificates"}
+	if err := validateExactJSONFields(root, append([]string{"snapshot"}, packageNames...)); err != nil {
+		return err
+	}
+	for _, name := range packageNames {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(root[name], &fields); err != nil {
+			return fmt.Errorf("field %q must be an object: %w", name, err)
+		}
+		if err := validateExactJSONFields(fields, []string{"version", "architecture", "filename", "sha256", "size"}); err != nil {
+			return fmt.Errorf("field %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func validateExactJSONFields(actual map[string]json.RawMessage, expected []string) error {
+	allowed := make(map[string]struct{}, len(expected))
+	for _, name := range expected {
+		allowed[name] = struct{}{}
+	}
+	var unknown []string
+	for name := range actual {
+		if _, ok := allowed[name]; !ok {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("unknown field %q", unknown[0])
+	}
+	for _, name := range expected {
+		if _, ok := actual[name]; !ok {
+			return fmt.Errorf("missing field %q", name)
+		}
+	}
+	return nil
+}
+
+func rejectDebianBootstrapDuplicateJSONKeys(raw []byte) error {
+	return scanDebianBootstrapJSONValue(json.NewDecoder(bytes.NewReader(raw)), 0)
+}
+
+func scanDebianBootstrapJSONValue(decoder *json.Decoder, depth int) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, isDelimiter := token.(json.Delim)
+	if !isDelimiter {
+		return nil
+	}
+	if depth >= maxBootstrapPlanJSONDepth {
+		return fmt.Errorf("JSON nesting exceeds %d levels", maxBootstrapPlanJSONDepth)
+	}
+	if delimiter == '{' {
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			if !ok {
+				return errors.New("JSON object key must be a string")
+			}
+			if _, duplicate := seen[name]; duplicate {
+				return fmt.Errorf("duplicate JSON key %q", name)
+			}
+			seen[name] = struct{}{}
+			if err := scanDebianBootstrapJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+	} else if delimiter == '[' {
+		for decoder.More() {
+			if err := scanDebianBootstrapJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = decoder.Token()
+	return err
 }

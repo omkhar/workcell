@@ -41,6 +41,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
 VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/validator/Dockerfile"
+DEBIAN_BOOTSTRAP_MANIFEST_PATH="${ROOT_DIR}/runtime/container/debian-bootstrap.env"
 GO_MOD_PATH="${ROOT_DIR}/go.mod"
 RUST_TOOLCHAIN_PATH="${ROOT_DIR}/runtime/container/rust/rust-toolchain.toml"
 CARGO_MANIFEST_PATH="${ROOT_DIR}/runtime/container/rust/Cargo.toml"
@@ -110,7 +111,8 @@ require_tool shasum
 # GitHub release lists are at most a few MiB) while still rejecting a
 # multi-GB body from a misbehaving or compromised endpoint.
 CURL_API_GUARDS=(--max-time 120 --connect-timeout 15 --max-filesize 209715200)
-DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}}"
+DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-60}"
+MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
 
 github_api_token() {
   local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
@@ -277,7 +279,7 @@ docker_image_digest_if_available() {
 
 extract_dockerfile_arg() {
   (
-    cd "${ROOT_DIR}"
+    cd "${ROOT_DIR}" || exit
     go run ./cmd/workcell-citools extract-dockerfile-arg "$1" "$2"
   )
 }
@@ -441,37 +443,70 @@ date_stamp_for_offset() {
   fi
 }
 
-latest_debian_snapshot() {
+resolve_debian_bootstrap_pins() {
+  (
+    cd "${ROOT_DIR}" || exit
+    go run ./cmd/workcell-citools resolve-debian-bootstrap "$1"
+  )
+}
+
+latest_debian_bootstrap_plan() {
   local stamp
   local offset
   local lookback_days="${DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-60}"
+  local max_age_days="${MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
+  local resolution=""
+  local resolution_error=""
+  local resolution_error_path=""
+  if [[ ! "${lookback_days}" =~ ^(0|[1-9][0-9]?)$ ]] || ((10#${lookback_days} > 60)); then
+    echo "WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS must be an integer from 0 through 60" >&2
+    return 2
+  fi
+  if [[ ! "${max_age_days}" =~ ^(0|[1-9][0-9]?)$ ]] || ((10#${max_age_days} > 60)); then
+    echo "WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS must be an integer from 0 through 60" >&2
+    return 2
+  fi
+  if ((10#${lookback_days} > 10#${max_age_days})); then
+    lookback_days="${max_age_days}"
+  fi
+  # Bootstrap packages intentionally come from trixie/main. A candidate is
+  # eligible only when the same timestamp also exposes the updates and security
+  # suites used by the subsequent apt install.
+  resolution_error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-debian-bootstrap.XXXXXX")"
   for offset in $(seq 0 "${lookback_days}"); do
     stamp="$(date_stamp_for_offset "${offset}")"
     if curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
       curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
       curl -fsSI "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
-      debian_snapshot_has_bootstrap_packages "${stamp}"; then
-      printf '%s\n' "${stamp}"
+      resolution="$(resolve_debian_bootstrap_pins "${stamp}" 2>"${resolution_error_path}")"; then
+      rm -f "${resolution_error_path}"
+      printf '%s\n' "${resolution}"
       return
     fi
   done
-  echo "Unable to resolve a Debian snapshot within ${lookback_days} days for trixie/trixie-updates/trixie-security with bootstrap packages" >&2
+  resolution_error="$(<"${resolution_error_path}")"
+  rm -f "${resolution_error_path}"
+  echo "Unable to resolve a Debian snapshot within ${lookback_days} days for trixie/trixie-updates/trixie-security with HTTPS-fetched and byte-verified bootstrap packages" >&2
+  if [[ -n "${resolution_error}" ]]; then
+    printf '%s\n' "${resolution_error}" >&2
+  fi
   exit 1
 }
 
-debian_snapshot_has_bootstrap_packages() {
-  local stamp="$1"
-  local base="https://snapshot.debian.org/archive/debian/${stamp}"
-  local path
-
-  for path in \
-    "pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb" \
-    "pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb" \
-    "pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; do
-    if ! curl -fsSI "${base}/${path}" >/dev/null 2>&1; then
-      return 1
-    fi
-  done
+apply_debian_bootstrap_plan() {
+  local plan="$1"
+  local plan_path=""
+  local status=0
+  plan_path="$(mktemp "${TMPDIR:-/tmp}/workcell-debian-bootstrap-plan.XXXXXX")"
+  printf '%s\n' "${plan}" >"${plan_path}"
+  (
+    cd "${ROOT_DIR}"
+    go run ./cmd/workcell-citools apply-debian-bootstrap \
+      "${plan_path}" \
+      "${ROOT_DIR}"
+  ) || status=$?
+  rm -f "${plan_path}"
+  return "${status}"
 }
 
 semver_patch_zero() {
@@ -586,8 +621,17 @@ target_zizmor_sha="$(
 )"
 current_runtime_base="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" NODE_BASE_IMAGE)"
 current_validator_base="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" VALIDATOR_BASE_IMAGE)"
-current_runtime_snapshot="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" DEBIAN_SNAPSHOT)"
-current_validator_snapshot="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" DEBIAN_SNAPSHOT)"
+current_debian_bootstrap_manifest="$(
+  cd "${ROOT_DIR}" || exit
+  go run ./cmd/workcell-citools inspect-debian-bootstrap "${DEBIAN_BOOTSTRAP_MANIFEST_PATH}"
+)"
+current_debian_snapshot="$(jq -er '.snapshot' <<<"${current_debian_bootstrap_manifest}")"
+current_debian_openssl_amd64_path="$(jq -er '.openssl_amd64_path' <<<"${current_debian_bootstrap_manifest}")"
+current_debian_openssl_amd64_sha256="$(jq -er '.openssl_amd64_sha256' <<<"${current_debian_bootstrap_manifest}")"
+current_debian_openssl_arm64_path="$(jq -er '.openssl_arm64_path' <<<"${current_debian_bootstrap_manifest}")"
+current_debian_openssl_arm64_sha256="$(jq -er '.openssl_arm64_sha256' <<<"${current_debian_bootstrap_manifest}")"
+current_debian_ca_path="$(jq -er '.ca_certificates_path' <<<"${current_debian_bootstrap_manifest}")"
+current_debian_ca_sha256="$(jq -er '.ca_certificates_sha256' <<<"${current_debian_bootstrap_manifest}")"
 current_go_toolchain="$(awk '/^toolchain / { sub(/^toolchain go/, "", $0); print; exit }' "${GO_MOD_PATH}")"
 current_go_language="$(awk '/^go / { print $2; exit }' "${GO_MOD_PATH}")"
 current_validator_go_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_VERSION)"
@@ -645,7 +689,14 @@ else
   target_cargo_rust_version="${current_cargo_rust_version}"
   target_runtime_rust_toolchain_image="${current_runtime_rust_toolchain_image}"
 fi
-target_debian_snapshot="$(latest_debian_snapshot)"
+target_debian_bootstrap_plan="$(latest_debian_bootstrap_plan)"
+target_debian_snapshot="$(jq -er '.snapshot' <<<"${target_debian_bootstrap_plan}")"
+target_debian_openssl_amd64_path="$(jq -er '.openssl_amd64.filename' <<<"${target_debian_bootstrap_plan}")"
+target_debian_openssl_amd64_sha256="$(jq -er '.openssl_amd64.sha256' <<<"${target_debian_bootstrap_plan}")"
+target_debian_openssl_arm64_path="$(jq -er '.openssl_arm64.filename' <<<"${target_debian_bootstrap_plan}")"
+target_debian_openssl_arm64_sha256="$(jq -er '.openssl_arm64.sha256' <<<"${target_debian_bootstrap_plan}")"
+target_debian_ca_path="$(jq -er '.ca_certificates.filename' <<<"${target_debian_bootstrap_plan}")"
+target_debian_ca_sha256="$(jq -er '.ca_certificates.sha256' <<<"${target_debian_bootstrap_plan}")"
 target_buildkit_image="${buildkit_track}@$(docker_image_digest "${buildkit_track}")"
 target_qemu_tag="$(latest_qemu_tag)"
 target_qemu_image="tonistiigi/binfmt:${target_qemu_tag}@$(docker_image_digest "tonistiigi/binfmt:${target_qemu_tag}")"
@@ -662,12 +713,32 @@ if [[ "${provider_check_status}" -eq 1 ]]; then
   provider_has_changes=1
 fi
 
+debian_has_changes=0
+for current_target_pair in \
+  "${current_debian_snapshot}|${target_debian_snapshot}" \
+  "${current_debian_openssl_amd64_path}|${target_debian_openssl_amd64_path}" \
+  "${current_debian_openssl_amd64_sha256}|${target_debian_openssl_amd64_sha256}" \
+  "${current_debian_openssl_arm64_path}|${target_debian_openssl_arm64_path}" \
+  "${current_debian_openssl_arm64_sha256}|${target_debian_openssl_arm64_sha256}" \
+  "${current_debian_ca_path}|${target_debian_ca_path}" \
+  "${current_debian_ca_sha256}|${target_debian_ca_sha256}"; do
+  if [[ "${current_target_pair%%|*}" != "${current_target_pair#*|}" ]]; then
+    debian_has_changes=1
+    break
+  fi
+done
+
 has_changes=0
 for current_target_pair in \
   "${current_runtime_base}|${target_runtime_base}" \
   "${current_validator_base}|${target_validator_base}" \
-  "${current_runtime_snapshot}|${target_debian_snapshot}" \
-  "${current_validator_snapshot}|${target_debian_snapshot}" \
+  "${current_debian_snapshot}|${target_debian_snapshot}" \
+  "${current_debian_openssl_amd64_path}|${target_debian_openssl_amd64_path}" \
+  "${current_debian_openssl_amd64_sha256}|${target_debian_openssl_amd64_sha256}" \
+  "${current_debian_openssl_arm64_path}|${target_debian_openssl_arm64_path}" \
+  "${current_debian_openssl_arm64_sha256}|${target_debian_openssl_arm64_sha256}" \
+  "${current_debian_ca_path}|${target_debian_ca_path}" \
+  "${current_debian_ca_sha256}|${target_debian_ca_sha256}" \
   "${current_go_toolchain}|${target_go_toolchain}" \
   "${current_go_language}|${target_go_language}" \
   "${current_validator_go_version}|${target_go_toolchain}" \
@@ -728,7 +799,13 @@ print_summary() {
   echo "Pinned upstream refresh summary:"
   print_summary_line "runtime-base" "${current_runtime_base}" "${target_runtime_base}"
   print_summary_line "validator-base" "${current_validator_base}" "${target_validator_base}"
-  print_summary_line "debian-snapshot" "${current_runtime_snapshot}" "${target_debian_snapshot}"
+  print_summary_line "debian-snapshot" "${current_debian_snapshot}" "${target_debian_snapshot}"
+  print_summary_line "debian-openssl-amd64" "${current_debian_openssl_amd64_path}" "${target_debian_openssl_amd64_path}"
+  print_summary_line "debian-openssl-amd64-sha256" "${current_debian_openssl_amd64_sha256}" "${target_debian_openssl_amd64_sha256}"
+  print_summary_line "debian-openssl-arm64" "${current_debian_openssl_arm64_path}" "${target_debian_openssl_arm64_path}"
+  print_summary_line "debian-openssl-arm64-sha256" "${current_debian_openssl_arm64_sha256}" "${target_debian_openssl_arm64_sha256}"
+  print_summary_line "debian-ca-certificates" "${current_debian_ca_path}" "${target_debian_ca_path}"
+  print_summary_line "debian-ca-certificates-sha256" "${current_debian_ca_sha256}" "${target_debian_ca_sha256}"
   print_summary_line "go-toolchain" "${current_go_toolchain}" "${target_go_toolchain}"
   print_summary_line "go-language" "${current_go_language}" "${target_go_language}"
   print_summary_line "rust-toolchain" "${current_rust_version}" "${target_rust_version}"
@@ -769,15 +846,17 @@ if [[ "${has_changes}" -eq 0 ]]; then
   exit 0
 fi
 
+if [[ "${debian_has_changes}" -eq 1 ]]; then
+  apply_debian_bootstrap_plan "${target_debian_bootstrap_plan}"
+fi
+
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG NODE_BASE_IMAGE=' "ARG NODE_BASE_IMAGE=${target_runtime_base}"
-replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG DEBIAN_SNAPSHOT=' "ARG DEBIAN_SNAPSHOT=${target_debian_snapshot}"
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG RUST_VERSION=' "ARG RUST_VERSION=${target_rust_version}"
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG RUST_TOOLCHAIN_IMAGE=' "ARG RUST_TOOLCHAIN_IMAGE=${target_runtime_rust_toolchain_image}"
 
 dockerfile_path="${VALIDATOR_DOCKERFILE_PATH}"
 target_base="${target_validator_base}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG VALIDATOR_BASE_IMAGE=' "ARG VALIDATOR_BASE_IMAGE=${target_base}"
-replace_line_with_prefix "${dockerfile_path}" 'ARG DEBIAN_SNAPSHOT=' "ARG DEBIAN_SNAPSHOT=${target_debian_snapshot}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG GO_VERSION=' "ARG GO_VERSION=${target_go_toolchain}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG GO_LINUX_X86_64_SHA256=' "ARG GO_LINUX_X86_64_SHA256=${target_go_sha_amd64}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG GO_LINUX_ARM64_SHA256=' "ARG GO_LINUX_ARM64_SHA256=${target_go_sha_arm64}"

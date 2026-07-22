@@ -7,10 +7,6 @@ ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:366fdef91728b1b7fa18c84fba63b6e79
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-# Debian snapshot date and TLS-bootstrap packages are one reproducibility tuple.
-# Resolve the snapshot plus both architecture paths and all digests together,
-# update both Dockerfiles, and then re-run verify-reproducible-build.sh.
-ARG DEBIAN_SNAPSHOT=20260721T000000Z
 ARG RUST_TOOLCHAIN_IMAGE=rust:1.97.0-slim-trixie@sha256:14c4fe50ea427dc42381a1a09a9a839c1d2346a2e508cd491bf02c659dbc0ed7
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
@@ -18,7 +14,9 @@ FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 FROM ${NODE_BASE_IMAGE} AS runtime-base
 
 ARG SOURCE_DATE_EPOCH
-ARG DEBIAN_SNAPSHOT
+
+# One canonical, atomically replaced tuple feeds both shipped Dockerfiles.
+COPY --chmod=0444 runtime/container/debian-bootstrap.env /usr/local/share/workcell/debian-bootstrap.env
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -29,7 +27,25 @@ ENV npm_config_fund=false
 ENV npm_config_update_notifier=false
 
 # hadolint ignore=DL3008
-RUN fetch_snapshot_bootstrap_package() { \
+RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap.env \
+  && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]] \
+  && [[ "${debian_bootstrap_pins[0]}" =~ ^DEBIAN_SNAPSHOT=[0-9]{8}T[0-9]{6}Z$ ]] \
+  && [[ "${debian_bootstrap_pins[1]}" =~ ^DEBIAN_OPENSSL_AMD64_PATH=pool/main/o/openssl/openssl_[A-Za-z0-9.+~_-]+_amd64\.deb$ ]] \
+  && [[ "${debian_bootstrap_pins[2]}" =~ ^DEBIAN_OPENSSL_AMD64_SHA256=[0-9a-f]{64}$ ]] \
+  && [[ "${debian_bootstrap_pins[3]}" =~ ^DEBIAN_OPENSSL_ARM64_PATH=pool/main/o/openssl/openssl_[A-Za-z0-9.+~_-]+_arm64\.deb$ ]] \
+  && [[ "${debian_bootstrap_pins[4]}" =~ ^DEBIAN_OPENSSL_ARM64_SHA256=[0-9a-f]{64}$ ]] \
+  && [[ "${debian_bootstrap_pins[5]}" =~ ^DEBIAN_CA_CERTIFICATES_PATH=pool/main/c/ca-certificates/ca-certificates_[A-Za-z0-9.+~_-]+_all\.deb$ ]] \
+  && [[ "${debian_bootstrap_pins[6]}" =~ ^DEBIAN_CA_CERTIFICATES_SHA256=[0-9a-f]{64}$ ]] \
+  && DEBIAN_SNAPSHOT="${debian_bootstrap_pins[0]#*=}" \
+  && DEBIAN_OPENSSL_AMD64_PATH="${debian_bootstrap_pins[1]#*=}" \
+  && DEBIAN_OPENSSL_AMD64_SHA256="${debian_bootstrap_pins[2]#*=}" \
+  && DEBIAN_OPENSSL_ARM64_PATH="${debian_bootstrap_pins[3]#*=}" \
+  && DEBIAN_OPENSSL_ARM64_SHA256="${debian_bootstrap_pins[4]#*=}" \
+  && DEBIAN_CA_CERTIFICATES_PATH="${debian_bootstrap_pins[5]#*=}" \
+  && DEBIAN_CA_CERTIFICATES_SHA256="${debian_bootstrap_pins[6]#*=}" \
+  && [[ "${DEBIAN_OPENSSL_AMD64_PATH%_amd64.deb}" == "${DEBIAN_OPENSSL_ARM64_PATH%_arm64.deb}" ]] \
+  && unset debian_bootstrap_pins \
+  && fetch_snapshot_bootstrap_package() { \
       local path="$1"; \
       local output="$2"; \
       local attempt="" host=""; \
@@ -46,23 +62,24 @@ RUN fetch_snapshot_bootstrap_package() { \
       done; \
     } \
   && bootstrap_snapshot_tls() { \
-       local openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
+       local openssl_path="" openssl_url="" openssl_sha256="" ca_url="" ca_sha256=""; \
        case "$(dpkg --print-architecture)" in \
          amd64) \
-           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_amd64.deb"; \
-           openssl_sha256="7b4270966255f0bad468ac889f4b090a6e10eb6ccbc2be0fa418560b24bdef5a"; \
+           openssl_path="${DEBIAN_OPENSSL_AMD64_PATH}"; \
+           openssl_sha256="${DEBIAN_OPENSSL_AMD64_SHA256}"; \
            ;; \
          arm64) \
-           openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/o/openssl/openssl_3.5.6-1~deb13u2_arm64.deb"; \
-           openssl_sha256="1ee735e2480519bd1fd5f6576a879243bc81b9773059e1fa1ec8b8943c84e77c"; \
+           openssl_path="${DEBIAN_OPENSSL_ARM64_PATH}"; \
+           openssl_sha256="${DEBIAN_OPENSSL_ARM64_SHA256}"; \
            ;; \
          *) \
            echo "Unsupported dpkg architecture for snapshot TLS bootstrap: $(dpkg --print-architecture)" >&2; \
            exit 1; \
            ;; \
        esac; \
-       ca_url="archive/debian/${DEBIAN_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20250419_all.deb"; \
-       ca_sha256="ef590f89563aa4b46c8260d49d1cea0fc1b181d19e8df3782694706adf05c184"; \
+       openssl_url="archive/debian/${DEBIAN_SNAPSHOT}/${openssl_path}"; \
+       ca_url="archive/debian/${DEBIAN_SNAPSHOT}/${DEBIAN_CA_CERTIFICATES_PATH}"; \
+       ca_sha256="${DEBIAN_CA_CERTIFICATES_SHA256}"; \
        fetch_snapshot_bootstrap_package "${openssl_url}" /tmp/workcell-bootstrap-openssl.deb \
        && echo "${openssl_sha256}  /tmp/workcell-bootstrap-openssl.deb" | sha256sum -c - \
        && fetch_snapshot_bootstrap_package "${ca_url}" /tmp/workcell-bootstrap-ca-certificates.deb \

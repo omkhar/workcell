@@ -84,12 +84,17 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	markdownlintPackageJSONPath := filepath.Join(repoRoot, "tools", "markdownlint", "package.json")
 	markdownlintPackageLockPath := filepath.Join(repoRoot, "tools", "markdownlint", "package-lock.json")
 	rustToolchainPath := filepath.Join(repoRoot, "runtime", "container", "rust", "rust-toolchain.toml")
+	debianBootstrapManifestPath := filepath.Join(repoRoot, filepath.FromSlash(DebianBootstrapManifestRelPath))
 
 	runtimeDockerfile, err := readText(cfg.RuntimeDockerfilePath)
 	if err != nil {
 		return err
 	}
 	validatorDockerfile, err := readText(cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return err
+	}
+	debianBootstrapManifest, err := ReadDebianBootstrapManifest(debianBootstrapManifestPath)
 	if err != nil {
 		return err
 	}
@@ -288,7 +293,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 		return result, nil
 	}
-	if err := validateDockerPinnedInputs(cfg, repoRoot, runtimeDockerfile, validatorDockerfile, goModText, codexRequirementsText, codexMCPConfigText); err != nil {
+	if err := validateDockerPinnedInputs(cfg, repoRoot, runtimeDockerfile, validatorDockerfile, debianBootstrapManifest, debianBootstrapManifestPath, goModText, codexRequirementsText, codexMCPConfigText); err != nil {
 		return err
 	}
 	if err := validateNodeMarkdownlintPinnedInputs(
@@ -453,6 +458,15 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 	if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, ".github/workflows/ci.yml", validatorImageFallback[1], "scripts/ci/build-validator-image.sh"); err != nil {
 		return err
+	}
+	for _, needle := range []string{
+		`DEBIAN_BOOTSTRAP_MANIFEST="${ROOT_DIR}/runtime/container/debian-bootstrap.env"`,
+		`DEBIAN_BOOTSTRAP_CKSUM="$(cksum "${DEBIAN_BOOTSTRAP_MANIFEST}" | awk '{print $1}')"`,
+		`VALIDATOR_IMAGE_DEFAULT_TAG="workcell-validator:local-${VALIDATOR_DOCKERFILE_CKSUM}-${DEBIAN_BOOTSTRAP_CKSUM}"`,
+	} {
+		if !strings.Contains(validatorImageScript, needle) {
+			return fmt.Errorf("scripts/ci/build-validator-image.sh must include the Debian bootstrap manifest in validator image identity: missing %s", needle)
+		}
 	}
 
 	ciCosignVersion, err := requireYAMLKey(ciWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml")
