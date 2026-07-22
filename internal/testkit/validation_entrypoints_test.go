@@ -621,6 +621,12 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
 	}
+
+	const commitTemplateStart = `cat >"${commit_file}" <<'EOF'
+^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)`
+	if !strings.Contains(script, commitTemplateStart) {
+		t.Fatalf("%s must generate the reviewed Risk-Aware upstream-refresh commit subject", scriptPath)
+	}
 }
 
 func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
