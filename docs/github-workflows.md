@@ -91,6 +91,9 @@ Other macOS versions are not install-gated today.
   pin-hygiene before provider release verification paths run
 - it refreshes provider pins, the Linux runtime and validator base images,
   Debian snapshot, Go/Rust/Hadolint toolchains, and release-build helper pins
+- a Codex pin change fetches the exact tagged CLI source and advances the
+  command-inventory fixture only when the classified subcommand set is
+  unchanged; additions or removals stop refresh before pin mutation
 - it binds to the empty `upstream-refresh` GitHub environment as an out-of-tree
   `main`-only gate with no hosted signing inputs
 - it uploads an advisory candidate bundle containing `patch`, `diffstat`, and

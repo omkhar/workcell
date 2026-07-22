@@ -688,6 +688,55 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(repoRoot(t), "scripts", "update-provider-pins.sh")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	prepare := strings.Index(script, "prepare-codex-subcommand-fixture")
+	apply := strings.Index(script, "apply-provider-bump-plan")
+	publishDockerfile := strings.Index(script, `mv -f -- "${dockerfile_candidate}" "${DOCKERFILE_PATH}"`)
+	publishPackageJSON := strings.Index(script, `mv -f -- "${providers_candidate_dir}/package.json" "${PROVIDERS_PACKAGE_JSON_PATH}"`)
+	publishPackageLock := strings.Index(script, `mv -f -- "${providers_candidate_dir}/package-lock.json" "${PROVIDERS_DIR}/package-lock.json"`)
+	publishCodexFixture := strings.Index(script, `mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"`)
+	lockfile := strings.Index(script, `"${NPM_BIN}" install --package-lock-only`)
+	verify := strings.LastIndex(script, "\nverify_provider_releases\n")
+	if prepare < 0 || apply < 0 || publishDockerfile < 0 || publishPackageJSON < 0 || publishPackageLock < 0 || publishCodexFixture < 0 || lockfile < 0 || verify < 0 {
+		t.Fatalf("%s must prepare, apply, publish, refresh the lockfile, and verify the Codex fixture update", path)
+	}
+	if !(prepare < apply && apply < lockfile &&
+		lockfile < publishDockerfile && lockfile < publishPackageJSON && lockfile < publishPackageLock && lockfile < publishCodexFixture &&
+		publishPackageLock < publishPackageJSON && publishCodexFixture < publishDockerfile &&
+		publishDockerfile < verify && publishPackageJSON < verify && publishPackageLock < verify && publishCodexFixture < verify) {
+		t.Fatalf("%s must stage every fallible refresh and publish dependent artifacts before their plan-driving pins", path)
+	}
+	for _, want := range []string{
+		`CODEX_SUBCOMMAND_FIXTURE_PATH="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"`,
+		`codex_fixture_candidate="$(mktemp "${CODEX_SUBCOMMAND_FIXTURE_PATH}.XXXXXX")"`,
+		`[[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"`,
+		`[[ -z "${dockerfile_candidate}" ]] || rm -f "${dockerfile_candidate}"`,
+		`"${PROVIDERS_DIR}"/.workcell-provider-bump.*) rm -rf -- "${providers_candidate_dir}" ;;`,
+		`dockerfile_candidate="$(mktemp "${DOCKERFILE_PATH}.XXXXXX")"`,
+		`providers_candidate_dir="$(mktemp -d "${PROVIDERS_DIR}/.workcell-provider-bump.XXXXXX")"`,
+		`"${dockerfile_candidate}"`,
+		`"${providers_candidate_dir}/package.json"`,
+		`cd "${providers_candidate_dir}"`,
+		`if [[ ! -f "${providers_candidate_dir}/package.json" || -L "${providers_candidate_dir}/package.json" ||`,
+		`! -f "${providers_candidate_dir}/package-lock.json" || -L "${providers_candidate_dir}/package-lock.json" ]]`,
+		`unexpected_provider_candidate="$(find "${providers_candidate_dir}"`,
+		"verify_provider_releases() {",
+		"  verify_provider_releases\n  print_summary\n  echo \"No eligible stable provider pin updates found.\"",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s is missing fail-closed Codex fixture handling %q", path, want)
+		}
+	}
+}
+
 func TestLatestDebianSnapshotFallsBackWhenNewestBootstrapPlanIsUnsuitable(t *testing.T) {
 	t.Parallel()
 
