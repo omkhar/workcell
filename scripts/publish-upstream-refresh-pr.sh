@@ -322,7 +322,7 @@ $(cat "${diffstat_path}")
 EOF
 
 cat >"${commit_file}" <<'EOF'
-Refresh pinned upstreams
+^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)
 
 - refresh provider pins and Linux base/toolchain inputs
 - refresh release-build helper versions and image digests
