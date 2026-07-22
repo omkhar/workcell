@@ -32,6 +32,7 @@ POLICY_PATH="${ROOT_DIR}/policy/provider-bumps.toml"
 DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
 PROVIDERS_PACKAGE_JSON_PATH="${ROOT_DIR}/runtime/container/providers/package.json"
 PROVIDERS_DIR="${ROOT_DIR}/runtime/container/providers"
+CODEX_SUBCOMMAND_FIXTURE_PATH="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"
 
 mode="summary"
 now_override=""
@@ -46,7 +47,7 @@ usage() {
 Usage: scripts/update-provider-pins.sh [--apply | --check | --json] [--now RFC3339]
 
 Modes:
-  --apply   Update pinned provider versions to the newest stable releases older than the configured cool-off and refresh package-lock.json.
+  --apply   Update pinned provider versions to the newest stable releases older than the configured cool-off, refresh package-lock.json, and advance an unchanged Codex command inventory.
   --check   Exit non-zero when an eligible stable provider update is available.
   --json    Print the resolved provider bump plan as JSON.
 
@@ -190,12 +191,26 @@ else
 fi
 
 plan_path="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-bump-plan.XXXXXX.json")"
+codex_fixture_candidate=""
 cleanup_apply() {
   cleanup
   rm -f "${plan_path}"
+  [[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"
 }
 trap cleanup_apply EXIT
 printf '%s\n' "${plan_json}" >"${plan_path}"
+
+if [[ "$(jq -r '.providers.codex.changed' <<<"${plan_json}")" == "true" ]]; then
+  codex_target_version="$(jq -r '.providers.codex.target_version' <<<"${plan_json}")"
+  codex_fixture_candidate="$(mktemp "${CODEX_SUBCOMMAND_FIXTURE_PATH}.XXXXXX")"
+  (
+    cd "${ROOT_DIR}"
+    go run ./cmd/workcell-citools prepare-codex-subcommand-fixture \
+      "${codex_target_version}" \
+      "${CODEX_SUBCOMMAND_FIXTURE_PATH}" \
+      "${codex_fixture_candidate}"
+  )
+fi
 
 (
   cd "${ROOT_DIR}"
@@ -206,6 +221,11 @@ printf '%s\n' "${plan_json}" >"${plan_path}"
   cd "${PROVIDERS_DIR}"
   "${NPM_BIN}" install --package-lock-only --ignore-scripts --no-audit --no-fund
 )
+
+if [[ -n "${codex_fixture_candidate}" ]]; then
+  mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"
+  codex_fixture_candidate=""
+fi
 
 "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
 "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"

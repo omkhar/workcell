@@ -688,6 +688,36 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderPinsPreparesCodexNamespaceBeforeApplyingBump(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(repoRoot(t), "scripts", "update-provider-pins.sh")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	prepare := strings.Index(script, "prepare-codex-subcommand-fixture")
+	apply := strings.Index(script, "apply-provider-bump-plan")
+	publish := strings.Index(script, `mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"`)
+	verify := strings.Index(script, `"${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"`)
+	if prepare < 0 || apply < 0 || publish < 0 || verify < 0 {
+		t.Fatalf("%s must prepare, apply, publish, and verify the Codex fixture update", path)
+	}
+	if !(prepare < apply && apply < publish && publish < verify) {
+		t.Fatalf("%s must validate the authoritative namespace before pin mutation, then publish the prepared fixture before release verification", path)
+	}
+	for _, want := range []string{
+		`CODEX_SUBCOMMAND_FIXTURE_PATH="${ROOT_DIR}/tests/fixtures/codex-subcommands.txt"`,
+		`codex_fixture_candidate="$(mktemp "${CODEX_SUBCOMMAND_FIXTURE_PATH}.XXXXXX")"`,
+		`[[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s is missing fail-closed Codex fixture handling %q", path, want)
+		}
+	}
+}
+
 func TestLatestDebianSnapshotFallsBackWhenNewestBootstrapPlanIsUnsuitable(t *testing.T) {
 	t.Parallel()
 

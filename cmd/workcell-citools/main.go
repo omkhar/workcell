@@ -77,6 +77,7 @@ func subcommands() []subcommand {
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 3, 4, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
+		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -388,6 +389,10 @@ func cmdProviderBumpPlan(args []string) error {
 
 func cmdApplyProviderBumpPlan(args []string) error {
 	return metadatautil.ApplyProviderBumpPlan(args[0], args[1], args[2], args[3])
+}
+
+func cmdPrepareCodexSubcommandFixture(args []string) error {
+	return metadatautil.PrepareCodexSubcommandFixture(args[0], args[1], args[2])
 }
 
 func cmdGenerateBuildInputManifest(args []string) error {

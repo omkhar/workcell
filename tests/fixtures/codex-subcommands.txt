@@ -22,6 +22,9 @@
 # (app-server, AGENT_UI=gui only), or DENY. A pin bump MUST regenerate this list from
 # the new clap Subcommand enum (unit variants, aliases, hidden tokens), classify any
 # new name in provider-policy.sh, AND bump the stamp above, or the build stays red.
+# The reviewed provider updater advances the stamp automatically only when the exact
+# authoritative token set is unchanged; any addition or removal fails before pin
+# mutation and requires an explicit classification change.
 # One name per line; blank/`#` lines are ignored.
 exec
 e
