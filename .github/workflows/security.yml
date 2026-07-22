@@ -71,8 +71,8 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: 8556289a64e7aaf2400cd516f61a471aa91c5902cc56ad96a82fd12f90c2ef73
-          ZIZMOR_VERSION: 1.26.1
+          ZIZMOR_SHA256: e87b67160194884e375a46a12c57ccc904f762b53845f254fab7f17d98809c09
+          ZIZMOR_VERSION: 1.28.0
         run: |
           curl -fsSL \
             --retry 3 \
@@ -107,8 +107,8 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: 8556289a64e7aaf2400cd516f61a471aa91c5902cc56ad96a82fd12f90c2ef73
-          ZIZMOR_VERSION: 1.26.1
+          ZIZMOR_SHA256: e87b67160194884e375a46a12c57ccc904f762b53845f254fab7f17d98809c09
+          ZIZMOR_VERSION: 1.28.0
         run: |
           curl -fsSL \
             --retry 3 \
