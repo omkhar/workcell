@@ -170,6 +170,13 @@ print_summary() {
   ' <<<"${plan_json}"
 }
 
+verify_provider_releases() {
+  "${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
+  WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
+  "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
+}
+
 if [[ "${mode}" == "summary" ]]; then
   print_summary
   exit 0
@@ -185,6 +192,7 @@ else
     print_summary
     exit 0
   fi
+  verify_provider_releases
   print_summary
   echo "No eligible stable provider pin updates found."
   exit 0
@@ -192,10 +200,19 @@ fi
 
 plan_path="$(mktemp "${TMPDIR:-/tmp}/workcell-provider-bump-plan.XXXXXX.json")"
 codex_fixture_candidate=""
+dockerfile_candidate=""
+providers_candidate_dir=""
 cleanup_apply() {
   cleanup
   rm -f "${plan_path}"
   [[ -z "${codex_fixture_candidate}" ]] || rm -f "${codex_fixture_candidate}"
+  [[ -z "${dockerfile_candidate}" ]] || rm -f "${dockerfile_candidate}"
+  if [[ -n "${providers_candidate_dir}" ]]; then
+    case "${providers_candidate_dir}" in
+      "${PROVIDERS_DIR}"/.workcell-provider-bump.*) rm -rf -- "${providers_candidate_dir}" ;;
+      *) echo "Refusing to clean unexpected provider bump candidate path: ${providers_candidate_dir}" >&2 ;;
+    esac
+  fi
 }
 trap cleanup_apply EXIT
 printf '%s\n' "${plan_json}" >"${plan_path}"
@@ -212,24 +229,49 @@ if [[ "$(jq -r '.providers.codex.changed' <<<"${plan_json}")" == "true" ]]; then
   )
 fi
 
+dockerfile_candidate="$(mktemp "${DOCKERFILE_PATH}.XXXXXX")"
+cp -p -- "${DOCKERFILE_PATH}" "${dockerfile_candidate}"
+providers_candidate_dir="$(mktemp -d "${PROVIDERS_DIR}/.workcell-provider-bump.XXXXXX")"
+cp -p -- "${PROVIDERS_DIR}/package.json" "${providers_candidate_dir}/package.json"
+cp -p -- "${PROVIDERS_DIR}/package-lock.json" "${providers_candidate_dir}/package-lock.json"
+
 (
   cd "${ROOT_DIR}"
-  go run ./cmd/workcell-citools apply-provider-bump-plan "${plan_path}" "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}"
+  go run ./cmd/workcell-citools apply-provider-bump-plan \
+    "${plan_path}" \
+    "${POLICY_PATH}" \
+    "${dockerfile_candidate}" \
+    "${providers_candidate_dir}/package.json"
 )
 
 (
-  cd "${PROVIDERS_DIR}"
+  cd "${providers_candidate_dir}"
   "${NPM_BIN}" install --package-lock-only --ignore-scripts --no-audit --no-fund
 )
 
+if [[ ! -f "${providers_candidate_dir}/package.json" || -L "${providers_candidate_dir}/package.json" ||
+  ! -f "${providers_candidate_dir}/package-lock.json" || -L "${providers_candidate_dir}/package-lock.json" ]]; then
+  echo "Provider bump staging must produce regular package.json and package-lock.json files." >&2
+  exit 1
+fi
+unexpected_provider_candidate="$(find "${providers_candidate_dir}" -mindepth 1 -maxdepth 1 \
+  ! -name package.json ! -name package-lock.json -print -quit)"
+if [[ -n "${unexpected_provider_candidate}" ]]; then
+  echo "Provider bump staging produced an unexpected path: ${unexpected_provider_candidate}" >&2
+  exit 1
+fi
+
+mv -f -- "${providers_candidate_dir}/package-lock.json" "${PROVIDERS_DIR}/package-lock.json"
+mv -f -- "${providers_candidate_dir}/package.json" "${PROVIDERS_PACKAGE_JSON_PATH}"
+rmdir -- "${providers_candidate_dir}"
+providers_candidate_dir=""
 if [[ -n "${codex_fixture_candidate}" ]]; then
   mv -f -- "${codex_fixture_candidate}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}"
   codex_fixture_candidate=""
 fi
+mv -f -- "${dockerfile_candidate}" "${DOCKERFILE_PATH}"
+dockerfile_candidate=""
 
-"${ROOT_DIR}/scripts/verify-upstream-codex-release.sh"
-"${ROOT_DIR}/scripts/verify-upstream-claude-release.sh"
-WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"
-"${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
+verify_provider_releases
 
 print_summary
