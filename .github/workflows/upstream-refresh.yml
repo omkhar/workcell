@@ -14,7 +14,7 @@ defaults:
     shell: bash --noprofile --norc -euo pipefail {0}
 
 env:
-  WORKCELL_COSIGN_VERSION: v3.1.1
+  WORKCELL_COSIGN_VERSION: v3.1.2
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
