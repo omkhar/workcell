@@ -3,8 +3,11 @@
 # Detects macOS (brew) vs Linux (apt) and installs missing packages.
 set -euo pipefail
 
-readonly MARKDOWNLINT_VERSION="0.49.0"
-readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.12.0"
+readonly MARKDOWNLINT_VERSION="0.49.1"
+readonly MARKDOWNLINT_NODE_22_MINIMUM="22.22.2"
+readonly MARKDOWNLINT_NODE_24_MINIMUM="24.15.0"
+readonly MARKDOWNLINT_NODE_OPEN_MINIMUM="26.0.0"
+readonly MARKDOWNLINT_NODE_VERSION_REQUIREMENT="^${MARKDOWNLINT_NODE_22_MINIMUM} || ^${MARKDOWNLINT_NODE_24_MINIMUM} || >=${MARKDOWNLINT_NODE_OPEN_MINIMUM}"
 
 append_unique_brew() {
   local candidate=""
@@ -52,7 +55,7 @@ node_version() {
 
   version="$("${node_bin}" --version 2>/dev/null || true)"
   version="${version#v}"
-  printf '%s\n' "${version%%-*}"
+  printf '%s\n' "${version}"
 }
 
 version_at_least() {
@@ -80,9 +83,28 @@ version_at_least() {
   ((actual_patch >= minimum_patch))
 }
 
+markdownlint_node_compatible() {
+  local version="$1"
+  local major=""
+
+  version_at_least "${version}" "0.0.0" || return 1
+  major="${version%%.*}"
+  case "${major}" in
+    22)
+      version_at_least "${version}" "${MARKDOWNLINT_NODE_22_MINIMUM}"
+      ;;
+    24)
+      version_at_least "${version}" "${MARKDOWNLINT_NODE_24_MINIMUM}"
+      ;;
+    *)
+      version_at_least "${version}" "${MARKDOWNLINT_NODE_OPEN_MINIMUM}"
+      ;;
+  esac
+}
+
 markdownlint_node_install_hint() {
   cat >&2 <<EOF
-Install Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer before installing markdownlint-cli@${MARKDOWNLINT_VERSION}.
+Install a Node.js version matching ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT} before installing markdownlint-cli@${MARKDOWNLINT_VERSION}.
 On macOS, Homebrew's node package satisfies this requirement.
 On Linux, use a current Node.js LTS package source such as your distro's supported Node.js channel, NodeSource, nvm, or asdf; Ubuntu 24.04's nodejs/npm apt packages are too old for this markdownlint release.
 Then rerun scripts/install-dev-tools.sh.
@@ -93,12 +115,12 @@ require_markdownlint_node() {
   local version=""
 
   if ! version="$(node_version)" || [[ -z "${version}" ]]; then
-    echo "markdownlint-cli@${MARKDOWNLINT_VERSION} requires Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer; no usable node binary was found." >&2
+    echo "markdownlint-cli@${MARKDOWNLINT_VERSION} requires Node.js ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT}; no usable node binary was found." >&2
     markdownlint_node_install_hint
     exit 1
   fi
-  if ! version_at_least "${version}" "${MARKDOWNLINT_NODE_VERSION_MINIMUM}"; then
-    echo "markdownlint-cli@${MARKDOWNLINT_VERSION} requires Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer; found ${version}." >&2
+  if ! markdownlint_node_compatible "${version}"; then
+    echo "markdownlint-cli@${MARKDOWNLINT_VERSION} requires Node.js ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT}; found ${version}." >&2
     markdownlint_node_install_hint
     exit 1
   fi
@@ -108,7 +130,7 @@ require_markdownlint_npm() {
   if command -v npm &>/dev/null; then
     return 0
   fi
-  echo "markdownlint-cli@${MARKDOWNLINT_VERSION} requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation." >&2
+  echo "markdownlint-cli@${MARKDOWNLINT_VERSION} requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT} installation." >&2
   markdownlint_node_install_hint
   exit 1
 }

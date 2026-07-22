@@ -57,15 +57,46 @@ func validateNodeMarkdownlintPinnedInputs(
 	if installMarkdownlintVersionMatch[1] != validatorMarkdownlintVersion {
 		return fmt.Errorf("MARKDOWNLINT_VERSION must match between %s and %s; found %q and %q", installDevToolsScriptPath, cfg.ValidatorDockerfilePath, installMarkdownlintVersionMatch[1], validatorMarkdownlintVersion)
 	}
-	_, markdownlintNodeFloorMatch, err := requireRegex(installDevToolsScript, `(?m)^readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="([0-9]+\.[0-9]+\.[0-9]+)"$`, "install-dev-tools markdownlint Node floor", installDevToolsScriptPath)
-	if err != nil {
-		return err
+	iniLockPackage, ok := markdownlintPackageLock.Packages["node_modules/ini"]
+	if !ok || iniLockPackage.Engines["node"] == "" {
+		return fmt.Errorf("%s must lock the markdownlint runtime Node.js requirement", markdownlintPackageLockPath)
 	}
-	if markdownlintNodeFloorMatch[1] != "22.12.0" {
-		return fmt.Errorf("MARKDOWNLINT_NODE_VERSION_MINIMUM in %s must be 22.12.0 for markdownlint-cli@%s, found %q", installDevToolsScriptPath, validatorMarkdownlintVersion, markdownlintNodeFloorMatch[1])
+	markdownlintNodeMinimums := make([]string, 0, 3)
+	for _, name := range []string{"MARKDOWNLINT_NODE_22_MINIMUM", "MARKDOWNLINT_NODE_24_MINIMUM", "MARKDOWNLINT_NODE_OPEN_MINIMUM"} {
+		_, match, matchErr := requireRegex(installDevToolsScript, `(?m)^readonly `+name+`="([0-9]+\.[0-9]+\.[0-9]+)"$`, "install-dev-tools "+name, installDevToolsScriptPath)
+		if matchErr != nil {
+			return matchErr
+		}
+		markdownlintNodeMinimums = append(markdownlintNodeMinimums, match[1])
+	}
+	lockedNodeRequirement := fmt.Sprintf("^%s || ^%s || >=%s", markdownlintNodeMinimums[0], markdownlintNodeMinimums[1], markdownlintNodeMinimums[2])
+	if lockedNodeRequirement != iniLockPackage.Engines["node"] {
+		return fmt.Errorf("markdownlint Node.js minimums in %s produce %q, which must match the locked runtime requirement %q for markdownlint-cli@%s", installDevToolsScriptPath, lockedNodeRequirement, iniLockPackage.Engines["node"], validatorMarkdownlintVersion)
+	}
+	if !strings.Contains(installDevToolsScript, `readonly MARKDOWNLINT_NODE_VERSION_REQUIREMENT="^${MARKDOWNLINT_NODE_22_MINIMUM} || ^${MARKDOWNLINT_NODE_24_MINIMUM} || >=${MARKDOWNLINT_NODE_OPEN_MINIMUM}"`) {
+		return fmt.Errorf("MARKDOWNLINT_NODE_VERSION_REQUIREMENT in %s must be composed from the enforced Node.js minimums", installDevToolsScriptPath)
 	}
 	if err := rejectInstallScriptAptPackages(installDevToolsScript, installDevToolsScriptPath, "nodejs", "npm"); err != nil {
 		return err
+	}
+	markdownlintNodeCompatibleBody, err := requireDelimitedText(
+		installDevToolsScript,
+		"markdownlint_node_compatible() {\n",
+		"\n}\n\nmarkdownlint_node_install_hint()",
+		"markdownlint Node.js range check",
+		installDevToolsScriptPath,
+	)
+	if err != nil {
+		return err
+	}
+	for _, needle := range []string{
+		`version_at_least "${version}" "${MARKDOWNLINT_NODE_22_MINIMUM}"`,
+		`version_at_least "${version}" "${MARKDOWNLINT_NODE_24_MINIMUM}"`,
+		`version_at_least "${version}" "${MARKDOWNLINT_NODE_OPEN_MINIMUM}"`,
+	} {
+		if !strings.Contains(markdownlintNodeCompatibleBody, needle) {
+			return fmt.Errorf("%s must enforce the displayed Node.js range using %q", installDevToolsScriptPath, needle)
+		}
 	}
 	if !strings.Contains(installDevToolsScript, "if [[ \"${host_os}\" == \"Linux\" ]] && markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\nif [[ ${#missing[@]} -gt 0 ]]; then") {
 		return fmt.Errorf("%s must validate Linux Node.js/npm compatibility before apt installs when markdownlint-cli needs installation", installDevToolsScriptPath)
@@ -98,7 +129,7 @@ func validateNodeMarkdownlintPinnedInputs(
 		return err
 	}
 	for _, needle := range []string{
-		"Install Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer before installing markdownlint-cli@${MARKDOWNLINT_VERSION}.",
+		"Install a Node.js version matching ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT} before installing markdownlint-cli@${MARKDOWNLINT_VERSION}.",
 		"Homebrew's node package",
 		"NodeSource",
 		"nvm",
@@ -140,7 +171,7 @@ func validateNodeMarkdownlintPinnedInputs(
 	}
 	for _, needle := range []string{
 		"command -v npm &>/dev/null",
-		"requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  markdownlint_node_install_hint\n  exit 1",
+		"requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT} installation.\" >&2\n  markdownlint_node_install_hint\n  exit 1",
 	} {
 		if !strings.Contains(requireMarkdownlintNPMBody, needle) {
 			return fmt.Errorf("%s must print Node.js upgrade instructions before exiting the markdownlint-cli npm failure path", installDevToolsScriptPath)

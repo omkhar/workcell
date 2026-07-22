@@ -653,14 +653,14 @@ func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 		{
 			name:         "package-json",
 			relativePath: "tools/markdownlint/package.json",
-			old:          `"markdownlint-cli": "0.49.0"`,
+			old:          `"markdownlint-cli": "0.49.1"`,
 			new:          `"markdownlint-cli": "0.48.0"`,
 			want:         "markdownlint-cli version must match",
 		},
 		{
 			name:         "package-lock-dependency",
 			relativePath: "tools/markdownlint/package-lock.json",
-			old:          `"markdownlint-cli": "0.49.0"`,
+			old:          `"markdownlint-cli": "0.49.1"`,
 			new:          `"markdownlint-cli": "0.48.0"`,
 			want:         "markdownlint-cli version must match",
 		},
@@ -668,7 +668,7 @@ func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 			name:         "package-lock-entry",
 			relativePath: "tools/markdownlint/package-lock.json",
 			old: `"node_modules/markdownlint-cli": {
-      "version": "0.49.0"`,
+      "version": "0.49.1"`,
 			new: `"node_modules/markdownlint-cli": {
       "version": "0.48.0"`,
 			want: "locked markdownlint-cli package version",
@@ -685,13 +685,31 @@ func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 	}
 }
 
-func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeFloorDrift(t *testing.T) {
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeMinimumDrift(t *testing.T) {
 	t.Parallel()
 
 	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
-		return strings.Replace(content, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.12.0"`, `readonly MARKDOWNLINT_NODE_VERSION_MINIMUM="22.0.0"`, 1)
+		return strings.Replace(content, `readonly MARKDOWNLINT_NODE_22_MINIMUM="22.22.2"`, `readonly MARKDOWNLINT_NODE_22_MINIMUM="22.0.0"`, 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, "MARKDOWNLINT_NODE_VERSION_MINIMUM")
+	requirePinnedInputsErrorContains(t, cfg, "locked runtime requirement")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintLockedNodeRequirementDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewritePinnedInputsFixtureFile(t, "tools/markdownlint/package-lock.json", func(content string) string {
+		return strings.Replace(content, `"node": "^22.22.2 || ^24.15.0 || >=26.0.0"`, `"node": ">=26.0.0"`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "locked runtime requirement")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintNodeEnforcementDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, `version_at_least "${version}" "${MARKDOWNLINT_NODE_24_MINIMUM}"`, `version_at_least "${version}" "${MARKDOWNLINT_NODE_22_MINIMUM}"`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "must enforce the displayed Node.js range")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeCheck(t *testing.T) {
@@ -796,7 +814,7 @@ func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMHintCall(t *test
 	t.Parallel()
 
 	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
-		return strings.Replace(content, "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  markdownlint_node_install_hint\n  exit 1", "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_MINIMUM} or newer installation.\" >&2\n  exit 1", 1)
+		return strings.Replace(content, "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT} installation.\" >&2\n  markdownlint_node_install_hint\n  exit 1", "requires npm from a Node.js ${MARKDOWNLINT_NODE_VERSION_REQUIREMENT} installation.\" >&2\n  exit 1", 1)
 	})
 	requirePinnedInputsErrorContains(t, cfg, "markdownlint-cli npm failure path")
 }
