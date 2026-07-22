@@ -50,6 +50,7 @@ type markdownlintPackageLock struct {
 type markdownlintPackageLockEntry struct {
 	Version      string            `json:"version"`
 	Dependencies map[string]string `json:"dependencies"`
+	Engines      map[string]string `json:"engines"`
 }
 
 // readText, isHexDigest, hexDigestPattern live in core.go.

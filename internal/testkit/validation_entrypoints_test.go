@@ -5,6 +5,7 @@ package testkit
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -256,6 +257,61 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 		if strings.Contains(script, unwanted) {
 			t.Fatalf("%s unexpectedly contains %q", scriptPath, unwanted)
 		}
+	}
+}
+
+func TestInstallDevToolsEnforcesLockedMarkdownlintNodeRanges(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "install-dev-tools.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, _, ok := strings.Cut(string(content), "markdownlint_node_install_hint() {")
+	if !ok {
+		t.Fatalf("%s is missing markdownlint_node_install_hint", scriptPath)
+	}
+	probe := filepath.Join(t.TempDir(), "node-range-probe.sh")
+	if err := os.WriteFile(probe, []byte(prefix+"version=\"$(node_version)\"\nmarkdownlint_node_compatible \"${version}\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		version string
+		accept  bool
+	}{
+		{version: "v22.22.1"},
+		{version: "v22.22.2", accept: true},
+		{version: "v22.99.0", accept: true},
+		{version: "v23.99.0"},
+		{version: "v24.14.99"},
+		{version: "v24.15.0", accept: true},
+		{version: "v24.15.0-rc.1"},
+		{version: "v25.99.0"},
+		{version: "v26.0.0", accept: true},
+		{version: "v26.0.0-nightly"},
+		{version: "v27.0.0", accept: true},
+		{version: "v26"},
+		{version: "v26.bad.0"},
+		{version: "not-a-version"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			binDir := t.TempDir()
+			node := filepath.Join(binDir, "node")
+			if err := os.WriteFile(node, []byte("#!/bin/sh\nprintf '%s\\n' '"+tc.version+"'\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command("/bin/bash", probe)
+			command.Env = []string{"PATH=" + binDir + ":/usr/bin:/bin"}
+			err := command.Run()
+			if tc.accept && err != nil {
+				t.Fatalf("markdownlint_node_compatible(%q) rejected a supported version: %v", tc.version, err)
+			}
+			if !tc.accept && err == nil {
+				t.Fatalf("markdownlint_node_compatible(%q) accepted an unsupported version", tc.version)
+			}
+		})
 	}
 }
 
