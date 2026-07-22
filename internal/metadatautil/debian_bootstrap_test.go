@@ -18,9 +18,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testDebianSnapshot = "20260720T000000Z"
+
+func TestVerifySnapshotFreshnessEnforcesSixtyDayBoundary(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	day60 := now.Add(-60 * 24 * time.Hour).Format("20060102T150405Z")
+	if err := verifySnapshotFreshness(day60, "fixture", 60); err != nil {
+		t.Fatalf("60-day-old snapshot was rejected: %v", err)
+	}
+
+	day61 := now.Add(-61 * 24 * time.Hour).Format("20060102T150405Z")
+	err := verifySnapshotFreshness(day61, "fixture", 60)
+	if err == nil || !strings.Contains(err.Error(), "is 61 days old") {
+		t.Fatalf("61-day-old snapshot error = %v", err)
+	}
+	if err := verifySnapshotFreshness(day60, "fixture", 61); err == nil || !strings.Contains(err.Error(), "between 0 and 60 days") {
+		t.Fatalf("maximum age above 60 days error = %v", err)
+	}
+}
 
 type debianFixturePackage struct {
 	name         string
@@ -220,6 +238,10 @@ func TestApplyDebianBootstrapPinsAtomicallyUpdatesSharedManifest(t *testing.T) {
 	root, manifestPath := writeDebianManifestRepo(t, testDebianBootstrapManifest(), 0o644)
 	planPath, pins := filepath.Join(root, "plan.json"), testDebianBootstrapPins()
 	writeDebianPlan(t, planPath, pins)
+	before, err := os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ApplyDebianBootstrapPins(planPath, root); err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +258,9 @@ func TestApplyDebianBootstrapPinsAtomicallyUpdatesSharedManifest(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o644 {
 		t.Fatalf("manifest mode = %o, want 644", info.Mode().Perm())
+	}
+	if os.SameFile(before, info) {
+		t.Fatal("atomic manifest apply reused the original file instead of replacing it")
 	}
 	for _, want := range []string{pins.Snapshot, pins.OpenSSLAMD64.Filename, pins.OpenSSLAMD64.SHA256, pins.OpenSSLARM64.Filename, pins.CACertificates.Filename} {
 		if !strings.Contains(string(content), want) {

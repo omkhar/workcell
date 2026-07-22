@@ -655,7 +655,7 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 		"Accept: application/octet-stream",
 		"github_release_asset_api_url",
 		`-D "${headers_file}"`,
-		`curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"`,
+		`curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"`,
 		"https://api.github.com/repos/hadolint/hadolint/releases/latest",
 		"hub.docker.com/v2/repositories/tonistiigi/binfmt/tags",
 		"docker buildx imagetools inspect",
@@ -677,6 +677,20 @@ func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
 	}
 	if strings.Contains(script, "--oauth2-bearer") {
 		t.Fatalf("%s still passes GitHub tokens through curl argv", scriptPath)
+	}
+	curlCalls := 0
+	for lineNumber, line := range strings.Split(script, "\n") {
+		index := strings.Index(line, "curl ")
+		if index < 0 {
+			continue
+		}
+		curlCalls++
+		if strings.Count(line, "curl ") != 1 || !strings.HasPrefix(line[index:], "curl -q ") {
+			t.Fatalf("%s:%d must disable HOME/.curlrc with curl's first option", scriptPath, lineNumber+1)
+		}
+	}
+	if curlCalls == 0 {
+		t.Fatalf("%s contains no curl calls", scriptPath)
 	}
 
 	for _, want := range []string{
@@ -743,6 +757,22 @@ func TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump(t
 	}
 }
 
+func TestDebianSnapshotFreshnessDefaultsToSixtyDays(t *testing.T) {
+	t.Parallel()
+
+	for _, rel := range []string{"scripts/update-upstream-pins.sh", "scripts/check-pinned-inputs.sh"} {
+		path := filepath.Join(repoRoot(t), filepath.FromSlash(rel))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"`
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("%s must default Debian snapshot freshness to exactly 60 days", path)
+		}
+	}
+}
+
 func TestLatestDebianSnapshotFallsBackWhenNewestBootstrapPlanIsUnsuitable(t *testing.T) {
 	t.Parallel()
 
@@ -804,6 +834,9 @@ latest_debian_bootstrap_plan
 `, map[string]string{"WORKCELL_RESOLUTION_LOG": resolutionLog})
 	if code != 1 {
 		t.Fatalf("bounded lookback exit code = %d output=%q, want 1", code, output)
+	}
+	if want := "Unable to resolve a Debian snapshot within 1 days for trixie/trixie-updates/trixie-security with HTTPS-fetched and byte-verified bootstrap packages\n"; output != want {
+		t.Fatalf("bounded lookback output = %q, want %q", output, want)
 	}
 	logContent, err := os.ReadFile(resolutionLog)
 	if err != nil {

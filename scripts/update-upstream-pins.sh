@@ -135,17 +135,17 @@ github_api_get() {
   local token
   token="$(github_api_token)"
   if [[ -n "${token}" ]]; then
-    curl -fsSL "${CURL_API_GUARDS[@]}" --config - "${url}" <<EOF
+    curl -q -fsSL "${CURL_API_GUARDS[@]}" --config - "${url}" <<EOF
 header = "Accept: application/vnd.github+json"
 header = "Authorization: Bearer ${token}"
 EOF
     return
   fi
-  curl -fsSL "${CURL_API_GUARDS[@]}" -H "Accept: application/vnd.github+json" "${url}"
+  curl -q -fsSL "${CURL_API_GUARDS[@]}" -H "Accept: application/vnd.github+json" "${url}"
 }
 
 dockerhub_api_get() {
-  curl -fsSL "${CURL_API_GUARDS[@]}" "$1"
+  curl -q -fsSL "${CURL_API_GUARDS[@]}" "$1"
 }
 
 github_release_asset_url() {
@@ -187,7 +187,7 @@ github_release_asset_get() {
     trap 'rm -f "${headers_file}" "${body_file}"' RETURN
 
     status="$(
-      curl -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
+      curl -q -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
         -D "${headers_file}" \
         -o "${body_file}" \
         -w '%{http_code}' \
@@ -207,7 +207,7 @@ EOF
           echo "GitHub release asset redirect did not include a Location header: ${url}" >&2
           exit 1
         fi
-        curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"
+        curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"
         ;;
       *)
         echo "Unexpected GitHub release asset response ${status}: ${url}" >&2
@@ -218,7 +218,7 @@ EOF
     trap - RETURN
     return 0
   fi
-  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" -H "Accept: application/octet-stream" "${url}"
+  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" -H "Accept: application/octet-stream" "${url}"
 }
 
 github_tag_commit_sha() {
@@ -475,9 +475,9 @@ latest_debian_bootstrap_plan() {
   resolution_error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-debian-bootstrap.XXXXXX")"
   for offset in $(seq 0 "${lookback_days}"); do
     stamp="$(date_stamp_for_offset "${offset}")"
-    if curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
-      curl -fsSI "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
-      curl -fsSI "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
+    if curl -q -fsSI "${CURL_API_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
+      curl -q -fsSI "${CURL_API_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
+      curl -q -fsSI "${CURL_API_GUARDS[@]}" "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
       resolution="$(resolve_debian_bootstrap_pins "${stamp}" 2>"${resolution_error_path}")"; then
       rm -f "${resolution_error_path}"
       printf '%s\n' "${resolution}"
@@ -545,13 +545,13 @@ latest_qemu_tag() {
       '
 }
 
-latest_go_json="$(curl -fsSL "${CURL_API_GUARDS[@]}" 'https://go.dev/dl/?mode=json' | jq 'map(select(.stable == true)) | .[0]')"
+latest_go_json="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://go.dev/dl/?mode=json' | jq 'map(select(.stable == true)) | .[0]')"
 target_go_toolchain="$(jq -r '.version | sub("^go"; "")' <<<"${latest_go_json}")"
 target_go_language="$(semver_patch_zero "${target_go_toolchain}")"
 target_go_sha_amd64="$(jq -r '.files[] | select(.os == "linux" and .arch == "amd64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 target_go_sha_arm64="$(jq -r '.files[] | select(.os == "linux" and .arch == "arm64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 
-rust_stable_toml="$(curl -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/dist/channel-rust-stable.toml')"
+rust_stable_toml="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/dist/channel-rust-stable.toml')"
 target_rust_version="$(
   awk -F'"' '
     /^\[pkg\.rust\]$/ {
@@ -569,25 +569,25 @@ target_rust_version="$(
   ' <<<"${rust_stable_toml}"
 )"
 target_cargo_rust_version="$(semver_major_minor "${target_rust_version}")"
-rustup_stable_toml="$(curl -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/rustup/release-stable.toml')"
+rustup_stable_toml="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/rustup/release-stable.toml')"
 target_rustup_version="$(awk -F"'" '$1 == "version = " { print $2; exit }' <<<"${rustup_stable_toml}")"
 # SHA256 checksum bodies are at most ~80 bytes; cap the response so a
 # misbehaving CDN or compromised release host cannot serve a multi-GB
 # body that OOMs the maintainer's shell.  Mirrors the discipline applied
 # to the zizmor download below.
 CURL_CHECKSUM_GUARDS=(--max-time 60 --connect-timeout 15 --max-filesize 65536)
-target_rustup_sha_amd64="$(curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/x86_64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
-target_rustup_sha_arm64="$(curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/aarch64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
+target_rustup_sha_amd64="$(curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/x86_64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
+target_rustup_sha_arm64="$(curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/aarch64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
 
 hadolint_release_json="$(github_api_get 'https://api.github.com/repos/hadolint/hadolint/releases/latest')"
 target_hadolint_version="$(jq -r '.tag_name' <<<"${hadolint_release_json}")"
 hadolint_sha_amd64_url="$(github_release_asset_url "${hadolint_release_json}" 'hadolint-linux-x86_64.sha256')"
 hadolint_sha_arm64_url="$(github_release_asset_url "${hadolint_release_json}" 'hadolint-linux-arm64.sha256')"
 target_hadolint_sha_amd64="$(
-  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_amd64_url}" | awk '{print $1}'
+  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_amd64_url}" | awk '{print $1}'
 )"
 target_hadolint_sha_arm64="$(
-  curl -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_arm64_url}" | awk '{print $1}'
+  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_arm64_url}" | awk '{print $1}'
 )"
 
 buildx_release_json="$(github_api_get 'https://api.github.com/repos/docker/buildx/releases/latest')"
@@ -611,7 +611,7 @@ zizmor_release_json="$(github_api_get 'https://api.github.com/repos/zizmorcore/z
 target_zizmor_version="$(jq -r '.tag_name | sub("^v"; "")' <<<"${zizmor_release_json}")"
 target_zizmor_url="$(github_release_asset_url "${zizmor_release_json}" 'zizmor-x86_64-unknown-linux-gnu.tar.gz')"
 target_zizmor_sha="$(
-  curl -fsSL \
+  curl -q -fsSL \
     --max-time 60 \
     --connect-timeout 15 \
     --max-filesize 209715200 \
