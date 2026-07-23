@@ -34,6 +34,12 @@ _workcell_canonical_env_require_value() {
   fi
 }
 
+_workcell_canonical_env_is_passive_go_toolcache_alias() {
+  local name="$1"
+
+  [[ "${name}" =~ ^GOROOT_[0123456789]+_[0123456789]+_(X64|ARM64)$ ]]
+}
+
 workcell_require_modern_privileged_bash() {
   local candidate=""
 
@@ -92,6 +98,17 @@ workcell_require_canonical_build_environment() {
         continue
         ;;
     esac
+    # GitHub-hosted runners publish versioned tool-cache aliases such as
+    # GOROOT_1_24_X64. They are not Go tool inputs, but leaving them available
+    # to descendants would make the canonical environment depend on ambient
+    # runner metadata. Accept only the exact passive grammar and remove it.
+    if _workcell_canonical_env_is_passive_go_toolcache_alias "${name}"; then
+      if ! unset "${name}" 2>/dev/null; then
+        printf 'Canonical build environment could not scrub ambient %s.\n' "${name}" >&2
+        return 2
+      fi
+      continue
+    fi
     _workcell_canonical_env_reject_nonempty "${name}" || return 2
   done
   for name in "${!CGO@}"; do

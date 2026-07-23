@@ -163,6 +163,10 @@ func TestCanonicalBuildEnvironmentRejectsBuildAndShellInputs(t *testing.T) {
 		{"module-mode", "GO111MODULE", "off"},
 		{"toolchain", "GOTOOLCHAIN", "local"},
 		{"toolchain-root", "GOROOT", "/tmp/workcell-goroot"},
+		{"toolcache-alias-missing-minor", "GOROOT_1_X64", "/tmp/workcell-goroot"},
+		{"toolcache-alias-unknown-architecture", "GOROOT_1_24_X86_64", "/tmp/workcell-goroot"},
+		{"toolcache-alias-lowercase-architecture", "GOROOT_1_24_x64", "/tmp/workcell-goroot"},
+		{"toolcache-alias-suffixed", "GOROOT_1_24_X64_EXTRA", "/tmp/workcell-goroot"},
 		{"debug-semantics", "GODEBUG", "gotypesalias=0"},
 		{"fips-selection", "GOFIPS140", "off"},
 		{"external-link-selection", "GO_EXTLINK_ENABLED", "0"},
@@ -221,6 +225,98 @@ echo should-not-run
 				t.Fatalf("output leaked rejected %s value: %q", tc.variable, output)
 			}
 		})
+	}
+}
+
+func TestCanonicalBuildEnvironmentScrubsPassiveHostedGoAliases(t *testing.T) {
+	t.Parallel()
+
+	realHelper := filepath.Join(repoRoot(t), "scripts", "lib", "canonical-build-env.sh")
+	aliases := map[string]string{
+		"GOROOT_1_24_X64":    "/opt/hostedtoolcache/go/1.24.0/x64",
+		"GOROOT_999_1_ARM64": "/opt/hostedtoolcache/go/999.1.0/arm64",
+	}
+	aliasNames := []string{"GOROOT_1_24_X64", "GOROOT_999_1_ARM64"}
+	probe := `
+set -euo pipefail
+source "$1"
+shift
+workcell_require_canonical_build_environment
+workcell_require_canonical_build_environment
+for name in "$@"; do
+  if declare -p "$name" >/dev/null 2>&1; then
+    printf 'retained:%s\n' "$name"
+    exit 3
+  fi
+done
+printf 'aliases-scrubbed\n'
+`
+	code, output := canonicalBuildEnvProbeWithHelper(t, realHelper, probe, aliases, aliasNames...)
+	if code != 0 || output != "aliases-scrubbed\n" {
+		t.Fatalf("passive hosted Go aliases were not scrubbed: code=%d output=%q", code, output)
+	}
+
+	readonlyValue := "/tmp/workcell-readonly-hosted-alias-secret"
+	readonlyProbe := `
+set -uo pipefail
+source "$1"
+readonly GOROOT_1_24_X64
+rc=0
+workcell_require_canonical_build_environment || rc=$?
+exit "$rc"
+`
+	code, output = canonicalBuildEnvProbeWithHelper(
+		t,
+		realHelper,
+		readonlyProbe,
+		map[string]string{"GOROOT_1_24_X64": readonlyValue},
+	)
+	if code != 2 ||
+		!strings.Contains(output, "could not scrub ambient GOROOT_1_24_X64") ||
+		strings.Contains(output, readonlyValue) {
+		t.Fatalf("readonly hosted alias did not fail closed without caller errexit: code=%d output=%q", code, output)
+	}
+
+	classifierMutant := filepath.Join(t.TempDir(), "canonical-build-env.sh")
+	writeCanonicalMutation(
+		t,
+		realHelper,
+		classifierMutant,
+		"    if _workcell_canonical_env_is_passive_go_toolcache_alias \"${name}\"; then\n",
+		"    if false; then\n",
+	)
+	if code, output = canonicalBuildEnvProbeWithHelper(t, classifierMutant, probe, aliases, aliasNames...); code != 2 {
+		t.Fatalf("tool-cache classifier-removal mutant was not killed: code=%d output=%q", code, output)
+	}
+
+	scrubMutant := filepath.Join(t.TempDir(), "canonical-build-env.sh")
+	writeCanonicalMutation(
+		t,
+		realHelper,
+		scrubMutant,
+		"    if _workcell_canonical_env_is_passive_go_toolcache_alias \"${name}\"; then\n      if ! unset \"${name}\" 2>/dev/null; then\n        printf 'Canonical build environment could not scrub ambient %s.\\n' \"${name}\" >&2\n        return 2\n      fi\n      continue\n    fi\n",
+		"    if _workcell_canonical_env_is_passive_go_toolcache_alias \"${name}\"; then\n      :\n      continue\n    fi\n",
+	)
+	if code, output = canonicalBuildEnvProbeWithHelper(t, scrubMutant, probe, aliases, aliasNames...); code != 3 ||
+		!strings.Contains(output, "retained:") {
+		t.Fatalf("tool-cache scrub-removal mutant was not killed: code=%d output=%q", code, output)
+	}
+
+	unsetFailureMutant := filepath.Join(t.TempDir(), "canonical-build-env.sh")
+	writeCanonicalMutation(
+		t,
+		realHelper,
+		unsetFailureMutant,
+		"      if ! unset \"${name}\" 2>/dev/null; then\n        printf 'Canonical build environment could not scrub ambient %s.\\n' \"${name}\" >&2\n        return 2\n      fi\n",
+		"      unset \"${name}\" 2>/dev/null\n",
+	)
+	if code, output = canonicalBuildEnvProbeWithHelper(
+		t,
+		unsetFailureMutant,
+		readonlyProbe,
+		map[string]string{"GOROOT_1_24_X64": readonlyValue},
+	); code != 0 {
+		t.Fatalf("unset-failure mutant was not killed: code=%d output=%q", code, output)
 	}
 }
 
@@ -821,6 +917,9 @@ func TestCanonicalBuildEnvironmentScopeAndReachability(t *testing.T) {
 		"exact `GOENV=off`",
 		"exact `GOWORK=off`",
 		"`GOPATH`, `GOCACHE`, and `GOMODCACHE`",
+		"`GOROOT_<major>_<minor>_{X64,ARM64}`",
+		"removed before any descendant runs",
+		"near-matches still fail closed",
 		"explicitly lower assurance",
 		"G0a1a2",
 		"G0a1b",

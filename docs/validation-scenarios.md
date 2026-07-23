@@ -81,7 +81,10 @@ explicitly source `scripts/lib/canonical-build-env.sh`.
 
 The gate rejects every nonempty ambient shell-identifier `GO*` and `CGO*`
 variable except exact `GOENV=off`, exact `GOWORK=off`, empty `GOFLAGS`, and
-caller-selected `GOPATH`, `GOCACHE`, and `GOMODCACHE` storage paths. It also
+caller-selected `GOPATH`, `GOCACHE`, and `GOMODCACHE` storage paths. Passive
+hosted-runner tool-cache aliases matching exact
+`GOROOT_<major>_<minor>_{X64,ARM64}` grammar are not Go tool inputs and are
+removed before any descendant runs; near-matches still fail closed. The gate also
 rejects ambient external compiler/tool selectors, `NETRC`, `GCM_INTERACTIVE`,
 nonempty `BASH_ENV` or `ENV`, every retained `BASH_FUNC_*` entry,
 noncanonical shell-identifier `GIT_*` overrides, and system/global Git config
