@@ -155,7 +155,7 @@ Always run the smallest local validation that proves the actual change. When
 the work updates repo-wide instructions or multiple docs/skills, finish with:
 
 ```sh
-bash ./scripts/validate-repo.sh
+/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh
 ```
 
 Use the GitHub plugin helpers when they fit the task:
