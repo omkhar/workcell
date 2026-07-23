@@ -75,6 +75,58 @@ state:
     `--approved-large-certified-adapter` during host publication
 
 They cover repo shape, runtime contracts, smoke behavior, and reproducibility.
+The G0a1a1 canonical-build-environment unit covers `validate-repo`,
+`dev-quick-check`, and the hosted-controls verifier. These three roots
+explicitly source `scripts/lib/canonical-build-env.sh`.
+
+The gate rejects every nonempty ambient shell-identifier `GO*` and `CGO*`
+variable except exact `GOENV=off`, exact `GOWORK=off`, empty `GOFLAGS`, and
+caller-selected `GOPATH`, `GOCACHE`, and `GOMODCACHE` storage paths. It also
+rejects ambient external compiler/tool selectors, `NETRC`, `GCM_INTERACTIVE`,
+nonempty `BASH_ENV` or `ENV`, every retained `BASH_FUNC_*` entry,
+noncanonical shell-identifier `GIT_*` overrides, and system/global Git config
+and attributes. Invalid identifiers exposed by the shell fail generically
+before indirect expansion; raw invalid names hidden by the shell and not
+recognized as tool variables are outside this unit. Set-empty `BASH_ENV` and
+`ENV` are removed so ordinary Bash descendants cannot consume them. The three
+allowed storage paths and their contents are explicitly lower assurance; exact
+tool and build-input identity remains a separate certification dependency.
+Production/default graph checks remain untagged.
+
+G0a1a1 does not yet claim complete CI/release workflow-root closure. G0a1a2
+must close canonical-state propagation through trusted-entrypoint children,
+including forged-sentinel behavior. G0a1b must close the shared validate job's
+containerized archive boundary and early token lifecycle. G0a1c must close
+`ci-plan` and its direct `pre-merge` caller with resident-only base selection,
+no implicit network or authentication, and fail-closed changed-file
+collection. G0a2 must wire and test the remaining build/release helpers,
+including `build-and-test`, pin checks and updates, smoke and manifest
+generation, invariant/release-bundle/reproducibility checks, and
+upstream-release and `verify-build-input-manifest` verification. After G0a2,
+the direct `job-pr-shape`, `job-docs`, `job-mutation`, `job-fuzz`,
+`check-workflows`, and `check-release-tag-signature` roots remain for G0b.
+Release certification stays blocked until these dependencies land.
+
+The gate begins only after the shell process starts. Its startup-state claim
+therefore requires the reviewed privileged shebang, which ignores `BASH_ENV`,
+`ENV`, and imported functions, and clears `CDPATH` during root discovery.
+Launching a root through an arbitrary interpreter is outside this unit. The
+gate also does not constrain arbitrary direct `go` invocations, authenticate
+the local repository's Git administrative metadata, or make
+candidate-controlled scripts trusted. The whole local administrative plane,
+including repository config, refs, index and worktree state, hooks, object and
+alternates storage, replace/graft/shallow data, and `.git/info/attributes`,
+remains an immutable-tree, controller, and scan dependency. It also does not
+authenticate later `PATH` resolution, tool binaries, or the three allowed
+storage roots and their module/build-cache contents. Ambient Go selector
+variables for module proxy, checksum, and auth behavior are rejected, but
+G0a1a does not authenticate the resulting network policy or credential files
+selected through `HOME` (including `.netrc`). General process networking
+variables and the contents reachable through the three allowed storage paths
+also remain outside this unit. Beyond the direct startup-code surfaces above,
+shell semantic and tracing state such as `SHELLOPTS`, `BASHOPTS`,
+`BASH_XTRACEFD`, and descendant `CDPATH` remain a G0a2a hygiene dependency.
+
 They also now cover canonical requirement traceability, host-side policy
 inspection and explainability, host-side detached session inventory, control,
 logs/timeline, clean-base diff/export behavior, and operator-contract parity.

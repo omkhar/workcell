@@ -177,7 +177,7 @@ If `scripts/workcell` changed, also run:
 If contract or release-facing docs changed broadly, finish with:
 
 ```sh
-bash ./scripts/validate-repo.sh
+/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh
 ```
 
 ## Blocking rule

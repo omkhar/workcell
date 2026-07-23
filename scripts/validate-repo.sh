@@ -1,7 +1,11 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
+# shellcheck source=scripts/lib/canonical-build-env.sh
+source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
+workcell_require_modern_privileged_bash "$@"
+workcell_require_canonical_build_environment
 SKIP_HEAVY_HOST_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 VALIDATION_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
 
@@ -154,6 +158,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/install-dev-tools.sh"
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
+  "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
   "${ROOT_DIR}/scripts/lib/go-run-env.sh"
   "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
   "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"

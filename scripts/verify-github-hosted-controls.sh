@@ -1,9 +1,13 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
+# shellcheck source=scripts/lib/canonical-build-env.sh
+source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
+workcell_require_modern_privileged_bash "$@"
+workcell_require_canonical_build_environment
 POLICY_PATH="${WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH:-${ROOT_DIR}/policy/github-hosted-controls.toml}"
-# shellcheck source=/dev/null
+# shellcheck source=scripts/lib/go-run-env.sh
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 require_tool() {

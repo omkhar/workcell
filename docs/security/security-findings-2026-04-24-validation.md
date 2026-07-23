@@ -81,7 +81,7 @@ bash ./scripts/verify-operator-contract.sh
 bash ./scripts/verify-requirements-coverage.sh
 bash ./scripts/check-dead-code.sh
 bash ./scripts/check-public-repo-hygiene.sh
-bash ./scripts/validate-repo.sh
+/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh
 ./scripts/workcell --gc
 ```
 
