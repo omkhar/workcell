@@ -126,7 +126,7 @@ variables for module proxy, checksum, and auth behavior are rejected, but
 G0a1a does not authenticate the resulting network policy or credential files
 selected through `HOME` (including `.netrc`). General process networking
 variables and the contents reachable through the three allowed storage paths
-also remain outside this unit. Beyond the direct startup-code surfaces above,
+also remain outside this unit. Beyond arbitrary-interpreter startup-code surfaces,
 shell semantic and tracing state such as `SHELLOPTS`, `BASHOPTS`,
 `BASH_XTRACEFD`, and descendant `CDPATH` remain a G0a2a hygiene dependency.
 
@@ -268,29 +268,15 @@ Use `./scripts/ci-plan.sh` to see which mirrored lanes a given local
 
 ### G0a1c resident changed-file planning
 
-`ci-plan.sh` never fetches the base branch. Automatic changed-file discovery is
-resident-only: it validates `--base` as a branch name, prefers an exact
-resident `refs/remotes/origin/<base>` ref, and falls back to the exact local
-branch only after confirming the remote ref is absent and rechecking that
-absence before accepting the fallback. A present but unreadable or malformed
-ref, an unexpected ref-presence status, a missing commit object, or a Git
-command failure stops planning.
+`ci-plan.sh` never fetches. It prefers exact resident `origin/<base>` state, accepts local fallback only after two absence checks, and requires exactly one resident merge base.
 
-The collector rejects symlinked submodule ancestry, then binds the physical
-worktree and resolved Git directory for the superproject and every populated
-submodule. Before any worktree diff it overrides ambient bare/worktree, global
-and system config and attributes, fsmonitor, credential, prompt,
-replacement-object, graft, and lazy-fetch authority. Versioned attributes use
-each repository's selected commit; local info attributes remain inspectable.
-Any clean or process filter stops planning before worktree diff.
-Tracked modifications and deletions, staged changes, ordinary untracked files,
-and dirty submodules remain visible to lane selection.
+The collector binds the physical worktree and Git directory, scrubs inherited shell/index/glob authority, and rejects nonregular or split-index state, shallow graphs, hidden flags, conversion filters, present gitlinks, and unsafe tracked ancestry.
+It builds a zero-stat flat index under its run root before worktree inspection, so cached stats are not trusted and the real index is not mutated. Every present stage-0 regular tracked file is raw-hashed with conversions disabled; `text`, `eol`, `ident`, and `working-tree-encoding` cannot hide byte mismatches.
+Worktree/config behavior, replacement objects, grafts, lazy fetch, and local/base attributes are pinned or inspected explicitly; valid UTF-8 changed paths remain NUL-framed until JSON encoding, while other path bytes fail closed.
 
-This is a scoped Git/ref/history/worktree guarantee, not a claim that the whole
-planner is hermetic or offline. JSON serialization, planner temporary-state
-hardening, and the later `go run` dependency/cache path remain separate
-follow-up work. Explicit `--changed-file` inputs continue to bypass automatic
-Git discovery without changing lane-planner semantics.
+Worktree, index, or untracked `.gitignore` case variants stop planning. Only `HEAD` rules are honored, never `.git/info/exclude`. Tracked, staged, deleted, and ordinary untracked paths remain visible. Only absent gitlinks are accepted.
+
+This scoped guarantee assumes static repository state; the planner is not wholly hermetic. `pr-parity` binds the publishable tree/status after planning and rechecks before evidence, but does not lock Git administration. JSON/temp-state hardening and the later `go run` cache path remain follow-ups. Explicit paths still bypass automatic discovery.
 
 ## Credential placement rule
 
