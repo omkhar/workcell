@@ -266,6 +266,32 @@ Workcell now also keeps a machine-checked local parity inventory in:
 Use `./scripts/ci-plan.sh` to see which mirrored lanes a given local
 `pre-merge` profile will execute and which selected lanes remain GitHub-only.
 
+### G0a1c resident changed-file planning
+
+`ci-plan.sh` never fetches the base branch. Automatic changed-file discovery is
+resident-only: it validates `--base` as a branch name, prefers an exact
+resident `refs/remotes/origin/<base>` ref, and falls back to the exact local
+branch only after confirming the remote ref is absent and rechecking that
+absence before accepting the fallback. A present but unreadable or malformed
+ref, an unexpected ref-presence status, a missing commit object, or a Git
+command failure stops planning.
+
+The collector rejects symlinked submodule ancestry, then binds the physical
+worktree and resolved Git directory for the superproject and every populated
+submodule. Before any worktree diff it overrides ambient bare/worktree, global
+and system config and attributes, fsmonitor, credential, prompt,
+replacement-object, graft, and lazy-fetch authority. Versioned attributes use
+each repository's selected commit; local info attributes remain inspectable.
+Any clean or process filter stops planning before worktree diff.
+Tracked modifications and deletions, staged changes, ordinary untracked files,
+and dirty submodules remain visible to lane selection.
+
+This is a scoped Git/ref/history/worktree guarantee, not a claim that the whole
+planner is hermetic or offline. JSON serialization, planner temporary-state
+hardening, and the later `go run` dependency/cache path remain separate
+follow-up work. Explicit `--changed-file` inputs continue to bypass automatic
+Git discovery without changing lane-planner semantics.
+
 ## Credential placement rule
 
 Provider credentials belong in the injection policy or the reviewed manual
