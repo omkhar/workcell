@@ -476,8 +476,11 @@ func TestCIPlanRejectsSymlinkedTrackedAncestryBeforeRawRead(t *testing.T) {
 	requireCIPlanError(t, fixture.run("--base", "main"), -1, "tracked-file ancestry is not a regular directory")
 	requireCIPlanExists(t, marker, false)
 }
-func TestCIPlanRejectsEnclosingRepository(t *testing.T) {
+func TestCIPlanRejectsRepositoryMetadataRedirection(t *testing.T) {
 	fixture := newCIPlanTopicFixture(t)
+	fixture.writeFile(".git/commondir", []byte("../../.git\n"), 0o600)
+	requireCIPlanError(t, fixture.run("--base", "main"), -1, "must not redirect the common Git directory")
+	ciPlanMust(t, os.Remove(filepath.Join(fixture.root, ".git", "commondir")))
 	parentGit := filepath.Join(filepath.Dir(fixture.root), ".git")
 	ciPlanMust(t, os.Rename(filepath.Join(fixture.root, ".git"), parentGit))
 	fixture.writeFile(".git", []byte("gitdir: "+parentGit+"\n"), 0o600)

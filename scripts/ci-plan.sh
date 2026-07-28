@@ -53,6 +53,7 @@ git_plan_error() {
 bootstrap_git_dir() {
   local work_tree="${ROOT_DIR}" git_dir="" status=0
   [[ ! -L "${work_tree}/.git" && -d "${work_tree}/.git" ]] || git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+  [[ ! -e "${work_tree}/.git/commondir" && ! -L "${work_tree}/.git/commondir" ]] || git_plan_error 'Planner repository metadata must not redirect the common Git directory.\n'
   git_dir="$(
     /usr/bin/env -i \
       "PATH=${PATH}" "HOME=${HOME:-/tmp}" "TMPDIR=${TMPDIR:-/tmp}" LC_ALL=C \
