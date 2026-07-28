@@ -16,6 +16,7 @@ GitHub-only behavior do not drift silently:
 - `./scripts/ci-plan.sh` explains which mirrored lanes apply locally and which
   selected lanes remain GitHub-only for a given profile, event, labels, and
   changed files
+- its fail-closed resident Git discovery rejects hidden/split-index state, shallow graphs, unsafe ancestry, mutable ignores, and present gitlinks; it neutralizes cached stats, ignores `.git/info/exclude`, and bypasses built-in conversions with raw bytes
 
 That inventory underpins the local `./scripts/pre-merge.sh` profiles and the
 repo-local `./scripts/repo-publish-pr.sh` publication gate.

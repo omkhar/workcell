@@ -534,7 +534,7 @@ func workflowLanePathPattern(glob string) *regexp.Regexp {
 	pattern = strings.ReplaceAll(pattern, `\*\*`, `.*`)
 	pattern = strings.ReplaceAll(pattern, `\*`, `[^/]*`)
 	pattern = strings.ReplaceAll(pattern, `\?`, `[^/]`)
-	return regexp.MustCompile("^" + pattern + "$")
+	return regexp.MustCompile("(?s)^" + pattern + "$")
 }
 
 func workflowLaneAvailableLocally(entry WorkflowLaneManifestEntry) (bool, string) {
