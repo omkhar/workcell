@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
-
 package testkit
 
 import (
@@ -23,12 +22,10 @@ type ciPlanCapturedConfig struct {
 	Labels       []string `json:"labels"`
 	ChangedFiles []string `json:"changed_files"`
 }
-
 type ciPlanResult struct {
 	code           int
 	stdout, stderr string
 }
-
 type ciPlanFixture struct {
 	t                                      *testing.T
 	root, binDir, homeDir, tmpDir, realGit string
@@ -478,6 +475,11 @@ func TestCIPlanRejectsSymlinkedTrackedAncestryBeforeRawRead(t *testing.T) {
 	ciPlanMust(t, os.Symlink(external, filepath.Join(fixture.root, "tracked")))
 	requireCIPlanError(t, fixture.run("--base", "main"), -1, "tracked-file ancestry is not a regular directory")
 	requireCIPlanExists(t, marker, false)
+}
+func TestCIPlanRejectsEnclosingRepository(t *testing.T) {
+	fixture := newCIPlanTopicFixture(t)
+	ciPlanMust(t, os.Rename(filepath.Join(fixture.root, ".git"), filepath.Join(filepath.Dir(fixture.root), ".git")))
+	requireCIPlanError(t, fixture.run("--base", "main"), -1, "anchored by the script root .git entry")
 }
 func TestCIPlanGitCollectorBindsCanonicalWorktreeAndOverridesLocalConfig(t *testing.T) {
 	fixture := newCIPlanTopicFixture(t)
