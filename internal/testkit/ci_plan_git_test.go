@@ -478,8 +478,10 @@ func TestCIPlanRejectsSymlinkedTrackedAncestryBeforeRawRead(t *testing.T) {
 }
 func TestCIPlanRejectsEnclosingRepository(t *testing.T) {
 	fixture := newCIPlanTopicFixture(t)
-	ciPlanMust(t, os.Rename(filepath.Join(fixture.root, ".git"), filepath.Join(filepath.Dir(fixture.root), ".git")))
-	requireCIPlanError(t, fixture.run("--base", "main"), -1, "anchored by the script root .git entry")
+	parentGit := filepath.Join(filepath.Dir(fixture.root), ".git")
+	ciPlanMust(t, os.Rename(filepath.Join(fixture.root, ".git"), parentGit))
+	fixture.writeFile(".git", []byte("gitdir: "+parentGit+"\n"), 0o600)
+	requireCIPlanError(t, fixture.run("--base", "main"), -1, "anchored by the script root .git directory")
 }
 func TestCIPlanGitCollectorBindsCanonicalWorktreeAndOverridesLocalConfig(t *testing.T) {
 	fixture := newCIPlanTopicFixture(t)
