@@ -82,6 +82,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	goModPath := filepath.Join(repoRoot, "go.mod")
 	cargoManifestPath := filepath.Join(repoRoot, "runtime", "container", "rust", "Cargo.toml")
 	installDevToolsScriptPath := filepath.Join(repoRoot, "scripts", "install-dev-tools.sh")
+	validateRepoScriptPath := filepath.Join(repoRoot, "scripts", "validate-repo.sh")
 	markdownlintPackageJSONPath := filepath.Join(repoRoot, "tools", "markdownlint", "package.json")
 	markdownlintPackageLockPath := filepath.Join(repoRoot, "tools", "markdownlint", "package-lock.json")
 	rustToolchainPath := filepath.Join(repoRoot, "runtime", "container", "rust", "rust-toolchain.toml")
@@ -116,6 +117,10 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		return err
 	}
 	installDevToolsScript, err := readText(installDevToolsScriptPath)
+	if err != nil {
+		return err
+	}
+	validateRepoScript, err := readText(validateRepoScriptPath)
 	if err != nil {
 		return err
 	}
@@ -306,6 +311,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		markdownlintPackageLock,
 		markdownlintPackageLockPath,
 		installDevToolsScriptPath,
+		validateRepoScript,
+		validateRepoScriptPath,
 	); err != nil {
 		return err
 	}

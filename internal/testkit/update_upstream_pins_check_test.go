@@ -393,6 +393,7 @@ func writeUpdaterFixture(t *testing.T, manifest updaterFixtureManifest, manifest
 		"scripts/install-dev-tools.sh",
 		"scripts/lib/trusted-entrypoint.sh",
 		"scripts/update-upstream-pins.sh",
+		"scripts/validate-repo.sh",
 		"scripts/verify-github-hosted-controls.sh",
 		"tools/markdownlint/package-lock.json",
 		"tools/markdownlint/package.json",

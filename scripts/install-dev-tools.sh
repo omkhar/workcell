@@ -3,7 +3,12 @@
 # Detects macOS (brew) vs Linux (apt) and installs missing packages.
 set -euo pipefail
 
+ROOT_DIR="$(CDPATH='' cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
+readonly ROOT_DIR
 readonly MARKDOWNLINT_VERSION="0.49.1"
+readonly MARKDOWNLINT_DIR="${ROOT_DIR}/tools/markdownlint"
+readonly MARKDOWNLINT_BIN="${MARKDOWNLINT_DIR}/node_modules/.bin/markdownlint"
+readonly MARKDOWNLINT_LOCK_STAMP="${MARKDOWNLINT_DIR}/node_modules/.workcell-package-lock.json"
 readonly MARKDOWNLINT_NODE_22_MINIMUM="22.22.2"
 readonly MARKDOWNLINT_NODE_24_MINIMUM="24.15.0"
 readonly MARKDOWNLINT_NODE_OPEN_MINIMUM="26.0.0"
@@ -135,16 +140,6 @@ require_markdownlint_npm() {
   exit 1
 }
 
-markdownlint_needs_install() {
-  local current_version=""
-
-  if ! command -v markdownlint &>/dev/null; then
-    return 0
-  fi
-  current_version="$(markdownlint --version 2>/dev/null || true)"
-  [[ "${current_version}" != *"${MARKDOWNLINT_VERSION}"* ]]
-}
-
 echo "Checking host tools..."
 missing=()
 brew_missing=()
@@ -216,7 +211,7 @@ if ! command -v syft &>/dev/null; then
   append_unique_apt syft
 fi
 
-if [[ "${host_os}" == "Linux" ]] && markdownlint_needs_install; then
+if [[ "${host_os}" == "Linux" ]]; then
   require_markdownlint_node
   require_markdownlint_npm
 fi
@@ -238,11 +233,11 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   esac
 fi
 
-if markdownlint_needs_install; then
-  require_markdownlint_node
-  require_markdownlint_npm
-  echo "  npm install -g markdownlint-cli@${MARKDOWNLINT_VERSION}"
-  npm install -g "markdownlint-cli@${MARKDOWNLINT_VERSION}"
-fi
+require_markdownlint_node
+require_markdownlint_npm
+echo "  npm ci --prefix ${MARKDOWNLINT_DIR} --ignore-scripts --omit=dev"
+npm ci --prefix "${MARKDOWNLINT_DIR}" --ignore-scripts --omit=dev
+install -m 0444 "${MARKDOWNLINT_DIR}/package-lock.json" "${MARKDOWNLINT_LOCK_STAMP}"
+"${MARKDOWNLINT_BIN}" --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null
 
 echo "Done."

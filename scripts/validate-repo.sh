@@ -8,6 +8,23 @@ workcell_require_modern_privileged_bash "$@"
 workcell_require_canonical_build_environment
 SKIP_HEAVY_HOST_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 VALIDATION_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
+MARKDOWNLINT_LOCKFILE="${ROOT_DIR}/tools/markdownlint/package-lock.json"
+MARKDOWNLINT_BIN=""
+
+resolve_markdownlint_bin() {
+  local install_dir=""
+
+  for install_dir in \
+    "${ROOT_DIR}/tools/markdownlint" \
+    "/usr/local/lib/workcell-markdownlint"; do
+    if [[ -x "${install_dir}/node_modules/.bin/markdownlint" ]] &&
+      cmp -s "${MARKDOWNLINT_LOCKFILE}" "${install_dir}/node_modules/.workcell-package-lock.json"; then
+      printf '%s\n' "${install_dir}/node_modules/.bin/markdownlint"
+      return 0
+    fi
+  done
+  return 1
+}
 
 HOME="${HOME:-/tmp/workcell-home}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
@@ -37,12 +54,17 @@ require_tool shellcheck
 require_tool shfmt
 require_tool go
 require_tool gofmt
-require_tool markdownlint
 require_tool yamllint
 require_tool cargo
 require_tool rustfmt
 require_tool git
+require_tool cmp
 require_cargo_subcommand clippy
+if ! MARKDOWNLINT_BIN="$(resolve_markdownlint_bin)"; then
+  echo "Missing or stale locked markdownlint tool: run ./scripts/install-dev-tools.sh on the host or rebuild the validator image" >&2
+  exit 1
+fi
+readonly MARKDOWNLINT_BIN
 
 case "${VALIDATION_PROFILE}" in
   repo-core | pr-parity | release-preflight) ;;
@@ -87,6 +109,7 @@ done < <(
     -path "${ROOT_DIR}/dist" -prune -o \
     -path "${ROOT_DIR}/tmp" -prune -o \
     -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+    -path "${ROOT_DIR}/tools/markdownlint/node_modules" -prune -o \
     -type f -name '*.py' -print | sort
 )
 
@@ -324,6 +347,7 @@ done < <(
     -path "${ROOT_DIR}/dist" -prune -o \
     -path "${ROOT_DIR}/tmp" -prune -o \
     -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+    -path "${ROOT_DIR}/tools/markdownlint/node_modules" -prune -o \
     -type f -name '*.toml' -print | sort
 )
 if [[ "${#toml_files[@]}" -gt 0 ]]; then
@@ -349,6 +373,7 @@ done < <(find "${ROOT_DIR}" \
   -path "${ROOT_DIR}/tmp" -prune -o \
   -path "${ROOT_DIR}/.venv" -prune -o \
   -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+  -path "${ROOT_DIR}/tools/markdownlint/node_modules" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/vendor" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \
   -type f \( -name '*.md' -o -name '*.txt' -o -name '*.1' \) -print0 | sort -z)
@@ -362,6 +387,7 @@ done < <(find "${ROOT_DIR}" \
   -path "${ROOT_DIR}/tmp" -prune -o \
   -path "${ROOT_DIR}/.venv" -prune -o \
   -path "${ROOT_DIR}/runtime/container/providers/node_modules" -prune -o \
+  -path "${ROOT_DIR}/tools/markdownlint/node_modules" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/vendor" -prune -o \
   -path "${ROOT_DIR}/runtime/container/rust/target" -prune -o \
   -type f -name '*.md' -print0 | sort -z)
@@ -373,7 +399,7 @@ else
 fi
 
 if [[ "${#markdown_files[@]}" -gt 0 ]]; then
-  markdownlint "${markdown_files[@]}"
+  "${MARKDOWNLINT_BIN}" "${markdown_files[@]}"
 fi
 
 validate_manpage

@@ -21,6 +21,8 @@ func validateNodeMarkdownlintPinnedInputs(
 	markdownlintPackageLock markdownlintPackageLock,
 	markdownlintPackageLockPath string,
 	installDevToolsScriptPath string,
+	validateRepoScript string,
+	validateRepoScriptPath string,
 ) error {
 	validatorMarkdownlintVersion, err := requireArg(validatorDockerfile, "MARKDOWNLINT_VERSION", cfg.ValidatorDockerfilePath)
 	if err != nil {
@@ -98,25 +100,51 @@ func validateNodeMarkdownlintPinnedInputs(
 			return fmt.Errorf("%s must enforce the displayed Node.js range using %q", installDevToolsScriptPath, needle)
 		}
 	}
-	if !strings.Contains(installDevToolsScript, "if [[ \"${host_os}\" == \"Linux\" ]] && markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\nif [[ ${#missing[@]} -gt 0 ]]; then") {
-		return fmt.Errorf("%s must validate Linux Node.js/npm compatibility before apt installs when markdownlint-cli needs installation", installDevToolsScriptPath)
+	if !strings.Contains(installDevToolsScript, "if [[ \"${host_os}\" == \"Linux\" ]]; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\nif [[ ${#missing[@]} -gt 0 ]]; then") {
+		return fmt.Errorf("%s must validate Linux Node.js/npm compatibility before apt installs", installDevToolsScriptPath)
 	}
-	markdownlintInstallBody, err := requireDelimitedText(
-		installDevToolsScript,
-		"if markdownlint_needs_install; then\n",
-		"\nfi\n\necho \"Done.\"",
-		"markdownlint install block",
-		installDevToolsScriptPath,
-	)
-	if err != nil {
-		return err
+	for _, needle := range []string{
+		`readonly MARKDOWNLINT_DIR="${ROOT_DIR}/tools/markdownlint"`,
+		`readonly MARKDOWNLINT_BIN="${MARKDOWNLINT_DIR}/node_modules/.bin/markdownlint"`,
+		`readonly MARKDOWNLINT_LOCK_STAMP="${MARKDOWNLINT_DIR}/node_modules/.workcell-package-lock.json"`,
+	} {
+		if !strings.Contains(installDevToolsScript, needle) {
+			return fmt.Errorf("%s must define the repository-local locked markdownlint path using %q", installDevToolsScriptPath, needle)
+		}
 	}
-	if err := requireOrderedText(markdownlintInstallBody, "markdownlint install block", installDevToolsScriptPath, []string{
+	if strings.Contains(installDevToolsScript, "npm install -g") {
+		return fmt.Errorf("%s must not install markdownlint-cli globally", installDevToolsScriptPath)
+	}
+	lockedInstallSequence := "require_markdownlint_node\nrequire_markdownlint_npm\n" +
+		"echo \"  npm ci --prefix ${MARKDOWNLINT_DIR} --ignore-scripts --omit=dev\"\n" +
+		"npm ci --prefix \"${MARKDOWNLINT_DIR}\" --ignore-scripts --omit=dev\n" +
+		"install -m 0444 \"${MARKDOWNLINT_DIR}/package-lock.json\" \"${MARKDOWNLINT_LOCK_STAMP}\"\n" +
+		"\"${MARKDOWNLINT_BIN}\" --version | grep -F \"${MARKDOWNLINT_VERSION}\" >/dev/null"
+	if !strings.Contains(installDevToolsScript, lockedInstallSequence) {
+		return fmt.Errorf("%s must validate Node.js/npm immediately, install the exact markdownlint lockfile without lifecycle scripts, and verify the locked binary", installDevToolsScriptPath)
+	}
+	if err := requireOrderedText(installDevToolsScript, "markdownlint install sequence", installDevToolsScriptPath, []string{
 		"require_markdownlint_node",
 		"require_markdownlint_npm",
-		"npm install -g \"markdownlint-cli@${MARKDOWNLINT_VERSION}\"",
+		`npm ci --prefix "${MARKDOWNLINT_DIR}" --ignore-scripts --omit=dev`,
+		`"${MARKDOWNLINT_BIN}" --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
 	}); err != nil {
-		return fmt.Errorf("%s must validate the Node.js floor and npm immediately before installing markdownlint-cli: %w", installDevToolsScriptPath, err)
+		return fmt.Errorf("%s must validate Node.js/npm, install the exact markdownlint lockfile without lifecycle scripts, and verify the locked binary: %w", installDevToolsScriptPath, err)
+	}
+	for _, needle := range []string{
+		`MARKDOWNLINT_LOCKFILE="${ROOT_DIR}/tools/markdownlint/package-lock.json"`,
+		`"${ROOT_DIR}/tools/markdownlint"`,
+		`"/usr/local/lib/workcell-markdownlint"`,
+		`cmp -s "${MARKDOWNLINT_LOCKFILE}" "${install_dir}/node_modules/.workcell-package-lock.json"`,
+		`if ! MARKDOWNLINT_BIN="$(resolve_markdownlint_bin)"; then`,
+		`"${MARKDOWNLINT_BIN}" "${markdown_files[@]}"`,
+	} {
+		if !strings.Contains(validateRepoScript, needle) {
+			return fmt.Errorf("%s must execute the repository-local locked markdownlint binary using %q", validateRepoScriptPath, needle)
+		}
+	}
+	if strings.Contains(validateRepoScript, "require_tool markdownlint") || strings.Contains(validateRepoScript, "\n  markdownlint \"${markdown_files[@]}\"") {
+		return fmt.Errorf("%s must not trust a PATH-resolved markdownlint binary", validateRepoScriptPath)
 	}
 	markdownlintNodeHintBody, err := requireDelimitedText(
 		installDevToolsScript,
@@ -162,7 +190,7 @@ func validateNodeMarkdownlintPinnedInputs(
 	requireMarkdownlintNPMBody, err := requireDelimitedText(
 		installDevToolsScript,
 		"require_markdownlint_npm() {\n",
-		"\n}\n\nmarkdownlint_needs_install()",
+		"\n}\n\necho \"Checking host tools...\"",
 		"markdownlint npm check",
 		installDevToolsScriptPath,
 	)
@@ -182,6 +210,7 @@ func validateNodeMarkdownlintPinnedInputs(
 		`COPY tools/markdownlint/package.json tools/markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/`,
 		`deadcode -h >/dev/null`,
 		`npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev`,
+		`install -m 0444 /usr/local/lib/workcell-markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/node_modules/.workcell-package-lock.json`,
 		`ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint`,
 		`markdownlint --version | grep -F "${MARKDOWNLINT_VERSION}" >/dev/null`,
 	} {

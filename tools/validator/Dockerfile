@@ -192,6 +192,7 @@ RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstra
   && chmod 0755 /usr/local/bin/hadolint \
   && GOBIN=/usr/local/bin go install "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" \
   && npm ci --prefix /usr/local/lib/workcell-markdownlint --ignore-scripts --omit=dev \
+  && install -m 0444 /usr/local/lib/workcell-markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/node_modules/.workcell-package-lock.json \
   && ln -sf /usr/local/lib/workcell-markdownlint/node_modules/.bin/markdownlint /usr/local/bin/markdownlint \
   && go version | grep -F "go version go${GO_VERSION} " >/dev/null \
   && deadcode -h >/dev/null \
