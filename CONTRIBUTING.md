@@ -37,12 +37,14 @@ Local development expects:
 - `actionlint`
 - `zizmor`
 - `jq`
+- Node.js and npm (the bootstrap helper enforces the repository-locked
+  markdownlint runtime requirement)
 - `cargo`, `rustfmt`, and `clippy`
 
 On macOS with Homebrew:
 
 ```bash
-brew install go shellcheck shfmt yamllint codespell actionlint zizmor jq
+brew install go node shellcheck shfmt yamllint codespell actionlint zizmor jq
 brew install --cask docker
 rustup-init  # installs cargo, rustfmt, clippy
 ```

@@ -240,9 +240,12 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 	for _, want := range []string{
 		`command -v npm`,
 		`append_unique_brew node`,
-		`if [[ "${host_os}" == "Linux" ]] && markdownlint_needs_install; then`,
+		`if [[ "${host_os}" == "Linux" ]]; then`,
 		`require_markdownlint_node`,
 		`require_markdownlint_npm`,
+		`npm ci --prefix "${MARKDOWNLINT_DIR}" --ignore-scripts --omit=dev`,
+		`install -m 0444 "${MARKDOWNLINT_DIR}/package-lock.json" "${MARKDOWNLINT_LOCK_STAMP}"`,
+		`"${MARKDOWNLINT_BIN}" --version`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
@@ -257,6 +260,108 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 		if strings.Contains(script, unwanted) {
 			t.Fatalf("%s unexpectedly contains %q", scriptPath, unwanted)
 		}
+	}
+}
+
+func TestValidateRepoUsesLockedMarkdownlint(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "validate-repo.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	for _, want := range []string{
+		`MARKDOWNLINT_LOCKFILE="${ROOT_DIR}/tools/markdownlint/package-lock.json"`,
+		`"${ROOT_DIR}/tools/markdownlint"`,
+		`"/usr/local/lib/workcell-markdownlint"`,
+		`cmp -s "${MARKDOWNLINT_LOCKFILE}" "${install_dir}/node_modules/.workcell-package-lock.json"`,
+		`if ! MARKDOWNLINT_BIN="$(resolve_markdownlint_bin)"; then`,
+		`"${MARKDOWNLINT_BIN}" "${markdown_files[@]}"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("%s does not contain %q", scriptPath, want)
+		}
+	}
+	if strings.Contains(script, "require_tool markdownlint") {
+		t.Fatalf("%s should not trust a PATH-resolved markdownlint", scriptPath)
+	}
+	if count := strings.Count(script, `-path "${ROOT_DIR}/tools/markdownlint/node_modules" -prune -o`); count < 4 {
+		t.Fatalf("%s should prune locked markdownlint dependencies from repository scans; found %d guards", scriptPath, count)
+	}
+}
+
+func TestValidateRepoRejectsStaleMarkdownlintInstall(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "validate-repo.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
+	start := strings.Index(script, `MARKDOWNLINT_LOCKFILE=`)
+	if start < 0 {
+		t.Fatalf("%s is missing the markdownlint resolver variables", scriptPath)
+	}
+	end := strings.Index(script[start:], "\n}\n\nHOME=")
+	if end < 0 {
+		t.Fatalf("%s is missing the end of resolve_markdownlint_bin", scriptPath)
+	}
+	resolver := script[start : start+end+3]
+
+	fixtureRoot := t.TempDir()
+	installDir := filepath.Join(fixtureRoot, "tools", "markdownlint")
+	binPath := filepath.Join(installDir, "node_modules", ".bin", "markdownlint")
+	stampPath := filepath.Join(installDir, "node_modules", ".workcell-package-lock.json")
+	lockPath := filepath.Join(installDir, "package-lock.json")
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, []byte("current lock\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stampPath, []byte("stale lock\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	probePath := filepath.Join(t.TempDir(), "markdownlint-resolver-probe.sh")
+	probe := "#!/bin/bash\nset -euo pipefail\nROOT_DIR=\"$1\"\n" + resolver + "\nresolve_markdownlint_bin\n"
+	if err := os.WriteFile(probePath, []byte(probe), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("/bin/bash", probePath, fixtureRoot).CombinedOutput(); err == nil {
+		t.Fatalf("resolve_markdownlint_bin accepted a stale lock stamp: %s", output)
+	}
+	if err := os.Chmod(stampPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stampPath, []byte("current lock\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command("/bin/bash", probePath, fixtureRoot).CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve_markdownlint_bin rejected a current lock stamp: %v\n%s", err, output)
+	}
+	if got, want := strings.TrimSpace(string(output)), binPath; got != want {
+		t.Fatalf("resolve_markdownlint_bin = %q, want %q", got, want)
+	}
+}
+
+func TestDocsValidatorPrunesLockedMarkdownlintDependencies(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "ci", "run-docs-in-validator.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), `-path /workspace/tools/markdownlint/node_modules -prune -o`) {
+		t.Fatalf("%s should prune locked markdownlint dependencies from documentation scans", scriptPath)
 	}
 }
 

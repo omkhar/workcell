@@ -6,6 +6,7 @@
 !runtime/container/**
 !tools/markdownlint/
 !tools/markdownlint/**
+tools/markdownlint/node_modules/
 runtime/container/providers/node_modules/
 runtime/container/rust/target/
 runtime/container/rust/fuzz/target/

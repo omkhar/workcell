@@ -83,6 +83,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
+		"scripts/validate-repo.sh",
 		"scripts/verify-github-hosted-controls.sh",
 		"tools/markdownlint/package.json",
 		"tools/markdownlint/package-lock.json",
@@ -149,6 +150,11 @@ func rewritePinnedInputsFixtureFile(tb testing.TB, relativePath string, rewrite 
 func rewriteInstallDevToolsFixture(tb testing.TB, rewrite func(string) string) metadatautil.PinnedInputsConfig {
 	tb.Helper()
 	return rewritePinnedInputsFixtureFile(tb, "scripts/install-dev-tools.sh", rewrite)
+}
+
+func rewriteValidateRepoFixture(tb testing.TB, rewrite func(string) string) metadatautil.PinnedInputsConfig {
+	tb.Helper()
+	return rewritePinnedInputsFixtureFile(tb, "scripts/validate-repo.sh", rewrite)
 }
 
 func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInputsConfig, want string) {
@@ -721,25 +727,84 @@ func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNodeCheck(t *testin
 	t.Parallel()
 
 	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
-		return strings.Replace(content, "if markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\n  echo", "if markdownlint_needs_install; then\n  echo", 1)
+		return strings.Replace(content, "require_markdownlint_node\nrequire_markdownlint_npm\necho \"  npm ci", "echo \"  npm ci", 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, "immediately before installing markdownlint-cli")
+	requirePinnedInputsErrorContains(t, cfg, "install the exact markdownlint lockfile")
 }
 
-func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMInstall(t *testing.T) {
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingNPMCI(t *testing.T) {
 	t.Parallel()
 
 	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
-		return strings.Replace(content, "  npm install -g \"markdownlint-cli@${MARKDOWNLINT_VERSION}\"\n", "", 1)
+		return strings.Replace(content, "\nnpm ci --prefix \"${MARKDOWNLINT_DIR}\" --ignore-scripts --omit=dev\n", "\n", 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, "immediately before installing markdownlint-cli")
+	requirePinnedInputsErrorContains(t, cfg, "install the exact markdownlint lockfile")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerUnlockedNPMInstall(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "\nnpm ci --prefix \"${MARKDOWNLINT_DIR}\" --ignore-scripts --omit=dev", "\nnpm install --prefix \"${MARKDOWNLINT_DIR}\" --ignore-scripts --omit=dev", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "install the exact markdownlint lockfile")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerLifecycleScripts(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "\nnpm ci --prefix \"${MARKDOWNLINT_DIR}\" --ignore-scripts --omit=dev", "\nnpm ci --prefix \"${MARKDOWNLINT_DIR}\" --omit=dev", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "install the exact markdownlint lockfile")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingLockStamp(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
+		return strings.Replace(content, "install -m 0444 \"${MARKDOWNLINT_DIR}/package-lock.json\" \"${MARKDOWNLINT_LOCK_STAMP}\"\n", "", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "install the exact markdownlint lockfile")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintValidationMissingFreshnessCheck(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteValidateRepoFixture(t, func(content string) string {
+		return strings.Replace(
+			content,
+			`cmp -s "${MARKDOWNLINT_LOCKFILE}" "${install_dir}/node_modules/.workcell-package-lock.json"`,
+			`[[ -e "${install_dir}/node_modules/.workcell-package-lock.json" ]]`,
+			1,
+		)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "repository-local locked markdownlint binary")
+}
+
+func TestCheckPinnedInputsRejectsMarkdownlintValidatorMissingLockStamp(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewritePinnedInputsFixtureFile(t, "tools/validator/Dockerfile", func(content string) string {
+		return strings.Replace(content, "  && install -m 0444 /usr/local/lib/workcell-markdownlint/package-lock.json /usr/local/lib/workcell-markdownlint/node_modules/.workcell-package-lock.json \\\n", "", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, ".workcell-package-lock.json")
+}
+
+func TestCheckPinnedInputsRejectsPATHResolvedMarkdownlintValidation(t *testing.T) {
+	t.Parallel()
+
+	cfg := rewriteValidateRepoFixture(t, func(content string) string {
+		return strings.Replace(content, `"${MARKDOWNLINT_BIN}" "${markdown_files[@]}"`, `markdownlint "${markdown_files[@]}"`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "repository-local locked markdownlint binary")
 }
 
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerMissingLinuxEarlyNodeCheck(t *testing.T) {
 	t.Parallel()
 
 	cfg := rewriteInstallDevToolsFixture(t, func(content string) string {
-		return strings.Replace(content, "if [[ \"${host_os}\" == \"Linux\" ]] && markdownlint_needs_install; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\n", "", 1)
+		return strings.Replace(content, "if [[ \"${host_os}\" == \"Linux\" ]]; then\n  require_markdownlint_node\n  require_markdownlint_npm\nfi\n\n", "", 1)
 	})
 	requirePinnedInputsErrorContains(t, cfg, "before apt installs")
 }
