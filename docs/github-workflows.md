@@ -16,9 +16,14 @@ GitHub-only behavior do not drift silently:
 - `./scripts/ci-plan.sh` explains which mirrored lanes apply locally and which
   selected lanes remain GitHub-only for a given profile, event, labels, and
   changed files
+- its fail-closed resident Git discovery rejects hidden/split-index state, shallow graphs, unsafe ancestry, mutable ignores, and present gitlinks; it neutralizes cached stats, ignores `.git/info/exclude`, and bypasses built-in conversions with raw bytes
 
 That inventory underpins the local `./scripts/pre-merge.sh` profiles and the
-repo-local `./scripts/repo-publish-pr.sh` publication gate.
+repo-local `./scripts/repo-publish-pr.sh` publication gate. For
+publication-grade `pr-parity`, `pre-merge.sh` buffers the complete local
+dispatch list before execution, then runs each selected local script once in
+declared `local_order`; a lane that reads standard input cannot consume or skip
+later dispatcher records, and `--skip-repro` is rejected.
 For the narrow certified-adapter exception, local parity evidence must be
 generated with `./scripts/pre-merge.sh --profile pr-parity --label
 approved-large-certified-adapter`; host publication must use `workcell

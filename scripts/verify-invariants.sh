@@ -5106,6 +5106,7 @@ fi
 PREMERGE_HARNESS_ROOT="${BARRIER_VERIFY_ROOT}/premerge-harness"
 PREMERGE_FAKEBIN="${PREMERGE_HARNESS_ROOT}/fakebin"
 PREMERGE_LOG="${PREMERGE_HARNESS_ROOT}/premerge.log"
+PREMERGE_DISPATCH_LOG="${PREMERGE_HARNESS_ROOT}/dispatch.log"
 PREMERGE_DEFAULT_HOME="${PREMERGE_HARNESS_ROOT}/home"
 if [[ "${OSTYPE:-}" == darwin* ]]; then
   PREMERGE_DEFAULT_SNAPSHOT_PARENT="${PREMERGE_DEFAULT_HOME}/Library/Caches/workcell-validation-snapshots"
@@ -5145,6 +5146,9 @@ for stub in check-workflows.sh container-smoke.sh; do
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+if [[ -n "${PREMERGE_DISPATCH_LOG:-}" ]]; then
+  printf 'scripts/%s\n' "$(basename "$0")" >>"${PREMERGE_DISPATCH_LOG}"
+fi
 EOF
   chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/${stub}"
 done
@@ -5153,6 +5157,12 @@ for stub in job-validate.sh job-docs.sh job-pin-hygiene.sh job-pr-shape.sh; do
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'ci/%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
+if [[ -n "${PREMERGE_DISPATCH_LOG:-}" ]]; then
+  printf 'scripts/ci/%s\n' "$(basename "$0")" >>"${PREMERGE_DISPATCH_LOG}"
+fi
+if [[ "$(basename "$0")" == "job-validate.sh" && "${WORKCELL_PREMERGE_TEST_CONSUME_STDIN:-0}" == "1" ]]; then
+  cat >/dev/null
+fi
 EOF
   chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/ci/${stub}"
 done
@@ -5161,6 +5171,9 @@ cat >"${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh" <<'EOF'
 set -euo pipefail
 printf '%s %s\n' "$(basename "$0")" "$*" >>"${PREMERGE_LOG}"
 printf 'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=%s\n' "${WORKCELL_REPRO_PLATFORMS-}" >>"${PREMERGE_LOG}"
+if [[ -n "${PREMERGE_DISPATCH_LOG:-}" ]]; then
+  printf 'scripts/%s\n' "$(basename "$0")" >>"${PREMERGE_DISPATCH_LOG}"
+fi
 EOF
 chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/ci-plan.sh" <<'EOF'
@@ -5220,10 +5233,12 @@ JSON
   "profile": "pr-parity",
   "lanes": [
     {"id": "security.yml/actionlint", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
+    {"id": "security.yml/zizmor", "status": "local", "local_script": "scripts/check-workflows.sh", "local_order": 10},
     {"id": "ci.yml/pr-shape", "status": "local", "local_script": "scripts/ci/job-pr-shape.sh", "local_order": 15},
     {"id": "ci.yml/validate", "status": "local", "local_script": "scripts/ci/job-validate.sh", "local_order": 20},
     {"id": "docs.yml/spelling-and-manpage", "status": "local", "local_script": "scripts/ci/job-docs.sh", "local_order": 30},
     {"id": "ci.yml/container-smoke", "status": "local", "local_script": "scripts/container-smoke.sh", "local_order": 40},
+    {"id": "ci.yml/reproducible-build-platform[platform=linux/amd64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/amd64"}},
     {"id": "ci.yml/reproducible-build-platform[platform=linux/arm64]", "status": "local", "local_script": "scripts/verify-reproducible-build.sh", "local_order": 45, "matrix": {"platform": "linux/arm64"}}
   ]
 }
@@ -5365,16 +5380,19 @@ fi
 grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/workcell-premerge-local-include.out
 
 : >"${PREMERGE_LOG}"
+: >"${PREMERGE_DISPATCH_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   HOME="${PREMERGE_DEFAULT_HOME}" \
   XDG_CACHE_HOME='' \
   PREMERGE_LOG="${PREMERGE_LOG}" \
+  PREMERGE_DISPATCH_LOG="${PREMERGE_DISPATCH_LOG}" \
+  WORKCELL_PREMERGE_TEST_CONSUME_STDIN=1 \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   WORKCELL_FAKE_GIT_TREE_OID='1111111111111111111111111111111111111111' \
   WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
-  --local-snapshot head >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
+  --local-snapshot head </dev/null >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
   echo "Expected --local-snapshot head pre-merge harness to succeed on a dirty worktree" >&2
   cat /tmp/workcell-premerge-local-snapshot.out >&2
   exit 1
@@ -5388,9 +5406,15 @@ for expected in \
   'ci/job-validate.sh --profile pr-parity' \
   'ci/job-docs.sh ' \
   'container-smoke.sh ' \
-  'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/arm64'; do
+  'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/amd64,linux/arm64'; do
   grep -q "${expected}" "${PREMERGE_LOG}"
 done
+PREMERGE_EXPECTED_DISPATCH=$'scripts/check-workflows.sh\nscripts/ci/job-pr-shape.sh\nscripts/ci/job-validate.sh\nscripts/ci/job-docs.sh\nscripts/container-smoke.sh\nscripts/verify-reproducible-build.sh'
+if [[ "$(cat "${PREMERGE_DISPATCH_LOG}")" != "${PREMERGE_EXPECTED_DISPATCH}" ]]; then
+  echo "Expected pre-merge to execute each selected local script once in local_order without sharing dispatcher stdin" >&2
+  cat "${PREMERGE_DISPATCH_LOG}" >&2
+  exit 1
+fi
 for expected in \
   '"profile": "pr-parity"' \
   '"base_branch": "main"' \
@@ -5405,6 +5429,17 @@ done
 
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --skip-repro >/tmp/workcell-premerge-skip-repro.out 2>&1; then
+  echo "Expected pr-parity to reject --skip-repro before writing publication evidence" >&2
+  exit 1
+fi
+grep -q -- '--skip-repro cannot be used with pr-parity because publication evidence requires every selected local lane.' /tmp/workcell-premerge-skip-repro.out
+test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \

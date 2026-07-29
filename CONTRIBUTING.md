@@ -183,10 +183,14 @@ Helpful flags:
 ./scripts/pre-merge.sh --allow-dirty
 ./scripts/pre-merge.sh --profile repo-core
 ./scripts/pre-merge.sh --profile release-preflight
-./scripts/pre-merge.sh --skip-repro
-./scripts/pre-merge.sh --skip-release-bundle
+./scripts/pre-merge.sh --profile repo-core --skip-repro
+./scripts/pre-merge.sh --profile release-preflight --skip-release-bundle
 ./scripts/pre-merge.sh --rebuild-validator
 ```
+
+`--skip-repro` is diagnostic-only for the non-publication profiles;
+publication-grade `pr-parity` rejects it so emitted evidence cannot certify a
+selected but unexecuted reproducibility lane.
 
 For `main`-based PRs, `./scripts/repo-publish-pr.sh` consumes the fresh
 `pr-parity` evidence emitted by `./scripts/pre-merge.sh` and refuses to publish

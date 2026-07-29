@@ -126,7 +126,7 @@ variables for module proxy, checksum, and auth behavior are rejected, but
 G0a1a does not authenticate the resulting network policy or credential files
 selected through `HOME` (including `.netrc`). General process networking
 variables and the contents reachable through the three allowed storage paths
-also remain outside this unit. Beyond the direct startup-code surfaces above,
+also remain outside this unit. Beyond arbitrary-interpreter startup-code surfaces,
 shell semantic and tracing state such as `SHELLOPTS`, `BASHOPTS`,
 `BASH_XTRACEFD`, and descendant `CDPATH` remain a G0a2a hygiene dependency.
 
@@ -265,6 +265,10 @@ Workcell now also keeps a machine-checked local parity inventory in:
 
 Use `./scripts/ci-plan.sh` to see which mirrored lanes a given local
 `pre-merge` profile will execute and which selected lanes remain GitHub-only.
+
+### G0a1c resident changed-file planning
+
+`ci-plan.sh` never fetches. It prefers exact resident `origin/<base>` state, accepts local fallback only after two absence checks, and requires exactly one resident merge base. The collector requires a root `.git` directory and rejects common-directory redirection. It binds the physical worktree and Git directory, scrubs inherited shell/index/glob authority, and rejects nonregular or split-index state, shallow graphs, hidden flags, conversion filters, present gitlinks, and unsafe tracked ancestry. It builds a zero-stat flat index under its run root before worktree inspection, so cached stats are not trusted and the real index is not mutated. Every present stage-0 regular tracked file is raw-hashed with conversions disabled; `text`, `eol`, `ident`, and `working-tree-encoding` cannot hide byte mismatches. Worktree/config behavior, replacement objects, grafts, lazy fetch, and local/base attributes are pinned or inspected explicitly; valid UTF-8 changed paths remain NUL-framed until JSON encoding, while other path bytes fail closed. Worktree, index, or untracked `.gitignore` case variants stop planning. Only `HEAD` rules are honored, never `.git/info/exclude`. Tracked, staged, deleted, and ordinary untracked paths remain visible. Only absent gitlinks are accepted. This scoped guarantee assumes static repository state; the planner is not wholly hermetic. `pr-parity` binds the publishable tree/status after planning and rechecks before evidence, but does not lock Git administration. JSON/temp-state hardening and the later `go run` cache path remain follow-ups. Explicit paths still bypass automatic discovery.
 
 ## Credential placement rule
 

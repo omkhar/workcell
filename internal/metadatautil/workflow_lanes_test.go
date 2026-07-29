@@ -157,7 +157,7 @@ func TestPlanWorkflowLanesRespectsPathsLabelsAndGitHubOnlyModes(t *testing.T) {
 		Profile:      "pr-parity",
 		Event:        "pull_request",
 		BaseBranch:   "main",
-		ChangedFiles: []string{"internal/foo.go"},
+		ChangedFiles: []string{"docs/review\n.md", "internal/foo.go"},
 	})
 	if err != nil {
 		t.Fatalf("PlanWorkflowLanes() error = %v", err)
@@ -170,8 +170,8 @@ func TestPlanWorkflowLanesRespectsPathsLabelsAndGitHubOnlyModes(t *testing.T) {
 	if got := statusByID["ci.yml/pr-shape"]; !strings.HasPrefix(got, "local:") {
 		t.Fatalf("pr-shape status = %q, want local", got)
 	}
-	if got := statusByID["docs.yml/spelling"]; got != "skipped:path-filter-not-selected" {
-		t.Fatalf("docs lane status = %q, want skipped:path-filter-not-selected", got)
+	if got := statusByID["docs.yml/spelling"]; !strings.HasPrefix(got, "local:") {
+		t.Fatalf("docs lane status = %q, want local for newline-containing path", got)
 	}
 	if got := statusByID["ci.yml/heavy[platform=linux/amd64,platform_name=amd64]"]; got != "skipped:missing-label:approved-heavy-ci" {
 		t.Fatalf("heavy lane status = %q, want missing approved-heavy-ci label", got)
