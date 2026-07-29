@@ -2214,31 +2214,13 @@ session_container_exit_code() {
 session_container_absent_for_delete() {
   local profile="$1"
   local container_name="$2"
-  local normalized_name=""
-  local inventory_output=""
-  local observed_name=""
 
-  case "${container_name}" in
-    /workcell-*) normalized_name="${container_name#/}" ;;
-    workcell-*) normalized_name="${container_name}" ;;
-    *) return 1 ;;
-  esac
-  [[ "${normalized_name}" =~ ^workcell-[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || return 1
-
-  if ! inventory_output="$(run_profile_docker_command "${profile}" ps -a --format '{{.Names}}' 2>&1)"; then
-    return 1
-  fi
-  inventory_output="$(printf '%s\n' "${inventory_output}" | tr -d '\r')"
-  [[ -n "${inventory_output}" ]] || return 0
-
-  # Compare the complete inventory client-side. This avoids Docker filter
-  # normalization differences and makes every accepted absence proof depend on
-  # a well-formed, successful inventory that does not contain the exact name.
-  while IFS= read -r observed_name; do
-    [[ "${observed_name}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]+$ ]] || return 1
-    [[ "${observed_name}" != "${normalized_name}" ]] || return 1
-  done <<<"${inventory_output}"
-  return 0
+  # Preserve the inventory byte-for-byte: Go owns identifier normalization,
+  # inventory validation, and the fail-closed absence decision. Pipefail makes
+  # either the same-profile Docker query or Go policy failure reject the proof.
+  run_profile_docker_command "${profile}" ps -a --format '{{.Names}}' 2>&1 |
+    go_hostutil helper session-container-absent-for-delete "${container_name}" \
+      >/dev/null 2>&1
 }
 
 session_container_state_for_delete() {

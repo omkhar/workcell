@@ -2534,12 +2534,14 @@ bash -lc '
   set -euo pipefail
   source "$1"
   trap - EXIT
-  for inventory_case in exact exact_and_near whitespace one_character malformed; do
+  for inventory_case in exact exact_and_near whitespace empty_record trailing_blank one_character malformed; do
     run_profile_docker_command() {
       case "${inventory_case}" in
         exact) printf "workcell-session-fixture\n" ;;
         exact_and_near) printf "workcell-session-fixture\nworkcell-session-fixture-neighbor\n" ;;
         whitespace) printf " \n" ;;
+        empty_record) printf "\n" ;;
+        trailing_blank) printf "unrelated-container\n\n" ;;
         one_character) printf "a\n" ;;
         malformed) printf "valid-name\ninvalid/name\n" ;;
       esac
@@ -2747,7 +2749,7 @@ EOF_JSON
   test -f "${SESSION_DELETE_RM_RACE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json"
   test -f "${SESSION_DELETE_RM_RACE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.audit-sig"
   if [[ "${inventory_outcome}" == "identifier" ]]; then
-    test ! -e "${SESSION_DELETE_RM_RACE_ROOT}/ps-called"
+    test -f "${SESSION_DELETE_RM_RACE_ROOT}/ps-called"
   fi
 done
 
