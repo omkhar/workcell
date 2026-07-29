@@ -44,6 +44,7 @@ Options:
   --rebuild-validator       Rebuild the local validator image before validation
   --skip-release-bundle     Skip verify-release-bundle.sh in shared validate runs
   --skip-repro              Skip verify-reproducible-build.sh when selected
+                            (not allowed with pr-parity evidence)
   -h, --help                Show this help
 EOF
 }
@@ -222,6 +223,7 @@ collect_selected_scripts() {
     | map(select(.status == "local"))
     | sort_by(.local_order, .local_script, .id)
     | unique_by(.local_script)
+    | sort_by(.local_order, .local_script, .id)
     | .[]
     | [.local_order, .local_script]
     | @tsv
@@ -290,11 +292,22 @@ write_pr_parity_evidence() {
 
 execute_plan() {
   local plan_json="$1"
+  local selected_script_records=""
+  local -a selected_scripts=()
   local script=""
   local repro_platforms=""
 
-  while IFS=$'\t' read -r _ script; do
+  if ! selected_script_records="$(collect_selected_scripts "${plan_json}")"; then
+    echo "Unable to collect selected local parity scripts." >&2
+    return 2
+  fi
+  while IFS=$'\t' read -r _ script <&3; do
     [[ -n "${script}" ]] || continue
+    selected_scripts[${#selected_scripts[@]}]="${script}"
+  done 3<<<"${selected_script_records}"
+  ((${#selected_scripts[@]} > 0)) || return 0
+
+  for script in "${selected_scripts[@]}"; do
     case "${script}" in
       scripts/check-workflows.sh)
         echo "[pre-merge] workflow lint and policy analysis"
@@ -347,7 +360,7 @@ execute_plan() {
         exit 2
         ;;
     esac
-  done < <(collect_selected_scripts "${plan_json}")
+  done
 }
 
 build_plan_args() {
@@ -463,6 +476,11 @@ case "${PROFILE}" in
     exit 2
     ;;
 esac
+
+if [[ "${PROFILE}" == "pr-parity" && "${RUN_REPRO}" -eq 0 ]]; then
+  echo "--skip-repro cannot be used with pr-parity because publication evidence requires every selected local lane." >&2
+  exit 2
+fi
 
 case "${PARITY_SNAPSHOT}" in
   index | worktree) ;;
