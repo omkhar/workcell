@@ -511,10 +511,10 @@ func TestCheckPinnedInputsRejectsOffAllowlistAction(t *testing.T) {
 	// but a raw-line scan would miss. Parsing the YAML must still catch it.
 	// SHA-shaped so it passes the pin check and reaches the allowlist check.
 	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "ci.yml"), func(content string) string {
-		return strings.Replace(content,
-			"- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+		return replaceFirstMatch(t, content,
+			regexp.MustCompile(`- uses: actions/checkout@[0-9a-f]{40}`),
 			`- "uses": evilorg/evil-action@0000000000000000000000000000000000000000`,
-			1)
+		)
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)
@@ -573,7 +573,12 @@ func TestCheckPinnedInputsRejectsUnsupportedUsesForm(t *testing.T) {
 
 	cfg := writePinnedInputsFixture(t)
 	rewriteFile(t, filepath.Join(cfg.WorkflowsDir, "ci.yml"), func(content string) string {
-		return strings.Replace(content, "- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", "- uses: docker://ghcr.io/evil/image:latest", 1)
+		return replaceFirstMatch(
+			t,
+			content,
+			regexp.MustCompile(`- uses: actions/checkout@[0-9a-f]{40}`),
+			"- uses: docker://ghcr.io/evil/image:latest",
+		)
 	})
 
 	err := metadatautil.CheckPinnedInputs(cfg)

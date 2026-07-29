@@ -55,21 +55,21 @@ jobs:
           - language: go
             build-mode: autobuild
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
-        uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/init@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4.37.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - if: ${{ (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true') && matrix.build-mode == 'autobuild' }}
-        uses: github/codeql-action/autobuild@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/autobuild@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4.37.2
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
-        uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/analyze@e0647621c2984b5ed2f768cb892365bf2a616ad1 # v4.37.2
 
   preflight-arm64-repro:
     name: Release reproducible image (arm64)
@@ -87,7 +87,7 @@ jobs:
       image_manifest_digest: ${{ steps.repro.outputs.image_manifest_digest }}
       config_digest: ${{ steps.repro.outputs.config_digest }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -144,7 +144,7 @@ jobs:
       image_manifest_digest: ${{ steps.repro.outputs.image_manifest_digest }}
       config_digest: ${{ steps.repro.outputs.config_digest }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -186,7 +186,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
@@ -217,7 +217,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
@@ -273,7 +273,7 @@ jobs:
       contents: read
       security-events: write # Upload SARIF results produced during release preflight scans.
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -747,7 +747,7 @@ jobs:
     outputs:
       digest: ${{ steps.build_arm64.outputs.digest }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -809,7 +809,7 @@ jobs:
       id-token: write # Mint OIDC tokens for signing and attestation workflows.
       packages: write # Push the container image to GitHub Container Registry.
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -1241,14 +1241,14 @@ jobs:
             --bundle dist/workcell-image.spdx.sigstore.json \
             dist/workcell-image.spdx.json
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.publish_manifest.outputs.digest }}
           push-to-registry: true
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-image.spdx.json
@@ -1256,43 +1256,43 @@ jobs:
           subject-digest: ${{ steps.publish_manifest.outputs.digest }}
           push-to-registry: true
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-source.spdx.json
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell.rb
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-image.digest
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-build-inputs.json
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-control-plane.json
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-builder-environment.json
 
-      - uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+      - uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/SHA256SUMS
