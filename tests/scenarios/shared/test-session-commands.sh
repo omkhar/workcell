@@ -2463,6 +2463,11 @@ EOF_JSON
           printf "stopped\n"
           ;;
         rm)
+          # Model the detached monitor removing the stopped container between
+          # the delete inspection and rm.
+          return 1
+          ;;
+        ps)
           return 0
           ;;
         *)
@@ -2487,6 +2492,264 @@ grep -q '^missing=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_CLEANUP_RECORD}"
 grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_CLEANUP_RECORD}"
+grep -Fqx 'transport|wcl-detached-fixture|ps -a --format {{.Names}}' \
+  "${SESSION_DELETE_CLEANUP_RECORD}"
+
+SESSION_DELETE_MISSING_CONTAINER_RECORD="${DETACHED_STATE_DIR}/session-delete.missing-container.record"
+session_delete_missing_container_state="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    : >"${RECORD_FILE}"
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1" in
+        inspect)
+          printf "error: no such object: workcell-session-fixture\n" >&2
+          return 1
+          ;;
+        ps)
+          [[ "$*" == "ps -a --format {{.Names}}" ]]
+          return
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_container_state_for_delete wcl-detached-fixture workcell-session-fixture
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_MISSING_CONTAINER_RECORD}"
+)"
+[[ "${session_delete_missing_container_state}" == "missing" ]]
+grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_MISSING_CONTAINER_RECORD}"
+grep -Fqx 'transport|wcl-detached-fixture|ps -a --format {{.Names}}' \
+  "${SESSION_DELETE_MISSING_CONTAINER_RECORD}"
+
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  for inventory_case in exact exact_and_near whitespace one_character malformed; do
+    run_profile_docker_command() {
+      case "${inventory_case}" in
+        exact) printf "workcell-session-fixture\n" ;;
+        exact_and_near) printf "workcell-session-fixture\nworkcell-session-fixture-neighbor\n" ;;
+        whitespace) printf " \n" ;;
+        one_character) printf "a\n" ;;
+        malformed) printf "valid-name\ninvalid/name\n" ;;
+      esac
+    }
+    if session_container_absent_for_delete wcl-detached-fixture workcell-session-fixture; then
+      echo "accepted unexpected inventory case: ${inventory_case}" >&2
+      exit 1
+    fi
+  done
+' _ "${WORKCELL_FUNCTIONS_COPY}"
+session_delete_unexpected_inventory_status=$?
+set -e
+if [[ "${session_delete_unexpected_inventory_status}" -ne 0 ]]; then
+  echo "session delete treated nonempty or malformed container inventory as proof of absence" >&2
+  exit 1
+fi
+
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  run_profile_docker_command() {
+    printf "unrelated-container\nworkcell-session-fixture-neighbor\n"
+  }
+  session_container_absent_for_delete wcl-detached-fixture workcell-session-fixture
+  session_container_absent_for_delete wcl-detached-fixture /workcell-session-fixture
+' _ "${WORKCELL_FUNCTIONS_COPY}"
+
+bash -lc '
+  set -uo pipefail
+  source "$1"
+  trap - EXIT
+  inventory_available=1
+  run_profile_docker_command() {
+    [[ "${inventory_available}" -eq 1 ]]
+  }
+  set +e
+  session_container_absent_for_delete wcl-detached-fixture workcell-session-fixture
+  inventory_status=$?
+  [[ "${inventory_status}" -eq 0 ]]
+  [[ "$-" != *e* ]]
+  inventory_available=0
+  session_container_absent_for_delete wcl-detached-fixture workcell-session-fixture
+  inventory_status=$?
+  [[ "${inventory_status}" -eq 1 ]]
+  [[ "$-" != *e* ]]
+' _ "${WORKCELL_FUNCTIONS_COPY}"
+
+SESSION_DELETE_UNAVAILABLE_INVENTORY_RECORD="${DETACHED_STATE_DIR}/session-delete.unavailable-inventory.record"
+set +e
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  RECORD_FILE="$2"
+  : >"${RECORD_FILE}"
+  run_profile_docker_command() {
+    local profile="$1"
+    shift
+    printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+    case "$1" in
+      inspect)
+        printf "error: no such object: workcell-session-fixture\n" >&2
+        return 1
+        ;;
+      ps)
+        return 1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  session_container_state_for_delete wcl-detached-fixture workcell-session-fixture
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_UNAVAILABLE_INVENTORY_RECORD}" >/dev/null 2>&1
+session_delete_unavailable_inventory_status=$?
+set -e
+if [[ "${session_delete_unavailable_inventory_status}" -eq 0 ]]; then
+  echo "session delete treated an unavailable container inventory as proof of absence" >&2
+  exit 1
+fi
+grep -Fqx 'transport|wcl-detached-fixture|ps -a --format {{.Names}}' \
+  "${SESSION_DELETE_UNAVAILABLE_INVENTORY_RECORD}"
+
+SESSION_DELETE_MISSING_INTEGRATION_ROOT="${DETACHED_STATE_DIR}/session-delete.missing-integration.root"
+session_delete_missing_integration_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    AUDIT_SEAL_PATH="${RECORD_PATH%.json}.audit-sig"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${PROFILE_DIR}/docker.sock"
+    printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{"version":1,"session_id":"detached-fixture","profile":"wcl-detached-fixture","agent":"codex","mode":"strict","status":"exited","live_status":"stopped","workspace":"/tmp/detached-fixture-workspace","container_name":"workcell-session-fixture","started_at":"2026-04-08T14:00:00Z"}
+EOF_JSON
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_STATUS="exited"
+      SESSION_META_LIVE_STATUS="stopped"
+      SESSION_META_SESSION_AUDIT_DIR=""
+      SESSION_META_DEBUG_LOG_PATH=""
+      SESSION_META_FILE_TRACE_LOG_PATH=""
+      SESSION_META_TRANSCRIPT_LOG_PATH=""
+    }
+    run_profile_docker_command() {
+      case "$2" in
+        inspect)
+          printf "error: no such object: workcell-session-fixture\n" >&2
+          return 1
+          ;;
+        ps)
+          return 0
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_delete_main --id detached-fixture
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_MISSING_INTEGRATION_ROOT}"
+)"
+grep -q '^deleted=1$' <<<"${session_delete_missing_integration_output}"
+grep -q '^missing=container$' <<<"${session_delete_missing_integration_output}"
+test ! -e "${SESSION_DELETE_MISSING_INTEGRATION_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json"
+test ! -e "${SESSION_DELETE_MISSING_INTEGRATION_ROOT}/wcl-detached-fixture/sessions/detached-fixture.audit-sig"
+
+for inventory_outcome in exact slash_exact identifier unavailable; do
+  SESSION_DELETE_RM_RACE_ROOT="${DETACHED_STATE_DIR}/session-delete.rm-race-${inventory_outcome}.root"
+  set +e
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_STATE_ROOT="$2"
+    inventory_outcome="$3"
+    record_container_name="workcell-session-fixture"
+    case "${inventory_outcome}" in
+      slash_exact) record_container_name="/workcell-session-fixture" ;;
+      identifier) record_container_name="60960d42abe11240abc082d91d806be0fdf5986da9dcb9aefb56695bfd45e104" ;;
+    esac
+    PROFILE_DIR="${COLIMA_STATE_ROOT}/wcl-detached-fixture"
+    RECORD_PATH="${PROFILE_DIR}/sessions/detached-fixture.json"
+    AUDIT_SEAL_PATH="${RECORD_PATH%.json}.audit-sig"
+    PS_CALLED_PATH="${COLIMA_STATE_ROOT}/ps-called"
+    mkdir -p "${PROFILE_DIR}/sessions"
+    : >"${PROFILE_DIR}/docker.sock"
+    printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
+    cat >"${RECORD_PATH}" <<EOF_JSON
+{"version":1,"session_id":"detached-fixture","profile":"wcl-detached-fixture","agent":"codex","mode":"strict","status":"exited","live_status":"stopped","workspace":"/tmp/detached-fixture-workspace","container_name":"${record_container_name}","started_at":"2026-04-08T14:00:00Z"}
+EOF_JSON
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="${record_container_name}"
+      SESSION_META_STATUS="exited"
+      SESSION_META_LIVE_STATUS="stopped"
+      SESSION_META_SESSION_AUDIT_DIR=""
+      SESSION_META_DEBUG_LOG_PATH=""
+      SESSION_META_FILE_TRACE_LOG_PATH=""
+      SESSION_META_TRANSCRIPT_LOG_PATH=""
+    }
+    run_profile_docker_command() {
+      case "$2" in
+        inspect)
+          printf "stopped\n"
+          ;;
+        rm)
+          return 1
+          ;;
+        ps)
+          if [[ "${inventory_outcome}" == "exact" || "${inventory_outcome}" == "slash_exact" ]]; then
+            printf "workcell-session-fixture\n"
+            return 0
+          fi
+          if [[ "${inventory_outcome}" == "identifier" ]]; then
+            : >"${PS_CALLED_PATH}"
+            return 0
+          fi
+          return 1
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+    session_delete_main --id detached-fixture
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_RM_RACE_ROOT}" "${inventory_outcome}" >/dev/null 2>&1
+  session_delete_rm_race_status=$?
+  set -e
+  if [[ "${session_delete_rm_race_status}" -eq 0 ]]; then
+    echo "session delete accepted an unproved rm-race absence: ${inventory_outcome}" >&2
+    exit 1
+  fi
+  test -f "${SESSION_DELETE_RM_RACE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json"
+  test -f "${SESSION_DELETE_RM_RACE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.audit-sig"
+  if [[ "${inventory_outcome}" == "identifier" ]]; then
+    test ! -e "${SESSION_DELETE_RM_RACE_ROOT}/ps-called"
+  fi
+done
 
 SESSION_DELETE_COMPAT_RECORD="${DETACHED_STATE_DIR}/session-delete.compat.record"
 SESSION_DELETE_COMPAT_ROOT="${DETACHED_STATE_DIR}/session-delete.compat.root"

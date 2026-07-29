@@ -2211,6 +2211,36 @@ session_container_exit_code() {
   printf '%s\n' "${exit_code}"
 }
 
+session_container_absent_for_delete() {
+  local profile="$1"
+  local container_name="$2"
+  local normalized_name=""
+  local inventory_output=""
+  local observed_name=""
+
+  case "${container_name}" in
+    /workcell-*) normalized_name="${container_name#/}" ;;
+    workcell-*) normalized_name="${container_name}" ;;
+    *) return 1 ;;
+  esac
+  [[ "${normalized_name}" =~ ^workcell-[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || return 1
+
+  if ! inventory_output="$(run_profile_docker_command "${profile}" ps -a --format '{{.Names}}' 2>&1)"; then
+    return 1
+  fi
+  inventory_output="$(printf '%s\n' "${inventory_output}" | tr -d '\r')"
+  [[ -n "${inventory_output}" ]] || return 0
+
+  # Compare the complete inventory client-side. This avoids Docker filter
+  # normalization differences and makes every accepted absence proof depend on
+  # a well-formed, successful inventory that does not contain the exact name.
+  while IFS= read -r observed_name; do
+    [[ "${observed_name}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]+$ ]] || return 1
+    [[ "${observed_name}" != "${normalized_name}" ]] || return 1
+  done <<<"${inventory_output}"
+  return 0
+}
+
 session_container_state_for_delete() {
   local profile="$1"
   local container_name="$2"
@@ -2233,12 +2263,15 @@ session_container_state_for_delete() {
     esac
     return 1
   fi
-  case "${inspect_output}" in
-    *"No such object"* | *"No such container"*)
-      printf 'missing\n'
-      return 0
-      ;;
-  esac
+
+  # Docker's missing-object diagnostic is not a stable API: capitalization
+  # and wording differ across client releases. Prove absence through a second,
+  # exact-name inventory query instead of interpreting human-readable stderr.
+  # A failed or malformed inventory remains an inspection failure.
+  if session_container_absent_for_delete "${profile}" "${container_name}"; then
+    printf 'missing\n'
+    return 0
+  fi
   return 1
 }
 
@@ -4401,8 +4434,14 @@ session_delete_main() {
 
   if [[ "${remove_container}" -eq 1 ]]; then
     if ! run_profile_docker_command "${SESSION_META_PROFILE}" rm -f "${SESSION_META_CONTAINER_NAME}" >/dev/null 2>&1; then
-      echo "session delete failed to remove the stopped session container: ${session_id}" >&2
-      exit 1
+      # The detached monitor can remove a stopped container between the
+      # inspection above and this rm. Accept only a new exact-name absence
+      # proof; a live object or unavailable inventory still fails closed and
+      # preserves the durable record and artifacts for a safe retry.
+      if ! session_container_absent_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}"; then
+        echo "session delete failed to remove the stopped session container: ${session_id}" >&2
+        exit 1
+      fi
     fi
   fi
   if [[ "${remove_debug_log}" -eq 1 ]]; then
