@@ -220,7 +220,10 @@ options.
   ([onboarding and auth](docs/onboarding-and-auth.md)).
 - `workcell session` — manage detached sessions, including
   `workcell session start`, `workcell session list`, and
-  `workcell session diff` ([safe-path expectations](docs/safe-path-expectations.md)).
+  `workcell session diff`; verify signed audit records with
+  `workcell session verify --id SESSION_ID`
+  ([safe-path expectations](docs/safe-path-expectations.md),
+  [signed session audit records](docs/signed-session-audit-records.md)).
 - `workcell publish-pr` — the host-side PR publication helper
   ([safe-path expectations](docs/safe-path-expectations.md)).
 

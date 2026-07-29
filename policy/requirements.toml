@@ -170,6 +170,7 @@ evidence = [
 docs = [
   "README.md",
   "docs/safe-path-expectations.md",
+  "docs/signed-session-audit-records.md",
   "man/workcell.1",
   "docs/workcell-session-supervisor-design.md",
   "docs/workcell-system-design.md",

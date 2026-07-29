@@ -328,6 +328,7 @@ Workflows:
     workcell session timeline --id SESSION_ID
     workcell session diff --id SESSION_ID
     workcell session export --id SESSION_ID
+    workcell session verify --id SESSION_ID
     workcell --agent codex --inspect --workspace /path/to/repo
     workcell --agent codex --doctor --workspace /path/to/repo
     workcell --logs debug --colima-profile wcl-...

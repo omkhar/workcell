@@ -55,6 +55,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+top_level_help="$("${ROOT_DIR}/scripts/workcell" --help)"
+grep -Fq 'workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify>' <<<"${top_level_help}"
+grep -Fq 'workcell session verify --id SESSION_ID' <<<"${top_level_help}"
+
 COLIMA_ROOT="${REAL_HOME}/.colima"
 WORKCELL_STATE_ROOT="${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell"
 TARGET_STATE_DIR="${WORKCELL_STATE_ROOT}/targets/local_vm/colima/${PROFILE}"
