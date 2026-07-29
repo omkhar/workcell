@@ -831,6 +831,12 @@ var runtimeInvariantChecks = []check{
 		message: "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path",
 	},
 	{
+		kind:         kindFunctionBlock,
+		functionName: "cleanup",
+		pattern:      "cleanup_runtime_builder || true",
+		message:      "Expected launcher exit cleanup to reap an active owned runtime-image builder",
+	},
+	{
 		// kindFunctionBlock (musl aarch64 asset must be present).
 		kind:         kindFunctionBlock,
 		functionName: "runtime_build_codex_arch",
@@ -893,7 +899,7 @@ var runtimeInvariantChecks = []check{
 	},
 }
 
-// CheckRuntimeInvariants runs the ten scripts/workcell runtime/gc
+// CheckRuntimeInvariants runs the scripts/workcell runtime/gc
 // invariants against the repo rooted at rootDir, in the shell's original
 // order.  It returns nil when every invariant holds (the shell's exit 0),
 // or an error whose message equals the shell's stderr for the first

@@ -18,6 +18,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
+	"github.com/omkhar/workcell/internal/host/runtimebuilder"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
@@ -103,6 +104,8 @@ func run(args []string) error {
 		return cmdHelperSessionVerifyCli(args[1:])
 	case "session-sign-head":
 		return cmdHelperSessionSignHead(args[1:])
+	case "runtime-builder-cli":
+		return runtimebuilder.Main(args[1:], os.Stdout)
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
 	case "support-bundle-usage":
@@ -1025,7 +1028,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
 }
 
 func pathUsage() error {
