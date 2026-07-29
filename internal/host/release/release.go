@@ -23,7 +23,15 @@ import (
 type createPayload struct {
 	TagName              string `json:"tag_name"`
 	Draft                bool   `json:"draft"`
+	Prerelease           bool   `json:"prerelease"`
+	MakeLatest           string `json:"make_latest"`
 	GenerateReleaseNotes bool   `json:"generate_release_notes"`
+}
+
+type publishPayload struct {
+	Draft      bool   `json:"draft"`
+	Prerelease bool   `json:"prerelease"`
+	MakeLatest string `json:"make_latest"`
 }
 
 type asset struct {
@@ -51,10 +59,38 @@ type bundleManifest struct {
 // WriteGitHubReleaseCreatePayload emits the JSON body the GitHub
 // "create a release" REST call needs.
 func WriteGitHubReleaseCreatePayload(tagName, outputPath string) error {
+	policy, err := ClassifyTag(tagName)
+	if err != nil {
+		return err
+	}
 	payload := createPayload{
 		TagName:              tagName,
 		Draft:                true,
+		Prerelease:           policy.Prerelease,
+		MakeLatest:           "false",
 		GenerateReleaseNotes: true,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(outputPath, data, 0o644)
+}
+
+// WriteGitHubReleasePublishPayload emits the final metadata transition for the
+// supported release class.
+func WriteGitHubReleasePublishPayload(tagName, outputPath string) error {
+	policy, err := ClassifyTag(tagName)
+	if err != nil {
+		return err
+	}
+	makeLatest := "false"
+	if policy.MakeLatest {
+		makeLatest = "true"
+	}
+	payload := publishPayload{
+		Prerelease: policy.Prerelease,
+		MakeLatest: makeLatest,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

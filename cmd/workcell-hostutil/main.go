@@ -195,11 +195,25 @@ func runRelease(args []string) error {
 	}
 
 	switch args[0] {
+	case "classify-tag":
+		if len(args) != 2 {
+			return releaseUsage()
+		}
+		policy, err := release.ClassifyTag(args[1])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(policy)
 	case "create-payload":
 		if len(args) != 3 {
 			return releaseUsage()
 		}
 		return release.WriteGitHubReleaseCreatePayload(args[1], args[2])
+	case "publish-payload":
+		if len(args) != 3 {
+			return releaseUsage()
+		}
+		return release.WriteGitHubReleasePublishPayload(args[1], args[2])
 	case "metadata":
 		if len(args) < 4 {
 			return releaseUsage()
@@ -1033,7 +1047,7 @@ func pathUsage() error {
 }
 
 func releaseUsage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil release <classify-tag|create-payload|publish-payload|metadata|encode-name|bundle-manifest> [args...]"}
 }
 
 func helperUsage() error {
