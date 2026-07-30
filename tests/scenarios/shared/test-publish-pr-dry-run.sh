@@ -762,7 +762,10 @@ test ! -e "${HOOK_MARKER_DIR}/pre-commit"
 test ! -e "${HOOK_MARKER_DIR}/pre-push"
 
 cat >"${GH_PR_LIST_RESPONSE_FILE}" <<'EOF'
-[{"baseRefName":"main","headRefName":"feature/publish-live","headRepository":{"nameWithOwner":"attacker/fork"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/foreign"}]
+[
+  {"baseRefName":"main","headRefName":"feature/publish-live","headRepository":{"nameWithOwner":"attacker/fork"}},
+  {"baseRefName":"main","headRefName":"feature/publish-live","headRepository":null}
+]
 EOF
 rm -f "${GH_LOG}"
 foreign_fork_publish_output="$(

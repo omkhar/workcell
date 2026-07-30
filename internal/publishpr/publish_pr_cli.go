@@ -22,16 +22,18 @@ import (
 const approvedLargeCertifiedAdapterLabel = "approved-large-certified-adapter"
 
 type pullRequestListEntry struct {
-	BaseRefName    string `json:"baseRefName"`
-	HeadRefName    string `json:"headRefName"`
-	HeadRepository struct {
-		NameWithOwner string `json:"nameWithOwner"`
-	} `json:"headRepository"`
-	IsDraft *bool `json:"isDraft"`
-	Labels  *[]struct {
+	BaseRefName    string          `json:"baseRefName"`
+	HeadRefName    string          `json:"headRefName"`
+	HeadRepository json.RawMessage `json:"headRepository"`
+	IsDraft        *bool           `json:"isDraft"`
+	Labels         *[]struct {
 		Name string `json:"name"`
 	} `json:"labels"`
 	URL string `json:"url"`
+}
+
+type pullRequestHeadRepository struct {
+	NameWithOwner string `json:"nameWithOwner"`
 }
 
 type repositoryView struct {
@@ -122,9 +124,38 @@ func parseExistingPullRequest(raw, repositoryNameWithOwner string, opts *Options
 	matches := make([]pullRequestListEntry, 0, len(entries))
 	for index, entry := range entries {
 		if strings.TrimSpace(entry.BaseRefName) == "" ||
-			strings.TrimSpace(entry.HeadRefName) == "" ||
-			strings.TrimSpace(entry.HeadRepository.NameWithOwner) == "" ||
-			entry.IsDraft == nil ||
+			strings.TrimSpace(entry.HeadRefName) == "" {
+			return "", &cliexit.ExitCodeError{
+				Code:    1,
+				Message: fmt.Sprintf("publish-pr existing pull request lookup returned an incomplete entry at index %d.", index),
+			}
+		}
+		if entry.BaseRefName != opts.Base || entry.HeadRefName != opts.Branch {
+			continue
+		}
+
+		headRepositoryJSON := bytes.TrimSpace(entry.HeadRepository)
+		if len(headRepositoryJSON) == 0 {
+			return "", &cliexit.ExitCodeError{
+				Code:    1,
+				Message: fmt.Sprintf("publish-pr existing pull request lookup returned an incomplete entry at index %d.", index),
+			}
+		}
+		if bytes.Equal(headRepositoryJSON, []byte("null")) {
+			continue
+		}
+		var headRepository pullRequestHeadRepository
+		if err := json.Unmarshal(headRepositoryJSON, &headRepository); err != nil ||
+			strings.TrimSpace(headRepository.NameWithOwner) == "" {
+			return "", &cliexit.ExitCodeError{
+				Code:    1,
+				Message: fmt.Sprintf("publish-pr existing pull request lookup returned an incomplete entry at index %d.", index),
+			}
+		}
+		if headRepository.NameWithOwner != repositoryNameWithOwner {
+			continue
+		}
+		if entry.IsDraft == nil ||
 			entry.Labels == nil ||
 			strings.TrimSpace(entry.URL) == "" {
 			return "", &cliexit.ExitCodeError{
@@ -132,11 +163,7 @@ func parseExistingPullRequest(raw, repositoryNameWithOwner string, opts *Options
 				Message: fmt.Sprintf("publish-pr existing pull request lookup returned an incomplete entry at index %d.", index),
 			}
 		}
-		if entry.HeadRepository.NameWithOwner == repositoryNameWithOwner &&
-			entry.BaseRefName == opts.Base &&
-			entry.HeadRefName == opts.Branch {
-			matches = append(matches, entry)
-		}
+		matches = append(matches, entry)
 	}
 	switch len(matches) {
 	case 0:
