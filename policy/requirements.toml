@@ -3,7 +3,7 @@ version = 1
 [functional.FR-001]
 title = "Managed provider launch"
 summary = "Workcell launches supported providers directly inside the managed Tier 1 runtime without a separate attach step; Copilot support also requires live provider-e2e certification before support-claim commits."
-workflows = ["launch_managed", "launch_managed_copilot"]
+workflows = ["launch_managed", "launch_managed_copilot", "launch_dry_run"]
 evidence = [
   "scripts/container-smoke.sh",
   "scripts/provider-e2e.sh",
@@ -19,10 +19,12 @@ docs = [
   "README.md",
   "docs/invariants.md",
   "docs/provider-matrix.md",
+  "docs/safe-path-expectations.md",
   "docs/examples/quickstart-codex.md",
   "docs/examples/quickstart-claude.md",
   "docs/examples/quickstart-copilot.md",
   "docs/examples/quickstart-gemini.md",
+  "man/workcell.1",
 ]
 
 [functional.FR-002]
@@ -63,13 +65,16 @@ docs = [
 [functional.FR-004]
 title = "Explicit lower-assurance modes"
 summary = "Development, breakglass, prompt autonomy, arbitrary command, control-plane VCS, and acknowledged repo-defined MCP paths stay explicit and visibly lower assurance."
+workflows = ["launch_mode", "launch_agent_autonomy"]
 evidence = [
   "tests/scenarios/shared/test-assurance-dry-run.sh",
   "scripts/verify-invariants.sh",
 ]
 docs = [
   "README.md",
+  "docs/adapter-control-planes.md",
   "docs/invariants.md",
+  "docs/mode-map.md",
   "man/workcell.1",
 ]
 

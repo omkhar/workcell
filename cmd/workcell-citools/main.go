@@ -95,6 +95,7 @@ func subcommands() []subcommand {
 		{"validate-requirements", "ROOT_DIR REQUIREMENTS_PATH", 2, 2, cmdValidateRequirements},
 		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
 		{"validate-public-contract", "ROOT_DIR CONTRACT_PATH", 2, 2, cmdValidatePublicContract},
+		{"validate-v1-contract-freeze-git-history", "ROOT_DIR CURRENT_FREEZE_PATH", 2, 2, cmdValidateV1ContractFreezeGitHistory},
 		{"scan-credential-patterns", "ROOT_DIR", 1, 1, cmdScanCredentialPatterns},
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
@@ -509,6 +510,10 @@ func cmdValidateOperatorContract(args []string) error {
 
 func cmdValidatePublicContract(args []string) error {
 	return metadatautil.CheckPublicContract(args[0], args[1])
+}
+
+func cmdValidateV1ContractFreezeGitHistory(args []string) error {
+	return metadatautil.CheckV1ContractFreezeGitHistory(args[0], args[1])
 }
 
 func cmdScanCredentialPatterns(args []string) error {

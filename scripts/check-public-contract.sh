@@ -10,6 +10,7 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTRACT_PATH="${ROOT_DIR}/policy/public-contract.toml"
+FREEZE_PATH="${ROOT_DIR}/policy/v1-contract-freeze.toml"
 
 GO_BIN="${WORKCELL_GO_BIN:-}"
 
@@ -36,4 +37,10 @@ resolve_go_bin() {
 
 resolve_go_bin
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools validate-public-contract "${ROOT_DIR}" "${CONTRACT_PATH}")
+(
+  cd "${ROOT_DIR}" || exit 1
+  "${GO_BIN}" run ./cmd/workcell-citools validate-public-contract "${ROOT_DIR}" "${CONTRACT_PATH}"
+  "${GO_BIN}" run ./cmd/workcell-citools validate-v1-contract-freeze-git-history \
+    "${ROOT_DIR}" \
+    "${FREEZE_PATH}"
+)

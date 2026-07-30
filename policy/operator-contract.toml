@@ -20,6 +20,36 @@ evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "tests/scenario
 requirements = ["functional.FR-001"]
 target_state = "retain"
 
+[workflows.launch_mode]
+title = "Runtime assurance mode selection"
+support = "supported"
+canonical = "--mode strict"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/mode-map.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-004"]
+target_state = "retain"
+
+[workflows.launch_agent_autonomy]
+title = "Provider approval posture selection"
+support = "supported"
+canonical = "--agent-autonomy yolo|prompt"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/adapter-control-planes.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-004"]
+target_state = "retain"
+
+[workflows.launch_dry_run]
+title = "Launch command preview"
+support = "supported"
+canonical = "--dry-run"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/safe-path-expectations.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios/shared/test-compat-target-dry-run.sh"]
+requirements = ["functional.FR-001"]
+target_state = "retain"
+
 [workflows.prepare_image]
 title = "Explicit image prepare"
 support = "supported"

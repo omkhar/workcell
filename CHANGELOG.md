@@ -8,6 +8,12 @@ Releases.
 
 ## Unreleased
 
+### Changed
+
+- freeze the versioned v1 public contract under the published deprecation
+  policy while keeping candidate certification and final release readiness as
+  separate evidence gates.
+
 ## v1.0.0-rc.2 - 2026-07-12
 
 Supersedes v1.0.0-rc.1, which was tagged but never published: its release

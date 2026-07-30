@@ -1,4 +1,4 @@
-# Public contract inventory (G1 part 1).
+# Public contract inventory and v1 freeze (G1).
 #
 # Machine-checkable companion to docs/stability-contract.md, enforced by
 # `workcell-citools validate-public-contract` (internal/metadatautil's
@@ -6,6 +6,11 @@
 # exit_codes/output_lines, be a subset emitted by) the corresponding
 # authoritative source location; see CheckPublicContract for the exact
 # assertions and error messages.
+#
+# `policy/v1-contract-freeze.toml` is the append-only compatibility floor. The
+# validator rejects removals from either this inventory or the operator
+# inventory, requires compatible additions to be appended to that floor, and
+# compares the floor with every prior version in Git history.
 #
 # This does NOT duplicate policy/operator-contract.toml's CLI-flag/help-text
 # parity checks — that remains operator-contract's job. This file covers the

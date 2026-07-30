@@ -41,7 +41,9 @@ boundary.
 
 ## Project status
 
-- pre-1.0 and still tightening the public contract
+- in the 1.0 release-candidate phase, with the v1 public contract frozen under
+  the published deprecation policy; exact candidate binding and final 1.0
+  readiness are still evidence-gated
 - Apple Silicon macOS hosts only today; Linux and Windows are not currently
   supported as launch hosts
 - local host-launched runtime first; cloud-facing paths today are the

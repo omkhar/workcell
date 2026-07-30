@@ -71,7 +71,11 @@ func CheckPublicContract(rootDir, contractPath string) error {
 	if err := checkInjectionTables(rootDir, contractPath, contract.InjectionTables, contract.InjectionScalarRootKeys); err != nil {
 		return err
 	}
-	return nil
+	return checkV1ContractFreeze(
+		contractPath,
+		filepath.Join(rootDir, "policy", "operator-contract.toml"),
+		defaultV1ContractFreezePath(rootDir),
+	)
 }
 
 func loadPublicContract(contractPath string) (publicContract, error) {

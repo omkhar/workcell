@@ -1,0 +1,63 @@
+# Immutable compatibility floor for the Workcell v1 release line.
+#
+# Append additive compatible surfaces here when they enter the live public and
+# operator contract inventories. Do not remove or rewrite entries before a v2
+# contract: release-preflight validation compares this file with every prior
+# version in Git history, requires both live inventories to stay complete, and
+# requires every historical primitive and canonical syntax to remain present.
+
+[meta]
+version = "1"
+
+[public_contract]
+exit_codes = ["0", "1", "2", "3", "124", "126", "127", "128"]
+output_line_prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest=", "egress_enforcement=", "session_verify=", "key_id=", "head_digest="]
+session_show_prefixes = ["session_id=", "profile=", "target_kind=", "target_provider=", "target_id=", "target_summary=", "target_assurance_class=", "runtime_api=", "control=", "agent=", "mode=", "ui=", "execution_path=", "status=", "live_status=", "assurance=", "workspace_transport=", "workspace=", "display_workspace=", "display_worktree=", "display_git_branch=", "workspace_origin=", "workspace_root=", "worktree_path=", "git_branch=", "git_head=", "git_base=", "container_name=", "monitor_pid=", "started_at=", "observed_at=", "finished_at=", "exit_status=", "initial_assurance=", "current_assurance=", "final_assurance=", "workspace_control_plane=", "workspace_repo_mcp=", "session_audit_dir=", "audit_log_path=", "debug_log_path=", "file_trace_log_path=", "transcript_log_path="]
+session_record_fields = ["version", "session_id", "profile", "target_kind", "target_provider", "target_id", "target_assurance_class", "runtime_api", "workspace_transport", "agent", "mode", "status", "ui", "execution_path", "workspace", "workspace_origin", "workspace_root", "worktree_path", "git_branch", "git_head", "git_base", "container_name", "monitor_pid", "live_status", "session_audit_dir", "audit_log_path", "debug_log_path", "file_trace_log_path", "transcript_log_path", "started_at", "observed_at", "finished_at", "exit_status", "initial_assurance", "current_assurance", "final_assurance", "workspace_control_plane", "workspace_repo_mcp", "bootstrap_id", "image_ref"]
+session_export_fields = ["session", "audit_records"]
+injection_tables = ["documents", "ssh", "credentials", "copies", "network"]
+injection_scalar_root_keys = ["version", "includes"]
+
+[operator_workflows]
+launch_managed = "workcell --agent codex --workspace /path/to/repo"
+launch_managed_copilot = "workcell --agent copilot --workspace /path/to/repo"
+launch_mode = "--mode strict"
+launch_agent_autonomy = "--agent-autonomy yolo|prompt"
+launch_dry_run = "--dry-run"
+prepare_image = "--prepare"
+prepare_only = "--prepare-only"
+repair_profile = "--repair-profile"
+launch_target_backend = "--target colima|docker-desktop|aws-ec2-ssm|gcp-vm"
+publish_pr = "workcell publish-pr"
+auth_commands_surface = "workcell auth"
+auth_init = "workcell auth init [options]"
+auth_set = "workcell auth set [options]"
+auth_unset = "workcell auth unset [options]"
+auth_status = "workcell auth status [options]"
+policy_commands_surface = "workcell policy"
+policy_show = "workcell policy show [options]"
+policy_validate = "workcell policy validate [options]"
+policy_diff = "workcell policy diff [options]"
+why_credential = "workcell why"
+session_commands_surface = "workcell session"
+session_start = "workcell session start"
+session_workspace_mode = "--session-workspace direct|isolated"
+session_attach = "workcell session attach --id SESSION_ID"
+session_send = "workcell session send --id SESSION_ID --message TEXT"
+session_stop = "workcell session stop --id SESSION_ID [--force]"
+session_list = "workcell session list"
+session_show = "workcell session show --id SESSION_ID"
+session_logs = "workcell session logs --id SESSION_ID --kind audit|debug|file-trace|transcript"
+session_timeline = "workcell session timeline --id SESSION_ID"
+session_diff = "workcell session diff"
+session_export = "workcell session export --id SESSION_ID [--format json|ocsf] [--output PATH]"
+session_verify = "workcell session verify --id SESSION_ID"
+session_delete = "workcell session delete --id SESSION_ID"
+launch_doctor = "--doctor"
+launch_inspect = "--inspect"
+launch_logs = "--logs audit|debug|file-trace|transcript"
+launch_auth_status = "--auth-status"
+launch_gc = "--gc"
+print_version = "--version"
+support_bundle = "workcell support-bundle"
+cache_profile_standard = "--cache-profile off|standard"
