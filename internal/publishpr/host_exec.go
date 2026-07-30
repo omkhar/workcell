@@ -478,6 +478,30 @@ func remoteOriginPushURL(ctx *BashContext, workspace string) (string, error) {
 	return pushURLs[0], nil
 }
 
+func hasOnBranchGitIncludes(ctx *BashContext, workspace string) (bool, error) {
+	var stdout bytes.Buffer
+	err := RunPublishHostCommandInDir(
+		workspace,
+		&PublishEnv{Path: ctx.TrustedHostPath, Home: ctx.RealHome},
+		[]string{
+			ctx.HostGitBin,
+			"-c", "core.hooksPath=/dev/null",
+			"-C", workspace,
+			"config", "--get-regexp", `^includeIf\.onbranch:.*\.path$`,
+		},
+		nil,
+		&stdout,
+		io.Discard,
+	)
+	if err == nil {
+		return strings.TrimSpace(stdout.String()) != "", nil
+	}
+	if ec, ok := cliexit.IsExitCodeError(err); ok && ec.Code == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
 func hasWorktreeChanges(ctx *BashContext, workspace string) bool {
 	out, _ := runCleanGit(ctx, workspace, []string{"status", "--short", "--untracked-files=all"})
 	return strings.TrimSpace(out) != ""

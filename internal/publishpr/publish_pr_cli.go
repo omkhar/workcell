@@ -263,20 +263,41 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if !workspaceIsGitWorkTree(ctx, resolvedWorkspace) {
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires a git worktree: %s", resolvedWorkspace)}
 	}
-	originPushURL, originErr := remoteOriginPushURL(ctx, resolvedWorkspace)
-	if originErr != nil {
-		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires exactly one origin push URL in %s.", resolvedWorkspace)}
+	resolveRepositorySelector := func() (string, error) {
+		originPushURL, originErr := remoteOriginPushURL(ctx, resolvedWorkspace)
+		if originErr != nil {
+			return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires exactly one origin push URL in %s.", resolvedWorkspace)}
+		}
+		return repositorySelectorFromRemoteURL(originPushURL)
 	}
-	repositorySelector, err := repositorySelectorFromRemoteURL(originPushURL)
-	if err != nil {
-		return err
-	}
-
 	for _, line := range preflight.LowerAssuranceNotice {
 		fmt.Fprintln(stderr, line)
 	}
 
 	current := currentBranch(ctx, resolvedWorkspace)
+	dryRunRepositorySelector := ""
+	if opts.DryRun {
+		if current != opts.Branch {
+			hasOnBranchIncludes, includeErr := hasOnBranchGitIncludes(ctx, resolvedWorkspace)
+			if includeErr != nil {
+				return includeErr
+			}
+			if hasOnBranchIncludes {
+				return &cliexit.ExitCodeError{
+					Code: 2,
+					Message: fmt.Sprintf(
+						"publish-pr dry-run cannot safely resolve branch-conditioned Git configuration before switching from %s to %s; check out the publication branch and retry.",
+						current,
+						opts.Branch,
+					),
+				}
+			}
+		}
+		dryRunRepositorySelector, err = resolveRepositorySelector()
+		if err != nil {
+			return err
+		}
+	}
 	publishExistingCommits := 0
 	hasChanges := func() bool {
 		if opts.Snapshot == "worktree" {
@@ -345,36 +366,44 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	}
 	pushCmd := clone("push", "--no-verify", "-u", "origin", opts.Branch)
 
-	repoViewCmd := []string{ctx.HostGhBin, "repo", "view", repositorySelector, "--json", "nameWithOwner"}
-	prListCmd := []string{
-		ctx.HostGhBin,
-		"pr", "list",
-		"-R", repositorySelector,
-		"--base", opts.Base,
-		"--head", opts.Branch,
-		"--state", "open",
-		"--json", "baseRefName,headRefName,headRepository,isDraft,labels,url",
-		"--limit", "100",
-	}
-	prCmd := []string{ctx.HostGhBin, "pr", "create", "-R", repositorySelector, "--base", opts.Base, "--head", opts.Branch, "--title", preflight.TitleText}
-	if opts.ApprovedLargeCertifiedAdapter {
-		prCmd = append(prCmd, "--label", approvedLargeCertifiedAdapterLabel)
-	}
 	draft := !preflight.Ready
-	if draft {
-		prCmd = append(prCmd, "--draft")
-	}
+	resolvedBodyFile := ""
 	if opts.BodyFile != "" {
-		resolvedBodyFile, bodyErr := resolveExistingFileOrDie(ctx, opts.BodyFile, "body")
+		var bodyErr error
+		resolvedBodyFile, bodyErr = resolveExistingFileOrDie(ctx, opts.BodyFile, "body")
 		if bodyErr != nil {
 			return bodyErr
 		}
-		prCmd = append(prCmd, "--body-file", resolvedBodyFile)
-	} else {
-		prCmd = append(prCmd, "--body", preflight.BodyText)
+	}
+	buildGitHubCommands := func(repositorySelector string) (repoViewCmd, prListCmd, prCmd []string) {
+		repoViewCmd = []string{ctx.HostGhBin, "repo", "view", repositorySelector, "--json", "nameWithOwner"}
+		prListCmd = []string{
+			ctx.HostGhBin,
+			"pr", "list",
+			"-R", repositorySelector,
+			"--base", opts.Base,
+			"--head", opts.Branch,
+			"--state", "open",
+			"--json", "baseRefName,headRefName,headRepository,isDraft,labels,url",
+			"--limit", "100",
+		}
+		prCmd = []string{ctx.HostGhBin, "pr", "create", "-R", repositorySelector, "--base", opts.Base, "--head", opts.Branch, "--title", preflight.TitleText}
+		if opts.ApprovedLargeCertifiedAdapter {
+			prCmd = append(prCmd, "--label", approvedLargeCertifiedAdapterLabel)
+		}
+		if draft {
+			prCmd = append(prCmd, "--draft")
+		}
+		if resolvedBodyFile != "" {
+			prCmd = append(prCmd, "--body-file", resolvedBodyFile)
+		} else {
+			prCmd = append(prCmd, "--body", preflight.BodyText)
+		}
+		return repoViewCmd, prListCmd, prCmd
 	}
 
 	if opts.DryRun {
+		repoViewCmd, prListCmd, prCmd := buildGitHubCommands(dryRunRepositorySelector)
 		if err := emitDryRunHeader(stdout, opts, preflight, resolvedWorkspace, publishExistingCommits, draft); err != nil {
 			return err
 		}
@@ -405,6 +434,11 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if err := run(branchCmd, nil); err != nil {
 		return err
 	}
+	repositorySelector, err := resolveRepositorySelector()
+	if err != nil {
+		return err
+	}
+	repoViewCmd, prListCmd, prCmd := buildGitHubCommands(repositorySelector)
 	if publishExistingCommits == 1 {
 		if hasWorktreeChanges(ctx, resolvedWorkspace) {
 			return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr existing-branch mode requires a clean worktree in %s.", resolvedWorkspace)}

@@ -32,6 +32,7 @@ compute_worktree_status_sha256() {
 
 FIXTURE="${TMP_DIR}/publish-pr-fixture"
 ORIGIN="${TMP_DIR}/publish-pr-origin.git"
+BRANCH_ORIGIN="${TMP_DIR}/publish-pr-branch-origin.git"
 SHA256_FIXTURE="${TMP_DIR}/publish-pr-sha256-fixture"
 SSH_SIGNING_KEY="${TMP_DIR}/signing_key"
 ALLOWED_SIGNERS="${TMP_DIR}/allowed_signers"
@@ -68,6 +69,7 @@ TRUSTED_GH_STUB="${TRUSTED_BIN_DIR}/workcell-gh-scenario-${RANDOM}-$$"
 
 mkdir -p "${FIXTURE}" "${HOOK_MARKER_DIR}" "${HOST_XDG_CONFIG_HOME}/git"
 git init -q --bare "${ORIGIN}"
+git init -q --bare "${BRANCH_ORIGIN}"
 git init -q "${FIXTURE}"
 git -C "${FIXTURE}" config user.name "Workcell Scenario"
 git -C "${FIXTURE}" config user.email "workcell-scenario@example.com"
@@ -114,6 +116,7 @@ git -C "${FIXTURE}" add tracked.txt
 git -C "${FIXTURE}" commit -q -m init
 git -C "${FIXTURE}" branch -M main
 git -C "${FIXTURE}" push -q -u origin main >/dev/null
+git -C "${FIXTURE}" push -q "${BRANCH_ORIGIN}" main >/dev/null
 
 git -C "${FIXTURE}" switch -q -c feature/pr-shape-safe
 printf 'shape gate\n' >"${FIXTURE}/shape-check.txt"
@@ -735,7 +738,64 @@ git -C "${FIXTURE}" switch -q main
 git -C "${FIXTURE}" reset -q --hard origin/main
 git -C "${FIXTURE}" branch -D feature/unsigned-ancestor >/dev/null
 
+git config --file "${HOST_XDG_CONFIG_HOME}/git/config" \
+  'includeIf.onbranch:feature/branch-conditioned-destination.path' \
+  "${TMP_DIR}/branch-conditioned-origin.gitconfig"
+git config --file "${TMP_DIR}/branch-conditioned-origin.gitconfig" \
+  remote.origin.pushurl \
+  "${BRANCH_ORIGIN}"
+printf 'branch-conditioned destination\n' >"${FIXTURE}/tracked.txt"
+set +e
+branch_destination_dry_run="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/branch-conditioned-destination \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Branch-conditioned destination" \
+    --commit-message "Branch-conditioned destination fixture" \
+    --dry-run 2>&1
+)"
+branch_destination_dry_run_rc=$?
+set -e
+test "${branch_destination_dry_run_rc}" -eq 2
+grep -q 'dry-run cannot safely resolve branch-conditioned Git configuration' <<<"${branch_destination_dry_run}"
+rm -f "${GH_LOG}"
+branch_destination_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/branch-conditioned-destination \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Branch-conditioned destination" \
+    --commit-message "Branch-conditioned destination fixture" \
+    2>"${TMP_DIR}/publish-branch-conditioned-destination.stderr"
+)"
+grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${branch_destination_output}"
+grep -q "^repo view ${BRANCH_ORIGIN} --json nameWithOwner$" "${GH_LOG}"
+grep -q "^pr list -R ${BRANCH_ORIGIN} --base main --head feature/branch-conditioned-destination " "${GH_LOG}"
+grep -q "^pr create -R ${BRANCH_ORIGIN} --base main --head feature/branch-conditioned-destination " "${GH_LOG}"
+git --git-dir="${BRANCH_ORIGIN}" show-ref --verify --quiet refs/heads/feature/branch-conditioned-destination
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/branch-conditioned-destination; then
+  echo "publish-pr should not push the branch-conditioned destination to the pre-switch origin" >&2
+  exit 1
+fi
+branch_destination_checked_out_dry_run="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/branch-conditioned-destination \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Branch-conditioned destination" \
+    --commit-message "Unused branch-conditioned destination fixture" \
+    --dry-run
+)"
+grep -q -- "repo view ${BRANCH_ORIGIN} --json nameWithOwner" <<<"${branch_destination_checked_out_dry_run}"
+git config --file "${HOST_XDG_CONFIG_HOME}/git/config" \
+  --unset-all \
+  'includeIf.onbranch:feature/branch-conditioned-destination.path'
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+
 printf 'live publish\n' >"${FIXTURE}/tracked.txt"
+rm -f "${GH_LOG}"
 publish_output="$(
   XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
     --workspace "${FIXTURE}" \
