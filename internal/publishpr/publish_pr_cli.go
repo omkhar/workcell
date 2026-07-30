@@ -5,8 +5,10 @@ package publishpr
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +20,150 @@ import (
 )
 
 const approvedLargeCertifiedAdapterLabel = "approved-large-certified-adapter"
+
+type pullRequestListEntry struct {
+	BaseRefName    string `json:"baseRefName"`
+	HeadRefName    string `json:"headRefName"`
+	HeadRepository struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"headRepository"`
+	IsDraft *bool `json:"isDraft"`
+	Labels  *[]struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+	URL string `json:"url"`
+}
+
+type repositoryView struct {
+	NameWithOwner string `json:"nameWithOwner"`
+}
+
+func parseRepositoryNameWithOwner(raw string) (string, error) {
+	var repository repositoryView
+	if err := json.Unmarshal([]byte(raw), &repository); err != nil {
+		return "", &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not parse the origin repository lookup: %v", err)}
+	}
+	nameWithOwner := strings.TrimSpace(repository.NameWithOwner)
+	if nameWithOwner == "" {
+		return "", &cliexit.ExitCodeError{Code: 1, Message: "publish-pr could not determine the origin repository identity."}
+	}
+	return nameWithOwner, nil
+}
+
+func repositorySelectorFromRemoteURL(raw string) (string, error) {
+	remoteURL := strings.TrimSpace(raw)
+	if remoteURL == "" || strings.ContainsAny(remoteURL, "\x00\r\n") {
+		return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr could not derive a GitHub repository selector from the origin push URL."}
+	}
+	if strings.HasPrefix(remoteURL, "/") {
+		return remoteURL, nil
+	}
+
+	selectorFromHostPath := func(host, path string) (string, bool) {
+		host = strings.TrimSpace(host)
+		path = strings.Trim(strings.TrimSpace(path), "/")
+		path = strings.TrimSuffix(path, ".git")
+		if host == "" || strings.HasPrefix(host, "-") {
+			return "", false
+		}
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
+			strings.HasPrefix(parts[0], "-") || strings.HasPrefix(parts[1], "-") {
+			return "", false
+		}
+		return strings.ToLower(host) + "/" + path, true
+	}
+
+	if schemeEnd := strings.Index(remoteURL, "://"); schemeEnd > 0 {
+		scheme := strings.ToLower(remoteURL[:schemeEnd])
+		if scheme != "https" && scheme != "ssh" {
+			return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr could not derive a GitHub repository selector from the origin push URL."}
+		}
+		parsed, err := url.Parse(remoteURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr could not derive a GitHub repository selector from the origin push URL."}
+		}
+		if _, ok := selectorFromHostPath(parsed.Host, parsed.Path); !ok {
+			return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr could not derive a GitHub repository selector from the origin push URL."}
+		}
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.ForceQuery = false
+		parsed.Fragment = ""
+		parsed.RawFragment = ""
+		return parsed.String(), nil
+	}
+
+	if colon := strings.IndexByte(remoteURL, ':'); colon > 0 && !strings.Contains(remoteURL[:colon], "/") {
+		host := remoteURL[:colon]
+		if at := strings.LastIndexByte(host, '@'); at >= 0 {
+			host = host[at+1:]
+		}
+		if selector, ok := selectorFromHostPath(host, remoteURL[colon+1:]); ok {
+			return selector, nil
+		}
+	}
+
+	return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr could not derive a GitHub repository selector from the origin push URL."}
+}
+
+func parseExistingPullRequest(raw, repositoryNameWithOwner string, opts *Options) (string, error) {
+	if opts == nil {
+		return "", &cliexit.ExitCodeError{Code: 1, Message: "publish-pr could not validate the existing pull request without publication options."}
+	}
+	trimmed := bytes.TrimSpace([]byte(raw))
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return "", &cliexit.ExitCodeError{Code: 1, Message: "publish-pr existing pull request lookup did not return a JSON array."}
+	}
+	var entries []pullRequestListEntry
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return "", &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("publish-pr could not parse the existing pull request lookup: %v", err)}
+	}
+	matches := make([]pullRequestListEntry, 0, len(entries))
+	for index, entry := range entries {
+		if strings.TrimSpace(entry.BaseRefName) == "" ||
+			strings.TrimSpace(entry.HeadRefName) == "" ||
+			strings.TrimSpace(entry.HeadRepository.NameWithOwner) == "" ||
+			entry.IsDraft == nil ||
+			entry.Labels == nil ||
+			strings.TrimSpace(entry.URL) == "" {
+			return "", &cliexit.ExitCodeError{
+				Code:    1,
+				Message: fmt.Sprintf("publish-pr existing pull request lookup returned an incomplete entry at index %d.", index),
+			}
+		}
+		if entry.HeadRepository.NameWithOwner == repositoryNameWithOwner &&
+			entry.BaseRefName == opts.Base &&
+			entry.HeadRefName == opts.Branch {
+			matches = append(matches, entry)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", nil
+	case 1:
+		entry := matches[0]
+		url := strings.TrimSpace(entry.URL)
+		if opts.Base != "main" && !*entry.IsDraft {
+			return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr found a matching non-main pull request that is not a draft; convert it to draft or close it before retrying."}
+		}
+		if opts.ApprovedLargeCertifiedAdapter {
+			hasRequiredLabel := false
+			for _, label := range *entry.Labels {
+				if label.Name == approvedLargeCertifiedAdapterLabel {
+					hasRequiredLabel = true
+					break
+				}
+			}
+			if !hasRequiredLabel {
+				return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr found a matching pull request without the approved-large-certified-adapter label; add the label or close the pull request before retrying."}
+			}
+		}
+		return url, nil
+	default:
+		return "", &cliexit.ExitCodeError{Code: 1, Message: "publish-pr found multiple open pull requests for the selected base and branch."}
+	}
+}
 
 // PublishPRMain is the in-process entry point invoked by the launcher
 // subcommand publish-pr-cli. It mirrors scripts/workcell publish_pr_main
@@ -90,8 +236,13 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if !workspaceIsGitWorkTree(ctx, resolvedWorkspace) {
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires a git worktree: %s", resolvedWorkspace)}
 	}
-	if !hasRemoteOrigin(ctx, resolvedWorkspace) {
-		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires an origin remote in %s.", resolvedWorkspace)}
+	originPushURL, originErr := remoteOriginPushURL(ctx, resolvedWorkspace)
+	if originErr != nil {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires exactly one origin push URL in %s.", resolvedWorkspace)}
+	}
+	repositorySelector, err := repositorySelectorFromRemoteURL(originPushURL)
+	if err != nil {
+		return err
 	}
 
 	for _, line := range preflight.LowerAssuranceNotice {
@@ -167,7 +318,18 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	}
 	pushCmd := clone("push", "--no-verify", "-u", "origin", opts.Branch)
 
-	prCmd := []string{ctx.HostGhBin, "pr", "create", "--base", opts.Base, "--head", opts.Branch, "--title", preflight.TitleText}
+	repoViewCmd := []string{ctx.HostGhBin, "repo", "view", repositorySelector, "--json", "nameWithOwner"}
+	prListCmd := []string{
+		ctx.HostGhBin,
+		"pr", "list",
+		"-R", repositorySelector,
+		"--base", opts.Base,
+		"--head", opts.Branch,
+		"--state", "open",
+		"--json", "baseRefName,headRefName,headRepository,isDraft,labels,url",
+		"--limit", "100",
+	}
+	prCmd := []string{ctx.HostGhBin, "pr", "create", "-R", repositorySelector, "--base", opts.Base, "--head", opts.Branch, "--title", preflight.TitleText}
 	if opts.ApprovedLargeCertifiedAdapter {
 		prCmd = append(prCmd, "--label", approvedLargeCertifiedAdapterLabel)
 	}
@@ -200,6 +362,8 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		EmitCommand(stdout, signatureCmd)
 		EmitCommand(stdout, shapeCmd)
 		EmitCommand(stdout, pushCmd)
+		EmitCommand(stdout, repoViewCmd)
+		EmitCommand(stdout, prListCmd)
 		EmitCommand(stdout, prCmd)
 		return nil
 	}
@@ -236,11 +400,39 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 			return err
 		}
 	}
-	var prOut strings.Builder
-	if err := run(prCmd, &prOut); err != nil {
+	var repoViewOut strings.Builder
+	if err := run(repoViewCmd, &repoViewOut); err != nil {
 		return err
 	}
-	prURL := strings.TrimRight(prOut.String(), "\n")
+	repositoryNameWithOwner, err := parseRepositoryNameWithOwner(repoViewOut.String())
+	if err != nil {
+		return err
+	}
+	lookupExistingPR := func() (string, error) {
+		var prListOut strings.Builder
+		if err := run(prListCmd, &prListOut); err != nil {
+			return "", err
+		}
+		return parseExistingPullRequest(prListOut.String(), repositoryNameWithOwner, opts)
+	}
+	prURL, err := lookupExistingPR()
+	if err != nil {
+		return err
+	}
+	if prURL == "" {
+		var prOut strings.Builder
+		if createErr := run(prCmd, &prOut); createErr != nil {
+			prURL, err = lookupExistingPR()
+			if err != nil {
+				return err
+			}
+			if prURL == "" {
+				return createErr
+			}
+		} else {
+			prURL = strings.TrimRight(prOut.String(), "\n")
+		}
+	}
 	// Fail-closed: render through a buffer first so a forbidden control
 	// character in any field aborts the whole plan emission rather than
 	// leaving the bash shim with a half-imported plan. Applies the same

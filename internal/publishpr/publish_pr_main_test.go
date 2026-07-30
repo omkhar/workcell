@@ -6,6 +6,7 @@ package publishpr
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -27,6 +28,120 @@ func TestParseArgsAppliesDefaults(t *testing.T) {
 	if opts.Ready || opts.DryRun || opts.AllowNonMainBase || opts.ApprovedLargeCertifiedAdapter || opts.HelpRequested {
 		t.Errorf("Ready/DryRun/AllowNonMainBase/ApprovedLargeCertifiedAdapter/HelpRequested = %v/%v/%v/%v/%v, want all false",
 			opts.Ready, opts.DryRun, opts.AllowNonMainBase, opts.ApprovedLargeCertifiedAdapter, opts.HelpRequested)
+	}
+}
+
+func TestParseRepositoryNameWithOwner(t *testing.T) {
+	t.Parallel()
+	got, err := parseRepositoryNameWithOwner("{\"nameWithOwner\":\"example/repo\"}\n")
+	if err != nil {
+		t.Fatalf("parseRepositoryNameWithOwner() err = %v", err)
+	}
+	if got != "example/repo" {
+		t.Errorf("parseRepositoryNameWithOwner() = %q, want example/repo", got)
+	}
+	for _, raw := range []string{"null", "{}", "not-json"} {
+		if _, err := parseRepositoryNameWithOwner(raw); err == nil {
+			t.Errorf("parseRepositoryNameWithOwner(%q) err = nil, want error", raw)
+		}
+	}
+}
+
+func TestRepositorySelectorFromRemoteURL(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "https", raw: "https://github.com/example/repo.git", want: "https://github.com/example/repo.git"},
+		{name: "https-credentials", raw: "https://user:TOKEN@github.com/example/repo.git", want: "https://github.com/example/repo.git"},
+		{name: "https-query", raw: "https://github.com/example/repo.git?token=SECRET", want: "https://github.com/example/repo.git"},
+		{name: "ssh-url", raw: "ssh://git@github.example.com:2222/example/repo.git", want: "ssh://github.example.com:2222/example/repo.git"},
+		{name: "github-ssh-endpoint", raw: "ssh://git@ssh.github.com:443/example/repo.git", want: "ssh://ssh.github.com:443/example/repo.git"},
+		{name: "scp", raw: "git@github.com:example/repo.git", want: "github.com/example/repo"},
+		{name: "absolute-local-fixture", raw: "/tmp/example/repo.git", want: "/tmp/example/repo.git"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := repositorySelectorFromRemoteURL(tc.raw)
+			if err != nil {
+				t.Fatalf("repositorySelectorFromRemoteURL() err = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("repositorySelectorFromRemoteURL() = %q, want %q", got, tc.want)
+			}
+			for _, secret := range []string{"TOKEN", "SECRET"} {
+				if strings.Contains(got, secret) {
+					t.Errorf("repositorySelectorFromRemoteURL() leaked %q in %q", secret, got)
+				}
+			}
+		})
+	}
+	for _, raw := range []string{"", "-R", "https://github.com/example", "git@github.com:-owner/repo.git", "relative/path.git", "https://github.com/example/repo/extra.git", "file://github.com/example/repo.git", "https://user:TOKEN%ZZ@github.com/example/repo.git"} {
+		if _, err := repositorySelectorFromRemoteURL(raw); err == nil {
+			t.Errorf("repositorySelectorFromRemoteURL(%q) err = nil, want error", raw)
+		} else if strings.Contains(err.Error(), "TOKEN") {
+			t.Errorf("repositorySelectorFromRemoteURL(%q) leaked credential material in err = %v", raw, err)
+		}
+	}
+}
+
+func TestParseExistingPullRequest(t *testing.T) {
+	t.Parallel()
+	mainOptions := &Options{Base: "main", Branch: "feature/x"}
+	nonMainOptions := &Options{Base: "feature/base", Branch: "feature/x"}
+	certifiedOptions := &Options{Base: "main", Branch: "feature/x", ApprovedLargeCertifiedAdapter: true}
+	entry := func(repository, base, head, url string, draft bool, labels string) string {
+		return `{"baseRefName":"` + base + `","headRefName":"` + head +
+			`","headRepository":{"nameWithOwner":"` + repository +
+			`"},"isDraft":` + fmt.Sprintf("%t", draft) + `,"labels":` + labels +
+			`,"url":"` + url + `"}`
+	}
+	cases := []struct {
+		name          string
+		raw           string
+		opts          *Options
+		want          string
+		wantSubstring string
+	}{
+		{name: "none", raw: "[]\n", opts: mainOptions},
+		{name: "one", raw: "[" + entry("example/repo", "main", "feature/x", "https://example.invalid/pr/123", false, "[]") + "]", opts: mainOptions, want: "https://example.invalid/pr/123"},
+		{name: "foreign-only", raw: "[" + entry("attacker/repo", "main", "feature/x", "https://example.invalid/pr/foreign", false, "[]") + "]", opts: mainOptions},
+		{name: "foreign-and-origin", raw: "[" + entry("attacker/repo", "main", "feature/x", "https://example.invalid/pr/foreign", false, "[]") + "," + entry("example/repo", "main", "feature/x", "https://example.invalid/pr/123", false, "[]") + "]", opts: mainOptions, want: "https://example.invalid/pr/123"},
+		{name: "null", raw: "null", opts: mainOptions, wantSubstring: "did not return a JSON array"},
+		{name: "malformed", raw: "not-json", opts: mainOptions, wantSubstring: "did not return a JSON array"},
+		{name: "null-entry", raw: "[null]", opts: mainOptions, wantSubstring: "incomplete entry at index 0"},
+		{name: "empty-entry", raw: "[{}]", opts: mainOptions, wantSubstring: "incomplete entry at index 0"},
+		{name: "missing-url", raw: "[" + entry("example/repo", "main", "feature/x", "", false, "[]") + "]", opts: mainOptions, wantSubstring: "incomplete entry at index 0"},
+		{name: "missing-draft-state", raw: `[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"example/repo"},"labels":[],"url":"https://example.invalid/pr/123"}]`, opts: mainOptions, wantSubstring: "incomplete entry at index 0"},
+		{name: "missing-labels", raw: `[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"example/repo"},"isDraft":false,"url":"https://example.invalid/pr/123"}]`, opts: mainOptions, wantSubstring: "incomplete entry at index 0"},
+		{name: "ambiguous", raw: "[" + entry("example/repo", "main", "feature/x", "https://example.invalid/pr/1", false, "[]") + "," + entry("example/repo", "main", "feature/x", "https://example.invalid/pr/2", false, "[]") + "]", opts: mainOptions, wantSubstring: "multiple open pull requests"},
+		{name: "non-main-draft", raw: "[" + entry("example/repo", "feature/base", "feature/x", "https://example.invalid/pr/123", true, "[]") + "]", opts: nonMainOptions, want: "https://example.invalid/pr/123"},
+		{name: "non-main-ready", raw: "[" + entry("example/repo", "feature/base", "feature/x", "https://example.invalid/pr/123", false, "[]") + "]", opts: nonMainOptions, wantSubstring: "not a draft"},
+		{name: "certified-label-present", raw: "[" + entry("example/repo", "main", "feature/x", "https://example.invalid/pr/123", false, `[{"name":"approved-large-certified-adapter"}]`) + "]", opts: certifiedOptions, want: "https://example.invalid/pr/123"},
+		{name: "certified-label-missing", raw: "[" + entry("example/repo", "main", "feature/x", "https://example.invalid/pr/123", false, "[]") + "]", opts: certifiedOptions, wantSubstring: "without the approved-large-certified-adapter label"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseExistingPullRequest(tc.raw, "example/repo", tc.opts)
+			if tc.wantSubstring == "" {
+				if err != nil {
+					t.Fatalf("parseExistingPullRequest() err = %v", err)
+				}
+				if got != tc.want {
+					t.Errorf("parseExistingPullRequest() = %q, want %q", got, tc.want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstring) {
+				t.Errorf("parseExistingPullRequest() err = %v, want substring %q", err, tc.wantSubstring)
+			}
+		})
 	}
 }
 
