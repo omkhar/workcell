@@ -13,8 +13,8 @@ on a host with a live runtime, not in PR CI (a real start needs a booted VM); th
 ## What is measured
 
 A **sample** is one full session start: the wall-clock time from invoking the
-session-start command to the point the session is ready. The harness times three
-modes that span the latency shapes C2 targets:
+session-start command to the point the session is ready. The benchmark times
+three modes that span the latency shapes C2 targets:
 
 | Mode | Runtime state before the sample | What it isolates |
 |---|---|---|
@@ -202,7 +202,8 @@ targets) to pin the stats math, the gate, and the guards without a container.
 
 ## Where this fits
 
-The harness and driver live in `scripts/bench/` alongside the C5 exec-guard
-benchmark ([syscall-shim-benchmarks.md](syscall-shim-benchmarks.md)). A scheduled,
-non-PR-blocking lane that captures the live numbers on a runtime-capable runner is
-**deferred** until the image build is unblocked.
+The thin `scripts/bench/run-startup-bench.sh` wrapper invokes the Go
+implementation in `internal/startupbench`; its wrapper remains alongside the C5
+exec-guard benchmark ([syscall-shim-benchmarks.md](syscall-shim-benchmarks.md)).
+A scheduled, non-PR-blocking lane that captures the live numbers on a
+runtime-capable runner is **deferred** until the image build is unblocked.
