@@ -33,6 +33,7 @@ validator_tmp="${validator_home}/.tmp"
 
 setup_workcell_ci_docker
 require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
+validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" false)"
 
 # shellcheck disable=SC2016
 workcell_ci_docker run --rm \
@@ -44,7 +45,7 @@ workcell_ci_docker run --rm \
   -e GOMODCACHE="${validator_cache}/go-mod" \
   -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
   -e TMPDIR="${validator_tmp}" \
-  --mount "type=bind,src=${WORKSPACE},dst=/workspace" \
+  --mount "${validator_workspace_mount}" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
   -lc '
