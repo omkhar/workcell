@@ -40,8 +40,12 @@ func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var matchedStatus string
 	for _, record := range records {
-		name, _ := record["name"].(string)
+		name, ok := record["name"].(string)
+		if !ok || name == "" {
+			return "", errors.New("profile inventory record has missing or invalid name field")
+		}
 		if name != profile {
 			continue
 		}
@@ -49,7 +53,13 @@ func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
 		if status == "" {
 			return "", errors.New("profile status missing status field")
 		}
-		return status, nil
+		if matchedStatus != "" {
+			return "", errors.New("profile inventory contains duplicate names")
+		}
+		matchedStatus = status
+	}
+	if matchedStatus != "" {
+		return matchedStatus, nil
 	}
 	return "", errNoMatch
 }

@@ -24,6 +24,21 @@ func TestColimaProfileStatusMissingProfileReturnsNoMatch(t *testing.T) {
 	if !IsNoMatch(err) {
 		t.Fatalf("ColimaProfileStatus() err = %v, want IsNoMatch", err)
 	}
+	for _, malformed := range []string{`{}`, `{"name":1,"status":"Running"}`, `{"name":"","status":"Running"}`} {
+		_, err := ColimaProfileStatus([]byte(malformed), "does-not-exist")
+		if err == nil || IsNoMatch(err) {
+			t.Fatalf("ColimaProfileStatus(%s) err = %v, want malformed-record error", malformed, err)
+		}
+	}
+	for _, ordered := range []string{"{}\n{\"name\":\"target\",\"status\":\"Running\"}", "{\"name\":\"target\",\"status\":\"Running\"}\n{}"} {
+		if _, err = ColimaProfileStatus([]byte(ordered), "target"); err == nil {
+			t.Fatal("ColimaProfileStatus accepted malformed ordered inventory")
+		}
+	}
+	_, err = ColimaProfileStatus([]byte("{\"name\":\"target\",\"status\":\"Running\"}\n{\"name\":\"target\",\"status\":\"Stopped\"}"), "target")
+	if err == nil {
+		t.Fatal("ColimaProfileStatus accepted duplicate profile names")
+	}
 }
 
 func TestProfileLockIsStaleReportsMalformedOwnerMetadata(t *testing.T) {
