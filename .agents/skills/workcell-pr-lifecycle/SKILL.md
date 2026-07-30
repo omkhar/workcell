@@ -96,8 +96,11 @@ If the task is release-bound, also read:
   including title, body, or base edits and draft/ready transitions. Do not run
   them concurrently or while `Allowed PR base` is in progress: finish the
   push, confirm the PR's `headRefOid`, and wait for the push-triggered policy
-  run to pass before mutating metadata. If the mutation triggers a replacement
-  policy run, follow it to success before another triggering mutation or merge.
+  run to settle. Require success before a non-corrective metadata mutation. If
+  it fails because the current PR state violates base policy, make only the
+  draft transition or base edit needed to restore a permitted state, then
+  follow the replacement policy run to success before another triggering
+  mutation or merge.
 - Sweep top-level comments, inline comments, unresolved review threads, and
   configured async reviewers in `policy/reviewer-identities.toml`.
 - Mark the PR ready only after repo-owned checks are green and the review
@@ -139,7 +142,8 @@ If the task is release-bound, also read:
    - rerun the smallest local validation that proves the fix
    - push the signed follow-up commit host-side to the existing branch
    - confirm `headRefOid` matches the pushed head and its `Allowed PR base` run
-     passed before a PR-base-policy-triggering metadata change
+     settled; require success unless the next change is the single corrective
+     draft transition or base edit needed to restore a permitted PR state
    - continue following checks until green
 9. Sweep top-level comments, inline comments, unresolved threads, and async
    reviewer feedback.
