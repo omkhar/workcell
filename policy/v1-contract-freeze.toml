@@ -20,8 +20,12 @@ injection_scalar_root_keys = ["version", "includes"]
 
 [operator_workflows]
 launch_managed = "workcell --agent codex --workspace /path/to/repo"
+launch_managed_claude = "workcell --agent claude --workspace /path/to/repo"
 launch_managed_copilot = "workcell --agent copilot --workspace /path/to/repo"
+launch_managed_gemini = "workcell --agent gemini --workspace /path/to/repo"
 launch_mode = "--mode strict"
+launch_mode_development = "--mode development"
+launch_mode_build = "--mode build"
 launch_agent_autonomy = "--agent-autonomy yolo|prompt"
 launch_dry_run = "--dry-run"
 prepare_image = "--prepare"

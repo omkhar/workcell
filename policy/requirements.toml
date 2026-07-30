@@ -3,7 +3,7 @@ version = 1
 [functional.FR-001]
 title = "Managed provider launch"
 summary = "Workcell launches supported providers directly inside the managed Tier 1 runtime without a separate attach step; Copilot support also requires live provider-e2e certification before support-claim commits."
-workflows = ["launch_managed", "launch_managed_copilot", "launch_dry_run"]
+workflows = ["launch_managed", "launch_managed_claude", "launch_managed_copilot", "launch_managed_gemini", "launch_dry_run"]
 evidence = [
   "scripts/container-smoke.sh",
   "scripts/provider-e2e.sh",
@@ -65,7 +65,7 @@ docs = [
 [functional.FR-004]
 title = "Explicit lower-assurance modes"
 summary = "Development, breakglass, prompt autonomy, arbitrary command, control-plane VCS, and acknowledged repo-defined MCP paths stay explicit and visibly lower assurance."
-workflows = ["launch_mode", "launch_agent_autonomy"]
+workflows = ["launch_mode", "launch_mode_development", "launch_agent_autonomy"]
 evidence = [
   "tests/scenarios/shared/test-assurance-dry-run.sh",
   "scripts/verify-invariants.sh",
@@ -305,12 +305,15 @@ docs = [
 
 [nonfunctional.NFR-002]
 title = "Visible assurance and audit state"
-summary = "Workcell records launch, downgrade, and exit metadata so assurance changes stay visible to operators."
+summary = "Workcell records mode selection, launch, downgrade, and exit metadata so broader policy postures and assurance changes stay visible to operators."
+workflows = ["launch_mode_build"]
 evidence = [
   "tests/scenarios/shared/test-assurance-dry-run.sh",
   "scripts/verify-invariants.sh",
 ]
 docs = [
+  "docs/invariants.md",
+  "docs/mode-map.md",
   "docs/validation-scenarios.md",
   "docs/workcell-system-design.md",
   "man/workcell.1",

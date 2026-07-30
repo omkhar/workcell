@@ -145,6 +145,14 @@ workcell auth set \
 workcell --agent copilot --workspace /path/to/repo
 ```
 
+Claude and Gemini use the same managed launch shape after their
+provider-specific auth is configured:
+
+```bash
+workcell --agent claude --workspace /path/to/repo
+workcell --agent gemini --workspace /path/to/repo
+```
+
 See [docs/getting-started.md](docs/getting-started.md) for the release install
 path and provider-specific onboarding. For team rollout patterns on today's
 local-first product, see [docs/enterprise-rollout.md](docs/enterprise-rollout.md).
