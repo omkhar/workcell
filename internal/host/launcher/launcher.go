@@ -64,6 +64,43 @@ func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
 	return "", errNoMatch
 }
 
+func ColimaProfileProcessPIDs(psOutput []byte, profile string) ([]int, error) {
+	if profile == "" {
+		return nil, errors.New("colima profile is required")
+	}
+	instance := "colima-" + profile
+	var pids []int
+	seen := make(map[int]struct{})
+	for _, line := range strings.Split(string(psOutput), "\n") {
+		id, command, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		command = strings.TrimSpace(command)
+		fields := strings.Fields(command)
+		hostagent := len(fields) >= 2 && filepath.Base(fields[0]) == "limactl" && fields[1] == "hostagent" &&
+			(strings.Contains(command, "/"+instance+"/") || strings.HasSuffix(command, " "+instance))
+		mux := strings.HasPrefix(command, "ssh: ") &&
+			strings.HasSuffix(command, "/"+instance+"/ssh.sock [mux]")
+		if !hostagent && !mux {
+			continue
+		}
+		pid, err := strconv.Atoi(id)
+		if err != nil {
+			return nil, fmt.Errorf("parse Colima profile process pid: %w", err)
+		}
+		if pid <= 0 || strconv.Itoa(pid) != id {
+			return nil, fmt.Errorf("non-canonical Colima profile process pid: %s", id)
+		}
+		if _, exists := seen[pid]; exists {
+			return nil, fmt.Errorf("duplicate Colima profile process pid: %d", pid)
+		}
+		seen[pid] = struct{}{}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
 func ProfileLockIsStale(lockDir string) (bool, error) {
 	ownerPath := filepath.Join(lockDir, "owner.json")
 	content, err := os.ReadFile(ownerPath)
