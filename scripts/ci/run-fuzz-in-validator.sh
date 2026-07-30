@@ -27,6 +27,7 @@ if [[ ! -d "${WORKSPACE}" ]]; then
   echo "Validator workspace does not exist: ${WORKSPACE}" >&2
   exit 2
 fi
+WORKSPACE="$(cd "${WORKSPACE}" && pwd -P)"
 
 validator_uid="$(id -u)"
 validator_gid="$(id -g)"
@@ -35,6 +36,7 @@ validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
 
 setup_workcell_ci_docker
+require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
 
 # shellcheck disable=SC2016
 workcell_ci_docker run --rm \
@@ -46,7 +48,7 @@ workcell_ci_docker run --rm \
   -e GOMODCACHE="${validator_cache}/go-mod" \
   -e TMPDIR="${validator_tmp}" \
   -e WORKCELL_FUZZTIME="${FUZZTIME}" \
-  -v "${WORKSPACE}:/workspace" \
+  --mount "type=bind,src=${WORKSPACE},dst=/workspace" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
   -lc '
