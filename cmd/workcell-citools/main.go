@@ -31,6 +31,7 @@ import (
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/scenarios"
+	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
 )
 
@@ -161,6 +162,9 @@ func main() {
 		// the wrong-arity path below and the other workcell Go CLIs (D8).
 		dieUsage(rootUsageError(""))
 	}
+	if os.Args[1] == "startup-bench" {
+		os.Exit(startupbench.Run(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	// scenario-manifest preserves the bash contract of distinct exit
 	// codes for usage (2) vs. runtime (1) errors that
 	// scenarios.Run encodes; scenarios.Run already wrote the
@@ -194,14 +198,14 @@ func main() {
 }
 
 func rootUsageError(badCommand string) error {
-	names := make([]string, 0, len(subcommands())+1)
+	names := make([]string, 0, len(subcommands())+2)
 	for _, sub := range subcommands() {
 		names = append(names, sub.name)
 	}
 	// scenario-manifest is dispatched directly in main() and so is not
 	// part of the subcommands() table, but it is still a known command
 	// for help/error output purposes.
-	names = append(names, "scenario-manifest")
+	names = append(names, "scenario-manifest", "startup-bench")
 	sort.Strings(names)
 	var lines strings.Builder
 	for _, name := range names {

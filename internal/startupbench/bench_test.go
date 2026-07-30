@@ -8,13 +8,19 @@ package startupbench
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func repoRoot(tb testing.TB) string {
@@ -82,23 +88,56 @@ func writeExec(tb testing.TB, path, script string) {
 	}
 }
 
-// liveEnv returns a live-run env (auto-detect bypassed, all prep hooks no-op,
-// RUNS>=2, gate widened so real timing can't flake) merged with extra, which
-// overrides. Tests set only what they exercise.
+// liveEnv returns a live-run env (auto-detect bypassed, all state hooks no-op,
+// all modes selected, RUNS>=2, gate widened so real timing can't flake) merged
+// with extra, which overrides. Tests set only what they exercise.
 func liveEnv(extra map[string]string) map[string]string {
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		panic("true executable is required by startup benchmark tests")
+	}
 	env := map[string]string{
 		"WORKCELL_STARTUP_RUNTIME":        "colima",
-		"WORKCELL_STARTUP_CMD":            "true",
+		"WORKCELL_STARTUP_MODES":          "cold cache-hit warm",
 		"WORKCELL_STARTUP_RUNS":           "2",
 		"WORKCELL_STARTUP_STABILITY_PCT":  "100000000",
-		"WORKCELL_STARTUP_COLD_PREP":      ":",
-		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
-		"WORKCELL_STARTUP_WARM_PREP":      ":",
+		"WORKCELL_STARTUP_COLD_PREP":      truePath,
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": truePath,
+		"WORKCELL_STARTUP_WARM_PREP":      truePath,
+		"WORKCELL_STARTUP_WARM_VERIFY":    truePath,
+		"WORKCELL_STARTUP_TEARDOWN":       truePath,
 	}
 	for k, v := range extra {
 		env[k] = v
 	}
 	return env
+}
+
+func runLiveDriver(tb testing.TB, env map[string]string, target ...string) (int, string) {
+	tb.Helper()
+	env, target = completeLiveFixture(tb, env, target)
+	return runScript(tb, driver, env, append([]string{"--"}, target...)...)
+}
+func completeLiveFixture(tb testing.TB, env map[string]string, target []string) (map[string]string, []string) {
+	tb.Helper()
+	env = maps.Clone(env)
+	dir := tb.TempDir()
+	if env["WORKCELL_STARTUP_TEARDOWN_VERIFY"] == "" {
+		verify := filepath.Join(dir, "verify")
+		writeExec(tb, verify, "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
+		env["WORKCELL_STARTUP_TEARDOWN_VERIFY"] = verify
+	}
+	if len(target) == 0 {
+		sampleTarget := filepath.Join(dir, "target")
+		writeExec(tb, sampleTarget, "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'session_id=sample-%s-%s-%s\\n' \"${WORKCELL_STARTUP_SAMPLE_MODE}\" \"${WORKCELL_STARTUP_SAMPLE_RUN}\" \"${WORKCELL_STARTUP_SAMPLE_INDEX}\"\nprintf 'sample_token=%s\\n' \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
+		target = []string{sampleTarget}
+	}
+	return env, target
+}
+func runLiveDriverSplit(tb testing.TB, env map[string]string, target ...string) (int, string, string) {
+	tb.Helper()
+	env, target = completeLiveFixture(tb, env, target)
+	return runScriptSplit(tb, driver, env, append([]string{"--"}, target...)...)
 }
 
 const harness = "scripts/bench/startup-bench.sh"
@@ -246,7 +285,9 @@ func TestDriverDryRunStablePasses(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# session-start latency benchmark results",
+		"classification: benchmark-only; this runner cannot produce a certified result",
 		"| cold |", "| warm |",
+		"## Raw samples", "mode=cold run=1 index=1 duration_ns=10",
 		"Cross-run stability (median)",
 		"Stability gate: STABLE",
 	} {
@@ -260,8 +301,8 @@ func TestDriverDryRunUnstableFailsGate(t *testing.T) {
 	// Two groups with very different medians (20 vs 200) exceed the 15% threshold.
 	code, out := runScript(t, driver,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30;100 200 300"})
-	if code != 2 {
-		t.Fatalf("unstable dry run should exit 2, got %d: %s", code, out)
+	if code != 1 {
+		t.Fatalf("unstable dry run should exit 1, got %d: %s", code, out)
 	}
 	if !strings.Contains(out, "Stability gate: UNSTABLE") {
 		t.Errorf("missing UNSTABLE gate verdict: %s", out)
@@ -269,55 +310,8 @@ func TestDriverDryRunUnstableFailsGate(t *testing.T) {
 	if !strings.Contains(out, "stability gate FAILED") {
 		t.Errorf("missing gate-failure diagnostic: %s", out)
 	}
-}
-
-func TestDriverColdSkipsWarmupAndDrivesCacheHit(t *testing.T) {
-	// cold/cache-hit force warmup=0 (re-prep per sample), only warm keeps it; a stub harness logs each mode's warmup.
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "harness.log")
-	stub := filepath.Join(dir, "stub-harness.sh")
-	writeExec(t, stub, "#!/usr/bin/env bash\n"+
-		"set -euo pipefail\n"+
-		"mode=\"$1\"; iters=\"$2\"; warmup=\"$3\"\n"+
-		"printf '%s %s\\n' \"$mode\" \"$warmup\" >> \"${HARNESS_LOG}\"\n"+
-		"printf 'mode=%s n=%s mean_ns=1 median_ns=1 p90_ns=1 stddev_ns=0 min_ns=1 max_ns=1\\n' \"$mode\" \"$iters\"\n")
-	env := liveEnv(map[string]string{
-		"HARNESS_LOG":                 logPath,
-		"WORKCELL_STARTUP_HARNESS":    stub,
-		"WORKCELL_STARTUP_ITERATIONS": "2",
-		"WORKCELL_STARTUP_WARMUP":     "1",
-	})
-	code, out := runScript(t, driver, env)
-	if code != 0 {
-		t.Fatalf("driver exit %d: %s", code, out)
-	}
-	if !strings.Contains(out, "| cache-hit |") {
-		t.Errorf("report missing cache-hit row (P2): %s", out)
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read harness log: %v", err)
-	}
-	warmupByMode := map[string]string{}
-	for _, ln := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		parts := strings.Fields(ln)
-		if len(parts) == 2 {
-			warmupByMode[parts[0]] = parts[1]
-		}
-	}
-	for _, mode := range []string{"cold", "cache-hit", "warm"} {
-		if _, ok := warmupByMode[mode]; !ok {
-			t.Errorf("driver never invoked harness for mode %q; saw %v", mode, warmupByMode)
-		}
-	}
-	if got := warmupByMode["cold"]; got != "0" {
-		t.Errorf("cold warmup = %q, want 0 (must not warm before measuring)", got)
-	}
-	if got := warmupByMode["cache-hit"]; got != "0" {
-		t.Errorf("cache-hit warmup = %q, want 0 (re-preps per sample like cold)", got)
-	}
-	if got := warmupByMode["warm"]; got != "1" {
-		t.Errorf("warm warmup = %q, want 1 (configured warmup preserved)", got)
+	if !strings.Contains(out, "iterations: 3") {
+		t.Errorf("dry-run metadata must use the canned group size: %s", out)
 	}
 }
 
@@ -337,20 +331,33 @@ func TestRunScriptEnvIsHermetic(t *testing.T) {
 	}
 }
 
-func TestDriverColdAndCacheHitRepPerSample(t *testing.T) {
-	// cold/cache-hit re-run their prep hook per sample, warm once per pass; hooks append a byte per call.
+func TestDriverStateHooksRunAtTheRequiredCadence(t *testing.T) {
+	// cold/cache-hit re-run prep per sample; warm prep runs once per pass, warm
+	// verification runs before warmup and measured samples, and teardown runs
+	// after every launch.
 	dir := t.TempDir()
 	coldF := filepath.Join(dir, "cold")
 	warmF := filepath.Join(dir, "warm")
+	warmVerifyF := filepath.Join(dir, "warm-verify")
 	chF := filepath.Join(dir, "cachehit")
+	teardownF := filepath.Join(dir, "teardown")
+	counter := func(name, path, value string) string {
+		helper := filepath.Join(dir, name)
+		writeExec(t, helper, "#!/usr/bin/env bash\n"+
+			"set -euo pipefail\n"+
+			"printf '"+value+"' >> \""+path+"\"\n")
+		return helper
+	}
 	env := liveEnv(map[string]string{
 		"WORKCELL_STARTUP_ITERATIONS":     "3",
-		"WORKCELL_STARTUP_WARMUP":         "0",
-		"WORKCELL_STARTUP_COLD_PREP":      "printf c >> " + coldF,
-		"WORKCELL_STARTUP_WARM_PREP":      "printf w >> " + warmF,
-		"WORKCELL_STARTUP_CACHE_HIT_PREP": "printf h >> " + chF,
+		"WORKCELL_STARTUP_WARMUP":         "1",
+		"WORKCELL_STARTUP_COLD_PREP":      counter("cold-op", coldF, "c"),
+		"WORKCELL_STARTUP_WARM_PREP":      counter("warm-op", warmF, "w"),
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": counter("cache-op", chF, "h"),
+		"WORKCELL_STARTUP_WARM_VERIFY":    counter("verify-op", warmVerifyF, "v"),
+		"WORKCELL_STARTUP_TEARDOWN":       counter("teardown-op", teardownF, "t"),
 	})
-	code, out := runScript(t, driver, env)
+	code, out := runLiveDriver(t, env)
 	if code != 0 {
 		t.Fatalf("driver exit %d: %s", code, out)
 	}
@@ -370,6 +377,12 @@ func TestDriverColdAndCacheHitRepPerSample(t *testing.T) {
 	}
 	if got := countPreps(warmF); got != 2 {
 		t.Errorf("warm prep ran %d time(s), want 2 (one prep per pass x 2 runs)", got)
+	}
+	if got := countPreps(warmVerifyF); got != 8 {
+		t.Errorf("warm verify ran %d time(s), want 8 ((1 warmup + 3 samples) x 2 runs)", got)
+	}
+	if got := countPreps(teardownF); got != 20 {
+		t.Errorf("teardown ran %d time(s), want 20 ((3 cold + 3 cache-hit + 4 warm) x 2 runs)", got)
 	}
 	if !strings.Contains(out, "| cache-hit |") || !strings.Contains(out, " 3 |") {
 		t.Errorf("aggregated cache-hit row missing/incorrect: %s", out)
@@ -401,12 +414,15 @@ func TestDriverDryRunSkipsPrep(t *testing.T) {
 
 func TestDriverPrepOutputStaysOffReport(t *testing.T) {
 	// A prep hook's stdout (e.g. `docker pull`) must go to stderr, not the stdout report (else `run.sh > report.md` breaks).
+	dir := t.TempDir()
+	prep := filepath.Join(dir, "prep")
+	writeExec(t, prep, "#!/usr/bin/env bash\nprintf 'PREP_STDOUT_MARKER\\n'\n")
 	env := liveEnv(map[string]string{
-		"WORKCELL_STARTUP_COLD_PREP":      "echo PREP_STDOUT_MARKER",
-		"WORKCELL_STARTUP_CACHE_HIT_PREP": "echo PREP_STDOUT_MARKER",
-		"WORKCELL_STARTUP_WARM_PREP":      "echo PREP_STDOUT_MARKER",
+		"WORKCELL_STARTUP_COLD_PREP":      prep,
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": prep,
+		"WORKCELL_STARTUP_WARM_PREP":      prep,
 	})
-	code, stdout, stderr := runScriptSplit(t, driver, env)
+	code, stdout, stderr := runLiveDriverSplit(t, env)
 	if code != 0 {
 		t.Fatalf("driver exit %d:\n%s%s", code, stdout, stderr)
 	}
@@ -421,6 +437,61 @@ func TestDriverPrepOutputStaysOffReport(t *testing.T) {
 	}
 }
 
+func TestEntrypointSignalKillsProcessGroupAndStillCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	started, childPID, cleaned := filepath.Join(dir, "started"), filepath.Join(dir, "child-pid"), filepath.Join(dir, "cleaned")
+	target, teardown := filepath.Join(dir, "target"), filepath.Join(dir, "teardown")
+	writeExec(t, target, "#!/usr/bin/env bash\ntrap '' TERM\nsh -c 'trap \"\" TERM; while :; do sleep 1; done' &\nprintf '%s\\n' \"$!\" >\""+childPID+"\"\ntouch \""+started+"\"\nwait\n")
+	writeExec(t, teardown, "#!/usr/bin/env bash\n[[ -n \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\" && -z \"${WORKCELL_STARTUP_SESSION_ID}\" ]]\ntouch \""+cleaned+"\"\n")
+	env := liveEnv(map[string]string{"WORKCELL_STARTUP_MODES": "cold", "WORKCELL_STARTUP_ITERATIONS": "1", "WORKCELL_STARTUP_TEARDOWN": teardown})
+	env, argv := completeLiveFixture(t, env, []string{target})
+	cmd := exec.Command(filepath.Join(repoRoot(t), filepath.FromSlash(driver)), append([]string{"--"}, argv...)...)
+	cmd.Dir, cmd.Env = repoRoot(t), hermeticEnv(env)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("measured target did not start")
+		}
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("signaled benchmark unexpectedly passed")
+	}
+	pidBytes, _ := os.ReadFile(childPID)
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("TERM-ignoring descendant survived: %v", err)
+	}
+	if _, err := os.Stat(cleaned); err != nil {
+		t.Errorf("cleanup did not run after signal: %v", err)
+	}
+}
+func TestLifecycleFailuresAreJoinedAndVerifierGetsIndependentBudget(t *testing.T) {
+	dir := t.TempDir()
+	teardown, verify, verified := filepath.Join(dir, "teardown"), filepath.Join(dir, "verify"), filepath.Join(dir, "verified")
+	writeExec(t, teardown, "#!/usr/bin/env bash\nsleep 1\n")
+	writeExec(t, verify, "#!/usr/bin/env bash\ntouch \""+verified+"\"\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
+	cfg := config{target: []string{"false"}, teardown: teardown, cleanupCheck: verify, teardownTimeout: 50 * time.Millisecond, verifyTimeout: 2 * time.Second}
+	_, err := measureOne(context.Background(), cfg, "cold", 1, "1", io.Discard)
+	if err == nil {
+		t.Fatal("combined lifecycle failure unexpectedly passed")
+	}
+	for _, want := range []string{"teardown:", "cold launch:", "target output:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("joined error missing %q: %v", want, err)
+		}
+	}
+	if _, err := os.Stat(verified); err != nil {
+		t.Errorf("absence verifier did not get an independent budget: %v", err)
+	}
+}
 func TestDriverRejectsInvalidNumericControls(t *testing.T) {
 	// Invalid numeric controls (RUNS=0, non-integer) must fail fast, not exit 0.
 	cases := []struct{ name, key, val string }{
@@ -448,21 +519,22 @@ func TestDriverRejectsInvalidNumericControls(t *testing.T) {
 }
 
 func TestDriverPreservesCommandArgv(t *testing.T) {
-	// Shell-quoted CMD: a spaced arg (--workspace '/a b') must reach as one element.
+	// Positional argv after -- preserves a spaced argument without parsing.
 	dir := t.TempDir()
 	argvF := filepath.Join(dir, "argv")
+	injectedF := filepath.Join(dir, "must-not-exist")
 	rec := filepath.Join(dir, "record.sh")
 	writeExec(t, rec, "#!/usr/bin/env bash\n"+
 		"set -euo pipefail\n"+
 		": > \"${ARGV_FILE}\"\n"+
-		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${ARGV_FILE}\"; done\n")
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${ARGV_FILE}\"; done\n"+
+		"printf 'session_id=argv-sample\\nsample_token=%s\\n' \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
 	env := liveEnv(map[string]string{
 		"ARGV_FILE":                   argvF,
-		"WORKCELL_STARTUP_CMD":        rec + " alpha 'beta gamma'",
 		"WORKCELL_STARTUP_ITERATIONS": "1",
 		"WORKCELL_STARTUP_WARMUP":     "0",
 	})
-	code, out := runScript(t, driver, env)
+	code, out := runLiveDriver(t, env, rec, "alpha", "beta gamma", "; touch "+injectedF)
 	if code != 0 {
 		t.Fatalf("driver exit %d: %s", code, out)
 	}
@@ -471,24 +543,22 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 		t.Fatalf("read argv file: %v", err)
 	}
 	got := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	want := []string{"alpha", "beta gamma"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	want := []string{"alpha", "beta gamma", "; touch " + injectedF}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("target argv = %q, want %q (word-splitting would break the spaced arg)\n%s", got, want, out)
+	}
+	if _, err := os.Stat(injectedF); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("metacharacter argument was evaluated as shell: %v", err)
 	}
 }
 
 func TestDriverLiveRequiresPrepHooks(t *testing.T) {
 	// On a LIVE run a missing mode prep hook must fail fast (naming mode + env var); dry-run needs none.
-	live := map[string]string{
-		"WORKCELL_STARTUP_RUNTIME": "colima", // bypass the no-runtime skip
-		"WORKCELL_STARTUP_CMD":     "true",
-		// WORKCELL_STARTUP_COLD_PREP deliberately omitted.
-		"WORKCELL_STARTUP_CACHE_HIT_PREP": ":",
-		"WORKCELL_STARTUP_WARM_PREP":      ":",
-	}
-	code, out := runScript(t, driver, live)
-	if code == 0 {
-		t.Fatalf("live run with a missing cold prep hook should fail, got exit 0: %s", out)
+	live := liveEnv(nil)
+	delete(live, "WORKCELL_STARTUP_COLD_PREP")
+	code, out := runLiveDriver(t, live)
+	if code != 2 {
+		t.Fatalf("missing cold prep should exit 2, got %d: %s", code, out)
 	}
 	if !strings.Contains(out, "WORKCELL_STARTUP_COLD_PREP") || !strings.Contains(out, "cold") {
 		t.Errorf("missing-prep error must name the mode and the env var: %s", out)
@@ -525,7 +595,7 @@ func TestDriverSkipsWhenRuntimeClientButNoDaemon(t *testing.T) {
 func TestDriverLiveRequiresTwoRuns(t *testing.T) {
 	// A single-run live capture has no repeatability evidence, so RUNS >= 2 is required.
 	live := liveEnv(map[string]string{"WORKCELL_STARTUP_RUNS": "1"})
-	code, out := runScript(t, driver, live)
+	code, out := runLiveDriver(t, live)
 	if code == 0 {
 		t.Fatalf("live run with RUNS=1 should fail fast, got exit 0: %s", out)
 	}
@@ -546,8 +616,8 @@ func TestDriverZeroMedianIsUnstable(t *testing.T) {
 	// A 0 median in one run vs nonzero in another is degenerate (impossible), not a 0% spread; the gate must fail.
 	code, out := runScript(t, driver,
 		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "0 0 0;10 20 30"})
-	if code != 2 {
-		t.Fatalf("zero-vs-nonzero medians should fail the gate (exit 2), got %d: %s", code, out)
+	if code == 0 {
+		t.Fatalf("zero-vs-nonzero medians should fail the gate, got %d: %s", code, out)
 	}
 	if !strings.Contains(out, "Stability gate: UNSTABLE") {
 		t.Errorf("expected UNSTABLE verdict for a zero median: %s", out)
@@ -564,10 +634,25 @@ func TestDriverStabilityThresholdIsConfigurable(t *testing.T) {
 		"WORKCELL_STARTUP_STABILITY_PCT": "1",
 	}
 	code, out := runScript(t, driver, env)
-	if code != 2 {
-		t.Fatalf("5%% spread under a 1%% threshold should fail (exit 2), got %d: %s", code, out)
+	if code == 0 {
+		t.Fatalf("5%% spread under a 1%% threshold should fail, got %d: %s", code, out)
 	}
 	if !strings.Contains(out, "UNSTABLE") {
 		t.Errorf("missing UNSTABLE verdict at tight threshold: %s", out)
+	}
+}
+
+func TestDriverUsesUnroundedStabilityDecision(t *testing.T) {
+	code, out := runScript(t, driver, map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10000;11504"})
+	if code == 0 || !strings.Contains(out, "| UNSTABLE |") {
+		t.Fatalf("15.04%% spread rounded to a passing decision: %s", out)
+	}
+}
+func TestGoStatsMatchHarnessTieRounding(t *testing.T) {
+	if stats := calculate([]int64{0, 1}); stats.mean != 0 || stats.stddev != 0 {
+		t.Fatalf("ties must round to even like the C5 harness: %+v", stats)
+	}
+	if _, err := parseCapture([]byte("session_id=--all\nsample_token=token\n"), "token"); err == nil {
+		t.Fatal("accepted an option-shaped session id")
 	}
 }

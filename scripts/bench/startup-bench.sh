@@ -14,7 +14,6 @@
 #   mode cold|warm|cache-hit; iterations/warmup = measured/discarded launches.
 # Dry-run: if WORKCELL_STARTUP_SAMPLES_NS is a whitespace-separated list of
 # non-negative integers, those are the samples verbatim and NO command launches
-# (how the driver/unit tests exercise the stats core with no runtime).
 #
 # Output (one line, ns): mode=<> n=<> mean_ns=<> median_ns=<> p90_ns=<> \
 #   stddev_ns=<> min_ns=<> max_ns=<>. A failed launch aborts non-zero with no
