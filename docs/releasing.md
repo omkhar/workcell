@@ -515,6 +515,15 @@ If the workflow enters a waiting state for the `release` environment:
 In `review-gated` mode, stop with the fourth checkpoint packet before approving
 the environment.
 
+The workflow starts with a read-only tag-policy gate. The gate uses the same
+`workcell-hostutil release classify-tag` implementation as the host-side
+publisher, and every later release job depends on it directly. The publisher
+also classifies the tag before its first GitHub release-API request.
+Unsupported tags therefore fail before a write-capable job or API mutation can
+run. Release candidates are published as prereleases and never become latest;
+final tags are non-prereleases and become latest only when their populated
+draft is published.
+
 In immutable-release mode, the release publisher must create or reuse a draft
 release, upload the full artifact set into that draft, and only then publish
 the final release record. If publication instead tries to upload assets into an
