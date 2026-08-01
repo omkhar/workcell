@@ -8,7 +8,15 @@ it down with cached images and an optional kept-warm lane — the sibling of
 on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
 [results tables below](#results) hold a **preliminary live capture from 2026-07-15**
 — recorded with its raw evidence, but confounded by four methodology issues
-(documented there) and therefore not yet a certified C2 result.
+(documented there) and therefore not a certified C2 result.
+
+**Decision (recorded 2026-08-01):** C2 certification and its 1.0 latency target
+are deferred to post-1.0. The reviewed dedicated-certifier design was rejected
+because proving image/profile state and cleanup would broaden the launcher with
+destructive maintainer controls. The generic driver remains useful for
+benchmark-only experimentation, but its caller-provided prepare, teardown, and
+absence hooks are not certification evidence and its output cannot promote a C2
+claim.
 
 ## What is measured
 
@@ -51,7 +59,8 @@ receives the validated ID and token and emits the matching
 `absent session_id=... sample_token=...` attestation.
 The measurement repeats for `WORKCELL_STARTUP_RUNS` passes.
 
-Live runs are guarded so a misconfigured capture cannot look publishable:
+Live runs are guarded so a misconfigured benchmark cannot look publishable as
+measurement evidence:
 
 - **Every driven mode's prep hook is required** (`*_COLD_PREP` /
   `*_CACHE_HIT_PREP` / `*_WARM_PREP`); an unset hook fails fast rather than
@@ -105,7 +114,8 @@ invocation (`WORKCELL_STARTUP_CMD` + all three prep hooks) and the complete raw
 report** are preserved verbatim in
 [`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md).
 Four methodology confounds (below) mean these numbers are a useful preliminary
-signal, **not** a certified C2 result; a clean capture remains for Batch-3.
+signal, **not** a certified C2 result; it does not establish a 1.0 latency
+target under the recorded post-1.0 re-scope.
 
 ### Measured start latency (5 samples per run, both runs shown)
 
@@ -157,17 +167,19 @@ restore-from-tarball cost**, not a kept-warm-session win.
    gaps — but the samples did not begin in the harness's intended clean state, and this
    is a candidate contributor to the `cache-hit` anomaly.
 
-A clean C2 certification should run with **working per-sample teardown**, resolve
+A future post-1.0 C2 certification should run with **working per-sample teardown**, resolve
 or explain the `cache-hit` anomaly, and decide whether to also capture a
 no-tarball first-start tier. A kept-warm measurement is optional unless Workcell
 ships that lane; if measured, it must use an actual verified persistent resource.
+That work is explicitly post-1.0 under the recorded decision above.
 
 ## Filling in the numbers
 
 On a host with a live runtime, run the driver (see [Rerunning](#rerunning)) with
 `WORKCELL_STARTUP_OUTPUT` set. A `0` exit means the stability gate passed;
 non-zero can also mean configuration, launch, or cleanup failure. The generic
-report stays preliminary; a separate certification surface owns promotion.
+report stays benchmark-only; no generic-driver invocation can certify or promote
+C2. Setting `WORKCELL_STARTUP_CERTIFY` is rejected explicitly.
 
 ## Rerunning
 

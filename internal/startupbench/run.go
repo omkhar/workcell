@@ -86,6 +86,9 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 		modes: []string{"cold", "cache-hit"}, prep: map[string]string{},
 		outputPath: os.Getenv("WORKCELL_STARTUP_OUTPUT"), teardownTimeout: 30 * time.Second, verifyTimeout: 30 * time.Second,
 	}
+	if os.Getenv("WORKCELL_STARTUP_CERTIFY") != "" {
+		return cfg, false, fmt.Errorf("generic startup benchmark is benchmark-only and cannot certify C2")
+	}
 	var err error
 	for _, control := range []struct {
 		name      string
@@ -172,7 +175,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 	var report strings.Builder
 	fmt.Fprintln(&report, "# session-start latency benchmark results")
 	fmt.Fprintln(&report)
-	fmt.Fprintln(&report, "- classification: benchmark-only; this runner cannot produce a certified result")
+	fmt.Fprintln(&report, "- classification: benchmark-only; caller-provided hooks are not C2 certification evidence")
 	fmt.Fprintf(&report, "- date (UTC): %s\n", time.Now().UTC().Format(time.RFC3339))
 	host := runtime.GOOS + " " + runtime.GOARCH
 	if release, err := exec.Command("uname", "-r").Output(); err == nil {

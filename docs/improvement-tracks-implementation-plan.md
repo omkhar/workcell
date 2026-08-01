@@ -61,7 +61,7 @@ The milestone ordering answers the current landscape directly:
 |---|---|---|
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
-| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
+| v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
 | post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
@@ -343,15 +343,23 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
 
 ### C2: Session Start Latency Program
 
+**Deferred to post-1.0 (recorded 2026-08-01).** The generic startup driver is
+benchmark-only: its caller-provided lifecycle hooks cannot prove the image,
+profile, session, or cleanup facts required for certification. A reviewed
+dedicated-certifier design was rejected because the required state controls would
+broaden the launcher with destructive maintainer operations. The preliminary
+2026-07-15 capture remains historical measurement evidence only; it does not meet
+or gate a 1.0 latency target.
+
 - Steps: measure and publish the current cold/warm start breakdown; add
   prebaked per-project image caching under the existing cache-profile
   labeling; evaluate a kept-warm VM lane as an explicit labeled mode;
   publish reproducible startup benchmarks; set and record the 1.0 latency
   target.
-- Exit gates: measured improvement recorded; no new unlabeled assurance
-  downgrade; benchmark methodology published; 1.0 target met or re-scoped
-  with rationale.
-- Validation: benchmark lane; scenario coverage for cache-profile behavior.
+- Exit gates: a post-1.0 certification design must prove lifecycle state without
+  widening the supported launcher surface; only then may a latency target be set.
+- Validation: benchmark lane for non-certifying measurements; a future dedicated
+  certification review before any support or performance claim.
 - Size: M. Dependencies: C5 methodology; C1 informs the ceiling.
 
 ### B8: CI Efficiency And Reliability Program
@@ -415,9 +423,9 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
 ### E6: Adoption Growth Kit
 
 **Deferred to post-1.0 (2026-07-09 criterion-7 amendment).** 1.0 ships with
-in-repo markdown docs; C2 benchmark numbers remain required in
-`docs/session-startup-benchmarks.md` during Batch 3 local-operator
-certification. This detail section stays here for continuity of the E6 track.
+in-repo markdown docs. C2 remains post-1.0 and its generic benchmark output is
+not a certification substitute. This detail section stays here for continuity of
+the E6 track.
 
 - Steps: publish a rendered docs site from the existing markdown; record
   asciinema demos for the 5-minute path and one provider quickstart; ship a
@@ -611,6 +619,9 @@ here for continuity of the B6 track.
   matrix row against shipped behavior; record all scope decisions (for
   example an Antigravity certification deferral) explicitly; file and burn
   down any P0/P1 findings.
+- Decision (recorded 2026-08-01): C2's 1.0 latency target and certification are
+  deferred to post-1.0. The generic benchmark remains benchmark-only; the
+  rejected dedicated-certifier design does not create a launcher control surface.
 - Exit gates: no unresolved P0/P1 findings; matrices verified; scope
   decisions recorded; criteria checklist complete with evidence links.
 - Validation: the recorded review itself.
@@ -728,7 +739,7 @@ does not gate 1.0.
 
 - D1 → D2 → D3/D4; A3 + A4 → D5; D2 → D7 (shell portion)
 - B9 → B6; B1 → B2; B3 baseline before D3/D5 refactors land
-- C5 → C2 → C3; C1 decision informs C2/C3/C4
+- C5 informs the post-1.0 C2 program; C1 decision informs C2/C3/C4
 - E4 → E1 → E6; A2 → E5; D8 → G1 (inventory) → G1 (freeze); E5 → G1 (freeze)
 - G1 (inventory) → G3; A5 ↔ F1 coordinated; F1 → F2; G2 ↔ F1 redaction rules
 - A3/A4/D5 → B7 (part 2); everything → G4

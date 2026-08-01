@@ -285,7 +285,7 @@ func TestDriverDryRunStablePasses(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# session-start latency benchmark results",
-		"classification: benchmark-only; this runner cannot produce a certified result",
+		"classification: benchmark-only; caller-provided hooks are not C2 certification evidence",
 		"| cold |", "| warm |",
 		"## Raw samples", "mode=cold run=1 index=1 duration_ns=10",
 		"Cross-run stability (median)",
@@ -294,6 +294,16 @@ func TestDriverDryRunStablePasses(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("report missing %q\n---\n%s", want, out)
 		}
+	}
+}
+
+func TestDriverRejectsCertificationRequest(t *testing.T) {
+	code, out := runScript(t, driver, map[string]string{
+		"WORKCELL_STARTUP_CERTIFY":    "1",
+		"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30",
+	})
+	if code != 2 || !strings.Contains(out, "benchmark-only") || !strings.Contains(out, "cannot certify C2") {
+		t.Fatalf("certification request = exit %d, output: %s", code, out)
 	}
 }
 
