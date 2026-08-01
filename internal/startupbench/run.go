@@ -51,6 +51,10 @@ type sample struct {
 type statistics struct{ n, mean, median, p90, stddev, min, max int64 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "certify" {
+		fmt.Fprintln(stderr, "run-startup-bench: certification is not a startup-bench command")
+		return 2
+	}
 	cfg, skip, err := loadConfig(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "run-startup-bench:", err)
@@ -85,9 +89,6 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 		iterations: 5, warmup: 1, runs: 2, stabilityPct: 15,
 		modes: []string{"cold", "cache-hit"}, prep: map[string]string{},
 		outputPath: os.Getenv("WORKCELL_STARTUP_OUTPUT"), teardownTimeout: 30 * time.Second, verifyTimeout: 30 * time.Second,
-	}
-	if os.Getenv("WORKCELL_STARTUP_CERTIFY") != "" {
-		return cfg, false, fmt.Errorf("generic startup benchmark is benchmark-only and cannot certify C2")
 	}
 	var err error
 	for _, control := range []struct {
@@ -185,7 +186,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 	fmt.Fprintf(&report, "- online CPUs: %d\n", runtime.NumCPU())
 	fmt.Fprintf(&report, "- runtime: %s\n", cfg.runtime)
 	fmt.Fprintf(&report, "- modes: %s\n", strings.Join(cfg.modes, " "))
-	fmt.Fprintf(&report, "- iterations: %d (warmup %d for warm; verified teardown after every live launch) x %d run(s)\n", cfg.iterations, cfg.warmup, cfg.runs)
+	fmt.Fprintf(&report, "- iterations: %d (warmup %d for warm; caller-supplied teardown and absence-verification hooks for live launches) x %d run(s)\n", cfg.iterations, cfg.warmup, cfg.runs)
 	fmt.Fprintf(&report, "- stability threshold: %.0f%% cross-run median spread\n\n", cfg.stabilityPct)
 	medians := make(map[string][]int64, len(cfg.modes))
 	var raw []sample

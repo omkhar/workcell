@@ -179,7 +179,7 @@ On a host with a live runtime, run the driver (see [Rerunning](#rerunning)) with
 `WORKCELL_STARTUP_OUTPUT` set. A `0` exit means the stability gate passed;
 non-zero can also mean configuration, launch, or cleanup failure. The generic
 report stays benchmark-only; no generic-driver invocation can certify or promote
-C2. Setting `WORKCELL_STARTUP_CERTIFY` is rejected explicitly.
+C2. `./scripts/bench/run-startup-bench.sh certify` is rejected explicitly.
 
 ## Rerunning
 
