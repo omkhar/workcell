@@ -167,15 +167,18 @@ hadolint_checksum_from_manifest() {
 
   if ! checksum="$(
     awk -v asset_name="${asset_name}" '
-      $2 == "*" asset_name {
-        matches++
-        if (NF != 2 || length($1) != 64 || $1 !~ /^[[:xdigit:]]+$/) {
+      ($2 == asset_name || $2 == "*" asset_name) {
+        candidates++
+        if (NF != 2 || length($1) != 64 || $1 !~ /^[0-9A-Fa-f]+$/) {
           invalid = 1
+        }
+        if ($2 != "*" asset_name) {
+          invalid_marker = 1
         }
         digest = tolower($1)
       }
       END {
-        if (matches != 1 || invalid) {
+        if (candidates != 1 || invalid || invalid_marker) {
           exit 1
         }
         print digest

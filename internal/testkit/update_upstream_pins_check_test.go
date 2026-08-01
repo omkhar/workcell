@@ -236,10 +236,29 @@ func TestUpdateUpstreamPinsRejectsMalformedHadolintChecksumManifest(t *testing.T
 			assetName: "hadolint-linux-x86_64",
 		},
 		{
-			name: "duplicate asset name",
+			name: "duplicate binary marker asset name",
 			checksums: fmt.Sprintf(
 				"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
 				pins.HadolintAMD64SHA,
+				pins.HadolintAMD64SHA,
+				pins.HadolintARM64SHA,
+			),
+			assetName: "hadolint-linux-x86_64",
+		},
+		{
+			name: "mixed marker duplicate asset name",
+			checksums: fmt.Sprintf(
+				"%s  *hadolint-linux-x86_64\n%s  hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
+				pins.HadolintAMD64SHA,
+				pins.HadolintAMD64SHA,
+				pins.HadolintARM64SHA,
+			),
+			assetName: "hadolint-linux-x86_64",
+		},
+		{
+			name: "unmarked asset name",
+			checksums: fmt.Sprintf(
+				"%s  hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
 				pins.HadolintAMD64SHA,
 				pins.HadolintARM64SHA,
 			),
