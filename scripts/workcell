@@ -1036,6 +1036,7 @@ runtime_builder_policy() {
 
 begin_runtime_builder() {
   local claim_output=""
+  local claim_valid=1
   local key=""
   local value=""
 
@@ -1055,16 +1056,20 @@ begin_runtime_builder() {
   while IFS='=' read -r key value; do
     case "${key}" in
       builder_name)
-        [[ -z "${BUILDX_BUILDER}" && -n "${value}" ]] || { rm -f "${claim_output}"; return 1; }
+        if [[ -n "${BUILDX_BUILDER}" || -z "${value}" ]]; then
+          claim_valid=0
+          break
+        fi
         BUILDX_BUILDER="${value}"
         ;;
       *)
-        rm -f "${claim_output}"; return 1
+        claim_valid=0
+        break
         ;;
     esac
   done <"${claim_output}"
   rm -f "${claim_output}"
-  [[ -n "${BUILDX_BUILDER}" ]] || return 1
+  [[ "${claim_valid}" -eq 1 && -n "${BUILDX_BUILDER}" ]] || return 1
 }
 
 create_runtime_builder() {
