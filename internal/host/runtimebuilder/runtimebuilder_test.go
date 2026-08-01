@@ -185,6 +185,7 @@ func ownedFixture(t *testing.T) (target, *fakeDocker, string) {
 	docker := newFakeDocker()
 	builder, err := claim(target, docker, bytes.NewReader(make([]byte, 16)), noSleep)
 	must(t, err)
+	markCreateStarted(t, target)
 	addBuilder(docker, builder, testContainerID)
 	must(t, adopt(target, docker))
 	return target, docker, builder
@@ -195,12 +196,122 @@ func TestClaimRecoversPriorPartialBuilder(t *testing.T) {
 	docker := newFakeDocker()
 	builder, err := claim(target, docker, bytes.NewReader(make([]byte, 16)), noSleep)
 	must(t, err)
+	markCreateStarted(t, target)
 	addBuilder(docker, builder, testContainerID)
 	random := append(bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{2}, 16)...)
 	next, err := claim(target, docker, bytes.NewReader(random), noSleep)
 	must(t, err)
 	if next == builder || len(docker.containers) != 0 || len(docker.volumes) != 0 {
 		t.Fatalf("recovery next=%q containers=%v volumes=%v", next, docker.containers, docker.volumes)
+	}
+}
+
+func TestCleanupSettlesDelayedCreateAndReapsExactResources(t *testing.T) {
+	_, target := fixture(t)
+	docker := newFakeDocker()
+	builder, err := claim(target, docker, bytes.NewReader(make([]byte, 16)), noSleep)
+	must(t, err)
+	err = create(target, docker, runnerFunc(func(args ...string) (string, error) { return "", nil }))
+	if err == nil {
+		t.Fatal("create unexpectedly adopted an absent builder")
+	}
+	psCalls := 0
+	delayed := runnerFunc(func(args ...string) (string, error) {
+		if equal(args, "ps", "-a", "--format", "{{.Names}}") {
+			psCalls++
+			if psCalls == 2 {
+				addBuilder(docker, builder, testContainerID)
+			}
+		}
+		return docker.Run(args...)
+	})
+	must(t, cleanup(target, delayed, noSleep))
+	if psCalls < 2 || len(docker.containers) != 0 || len(docker.volumes) != 0 {
+		t.Fatalf("cleanup did not reap delayed resources: ps=%d containers=%v volumes=%v", psCalls, docker.containers, docker.volumes)
+	}
+	if _, err := os.Lstat(target.recordPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ownership record remains: %v", err)
+	}
+}
+
+func TestCleanupPreservesStartedClaimWhenCreateDoesNotSettle(t *testing.T) {
+	_, target := fixture(t)
+	docker := newFakeDocker()
+	_, err := claim(target, docker, bytes.NewReader(make([]byte, 16)), noSleep)
+	must(t, err)
+	err = create(target, docker, runnerFunc(func(args ...string) (string, error) {
+		return "", errors.New("Buildx create interrupted")
+	}))
+	if err == nil {
+		t.Fatal("create unexpectedly succeeded")
+	}
+	sleeps := 0
+	err = cleanup(target, docker, func(time.Duration) { sleeps++ })
+	if err == nil {
+		t.Fatal("cleanup unexpectedly accepted a missing started builder")
+	}
+	if sleeps != 4 {
+		t.Fatalf("settle sleeps = %d, want 4", sleeps)
+	}
+	record, err := requireOwnership(target)
+	must(t, err)
+	if !record.CreateStarted || record.Adopted || len(record.Objects) != 0 {
+		t.Fatalf("ownership record was not preserved as an unadopted started claim: %+v", record)
+	}
+}
+
+func TestCleanupRemovesNeverStartedEmptyClaim(t *testing.T) {
+	_, target := fixture(t)
+	docker := newFakeDocker()
+	_, err := claim(target, docker, bytes.NewReader(make([]byte, 16)), noSleep)
+	must(t, err)
+	must(t, cleanup(target, docker, noSleep))
+	if _, err := os.Lstat(target.recordPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ownership record remains: %v", err)
+	}
+}
+
+func TestOwnershipRejectsImpossibleStates(t *testing.T) {
+	_, target := fixture(t)
+	docker := newFakeDocker()
+	builder, err := claim(target, docker, bytes.NewReader(make([]byte, 16)), noSleep)
+	must(t, err)
+	base, err := requireOwnership(target)
+	must(t, err)
+	addBuilder(docker, builder, testContainerID)
+	objects, err := observe(docker, builder)
+	must(t, err)
+	tests := []struct {
+		name   string
+		mutate func(*ownershipRecord)
+	}{
+		{"unadopted objects", func(record *ownershipRecord) { record.Objects = objects }},
+		{"adopted before create", func(record *ownershipRecord) { record.Adopted, record.Objects = true, objects }},
+		{"adopted empty", func(record *ownershipRecord) { record.CreateStarted, record.Adopted = true, true }},
+		{"adopted partial", func(record *ownershipRecord) {
+			record.CreateStarted, record.Adopted, record.Objects = true, true, objects[:1]
+		}},
+		{"unsupported version", func(record *ownershipRecord) { record.Version = 2 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := *base
+			test.mutate(&record)
+			must(t, replaceOwnership(target.recordPath, record))
+			if _, err := readOwnership(target); err == nil {
+				t.Fatal("readOwnership unexpectedly accepted impossible state")
+			}
+		})
+	}
+	data, err := ownershipData(*base)
+	must(t, err)
+	withoutCreateState := bytes.Replace(data, []byte(`,"create_started":false`), nil, 1)
+	if bytes.Equal(withoutCreateState, data) {
+		t.Fatal("ownership fixture did not contain explicit create state")
+	}
+	must(t, os.WriteFile(target.recordPath, withoutCreateState, 0o600))
+	if _, err := readOwnership(target); err == nil {
+		t.Fatal("readOwnership accepted a record without explicit create state")
 	}
 }
 
@@ -264,6 +375,14 @@ func addBuilder(docker *fakeDocker, builder, containerID string) {
 		Mountpoint: "/var/lib/docker/volumes/" + names[3] + "/_data",
 		Scope:      "local",
 	}
+}
+
+func markCreateStarted(t *testing.T, target target) {
+	t.Helper()
+	record, err := requireOwnership(target)
+	must(t, err)
+	record.CreateStarted = true
+	must(t, replaceOwnership(target.recordPath, *record))
 }
 
 func names[T any](values map[string]T) string {

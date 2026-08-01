@@ -44,15 +44,16 @@ type Config struct {
 }
 
 type ownershipRecord struct {
-	Version   int           `json:"version"`
-	Profile   string        `json:"profile"`
-	Backend   string        `json:"backend"`
-	Builder   string        `json:"builder"`
-	Nonce     string        `json:"nonce"`
-	Endpoint  string        `json:"endpoint"`
-	Workspace string        `json:"workspace"`
-	Adopted   bool          `json:"adopted"`
-	Objects   []ownedObject `json:"objects,omitempty"`
+	Version       int           `json:"version"`
+	Profile       string        `json:"profile"`
+	Backend       string        `json:"backend"`
+	Builder       string        `json:"builder"`
+	Nonce         string        `json:"nonce"`
+	Endpoint      string        `json:"endpoint"`
+	Workspace     string        `json:"workspace"`
+	CreateStarted bool          `json:"create_started"`
+	Adopted       bool          `json:"adopted"`
+	Objects       []ownedObject `json:"objects,omitempty"`
 }
 
 type ownedObject struct {
@@ -225,6 +226,10 @@ func adopt(t target, runner dockerRunner) error {
 	if err != nil {
 		return err
 	}
+	return adoptObserved(t, record, objects)
+}
+
+func adoptObserved(t target, record *ownershipRecord, objects []ownedObject) error {
 	var containers, volumes int
 	for _, object := range objects {
 		switch object.Kind {
@@ -237,6 +242,7 @@ func adopt(t target, runner dockerRunner) error {
 	if containers != 1 || volumes != 1 {
 		return fmt.Errorf("runtime-image builder created %d containers and %d volumes; expected one of each", containers, volumes)
 	}
+	record.CreateStarted = true
 	record.Adopted = true
 	record.Objects = objects
 	return replaceOwnership(t.recordPath, *record)
@@ -246,6 +252,12 @@ func create(t target, docker, buildx dockerRunner) error {
 	record, err := requireOwnership(t)
 	if err != nil {
 		return err
+	}
+	if !record.CreateStarted {
+		record.CreateStarted = true
+		if err := replaceOwnership(t.recordPath, *record); err != nil {
+			return err
+		}
 	}
 	args := []string{"create", "--driver", "docker-container"}
 	if t.cfg.BuildkitdConfig != "" {
@@ -267,12 +279,21 @@ func cleanup(t target, runner dockerRunner, sleep func(time.Duration)) error {
 		return err
 	}
 	if !record.Adopted {
-		record.Objects, err = observe(runner, record.Builder)
+		if !record.CreateStarted {
+			objects, err := observe(runner, record.Builder)
+			if err != nil {
+				return err
+			}
+			if len(objects) == 0 {
+				return removeOwnership(t.recordPath, *record)
+			}
+			return errors.New("unstarted runtime-image builder ownership unexpectedly has resources")
+		}
+		objects, err := settleCreatedBuilder(runner, record.Builder, sleep)
 		if err != nil {
 			return err
 		}
-		record.Adopted = true
-		if err := replaceOwnership(t.recordPath, *record); err != nil {
+		if err := adoptObserved(t, record, objects); err != nil {
 			return err
 		}
 	}
@@ -304,6 +325,35 @@ func cleanup(t target, runner dockerRunner, sleep func(time.Duration)) error {
 		return removeOwnership(t.recordPath, *record)
 	}
 	return errors.New("could not remove every exact owned runtime-image builder resource")
+}
+
+func settleCreatedBuilder(runner dockerRunner, builder string, sleep func(time.Duration)) ([]ownedObject, error) {
+	for attempt := 0; attempt < 5; attempt++ {
+		objects, err := observe(runner, builder)
+		if err != nil {
+			return nil, err
+		}
+		if hasExpectedBuilderShape(objects) {
+			return objects, nil
+		}
+		if attempt < 4 {
+			sleep(time.Second)
+		}
+	}
+	return nil, errors.New("runtime-image builder create did not settle to exactly one container and one volume; ownership record preserved")
+}
+
+func hasExpectedBuilderShape(objects []ownedObject) bool {
+	var containers, volumes int
+	for _, object := range objects {
+		switch object.Kind {
+		case "container":
+			containers++
+		case "volume":
+			volumes++
+		}
+	}
+	return containers == 1 && volumes == 1
 }
 
 func verifyOwned(runner dockerRunner, record ownershipRecord) ([]ownedObject, error) {
@@ -431,6 +481,10 @@ func readOwnership(t target) (*ownershipRecord, error) {
 	if err := decodeStrict(bytes.NewReader(data), &record); err != nil {
 		return nil, fmt.Errorf("decode runtime-image builder ownership: %w", err)
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("decode runtime-image builder ownership fields: %w", err)
+	}
 	if record.Version != 1 || record.Profile != t.cfg.Profile || record.Backend != t.cfg.Backend ||
 		record.Endpoint != t.endpoint || record.Workspace != t.cfg.Workspace ||
 		!nonceValue.MatchString(record.Nonce) ||
@@ -456,8 +510,14 @@ func readOwnership(t target) (*ownershipRecord, error) {
 		}
 		seen[key] = struct{}{}
 	}
+	if _, ok := fields["create_started"]; !ok {
+		return nil, errors.New("runtime-image builder ownership lacks create state")
+	}
 	if !record.Adopted && len(record.Objects) != 0 {
 		return nil, errors.New("unadopted runtime-image builder ownership contains objects")
+	}
+	if record.Adopted && (!record.CreateStarted || !hasExpectedBuilderShape(record.Objects)) {
+		return nil, errors.New("adopted runtime-image builder ownership has an impossible state")
 	}
 	return &record, nil
 }

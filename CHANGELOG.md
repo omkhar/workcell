@@ -8,11 +8,6 @@ Releases.
 
 ## Unreleased
 
-### Fixed
-
-- remove temporary Buildx resources after every runtime-image build attempt,
-  with exact target, random identity, ownership, and inventory checks.
-
 ## v1.0.0-rc.2 - 2026-07-12
 
 Supersedes v1.0.0-rc.1, which was tagged but never published: its release

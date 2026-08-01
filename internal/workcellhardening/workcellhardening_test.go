@@ -298,7 +298,7 @@ func TestCheckConfigSafetyRealRepo(t *testing.T) {
 }
 
 // runtimeHappyLauncher is a minimal scripts/workcell that satisfies all
-// runtime/gc invariants: the trusted Docker client seed, no
+// ten runtime/gc invariants: the trusted Docker client seed, no
 // DOCKER_CONFIG pin to the real host home, the buildx_cmd invocation, a
 // runtime_build_codex_arch body resolving both musl assets (and no gnu
 // asset), both hidden probes, both --gc cleanup helpers, the strict-mode
@@ -313,10 +313,6 @@ setup_workcell_trusted_docker_client() {
 
 runtime_build_image() {
   buildx_cmd build --tag workcell/runtime .
-}
-
-cleanup() {
-  cleanup_runtime_builder || true
 }
 
 runtime_build_codex_arch() {
@@ -377,11 +373,6 @@ func TestCheckRuntimeInvariants(t *testing.T) {
 			name:    "missing buildx_cmd build",
 			body:    strings.Replace(runtimeHappyLauncher, "buildx_cmd build", "buildx build", 1),
 			wantErr: "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path",
-		},
-		{
-			name:    "exit trap omits builder cleanup",
-			body:    strings.Replace(runtimeHappyLauncher, "cleanup_runtime_builder || true", ":", 1),
-			wantErr: "Expected launcher exit cleanup to reap an active owned runtime-image builder",
 		},
 		{
 			// kindFunctionBlock: aarch64 musl asset removed from the block.

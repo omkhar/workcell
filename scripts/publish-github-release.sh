@@ -130,6 +130,9 @@ cleanup() {
 trap cleanup EXIT
 build_go_tool_in_repo "${ROOT_DIR}" "${HOSTUTIL_BIN}" ./cmd/workcell-hostutil
 
+# This fail-closed tag gate runs before the first GitHub release-API request.
+"${HOSTUTIL_BIN}" release classify-tag "${TAG_NAME}" >/dev/null
+
 release_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}"
 release_json="${TMP_ROOT}/release.json"
 create_payload="${TMP_ROOT}/create.json"
@@ -205,7 +208,7 @@ for path in "$@"; do
 done
 
 publish_payload="${TMP_ROOT}/publish.json"
-printf '{"draft":false}\n' >"${publish_payload}"
+"${HOSTUTIL_BIN}" release publish-payload "${TAG_NAME}" "${publish_payload}"
 publish_status="$(api PATCH "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}" "${publish_payload}" "${TMP_ROOT}/publish-response.json")"
 [[ "${publish_status}" == "200" ]] || {
   echo "Failed to publish GitHub release ${TAG_NAME} after uploading assets" >&2

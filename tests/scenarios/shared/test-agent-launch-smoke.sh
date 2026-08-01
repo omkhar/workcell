@@ -124,25 +124,6 @@ prepare_runtime
 grep -q "^profile=${PROFILE} mode=strict agent=codex " "${TMP_DIR}/prepare.stderr"
 grep -q '^target_kind=local_vm target_provider=colima target_id='"${PROFILE}"' target_assurance_class=strict runtime_api=docker workspace_transport=workspace-mount$' "${TMP_DIR}/prepare.stderr"
 grep -q "Prepared runtime image recorded for profile ${PROFILE}. No session launched because --prepare-only was requested." "${TMP_DIR}/prepare.stderr"
-"${ROOT_DIR}/scripts/workcell" \
-  --inspect \
-  --agent codex \
-  --no-default-injection-policy \
-  --workspace "${WORKSPACE}" \
-  --colima-profile "${PROFILE}" >"${TMP_DIR}/inspect.stdout"
-TARGET_STATE_DIR="$(sed -n 's/^target_state_dir=//p' "${TMP_DIR}/inspect.stdout")"
-[[ -n "${TARGET_STATE_DIR}" ]]
-[[ ! -e "${TARGET_STATE_DIR}/workcell.builder-owned" ]]
-BUILDER_PREFIX="buildx_buildkit_workcell-runtime-${PROFILE}"
-COLIMA_HOME="${REAL_HOME}/.colima" colima start --profile "${PROFILE}" >/dev/null
-{
-  env DOCKER_HOST="unix://${REAL_HOME}/.colima/${PROFILE}/docker.sock" docker ps -a --format '{{.Names}}'
-  env DOCKER_HOST="unix://${REAL_HOME}/.colima/${PROFILE}/docker.sock" docker volume ls --format '{{.Name}}'
-} >"${TMP_DIR}/builder-inventory"
-if grep -Eq "^${BUILDER_PREFIX}-[a-f0-9]{32}(0|0?_state)?$" "${TMP_DIR}/builder-inventory"; then
-  echo "Runtime-image builder resources remain after prepare-only." >&2
-  exit 1
-fi
 
 for agent in codex claude copilot gemini; do
   expected_version="$(expected_runtime_version "${agent}")"

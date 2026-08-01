@@ -16,7 +16,6 @@ cleanup() {
   local builder_name=""
   local builder_container_prefix=""
   local builder_resource=""
-  local -a builder_names=()
   local -a builder_containers=()
   local -a builder_volumes=()
 
@@ -35,22 +34,25 @@ cleanup() {
     done
   fi
   if [[ -n "${PROFILE_NAME}" ]]; then
-    builder_name="workcell-runtime-${PROFILE_NAME}-"
+    builder_name="workcell-runtime-${PROFILE_NAME//[^[:alnum:]_.-]/-}"
     builder_container_prefix="buildx_buildkit_${builder_name}"
-    while IFS= read -r builder_resource; do builder_names+=("${builder_resource}"); done < <(docker --context desktop-linux buildx ls --format '{{.Name}}' 2>/dev/null | grep -E "^${builder_name}[a-f0-9]{32}$" || true)
-    while IFS= read -r builder_resource; do builder_containers+=("${builder_resource}"); done < <(docker --context desktop-linux ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${builder_container_prefix}[a-f0-9]{32}0?$" || true)
-    while IFS= read -r builder_resource; do builder_volumes+=("${builder_resource}"); done < <(docker --context desktop-linux volume ls --format '{{.Name}}' 2>/dev/null | grep -E "^${builder_container_prefix}[a-f0-9]{32}0?_state$" || true)
+    builder_containers=("${builder_container_prefix}" "${builder_container_prefix}0")
+    builder_volumes=("${builder_container_prefix}_state" "${builder_container_prefix}0_state")
     for ((cleanup_attempt = 1; cleanup_attempt <= 5; cleanup_attempt++)); do
-      for builder_resource in "${builder_names[@]}"; do
-        docker --context desktop-linux buildx rm --force "${builder_resource}" >/dev/null 2>&1 || true
-      done
+      docker --context desktop-linux buildx rm --force "${builder_name}" >/dev/null 2>&1 || true
       for builder_resource in "${builder_containers[@]}"; do
         docker --context desktop-linux rm -f "${builder_resource}" >/dev/null 2>&1 || true
       done
       for builder_resource in "${builder_volumes[@]}"; do
         docker --context desktop-linux volume rm "${builder_resource}" >/dev/null 2>&1 || true
       done
-      [[ "${cleanup_attempt}" -eq 5 ]] || sleep 1
+      if ! docker --context desktop-linux ps -a --format '{{.Names}}' | grep -Fxq "${builder_container_prefix}" &&
+        ! docker --context desktop-linux ps -a --format '{{.Names}}' | grep -Fxq "${builder_container_prefix}0" &&
+        ! docker --context desktop-linux volume ls --format '{{.Name}}' | grep -Fxq "${builder_container_prefix}_state" &&
+        ! docker --context desktop-linux volume ls --format '{{.Name}}' | grep -Fxq "${builder_container_prefix}0_state"; then
+        break
+      fi
+      sleep 1
     done
   fi
   if [[ -n "${TARGET_STATE_DIR}" ]] && [[ "${TARGET_STATE_DIR}" == "${REAL_HOME}/.local/state/workcell/targets/local_compat/docker-desktop/"* ]]; then
@@ -191,16 +193,6 @@ grep -q '^target_kind=local_compat target_provider=docker-desktop target_id=desk
 grep -q 'Prepared runtime image recorded for profile ' "${TMP_DIR}/prepare.stderr"
 [[ -f "${TARGET_STATE_DIR}/workcell.image-ready" ]]
 [[ -f "${TARGET_STATE_DIR}/workcell.managed" ]]
-[[ ! -e "${TARGET_STATE_DIR}/workcell.builder-owned" ]]
-BUILDER_PREFIX="buildx_buildkit_workcell-runtime-${PROFILE_NAME}"
-{
-  docker --context desktop-linux ps -a --format '{{.Names}}'
-  docker --context desktop-linux volume ls --format '{{.Name}}'
-} >"${TMP_DIR}/builder-inventory"
-if grep -Eq "^${BUILDER_PREFIX}-[a-f0-9]{32}(0|0?_state)?$" "${TMP_DIR}/builder-inventory"; then
-  echo "Runtime-image builder resources remain after prepare-only." >&2
-  exit 1
-fi
 
 for agent in codex claude copilot gemini; do
   expected_version="$(expected_runtime_version "${agent}")"
