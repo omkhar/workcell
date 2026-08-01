@@ -97,10 +97,11 @@ If the task is release-bound, also read:
   commits.
 - Serialize follow-up branch pushes and PR-base-policy-triggering mutations,
   including title, body, or base edits and draft/ready transitions. Do not run
-  them concurrently or while `Allowed PR base` is in progress: finish the
-  push, confirm the PR's `headRefOid`, and wait for the push-triggered policy
-  run to settle. Require success before a non-corrective metadata mutation. If
-  it fails because the current PR state violates base policy, make only the
+  them concurrently or while `Allowed PR base` is in progress. For each push or
+  mutation, wait for that event's own policy run to appear, identify it against
+  the current PR state, and require it to settle successfully before another
+  push, mutation, or merge; after a push, also confirm the PR's `headRefOid`.
+  If it fails because the current PR state violates base policy, make only the
   draft transition or base edit needed to restore a permitted state, then
   follow the replacement policy run to success before another triggering
   mutation or merge.
