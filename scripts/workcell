@@ -1000,6 +1000,87 @@ declare -a WORKSPACE_IMPORT_MOUNTS=()
 declare -a CACHE_MOUNTS=()
 declare -a RUNTIME_NETWORK_ARGS=()
 INTERACTIVE_HOST_TERMINAL_RESTORE_NEEDED=0
+BUILDX_BUILDER=""
+RUNTIME_BUILDER_CLEANUP_ACTIVE=0
+
+runtime_builder_policy() {
+  local action="$1"
+  local buildkitd_config="${2:-}"
+  local docker_endpoint="${DOCKER_HOST:-}"
+  local target_kind=""
+
+  target_kind="$(current_target_kind)" || return 1
+  if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
+    docker_endpoint="$(run_workcell_docker_client_command \
+      docker context inspect "${DOCKER_CONTEXT}" --format '{{.Endpoints.docker.Host}}')" || return 1
+  fi
+  run_go_hostutil_preserve_exit runtime-builder-cli "${action}" \
+    "--profile=${COLIMA_PROFILE}" \
+    "--backend=${TARGET_BACKEND}" \
+    "--target-kind=${target_kind}" \
+    "--target-state-root=${WORKCELL_TARGET_STATE_ROOT}" \
+    "--colima-state-root=${COLIMA_STATE_ROOT}" \
+    "--workspace=${PROFILE_WORKSPACE_ROOT}" \
+    "--docker-host=${DOCKER_HOST:-}" \
+    "--docker-context=${DOCKER_CONTEXT:-}" \
+    "--docker-endpoint=${docker_endpoint}" \
+    "--docker-bin=${HOST_DOCKER_BIN}" \
+    "--docker-config=${DOCKER_CONFIG}" \
+    "--docker-home=${HOME}" \
+    "--real-home=${REAL_HOME}" \
+    "--docker-cwd=${WORKCELL_DOCKER_CLIENT_CWD:-${HOME:-/}}" \
+    "--buildx-bin=${WORKCELL_TRUSTED_BUILDX_BIN}" \
+    "--buildkitd-config=${buildkitd_config}" \
+    "--tool-path=${TRUSTED_HOST_PATH}"
+}
+
+begin_runtime_builder() {
+  local claim_output=""
+  local key=""
+  local value=""
+
+  [[ "${RUNTIME_BUILDER_CLEANUP_ACTIVE:-0}" -eq 0 ]] || {
+    echo "Workcell refused to claim a second runtime-image builder before cleanup." >&2
+    return 1
+  }
+  ensure_workcell_trusted_buildx
+  claim_output="$(mktemp "${TMPDIR:-/tmp}/workcell-runtime-builder-claim.XXXXXX")" || return 1
+  if ! runtime_builder_policy claim >"${claim_output}"; then
+    rm -f "${claim_output}"
+    echo "Workcell refused to claim runtime-image builder ownership." >&2
+    return 1
+  fi
+  RUNTIME_BUILDER_CLEANUP_ACTIVE=1
+  BUILDX_BUILDER=""
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      builder_name)
+        [[ -z "${BUILDX_BUILDER}" && -n "${value}" ]] || { rm -f "${claim_output}"; return 1; }
+        BUILDX_BUILDER="${value}"
+        ;;
+      *)
+        rm -f "${claim_output}"; return 1
+        ;;
+    esac
+  done <"${claim_output}"
+  rm -f "${claim_output}"
+  [[ -n "${BUILDX_BUILDER}" ]] || return 1
+}
+
+create_runtime_builder() {
+  local buildkitd_config=""
+
+  [[ "${RUNTIME_BUILDER_CLEANUP_ACTIVE:-0}" -eq 1 ]] || return 1
+  buildkitd_config="$(prepare_workcell_buildkitd_config)" || return 1
+  runtime_builder_policy create "${buildkitd_config}"
+}
+
+cleanup_runtime_builder() {
+  [[ "${RUNTIME_BUILDER_CLEANUP_ACTIVE:-0}" -eq 1 ]] || return 0
+  runtime_builder_policy cleanup || return 1
+  RUNTIME_BUILDER_CLEANUP_ACTIVE=0
+  BUILDX_BUILDER=""
+}
 
 mark_interactive_host_terminal_dirty() {
   [[ -t 0 ]] && [[ -t 1 ]] || return 0
@@ -1076,6 +1157,7 @@ cleanup() {
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   fi
 
+  cleanup_runtime_builder || true
   if [[ -n "${PROFILE_LOCK_DIR}" ]] && [[ -d "${PROFILE_LOCK_DIR}" ]]; then
     rm -rf "${PROFILE_LOCK_DIR}"
   fi
@@ -6683,13 +6765,7 @@ run_runtime_image_build_with_retries() {
   local max_attempts=5
   local codex_release_url=""
   local copilot_release_url=""
-  local safe_builder_context=""
   local -a build_cmd=()
-
-  if [[ -z "${BUILDX_BUILDER:-}" ]]; then
-    safe_builder_context="${COLIMA_PROFILE//[^[:alnum:]_.-]/-}"
-    BUILDX_BUILDER="workcell-runtime-${safe_builder_context}"
-  fi
 
   while :; do
     build_status=0
@@ -6732,25 +6808,35 @@ run_runtime_image_build_with_retries() {
         "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
       fi
     fi
-    ensure_workcell_selected_builder
-    build_cmd=(
-      buildx_cmd build
-      --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}"
-      --provenance=false
-      --sbom=false
-      --load
-      -t "${IMAGE_TAG}"
-      -f "${ROOT_DIR}/runtime/container/Dockerfile"
-      "${ROOT_DIR}"
-    )
-    if [[ -n "${codex_release_url}" ]]; then
-      build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
+    if ! begin_runtime_builder; then
+      return 2
     fi
-    if [[ -n "${copilot_release_url}" ]]; then
-      build_cmd+=(--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}")
+    if ! create_runtime_builder; then
+      build_status=2
+    else
+      build_cmd=(
+        buildx_cmd build
+        --builder "${BUILDX_BUILDER}"
+        --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}"
+        --provenance=false
+        --sbom=false
+        --load
+        -t "${IMAGE_TAG}"
+        -f "${ROOT_DIR}/runtime/container/Dockerfile"
+        "${ROOT_DIR}"
+      )
+      if [[ -n "${codex_release_url}" ]]; then
+        build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
+      fi
+      if [[ -n "${copilot_release_url}" ]]; then
+        build_cmd+=(--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}")
+      fi
+      SOURCE_DATE_EPOCH="${build_source_date_epoch}" run_command_with_debug_log runtime-build \
+        "${build_cmd[@]}" || build_status=$?
     fi
-    SOURCE_DATE_EPOCH="${build_source_date_epoch}" run_command_with_debug_log runtime-build \
-      "${build_cmd[@]}" || build_status=$?
+    if ! cleanup_runtime_builder; then
+      return 2
+    fi
     if [[ "${build_status}" -eq 0 ]]; then
       return 0
     fi
