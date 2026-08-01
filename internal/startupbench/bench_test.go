@@ -313,6 +313,25 @@ func TestDriverRejectsCertificationCommandBeforeCannedSampleProcessing(t *testin
 	}
 }
 
+func TestDriverCannedSamplesRejectArguments(t *testing.T) {
+	for _, arg := range []string{"--certify", "certify=true", "--certify=true", "unexpected"} {
+		t.Run(arg, func(t *testing.T) {
+			code, stdout, stderr := runScriptSplit(t, driver,
+				map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"}, arg)
+			if code != 2 {
+				t.Fatalf("canned sample argument %q = exit %d, want 2", arg, code)
+			}
+			if stdout != "" || strings.Contains(stdout, "# session-start latency benchmark results") {
+				t.Fatalf("canned sample argument %q wrote benchmark output: %q", arg, stdout)
+			}
+			const want = "run-startup-bench: canned-sample mode does not accept arguments\n"
+			if stderr != want {
+				t.Fatalf("canned sample argument %q stderr = %q, want %q", arg, stderr, want)
+			}
+		})
+	}
+}
+
 func TestDriverDryRunUnstableFailsGate(t *testing.T) {
 	// Two groups with very different medians (20 vs 200) exceed the 15% threshold.
 	code, out := runScript(t, driver,

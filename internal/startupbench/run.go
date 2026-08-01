@@ -107,6 +107,9 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 	cfg.stabilityPct = float64(stability)
 	rawSamples := os.Getenv("WORKCELL_STARTUP_SAMPLES_NS")
 	if rawSamples != "" {
+		if len(args) != 0 {
+			return cfg, false, fmt.Errorf("canned-sample mode does not accept arguments")
+		}
 		cfg.dryRun = true
 		cfg.runtime = "dry-run (canned samples)"
 		cfg.modes = []string{"cold", "cache-hit", "warm"}
