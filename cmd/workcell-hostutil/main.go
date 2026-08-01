@@ -318,6 +318,7 @@ func helperSubcommands() []helperSubcommand {
 		{"session-export", 0, -1, runHelperSessionExport},
 		{"session-diff-metadata", 0, -1, runHelperSessionDiffMetadata},
 		{"session-runtime-metadata", 0, -1, runHelperSessionRuntimeMetadata},
+		{"session-container-absent-for-delete", 1, 1, cmdHelperSessionContainerAbsentForDelete},
 		{"session-timeline", 0, -1, runHelperSessionTimeline},
 		{"audit-digest", 2, -1, cmdHelperAuditDigest},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
@@ -464,6 +465,14 @@ func cmdHelperSessionSuffix(_ []string) error {
 	}
 	fmt.Println(value)
 	return nil
+}
+
+func cmdHelperSessionContainerAbsentForDelete(args []string) error {
+	inventory, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	return sessions.ProveContainerAbsentForDelete(args[0], string(inventory))
 }
 
 func cmdHelperColimaStatus(args []string) error {
