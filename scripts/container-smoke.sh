@@ -1883,7 +1883,7 @@ docker_cmd run -d \
   -v "$(workcell_docker_host_path "${INJECTION_BUNDLE_ROOT}/copilot"):/opt/workcell/host-injections:ro" \
   -v "$(workcell_docker_host_path "${COPILOT_METADATA_STUB}"):/usr/local/libexec/workcell/real/copilot:ro" \
   "${IMAGE_TAG}" copilot -p smoke -s >/dev/null
-for _ in {1..100}; do
+for _ in {1..300}; do
   [[ -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-token-consumed" ]] && break
   sleep 0.1
 done
@@ -1897,13 +1897,20 @@ if [[ -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-github-token.txt" ]]; th
   docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
   exit 32
 fi
-for _ in {1..100}; do
+for _ in {1..300}; do
   [[ -e "${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub.out" ]] && break
+  if [[ "$(docker_cmd inspect --format '{{.State.Status}}' "${COPILOT_METADATA_CONTAINER}" 2>/dev/null || true)" =~ ^(dead|exited)$ ]]; then
+    echo "Copilot metadata smoke container exited before the stub became ready" >&2
+    docker_cmd logs "${COPILOT_METADATA_CONTAINER}" >&2 || true
+    docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+    exit 34
+  fi
   sleep 0.1
 done
 if [[ ! -e "${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub.out" ]] ||
   ! grep -q '^copilot-metadata-stub-ok$' "${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub.out"; then
   echo "Copilot metadata smoke stub did not become ready" >&2
+  docker_cmd logs "${COPILOT_METADATA_CONTAINER}" >&2 || true
   docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
   exit 34
 fi
