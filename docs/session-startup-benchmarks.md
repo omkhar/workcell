@@ -2,8 +2,8 @@
 
 Workcell starts an isolated session by resolving the runtime image, booting the
 container runtime (Colima today, Apple `container` under evaluation in C1), and
-completing the supervisor handshake. **C2** measures that start latency and drives
-it down with cached images and an optional kept-warm lane — the sibling of
+completing the supervisor handshake. This page records historical session-start
+measurements from the C2 investigation — the sibling of
 [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5). Numbers are captured
 on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
 [results tables below](#results) hold a **preliminary live capture from 2026-07-15**
@@ -22,7 +22,7 @@ claim.
 
 A **sample** is one full session start: the wall-clock time from invoking the
 session-start command to the point the session is ready. The harness times three
-modes that span the latency shapes C2 targets:
+modes that distinguish the latency shapes explored by the historical C2 work:
 
 | Mode | Runtime state before the sample | What it isolates |
 |---|---|---|
@@ -30,8 +30,9 @@ modes that span the latency shapes C2 targets:
 | `warm` | image cached and a kept-warm session available | best-case start off the kept-warm lane |
 | `cache-hit` | image cached, no kept-warm session | the image-cache win alone, without the warm lane |
 
-For 1.0, the `cold` versus `cache-hit` delta is the headline C2 number. `warm`
-becomes a separate headline only if Workcell ships and verifies a kept-warm lane.
+These measurements establish no 1.0 target, headline number, performance
+guarantee, or C2 certification. A future post-1.0 program may decide which
+metrics to claim only after an independently reviewed certification design.
 
 ## Methodology
 
@@ -51,12 +52,14 @@ state through a per-mode prep hook (`WORKCELL_STARTUP_COLD_PREP` /
 the cached image and stopping the kept-warm session for `cold`, pre-pulling the
 image but leaving the warm lane down for `cache-hit`, or pre-pulling and priming
 the warm lane for `warm`), then times the exact argv supplied after `--`. A random
-`WORKCELL_STARTUP_SAMPLE_TOKEN` binds each target launch to cleanup. The measured
-wrapper labels its resource with that token, then emits exactly `session_id=...`
-and the echoed `sample_token=...`. Teardown receives an empty
-`WORKCELL_STARTUP_SESSION_ID` and selects only by token. The absence verifier
-receives the validated ID and token and emits the matching
-`absent session_id=... sample_token=...` attestation.
+`WORKCELL_STARTUP_SAMPLE_TOKEN` binds each target launch to a caller-hook
+protocol. The measured wrapper labels its resource with that token, then emits
+exactly `session_id=...` and the echoed `sample_token=...`. The caller-supplied
+teardown hook receives an empty `WORKCELL_STARTUP_SESSION_ID` and selects only by
+token. The caller-supplied absence hook receives the reported ID and token and
+returns `absent session_id=... sample_token=...`. This checks only the hook
+protocol and matching fields; it cannot prove resource ownership, cleanup, or
+lifecycle state.
 The measurement repeats for `WORKCELL_STARTUP_RUNS` passes.
 
 Live runs are guarded so a misconfigured benchmark cannot look publishable as
@@ -65,9 +68,9 @@ measurement evidence:
 - **Every driven mode's prep hook is required** (`*_COLD_PREP` /
   `*_CACHE_HIT_PREP` / `*_WARM_PREP`); an unset hook fails fast rather than
   measuring whatever state happened to be present.
-- **Per-sample teardown and absence verification are required.** Missing
-  operations, malformed ownership output, token mismatch, or failed attestation
-  fails the live run.
+- **Caller-supplied teardown and absence hooks are required.** Missing
+  operations, malformed hook output, or token mismatch fails the live run, but
+  successful hook output is not proof of ownership, cleanup, or lifecycle state.
 - **Warm means kept-warm.** Live `warm` is opt-in and requires
   `WORKCELL_STARTUP_WARM_VERIFY`; the default live modes are `cold cache-hit`.
 - **The runtime must be usable, not just installed** — a cheap read-only probe
@@ -89,8 +92,8 @@ evaluate shell fragments. Canned dry runs execute no operations.
 
 ### The cross-run stability gate
 
-Reproducibility is the C2 acceptance bar, so the driver enforces it: after all
-runs it computes, per mode, the run-to-run **median** spread as a percentage of
+The generic benchmark has a reproducibility guard: after all runs it computes,
+per mode, the run-to-run **median** spread as a percentage of
 the smallest run's median, and **fails** (non-zero exit) if any mode exceeds
 `WORKCELL_STARTUP_STABILITY_PCT` (default 15%) — the evidence a published number
 repeats. A zero median fails the gate outright: a 0 ns start is impossible, so it

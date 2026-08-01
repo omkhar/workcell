@@ -44,7 +44,7 @@ The milestone ordering answers the current landscape directly:
   default-deny allowlisting → A1 (v0.13) documents, extends, and brings
   target parity to that shipped control instead of building a duplicate lane
 - microVM-per-session backends with warm starts are the mainstream
-  comparison point → C1/C2 anchor v0.14
+  comparison point → C1 anchors v0.14; C2 is a post-1.0 program
 - parallel worktree-per-agent sessions are the 2026 unit of agent work →
   C3 is in 1.0 scope (v0.15), not a post-1.0 idea
 - upstream retires Gemini CLI personal-account tiers in June 2026 →
@@ -64,7 +64,7 @@ The milestone ordering answers the current landscape directly:
 | v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C2, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Items inside a milestone are independently shippable and individually
 reviewable. Later-milestone items may start early when nothing earlier gates
@@ -351,13 +351,13 @@ broaden the launcher with destructive maintainer operations. The preliminary
 2026-07-15 capture remains historical measurement evidence only; it does not meet
 or gate a 1.0 latency target.
 
-- Steps: measure and publish the current cold/warm start breakdown; add
-  prebaked per-project image caching under the existing cache-profile
-  labeling; evaluate a kept-warm VM lane as an explicit labeled mode;
-  publish reproducible startup benchmarks; set and record the 1.0 latency
-  target.
-- Exit gates: a post-1.0 certification design must prove lifecycle state without
-  widening the supported launcher surface; only then may a latency target be set.
+- Post-1.0 steps: measure and publish the current cold/warm start breakdown;
+  add prebaked per-project image caching under the existing cache-profile
+  labeling; evaluate a kept-warm VM lane as an explicit labeled mode; publish
+  reproducible startup benchmarks; and set any resulting latency target.
+- Post-1.0 exit gates: a certification design must prove lifecycle state without
+  widening the supported launcher surface before any performance claim or target.
+- 1.0 exit gate: recorded rationale in ROADMAP/G4; no C2 performance claim.
 - Validation: benchmark lane for non-certifying measurements; a future dedicated
   certification review before any support or performance claim.
 - Size: M. Dependencies: C5 methodology; C1 informs the ceiling.
@@ -539,8 +539,7 @@ here for continuity of the B6 track.
   (deterministic tests); session tooling renders parallel topology; docs
   updated; works on the strict path.
 - Validation: scenario coverage including conflict cases; live exercise.
-- Size: L. Dependencies: C2 (latency makes parallel viable); C1 decision
-  helps (per-session VMs).
+- Size: L. Dependencies: C1 decision helps (per-session VMs).
 
 ### D5: Modularize The Rust Interception Library
 
