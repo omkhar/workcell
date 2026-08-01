@@ -89,6 +89,9 @@ If the task is release-bound, also read:
   end-to-end certification.
 - Open the PR as a draft first. Mark it ready only after the review and check
   gates below are satisfied.
+- Every PR must complete the Codex bot loop required by `AGENTS.md`. Workflow
+  step 9 defines the repository procedure; use the Codex PR review loop skill
+  when it is available.
 - Do not stop at PR creation. Follow repo-owned checks until they are green,
   fix failures, and rerun the relevant local validation before pushing more
   commits.
@@ -111,6 +114,9 @@ If the task is release-bound, also read:
   merge, then follow merged `main` workflows until all repo-owned lanes are
   green. Scope hosted polling to the PR head SHA or merge SHA; historical
   scheduled failures are triage inputs, not blockers for an unrelated SHA.
+- A single-maintainer admin merge may bypass only a missing independent
+  approval. It never bypasses required checks, commit-signature or base policy,
+  the current-head Codex clean marker, comment sweeps, or unresolved threads.
 - Do not accept failing repo-owned tests, checks, or workflows as acceptable
   residue. Fix them or explicitly change the claimed guarantee in the same
   review unit.
@@ -145,19 +151,23 @@ If the task is release-bound, also read:
      settled; require success unless the next change is the single corrective
      draft transition or base edit needed to restore a permitted PR state
    - continue following checks until green
-9. Sweep top-level comments, inline comments, unresolved threads, and async
+9. Run the Codex bot loop after the branch is at its intended head. Post the
+   standalone trigger, check every response channel, react to and resolve or
+   disposition findings, resolve Codex threads, and confirm the clean marker's
+   reviewed SHA matches the current head. Repeat this step after every push.
+10. Sweep top-level comments, inline comments, unresolved threads, and async
    reviewer feedback.
-10. When checks are green and no actionable findings remain, mark the PR ready
+11. When checks are green and no actionable findings remain, mark the PR ready
    unless the user explicitly asked to keep it draft. Do not mark non-`main`
    base PRs ready; they stay lower-assurance draft-only review units.
-11. After marking ready, re-check checks and review surfaces again.
-12. If merge is part of the task, repeat the review sweep immediately before
+12. After marking ready, re-check checks and review surfaces again.
+13. If merge is part of the task, repeat the review sweep immediately before
     merge, merge, then follow merged `main` workflows until repo-owned lanes
     are green.
-13. After merge follow-up, run the aggregate repository readiness gate:
+14. After merge follow-up, run the aggregate repository readiness gate:
     `./scripts/check-repo-readiness.sh --repo <owner/repo> --base main`. Use
     `--watch` when CI or maintenance workflows are still active.
-14. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
+15. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
     update the relevant repo-local instructions in the same change stream or a
     separate follow-on PR.
 
