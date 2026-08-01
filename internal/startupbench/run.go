@@ -55,6 +55,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "run-startup-bench: certification is not a startup-bench command")
 		return 2
 	}
+	if len(args) > 0 && (args[0] != "--" || len(args) < 2) {
+		fmt.Fprintln(stderr, "run-startup-bench: measured argv must follow -- and include a target")
+		return 2
+	}
 	cfg, skip, err := loadConfig(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "run-startup-bench:", err)
@@ -148,7 +152,7 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 		return cfg, false, nil
 	}
 	if len(args) < 2 || args[0] != "--" {
-		return cfg, false, fmt.Errorf("live measured argv must follow --")
+		return cfg, false, fmt.Errorf("measured argv must follow -- and include a target")
 	}
 	cfg.target = append([]string(nil), args[1:]...)
 	cfg.prep["cold"] = os.Getenv("WORKCELL_STARTUP_COLD_PREP")

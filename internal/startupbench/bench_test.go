@@ -314,19 +314,56 @@ func TestDriverRejectsCertificationCommandBeforeCannedSampleProcessing(t *testin
 }
 
 func TestDriverCannedSamplesRejectArguments(t *testing.T) {
-	for _, arg := range []string{"--certify", "certify=true", "--certify=true", "unexpected"} {
-		t.Run(arg, func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"flag", []string{"--certify"}},
+		{"assignment", []string{"certify=true"}},
+		{"flag-assignment", []string{"--certify=true"}},
+		{"unexpected", []string{"unexpected"}},
+		{"live-shape", []string{"--", "target"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			code, stdout, stderr := runScriptSplit(t, driver,
-				map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"}, arg)
+				map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"}, tc.args...)
 			if code != 2 {
-				t.Fatalf("canned sample argument %q = exit %d, want 2", arg, code)
+				t.Fatalf("canned sample arguments %q = exit %d, want 2", tc.args, code)
 			}
 			if stdout != "" || strings.Contains(stdout, "# session-start latency benchmark results") {
-				t.Fatalf("canned sample argument %q wrote benchmark output: %q", arg, stdout)
+				t.Fatalf("canned sample arguments %q wrote benchmark output: %q", tc.args, stdout)
 			}
 			const want = "run-startup-bench: canned-sample mode does not accept arguments\n"
 			if stderr != want {
-				t.Fatalf("canned sample argument %q stderr = %q, want %q", arg, stderr, want)
+				t.Fatalf("canned sample arguments %q stderr = %q, want %q", tc.args, stderr, want)
+			}
+		})
+	}
+}
+
+func TestDriverRejectsNonEmptyArgumentsBeforeNoRuntimeSkip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"flag", []string{"--certify"}},
+		{"assignment", []string{"certify=true"}},
+		{"flag-assignment", []string{"--certify=true"}},
+		{"unexpected", []string{"unexpected"}},
+		{"lone-separator", []string{"--"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, stdout, stderr := runScriptSplit(t, driver,
+				map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"}, tc.args...)
+			if code != 2 {
+				t.Fatalf("no-runtime arguments %q = exit %d, want 2", tc.args, code)
+			}
+			if stdout != "" || strings.Contains(stdout, "# session-start latency benchmark results") {
+				t.Fatalf("no-runtime arguments %q wrote benchmark output: %q", tc.args, stdout)
+			}
+			const want = "run-startup-bench: measured argv must follow -- and include a target\n"
+			if stderr != want {
+				t.Fatalf("no-runtime arguments %q stderr = %q, want %q", tc.args, stderr, want)
 			}
 		})
 	}
