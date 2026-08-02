@@ -23,19 +23,19 @@ import (
 )
 
 type publisherClient struct {
-	t                                                              *testing.T
-	tag, repository, token                                         string
-	releaseID                                                      int64
-	stagingDone                                                    *bool
-	draft, immutable, existing                                     bool
-	assets                                                         []githubReleaseAsset
-	uploaded                                                       map[string][]byte
-	latestStatus                                                   int
-	latestBody                                                     any
-	beforePublish                                                  func()
-	failFinalVerification, failTagRebind, disableImmutableReleases bool
-	bindingReads                                                   int
-	requests                                                       []string
+	t                                *testing.T
+	tag, repository, token           string
+	releaseID                        int64
+	stagingDone                      *bool
+	draft, immutable, existing       bool
+	assets                           []githubReleaseAsset
+	uploaded                         map[string][]byte
+	latestStatus                     int
+	latestBody                       any
+	beforePublish                    func()
+	disableImmutableReleases         bool
+	failTagRebindAfter, bindingReads int
+	requests                         []string
 }
 
 func (client *publisherClient) Do(request *http.Request) (*http.Response, error) {
@@ -65,7 +65,7 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == tagRefPath:
 		client.bindingReads++
 		objectSHA := testTagObjectSHA
-		if client.failTagRebind && client.bindingReads > 1 {
+		if client.failTagRebindAfter > 0 && client.bindingReads > client.failTagRebindAfter {
 			objectSHA = strings.Repeat("c", 40)
 		}
 		return jsonResponse(http.StatusOK, map[string]any{"ref": "refs/tags/" + client.tag, "object": map[string]any{"type": "tag", "sha": objectSHA}}), nil
@@ -113,9 +113,6 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 		client.assets = append(client.assets, asset)
 		return jsonResponse(http.StatusCreated, asset), nil
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == releasePath:
-		if client.failFinalVerification && !client.draft {
-			client.immutable = false
-		}
 		return jsonResponse(http.StatusOK, client.record()), nil
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == immutableReleasesPath:
 		if client.disableImmutableReleases {
@@ -239,7 +236,7 @@ func TestPublisherSealsFinalAndReleaseCandidateAssets(t *testing.T) {
 			wantSuffix := "GET api.github.com/repos/example/workcell/git/tags/" + testTagObjectSHA +
 				"\nGET api.github.com/repos/example/workcell/git/ref/tags/" + tc.tag +
 				"\nGET api.github.com/repos/example/workcell/immutable-releases" +
-				"\nPATCH api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/latest"
+				"\nPATCH api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/git/tags/" + testTagObjectSHA + "\nGET api.github.com/repos/example/workcell/git/ref/tags/" + tc.tag + "\nGET api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/latest"
 			if !strings.HasSuffix(strings.Join(client.requests, "\n"), wantSuffix) {
 				t.Fatalf("requests = %q, want final verification suffix %q", client.requests, wantSuffix)
 			}
@@ -247,15 +244,15 @@ func TestPublisherSealsFinalAndReleaseCandidateAssets(t *testing.T) {
 	}
 }
 
-func TestPublisherPostPublicationFailureRequiresNextPatchRecovery(t *testing.T) {
+func TestPublisherMovedTagAfterPublicationRequiresNextPatchRecovery(t *testing.T) {
 	paths, _ := writeAssets(t, "v1.0.0")
 	client := &publisherClient{
 		t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
-		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), failFinalVerification: true,
+		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), failTagRebindAfter: 2,
 	}
-	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
-	for _, fragment := range []string{"was published", "do not rewrite or retry this tag", "next patch release"} {
-		if err == nil || !strings.Contains(err.Error(), fragment) {
+	id, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
+	for _, fragment := range []string{"was published", "do not rewrite or retry this tag", "next patch release", "annotated tag object SHA"} {
+		if id != 42 || err == nil || !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("publish() error = %v, want %q", err, fragment)
 		}
 	}
@@ -264,7 +261,7 @@ func TestPublisherPostPublicationFailureRequiresNextPatchRecovery(t *testing.T) 
 func TestPublisherRejectsMovedTagBeforePublication(t *testing.T) {
 	paths, _ := writeAssets(t, "v1.0.0")
 	client := &publisherClient{t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
-		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), failTagRebind: true}
+		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), failTagRebindAfter: 1}
 	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
 	if err == nil || !strings.Contains(err.Error(), "reverify release tag") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
 		t.Fatalf("publish() error=%v requests=%q", err, client.requests)

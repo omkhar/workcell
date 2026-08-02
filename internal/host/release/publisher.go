@@ -177,6 +177,9 @@ func (publisher githubReleasePublisher) publish(ctx context.Context, repository,
 			err,
 		)
 	}
+	if err := publisher.verifyTagBinding(ctx, repository, token, tag, expectedTag); err != nil {
+		return releaseID, postPublicationVerificationError(tag, releaseID, err)
+	}
 	if err := validatePublishedRelease(repository, tag, policy, releaseID, published, assets); err != nil {
 		return releaseID, postPublicationVerificationError(tag, releaseID, err)
 	}
