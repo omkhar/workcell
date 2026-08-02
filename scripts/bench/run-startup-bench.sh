@@ -1,4 +1,16 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
+#
+# run-startup-bench.sh -- drive the session-start latency benchmark (C2).
+#
+# `cold` and `cache-hit` re-prep before every measured sample (warmup 0) so a
+# discarded warmup can't spend that state; only `warm` shares one prep per pass.
+# Repeated for WORKCELL_STARTUP_RUNS passes; the driver FAILS if any mode's
+# run-to-run median spread exceeds the stability threshold (C5's sibling).
+#
+# With no live runtime the driver exits 0 with a clear skip message;
+# WORKCELL_STARTUP_SAMPLES_NS switches to a canned dry-run (no runtime) used by the
+# unit tests. All configuration env vars and the full methodology are documented
+# in docs/session-startup-benchmarks.md.
 # shellcheck shell=bash
 set -euo pipefail
 

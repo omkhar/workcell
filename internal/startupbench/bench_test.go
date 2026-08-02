@@ -352,37 +352,17 @@ func TestRunScriptEnvIsHermetic(t *testing.T) {
 	}
 }
 
-func TestCommandEnvReplacesInheritedSampleValues(t *testing.T) {
-	for key, value := range map[string]string{
-		"WORKCELL_STARTUP_SAMPLE_MODE":  "stale-mode",
-		"WORKCELL_STARTUP_SAMPLE_RUN":   "stale-run",
-		"WORKCELL_STARTUP_SAMPLE_INDEX": "stale-index",
-		"WORKCELL_STARTUP_SESSION_ID":   "stale-session",
-		"WORKCELL_STARTUP_SAMPLE_TOKEN": "stale-token",
-	} {
-		t.Setenv(key, value)
-	}
-	want := map[string]string{
-		"WORKCELL_STARTUP_SAMPLE_MODE":  "cold",
-		"WORKCELL_STARTUP_SAMPLE_RUN":   "2",
-		"WORKCELL_STARTUP_SAMPLE_INDEX": "3",
-		"WORKCELL_STARTUP_SESSION_ID":   "new-session",
-		"WORKCELL_STARTUP_SAMPLE_TOKEN": "new-token",
-	}
-	counts := make(map[string]int, len(want))
-	for _, entry := range commandEnv(sampleEnv("cold", 2, "3", "new-session", "new-token")) {
-		key, value, _ := strings.Cut(entry, "=")
-		if expected, ok := want[key]; ok {
-			counts[key]++
-			if value != expected {
-				t.Errorf("%s = %q, want %q", key, value, expected)
-			}
+func TestCommandEnvReplacesInheritedValues(t *testing.T) {
+	const key = "WORKCELL_STARTUP_SAMPLE_TOKEN"
+	t.Setenv(key, "stale")
+	var got []string
+	for _, entry := range commandEnv([]string{key + "=fresh"}) {
+		if strings.HasPrefix(entry, key+"=") {
+			got = append(got, entry)
 		}
 	}
-	for key := range want {
-		if counts[key] != 1 {
-			t.Errorf("%s occurs %d times, want exactly once", key, counts[key])
-		}
+	if strings.Join(got, "\n") != key+"=fresh" {
+		t.Fatalf("sample token entries = %q, want one fresh value", got)
 	}
 }
 

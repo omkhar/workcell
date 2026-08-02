@@ -29,16 +29,14 @@ const captureLimit = 4096
 var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type config struct {
-	iterations, warmup, runs       int
-	stabilityPct                   int
-	outputPath, runtime            string
-	modes                          []string
-	sampleGroups                   [][]int64
-	target                         []string
-	prep                           map[string]string
-	warmVerify, teardown           string
-	cleanupCheck                   string
-	teardownTimeout, verifyTimeout time.Duration
+	iterations, warmup, runs           int
+	stabilityPct                       int
+	outputPath, runtime                string
+	modes, target                      []string
+	sampleGroups                       [][]int64
+	prep                               map[string]string
+	warmVerify, teardown, cleanupCheck string
+	teardownTimeout, verifyTimeout     time.Duration
 }
 
 type sample struct {
@@ -190,8 +188,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 	var raw []sample
 	for runIndex := 1; runIndex <= cfg.runs; runIndex++ {
 		fmt.Fprintf(&report, "## Run %d\n\n", runIndex)
-		fmt.Fprintln(&report, "| Mode | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | Min (ns) | Max (ns) | n |")
-		fmt.Fprintln(&report, "|---|---|---|---|---|---|---|---|")
+		fmt.Fprint(&report, "| Mode | Median (ns) | p90 (ns) | Mean (ns) | Stddev (ns) | Min (ns) | Max (ns) | n |\n|---|---|---|---|---|---|---|---|\n")
 		for _, mode := range cfg.modes {
 			samples, err := measureMode(ctx, cfg, mode, runIndex, stderr)
 			if err != nil {
@@ -209,9 +206,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 		}
 		fmt.Fprintln(&report)
 	}
-	fmt.Fprintln(&report, "## Raw samples")
-	fmt.Fprintln(&report)
-	fmt.Fprintln(&report, "```text")
+	fmt.Fprint(&report, "## Raw samples\n\n```text\n")
 	for _, item := range raw {
 		fmt.Fprintf(&report, "mode=%s run=%d index=%s duration_ns=%d session_id=%s\n",
 			item.mode, item.run, item.index, item.duration, item.sessionID)
@@ -222,8 +217,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 	if cfg.runs >= 2 {
 		fmt.Fprintln(&report, "## Cross-run stability (median)")
 		fmt.Fprintln(&report)
-		fmt.Fprintln(&report, "| Mode | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |")
-		fmt.Fprintln(&report, "|---|---|---|---|---|---|")
+		fmt.Fprint(&report, "| Mode | Min median (ns) | Max median (ns) | Spread (ns) | Spread (%) | Verdict |\n|---|---|---|---|---|---|\n")
 		var worst float64
 		degenerate := false
 		for _, mode := range cfg.modes {
@@ -355,18 +349,10 @@ func runCommand(ctx context.Context, argv, env []string, stdout, stderr io.Write
 	return err
 }
 func commandEnv(overrides []string) []string {
-	keys := make(map[string]struct{}, len(overrides))
-	for _, entry := range overrides {
+	env := slices.DeleteFunc(os.Environ(), func(entry string) bool {
 		key, _, _ := strings.Cut(entry, "=")
-		keys[key] = struct{}{}
-	}
-	env := make([]string, 0, len(os.Environ())+len(overrides))
-	for _, entry := range os.Environ() {
-		key, _, _ := strings.Cut(entry, "=")
-		if _, overridden := keys[key]; !overridden {
-			env = append(env, entry)
-		}
-	}
+		return strings.HasPrefix(key, "WORKCELL_STARTUP_SAMPLE_") || key == "WORKCELL_STARTUP_SESSION_ID"
+	})
 	return append(env, overrides...)
 }
 func verifyCleanup(ctx context.Context, path string, env []string, sessionID, token string) error {
