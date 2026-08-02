@@ -18,7 +18,7 @@ modes that span the latency shapes C2 targets:
 
 | Mode | Runtime state before the sample | What it isolates |
 |---|---|---|
-| `cold` | image not cached, no kept-warm session | worst-case first start (image resolve + full boot) |
+| `cold` | image tag absent; Workcell tarball retained; profile stopped | tarball restore + full boot |
 | `warm` | image cached and a kept-warm session available | best-case start off the kept-warm lane |
 | `cache-hit` | image cached, no kept-warm session | the image-cache win alone, without the warm lane |
 
@@ -26,13 +26,9 @@ These modes establish no performance guarantee or C2 certification.
 
 ## Methodology
 
-The harness (`scripts/bench/startup-bench.sh`) times one mode: `WORKCELL_STARTUP_
-WARMUP` discarded launches settle first-touch page-cache/loader costs, then
-`WORKCELL_STARTUP_ITERATIONS` measured launches run inside one long-lived timer
-process (like C5's in-process loop) on a **monotonic** clock (`CLOCK_MONOTONIC`),
-so neither an NTP step/sleep-wake nor a per-sample interpreter launch corrupts or
-inflates a sample. Stats conventions match the C5 exec-guard harness, so the pages
-compare directly:
+The Go driver behind `scripts/bench/run-startup-bench.sh` times each launch on a
+monotonic clock. Driver startup, output validation, and cleanup are outside the
+interval; target launch and stdout capture are inside it. Stats conventions match C5:
 
 - **median** (`sorted[floor(n/2)]`, the outlier-robust headline), **p90**
   (`sorted[floor(n*9/10)]` clamped, the tail a slow start shows), **mean/stddev**
@@ -43,14 +39,21 @@ state through a per-mode prep hook (`WORKCELL_STARTUP_COLD_PREP` /
 `WORKCELL_STARTUP_CACHE_HIT_PREP` / `WORKCELL_STARTUP_WARM_PREP` — e.g. evicting
 the cached image and stopping the kept-warm session for `cold`, pre-pulling the
 image but leaving the warm lane down for `cache-hit`, or pre-pulling and priming
-the warm lane for `warm`), then times the configured `WORKCELL_STARTUP_CMD` for
-that mode. The whole measurement is repeated for `WORKCELL_STARTUP_RUNS` passes.
+the warm lane for `warm`), then times the exact argv after `--`. The target emits
+exactly `session_id=...` and `sample_token=...`, echoing the random token. Teardown
+receives the token with an empty session ID; the absence operation receives both
+and must echo matching fields. These hooks cannot prove resource ownership,
+cleanup, or lifecycle state. The measurement repeats for `WORKCELL_STARTUP_RUNS`
+passes.
 
 Live runs are guarded so a misconfigured capture cannot look publishable:
 
 - **Every driven mode's prep hook is required** (`*_COLD_PREP` /
   `*_CACHE_HIT_PREP` / `*_WARM_PREP`); an unset hook fails fast rather than
   measuring whatever state happened to be present.
+- **Teardown and absence operations are required** after every launch. Live `warm`
+  is opt-in and also requires `WORKCELL_STARTUP_WARM_VERIFY`; default modes are
+  `cold cache-hit`.
 - **The runtime must be usable, not just installed** — a cheap read-only probe
   (`docker info` / `colima status` / `container system status`) sends a
   client-only host to the clean CI-safe skip. `WORKCELL_STARTUP_RUNTIME` overrides
@@ -62,12 +65,10 @@ For `cold` **and `cache-hit`** the driver re-runs the mode's prep hook before
 **every** measured sample (warmup `0`) and aggregates the per-sample timings — a
 start warms the cache/lane the next start would spend, so prepping once per pass
 would leave only the first sample genuine; those hooks must be **repeatable**.
-Only `warm` legitimately shares one prep per pass and keeps `WORKCELL_STARTUP_WARMUP`.
+Only `warm` shares one prep per pass; its warmups are also torn down.
 
-`WORKCELL_STARTUP_CMD` is parsed with shell quoting, so a spaced argument keeps its
-boundary (`--workspace '/path/with space'` stays one argv element, not word-split
-tokens). The canned dry run needs no prep hooks or runtime and never executes
-hooks — these guards are live-only.
+Measured argv follows `--`, preserving each argument without shell parsing. Every
+state operation names one executable path. Canned dry runs execute no operations.
 
 ### The cross-run stability gate
 
@@ -155,29 +156,30 @@ A future C2 certification should prove **working per-sample teardown**, resolve 
 On a host with a live runtime, run the driver (see [Rerunning](#rerunning)) with
 `WORKCELL_STARTUP_OUTPUT` set. A `0` exit means the benchmark stability gate
 passed; non-zero can also mean configuration, launch, or cleanup failure. Generic
-driver output cannot certify or promote C2.
+driver output cannot certify or promote C2; the `certify` command is rejected.
 
 ## Rerunning
 
 From the repository root on a host with a container runtime:
 
 ```sh
-# A live run needs all three prep hooks and RUNS >= 2. WORKCELL_STARTUP_CMD is
-# shell-quoted; COLD_PREP/CACHE_HIT_PREP re-run per sample, so make them idempotent.
-export WORKCELL_STARTUP_CMD='./scripts/workcell <your session-start args>'
-export WORKCELL_STARTUP_COLD_PREP='<evict cached image + stop kept-warm session>'
-export WORKCELL_STARTUP_CACHE_HIT_PREP='<pre-pull image, no kept-warm session>'
-export WORKCELL_STARTUP_WARM_PREP='<pre-pull image + prime kept-warm session>'
+export WORKCELL_STARTUP_COLD_PREP=/absolute/path/to/repeatable-cold-operation
+export WORKCELL_STARTUP_CACHE_HIT_PREP=/absolute/path/to/repeatable-cache-operation
+export WORKCELL_STARTUP_TEARDOWN=/absolute/path/to/exact-session-teardown
+export WORKCELL_STARTUP_TEARDOWN_VERIFY=/absolute/path/to/absence-verifier
 export WORKCELL_STARTUP_OUTPUT=session-startup-results.md
 
 # Defaults: 5 iterations, 1 warmup, 2 runs, 15% stability threshold.
-./scripts/bench/run-startup-bench.sh
+./scripts/bench/run-startup-bench.sh -- /absolute/path/to/measured-wrapper arg1
 ```
 
-Tunable via environment: `WORKCELL_STARTUP_ITERATIONS`, `WORKCELL_STARTUP_WARMUP`
-(forced to `0` for `cold`/`cache-hit`), `WORKCELL_STARTUP_RUNS`,
-`WORKCELL_STARTUP_STABILITY_PCT`, `WORKCELL_STARTUP_CMD`, the three `*_PREP` hooks,
-and `WORKCELL_STARTUP_OUTPUT`. Numeric controls are validated up front
+Operations receive `WORKCELL_STARTUP_SAMPLE_MODE`, `WORKCELL_STARTUP_SAMPLE_RUN`,
+and `WORKCELL_STARTUP_SAMPLE_INDEX`; target, teardown, and verifier also receive
+`WORKCELL_STARTUP_SAMPLE_TOKEN`, while the verifier receives
+`WORKCELL_STARTUP_SESSION_ID`.
+
+Other controls select iterations, warmup (forced to `0` for `cold`/`cache-hit`),
+runs, stability threshold, modes, operations, and output. Numeric controls are validated
 (`ITERATIONS`/`RUNS` `>= 1`, `WARMUP`/`STABILITY_PCT` `>= 0`); anything else fails
 fast rather than silently misreporting.
 
@@ -191,7 +193,7 @@ dry run runs no prep hooks (any exported `*_PREP` is ignored) and times nothing:
 # One stable run set (gate passes, exit 0):
 WORKCELL_STARTUP_SAMPLES_NS='10 20 30 40 50' ./scripts/bench/run-startup-bench.sh
 
-# Two ';'-separated per-run groups with divergent medians (gate fails, exit 2):
+# Two ';'-separated per-run groups with divergent medians (gate fails non-zero):
 WORKCELL_STARTUP_SAMPLES_NS='10 20 30;100 200 300' ./scripts/bench/run-startup-bench.sh
 ```
 
