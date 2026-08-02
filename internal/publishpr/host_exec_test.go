@@ -5,6 +5,9 @@ package publishpr
 
 import (
 	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -83,6 +86,47 @@ func TestEmitCommandMatchesBashPrintfQ(t *testing.T) {
 	want := `  gh pr create --title Existing\ branch\ title ` + "\n"
 	if got != want {
 		t.Errorf("EmitCommand mismatch:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestRemoteOriginPushURLUsesHostGitConfiguration(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	repository := filepath.Join(root, "repo")
+	xdgConfigHome := filepath.Join(root, "xdg")
+	if err := os.MkdirAll(filepath.Join(xdgConfigHome, "git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitBin, args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	run("init", "-q", repository)
+	run("-C", repository, "remote", "add", "origin", "https://push-alias.invalid/example/repo.git")
+	run(
+		"config",
+		"--file", filepath.Join(xdgConfigHome, "git", "config"),
+		"url.https://github.com/example/repo.git.pushInsteadOf",
+		"https://push-alias.invalid/example/repo.git",
+	)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+	ctx := &BashContext{
+		HostGitBin:      gitBin,
+		TrustedHostPath: filepath.Dir(gitBin) + ":/usr/bin:/bin",
+		RealHome:        root,
+	}
+	got, err := remoteOriginPushURL(ctx, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://github.com/example/repo.git"; got != want {
+		t.Errorf("remoteOriginPushURL() = %q, want %q", got, want)
 	}
 }
 

@@ -121,6 +121,12 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   - unresolved review threads
   - asynchronous review comments from configured async reviewers listed in
     `policy/reviewer-identities.toml`
+- Every PR must complete the Codex bot loop: post a standalone `@codex review`,
+  sweep its issue comments, inline comments, formal reviews, and trigger
+  reactions; react to and fix or explicitly disposition its findings; resolve
+  its addressed threads; and require a clean marker for the current head before
+  merge. Repeat the loop after every push. When available, use the Codex PR
+  review loop skill for the exact response and SHA checks.
 - Actionable comments must be addressed or explicitly dispositioned before
   merge.
 - Re-check comments and review threads after CI turns green and immediately
@@ -136,6 +142,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   acceptable post-merge residue.
 - Async reviewer feedback is advisory input, not a substitute for an
   independent human approval.
+- A single-maintainer admin merge may bypass only a missing independent
+  approval. It must never bypass required checks, commit-signature or base
+  policy, the current-head Codex clean marker, comment sweeps, or unresolved
+  threads.
 
 ## Release workflow
 

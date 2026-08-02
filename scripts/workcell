@@ -1000,6 +1000,92 @@ declare -a WORKSPACE_IMPORT_MOUNTS=()
 declare -a CACHE_MOUNTS=()
 declare -a RUNTIME_NETWORK_ARGS=()
 INTERACTIVE_HOST_TERMINAL_RESTORE_NEEDED=0
+BUILDX_BUILDER=""
+RUNTIME_BUILDER_CLEANUP_ACTIVE=0
+
+runtime_builder_policy() {
+  local action="$1"
+  local buildkitd_config="${2:-}"
+  local docker_endpoint="${DOCKER_HOST:-}"
+  local target_kind=""
+
+  target_kind="$(current_target_kind)" || return 1
+  if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
+    docker_endpoint="$(run_workcell_docker_client_command \
+      docker context inspect "${DOCKER_CONTEXT}" --format '{{.Endpoints.docker.Host}}')" || return 1
+  fi
+  run_go_hostutil_preserve_exit runtime-builder-cli "${action}" \
+    "--profile=${COLIMA_PROFILE}" \
+    "--backend=${TARGET_BACKEND}" \
+    "--target-kind=${target_kind}" \
+    "--target-state-root=${WORKCELL_TARGET_STATE_ROOT}" \
+    "--colima-state-root=${COLIMA_STATE_ROOT}" \
+    "--workspace=${PROFILE_WORKSPACE_ROOT}" \
+    "--docker-host=${DOCKER_HOST:-}" \
+    "--docker-context=${DOCKER_CONTEXT:-}" \
+    "--docker-endpoint=${docker_endpoint}" \
+    "--docker-bin=${HOST_DOCKER_BIN}" \
+    "--docker-config=${DOCKER_CONFIG}" \
+    "--docker-home=${HOME}" \
+    "--real-home=${REAL_HOME}" \
+    "--docker-cwd=${WORKCELL_DOCKER_CLIENT_CWD:-${HOME:-/}}" \
+    "--buildx-bin=${WORKCELL_TRUSTED_BUILDX_BIN}" \
+    "--buildkitd-config=${buildkitd_config}" \
+    "--tool-path=${TRUSTED_HOST_PATH}"
+}
+
+begin_runtime_builder() {
+  local claim_output=""
+  local claim_valid=1
+  local key=""
+  local value=""
+
+  [[ "${RUNTIME_BUILDER_CLEANUP_ACTIVE:-0}" -eq 0 ]] || {
+    echo "Workcell refused to claim a second runtime-image builder before cleanup." >&2
+    return 1
+  }
+  ensure_workcell_trusted_buildx
+  claim_output="$(mktemp "${TMPDIR:-/tmp}/workcell-runtime-builder-claim.XXXXXX")" || return 1
+  if ! runtime_builder_policy claim >"${claim_output}"; then
+    rm -f "${claim_output}"
+    echo "Workcell refused to claim runtime-image builder ownership." >&2
+    return 1
+  fi
+  RUNTIME_BUILDER_CLEANUP_ACTIVE=1
+  BUILDX_BUILDER=""
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      builder_name)
+        if [[ -n "${BUILDX_BUILDER}" || -z "${value}" ]]; then
+          claim_valid=0
+          break
+        fi
+        BUILDX_BUILDER="${value}"
+        ;;
+      *)
+        claim_valid=0
+        break
+        ;;
+    esac
+  done <"${claim_output}"
+  rm -f "${claim_output}"
+  [[ "${claim_valid}" -eq 1 && -n "${BUILDX_BUILDER}" ]] || return 1
+}
+
+create_runtime_builder() {
+  local buildkitd_config=""
+
+  [[ "${RUNTIME_BUILDER_CLEANUP_ACTIVE:-0}" -eq 1 ]] || return 1
+  buildkitd_config="$(prepare_workcell_buildkitd_config)" || return 1
+  runtime_builder_policy create "${buildkitd_config}"
+}
+
+cleanup_runtime_builder() {
+  [[ "${RUNTIME_BUILDER_CLEANUP_ACTIVE:-0}" -eq 1 ]] || return 0
+  runtime_builder_policy cleanup || return 1
+  RUNTIME_BUILDER_CLEANUP_ACTIVE=0
+  BUILDX_BUILDER=""
+}
 
 mark_interactive_host_terminal_dirty() {
   [[ -t 0 ]] && [[ -t 1 ]] || return 0
@@ -1076,6 +1162,7 @@ cleanup() {
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   fi
 
+  cleanup_runtime_builder || true
   if [[ -n "${PROFILE_LOCK_DIR}" ]] && [[ -d "${PROFILE_LOCK_DIR}" ]]; then
     rm -rf "${PROFILE_LOCK_DIR}"
   fi
@@ -2211,6 +2298,18 @@ session_container_exit_code() {
   printf '%s\n' "${exit_code}"
 }
 
+session_container_absent_for_delete() {
+  local profile="$1"
+  local container_name="$2"
+
+  # Preserve the inventory byte-for-byte: Go owns identifier normalization,
+  # inventory validation, and the fail-closed absence decision. Pipefail makes
+  # either the same-profile Docker query or Go policy failure reject the proof.
+  run_profile_docker_command "${profile}" ps -a --format '{{.Names}}' 2>&1 |
+    go_hostutil helper session-container-absent-for-delete "${container_name}" \
+      >/dev/null 2>&1
+}
+
 session_container_state_for_delete() {
   local profile="$1"
   local container_name="$2"
@@ -2233,12 +2332,15 @@ session_container_state_for_delete() {
     esac
     return 1
   fi
-  case "${inspect_output}" in
-    *"No such object"* | *"No such container"*)
-      printf 'missing\n'
-      return 0
-      ;;
-  esac
+
+  # Docker's missing-object diagnostic is not a stable API: capitalization
+  # and wording differ across client releases. Prove absence through a second,
+  # exact-name inventory query instead of interpreting human-readable stderr.
+  # A failed or malformed inventory remains an inspection failure.
+  if session_container_absent_for_delete "${profile}" "${container_name}"; then
+    printf 'missing\n'
+    return 0
+  fi
   return 1
 }
 
@@ -4401,8 +4503,14 @@ session_delete_main() {
 
   if [[ "${remove_container}" -eq 1 ]]; then
     if ! run_profile_docker_command "${SESSION_META_PROFILE}" rm -f "${SESSION_META_CONTAINER_NAME}" >/dev/null 2>&1; then
-      echo "session delete failed to remove the stopped session container: ${session_id}" >&2
-      exit 1
+      # The detached monitor can remove a stopped container between the
+      # inspection above and this rm. Accept only a new exact-name absence
+      # proof; a live object or unavailable inventory still fails closed and
+      # preserves the durable record and artifacts for a safe retry.
+      if ! session_container_absent_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}"; then
+        echo "session delete failed to remove the stopped session container: ${session_id}" >&2
+        exit 1
+      fi
     fi
   fi
   if [[ "${remove_debug_log}" -eq 1 ]]; then
@@ -6662,13 +6770,7 @@ run_runtime_image_build_with_retries() {
   local max_attempts=5
   local codex_release_url=""
   local copilot_release_url=""
-  local safe_builder_context=""
   local -a build_cmd=()
-
-  if [[ -z "${BUILDX_BUILDER:-}" ]]; then
-    safe_builder_context="${COLIMA_PROFILE//[^[:alnum:]_.-]/-}"
-    BUILDX_BUILDER="workcell-runtime-${safe_builder_context}"
-  fi
 
   while :; do
     build_status=0
@@ -6711,25 +6813,35 @@ run_runtime_image_build_with_retries() {
         "${EGRESS_HELPER}" apply "${COLIMA_PROFILE}" "${BOOTSTRAP_ENDPOINTS}"
       fi
     fi
-    ensure_workcell_selected_builder
-    build_cmd=(
-      buildx_cmd build
-      --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}"
-      --provenance=false
-      --sbom=false
-      --load
-      -t "${IMAGE_TAG}"
-      -f "${ROOT_DIR}/runtime/container/Dockerfile"
-      "${ROOT_DIR}"
-    )
-    if [[ -n "${codex_release_url}" ]]; then
-      build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
+    if ! begin_runtime_builder; then
+      return 2
     fi
-    if [[ -n "${copilot_release_url}" ]]; then
-      build_cmd+=(--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}")
+    if ! create_runtime_builder; then
+      build_status=2
+    else
+      build_cmd=(
+        buildx_cmd build
+        --builder "${BUILDX_BUILDER}"
+        --build-arg "SOURCE_DATE_EPOCH=${build_source_date_epoch}"
+        --provenance=false
+        --sbom=false
+        --load
+        -t "${IMAGE_TAG}"
+        -f "${ROOT_DIR}/runtime/container/Dockerfile"
+        "${ROOT_DIR}"
+      )
+      if [[ -n "${codex_release_url}" ]]; then
+        build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
+      fi
+      if [[ -n "${copilot_release_url}" ]]; then
+        build_cmd+=(--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}")
+      fi
+      SOURCE_DATE_EPOCH="${build_source_date_epoch}" run_command_with_debug_log runtime-build \
+        "${build_cmd[@]}" || build_status=$?
     fi
-    SOURCE_DATE_EPOCH="${build_source_date_epoch}" run_command_with_debug_log runtime-build \
-      "${build_cmd[@]}" || build_status=$?
+    if ! cleanup_runtime_builder; then
+      return 2
+    fi
     if [[ "${build_status}" -eq 0 ]]; then
       return 0
     fi
