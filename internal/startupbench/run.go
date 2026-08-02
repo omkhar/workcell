@@ -59,7 +59,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if skip {
 		return 0
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
 	defer stop()
 	report, stable, err := execute(ctx, cfg, stderr)
 	if err != nil {

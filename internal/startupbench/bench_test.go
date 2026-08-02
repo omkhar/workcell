@@ -475,7 +475,7 @@ func TestEntrypointSignalKillsProcessGroupAndStillCleansUp(t *testing.T) {
 			t.Fatal("measured target did not start")
 		}
 	}
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
 		t.Fatal(err)
 	}
 	if err := cmd.Wait(); err == nil {
