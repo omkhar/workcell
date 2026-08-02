@@ -151,9 +151,18 @@ func (publisher githubReleasePublisher) publish(ctx context.Context, repository,
 	if err := publisher.verifyTagBinding(ctx, repository, token, tag, expectedTag); err != nil {
 		return 0, fmt.Errorf("reverify release tag before publication: %w", err)
 	}
-	immutableReleasesEndpoint := fmt.Sprintf("%s/repos/%s/immutable-releases", githubAPIOrigin, repository)
-	if _, _, err := publisher.requestOneOf(ctx, token, http.MethodGet, immutableReleasesEndpoint, "", nil, 0, http.StatusOK); err != nil {
+	immutableReleasesBody, _, err := publisher.requestOneOf(ctx, token, http.MethodGet, fmt.Sprintf("%s/repos/%s/immutable-releases", githubAPIOrigin, repository), "", nil, 0, http.StatusOK)
+	if err != nil {
 		return 0, fmt.Errorf("verify immutable releases before publication: %w", err)
+	}
+	var immutableReleases struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(immutableReleasesBody, &immutableReleases); err != nil {
+		return 0, fmt.Errorf("decode GitHub immutable releases response: %w", err)
+	}
+	if !immutableReleases.Enabled {
+		return 0, errors.New("GitHub immutable releases response did not report enabled = true")
 	}
 	if err := closeLocalAssets(assets); err != nil {
 		return 0, fmt.Errorf("close sealed release assets before publishing draft: %w", err)

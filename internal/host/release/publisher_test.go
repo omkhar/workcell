@@ -61,14 +61,14 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 	immutableReleasesPath := "/repos/" + client.repository + "/immutable-releases"
 	switch {
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == "/repos/"+client.repository+"/git/tags/"+testTagObjectSHA:
-		return tagObjectResponse(client.tag, testTagObjectSHA, testTagCommitSHA), nil
+		return jsonResponse(http.StatusOK, map[string]any{"sha": testTagObjectSHA, "tag": client.tag, "object": map[string]any{"type": "commit", "sha": testTagCommitSHA}}), nil
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == tagRefPath:
 		client.bindingReads++
 		objectSHA := testTagObjectSHA
 		if client.failTagRebind && client.bindingReads > 1 {
 			objectSHA = strings.Repeat("c", 40)
 		}
-		return tagRefResponse(client.tag, objectSHA), nil
+		return jsonResponse(http.StatusOK, map[string]any{"ref": "refs/tags/" + client.tag, "object": map[string]any{"type": "tag", "sha": objectSHA}}), nil
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == listPath:
 		if request.URL.Query().Get("per_page") != strconv.Itoa(githubReleasePageSize) || request.URL.Query().Get("page") != "1" {
 			client.t.Fatalf("unexpected release-list query %q", request.URL.RawQuery)
@@ -119,7 +119,7 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 		return jsonResponse(http.StatusOK, client.record()), nil
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == immutableReleasesPath:
 		if client.disableImmutableReleases {
-			return jsonResponse(http.StatusNotFound, map[string]string{"message": "Not Found"}), nil
+			return jsonResponse(http.StatusOK, map[string]bool{"enabled": false}), nil
 		}
 		return jsonResponse(http.StatusOK, map[string]bool{"enabled": true}), nil
 	case request.Method == http.MethodPatch && request.URL.Host == "api.github.com" && request.URL.Path == releasePath:
@@ -162,14 +162,6 @@ func jsonResponse(status int, value any) *http.Response {
 		panic(err)
 	}
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body)))}
-}
-
-func tagRefResponse(tag, objectSHA string) *http.Response {
-	return jsonResponse(http.StatusOK, map[string]any{"ref": "refs/tags/" + tag, "object": map[string]any{"type": "tag", "sha": objectSHA}})
-}
-
-func tagObjectResponse(tag, objectSHA, commitSHA string) *http.Response {
-	return jsonResponse(http.StatusOK, map[string]any{"sha": objectSHA, "tag": tag, "object": map[string]any{"type": "commit", "sha": commitSHA}})
 }
 
 func decodeJSONRequest(t *testing.T, request *http.Request, destination any) {
@@ -284,7 +276,7 @@ func TestPublisherRejectsDisabledImmutableReleasesBeforePublication(t *testing.T
 	client := &publisherClient{t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
 		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), disableImmutableReleases: true}
 	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
-	if err == nil || !strings.Contains(err.Error(), "HTTP 404") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
+	if err == nil || !strings.Contains(err.Error(), "enabled = true") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
 		t.Fatalf("publish() error=%v requests=%q", err, client.requests)
 	}
 }
@@ -314,10 +306,10 @@ func (client *staticClient) Do(request *http.Request) (*http.Response, error) {
 	client.requests++
 	if marker := "/git/ref/tags/"; strings.Contains(request.URL.Path, marker) {
 		tag := strings.TrimPrefix(request.URL.Path[strings.Index(request.URL.Path, marker):], marker)
-		return tagRefResponse(tag, testTagObjectSHA), nil
+		return jsonResponse(http.StatusOK, map[string]any{"ref": "refs/tags/" + tag, "object": map[string]any{"type": "tag", "sha": testTagObjectSHA}}), nil
 	}
 	if strings.HasSuffix(request.URL.Path, "/git/tags/"+testTagObjectSHA) {
-		return tagObjectResponse("v1.0.0", testTagObjectSHA, testTagCommitSHA), nil
+		return jsonResponse(http.StatusOK, map[string]any{"sha": testTagObjectSHA, "tag": "v1.0.0", "object": map[string]any{"type": "commit", "sha": testTagCommitSHA}}), nil
 	}
 	return jsonResponse(client.status, client.body), nil
 }
