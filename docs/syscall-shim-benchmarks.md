@@ -6,7 +6,8 @@ forwarding it to the real entry point. This page records the added latency that
 classification costs on the **allow path** -- a launch the guard permits and
 forwards -- and the methodology and rerun steps behind those numbers. Its
 sibling page, [session-startup-benchmarks.md](session-startup-benchmarks.md),
-records the **C2** session-start latency baselines.
+records historical, benchmark-only C2 session-start measurements; it makes no
+1.0 performance claim.
 
 The numbers are produced by the optional `bench.yml` GitHub lane on Linux, not
 on the macOS development host: the shim reads `/proc` and interposes the
