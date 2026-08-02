@@ -160,38 +160,6 @@ github_release_asset_url() {
   printf '%s\n' "${asset_url}"
 }
 
-hadolint_checksum_from_manifest() {
-  local manifest="$1"
-  local asset_name="$2"
-  local checksum
-
-  if ! checksum="$(
-    awk -v asset_name="${asset_name}" '
-      ($2 == asset_name || $2 == "*" asset_name) {
-        candidates++
-        if (NF != 2 || length($1) != 64 || $1 !~ /^[0-9A-Fa-f]+$/) {
-          invalid = 1
-        }
-        if ($2 != "*" asset_name) {
-          invalid_marker = 1
-        }
-        digest = tolower($1)
-      }
-      END {
-        if (candidates != 1 || invalid || invalid_marker) {
-          exit 1
-        }
-        print digest
-      }
-    ' <<<"${manifest}"
-  )"; then
-    echo "Hadolint checksum manifest must contain exactly one 64-hex digest for ${asset_name}" >&2
-    exit 1
-  fi
-
-  printf '%s\n' "${checksum}"
-}
-
 github_release_asset_api_url() {
   local release_json="$1"
   local asset_name="$2"
@@ -618,10 +586,10 @@ hadolint_checksums="$(
   curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_checksums_url}"
 )"
 target_hadolint_sha_amd64="$(
-  hadolint_checksum_from_manifest "${hadolint_checksums}" 'hadolint-linux-x86_64'
+  printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-x86_64'
 )"
 target_hadolint_sha_arm64="$(
-  hadolint_checksum_from_manifest "${hadolint_checksums}" 'hadolint-linux-arm64'
+  printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-arm64'
 )"
 
 buildx_release_json="$(github_api_get 'https://api.github.com/repos/docker/buildx/releases/latest')"

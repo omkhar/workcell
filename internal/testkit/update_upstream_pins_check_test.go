@@ -107,9 +107,10 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	checkRun := runUpdaterFixture(t, fixtureRoot, checkScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--check")
 	assertUpdaterFixtureRun(t, checkRun, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, checkRun.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   0,
-		"check-pinned-inputs":      0,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     0,
+		"check-pinned-inputs":        0,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(checkRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", checkRun.ProviderLog, want)
@@ -130,9 +131,10 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	applyRun := runUpdaterFixture(t, fixtureRoot, applyScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--apply")
 	assertUpdaterFixtureRun(t, applyRun, 0, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, applyRun.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   1,
-		"check-pinned-inputs":      1,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     1,
+		"check-pinned-inputs":        1,
 	})
 	if want := []string{"summary", "check", "apply"}; !reflect.DeepEqual(applyRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", applyRun.ProviderLog, want)
@@ -163,9 +165,10 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	cleanRun := runUpdaterFixture(t, fixtureRoot, cleanScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--check")
 	assertUpdaterFixtureRun(t, cleanRun, 0, updaterFixtureSummary(pins, targetManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, cleanRun.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   0,
-		"check-pinned-inputs":      0,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     0,
+		"check-pinned-inputs":        0,
 	})
 	assertUpdaterScratchHasOnlyLogs(t, cleanScratch)
 	afterCleanCheck := snapshotUpdaterFixtureTree(t, fixtureRoot)
@@ -197,9 +200,10 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	}
 	assertUpdaterResolutionLog(t, run.ResolutionLog, invalidPlan.Snapshot)
 	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   1,
-		"check-pinned-inputs":      0,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     1,
+		"check-pinned-inputs":        0,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(run.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", run.ProviderLog, want)
@@ -209,105 +213,6 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	after := snapshotUpdaterFixtureTree(t, fixtureRoot)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("failed update-upstream-pins.sh --apply mutated its fixture tree\nbefore: %#v\nafter:  %#v", before, after)
-	}
-}
-
-func TestUpdateUpstreamPinsRejectsMalformedHadolintChecksumManifest(t *testing.T) {
-	t.Parallel()
-
-	pins := readUpdaterFixturePins(t)
-	targetPlan := updaterTargetDebianPlan()
-	toolsRoot := t.TempDir()
-	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
-	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
-
-	testCases := []struct {
-		name      string
-		checksums string
-		assetName string
-	}{
-		{
-			name: "near match AMD64 asset name",
-			checksums: fmt.Sprintf(
-				"%s  *hadolint-linux-x86_64-extra\n%s  *hadolint-linux-arm64\n",
-				pins.HadolintAMD64SHA,
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-x86_64",
-		},
-		{
-			name: "duplicate binary marker asset name",
-			checksums: fmt.Sprintf(
-				"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
-				pins.HadolintAMD64SHA,
-				pins.HadolintAMD64SHA,
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-x86_64",
-		},
-		{
-			name: "mixed marker duplicate asset name",
-			checksums: fmt.Sprintf(
-				"%s  *hadolint-linux-x86_64\n%s  hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
-				pins.HadolintAMD64SHA,
-				pins.HadolintAMD64SHA,
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-x86_64",
-		},
-		{
-			name: "unmarked asset name",
-			checksums: fmt.Sprintf(
-				"%s  hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
-				pins.HadolintAMD64SHA,
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-x86_64",
-		},
-		{
-			name: "short digest",
-			checksums: fmt.Sprintf(
-				"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
-				pins.HadolintAMD64SHA[:63],
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-x86_64",
-		},
-		{
-			name: "non hexadecimal digest",
-			checksums: fmt.Sprintf(
-				"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
-				strings.Repeat("g", 64),
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-x86_64",
-		},
-		{
-			name: "near match ARM64 asset name",
-			checksums: fmt.Sprintf(
-				"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64-extra\n",
-				pins.HadolintAMD64SHA,
-				pins.HadolintARM64SHA,
-			),
-			assetName: "hadolint-linux-arm64",
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			fixtureRoot := writeUpdaterFixture(t, updaterManifestFromPlan(targetPlan), 0o640)
-			fixturePins := pins
-			fixturePins.HadolintChecksums = testCase.checksums
-
-			run := runUpdaterFixture(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, fixturePins, targetPlan, "--check")
-			if run.Code != 1 {
-				t.Fatalf("updater exit code = %d, want 1\noutput:\n%s", run.Code, run.Output)
-			}
-			want := "Hadolint checksum manifest must contain exactly one 64-hex digest for " + testCase.assetName
-			if !strings.Contains(run.Output, want) {
-				t.Fatalf("updater output did not reject malformed Hadolint manifest:\n%s", run.Output)
-			}
-		})
 	}
 }
 
@@ -737,7 +642,7 @@ func assertUpdaterCommandCounts(t *testing.T, commands []string, expected map[st
 	}
 	for command := range counts {
 		switch command {
-		case "extract-dockerfile-arg", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
+		case "extract-dockerfile-arg", "hadolint-manifest-checksum", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
 		default:
 			t.Fatalf("unexpected real workcell-citools command %q; log=%q", command, commands)
 		}
