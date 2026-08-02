@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,6 +208,23 @@ func runRelease(args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(policy)
+	case "publish":
+		if len(args) < 5 {
+			return releaseUsage()
+		}
+		releaseID, err := release.PublishGitHubRelease(
+			context.Background(),
+			os.Getenv("GITHUB_REPOSITORY"),
+			os.Getenv("GITHUB_TOKEN"),
+			args[1],
+			release.TagExpectation{ObjectSHA: args[2], PeeledCommitSHA: args[3]},
+			args[4:],
+		)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Uploaded sealed GitHub release assets and published %s (release id %d)\n", args[1], releaseID)
+		return nil
 	case "create-payload":
 		if len(args) != 3 {
 			return releaseUsage()
@@ -1097,6 +1115,7 @@ func releaseUsage() error {
 	return &cliexit.ExitCodeError{Code: 2, Message: `usage: workcell-hostutil release COMMAND [args...]
 commands:
   classify-tag TAG
+  publish TAG TAG_OBJECT_SHA PEELED_COMMIT_SHA ASSET...
   create-payload TAG OUTPUT
   publish-payload TAG OUTPUT
   validate-repository OWNER/REPO
