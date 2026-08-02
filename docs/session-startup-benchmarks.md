@@ -40,7 +40,7 @@ state through a per-mode prep hook (`WORKCELL_STARTUP_COLD_PREP` /
 the cached image and stopping the kept-warm session for `cold`, pre-pulling the
 image but leaving the warm lane down for `cache-hit`, or pre-pulling and priming
 the warm lane for `warm`), then times the exact argv after `--`. The target emits
-exactly `session_id=...` and the random `WORKCELL_STARTUP_SAMPLE_TOKEN`. Teardown
+exactly `session_id=...` and `sample_token=...`, echoing the random token. Teardown
 receives the token with an empty session ID; the absence operation receives both
 and must echo matching fields. These hooks cannot prove resource ownership,
 cleanup, or lifecycle state. The measurement repeats for `WORKCELL_STARTUP_RUNS`
