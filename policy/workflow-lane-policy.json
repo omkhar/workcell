@@ -201,6 +201,12 @@
       "local_mode": "none",
       "github_only_reason": "release publication remains GitHub-only"
     },
+    "release.yml/tag-policy": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "the exact pushed-tag event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
+    },
     "scorecard.yml/analysis": {
       "profiles": ["release-preflight"],
       "authority": "github-only",

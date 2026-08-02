@@ -14,23 +14,29 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/gitconfigblocklist"
 	"github.com/omkhar/workcell/internal/hardeningprofile"
+	"github.com/omkhar/workcell/internal/host/validatorbind"
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/scenarios"
+	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
 )
 
@@ -72,6 +78,7 @@ func subcommands() []subcommand {
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
+		{"hadolint-manifest-checksum", "ASSET_NAME", 1, 1, cmdHadolintManifestChecksum},
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
@@ -88,6 +95,8 @@ func subcommands() []subcommand {
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
 		{"canonicalize-path", "PATH", 1, 1, cmdCanonicalizePath},
+		{"validate-docker-workspace-bind", "DOCKER_BIN IMAGE WORKSPACE CONTEXT CONTEXT_EXPLICIT", 5, 5, cmdValidateDockerWorkspaceBind},
+		{"docker-workspace-bind-mount", "WORKSPACE READONLY", 2, 2, cmdDockerWorkspaceBindMount},
 		{"coverage-percent", "REPORT_PATH MINIMUM LABEL", 3, 3, cmdCoveragePercent},
 		{"coverage-executables", "MESSAGE_PATH", 1, 1, cmdCoverageExecutables},
 		{"validate-json", "FILE [FILE...]", 1, -1, cmdValidateJSON},
@@ -161,6 +170,9 @@ func main() {
 		// the wrong-arity path below and the other workcell Go CLIs (D8).
 		dieUsage(rootUsageError(""))
 	}
+	if os.Args[1] == "startup-bench" {
+		os.Exit(startupbench.Run(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	// scenario-manifest preserves the bash contract of distinct exit
 	// codes for usage (2) vs. runtime (1) errors that
 	// scenarios.Run encodes; scenarios.Run already wrote the
@@ -194,14 +206,14 @@ func main() {
 }
 
 func rootUsageError(badCommand string) error {
-	names := make([]string, 0, len(subcommands())+1)
+	names := make([]string, 0, len(subcommands())+2)
 	for _, sub := range subcommands() {
 		names = append(names, sub.name)
 	}
 	// scenario-manifest is dispatched directly in main() and so is not
 	// part of the subcommands() table, but it is still a known command
 	// for help/error output purposes.
-	names = append(names, "scenario-manifest")
+	names = append(names, "scenario-manifest", "startup-bench")
 	sort.Strings(names)
 	var lines strings.Builder
 	for _, name := range names {
@@ -315,6 +327,19 @@ func cmdExtractCodexSHA(args []string) error {
 
 func cmdExtractCopilotSHA(args []string) error {
 	value, err := metadatautil.ExtractCopilotSHA(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdHadolintManifestChecksum(args []string) error {
+	manifest, err := io.ReadAll(io.LimitReader(os.Stdin, metadatautil.HadolintChecksumManifestMaxBytes+1))
+	if err != nil {
+		return err
+	}
+	value, err := metadatautil.HadolintManifestChecksum(manifest, args[0])
 	if err != nil {
 		return err
 	}
@@ -453,6 +478,35 @@ func cmdGenerateReproducibleBuildManifest(args []string) error {
 
 func cmdVerifyReproducibleBuildManifest(args []string) error {
 	return metadatautil.VerifyReproducibleBuildManifest(args[0], args[1], args[2])
+}
+
+func cmdValidateDockerWorkspaceBind(args []string) error {
+	contextExplicit, err := strconv.ParseBool(args[4])
+	if err != nil {
+		return fmt.Errorf("CONTEXT_EXPLICIT must be true or false")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return validatorbind.Require(ctx, validatorbind.Options{
+		DockerBinary:    args[0],
+		Image:           args[1],
+		Workspace:       args[2],
+		Context:         args[3],
+		ContextExplicit: contextExplicit,
+	})
+}
+
+func cmdDockerWorkspaceBindMount(args []string) error {
+	readOnly, err := strconv.ParseBool(args[1])
+	if err != nil {
+		return fmt.Errorf("READONLY must be true or false")
+	}
+	mount, err := validatorbind.MountSpec(args[0], readOnly)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, mount)
+	return nil
 }
 
 func cmdCanonicalizePath(args []string) error {

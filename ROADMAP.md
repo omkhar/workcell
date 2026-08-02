@@ -134,8 +134,12 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    resourcing (no audit sponsor/funding).
 3. Platform: `macos/arm64` strict (Colima) and compat (Docker Desktop) are
    certified on the release matrix; the Apple `container` backend decision
-   (C1) is recorded either way; session start latency targets (C2) are met
-   and published; native parallel sessions (C3) work on the strict path.
+   (C1) is recorded either way; native parallel sessions (C3) work on the
+   strict path. **[Amended 2026-08-01, recorded maintainer decision:]** C2
+   certification and its 1.0 latency target are deferred to post-1.0. The
+   generic startup driver remains benchmark-only because caller-provided hooks
+   cannot prove lifecycle state; the reviewed dedicated-certifier design was
+   rejected rather than broaden the launcher with destructive controls.
 4. Providers: the Tier 1 set covers the current agent ecosystem — Codex,
    Claude Code, GitHub Copilot CLI, Gemini, and Google Antigravity CLI —
    each through the same Tier 1 evidence bar. If upstream instability blocks
@@ -168,11 +172,10 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    support-tier and diagnostics guides (E3) are live. **[Amended 2026-07-09,
    recorded maintainer decision:]** the rendered docs site with demos and
    externally published reproducible benchmarks (E6) is **deferred to post-1.0**.
-   1.0 ships with in-repo markdown docs; C2 benchmark numbers are still captured
-   and published in
-   [`docs/session-startup-benchmarks.md`](docs/session-startup-benchmarks.md)
-   during Batch 3 local-operator certification. Tradeoff recorded honestly:
-   1.0 ships without the external rendered site or demo package.
+   1.0 ships with in-repo markdown docs. C2 is deferred to post-1.0 and the
+   generic benchmark is not certification evidence. Tradeoff recorded honestly:
+   1.0 ships without the external rendered site, demo package, or a certified
+   latency claim.
 8. Readiness review: a cross-lens 1.0 gate review (G4) — product,
    enterprise/security, adapter-maintainer, validation, docs/contract, and
    release lenses — records no unresolved P0/P1 findings, and every support
@@ -189,10 +192,10 @@ amended above). B6 — defer the automated Apple-Silicon runner (no funding);
 certify both boundaries by the local-operator discipline on the maintainer's
 host (criterion 6, amended above). B7 — defer the third-party boundary audit and
 OpenSSF badge to post-1.0 (criterion 2, amended above). E6 — defer the rendered
-docs site, demos, and external benchmark publication; 1.0 ships with in-repo
-markdown docs while C2 benchmark numbers are captured and published through
-Batch 3 local-operator certification (criterion 7, amended above). See the
-readiness review for the recorded G4 checklist state.
+docs site, demos, and external benchmark publication. C2 — defer certification
+and its latency target to post-1.0; preserve the generic driver as benchmark-only
+after rejecting the broader dedicated-certifier design (criteria 3 and 7 amended
+above). See the readiness review for the recorded G4 checklist state.
 
 ### Milestone Train
 
@@ -205,10 +208,10 @@ live in
 |---|---|---|
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
-| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
+| v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C2, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Phase 13 (Linux `amd64` `local_compat` certification candidate) may land
 before or after 1.0 depending on certification evidence; it does not gate
@@ -528,8 +531,9 @@ security-boundary product to prove.
   default (and the only option below macOS 26); promotion to a supported
   backend deferred post-1.0 pending the B6 certification lane.** See
   [docs/apple-container-evaluation.md](docs/apple-container-evaluation.md)
-- **C2 (next, M):** session start latency program with cached images, an
-  optional kept-warm lane, and published reproducible benchmarks
+- **C2 (post-1.0, M):** session start latency program with cached images, an
+  optional kept-warm lane, and a certification design that does not broaden the
+  launcher with destructive controls; generic output remains benchmark-only
 - **C3 (next, L):** native parallel sessions — one agent per worktree,
   branch, and isolated runtime, with session-record linkage
 - **C4 (later, L):** container tooling inside the boundary as an explicit

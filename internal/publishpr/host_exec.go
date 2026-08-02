@@ -447,9 +447,59 @@ func currentBranch(ctx *BashContext, workspace string) string {
 	return out
 }
 
-func hasRemoteOrigin(ctx *BashContext, workspace string) bool {
-	_, err := runCleanGit(ctx, workspace, []string{"remote", "get-url", "origin"})
-	return err == nil
+func remoteOriginPushURL(ctx *BashContext, workspace string) (string, error) {
+	var stdout bytes.Buffer
+	err := RunPublishHostCommandInDir(
+		workspace,
+		&PublishEnv{Path: ctx.TrustedHostPath, Home: ctx.RealHome},
+		[]string{
+			ctx.HostGitBin,
+			"-c", "core.hooksPath=/dev/null",
+			"-C", workspace,
+			"remote", "get-url", "--push", "--all", "origin",
+		},
+		nil,
+		&stdout,
+		io.Discard,
+	)
+	if err != nil {
+		return "", err
+	}
+	out := strings.TrimRight(stdout.String(), "\n")
+	var pushURLs []string
+	for _, line := range strings.Split(out, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			pushURLs = append(pushURLs, trimmed)
+		}
+	}
+	if len(pushURLs) != 1 {
+		return "", fmt.Errorf("origin has %d push URLs", len(pushURLs))
+	}
+	return pushURLs[0], nil
+}
+
+func hasOnBranchGitIncludes(ctx *BashContext, workspace string) (bool, error) {
+	var stdout bytes.Buffer
+	err := RunPublishHostCommandInDir(
+		workspace,
+		&PublishEnv{Path: ctx.TrustedHostPath, Home: ctx.RealHome},
+		[]string{
+			ctx.HostGitBin,
+			"-c", "core.hooksPath=/dev/null",
+			"-C", workspace,
+			"config", "--get-regexp", `^includeIf\.onbranch:.*\.path$`,
+		},
+		nil,
+		&stdout,
+		io.Discard,
+	)
+	if err == nil {
+		return strings.TrimSpace(stdout.String()) != "", nil
+	}
+	if ec, ok := cliexit.IsExitCodeError(err); ok && ec.Code == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 func hasWorktreeChanges(ctx *BashContext, workspace string) bool {

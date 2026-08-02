@@ -3142,6 +3142,10 @@ grep -q 'event=command session_id=detached-lifecycle source=host-cli command=ses
 grep -q 'event=stop-request session_id=detached-lifecycle' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 grep -q 'event=exit session_id=detached-lifecycle source=host-stop-fallback exit_status=0 final_assurance=managed-mutable' "${SESSION_LIFECYCLE_AUDIT_LOG}"
 
+runtime_builder_claim_output="$(bash -lc '
+  set -euo pipefail; source "$1"; root="$2"; WORKCELL_DOCKER_SANDBOX_ROOT="${root}/docker"; WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"; WORKCELL_DOCKER_CLIENT_CWD="${WORKCELL_DOCKER_HOME}"; mkdir -p "${WORKCELL_DOCKER_HOME}"; RUNTIME_BUILDER_CLEANUP_ACTIVE=0; ensure_workcell_trusted_buildx() { :; }; runtime_builder_policy() { [[ "$1" == claim ]] && printf "builder_name=workcell-runtime-test\\n"; }; trap "rm -rf \"${WORKCELL_DOCKER_SANDBOX_ROOT}\"" EXIT; begin_runtime_builder; test -d "${WORKCELL_DOCKER_HOME}"; run_workcell_docker_client_command /bin/pwd
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${TMP_DIR}/runtime-builder-claim")"
+grep -qx "${TMP_DIR}/runtime-builder-claim/docker/home" <<<"${runtime_builder_claim_output}"
 HOST_DOCKER_BIN="$(resolve_host_docker_bin || true)"
 if [[ -n "${HOST_DOCKER_BIN}" ]]; then
   docker_context_candidate=""

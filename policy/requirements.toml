@@ -325,8 +325,9 @@ docs = [
 
 [nonfunctional.NFR-004]
 title = "Release provenance validation"
-summary = "Release artifacts, control-plane manifests, and signing metadata must remain validated and reproducible before publication."
+summary = "Release artifacts, control-plane manifests, and signing metadata must remain validated and reproducible before publication, with the exact asset inventory sealed before any GitHub mutation and uploaded only from its staged read-only content."
 evidence = [
+  "internal/host/release/publisher_test.go",
   "scripts/verify-release-bundle.sh",
   "scripts/verify-control-plane-manifest.sh",
   "scripts/verify-upstream-claude-release.sh",
@@ -335,6 +336,7 @@ evidence = [
   "scripts/verify-upstream-gemini-release.sh",
 ]
 docs = [
+  "docs/releasing.md",
   "docs/provenance.md",
   "docs/github-workflows.md",
 ]

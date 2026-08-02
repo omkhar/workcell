@@ -1844,8 +1844,8 @@ test -z "${WORKCELL_COPILOT_GITHUB_TOKEN:-}"
 test -z "${WORKCELL_COPILOT_TOKEN_FILE:-}"
 test ! -e /opt/workcell/copilot-token-handoff/copilot-github-token.txt
 test -e /opt/workcell/copilot-token-handoff/copilot-token-consumed
-printf 'copilot-metadata-stub-ok\n' >/workspace/tmp/copilot-metadata-stub.out
 trap 'printf "copilot-metadata-term-ok\n" >/workspace/tmp/copilot-metadata-term.out; exit 0' TERM INT
+printf 'copilot-metadata-stub-ok\n' >/workspace/tmp/copilot-metadata-stub.out
 while :; do
   sleep 1
 done
@@ -1883,7 +1883,7 @@ docker_cmd run -d \
   -v "$(workcell_docker_host_path "${INJECTION_BUNDLE_ROOT}/copilot"):/opt/workcell/host-injections:ro" \
   -v "$(workcell_docker_host_path "${COPILOT_METADATA_STUB}"):/usr/local/libexec/workcell/real/copilot:ro" \
   "${IMAGE_TAG}" copilot -p smoke -s >/dev/null
-for _ in {1..100}; do
+for _ in {1..300}; do
   [[ -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-token-consumed" ]] && break
   sleep 0.1
 done
@@ -1896,6 +1896,23 @@ if [[ -e "${COPILOT_METADATA_TOKEN_HANDOFF_DIR}/copilot-github-token.txt" ]]; th
   echo "Copilot metadata smoke token handoff file was not consumed" >&2
   docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
   exit 32
+fi
+for _ in {1..300}; do
+  [[ -e "${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub.out" ]] && break
+  if [[ "$(docker_cmd inspect --format '{{.State.Status}}' "${COPILOT_METADATA_CONTAINER}" 2>/dev/null || true)" =~ ^(dead|exited)$ ]]; then
+    echo "Copilot metadata smoke container exited before the stub became ready" >&2
+    docker_cmd logs "${COPILOT_METADATA_CONTAINER}" >&2 || true
+    docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+    exit 34
+  fi
+  sleep 0.1
+done
+if [[ ! -e "${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub.out" ]] ||
+  ! grep -q '^copilot-metadata-stub-ok$' "${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub.out"; then
+  echo "Copilot metadata smoke stub did not become ready" >&2
+  docker_cmd logs "${COPILOT_METADATA_CONTAINER}" >&2 || true
+  docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
+  exit 34
 fi
 COPILOT_METADATA_ENV="$(docker_cmd inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${COPILOT_METADATA_CONTAINER}")"
 COPILOT_METADATA_JSON="$(docker_cmd inspect "${COPILOT_METADATA_CONTAINER}")"

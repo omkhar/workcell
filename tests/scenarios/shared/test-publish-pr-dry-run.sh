@@ -32,6 +32,7 @@ compute_worktree_status_sha256() {
 
 FIXTURE="${TMP_DIR}/publish-pr-fixture"
 ORIGIN="${TMP_DIR}/publish-pr-origin.git"
+BRANCH_ORIGIN="${TMP_DIR}/publish-pr-branch-origin.git"
 SHA256_FIXTURE="${TMP_DIR}/publish-pr-sha256-fixture"
 SSH_SIGNING_KEY="${TMP_DIR}/signing_key"
 ALLOWED_SIGNERS="${TMP_DIR}/allowed_signers"
@@ -40,6 +41,10 @@ WORKSPACE_ALLOWED_SIGNERS="${TMP_DIR}/workspace_allowed_signers"
 HOST_XDG_CONFIG_HOME="${TMP_DIR}/host-xdg-config"
 UNTRUSTED_GH_STUB="${TMP_DIR}/gh-stub"
 GH_LOG="${TMP_DIR}/gh.log"
+GH_PR_LIST_RESPONSE_FILE="${TMP_DIR}/gh-pr-list-response.json"
+GH_CREATE_RACE_RESPONSE_FILE="${TMP_DIR}/gh-create-race-response.json"
+GH_CREATE_RACE_MARKER="${TMP_DIR}/gh-create-race"
+GH_CREATE_FAILURE_MARKER="${TMP_DIR}/gh-create-failure"
 HOOK_MARKER_DIR="${TMP_DIR}/hook-markers"
 TITLE_FILE="${TMP_DIR}/pr-title.txt"
 BODY_FILE="${TMP_DIR}/pr-body.md"
@@ -64,6 +69,7 @@ TRUSTED_GH_STUB="${TRUSTED_BIN_DIR}/workcell-gh-scenario-${RANDOM}-$$"
 
 mkdir -p "${FIXTURE}" "${HOOK_MARKER_DIR}" "${HOST_XDG_CONFIG_HOME}/git"
 git init -q --bare "${ORIGIN}"
+git init -q --bare "${BRANCH_ORIGIN}"
 git init -q "${FIXTURE}"
 git -C "${FIXTURE}" config user.name "Workcell Scenario"
 git -C "${FIXTURE}" config user.email "workcell-scenario@example.com"
@@ -110,6 +116,7 @@ git -C "${FIXTURE}" add tracked.txt
 git -C "${FIXTURE}" commit -q -m init
 git -C "${FIXTURE}" branch -M main
 git -C "${FIXTURE}" push -q -u origin main >/dev/null
+git -C "${FIXTURE}" push -q "${BRANCH_ORIGIN}" main >/dev/null
 
 git -C "${FIXTURE}" switch -q -c feature/pr-shape-safe
 printf 'shape gate\n' >"${FIXTURE}/shape-check.txt"
@@ -169,7 +176,43 @@ grep -q -- ' fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${existing_branch_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${existing_branch_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/existing-signed-branch ' <<<"${existing_branch_dry_run}"
-grep -q -- 'gh pr create --base main --head feature/existing-signed-branch --title Existing\\ branch\\ title --draft' <<<"${existing_branch_dry_run}"
+grep -q -- "gh repo view ${ORIGIN} --json nameWithOwner" <<<"${existing_branch_dry_run}"
+grep -q -- "gh pr list -R ${ORIGIN} --base main --head feature/existing-signed-branch --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100" <<<"${existing_branch_dry_run}"
+grep -q -- "gh pr create -R ${ORIGIN} --base main --head feature/existing-signed-branch --title Existing\\\\ branch\\\\ title --draft" <<<"${existing_branch_dry_run}"
+
+git -C "${FIXTURE}" config --add remote.origin.pushurl 'https://user:TOKEN@github.com/fork-owner/publish-pr-fixture.git'
+credential_pushurl_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/existing-signed-branch \
+  --title "Credential-safe push URL" \
+  --commit-message "Unused credential-safe push URL commit" \
+  --dry-run)"
+if grep -q 'TOKEN' <<<"${credential_pushurl_dry_run}"; then
+  echo "publish-pr dry-run should not expose credentials from the origin push URL" >&2
+  exit 1
+fi
+grep -q -- 'gh repo view https://github.com/fork-owner/publish-pr-fixture.git --json nameWithOwner' <<<"${credential_pushurl_dry_run}"
+grep -q -- 'gh pr list -R https://github.com/fork-owner/publish-pr-fixture.git --base main --head feature/existing-signed-branch ' <<<"${credential_pushurl_dry_run}"
+grep -q -- 'gh pr create -R https://github.com/fork-owner/publish-pr-fixture.git --base main --head feature/existing-signed-branch ' <<<"${credential_pushurl_dry_run}"
+
+git -C "${FIXTURE}" config --add remote.origin.pushurl 'git@github.com:second-owner/publish-pr-fixture.git'
+set +e
+multiple_pushurl_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
+  --workspace "${FIXTURE}" \
+  --branch feature/existing-signed-branch \
+  --title "Ambiguous push URLs" \
+  --commit-message "Unused ambiguous push URL commit" \
+  --dry-run 2>&1)"
+multiple_pushurl_rc=$?
+set -e
+test "${multiple_pushurl_rc}" -eq 2
+grep -q 'publish-pr requires exactly one origin push URL' <<<"${multiple_pushurl_output}"
+if grep -q 'TOKEN' <<<"${multiple_pushurl_output}"; then
+  echo "publish-pr errors should not expose credentials from ambiguous push URLs" >&2
+  exit 1
+fi
+git -C "${FIXTURE}" config --unset-all remote.origin.pushurl
+
 git -C "${FIXTURE}" switch -q main
 git -C "${FIXTURE}" reset -q --hard origin/main
 set +e
@@ -240,7 +283,7 @@ test "${worktree_signature_line}" -lt "${worktree_shape_line}"
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${worktree_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
-grep -q -- 'gh pr create --base main --head feature/publish-scenario --title Scenario\\ PR\\ title --draft --body-file' <<<"${worktree_dry_run}"
+grep -q -- "gh pr create -R ${ORIGIN} --base main --head feature/publish-scenario --title Scenario\\\\ PR\\\\ title --draft --body-file" <<<"${worktree_dry_run}"
 
 certified_adapter_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --workspace "${FIXTURE}" \
@@ -252,7 +295,7 @@ certified_adapter_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
   --approved-large-certified-adapter \
   --dry-run)"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0 --allow-certified-adapter-shape' <<<"${certified_adapter_dry_run}"
-grep -q -- 'gh pr create --base main --head feature/certified-adapter --title Scenario\\ PR\\ title --label approved-large-certified-adapter --draft --body-file' <<<"${certified_adapter_dry_run}"
+grep -q -- "gh pr create -R ${ORIGIN} --base main --head feature/certified-adapter --title Scenario\\\\ PR\\\\ title --label approved-large-certified-adapter --draft --body-file" <<<"${certified_adapter_dry_run}"
 
 git -C "${FIXTURE}" add tracked.txt
 index_dry_run="$("${ROOT_DIR}/scripts/workcell" publish-pr \
@@ -415,7 +458,7 @@ grep -q '^publish_repo_owned_pr_checks_expected=0$' <<<"${allowed_non_main_dry_r
 grep -q '^publish_draft=1$' <<<"${allowed_non_main_dry_run}"
 grep -q 'publish-pr preflight: repo-owned PR checks are not expected for --base feature/review-stack' <<<"${allowed_non_main_dry_run}"
 grep -q 'normal main-based PR validation and merge gating do not apply to that PR shape' <<<"${allowed_non_main_dry_run}"
-grep -q -- "gh pr create --base feature/review-stack --head feature/non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${allowed_non_main_dry_run}"
+grep -q -- "gh pr create -R ${ORIGIN} --base feature/review-stack --head feature/non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${allowed_non_main_dry_run}"
 
 no_remote_fixture="${TMP_DIR}/publish-pr-no-remote"
 git init -q "${no_remote_fixture}"
@@ -429,7 +472,7 @@ missing_remote_output="$("${ROOT_DIR}/scripts/workcell" publish-pr \
 missing_remote_rc=$?
 set -e
 test "${missing_remote_rc}" -eq 2
-grep -q 'publish-pr requires an origin remote' <<<"${missing_remote_output}"
+grep -q 'publish-pr requires exactly one origin push URL' <<<"${missing_remote_output}"
 
 git -C "${FIXTURE}" reset tracked.txt >/dev/null
 printf 'live publish\n' >"${FIXTURE}/tracked.txt"
@@ -480,8 +523,32 @@ grep -q 'HOST_GH_BIN must point to a trusted host executable path' <<<"${host_gh
 cat >"${TRUSTED_GH_STUB}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "\$*" >"${GH_LOG}"
-printf 'https://example.invalid/pr/123\n'
+printf '%s\n' "\$*" >>"${GH_LOG}"
+if [[ "\${1:-} \${2:-}" == "repo view" ]]; then
+  printf '{"nameWithOwner":"example/publish-pr-fixture"}\n'
+  exit 0
+fi
+if [[ "\${1:-} \${2:-}" == "pr list" ]]; then
+  if [[ -f "${GH_PR_LIST_RESPONSE_FILE}" ]]; then
+    cat "${GH_PR_LIST_RESPONSE_FILE}"
+  else
+    printf '[]\n'
+  fi
+  exit 0
+fi
+if [[ "\${1:-} \${2:-}" == "pr create" ]]; then
+  if [[ -f "${GH_CREATE_RACE_MARKER}" ]]; then
+    cp "${GH_CREATE_RACE_RESPONSE_FILE}" "${GH_PR_LIST_RESPONSE_FILE}"
+    rm -f "${GH_CREATE_RACE_MARKER}"
+    exit 1
+  fi
+  if [[ -f "${GH_CREATE_FAILURE_MARKER}" ]]; then
+    exit 1
+  fi
+  printf 'https://example.invalid/pr/123\n'
+  exit 0
+fi
+exit 2
 EOF
 chmod +x "${TRUSTED_GH_STUB}"
 
@@ -671,7 +738,64 @@ git -C "${FIXTURE}" switch -q main
 git -C "${FIXTURE}" reset -q --hard origin/main
 git -C "${FIXTURE}" branch -D feature/unsigned-ancestor >/dev/null
 
+git config --file "${HOST_XDG_CONFIG_HOME}/git/config" \
+  'includeIf.onbranch:feature/branch-conditioned-destination.path' \
+  "${TMP_DIR}/branch-conditioned-origin.gitconfig"
+git config --file "${TMP_DIR}/branch-conditioned-origin.gitconfig" \
+  remote.origin.pushurl \
+  "${BRANCH_ORIGIN}"
+printf 'branch-conditioned destination\n' >"${FIXTURE}/tracked.txt"
+set +e
+branch_destination_dry_run="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/branch-conditioned-destination \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Branch-conditioned destination" \
+    --commit-message "Branch-conditioned destination fixture" \
+    --dry-run 2>&1
+)"
+branch_destination_dry_run_rc=$?
+set -e
+test "${branch_destination_dry_run_rc}" -eq 2
+grep -q 'dry-run cannot safely resolve branch-conditioned Git configuration' <<<"${branch_destination_dry_run}"
+rm -f "${GH_LOG}"
+branch_destination_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/branch-conditioned-destination \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Branch-conditioned destination" \
+    --commit-message "Branch-conditioned destination fixture" \
+    2>"${TMP_DIR}/publish-branch-conditioned-destination.stderr"
+)"
+grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${branch_destination_output}"
+grep -q "^repo view ${BRANCH_ORIGIN} --json nameWithOwner$" "${GH_LOG}"
+grep -q "^pr list -R ${BRANCH_ORIGIN} --base main --head feature/branch-conditioned-destination " "${GH_LOG}"
+grep -q "^pr create -R ${BRANCH_ORIGIN} --base main --head feature/branch-conditioned-destination " "${GH_LOG}"
+git --git-dir="${BRANCH_ORIGIN}" show-ref --verify --quiet refs/heads/feature/branch-conditioned-destination
+if git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/branch-conditioned-destination; then
+  echo "publish-pr should not push the branch-conditioned destination to the pre-switch origin" >&2
+  exit 1
+fi
+branch_destination_checked_out_dry_run="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/branch-conditioned-destination \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Branch-conditioned destination" \
+    --commit-message "Unused branch-conditioned destination fixture" \
+    --dry-run
+)"
+grep -q -- "repo view ${BRANCH_ORIGIN} --json nameWithOwner" <<<"${branch_destination_checked_out_dry_run}"
+git config --file "${HOST_XDG_CONFIG_HOME}/git/config" \
+  --unset-all \
+  'includeIf.onbranch:feature/branch-conditioned-destination.path'
+git -C "${FIXTURE}" switch -q main
+git -C "${FIXTURE}" reset -q --hard origin/main
+
 printf 'live publish\n' >"${FIXTURE}/tracked.txt"
+rm -f "${GH_LOG}"
 publish_output="$(
   XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
     --workspace "${FIXTURE}" \
@@ -686,7 +810,9 @@ grep -q '^publish_branch=feature/publish-live$' <<<"${publish_output}"
 grep -q '^publish_base=main$' <<<"${publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${publish_output}"
 grep -q '^publish_snapshot=worktree$' <<<"${publish_output}"
-grep -q '^pr create --base main --head feature/publish-live --title Live scenario title --draft --body-file ' "${GH_LOG}"
+grep -q "^repo view ${ORIGIN} --json nameWithOwner$" "${GH_LOG}"
+grep -q "^pr list -R ${ORIGIN} --base main --head feature/publish-live --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100$" "${GH_LOG}"
+grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-live --title Live scenario title --draft --body-file " "${GH_LOG}"
 
 publish_head="$(git -C "${FIXTURE}" rev-parse HEAD)"
 remote_head="$(git --git-dir="${ORIGIN}" rev-parse refs/heads/feature/publish-live)"
@@ -694,6 +820,111 @@ test "${publish_head}" = "${remote_head}"
 git -C "${FIXTURE}" verify-commit "${publish_head}" >/dev/null 2>&1
 test ! -e "${HOOK_MARKER_DIR}/pre-commit"
 test ! -e "${HOOK_MARKER_DIR}/pre-push"
+
+cat >"${GH_PR_LIST_RESPONSE_FILE}" <<'EOF'
+[
+  {"baseRefName":"main","headRefName":"feature/publish-live","headRepository":{"nameWithOwner":"attacker/fork"}},
+  {"baseRefName":"main","headRefName":"feature/publish-live","headRepository":null}
+]
+EOF
+rm -f "${GH_LOG}"
+foreign_fork_publish_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/publish-live \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Origin PR after foreign collision" \
+    --commit-message "Unused foreign collision commit" \
+    2>"${TMP_DIR}/publish-foreign-collision.stderr"
+)"
+grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${foreign_fork_publish_output}"
+grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-live " "${GH_LOG}"
+
+cat >"${GH_PR_LIST_RESPONSE_FILE}" <<'EOF'
+[{"baseRefName":"main","headRefName":"feature/publish-live","headRepository":{"nameWithOwner":"example/publish-pr-fixture"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/existing"}]
+EOF
+rm -f "${GH_LOG}"
+existing_publish_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/publish-live \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Ignored existing PR title" \
+    --body "Ignored existing PR body" \
+    --commit-message "Unused existing PR commit" \
+    2>"${TMP_DIR}/publish-existing.stderr"
+)"
+grep -q '^publish_branch=feature/publish-live$' <<<"${existing_publish_output}"
+grep -q '^publish_pr_url=https://example.invalid/pr/existing$' <<<"${existing_publish_output}"
+grep -q "^pr list -R ${ORIGIN} --base main --head feature/publish-live --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100$" "${GH_LOG}"
+if grep -q '^pr create ' "${GH_LOG}"; then
+  echo "publish-pr should reuse the matching open pull request instead of creating another" >&2
+  exit 1
+fi
+rm -f "${GH_PR_LIST_RESPONSE_FILE}"
+
+cat >"${GH_CREATE_RACE_RESPONSE_FILE}" <<'EOF'
+[{"baseRefName":"main","headRefName":"feature/publish-live","headRepository":{"nameWithOwner":"example/publish-pr-fixture"},"isDraft":true,"labels":[],"url":"https://example.invalid/pr/race-winner"}]
+EOF
+touch "${GH_CREATE_RACE_MARKER}"
+rm -f "${GH_LOG}"
+race_publish_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/publish-live \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Race-safe publication" \
+    --commit-message "Unused race-safe publication commit" \
+    2>"${TMP_DIR}/publish-race.stderr"
+)"
+grep -q '^publish_pr_url=https://example.invalid/pr/race-winner$' <<<"${race_publish_output}"
+test "$(grep -c "^pr list -R ${ORIGIN} " "${GH_LOG}")" -eq 2
+test "$(grep -c "^pr create -R ${ORIGIN} " "${GH_LOG}")" -eq 1
+rm -f "${GH_PR_LIST_RESPONSE_FILE}"
+
+touch "${GH_CREATE_FAILURE_MARKER}"
+rm -f "${GH_LOG}"
+set +e
+create_failure_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/publish-live \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Failed publication" \
+    --commit-message "Unused failed publication commit" \
+    2>&1
+)"
+create_failure_rc=$?
+set -e
+test "${create_failure_rc}" -eq 1
+if grep -q '^publish_pr_url=' <<<"${create_failure_output}"; then
+  echo "publish-pr should not emit a PR URL when create and race lookup both fail" >&2
+  exit 1
+fi
+test "$(grep -c "^pr list -R ${ORIGIN} " "${GH_LOG}")" -eq 2
+test "$(grep -c "^pr create -R ${ORIGIN} " "${GH_LOG}")" -eq 1
+rm -f "${GH_CREATE_FAILURE_MARKER}"
+
+printf '[{}]\n' >"${GH_CREATE_RACE_RESPONSE_FILE}"
+touch "${GH_CREATE_RACE_MARKER}"
+rm -f "${GH_LOG}"
+set +e
+race_lookup_failure_output="$(
+  XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" bash "${ROOT_DIR}/scripts/workcell" publish-pr \
+    --workspace "${FIXTURE}" \
+    --branch feature/publish-live \
+    --gh-bin "${TRUSTED_GH_STUB}" \
+    --title "Invalid race lookup" \
+    --commit-message "Unused invalid race lookup commit" \
+    2>&1
+)"
+race_lookup_failure_rc=$?
+set -e
+test "${race_lookup_failure_rc}" -eq 1
+grep -q 'existing pull request lookup returned an incomplete entry at index 0' <<<"${race_lookup_failure_output}"
+test "$(grep -c "^pr list -R ${ORIGIN} " "${GH_LOG}")" -eq 2
+test "$(grep -c "^pr create -R ${ORIGIN} " "${GH_LOG}")" -eq 1
+rm -f "${GH_PR_LIST_RESPONSE_FILE}"
 
 git -C "${FIXTURE}" switch -C main >/dev/null
 git -C "${FIXTURE}" reset -q --hard origin/main
@@ -738,7 +969,7 @@ certified_publish_output="$(
 grep -q 'PR shape check passed with approved certified-adapter override' <<<"${certified_publish_output}"
 grep -q '^publish_branch=feature/publish-certified-adapter$' <<<"${certified_publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${certified_publish_output}"
-grep -q '^pr create --base main --head feature/publish-certified-adapter --title Certified adapter scenario title --label approved-large-certified-adapter --draft --body Certified adapter scenario body$' "${GH_LOG}"
+grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-certified-adapter --title Certified adapter scenario title --label approved-large-certified-adapter --draft --body Certified adapter scenario body$" "${GH_LOG}"
 if ! git --git-dir="${ORIGIN}" show-ref --verify --quiet refs/heads/feature/publish-certified-adapter; then
   echo "publish-pr should push a bounded certified-adapter branch when explicitly approved" >&2
   exit 1
