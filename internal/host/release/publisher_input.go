@@ -70,12 +70,6 @@ func validateRepository(repository string) error {
 	return nil
 }
 
-// ValidateGitHubRepository requires one safe OWNER/REPO identifier before a
-// caller interpolates it into a GitHub release API URL.
-func ValidateGitHubRepository(repository string) error {
-	return validateRepository(repository)
-}
-
 func validateToolchain(toolchain string) error {
 	if !toolchainPattern.MatchString(toolchain) {
 		return inputErrorf("toolchain must be exact goX.Y.Z, got %q", toolchain)

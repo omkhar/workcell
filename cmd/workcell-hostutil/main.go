@@ -225,62 +225,6 @@ func runRelease(args []string) error {
 		}
 		fmt.Printf("Uploaded sealed GitHub release assets and published %s (release id %d)\n", args[1], releaseID)
 		return nil
-	case "create-payload":
-		if len(args) != 3 {
-			return releaseUsage()
-		}
-		return release.WriteGitHubReleaseCreatePayload(args[1], args[2])
-	case "publish-payload":
-		if len(args) != 3 {
-			return releaseUsage()
-		}
-		return release.WriteGitHubReleasePublishPayload(args[1], args[2])
-	case "validate-repository":
-		if len(args) != 2 {
-			return releaseUsage()
-		}
-		return release.ValidateGitHubRepository(args[1])
-	case "validate-draft-release":
-		if len(args) != 4 {
-			return releaseUsage()
-		}
-		return release.ValidateGitHubDraftRelease(args[1], args[2], args[3])
-	case "validate-published-state":
-		if len(args) != 4 {
-			return releaseUsage()
-		}
-		return release.ValidateGitHubPublishedReleaseState(args[1], args[2], args[3])
-	case "validate-latest-response":
-		if len(args) != 5 {
-			return releaseUsage()
-		}
-		return release.ValidateGitHubLatestReleaseResponse(args[1], args[2], args[3], args[4])
-	case "list-page-size":
-		if len(args) != 2 {
-			return releaseUsage()
-		}
-		size, err := release.GitHubReleaseListPageSize(args[1])
-		if err != nil {
-			return err
-		}
-		fmt.Println(size)
-		return nil
-	case "select-listed-release":
-		if len(args) < 4 {
-			return releaseUsage()
-		}
-		return release.WriteGitHubListedRelease(args[1], args[3:], args[2])
-	case "metadata":
-		if len(args) < 4 {
-			return releaseUsage()
-		}
-		return release.WriteGitHubReleaseMetadata(args[1], args[3:], args[2])
-	case "encode-name":
-		if len(args) != 2 {
-			return releaseUsage()
-		}
-		fmt.Println(release.EncodeReleaseAssetName(args[1]))
-		return nil
 	case "bundle-manifest":
 		if len(args) != 8 {
 			return releaseUsage()
@@ -1116,16 +1060,6 @@ func releaseUsage() error {
 commands:
   classify-tag TAG
   publish TAG TAG_OBJECT_SHA PEELED_COMMIT_SHA ASSET...
-  create-payload TAG OUTPUT
-  publish-payload TAG OUTPUT
-  validate-repository OWNER/REPO
-  validate-draft-release OWNER/REPO TAG RESPONSE_JSON
-  validate-published-state OWNER/REPO TAG RESPONSE_JSON
-  validate-latest-response OWNER/REPO TAG HTTP_STATUS RESPONSE_JSON
-  list-page-size PAGE_JSON
-  select-listed-release TAG OUTPUT PAGE_JSON...
-  metadata RESPONSE_JSON OUTPUT ASSET...
-  encode-name NAME
   bundle-manifest OUTPUT ARCHIVE_REF BUNDLE_NAME BUNDLE_PREFIX SOURCE_DATE_EPOCH BUNDLE_SHA256 CHECKSUMS_SHA256`}
 }
 
