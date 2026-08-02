@@ -486,6 +486,14 @@ Prepare a host-side publication flow for the mounted workspace: switch to or
 create a feature branch, optionally stage the worktree, create a signed commit,
 verify every commit being published, push it, and open a GitHub pull request
 using host Git and GitHub CLI state.
+After a verified push, a matching open pull request for the selected base and
+branch in the pushed origin repository is reused without editing its existing
+metadata.
+Reuse fails closed when an existing non-main pull request is not a draft or
+when an approved large certified-adapter pull request lacks its required label.
+Origin must resolve to exactly one push URL.
+GitHub operations use a credential-free repository selector derived from that
+push URL.
 The supported base branch is
 .BR main ;
 non-main bases remain an explicit lower-assurance draft-only escape hatch

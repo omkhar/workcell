@@ -6371,7 +6371,7 @@ test "${PUBLISH_PR_WORKTREE_SIGNATURE_LINE}" -lt "${PUBLISH_PR_WORKTREE_SHAPE_LI
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' push --no-verify -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'gh pr create -R .* --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
 
 git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
 PUBLISH_PR_INDEX_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
@@ -6423,7 +6423,7 @@ if grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"; 
 fi
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
 grep -q -- ' push --no-verify -u origin feature/publish-existing-commits ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
-grep -q -- 'gh pr create --base main --head feature/publish-existing-commits --title Existing\\ publish\\ branch --draft' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
+grep -q -- 'gh pr create -R .* --base main --head feature/publish-existing-commits --title Existing\\ publish\\ branch --draft' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
 git -C "${PUBLISH_PR_FIXTURE}" switch -q "${PUBLISH_PR_FIXTURE_DEFAULT_BRANCH}"
 git -C "${PUBLISH_PR_FIXTURE}" branch -D feature/publish-existing-commits >/dev/null
 
@@ -6507,7 +6507,7 @@ grep -q '^publish_repo_owned_pr_checks_expected=0$' <<<"${PUBLISH_PR_NON_MAIN_DR
 grep -q '^publish_draft=1$' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 grep -q 'publish-pr preflight: repo-owned PR checks are not expected for --base feature/review-stack' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 grep -q 'normal main-based PR validation and merge gating do not apply to that PR shape' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
-grep -q -- "gh pr create --base feature/review-stack --head feature/publish-non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q -- "gh pr create -R .* --base feature/review-stack --head feature/publish-non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 
 cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/gh-untrusted"
 #!/usr/bin/env bash

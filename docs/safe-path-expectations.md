@@ -11,7 +11,13 @@
   for that base; reviewed, live-certified adapter support PRs may use the
   bounded `approved-large-certified-adapter` label plus
   `--approved-large-certified-adapter` publication flag when they cannot be
-  split without invalidating certification evidence
+  split without invalidating certification evidence; after a verified push,
+  publication reuses a matching open PR for the selected base and branch
+  in the pushed `origin` repository without changing its existing title, body,
+  labels, or draft state, and fails closed if that preserved state violates the
+  non-`main` draft-only or certified-adapter label requirements
+  (`origin` must resolve to exactly one push destination, and GitHub operations
+  use a credential-free selector derived from that push destination)
 - completed and aborted launches are recorded as durable host-side session
   records that you can inspect with `workcell session ...`
 - `workcell session diff` compares the current workspace against the clean git
