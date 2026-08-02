@@ -14,19 +14,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/gitconfigblocklist"
 	"github.com/omkhar/workcell/internal/hardeningprofile"
+	"github.com/omkhar/workcell/internal/host/validatorbind"
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
@@ -88,6 +92,8 @@ func subcommands() []subcommand {
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
 		{"canonicalize-path", "PATH", 1, 1, cmdCanonicalizePath},
+		{"validate-docker-workspace-bind", "DOCKER_BIN IMAGE WORKSPACE CONTEXT CONTEXT_EXPLICIT", 5, 5, cmdValidateDockerWorkspaceBind},
+		{"docker-workspace-bind-mount", "WORKSPACE READONLY", 2, 2, cmdDockerWorkspaceBindMount},
 		{"coverage-percent", "REPORT_PATH MINIMUM LABEL", 3, 3, cmdCoveragePercent},
 		{"coverage-executables", "MESSAGE_PATH", 1, 1, cmdCoverageExecutables},
 		{"validate-json", "FILE [FILE...]", 1, -1, cmdValidateJSON},
@@ -453,6 +459,35 @@ func cmdGenerateReproducibleBuildManifest(args []string) error {
 
 func cmdVerifyReproducibleBuildManifest(args []string) error {
 	return metadatautil.VerifyReproducibleBuildManifest(args[0], args[1], args[2])
+}
+
+func cmdValidateDockerWorkspaceBind(args []string) error {
+	contextExplicit, err := strconv.ParseBool(args[4])
+	if err != nil {
+		return fmt.Errorf("CONTEXT_EXPLICIT must be true or false")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return validatorbind.Require(ctx, validatorbind.Options{
+		DockerBinary:    args[0],
+		Image:           args[1],
+		Workspace:       args[2],
+		Context:         args[3],
+		ContextExplicit: contextExplicit,
+	})
+}
+
+func cmdDockerWorkspaceBindMount(args []string) error {
+	readOnly, err := strconv.ParseBool(args[1])
+	if err != nil {
+		return fmt.Errorf("READONLY must be true or false")
+	}
+	mount, err := validatorbind.MountSpec(args[0], readOnly)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, mount)
+	return nil
 }
 
 func cmdCanonicalizePath(args []string) error {
