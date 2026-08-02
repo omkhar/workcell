@@ -211,6 +211,13 @@ func signalCurrentProcessIdentity(
 		}
 		return fmt.Errorf("colima profile process %d command identity changed before signal", identity.pid)
 	}
+	started, err = deps.started(identity.pid)
+	if IsProcessGone(err) || (err == nil && started != identity.started) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("revalidate Colima profile process %d immediately before signal: %w", identity.pid, err)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

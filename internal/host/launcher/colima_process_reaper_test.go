@@ -271,6 +271,26 @@ func TestReapColimaProfileProcessesDoesNotSignalReusedPID(t *testing.T) {
 	}
 }
 
+func TestSignalCurrentProcessIdentityRevalidatesAfterInventory(t *testing.T) {
+	fake := newReaperFake()
+	deps := fake.dependencies()
+	list := deps.list
+	deps.list = func(ctx context.Context) ([]byte, error) {
+		output, err := list(ctx)
+		fake.started[42] = "reused"
+		return output, err
+	}
+	identity := colimaProcessIdentity{pid: 42, started: "started-42"}
+	if err := signalCurrentProcessIdentity(
+		context.Background(), fake.profile, identity, syscall.SIGTERM, deps,
+	); err != nil {
+		t.Fatalf("signal identity error = %v", err)
+	}
+	if len(fake.signals) != 0 {
+		t.Fatalf("signals = %#v, want none", fake.signals)
+	}
+}
+
 func TestReapColimaProfileProcessesRejectsSameStartChangedCommand(t *testing.T) {
 	fake := newReaperFake()
 	deps := fake.dependencies()
