@@ -334,7 +334,7 @@ func runOperation(ctx context.Context, path string, env []string, output io.Writ
 }
 func runCommand(ctx context.Context, argv, env []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = commandEnv(env)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -353,6 +353,21 @@ func runCommand(ctx context.Context, argv, env []string, stdout, stderr io.Write
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	return err
+}
+func commandEnv(overrides []string) []string {
+	keys := make(map[string]struct{}, len(overrides))
+	for _, entry := range overrides {
+		key, _, _ := strings.Cut(entry, "=")
+		keys[key] = struct{}{}
+	}
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, overridden := keys[key]; !overridden {
+			env = append(env, entry)
+		}
+	}
+	return append(env, overrides...)
 }
 func verifyCleanup(ctx context.Context, path string, env []string, sessionID, token string) error {
 	var output, diagnostics limitedBuffer
