@@ -45,6 +45,30 @@ type githubReleaseAsset struct {
 	Digest *string `json:"digest"`
 }
 
+type listedRelease struct {
+	ID         *int64             `json:"id"`
+	UploadURL  *string            `json:"upload_url"`
+	TagName    *string            `json:"tag_name"`
+	Draft      *bool              `json:"draft"`
+	Prerelease *bool              `json:"prerelease"`
+	Immutable  *bool              `json:"immutable"`
+	Assets     *[]json.RawMessage `json:"assets"`
+}
+
+type createPayload struct {
+	TagName              string `json:"tag_name"`
+	Draft                bool   `json:"draft"`
+	Prerelease           bool   `json:"prerelease"`
+	MakeLatest           string `json:"make_latest"`
+	GenerateReleaseNotes bool   `json:"generate_release_notes"`
+}
+
+type publishPayload struct {
+	Draft      bool   `json:"draft"`
+	Prerelease bool   `json:"prerelease"`
+	MakeLatest string `json:"make_latest"`
+}
+
 type githubTagRecord struct {
 	Ref    string `json:"ref"`
 	SHA    string `json:"sha"`
@@ -53,6 +77,66 @@ type githubTagRecord struct {
 		Type string `json:"type"`
 		SHA  string `json:"sha"`
 	} `json:"object"`
+}
+
+func validateListedRelease(item listedRelease) error {
+	if item.ID == nil || *item.ID <= 0 {
+		return fmt.Errorf("missing or invalid id")
+	}
+	if item.UploadURL == nil || *item.UploadURL == "" {
+		return fmt.Errorf("missing upload_url")
+	}
+	if item.TagName == nil || *item.TagName == "" {
+		return fmt.Errorf("missing tag_name")
+	}
+	if item.Draft == nil {
+		return fmt.Errorf("missing draft")
+	}
+	if item.Prerelease == nil {
+		return fmt.Errorf("missing prerelease")
+	}
+	if item.Immutable == nil {
+		return fmt.Errorf("missing immutable")
+	}
+	if item.Assets == nil {
+		return fmt.Errorf("missing assets")
+	}
+	return nil
+}
+
+func validateReleaseUploadURL(repository string, item listedRelease) error {
+	want := fmt.Sprintf(
+		"https://uploads.github.com/repos/%s/releases/%d/assets{?name,label}",
+		repository,
+		*item.ID,
+	)
+	if !equalASCIIFold(*item.UploadURL, want) {
+		return fmt.Errorf("GitHub release upload_url = %q, want %q", *item.UploadURL, want)
+	}
+	return nil
+}
+
+func equalASCIIFold(left, right string) bool {
+	nonASCII := func(character rune) bool { return character > 0x7f }
+	return strings.IndexFunc(left, nonASCII) < 0 &&
+		strings.IndexFunc(right, nonASCII) < 0 && strings.EqualFold(left, right)
+}
+
+func validatePublishedReleaseItem(tagName string, item listedRelease) error {
+	if *item.Draft {
+		return fmt.Errorf("GitHub published release draft = true, want false")
+	}
+	policy, err := ClassifyTag(tagName)
+	if err != nil {
+		return err
+	}
+	if *item.Prerelease != policy.Prerelease {
+		return fmt.Errorf("GitHub published release prerelease = %t, want %t for %s tag %q", *item.Prerelease, policy.Prerelease, policy.Kind, tagName)
+	}
+	if !*item.Immutable {
+		return fmt.Errorf("GitHub published release immutable = false, want true")
+	}
+	return nil
 }
 
 // PublishGitHubRelease publishes the exact Workcell asset inventory through a
