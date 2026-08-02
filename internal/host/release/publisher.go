@@ -22,7 +22,7 @@ import (
 
 const (
 	githubAPIOrigin, githubUploadsOrigin         = "https://api.github.com", "https://uploads.github.com"
-	githubAPIVersion                             = "2022-11-28"
+	githubAPIVersion                             = "2026-03-10"
 	maxGitHubResponseBytes                       = 4 * 1024 * 1024
 	maxGitHubReleasePages, githubReleasePageSize = 100, 25
 	maxGitHubCredentialBytes                     = 4096
@@ -150,6 +150,10 @@ func (publisher githubReleasePublisher) publish(ctx context.Context, repository,
 	}
 	if err := publisher.verifyTagBinding(ctx, repository, token, tag, expectedTag); err != nil {
 		return 0, fmt.Errorf("reverify release tag before publication: %w", err)
+	}
+	immutableReleasesEndpoint := fmt.Sprintf("%s/repos/%s/immutable-releases", githubAPIOrigin, repository)
+	if _, _, err := publisher.requestOneOf(ctx, token, http.MethodGet, immutableReleasesEndpoint, "", nil, 0, http.StatusOK); err != nil {
+		return 0, fmt.Errorf("verify immutable releases before publication: %w", err)
 	}
 	if err := closeLocalAssets(assets); err != nil {
 		return 0, fmt.Errorf("close sealed release assets before publishing draft: %w", err)
@@ -673,14 +677,8 @@ func validatePublishedRelease(
 	if *record.ID != releaseID || *record.TagName != tag {
 		return fmt.Errorf("published GitHub release identity is id %d tag %q, want id %d tag %q", *record.ID, *record.TagName, releaseID, tag)
 	}
-	if *record.Draft {
-		return fmt.Errorf("published GitHub release %q still reports draft = true", tag)
-	}
-	if *record.Prerelease != policy.Prerelease {
-		return fmt.Errorf("published GitHub release prerelease = %t, want %t for %s tag %q", *record.Prerelease, policy.Prerelease, policy.Kind, tag)
-	}
-	if !*record.Immutable {
-		return fmt.Errorf("published GitHub release %q is not immutable", tag)
+	if err := validatePublishedReleaseItem(tag, record); err != nil {
+		return err
 	}
 	if err := validateReleaseUploadURL(repository, record); err != nil {
 		return fmt.Errorf("published %w", err)

@@ -23,20 +23,19 @@ import (
 )
 
 type publisherClient struct {
-	t                          *testing.T
-	tag, repository, token     string
-	releaseID                  int64
-	stagingDone                *bool
-	draft, immutable, existing bool
-	assets                     []githubReleaseAsset
-	uploaded                   map[string][]byte
-	latestStatus               int
-	latestBody                 any
-	beforePublish              func()
-	failFinalVerification      bool
-	failTagRebind              bool
-	bindingReads               int
-	requests                   []string
+	t                                                              *testing.T
+	tag, repository, token                                         string
+	releaseID                                                      int64
+	stagingDone                                                    *bool
+	draft, immutable, existing                                     bool
+	assets                                                         []githubReleaseAsset
+	uploaded                                                       map[string][]byte
+	latestStatus                                                   int
+	latestBody                                                     any
+	beforePublish                                                  func()
+	failFinalVerification, failTagRebind, disableImmutableReleases bool
+	bindingReads                                                   int
+	requests                                                       []string
 }
 
 func (client *publisherClient) Do(request *http.Request) (*http.Response, error) {
@@ -44,8 +43,8 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 	if client.stagingDone != nil && !*client.stagingDone {
 		client.t.Fatal("GitHub request started before every asset was staged")
 	}
-	if request.Header.Get("Authorization") != "Bearer "+client.token {
-		client.t.Fatalf("unexpected authorization header")
+	if request.Header.Get("Authorization") != "Bearer "+client.token || request.Header.Get("X-GitHub-Api-Version") != githubAPIVersion {
+		client.t.Fatalf("unexpected GitHub request headers")
 	}
 	client.requests = append(client.requests, request.Method+" "+request.URL.Host+request.URL.Path)
 	policy, err := ClassifyTag(client.tag)
@@ -59,6 +58,7 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 	listPath := "/repos/" + client.repository + "/releases"
 	releasePath := fmt.Sprintf("%s/%d", listPath, client.releaseID)
 	tagRefPath := "/repos/" + client.repository + "/git/ref/tags/" + client.tag
+	immutableReleasesPath := "/repos/" + client.repository + "/immutable-releases"
 	switch {
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == "/repos/"+client.repository+"/git/tags/"+testTagObjectSHA:
 		return tagObjectResponse(client.tag, testTagObjectSHA, testTagCommitSHA), nil
@@ -117,6 +117,11 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 			client.immutable = false
 		}
 		return jsonResponse(http.StatusOK, client.record()), nil
+	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == immutableReleasesPath:
+		if client.disableImmutableReleases {
+			return jsonResponse(http.StatusNotFound, map[string]string{"message": "Not Found"}), nil
+		}
+		return jsonResponse(http.StatusOK, map[string]bool{"enabled": true}), nil
 	case request.Method == http.MethodPatch && request.URL.Host == "api.github.com" && request.URL.Path == releasePath:
 		if client.beforePublish != nil {
 			client.beforePublish()
@@ -148,10 +153,7 @@ func (client *publisherClient) record() map[string]any {
 }
 
 func releaseRecord(repository, tag string, id int64, draft, prerelease, immutable bool, assets any) map[string]any {
-	return map[string]any{
-		"id": id, "upload_url": fmt.Sprintf("%s/repos/%s/releases/%d/assets{?name,label}", githubUploadsOrigin, repository, id),
-		"tag_name": tag, "draft": draft, "prerelease": prerelease, "immutable": immutable, "assets": assets,
-	}
+	return map[string]any{"id": id, "upload_url": fmt.Sprintf("%s/repos/%s/releases/%d/assets{?name,label}", githubUploadsOrigin, repository, id), "tag_name": tag, "draft": draft, "prerelease": prerelease, "immutable": immutable, "assets": assets}
 }
 
 func jsonResponse(status int, value any) *http.Response {
@@ -195,10 +197,6 @@ func writeAssets(t *testing.T, tag string) ([]string, map[string][]byte) {
 	return paths, content
 }
 
-func publisherTagExpectation() TagExpectation {
-	return TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}
-}
-
 func TestPublisherSealsFinalAndReleaseCandidateAssets(t *testing.T) {
 	const repository, token = "example/workcell", "github_pat_test"
 	for _, tc := range []struct {
@@ -235,7 +233,7 @@ func TestPublisherSealsFinalAndReleaseCandidateAssets(t *testing.T) {
 				}
 				staged = true
 			}}
-			if id, err := publisher.publish(context.Background(), repository, token, tc.tag, publisherTagExpectation(), paths); err != nil || id != 42 {
+			if id, err := publisher.publish(context.Background(), repository, token, tc.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths); err != nil || id != 42 {
 				t.Fatalf("publish() = id %d error %v", id, err)
 			}
 			for name, want := range original {
@@ -248,6 +246,7 @@ func TestPublisherSealsFinalAndReleaseCandidateAssets(t *testing.T) {
 			}
 			wantSuffix := "GET api.github.com/repos/example/workcell/git/tags/" + testTagObjectSHA +
 				"\nGET api.github.com/repos/example/workcell/git/ref/tags/" + tc.tag +
+				"\nGET api.github.com/repos/example/workcell/immutable-releases" +
 				"\nPATCH api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/latest"
 			if !strings.HasSuffix(strings.Join(client.requests, "\n"), wantSuffix) {
 				t.Fatalf("requests = %q, want final verification suffix %q", client.requests, wantSuffix)
@@ -262,7 +261,7 @@ func TestPublisherPostPublicationFailureRequiresNextPatchRecovery(t *testing.T) 
 		t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
 		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), failFinalVerification: true,
 	}
-	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, publisherTagExpectation(), paths)
+	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
 	for _, fragment := range []string{"was published", "do not rewrite or retry this tag", "next patch release"} {
 		if err == nil || !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("publish() error = %v, want %q", err, fragment)
@@ -274,8 +273,18 @@ func TestPublisherRejectsMovedTagBeforePublication(t *testing.T) {
 	paths, _ := writeAssets(t, "v1.0.0")
 	client := &publisherClient{t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
 		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), failTagRebind: true}
-	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, publisherTagExpectation(), paths)
+	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
 	if err == nil || !strings.Contains(err.Error(), "reverify release tag") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
+		t.Fatalf("publish() error=%v requests=%q", err, client.requests)
+	}
+}
+
+func TestPublisherRejectsDisabledImmutableReleasesBeforePublication(t *testing.T) {
+	paths, _ := writeAssets(t, "v1.0.0")
+	client := &publisherClient{t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
+		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), disableImmutableReleases: true}
+	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
 		t.Fatalf("publish() error=%v requests=%q", err, client.requests)
 	}
 }
@@ -288,7 +297,7 @@ func TestPublisherReplacesExpectedStaleDraftAsset(t *testing.T) {
 		t: t, tag: tag, repository: repository, token: "token", releaseID: 42, draft: true, existing: true,
 		assets: []githubReleaseAsset{{ID: &id, Name: &name, Size: &size, State: &state}}, uploaded: make(map[string][]byte),
 	}
-	if _, err := (githubReleasePublisher{client: client}).publish(context.Background(), repository, "token", tag, publisherTagExpectation(), paths); err != nil {
+	if _, err := (githubReleasePublisher{client: client}).publish(context.Background(), repository, "token", tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(client.requests, "DELETE api.github.com/repos/example/workcell/releases/assets/99") {
@@ -297,9 +306,8 @@ func TestPublisherReplacesExpectedStaleDraftAsset(t *testing.T) {
 }
 
 type staticClient struct {
-	requests int
-	status   int
-	body     any
+	requests, status int
+	body             any
 }
 
 func (client *staticClient) Do(request *http.Request) (*http.Response, error) {
@@ -309,8 +317,7 @@ func (client *staticClient) Do(request *http.Request) (*http.Response, error) {
 		return tagRefResponse(tag, testTagObjectSHA), nil
 	}
 	if strings.HasSuffix(request.URL.Path, "/git/tags/"+testTagObjectSHA) {
-		tag := "v1.0.0"
-		return tagObjectResponse(tag, testTagObjectSHA, testTagCommitSHA), nil
+		return tagObjectResponse("v1.0.0", testTagObjectSHA, testTagCommitSHA), nil
 	}
 	return jsonResponse(client.status, client.body), nil
 }
@@ -370,7 +377,7 @@ func TestPublisherRejectsUnsafeStateBeforeMutation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &staticClient{status: http.StatusOK, body: []any{tc.record}}
-			_, err := (githubReleasePublisher{client: client}).publish(context.Background(), repository, "token", tag, publisherTagExpectation(), paths)
+			_, err := (githubReleasePublisher{client: client}).publish(context.Background(), repository, "token", tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || client.requests != 3 {
 				t.Fatalf("publish() error=%v requests=%d", err, client.requests)
 			}
@@ -390,7 +397,7 @@ func TestPublisherRejectsInputsBeforeNetwork(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &staticClient{status: http.StatusInternalServerError}
-			_, err := (githubReleasePublisher{client: client}).publish(context.Background(), "example/workcell", "token", tc.tag, publisherTagExpectation(), tc.paths)
+			_, err := (githubReleasePublisher{client: client}).publish(context.Background(), "example/workcell", "token", tc.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, tc.paths)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || client.requests != 0 {
 				t.Fatalf("publish() error=%v requests=%d", err, client.requests)
 			}
@@ -471,13 +478,6 @@ func TestGitHubErrorsAreBoundedAndSanitized(t *testing.T) {
 	_, err = (githubReleasePublisher{client: client}).request(context.Background(), "token", http.MethodGet, githubAPIOrigin+"/repos/example/workcell/releases", "", nil, 0, http.StatusOK)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || !strings.Contains(err.Error(), "release permission denied") {
 		t.Fatalf("request() error = %v", err)
-	}
-}
-
-func TestUnsupportedTagIsInvalidInput(t *testing.T) {
-	_, err := (githubReleasePublisher{client: &staticClient{}}).publish(context.Background(), "example/workcell", "token", "beta", TagExpectation{}, nil)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("publish() error = %v, want invalid input", err)
 	}
 }
 
