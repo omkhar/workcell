@@ -301,6 +301,8 @@ func (publisher githubReleasePublisher) findRelease(ctx context.Context, reposit
 }
 
 func (publisher githubReleasePublisher) createDraft(ctx context.Context, repository, token, tag string, policy TagPolicy) (listedRelease, error) {
+	operation := fmt.Sprintf("create GitHub draft release %q", tag)
+	const recovery = "inspect the exact-tag hosted release state before retrying"
 	payload := createPayload{
 		TagName:              tag,
 		Draft:                true,
@@ -317,15 +319,23 @@ func (publisher githubReleasePublisher) createDraft(ctx context.Context, reposit
 		http.StatusCreated,
 	)
 	if err != nil {
-		return listedRelease{}, fmt.Errorf("create GitHub draft release %q: %w", tag, err)
+		return listedRelease{}, ambiguousMutationError(operation, recovery, err)
 	}
-	return decodeReleaseRecord(body, "created draft")
+	created, err := decodeReleaseRecord(body, "created draft")
+	if err != nil {
+		return listedRelease{}, ambiguousMutationError(operation, recovery, err)
+	}
+	return created, nil
 }
 
 func (publisher githubReleasePublisher) deleteAsset(ctx context.Context, repository, token string, assetID int64) error {
 	endpoint := fmt.Sprintf("%s/repos/%s/releases/assets/%d", githubAPIOrigin, repository, assetID)
 	if _, err := publisher.request(ctx, token, http.MethodDelete, endpoint, "", nil, 0, http.StatusNoContent); err != nil {
-		return fmt.Errorf("delete existing GitHub release asset %d: %w", assetID, err)
+		return ambiguousMutationError(
+			fmt.Sprintf("delete existing GitHub release asset %d", assetID),
+			"inspect the draft asset inventory before retrying",
+			err,
+		)
 	}
 	return nil
 }
@@ -338,6 +348,8 @@ func (publisher githubReleasePublisher) uploadAsset(ctx context.Context, reposit
 	if err != nil {
 		return err
 	}
+	operation := fmt.Sprintf("upload GitHub release asset %q", asset.name)
+	const recovery = "inspect the draft asset inventory before retrying"
 	query := url.Values{"name": []string{asset.name}}
 	endpoint := fmt.Sprintf(
 		"%s/repos/%s/releases/%d/assets?%s",
@@ -357,13 +369,16 @@ func (publisher githubReleasePublisher) uploadAsset(ctx context.Context, reposit
 		http.StatusCreated,
 	)
 	if err != nil {
-		return fmt.Errorf("upload GitHub release asset %q: %w", asset.name, err)
+		return ambiguousMutationError(operation, recovery, err)
 	}
 	var uploaded githubReleaseAsset
 	if err := json.Unmarshal(body, &uploaded); err != nil {
-		return fmt.Errorf("decode uploaded GitHub release asset %q: %w", asset.name, err)
+		return ambiguousMutationError(operation, recovery, fmt.Errorf("decode uploaded asset response: %w", err))
 	}
-	return validateUploadedAsset(uploaded, asset)
+	if err := validateUploadedAsset(uploaded, asset); err != nil {
+		return ambiguousMutationError(operation, recovery, err)
+	}
+	return nil
 }
 
 func (publisher githubReleasePublisher) getReleaseByID(ctx context.Context, repository, token string, releaseID int64) (listedRelease, error) {
@@ -376,6 +391,8 @@ func (publisher githubReleasePublisher) getReleaseByID(ctx context.Context, repo
 }
 
 func (publisher githubReleasePublisher) publishDraft(ctx context.Context, repository, token, tag string, policy TagPolicy, releaseID int64) (listedRelease, error) {
+	operation := fmt.Sprintf("publish GitHub release %q", tag)
+	const recovery = "inspect the hosted release and do not retry or rewrite this tag until its state is known"
 	makeLatest := "false"
 	if policy.MakeLatest {
 		makeLatest = "true"
@@ -393,9 +410,17 @@ func (publisher githubReleasePublisher) publishDraft(ctx context.Context, reposi
 		http.StatusOK,
 	)
 	if err != nil {
-		return listedRelease{}, fmt.Errorf("publish GitHub release %q: %w", tag, err)
+		return listedRelease{}, ambiguousMutationError(operation, recovery, err)
 	}
-	return decodeReleaseRecord(body, "published release")
+	published, err := decodeReleaseRecord(body, "published release")
+	if err != nil {
+		return listedRelease{}, ambiguousMutationError(operation, recovery, err)
+	}
+	return published, nil
+}
+
+func ambiguousMutationError(operation, recovery string, err error) error {
+	return fmt.Errorf("%s outcome is ambiguous; %s: %w", operation, recovery, err)
 }
 
 func (publisher githubReleasePublisher) validateLatest(

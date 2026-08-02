@@ -294,6 +294,135 @@ func TestPublisherReplacesExpectedStaleDraftAsset(t *testing.T) {
 	}
 }
 
+type mutationFaultClient struct {
+	requests int
+	err      error
+	response *http.Response
+}
+
+func (client *mutationFaultClient) Do(*http.Request) (*http.Response, error) {
+	client.requests++
+	return client.response, client.err
+}
+
+func TestMutationFailuresReportAmbiguousHostedState(t *testing.T) {
+	const repository, tag = "example/workcell", "v1.0.0"
+	policy, err := ClassifyTag(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, _ := writeAssets(t, tag)
+	assets, err := inspectWorkcellAssets(tag, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := closeLocalAssets(assets); err != nil {
+			t.Error(err)
+		}
+	})
+
+	injected := errors.New("connection reset after request write")
+	for _, tc := range []struct {
+		name, operation, recovery string
+		run                       func(githubReleasePublisher) error
+	}{
+		{
+			name: "create", operation: "create GitHub draft release", recovery: "inspect the exact-tag hosted release state",
+			run: func(publisher githubReleasePublisher) error {
+				_, err := publisher.createDraft(context.Background(), repository, "token", tag, policy)
+				return err
+			},
+		},
+		{
+			name: "delete", operation: "delete existing GitHub release asset", recovery: "inspect the draft asset inventory",
+			run: func(publisher githubReleasePublisher) error {
+				return publisher.deleteAsset(context.Background(), repository, "token", 99)
+			},
+		},
+		{
+			name: "upload", operation: "upload GitHub release asset", recovery: "inspect the draft asset inventory",
+			run: func(publisher githubReleasePublisher) error {
+				return publisher.uploadAsset(context.Background(), repository, "token", 42, &assets[0])
+			},
+		},
+		{
+			name: "publish", operation: "publish GitHub release", recovery: "do not retry or rewrite this tag",
+			run: func(publisher githubReleasePublisher) error {
+				_, err := publisher.publishDraft(context.Background(), repository, "token", tag, policy, 42)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mutationFaultClient{err: injected}
+			err := tc.run(githubReleasePublisher{client: client})
+			for _, fragment := range []string{tc.operation, "outcome is ambiguous", tc.recovery} {
+				if err == nil || !strings.Contains(err.Error(), fragment) {
+					t.Fatalf("mutation error = %v, want %q", err, fragment)
+				}
+			}
+			if !errors.Is(err, injected) || client.requests != 1 {
+				t.Fatalf("mutation error = %v requests = %d", err, client.requests)
+			}
+		})
+	}
+}
+
+func TestMutationResponseFailuresReportAmbiguousHostedState(t *testing.T) {
+	const repository, tag = "example/workcell", "v1.0.0"
+	policy, err := ClassifyTag(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, _ := writeAssets(t, tag)
+	assets, err := inspectWorkcellAssets(tag, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := closeLocalAssets(assets); err != nil {
+			t.Error(err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name      string
+		status    int
+		operation string
+		run       func(githubReleasePublisher) error
+	}{
+		{
+			name: "create", status: http.StatusCreated, operation: "create GitHub draft release",
+			run: func(publisher githubReleasePublisher) error {
+				_, err := publisher.createDraft(context.Background(), repository, "token", tag, policy)
+				return err
+			},
+		},
+		{
+			name: "upload", status: http.StatusCreated, operation: "upload GitHub release asset",
+			run: func(publisher githubReleasePublisher) error {
+				return publisher.uploadAsset(context.Background(), repository, "token", 42, &assets[0])
+			},
+		},
+		{
+			name: "publish", status: http.StatusOK, operation: "publish GitHub release",
+			run: func(publisher githubReleasePublisher) error {
+				_, err := publisher.publishDraft(context.Background(), repository, "token", tag, policy, 42)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mutationFaultClient{response: jsonResponse(tc.status, map[string]any{})}
+			err := tc.run(githubReleasePublisher{client: client})
+			if err == nil || !strings.Contains(err.Error(), tc.operation) || !strings.Contains(err.Error(), "outcome is ambiguous") || client.requests != 1 {
+				t.Fatalf("mutation response error = %v requests = %d", err, client.requests)
+			}
+		})
+	}
+}
+
 type staticClient struct {
 	requests, status int
 	body             any
