@@ -498,7 +498,9 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 	const hostileCurlConfig = "output = \"/dev/null\"\n"
 	writeUpdaterFixtureFile(t, hostileHome, ".curlrc", hostileCurlConfig, 0o600)
 	cmd := exec.Command("/bin/bash", "-p", "-c", updaterFixtureHarness, "workcell-updater-fixture", filepath.Join(fixtureRoot, "scripts", "update-upstream-pins.sh"), mode)
-	cmd.Dir = fixtureRoot
+	// Invoke the absolute updater path from outside the fixture repository so
+	// every repo-local tool dispatch must anchor itself to ROOT_DIR.
+	cmd.Dir = scratchRoot
 	cmd.Env = []string{
 		"ALL_PROXY=http://127.0.0.1:1",
 		"BASH_ENV=",

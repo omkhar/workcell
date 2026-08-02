@@ -586,9 +586,11 @@ hadolint_checksums="$(
   curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_checksums_url}"
 )"
 target_hadolint_sha_amd64="$(
+  cd "${ROOT_DIR}" || exit
   printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-x86_64'
 )"
 target_hadolint_sha_arm64="$(
+  cd "${ROOT_DIR}" || exit
   printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-arm64'
 )"
 
