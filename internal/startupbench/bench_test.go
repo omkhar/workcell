@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Omkhar Arasaratnam
 
-// Package startupbench pins the pure logic of the C2 session-start latency bench
-// scripts (median/p90/stddev math, stability gate, driver skip/validation guards)
-// so it runs under `go test ./...` with no runtime.
+// Package startupbench pins the C2 session-start latency benchmark's statistics,
+// stability gate, and driver validation so they run under `go test ./...`.
 package startupbench
 
 import (
@@ -140,130 +139,35 @@ func runLiveDriverSplit(tb testing.TB, env map[string]string, target ...string) 
 	return runScriptSplit(tb, driver, env, append([]string{"--"}, target...)...)
 }
 
-const harness = "scripts/bench/startup-bench.sh"
 const driver = "scripts/bench/run-startup-bench.sh"
 
-// parseFields turns a "k=v k=v" harness line into a map.
-func parseFields(line string) map[string]string {
-	fields := map[string]string{}
-	for _, tok := range strings.Fields(strings.TrimSpace(line)) {
-		if k, v, ok := strings.Cut(tok, "="); ok {
-			fields[k] = v
-		}
-	}
-	return fields
-}
-
-func TestHarnessStatsOddSampleSet(t *testing.T) {
-	// Unsorted input; harness sorts. n=5 -> median=3rd value, p90 (idx 4)=max.
-	code, out := runScript(t, harness,
-		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "50 10 40 20 30"},
-		"cold", "0", "0")
-	if code != 0 {
-		t.Fatalf("exit %d, out=%q", code, out)
-	}
-	f := parseFields(out)
-	want := map[string]string{
-		"mode": "cold", "n": "5", "mean_ns": "30", "median_ns": "30",
-		"p90_ns": "50", "stddev_ns": "14", "min_ns": "10", "max_ns": "50",
-	}
-	for k, v := range want {
-		if f[k] != v {
-			t.Errorf("field %s = %q, want %q (line: %s)", k, f[k], v, strings.TrimSpace(out))
-		}
+func TestCalculateStatsConventions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values []int64
+		want   statistics
+	}{
+		{"odd", []int64{50, 10, 40, 20, 30}, statistics{5, 30, 30, 50, 14, 10, 50}},
+		{"even upper median", []int64{10, 20, 30, 40, 50, 60}, statistics{6, 35, 40, 60, 17, 10, 60}},
+		{"ties round to even", []int64{0, 1}, statistics{2, 0, 1, 1, 0, 0, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := calculate(tc.values); got != tc.want {
+				t.Fatalf("calculate(%v) = %+v, want %+v", tc.values, got, tc.want)
+			}
+		})
 	}
 }
 
-func TestHarnessMedianEvenSampleSet(t *testing.T) {
-	// n=6: matches the C5 harness convention median=sorted[n/2] (upper-middle).
-	code, out := runScript(t, harness,
-		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30 40 50 60"},
-		"warm", "0", "0")
-	if code != 0 {
-		t.Fatalf("exit %d, out=%q", code, out)
+func TestPureInputValidation(t *testing.T) {
+	if _, err := parseModes("cold bogus"); err == nil {
+		t.Fatal("accepted an unsupported mode")
 	}
-	f := parseFields(out)
-	if f["median_ns"] != "40" {
-		t.Errorf("median_ns = %q, want 40", f["median_ns"])
+	if _, err := parseSampleGroups("10 x 30"); err == nil {
+		t.Fatal("accepted a non-integer sample")
 	}
-	if f["p90_ns"] != "60" {
-		t.Errorf("p90_ns = %q, want 60", f["p90_ns"])
-	}
-	if f["n"] != "6" {
-		t.Errorf("n = %q, want 6", f["n"])
-	}
-}
-
-func TestHarnessRejectsUnknownMode(t *testing.T) {
-	code, out := runScript(t, harness,
-		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"},
-		"bogus", "0", "0")
-	if code == 0 {
-		t.Fatalf("expected non-zero exit for unknown mode, got 0: %s", out)
-	}
-	if !strings.Contains(out, "unknown mode") {
-		t.Errorf("missing 'unknown mode' diagnostic: %s", out)
-	}
-}
-
-func TestHarnessRejectsNonIntegerSample(t *testing.T) {
-	code, out := runScript(t, harness,
-		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 x 30"},
-		"cold", "0", "0")
-	if code == 0 {
-		t.Fatalf("expected non-zero exit for non-integer sample, got 0: %s", out)
-	}
-	if !strings.Contains(out, "non-integer sample") {
-		t.Errorf("missing 'non-integer sample' diagnostic: %s", out)
-	}
-}
-
-func TestHarnessLivePathTimesTarget(t *testing.T) {
-	// No canned samples: times a benign target on the real clock; assert structure.
-	code, out := runScript(t, harness, nil, "warm", "3", "1", "--", "true")
-	if code != 0 {
-		t.Fatalf("exit %d, out=%q", code, out)
-	}
-	f := parseFields(out)
-	if f["n"] != "3" {
-		t.Errorf("n = %q, want 3 (line: %s)", f["n"], strings.TrimSpace(out))
-	}
-	for _, k := range []string{"median_ns", "p90_ns", "min_ns", "max_ns"} {
-		if f[k] == "" {
-			t.Errorf("missing field %s in live output: %s", k, strings.TrimSpace(out))
-		}
-	}
-}
-
-func TestHarnessTimesLaunchesInOneProcess(t *testing.T) {
-	// The measured loop must run in ONE long-lived timer process. Each launch
-	// records its parent PID: all share one PPID (the timer) != the harness's.
-	dir := t.TempDir()
-	ppidF := filepath.Join(dir, "ppids")
-	rec := filepath.Join(dir, "ppid.sh")
-	writeExec(t, rec, "#!/usr/bin/env bash\necho \"$PPID\" >> \""+ppidF+"\"\n")
-	root := repoRoot(t)
-	cmd := exec.Command(filepath.Join(root, filepath.FromSlash(harness)), "warm", "3", "0", "--", rec)
-	cmd.Dir = root
-	cmd.Env = hermeticEnv(nil)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("harness failed: %v\n%s", err, out)
-	}
-	data, err := os.ReadFile(ppidF)
-	if err != nil {
-		t.Fatalf("read ppids: %v", err)
-	}
-	ppids := strings.Fields(string(data))
-	if len(ppids) != 3 {
-		t.Fatalf("want 3 launches, got %d: %q", len(ppids), data)
-	}
-	if harnessPid := strconv.Itoa(cmd.Process.Pid); ppids[0] == harnessPid {
-		t.Errorf("target parent == harness pid %s: launches ran in the harness shell, not a dedicated in-process timer", harnessPid)
-	}
-	for _, p := range ppids[1:] {
-		if p != ppids[0] {
-			t.Errorf("launches had different parents %v; want a single timer process", ppids)
-		}
+	if _, err := parseCapture([]byte("session_id=--all\nsample_token=token\n"), "token"); err == nil {
+		t.Fatal("accepted an option-shaped session id")
 	}
 }
 
@@ -664,10 +568,5 @@ func TestDriverStabilityThresholdIsConfigurable(t *testing.T) {
 	code, out = runScript(t, driver, map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10000;11504"})
 	if code == 0 || !strings.Contains(out, "| UNSTABLE |") {
 		t.Fatalf("15.04%% spread rounded to a passing decision: %s", out)
-	}
-}
-func TestGoStatsMatchHarnessTieRounding(t *testing.T) {
-	if stats := calculate([]int64{0, 1}); stats.mean != 0 || stats.stddev != 0 {
-		t.Fatalf("ties must round to even like the C5 harness: %+v", stats)
 	}
 }
