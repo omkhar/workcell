@@ -332,16 +332,16 @@ func TestReleaseWorkflowUsesSingleAuthoritativeTagPolicyGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := string(publisherData)
-	firstAPI := strings.Index(publisher, `status="$(api GET`)
-	if firstAPI < 0 {
-		t.Fatal("publisher is missing the GitHub release lookup")
+	invocation := `"${HOSTUTIL_BIN}" release publish "${TAG_NAME}" "${TAG_OBJECT_SHA}" "${PEELED_COMMIT_SHA}" "$@"`
+	if strings.Count(publisher, invocation) != 1 {
+		t.Fatalf("publisher invocation %q count = %d, want 1", invocation, strings.Count(publisher, invocation))
 	}
-	for _, invocation := range []string{`release classify-tag "${TAG_NAME}"`} {
-		if strings.Count(publisher, invocation) != 1 {
-			t.Fatalf("publisher invocation %q count = %d, want 1", invocation, strings.Count(publisher, invocation))
-		}
-		if index := strings.Index(publisher, invocation); index < 0 || index > firstAPI {
-			t.Fatalf("publisher invocation %q must precede the first GitHub release-API call", invocation)
+	if strings.Contains(publisher, "curl ") || strings.Contains(publisher, "api GET") {
+		t.Fatal("publisher shell must delegate GitHub release API policy to the Go publisher")
+	}
+	for _, binding := range []string{`"${TAG_REF}^{tag}"`, `"${TAG_REF}^{commit}"`} {
+		if strings.Count(publisher, binding) != 1 {
+			t.Fatalf("publisher tag binding %q count = %d, want 1", binding, strings.Count(publisher, binding))
 		}
 	}
 }

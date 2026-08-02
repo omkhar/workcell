@@ -12,6 +12,9 @@ Releases.
 
 - remove temporary Buildx resources after every runtime-image build attempt,
   with exact target, random identity, ownership, and inventory checks.
+- stage and hash the exact GitHub release asset inventory before the first
+  hosted mutation, upload only from unlinked read-only handles, and verify each
+  uploaded SHA-256 before publishing the immutable release.
 
 ## v1.0.0-rc.2 - 2026-07-12
 
