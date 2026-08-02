@@ -203,10 +203,16 @@ func validateReleaseUploadURL(repository string, item listedRelease) error {
 		repository,
 		*item.ID,
 	)
-	if *item.UploadURL != want {
+	if !equalASCIIFold(*item.UploadURL, want) {
 		return fmt.Errorf("GitHub release upload_url = %q, want %q", *item.UploadURL, want)
 	}
 	return nil
+}
+
+func equalASCIIFold(left, right string) bool {
+	nonASCII := func(character rune) bool { return character > 0x7f }
+	return strings.IndexFunc(left, nonASCII) < 0 &&
+		strings.IndexFunc(right, nonASCII) < 0 && strings.EqualFold(left, right)
 }
 
 // ValidateGitHubDraftRelease validates an exact-tag mutable draft and its
