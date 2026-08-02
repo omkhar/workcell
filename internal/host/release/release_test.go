@@ -6,6 +6,7 @@ package release
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,19 +15,76 @@ import (
 
 func TestWriteGitHubReleaseCreatePayload(t *testing.T) {
 	t.Parallel()
-	tmp := t.TempDir()
-	outputPath := filepath.Join(tmp, "create.json")
-	if err := WriteGitHubReleaseCreatePayload("v1.2.3", outputPath); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		tag  string
+		want string
+	}{
+		{
+			tag:  "v1.2.3",
+			want: `{"tag_name":"v1.2.3","draft":true,"prerelease":false,"make_latest":"false","generate_release_notes":true}`,
+		},
+		{
+			tag:  "v1.2.3-rc.4",
+			want: `{"tag_name":"v1.2.3-rc.4","draft":true,"prerelease":true,"make_latest":"false","generate_release_notes":true}`,
+		},
+	} {
+		t.Run(tc.tag, func(t *testing.T) {
+			t.Parallel()
+			outputPath := filepath.Join(t.TempDir(), "create.json")
+			if err := WriteGitHubReleaseCreatePayload(tc.tag, outputPath); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != tc.want {
+				t.Fatalf("payload = %s, want %s", data, tc.want)
+			}
+		})
 	}
+}
 
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatal(err)
+func TestWriteGitHubReleasePublishPayload(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		tag  string
+		want string
+	}{
+		{tag: "v1.2.3", want: `{"draft":false,"prerelease":false,"make_latest":"true"}`},
+		{tag: "v1.2.3-rc.4", want: `{"draft":false,"prerelease":true,"make_latest":"false"}`},
+	} {
+		t.Run(tc.tag, func(t *testing.T) {
+			t.Parallel()
+			outputPath := filepath.Join(t.TempDir(), "publish.json")
+			if err := WriteGitHubReleasePublishPayload(tc.tag, outputPath); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(outputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != tc.want {
+				t.Fatalf("payload = %s, want %s", data, tc.want)
+			}
+		})
 	}
+}
 
-	if string(data) != `{"tag_name":"v1.2.3","draft":true,"generate_release_notes":true}` {
-		t.Fatalf("unexpected payload: %s", data)
+func TestReleasePayloadsRejectUnsupportedTags(t *testing.T) {
+	t.Parallel()
+	for _, write := range []func(string, string) error{
+		WriteGitHubReleaseCreatePayload,
+		WriteGitHubReleasePublishPayload,
+	} {
+		outputPath := filepath.Join(t.TempDir(), "payload.json")
+		err := write("v1.2.3-beta.1", outputPath)
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("write unsupported tag error = %v, want ErrInvalidInput", err)
+		}
+		if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("unsupported tag created output file: %v", statErr)
+		}
 	}
 }
 

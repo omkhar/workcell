@@ -18,6 +18,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
+	"github.com/omkhar/workcell/internal/host/runtimebuilder"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
@@ -103,6 +104,8 @@ func run(args []string) error {
 		return cmdHelperSessionVerifyCli(args[1:])
 	case "session-sign-head":
 		return cmdHelperSessionSignHead(args[1:])
+	case "runtime-builder-cli":
+		return runtimebuilder.Main(args[1:], os.Stdout)
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
 	case "support-bundle-usage":
@@ -195,11 +198,60 @@ func runRelease(args []string) error {
 	}
 
 	switch args[0] {
+	case "classify-tag":
+		if len(args) != 2 {
+			return releaseUsage()
+		}
+		policy, err := release.ClassifyTag(args[1])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(policy)
 	case "create-payload":
 		if len(args) != 3 {
 			return releaseUsage()
 		}
 		return release.WriteGitHubReleaseCreatePayload(args[1], args[2])
+	case "publish-payload":
+		if len(args) != 3 {
+			return releaseUsage()
+		}
+		return release.WriteGitHubReleasePublishPayload(args[1], args[2])
+	case "validate-repository":
+		if len(args) != 2 {
+			return releaseUsage()
+		}
+		return release.ValidateGitHubRepository(args[1])
+	case "validate-draft-release":
+		if len(args) != 4 {
+			return releaseUsage()
+		}
+		return release.ValidateGitHubDraftRelease(args[1], args[2], args[3])
+	case "validate-published-state":
+		if len(args) != 4 {
+			return releaseUsage()
+		}
+		return release.ValidateGitHubPublishedReleaseState(args[1], args[2], args[3])
+	case "validate-latest-response":
+		if len(args) != 5 {
+			return releaseUsage()
+		}
+		return release.ValidateGitHubLatestReleaseResponse(args[1], args[2], args[3], args[4])
+	case "list-page-size":
+		if len(args) != 2 {
+			return releaseUsage()
+		}
+		size, err := release.GitHubReleaseListPageSize(args[1])
+		if err != nil {
+			return err
+		}
+		fmt.Println(size)
+		return nil
+	case "select-listed-release":
+		if len(args) < 4 {
+			return releaseUsage()
+		}
+		return release.WriteGitHubListedRelease(args[1], args[3:], args[2])
 	case "metadata":
 		if len(args) < 4 {
 			return releaseUsage()
@@ -269,6 +321,7 @@ func helperSubcommands() []helperSubcommand {
 		{"session-export", 0, -1, runHelperSessionExport},
 		{"session-diff-metadata", 0, -1, runHelperSessionDiffMetadata},
 		{"session-runtime-metadata", 0, -1, runHelperSessionRuntimeMetadata},
+		{"session-container-absent-for-delete", 1, 1, cmdHelperSessionContainerAbsentForDelete},
 		{"session-timeline", 0, -1, runHelperSessionTimeline},
 		{"audit-digest", 2, -1, cmdHelperAuditDigest},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
@@ -415,6 +468,14 @@ func cmdHelperSessionSuffix(_ []string) error {
 	}
 	fmt.Println(value)
 	return nil
+}
+
+func cmdHelperSessionContainerAbsentForDelete(args []string) error {
+	inventory, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	return sessions.ProveContainerAbsentForDelete(args[0], string(inventory))
 }
 
 func cmdHelperColimaStatus(args []string) error {
@@ -1025,7 +1086,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
 }
 
 func pathUsage() error {
@@ -1033,7 +1094,20 @@ func pathUsage() error {
 }
 
 func releaseUsage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: `usage: workcell-hostutil release COMMAND [args...]
+commands:
+  classify-tag TAG
+  create-payload TAG OUTPUT
+  publish-payload TAG OUTPUT
+  validate-repository OWNER/REPO
+  validate-draft-release OWNER/REPO TAG RESPONSE_JSON
+  validate-published-state OWNER/REPO TAG RESPONSE_JSON
+  validate-latest-response OWNER/REPO TAG HTTP_STATUS RESPONSE_JSON
+  list-page-size PAGE_JSON
+  select-listed-release TAG OUTPUT PAGE_JSON...
+  metadata RESPONSE_JSON OUTPUT ASSET...
+  encode-name NAME
+  bundle-manifest OUTPUT ARCHIVE_REF BUNDLE_NAME BUNDLE_PREFIX SOURCE_DATE_EPOCH BUNDLE_SHA256 CHECKSUMS_SHA256`}
 }
 
 func helperUsage() error {
