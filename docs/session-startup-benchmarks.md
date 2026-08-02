@@ -2,13 +2,13 @@
 
 Workcell starts an isolated session by resolving the runtime image, booting the
 container runtime (Colima today, Apple `container` under evaluation in C1), and
-completing the supervisor handshake. **C2** measures that start latency and drives
-it down with cached images and an optional kept-warm lane — the sibling of
+completing the supervisor handshake. The post-1.0 **C2** program measures that
+latency and drives it down with cached images and an optional kept-warm lane — the sibling of
 [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) (C5). Numbers are captured
 on a host with a live runtime, not in PR CI (a real start needs a booted VM); the
 [results tables below](#results) hold a **preliminary live capture from 2026-07-15**
-— recorded with its raw evidence, but confounded by three methodology issues
-(documented there) and therefore not yet a certified C2 result.
+— recorded with its raw evidence, but confounded by four methodology issues
+(documented there) and therefore not a certified C2 result.
 
 ## What is measured
 
@@ -22,8 +22,7 @@ modes that span the latency shapes C2 targets:
 | `warm` | image cached and a kept-warm session available | best-case start off the kept-warm lane |
 | `cache-hit` | image cached, no kept-warm session | the image-cache win alone, without the warm lane |
 
-The `cold` vs `warm` delta is the headline C2 number; `cache-hit` separates the
-image-cache win from the kept-warm-lane win so each is credited independently.
+These modes establish no performance guarantee or C2 certification.
 
 ## Methodology
 
@@ -72,7 +71,7 @@ hooks — these guards are live-only.
 
 ### The cross-run stability gate
 
-Reproducibility is the C2 acceptance bar, so the driver enforces it: after all
+The driver enforces a reproducibility guard: after all
 runs it computes, per mode, the run-to-run **median** spread as a percentage of
 the smallest run's median, and **fails** (non-zero exit) if any mode exceeds
 `WORKCELL_STARTUP_STABILITY_PCT` (default 15%) — the evidence a published number
@@ -81,14 +80,13 @@ signals a broken clock rather than a 0% spread that would read as `STABLE`.
 
 ### Runner caveats
 
-Numbers are **relative** to the host's hardware and runtime backend, so treat the
-cold-vs-warm delta (not absolute medians) as the portable signal; session start
-includes VM boot, so expect a wider stddev than the C5 exec-guard numbers.
+Numbers are **relative** to the host's hardware and runtime backend. A warm delta
+is meaningful only when a kept-warm lane is present and verified.
 
 ## Results
 
-**Status: PRELIMINARY capture 2026-07-15 — recorded, but not yet a clean C2
-certification.** Captured on the maintainer host (Darwin 25.5.0 arm64, 12 online
+**Status: PRELIMINARY capture 2026-07-15 — benchmark-only, not C2 certification.**
+Captured on the maintainer host (Darwin 25.5.0 arm64, 12 online
 CPUs, `colima` runtime, profile `wcl-workcell-006e49ec`), 5 iterations × 2 runs,
 `codex` provider; the cross-run stability gate passed (exit 0) — its overall max
 cross-run median spread was **4.1%**, from the unpromoted `cache-hit` mode; the two
@@ -97,7 +95,7 @@ invocation (`WORKCELL_STARTUP_CMD` + all three prep hooks) and the complete raw
 report** are preserved verbatim in
 [`benchmark-evidence/session-startup-2026-07-15.md`](benchmark-evidence/session-startup-2026-07-15.md).
 Four methodology confounds (below) mean these numbers are a useful preliminary
-signal, **not** a certified C2 result; a clean capture remains for Batch-3.
+signal, **not** a certified C2 result or a 1.0 latency target.
 
 ### Measured start latency (5 samples per run, both runs shown)
 
@@ -149,17 +147,15 @@ restore-from-tarball cost**, not a kept-warm-session win.
    gaps — but the samples did not begin in the harness's intended clean state, and this
    is a candidate contributor to the `cache-hit` anomaly.
 
-A clean C2 certification should run with **working per-sample teardown**, establish an
-actual persistent kept-warm session, resolve or explain the `cache-hit` anomaly, and
-decide whether to also capture a no-tarball first-start tier.
+A future C2 certification should prove **working per-sample teardown**, resolve the
+`cache-hit` anomaly, and decide whether to capture a no-tarball first-start tier.
 
 ## Filling in the numbers
 
 On a host with a live runtime, run the driver (see [Rerunning](#rerunning)) with
-`WORKCELL_STARTUP_OUTPUT` set. A `0` exit means the stability gate passed and the
-numbers are reproducible (non-zero means the spread was too wide — fix first).
-Transcribe the report's medians, p90s and stability table into the tables above,
-fill `vs cold`, and record the host, runtime backend, and `N`/`R`.
+`WORKCELL_STARTUP_OUTPUT` set. A `0` exit means the benchmark stability gate
+passed; non-zero can also mean configuration, launch, or cleanup failure. Generic
+driver output cannot certify or promote C2.
 
 ## Rerunning
 
