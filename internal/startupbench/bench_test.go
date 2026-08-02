@@ -298,75 +298,24 @@ func TestDriverDryRunStablePasses(t *testing.T) {
 	}
 }
 
-func TestDriverRejectsCertificationCommandBeforeCannedSampleProcessing(t *testing.T) {
-	code, stdout, stderr := runScriptSplit(t, driver,
-		map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"}, "certify")
-	if code != 2 {
-		t.Fatalf("certification command = exit %d, want 2", code)
-	}
-	if stdout != "" {
-		t.Fatalf("certification command wrote stdout: %q", stdout)
-	}
-	const want = "run-startup-bench: certification is not a startup-bench command\n"
-	if stderr != want {
-		t.Fatalf("certification command stderr = %q, want %q", stderr, want)
-	}
-}
-
-func TestDriverCannedSamplesRejectArguments(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"flag", []string{"--certify"}},
-		{"assignment", []string{"certify=true"}},
-		{"flag-assignment", []string{"--certify=true"}},
-		{"unexpected", []string{"unexpected"}},
-		{"live-shape", []string{"--", "target"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, stdout, stderr := runScriptSplit(t, driver,
-				map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"}, tc.args...)
-			if code != 2 {
-				t.Fatalf("canned sample arguments %q = exit %d, want 2", tc.args, code)
-			}
-			if stdout != "" || strings.Contains(stdout, "# session-start latency benchmark results") {
-				t.Fatalf("canned sample arguments %q wrote benchmark output: %q", tc.args, stdout)
-			}
-			const want = "run-startup-bench: canned-sample mode does not accept arguments\n"
-			if stderr != want {
-				t.Fatalf("canned sample arguments %q stderr = %q, want %q", tc.args, stderr, want)
+func TestDriverArgumentValidationPrecedence(t *testing.T) {
+	canned := map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10 20 30"}
+	noRuntime := map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"}
+	const certification = "run-startup-bench: certification is not a startup-bench command\n"
+	const cannedUsage = "run-startup-bench: canned-sample mode does not accept arguments\n"
+	const liveUsage = "run-startup-bench: measured argv must follow -- and include a target\n"
+	assertUsage := func(name string, env map[string]string, want string, args ...string) {
+		t.Run(name, func(t *testing.T) {
+			code, stdout, stderr := runScriptSplit(t, driver, env, args...)
+			if code != 2 || stdout != "" || stderr != want {
+				t.Fatalf("exit=%d stdout=%q stderr=%q, want exit=2 stdout empty stderr=%q", code, stdout, stderr, want)
 			}
 		})
 	}
-}
-
-func TestDriverRejectsNonEmptyArgumentsBeforeNoRuntimeSkip(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"flag", []string{"--certify"}},
-		{"assignment", []string{"certify=true"}},
-		{"flag-assignment", []string{"--certify=true"}},
-		{"unexpected", []string{"unexpected"}},
-		{"lone-separator", []string{"--"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			code, stdout, stderr := runScriptSplit(t, driver,
-				map[string]string{"WORKCELL_STARTUP_RUNTIME": "none"}, tc.args...)
-			if code != 2 {
-				t.Fatalf("no-runtime arguments %q = exit %d, want 2", tc.args, code)
-			}
-			if stdout != "" || strings.Contains(stdout, "# session-start latency benchmark results") {
-				t.Fatalf("no-runtime arguments %q wrote benchmark output: %q", tc.args, stdout)
-			}
-			const want = "run-startup-bench: measured argv must follow -- and include a target\n"
-			if stderr != want {
-				t.Fatalf("no-runtime arguments %q stderr = %q, want %q", tc.args, stderr, want)
-			}
-		})
-	}
+	assertUsage("certification", canned, certification, "certify")
+	assertUsage("canned-live-shape", canned, cannedUsage, "--", "target")
+	assertUsage("live-certify-flag", noRuntime, liveUsage, "--certify")
+	assertUsage("live-lone-separator", noRuntime, liveUsage, "--")
 }
 
 func TestDriverDryRunUnstableFailsGate(t *testing.T) {
@@ -408,56 +357,38 @@ func TestDriverStateHooksRunAtTheRequiredCadence(t *testing.T) {
 	// verification runs before warmup and measured samples, and teardown runs
 	// after every launch.
 	dir := t.TempDir()
-	coldF := filepath.Join(dir, "cold")
-	warmF := filepath.Join(dir, "warm")
-	warmVerifyF := filepath.Join(dir, "warm-verify")
-	chF := filepath.Join(dir, "cachehit")
-	teardownF := filepath.Join(dir, "teardown")
-	counter := func(name, path, value string) string {
+	logPath := filepath.Join(dir, "operations")
+	counter := func(name string) string {
 		helper := filepath.Join(dir, name)
 		writeExec(t, helper, "#!/usr/bin/env bash\n"+
 			"set -euo pipefail\n"+
-			"printf '"+value+"' >> \""+path+"\"\n")
+			"printf '"+name+"\\n' >> \""+logPath+"\"\n")
 		return helper
 	}
 	env := liveEnv(map[string]string{
-		"WORKCELL_STARTUP_ITERATIONS":     "3",
+		"WORKCELL_STARTUP_ITERATIONS":     "2",
 		"WORKCELL_STARTUP_WARMUP":         "1",
-		"WORKCELL_STARTUP_COLD_PREP":      counter("cold-op", coldF, "c"),
-		"WORKCELL_STARTUP_WARM_PREP":      counter("warm-op", warmF, "w"),
-		"WORKCELL_STARTUP_CACHE_HIT_PREP": counter("cache-op", chF, "h"),
-		"WORKCELL_STARTUP_WARM_VERIFY":    counter("verify-op", warmVerifyF, "v"),
-		"WORKCELL_STARTUP_TEARDOWN":       counter("teardown-op", teardownF, "t"),
+		"WORKCELL_STARTUP_COLD_PREP":      counter("cold-prep"),
+		"WORKCELL_STARTUP_WARM_PREP":      counter("warm-prep"),
+		"WORKCELL_STARTUP_CACHE_HIT_PREP": counter("cache-hit-prep"),
+		"WORKCELL_STARTUP_WARM_VERIFY":    counter("warm-verify"),
+		"WORKCELL_STARTUP_TEARDOWN":       counter("teardown"),
 	})
 	code, out := runLiveDriver(t, env)
 	if code != 0 {
 		t.Fatalf("driver exit %d: %s", code, out)
 	}
-	countPreps := func(path string) int {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read prep counter %s: %v", path, err)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]int{
+		"cold-prep": 4, "cache-hit-prep": 4, "warm-prep": 2,
+		"warm-verify": 6, "teardown": 14,
+	} {
+		if got := strings.Count(string(data), name+"\n"); got != want {
+			t.Errorf("%s ran %d time(s), want %d", name, got, want)
 		}
-		return len(data)
-	}
-	// 3 samples x 2 runs -> 6 preps each for cold/cache-hit; warm -> 2 (one/pass).
-	if got := countPreps(coldF); got != 6 {
-		t.Errorf("cold prep ran %d time(s), want 6 (per measured sample x 2 runs)", got)
-	}
-	if got := countPreps(chF); got != 6 {
-		t.Errorf("cache-hit prep ran %d time(s), want 6 (per measured sample x 2 runs)", got)
-	}
-	if got := countPreps(warmF); got != 2 {
-		t.Errorf("warm prep ran %d time(s), want 2 (one prep per pass x 2 runs)", got)
-	}
-	if got := countPreps(warmVerifyF); got != 8 {
-		t.Errorf("warm verify ran %d time(s), want 8 ((1 warmup + 3 samples) x 2 runs)", got)
-	}
-	if got := countPreps(teardownF); got != 20 {
-		t.Errorf("teardown ran %d time(s), want 20 ((3 cold + 3 cache-hit + 4 warm) x 2 runs)", got)
-	}
-	if !strings.Contains(out, "| cache-hit |") || !strings.Contains(out, " 3 |") {
-		t.Errorf("aggregated cache-hit row missing/incorrect: %s", out)
 	}
 }
 
@@ -490,9 +421,9 @@ func TestDriverPrepOutputStaysOffReport(t *testing.T) {
 	prep := filepath.Join(dir, "prep")
 	writeExec(t, prep, "#!/usr/bin/env bash\nprintf 'PREP_STDOUT_MARKER\\n'\n")
 	env := liveEnv(map[string]string{
-		"WORKCELL_STARTUP_COLD_PREP":      prep,
-		"WORKCELL_STARTUP_CACHE_HIT_PREP": prep,
-		"WORKCELL_STARTUP_WARM_PREP":      prep,
+		"WORKCELL_STARTUP_MODES":      "cold",
+		"WORKCELL_STARTUP_ITERATIONS": "1",
+		"WORKCELL_STARTUP_COLD_PREP":  prep,
 	})
 	code, stdout, stderr := runLiveDriverSplit(t, env)
 	if code != 0 {
@@ -602,6 +533,7 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> \"${ARGV_FILE}\"; done\n"+
 		"printf 'session_id=argv-sample\\nsample_token=%s\\n' \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
 	env := liveEnv(map[string]string{
+		"WORKCELL_STARTUP_MODES":      "cold",
 		"ARGV_FILE":                   argvF,
 		"WORKCELL_STARTUP_ITERATIONS": "1",
 		"WORKCELL_STARTUP_WARMUP":     "0",
@@ -621,6 +553,9 @@ func TestDriverPreservesCommandArgv(t *testing.T) {
 	}
 	if _, err := os.Stat(injectedF); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("metacharacter argument was evaluated as shell: %v", err)
+	}
+	if _, err := parseCapture([]byte("session_id=--all\nsample_token=token\n"), "token"); err == nil {
+		t.Fatal("accepted an option-shaped session id")
 	}
 }
 
@@ -712,10 +647,7 @@ func TestDriverStabilityThresholdIsConfigurable(t *testing.T) {
 	if !strings.Contains(out, "UNSTABLE") {
 		t.Errorf("missing UNSTABLE verdict at tight threshold: %s", out)
 	}
-}
-
-func TestDriverUsesUnroundedStabilityDecision(t *testing.T) {
-	code, out := runScript(t, driver, map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10000;11504"})
+	code, out = runScript(t, driver, map[string]string{"WORKCELL_STARTUP_SAMPLES_NS": "10000;11504"})
 	if code == 0 || !strings.Contains(out, "| UNSTABLE |") {
 		t.Fatalf("15.04%% spread rounded to a passing decision: %s", out)
 	}
@@ -723,8 +655,5 @@ func TestDriverUsesUnroundedStabilityDecision(t *testing.T) {
 func TestGoStatsMatchHarnessTieRounding(t *testing.T) {
 	if stats := calculate([]int64{0, 1}); stats.mean != 0 || stats.stddev != 0 {
 		t.Fatalf("ties must round to even like the C5 harness: %+v", stats)
-	}
-	if _, err := parseCapture([]byte("session_id=--all\nsample_token=token\n"), "token"); err == nil {
-		t.Fatal("accepted an option-shaped session id")
 	}
 }

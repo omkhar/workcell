@@ -18,7 +18,6 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -31,7 +30,7 @@ var safeSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type config struct {
 	iterations, warmup, runs       int
-	stabilityPct                   float64
+	stabilityPct                   int
 	outputPath, runtime            string
 	modes                          []string
 	sampleGroups                   [][]int64
@@ -40,7 +39,6 @@ type config struct {
 	warmVerify, teardown           string
 	cleanupCheck                   string
 	teardownTimeout, verifyTimeout time.Duration
-	dryRun                         bool
 }
 
 type sample struct {
@@ -53,10 +51,6 @@ type statistics struct{ n, mean, median, p90, stddev, min, max int64 }
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "certify" {
 		fmt.Fprintln(stderr, "run-startup-bench: certification is not a startup-bench command")
-		return 2
-	}
-	if len(args) > 0 && (args[0] != "--" || len(args) < 2) {
-		fmt.Fprintln(stderr, "run-startup-bench: measured argv must follow -- and include a target")
 		return 2
 	}
 	cfg, skip, err := loadConfig(args, stderr)
@@ -90,7 +84,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 	cfg := config{
-		iterations: 5, warmup: 1, runs: 2, stabilityPct: 15,
+		iterations: 5, warmup: 1, runs: 2,
 		modes: []string{"cold", "cache-hit"}, prep: map[string]string{},
 		outputPath: os.Getenv("WORKCELL_STARTUP_OUTPUT"), teardownTimeout: 30 * time.Second, verifyTimeout: 30 * time.Second,
 	}
@@ -99,22 +93,16 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 		name      string
 		dst       *int
 		base, min int
-	}{{"WORKCELL_STARTUP_ITERATIONS", &cfg.iterations, 5, 1}, {"WORKCELL_STARTUP_WARMUP", &cfg.warmup, 1, 0}, {"WORKCELL_STARTUP_RUNS", &cfg.runs, 2, 1}} {
+	}{{"WORKCELL_STARTUP_ITERATIONS", &cfg.iterations, 5, 1}, {"WORKCELL_STARTUP_WARMUP", &cfg.warmup, 1, 0}, {"WORKCELL_STARTUP_RUNS", &cfg.runs, 2, 1}, {"WORKCELL_STARTUP_STABILITY_PCT", &cfg.stabilityPct, 15, 0}} {
 		if *control.dst, err = envInt(control.name, control.base, control.min); err != nil {
 			return cfg, false, err
 		}
 	}
-	stability, err := envInt("WORKCELL_STARTUP_STABILITY_PCT", 15, 0)
-	if err != nil {
-		return cfg, false, err
-	}
-	cfg.stabilityPct = float64(stability)
 	rawSamples := os.Getenv("WORKCELL_STARTUP_SAMPLES_NS")
 	if rawSamples != "" {
 		if len(args) != 0 {
 			return cfg, false, fmt.Errorf("canned-sample mode does not accept arguments")
 		}
-		cfg.dryRun = true
 		cfg.runtime = "dry-run (canned samples)"
 		cfg.modes = []string{"cold", "cache-hit", "warm"}
 		cfg.sampleGroups, err = parseSampleGroups(rawSamples)
@@ -129,6 +117,9 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 			cfg.runs = len(cfg.sampleGroups)
 		}
 	} else {
+		if len(args) > 0 && (args[0] != "--" || len(args) < 2) {
+			return cfg, false, fmt.Errorf("measured argv must follow -- and include a target")
+		}
 		cfg.runtime = os.Getenv("WORKCELL_STARTUP_RUNTIME")
 		if cfg.runtime == "" {
 			cfg.runtime = detectRuntime()
@@ -141,6 +132,9 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 		if cfg.runs < 2 {
 			return cfg, false, fmt.Errorf("a live run requires WORKCELL_STARTUP_RUNS >= 2 for cross-run stability evidence")
 		}
+		if len(args) < 2 {
+			return cfg, false, fmt.Errorf("measured argv must follow -- and include a target")
+		}
 	}
 	if rawModes := os.Getenv("WORKCELL_STARTUP_MODES"); rawModes != "" {
 		cfg.modes, err = parseModes(rawModes)
@@ -148,11 +142,8 @@ func loadConfig(args []string, stderr io.Writer) (config, bool, error) {
 			return cfg, false, err
 		}
 	}
-	if cfg.dryRun {
+	if len(cfg.sampleGroups) != 0 {
 		return cfg, false, nil
-	}
-	if len(args) < 2 || args[0] != "--" {
-		return cfg, false, fmt.Errorf("measured argv must follow -- and include a target")
 	}
 	cfg.target = append([]string(nil), args[1:]...)
 	cfg.prep["cold"] = os.Getenv("WORKCELL_STARTUP_COLD_PREP")
@@ -194,7 +185,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 	fmt.Fprintf(&report, "- runtime: %s\n", cfg.runtime)
 	fmt.Fprintf(&report, "- modes: %s\n", strings.Join(cfg.modes, " "))
 	fmt.Fprintf(&report, "- iterations: %d (warmup %d for warm; caller-supplied teardown and absence-verification hooks for live launches) x %d run(s)\n", cfg.iterations, cfg.warmup, cfg.runs)
-	fmt.Fprintf(&report, "- stability threshold: %.0f%% cross-run median spread\n\n", cfg.stabilityPct)
+	fmt.Fprintf(&report, "- stability threshold: %d%% cross-run median spread\n\n", cfg.stabilityPct)
 	medians := make(map[string][]int64, len(cfg.modes))
 	var raw []sample
 	for runIndex := 1; runIndex <= cfg.runs; runIndex++ {
@@ -237,15 +228,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 		degenerate := false
 		for _, mode := range cfg.modes {
 			values := medians[mode]
-			minimum, maximum := values[0], values[0]
-			for _, value := range values[1:] {
-				if value < minimum {
-					minimum = value
-				}
-				if value > maximum {
-					maximum = value
-				}
-			}
+			minimum, maximum := slices.Min(values), slices.Max(values)
 			spread := maximum - minimum
 			if minimum <= 0 {
 				degenerate, stable = true, false
@@ -257,7 +240,7 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 				worst = percent
 			}
 			verdict := "STABLE"
-			if percent > cfg.stabilityPct {
+			if percent > float64(cfg.stabilityPct) {
 				verdict, stable = "UNSTABLE", false
 			}
 			fmt.Fprintf(&report, "| %s | %d | %d | %d | %.1f | %s |\n", mode, minimum, maximum, spread, percent, verdict)
@@ -265,18 +248,18 @@ func execute(ctx context.Context, cfg config, stderr io.Writer) (string, bool, e
 		fmt.Fprintln(&report)
 		switch {
 		case stable:
-			fmt.Fprintf(&report, "Stability gate: STABLE (max cross-run median spread %.1f%% <= %.0f%%).\n\n", worst, cfg.stabilityPct)
+			fmt.Fprintf(&report, "Stability gate: STABLE (max cross-run median spread %.1f%% <= %d%%).\n\n", worst, cfg.stabilityPct)
 		case degenerate:
 			fmt.Fprintln(&report, "Stability gate: UNSTABLE (a mode reported a zero median across runs -- degenerate measurement, not a fast start).")
 			fmt.Fprintln(&report)
 		default:
-			fmt.Fprintf(&report, "Stability gate: UNSTABLE (max cross-run median spread %.1f%% > %.0f%%).\n\n", worst, cfg.stabilityPct)
+			fmt.Fprintf(&report, "Stability gate: UNSTABLE (max cross-run median spread %.1f%% > %d%%).\n\n", worst, cfg.stabilityPct)
 		}
 	}
 	return report.String(), stable, nil
 }
 func measureMode(ctx context.Context, cfg config, mode string, runIndex int, stderr io.Writer) ([]sample, error) {
-	if cfg.dryRun {
+	if len(cfg.sampleGroups) != 0 {
 		group := cfg.sampleGroups[min(runIndex-1, len(cfg.sampleGroups)-1)]
 		result := make([]sample, len(group))
 		for i, duration := range group {
@@ -284,34 +267,34 @@ func measureMode(ctx context.Context, cfg config, mode string, runIndex int, std
 		}
 		return result, nil
 	}
+	warmups := 0
 	if mode == "warm" {
 		if err := runOperation(ctx, cfg.prep[mode], sampleEnv(mode, runIndex, "0", "", ""), stderr); err != nil {
 			return nil, fmt.Errorf("%s prep: %w", mode, err)
 		}
-		for i := 1; i <= cfg.warmup; i++ {
-			warmupIndex := fmt.Sprintf("warmup-%d", i)
-			if err := runOperation(ctx, cfg.warmVerify, sampleEnv(mode, runIndex, warmupIndex, "", ""), stderr); err != nil {
-				return nil, fmt.Errorf("warm verify: %w", err)
-			}
-			if _, err := measureOne(ctx, cfg, mode, runIndex, warmupIndex, stderr); err != nil {
-				return nil, err
-			}
-		}
+		warmups = cfg.warmup
 	}
 	result := make([]sample, 0, cfg.iterations)
-	for i := 1; i <= cfg.iterations; i++ {
+	for i := 1; i <= warmups+cfg.iterations; i++ {
+		measured := i > warmups
+		index := strconv.Itoa(i - warmups)
+		if !measured {
+			index = fmt.Sprintf("warmup-%d", i)
+		}
 		if mode == "warm" {
-			if err := runOperation(ctx, cfg.warmVerify, sampleEnv(mode, runIndex, strconv.Itoa(i), "", ""), stderr); err != nil {
+			if err := runOperation(ctx, cfg.warmVerify, sampleEnv(mode, runIndex, index, "", ""), stderr); err != nil {
 				return nil, fmt.Errorf("warm verify: %w", err)
 			}
-		} else if err := runOperation(ctx, cfg.prep[mode], sampleEnv(mode, runIndex, strconv.Itoa(i), "", ""), stderr); err != nil {
+		} else if err := runOperation(ctx, cfg.prep[mode], sampleEnv(mode, runIndex, index, "", ""), stderr); err != nil {
 			return nil, fmt.Errorf("%s prep: %w", mode, err)
 		}
-		item, err := measureOne(ctx, cfg, mode, runIndex, strconv.Itoa(i), stderr)
+		item, err := measureOne(ctx, cfg, mode, runIndex, index, stderr)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, item)
+		if measured {
+			result = append(result, item)
+		}
 	}
 	return result, nil
 }
@@ -327,7 +310,7 @@ func measureOne(ctx context.Context, cfg config, mode string, runIndex int, inde
 	duration := time.Since(start).Nanoseconds()
 	sessionID, parseErr := parseCapture(capture.Bytes(), token)
 	teardownCtx, cancelTeardown := context.WithTimeout(context.Background(), cfg.teardownTimeout)
-	teardownErr := runOperation(teardownCtx, cfg.teardown, sampleEnv(mode, runIndex, index, "", token), stderr)
+	teardownErr := runOperation(teardownCtx, cfg.teardown, env, stderr)
 	cancelTeardown()
 	verifyCtx, cancelVerify := context.WithTimeout(context.Background(), cfg.verifyTimeout)
 	verifyErr := verifyCleanup(verifyCtx, cfg.cleanupCheck, sampleEnv(mode, runIndex, index, sessionID, token), sessionID, token)
@@ -376,8 +359,7 @@ func verifyCleanup(ctx context.Context, path string, env []string, sessionID, to
 	if err := runCommand(ctx, []string{path}, env, &output, &diagnostics); err != nil {
 		return fmt.Errorf("%w (%s)", err, strings.TrimSpace(diagnostics.String()))
 	}
-	want := fmt.Sprintf("absent session_id=%s sample_token=%s\n", sessionID, token)
-	if output.String() != want {
+	if output.String() != fmt.Sprintf("absent session_id=%s sample_token=%s\n", sessionID, token) {
 		return fmt.Errorf("unexpected verifier output")
 	}
 	return nil
@@ -398,7 +380,7 @@ func parseCapture(data []byte, token string) (string, error) {
 }
 func calculate(values []int64) statistics {
 	sorted := append([]int64(nil), values...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	slices.Sort(sorted)
 	var sum float64
 	for _, value := range sorted {
 		sum += float64(value)
@@ -410,9 +392,6 @@ func calculate(values []int64) statistics {
 		variance += delta * delta
 	}
 	p90 := len(sorted) * 9 / 10
-	if p90 >= len(sorted) {
-		p90 = len(sorted) - 1
-	}
 	return statistics{
 		n: int64(len(sorted)), mean: int64(math.RoundToEven(mean)), median: sorted[len(sorted)/2],
 		p90: sorted[p90], stddev: int64(math.RoundToEven(math.Sqrt(variance / float64(len(sorted))))),
@@ -422,7 +401,6 @@ func calculate(values []int64) statistics {
 func parseSampleGroups(raw string) ([][]int64, error) {
 	rawGroups := strings.Split(raw, ";")
 	groups := make([][]int64, len(rawGroups))
-	size := -1
 	for i, rawGroup := range rawGroups {
 		for _, field := range strings.Fields(rawGroup) {
 			value, err := strconv.ParseInt(field, 10, 64)
@@ -434,10 +412,9 @@ func parseSampleGroups(raw string) ([][]int64, error) {
 		if len(groups[i]) == 0 {
 			return nil, fmt.Errorf("WORKCELL_STARTUP_SAMPLES_NS contains an empty group")
 		}
-		if size >= 0 && len(groups[i]) != size {
+		if i > 0 && len(groups[i]) != len(groups[0]) {
 			return nil, fmt.Errorf("canned sample groups have different sizes")
 		}
-		size = len(groups[i])
 	}
 	return groups, nil
 }
@@ -462,9 +439,6 @@ func detectRuntime() string {
 		name string
 		args []string
 	}{{"colima", []string{"status"}}, {"container", []string{"system", "status"}}, {"docker", []string{"info"}}} {
-		if _, err := exec.LookPath(candidate.name); err != nil {
-			continue
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := exec.CommandContext(ctx, candidate.name, candidate.args...).Run()
 		cancel()
@@ -475,8 +449,8 @@ func detectRuntime() string {
 	return ""
 }
 func envInt(name string, fallback, floor int) (int, error) {
-	raw, set := os.LookupEnv(name)
-	if !set || raw == "" {
+	raw := os.Getenv(name)
+	if raw == "" {
 		return fallback, nil
 	}
 	value, err := strconv.Atoi(raw)
@@ -489,11 +463,10 @@ func requireExecutable(name, path string) error {
 	if path == "" {
 		return fmt.Errorf("live run requires %s to name an executable path", name)
 	}
-	resolved, err := exec.LookPath(path)
-	if err != nil {
+	if _, err := exec.LookPath(path); err != nil {
 		return fmt.Errorf("%s must name an executable path", name)
 	}
-	if strings.ContainsAny(path, " \t\n") || resolved == "" {
+	if strings.ContainsAny(path, " \t\n") {
 		return fmt.Errorf("%s must name one executable path, not a shell fragment", name)
 	}
 	return nil
