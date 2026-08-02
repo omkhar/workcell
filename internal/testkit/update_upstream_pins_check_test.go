@@ -33,6 +33,7 @@ type updaterFixturePins struct {
 	HadolintVersion              string
 	HadolintAMD64SHA             string
 	HadolintARM64SHA             string
+	HadolintChecksums            string
 	BuildkitImage                string
 	BuildxVersion                string
 	CosignVersion                string
@@ -106,9 +107,10 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	checkRun := runUpdaterFixture(t, fixtureRoot, checkScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--check")
 	assertUpdaterFixtureRun(t, checkRun, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, checkRun.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   0,
-		"check-pinned-inputs":      0,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     0,
+		"check-pinned-inputs":        0,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(checkRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", checkRun.ProviderLog, want)
@@ -129,9 +131,10 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	applyRun := runUpdaterFixture(t, fixtureRoot, applyScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--apply")
 	assertUpdaterFixtureRun(t, applyRun, 0, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, applyRun.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   1,
-		"check-pinned-inputs":      1,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     1,
+		"check-pinned-inputs":        1,
 	})
 	if want := []string{"summary", "check", "apply"}; !reflect.DeepEqual(applyRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", applyRun.ProviderLog, want)
@@ -162,9 +165,10 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	cleanRun := runUpdaterFixture(t, fixtureRoot, cleanScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--check")
 	assertUpdaterFixtureRun(t, cleanRun, 0, updaterFixtureSummary(pins, targetManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, cleanRun.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   0,
-		"check-pinned-inputs":      0,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     0,
+		"check-pinned-inputs":        0,
 	})
 	assertUpdaterScratchHasOnlyLogs(t, cleanScratch)
 	afterCleanCheck := snapshotUpdaterFixtureTree(t, fixtureRoot)
@@ -196,9 +200,10 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	}
 	assertUpdaterResolutionLog(t, run.ResolutionLog, invalidPlan.Snapshot)
 	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{
-		"inspect-debian-bootstrap": 1,
-		"apply-debian-bootstrap":   1,
-		"check-pinned-inputs":      0,
+		"hadolint-manifest-checksum": 2,
+		"inspect-debian-bootstrap":   1,
+		"apply-debian-bootstrap":     1,
+		"check-pinned-inputs":        0,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(run.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", run.ProviderLog, want)
@@ -493,7 +498,9 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 	const hostileCurlConfig = "output = \"/dev/null\"\n"
 	writeUpdaterFixtureFile(t, hostileHome, ".curlrc", hostileCurlConfig, 0o600)
 	cmd := exec.Command("/bin/bash", "-p", "-c", updaterFixtureHarness, "workcell-updater-fixture", filepath.Join(fixtureRoot, "scripts", "update-upstream-pins.sh"), mode)
-	cmd.Dir = fixtureRoot
+	// Invoke the absolute updater path from outside the fixture repository so
+	// every repo-local tool dispatch must anchor itself to ROOT_DIR.
+	cmd.Dir = scratchRoot
 	cmd.Env = []string{
 		"ALL_PROXY=http://127.0.0.1:1",
 		"BASH_ENV=",
@@ -526,6 +533,7 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 		"WORKCELL_FIXTURE_GO_VERSION=" + pins.GoToolchain,
 		"WORKCELL_FIXTURE_HADOLINT_AMD64_SHA=" + pins.HadolintAMD64SHA,
 		"WORKCELL_FIXTURE_HADOLINT_ARM64_SHA=" + pins.HadolintARM64SHA,
+		"WORKCELL_FIXTURE_HADOLINT_CHECKSUMS=" + pins.HadolintChecksums,
 		"WORKCELL_FIXTURE_HADOLINT_VERSION=" + pins.HadolintVersion,
 		"WORKCELL_FIXTURE_PROVIDER_LOG=" + providerLogPath,
 		"WORKCELL_FIXTURE_QEMU_DIGEST=" + qemuDigest,
@@ -636,7 +644,7 @@ func assertUpdaterCommandCounts(t *testing.T, commands []string, expected map[st
 	}
 	for command := range counts {
 		switch command {
-		case "extract-dockerfile-arg", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
+		case "extract-dockerfile-arg", "hadolint-manifest-checksum", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
 		default:
 			t.Fatalf("unexpected real workcell-citools command %q; log=%q", command, commands)
 		}
@@ -820,21 +828,29 @@ func readUpdaterFixturePins(t *testing.T) updaterFixturePins {
 	releaseWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	securityWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "security.yml"))
 	upstreamWorkflow := readUpdaterFixtureSource(t, filepath.Join(root, ".github", "workflows", "upstream-refresh.yml"))
+	hadolintAMD64SHA := updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_X86_64_SHA256=")
+	hadolintARM64SHA := updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_ARM64_SHA256=")
+
 	return updaterFixturePins{
-		RuntimeBase:                  updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG NODE_BASE_IMAGE="),
-		ValidatorBase:                updaterFixtureUniqueValue(t, validatorDockerfile, "ARG VALIDATOR_BASE_IMAGE="),
-		GoToolchain:                  updaterFixtureUniqueValue(t, goMod, "toolchain go"),
-		GoLanguage:                   updaterFixtureUniqueValue(t, goMod, "go "),
-		GoAMD64SHA:                   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_X86_64_SHA256="),
-		GoARM64SHA:                   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_ARM64_SHA256="),
-		RustVersion:                  updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_VERSION="),
-		RuntimeRustImage:             updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_TOOLCHAIN_IMAGE="),
-		RustupVersion:                updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_VERSION="),
-		RustupAMD64SHA:               updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_X86_64_SHA256="),
-		RustupARM64SHA:               updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_ARM64_SHA256="),
-		HadolintVersion:              updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_VERSION="),
-		HadolintAMD64SHA:             updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_X86_64_SHA256="),
-		HadolintARM64SHA:             updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_ARM64_SHA256="),
+		RuntimeBase:      updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG NODE_BASE_IMAGE="),
+		ValidatorBase:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG VALIDATOR_BASE_IMAGE="),
+		GoToolchain:      updaterFixtureUniqueValue(t, goMod, "toolchain go"),
+		GoLanguage:       updaterFixtureUniqueValue(t, goMod, "go "),
+		GoAMD64SHA:       updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_X86_64_SHA256="),
+		GoARM64SHA:       updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_ARM64_SHA256="),
+		RustVersion:      updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_VERSION="),
+		RuntimeRustImage: updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_TOOLCHAIN_IMAGE="),
+		RustupVersion:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_VERSION="),
+		RustupAMD64SHA:   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_X86_64_SHA256="),
+		RustupARM64SHA:   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_ARM64_SHA256="),
+		HadolintVersion:  updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_VERSION="),
+		HadolintAMD64SHA: hadolintAMD64SHA,
+		HadolintARM64SHA: hadolintARM64SHA,
+		HadolintChecksums: fmt.Sprintf(
+			"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
+			hadolintAMD64SHA,
+			hadolintARM64SHA,
+		),
 		BuildkitImage:                updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_BUILDKIT_IMAGE: "),
 		BuildxVersion:                updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_BUILDX_VERSION: "),
 		CosignVersion:                updaterFixtureUniqueValue(t, ciWorkflow, "  WORKCELL_COSIGN_VERSION: "),
@@ -991,15 +1007,11 @@ curl() {
       ;;
     'https://api.github.com/repos/hadolint/hadolint/releases/latest')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"%s","assets":[{"name":"hadolint-linux-x86_64.sha256","browser_download_url":"https://fixture.invalid/hadolint-amd64.sha256"},{"name":"hadolint-linux-arm64.sha256","browser_download_url":"https://fixture.invalid/hadolint-arm64.sha256"}]}\n' "${WORKCELL_FIXTURE_HADOLINT_VERSION}"
+      printf '{"tag_name":"%s","assets":[{"name":"checksums.sha256","browser_download_url":"https://fixture.invalid/hadolint-checksums.sha256"}]}\n' "${WORKCELL_FIXTURE_HADOLINT_VERSION}"
       ;;
-    'https://fixture.invalid/hadolint-amd64.sha256')
+    'https://fixture.invalid/hadolint-checksums.sha256')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 65536 "${url}" || return
-      printf '%s  hadolint-linux-x86_64\n' "${WORKCELL_FIXTURE_HADOLINT_AMD64_SHA}"
-      ;;
-    'https://fixture.invalid/hadolint-arm64.sha256')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 65536 "${url}" || return
-      printf '%s  hadolint-linux-arm64\n' "${WORKCELL_FIXTURE_HADOLINT_ARM64_SHA}"
+      printf '%s' "${WORKCELL_FIXTURE_HADOLINT_CHECKSUMS}"
       ;;
     'https://api.github.com/repos/docker/buildx/releases/latest')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return

@@ -40,6 +40,51 @@ func TestWalkFilesSkipsExcludedPaths(t *testing.T) {
 	}
 }
 
+func TestHadolintManifestChecksum(t *testing.T) {
+	t.Parallel()
+
+	amd64Digest := strings.Repeat("A", 64)
+	arm64Digest := strings.Repeat("b", 64)
+	validManifest := amd64Digest + "  *hadolint-linux-x86_64\n" + arm64Digest + "  *hadolint-linux-arm64\n"
+	tests := []struct {
+		name      string
+		manifest  string
+		assetName string
+		want      string
+		wantErr   bool
+	}{
+		{name: "binary marker", manifest: validManifest, assetName: "hadolint-linux-x86_64", want: strings.ToLower(amd64Digest)},
+		{name: "near match", manifest: amd64Digest + "  *hadolint-linux-x86_64-extra\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "duplicate", manifest: amd64Digest + "  *hadolint-linux-x86_64\n" + amd64Digest + "  *hadolint-linux-x86_64\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "mixed marker duplicate", manifest: amd64Digest + "  *hadolint-linux-x86_64\n" + amd64Digest + "  hadolint-linux-x86_64\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "unmarked", manifest: amd64Digest + "  hadolint-linux-x86_64\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "short digest", manifest: amd64Digest[:63] + "  *hadolint-linux-x86_64\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "non hexadecimal digest", manifest: strings.Repeat("g", 64) + "  *hadolint-linux-x86_64\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "extra field", manifest: amd64Digest + "  *hadolint-linux-x86_64 extra\n", assetName: "hadolint-linux-x86_64", wantErr: true},
+		{name: "invalid asset name", manifest: validManifest, assetName: "hadolint linux x86_64", wantErr: true},
+		{name: "oversized manifest", manifest: strings.Repeat("x", HadolintChecksumManifestMaxBytes+1), assetName: "hadolint-linux-x86_64", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := HadolintManifestChecksum([]byte(test.manifest), test.assetName)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("HadolintManifestChecksum() = %q, want error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("HadolintManifestChecksum() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("HadolintManifestChecksum() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestWalkRepoFilesSkipsExcludedPaths(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{".git", "dist", "tmp", "node_modules", "target", "pkg"} {

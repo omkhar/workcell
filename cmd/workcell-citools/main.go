@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -77,6 +78,7 @@ func subcommands() []subcommand {
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
+		{"hadolint-manifest-checksum", "ASSET_NAME", 1, 1, cmdHadolintManifestChecksum},
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
@@ -325,6 +327,19 @@ func cmdExtractCodexSHA(args []string) error {
 
 func cmdExtractCopilotSHA(args []string) error {
 	value, err := metadatautil.ExtractCopilotSHA(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdHadolintManifestChecksum(args []string) error {
+	manifest, err := io.ReadAll(io.LimitReader(os.Stdin, metadatautil.HadolintChecksumManifestMaxBytes+1))
+	if err != nil {
+		return err
+	}
+	value, err := metadatautil.HadolintManifestChecksum(manifest, args[0])
 	if err != nil {
 		return err
 	}
