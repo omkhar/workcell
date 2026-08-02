@@ -786,41 +786,8 @@ profile_process_pids() {
 
 reap_stale_profile_processes() {
   local profile="$1"
-  local -a pids=()
-  local -a remaining=()
-  local pid=""
-  local deadline=0
 
-  while IFS= read -r pid; do
-    [[ -n "${pid}" ]] && pids+=("${pid}")
-  done < <(profile_process_pids "${profile}")
-
-  if ((${#pids[@]} == 0)); then
-    return 0
-  fi
-
-  echo "Stopping stale Lima processes for profile ${profile}." >&2
-  kill "${pids[@]}" >/dev/null 2>&1 || true
-  deadline=$((SECONDS + 5))
-
-  while :; do
-    remaining=()
-    for pid in "${pids[@]}"; do
-      if kill -0 "${pid}" >/dev/null 2>&1; then
-        remaining+=("${pid}")
-      fi
-    done
-    if ((${#remaining[@]} == 0)); then
-      return 0
-    fi
-    if ((SECONDS >= deadline)); then
-      break
-    fi
-    sleep 1
-    pids=("${remaining[@]}")
-  done
-
-  kill -9 "${remaining[@]}" >/dev/null 2>&1 || true
+  go_hostutil helper reap-colima-profile-processes "${profile}"
 }
 
 maybe_reap_stale_profile_processes() {

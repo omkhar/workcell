@@ -38,6 +38,13 @@ func TestUsageReturnsExitCode2(t *testing.T) {
 	}
 }
 
+func TestReapColimaProfileProcessesHelperAcceptsAbsentProfile(t *testing.T) {
+	profile := "workcell-hostutil-test-no-process"
+	if err := run([]string{"helper", "reap-colima-profile-processes", profile}); err != nil {
+		t.Fatalf("reap absent profile: %v", err)
+	}
+}
+
 func TestRunHelperSessionTimeline(t *testing.T) {
 	colimaRoot := t.TempDir()
 	auditLogPath := filepath.Join(colimaRoot, "wcl-one", "workcell.audit.log")

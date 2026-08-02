@@ -5041,6 +5041,13 @@ PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 } >"${PROFILE_PROCESS_MATCH_HARNESS}"
 /bin/bash "${PROFILE_PROCESS_MATCH_HARNESS}"
 rm -f "${PROFILE_PROCESS_MATCH_HARNESS}"
+PROFILE_PROCESS_REAPER_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reap_stale_profile_processes
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/profile-process-reaper.sh"
+} >"${PROFILE_PROCESS_REAPER_HARNESS}"
+/bin/bash "${PROFILE_PROCESS_REAPER_HARNESS}"
+rm -f "${PROFILE_PROCESS_REAPER_HARNESS}"
 COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_profile_status
