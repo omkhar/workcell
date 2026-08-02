@@ -36,10 +36,25 @@ env:
   WORKCELL_SYFT_VERSION: v1.49.0
 
 jobs:
+  tag-policy:
+    name: Release tag policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Classify release tag
+        run: go run ./cmd/workcell-hostutil release classify-tag "${GITHUB_REF_NAME}" >/dev/null
+
   codeql-preflight:
     name: Release CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    needs: tag-policy
     permissions:
       actions: read # Read workflow metadata required by CodeQL helper actions.
       contents: read
@@ -81,6 +96,7 @@ jobs:
     # mirrors the already-reviewed native arm64 lane in ci.yml.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+    needs: tag-policy
     permissions:
       contents: read
     outputs:
@@ -138,6 +154,7 @@ jobs:
     # combined runtime manifest that publish checks against.
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: tag-policy
     permissions:
       contents: read
     outputs:
@@ -183,6 +200,7 @@ jobs:
     # `needs` of build-arm64-image and release below.
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: tag-policy
     permissions:
       contents: read
     steps:
@@ -214,6 +232,7 @@ jobs:
     name: Release Copilot runtime image probe (arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    needs: tag-policy
     permissions:
       contents: read
     steps:
@@ -264,6 +283,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs:
+      - tag-policy
       - preflight-amd64-repro
       - preflight-arm64-repro
     environment:
@@ -353,10 +373,6 @@ jobs:
             echo "Wait for main checks to finish before re-running this release." >&2
             exit 1
           fi
-
-      - name: Validate release tag name
-        run: |
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 
       - name: Verify release tag signature
         env:
@@ -644,6 +660,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     needs:
+      - tag-policy
       - preflight
     permissions:
       contents: read
@@ -733,6 +750,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     needs:
+      - tag-policy
       - codeql-preflight
       - preflight
       - preflight-arm64-copilot-runtime
@@ -792,6 +810,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs:
+      - tag-policy
       - codeql-preflight
       - preflight
       - preflight-arm64-copilot-runtime
@@ -818,10 +837,6 @@ jobs:
         with:
           name: workcell-release-preflight
           path: dist/preflight
-
-      - name: Validate release tag name
-        run: |
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 
       - name: Verify release tag signature
         env:
