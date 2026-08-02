@@ -236,7 +236,7 @@ func TestPublisherSealsFinalAndReleaseCandidateAssets(t *testing.T) {
 			wantSuffix := "GET api.github.com/repos/example/workcell/git/tags/" + testTagObjectSHA +
 				"\nGET api.github.com/repos/example/workcell/git/ref/tags/" + tc.tag +
 				"\nGET api.github.com/repos/example/workcell/immutable-releases" +
-				"\nPATCH api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/git/tags/" + testTagObjectSHA + "\nGET api.github.com/repos/example/workcell/git/ref/tags/" + tc.tag + "\nGET api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/latest"
+				"\nPATCH api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/42\nGET api.github.com/repos/example/workcell/releases/latest\nGET api.github.com/repos/example/workcell/git/tags/" + testTagObjectSHA + "\nGET api.github.com/repos/example/workcell/git/ref/tags/" + tc.tag
 			if !strings.HasSuffix(strings.Join(client.requests, "\n"), wantSuffix) {
 				t.Fatalf("requests = %q, want final verification suffix %q", client.requests, wantSuffix)
 			}
