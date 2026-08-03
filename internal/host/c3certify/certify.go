@@ -25,8 +25,7 @@ import (
 
 const keepalive = `trap 'exit 0' TERM INT; while :; do sleep 1; done`
 
-var safeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-var gitFilterSetting = regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`)
+var safeID, gitFilterSetting, gitHiddenIndexState = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`), regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`), regexp.MustCompile(`(^|\x00)(S|[a-z]) `)
 
 type Options struct {
 	Root, Workspace, PrecommitControlTree string
@@ -44,9 +43,7 @@ type evidence struct {
 	record     sessions.SessionRecord
 	recordPath string
 }
-type snapshot struct {
-	controlCommit, controlTree, launcherHash, dockerHash, workloadCommit string
-}
+type snapshot struct{ controlCommit, controlTree, launcherHash, dockerHash, workloadCommit string }
 type certifier struct {
 	options                                        Options
 	deps                                           dependencies
@@ -67,7 +64,6 @@ func Run(ctx context.Context, options Options, stdout io.Writer) error {
 		reapProfileProcesses: launcher.ReapColimaProfileProcesses,
 	})
 }
-
 func run(ctx context.Context, options Options, stdout io.Writer, deps dependencies) error {
 	if options.PollAttempts == 0 {
 		options.PollAttempts = 120
@@ -182,7 +178,6 @@ func writeReport(stdout io.Writer, before snapshot, first, second *evidence, now
 	}
 	return nil
 }
-
 func newCertifier(options Options, deps dependencies) (*certifier, error) {
 	root, err := filepath.Abs(options.Root)
 	if err != nil {
@@ -349,7 +344,6 @@ func (c *certifier) adoptOwnedRecords(ctx context.Context) error {
 	}
 	return nil
 }
-
 func (c *certifier) findOwnedRecord(ctx context.Context, id string) (sessions.SessionRecord, string, error) {
 	record, path, err := sessions.FindSessionRecordWithPathInRoots([]string{c.stateRoot}, id)
 	if err != nil {
@@ -464,7 +458,7 @@ func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.Ses
 	if err != nil || strings.TrimSpace(string(head)) != commit {
 		return fmt.Errorf("certify-c3: isolated worktree does not match workload commit: %s", record.SessionID)
 	}
-	status, err := c.gitCommand(ctx, expected, "status", "--porcelain=v1", "--untracked-files=all")
+	status, err := c.gitCommand(ctx, expected, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
 	if err != nil || len(bytes.TrimSpace(status)) != 0 {
 		return fmt.Errorf("certify-c3: isolated worktree is not clean: %s", record.SessionID)
 	}
@@ -802,7 +796,7 @@ func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte
 	return c.command(ctx, c.baseEnv, "/bin/bash", append([]string{c.workcell}, args...)...)
 }
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "color.ui=false"}
+	safeArgs := []string{"--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "color.ui=false"}
 	if len(args) == 0 || args[0] != "clone" {
 		safeArgs = append(safeArgs, "--work-tree="+dir)
 	}
@@ -820,6 +814,11 @@ func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) 
 		}
 		safeArgs = append(safeArgs, "-c", name+"=", "-c", strings.TrimSuffix(name, match[1])+"required=false")
 	}
+	if len(args) > 0 && args[0] == "status" {
+		if flags, err := c.command(ctx, c.baseEnv, c.git, append(safeArgs, "ls-files", "-v", "-z")...); err != nil || gitHiddenIndexState.Match(flags) {
+			return nil, errors.New("certify-c3: repository index hides tracked worktree state")
+		}
+	}
 	return c.command(ctx, c.baseEnv, c.git, append(safeArgs, args...)...)
 }
 func (c *certifier) command(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -834,7 +833,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 		return snapshot{}, err
 	}
 	if c.options.PrecommitControlTree == "" {
-		status, err := c.gitCommand(ctx, c.options.Root, "status", "--porcelain=v1", "--untracked-files=all")
+		status, err := c.gitCommand(ctx, c.options.Root, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
 		if err != nil || len(bytes.TrimSpace(status)) != 0 {
 			return snapshot{}, errors.New("certify-c3: control-plane tree must be clean")
 		}
@@ -861,7 +860,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 			return snapshot{}, errors.New("certify-c3: pre-commit control snapshot has untracked residue")
 		}
 	}
-	workloadStatus, err := c.gitCommand(ctx, c.options.Workspace, "status", "--porcelain=v1", "--untracked-files=all")
+	workloadStatus, err := c.gitCommand(ctx, c.options.Workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
 	if err != nil || len(bytes.TrimSpace(workloadStatus)) != 0 {
 		return snapshot{}, errors.New("certify-c3: workload tree must be clean")
 	}

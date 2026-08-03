@@ -125,7 +125,6 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 		}
 	}
 }
-
 func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	workspace, _ := newGitRepo(t)
 	marker, hook := filepath.Join(t.TempDir(), "hook-ran"), filepath.Join(t.TempDir(), "hook.sh")
@@ -147,7 +146,7 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	mustNoError(t, os.Remove(marker))
 	decoy, _ := newGitRepo(t)
 	runGit(t, workspace, "config", "core.worktree", decoy)
-	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all")
+	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
 	mustNoError(t, err)
 	if !strings.Contains(string(status), "?? untracked") {
 		t.Fatalf("gitCommand hid untracked workload file: %q", status)
@@ -155,8 +154,11 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("repository-local Git hook executed on the host: %v", err)
 	}
+	runGit(t, workspace, "update-index", "--assume-unchanged", "--skip-worktree", "tracked")
+	if _, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1"); err == nil {
+		t.Fatal("gitCommand accepted hidden index state")
+	}
 }
-
 func testCertifier(t *testing.T, workspace string) *certifier {
 	git, err := exec.LookPath("git")
 	mustNoError(t, err)
