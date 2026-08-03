@@ -185,6 +185,11 @@ func TestGitCommandRejectsForgedTrackedState(t *testing.T) {
 				t.Fatalf("external attributes fixture is not hidden from raw Git: %q", status)
 			}
 		}},
+		{"repository info attributes", func(t *testing.T, root string) {
+			path := strings.TrimSpace(string(runGit(t, root, "rev-parse", "--git-path", "info/attributes")))
+			mustNoError(t, errors.Join(os.WriteFile(filepath.Join(root, path), []byte("* text eol=crlf\n"), 0o600), os.Remove(filepath.Join(root, "eol"))))
+			runGit(t, root, "checkout", "--", "eol")
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

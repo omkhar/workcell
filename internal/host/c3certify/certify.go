@@ -23,9 +23,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
-const keepalive = `trap 'exit 0' TERM INT; while :; do sleep 1; done`
-
-var safeID, gitFilterSetting, gitHiddenIndexState = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`), regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`), regexp.MustCompile(`(^|\x00)(S|[a-z]) `)
+var keepalive, safeID, gitFilterSetting, gitHiddenIndexState = `trap 'exit 0' TERM INT; while :; do sleep 1; done`, regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`), regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`), regexp.MustCompile(`(^|\x00)(S|[a-z]) `)
 
 type Options struct {
 	Root, Workspace, PrecommitControlTree string
@@ -55,6 +53,42 @@ type certifier struct {
 	cleanupTried, profileTried                     bool
 }
 
+func Run(ctx context.Context, options Options, stdout io.Writer) error {
+	if options.PollAttempts == 0 {
+		options.PollAttempts = 120
+	}
+	if options.PollInterval == 0 {
+		options.PollInterval = time.Second
+	}
+	if options.CommandTimeout == 0 {
+		options.CommandTimeout = 10 * time.Minute
+	}
+	if options.PollAttempts < 1 || options.PollInterval < 0 || options.CommandTimeout <= 0 {
+		return errors.New("certify-c3: polling and command timeout values must be positive")
+	}
+	c, err := newCertifier(options, dependencies{
+		command: runCommand, now: time.Now, reapProfileProcesses: launcher.ReapColimaProfileProcesses,
+		sleep: func(ctx context.Context, delay time.Duration) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+				return nil
+			}
+		},
+		socketExists: func(path string) error {
+			info, err := os.Lstat(path)
+			if err == nil && info.Mode()&os.ModeSocket == 0 {
+				return errors.New("not a socket")
+			}
+			return err
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return c.execute(ctx, stdout)
+}
 func (c *certifier) execute(ctx context.Context, stdout io.Writer) (runErr error) {
 	defer func() {
 		if cleanupErr := c.cleanupBounded(); cleanupErr != nil {
@@ -114,39 +148,109 @@ func (c *certifier) execute(ctx context.Context, stdout io.Writer) (runErr error
 	}
 	return writeReport(stdout, before, first, second, c.deps.now())
 }
-
 func writeReport(stdout io.Writer, before snapshot, first, second *evidence, now time.Time) error {
-	if _, err := fmt.Fprintf(stdout, `# C3 strict-target isolation certification
-
-- date (UTC): %s
-- Workcell control-plane commit: %s
-- Workcell control-plane tree: %s
-- Workcell launcher SHA-256: %s
-- Docker client SHA-256: %s
-- workload commit: %s
-- target: local_vm/colima/strict
-- profile: %s
-- session A: %s (%s, %s, %s)
-- session B: %s (%s, %s, %s)
-- sessions overlapped: true
-- containers distinct: true
-- worktrees distinct: true
-- branches distinct: true
-- marker visible in session A: true
-- marker absent from session B: true
-- marker visible in session B: true
-- marker absent from session A: true
-- container workspaces matched recorded host worktrees: true
-- session A stopped independently: true
-- session B remained running after A stopped: true
-- session records, containers, and isolated worktrees removed: true
-- certifier-owned Colima profile, target state, and runtime image cache removed: true
-- keepalive scope: acknowledged arbitrary command; provider interaction is not certified
-`, now.UTC().Format(time.RFC3339), before.controlCommit, before.controlTree,
+	const format = "# C3 strict-target isolation certification\n\n- date (UTC): %s\n- Workcell control-plane commit: %s\n- Workcell control-plane tree: %s\n- Workcell launcher SHA-256: %s\n- Docker client SHA-256: %s\n- workload commit: %s\n- target: local_vm/colima/strict\n- profile: %s\n- session A: %s (%s, %s, %s)\n- session B: %s (%s, %s, %s)\n- sessions overlapped: true\n- containers distinct: true\n- worktrees distinct: true\n- branches distinct: true\n- marker visible in session A: true\n- marker absent from session B: true\n- marker visible in session B: true\n- marker absent from session A: true\n- container workspaces matched recorded host worktrees: true\n- session A stopped independently: true\n- session B remained running after A stopped: true\n- session records, containers, and isolated worktrees removed: true\n- certifier-owned Colima profile, target state, and runtime image cache removed: true\n- keepalive scope: acknowledged arbitrary command; provider interaction is not certified\n"
+	_, err := fmt.Fprintf(stdout, format, now.UTC().Format(time.RFC3339), before.controlCommit, before.controlTree,
 		before.launcherHash, before.dockerHash, before.workloadCommit, first.record.Profile,
 		first.record.SessionID, first.record.ContainerName, first.record.WorktreePath, first.record.GitBranch,
-		second.record.SessionID, second.record.ContainerName, second.record.WorktreePath, second.record.GitBranch); err != nil {
-		return fmt.Errorf("certify-c3: write certification report: %w", err)
+		second.record.SessionID, second.record.ContainerName, second.record.WorktreePath, second.record.GitBranch)
+	return err
+}
+func newCertifier(options Options, deps dependencies) (_ *certifier, resultErr error) {
+	root, rootErr := canonicalDirectory(options.Root, false)
+	workspace, workspaceErr := canonicalDirectory(options.Workspace, false)
+	if err := errors.Join(rootErr, workspaceErr); err != nil {
+		return nil, err
+	}
+	options.Root, options.Workspace = root, workspace
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("certify-c3: resolve operator home: %w", err)
+	}
+	home, err = canonicalDirectory(home, false)
+	if err != nil {
+		return nil, err
+	}
+	colimaRoot, err := canonicalDirectory(filepath.Join(home, ".colima"), true)
+	if err != nil {
+		return nil, err
+	}
+	stateRoot := os.Getenv("WORKCELL_STATE_ROOT")
+	if stateRoot == "" {
+		stateRoot = filepath.Join(os.Getenv("XDG_STATE_HOME"), "workcell")
+		if !filepath.IsAbs(stateRoot) {
+			stateRoot = filepath.Join(home, ".local", "state", "workcell")
+		}
+	}
+	stateRoot, err = canonicalDirectory(stateRoot, true)
+	if err != nil {
+		return nil, err
+	}
+	workcell, workcellErr := resolveExecutable(filepath.Join(root, "scripts", "workcell"))
+	docker, dockerErr := resolveExecutable("/opt/homebrew/bin/docker", "/usr/local/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker")
+	colima, colimaErr := resolveExecutable("/opt/homebrew/bin/colima", "/usr/local/bin/colima")
+	git, gitErr := resolveExecutable("/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git")
+	if err := errors.Join(workcellErr, dockerErr, colimaErr, gitErr); err != nil {
+		return nil, fmt.Errorf("certify-c3: trusted host tools: %w", err)
+	}
+	dockerConfig, dockerConfigErr := os.MkdirTemp("", "workcell-c3-docker-config.")
+	scratchRoot, scratchRootErr := os.MkdirTemp("", "workcell-c3-workload.")
+	if err := errors.Join(dockerConfigErr, scratchRootErr); err != nil {
+		_ = os.RemoveAll(dockerConfig)
+		_ = os.RemoveAll(scratchRoot)
+		return nil, fmt.Errorf("certify-c3: create scratch state: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			_ = os.RemoveAll(dockerConfig)
+			_ = os.RemoveAll(scratchRoot)
+		}
+	}()
+	scratchRoot, err = canonicalDirectory(scratchRoot, false)
+	if err != nil {
+		return nil, err
+	}
+	profile := "wcl-c3-" + strings.TrimPrefix(filepath.Ext(scratchRoot), ".")
+	cachePaths, err := runtimeImageCachePaths(stateRoot, profile)
+	if err != nil {
+		return nil, fmt.Errorf("certify-c3: inspect runtime image cache: %w", err)
+	}
+	if err := requireOwnedPathsAbsent(colimaRoot, colimaProfilePaths(colimaRoot, profile)...); err != nil {
+		return nil, err
+	}
+	statePaths := append(cachePaths, filepath.Join(stateRoot, "targets", "local_vm", "colima", profile))
+	if err := requireOwnedPathsAbsent(stateRoot, statePaths...); err != nil {
+		return nil, err
+	}
+	env := []string{
+		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin", "HOME=" + home,
+		"TMPDIR=" + os.TempDir(), "LC_ALL=C", "LANG=C", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1", "WORKCELL_STATE_ROOT=" + stateRoot,
+	}
+	return &certifier{
+		options: options, deps: deps, workcell: workcell, docker: docker, colima: colima, git: git,
+		stateRoot: stateRoot, colimaRoot: colimaRoot, scratchRoot: scratchRoot,
+		launchRoot: filepath.Join(scratchRoot, "repo"), dockerConfig: dockerConfig, profile: profile, baseEnv: env,
+	}, nil
+}
+func canonicalDirectory(path string, create bool) (string, error) {
+	path, err := filepath.Abs(path)
+	if err == nil && create {
+		err = os.MkdirAll(path, 0o700)
+	}
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(path)
+}
+func requireOwnedPathsAbsent(root string, paths ...string) error {
+	for _, path := range paths {
+		if err := requirePlainDirectoryChain(root, filepath.Dir(path)); err != nil {
+			return fmt.Errorf("certify-c3: unsafe owned profile parent: %w", err)
+		}
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("certify-c3: owned profile state already exists: %s", path)
+		}
 	}
 	return nil
 }
@@ -654,6 +758,12 @@ func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) 
 		safeArgs = append(safeArgs, "-c", name+"=", "-c", strings.TrimSuffix(name, match[1])+"required=false")
 	}
 	if len(args) > 0 && (args[0] == "status" || args[0] == "diff-files") {
+		infoAttributes, err := c.command(ctx, c.baseEnv, c.git, append(safeArgs, "rev-parse", "--path-format=absolute", "--git-path", "info/attributes")...)
+		if path := strings.TrimSpace(string(infoAttributes)); err != nil || !filepath.IsAbs(path) {
+			return nil, errors.New("certify-c3: cannot resolve repository info attributes")
+		} else if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			return nil, errors.New("certify-c3: tracked worktree content differs from clone semantics")
+		}
 		if flags, err := c.command(ctx, c.baseEnv, c.git, append(safeArgs, "ls-files", "-v", "-z")...); err != nil || gitHiddenIndexState.Match(flags) {
 			return nil, errors.New("certify-c3: repository index hides tracked worktree state")
 		}
@@ -767,6 +877,14 @@ func parseStartSessionID(output []byte) (string, error) {
 		return "", errors.New("certify-c3: session start returned no session id")
 	}
 	return id, nil
+}
+func resolveExecutable(candidates ...string) (string, error) {
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no executable found among %s", strings.Join(candidates, ", "))
 }
 func fileHash(path string) (string, error) {
 	data, err := os.ReadFile(path)
