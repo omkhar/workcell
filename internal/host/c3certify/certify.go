@@ -55,34 +55,6 @@ type certifier struct {
 	cleanupTried, profileTried                     bool
 }
 
-func Run(ctx context.Context, options Options, stdout io.Writer) error {
-	return run(ctx, options, stdout, dependencies{
-		command:              runCommand,
-		now:                  time.Now,
-		sleep:                sleepContext,
-		socketExists:         requireSocket,
-		reapProfileProcesses: launcher.ReapColimaProfileProcesses,
-	})
-}
-func run(ctx context.Context, options Options, stdout io.Writer, deps dependencies) error {
-	if options.PollAttempts == 0 {
-		options.PollAttempts = 120
-	}
-	if options.PollInterval == 0 {
-		options.PollInterval = time.Second
-	}
-	if options.CommandTimeout == 0 {
-		options.CommandTimeout = 10 * time.Minute
-	}
-	if options.PollAttempts < 1 || options.PollInterval < 0 || options.CommandTimeout <= 0 {
-		return errors.New("certify-c3: polling and command timeout values must be positive")
-	}
-	c, err := newCertifier(options, deps)
-	if err != nil {
-		return err
-	}
-	return c.execute(ctx, stdout)
-}
 func (c *certifier) execute(ctx context.Context, stdout io.Writer) (runErr error) {
 	defer func() {
 		if cleanupErr := c.cleanupBounded(); cleanupErr != nil {
@@ -177,139 +149,6 @@ func writeReport(stdout io.Writer, before snapshot, first, second *evidence, now
 		return fmt.Errorf("certify-c3: write certification report: %w", err)
 	}
 	return nil
-}
-func newCertifier(options Options, deps dependencies) (*certifier, error) {
-	root, err := filepath.Abs(options.Root)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve control-plane root: %w", err)
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve control-plane root: %w", err)
-	}
-	workspace, err := filepath.Abs(options.Workspace)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve workspace: %w", err)
-	}
-	workspace, err = filepath.EvalSymlinks(workspace)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve workspace: %w", err)
-	}
-	options.Root, options.Workspace = root, workspace
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve operator home: %w", err)
-	}
-	home, err = filepath.EvalSymlinks(home)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve operator home: %w", err)
-	}
-	colimaRoot := filepath.Join(home, ".colima")
-	if err := os.MkdirAll(colimaRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("certify-c3: create Colima state root: %w", err)
-	}
-	colimaRoot, err = filepath.EvalSymlinks(colimaRoot)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve Colima state root: %w", err)
-	}
-	stateRoot := os.Getenv("WORKCELL_STATE_ROOT")
-	if stateRoot == "" {
-		stateRoot = filepath.Join(os.Getenv("XDG_STATE_HOME"), "workcell")
-		if os.Getenv("XDG_STATE_HOME") == "" {
-			stateRoot = filepath.Join(home, ".local", "state", "workcell")
-		}
-	}
-	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
-		return nil, fmt.Errorf("certify-c3: create state root: %w", err)
-	}
-	stateRoot, err = filepath.EvalSymlinks(stateRoot)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: resolve state root: %w", err)
-	}
-	workcell := filepath.Join(root, "scripts", "workcell")
-	if info, err := os.Stat(workcell); err != nil || info.Mode()&0o111 == 0 {
-		return nil, fmt.Errorf("certify-c3: Workcell launcher is not executable: %s", workcell)
-	}
-	docker, err := resolveExecutable(
-		"/opt/homebrew/bin/docker",
-		"/usr/local/bin/docker",
-		"/Applications/Docker.app/Contents/Resources/bin/docker",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: trusted Docker client: %w", err)
-	}
-	colima, err := resolveExecutable("/opt/homebrew/bin/colima", "/usr/local/bin/colima")
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: trusted Colima client: %w", err)
-	}
-	git, err := resolveExecutable("/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git")
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: trusted Git client: %w", err)
-	}
-	dockerConfig, err := os.MkdirTemp("", "workcell-c3-docker-config.")
-	if err != nil {
-		return nil, fmt.Errorf("certify-c3: create Docker config: %w", err)
-	}
-	scratchRoot, err := os.MkdirTemp("", "workcell-c3-workload.")
-	if err != nil {
-		_ = os.RemoveAll(dockerConfig)
-		return nil, fmt.Errorf("certify-c3: create workload root: %w", err)
-	}
-	resolvedScratchRoot, err := filepath.EvalSymlinks(scratchRoot)
-	if err != nil {
-		_ = os.RemoveAll(dockerConfig)
-		_ = os.RemoveAll(scratchRoot)
-		return nil, fmt.Errorf("certify-c3: resolve workload root: %w", err)
-	}
-	scratchRoot = resolvedScratchRoot
-	profile := "wcl-c3-" + strings.TrimPrefix(filepath.Ext(scratchRoot), ".")
-	profileState := filepath.Join(stateRoot, "targets", "local_vm", "colima", profile)
-	cachePaths, err := runtimeImageCachePaths(stateRoot, profile)
-	if err != nil {
-		_ = os.RemoveAll(dockerConfig)
-		_ = os.RemoveAll(scratchRoot)
-		return nil, fmt.Errorf("certify-c3: inspect runtime image cache: %w", err)
-	}
-	groups := []struct {
-		root  string
-		paths []string
-	}{
-		{colimaRoot, colimaProfilePaths(colimaRoot, profile)},
-		{stateRoot, append(cachePaths, profileState)},
-	}
-	for _, group := range groups {
-		for _, path := range group.paths {
-			if err := requirePlainDirectoryChain(group.root, filepath.Dir(path)); err != nil {
-				_ = os.RemoveAll(dockerConfig)
-				_ = os.RemoveAll(scratchRoot)
-				return nil, fmt.Errorf("certify-c3: unsafe owned profile parent: %w", err)
-			}
-			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-				_ = os.RemoveAll(dockerConfig)
-				_ = os.RemoveAll(scratchRoot)
-				return nil, fmt.Errorf("certify-c3: owned profile state already exists: %s", profile)
-			}
-		}
-	}
-	env := []string{
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin",
-		"HOME=" + home,
-		"TMPDIR=" + os.TempDir(),
-		"LC_ALL=C",
-		"LANG=C",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-	}
-	for _, key := range []string{"XDG_STATE_HOME", "WORKCELL_STATE_ROOT"} {
-		if value := os.Getenv(key); value != "" {
-			env = append(env, key+"="+value)
-		}
-	}
-	return &certifier{
-		options: options, deps: deps, workcell: workcell, docker: docker, colima: colima, git: git,
-		stateRoot: stateRoot, colimaRoot: colimaRoot, scratchRoot: scratchRoot,
-		launchRoot: filepath.Join(scratchRoot, "repo"), dockerConfig: dockerConfig, profile: profile, baseEnv: env,
-	}, nil
 }
 func (c *certifier) prepareLaunchWorkspace(ctx context.Context, commit string) error {
 	if _, err := c.gitCommand(ctx, c.options.Workspace, "clone", "--quiet", "--no-hardlinks",
@@ -818,8 +657,31 @@ func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) 
 		if flags, err := c.command(ctx, c.baseEnv, c.git, append(safeArgs, "ls-files", "-v", "-z")...); err != nil || gitHiddenIndexState.Match(flags) {
 			return nil, errors.New("certify-c3: repository index hides tracked worktree state")
 		}
+		if err := c.verifyTrackedWorktree(ctx, safeArgs); err != nil {
+			return nil, err
+		}
 	}
 	return c.command(ctx, c.baseEnv, c.git, append(safeArgs, args...)...)
+}
+func (c *certifier) verifyTrackedWorktree(ctx context.Context, safeArgs []string) error {
+	indexDir, err := os.MkdirTemp(c.stateRoot, ".c3-index-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(indexDir)
+	tree, err := c.command(ctx, c.baseEnv, c.git, append(safeArgs, "write-tree")...)
+	if err != nil {
+		return errors.New("certify-c3: cannot materialize indexed tree")
+	}
+	env := append([]string{}, c.baseEnv...)
+	env = append(env, "GIT_INDEX_FILE="+filepath.Join(indexDir, "index"))
+	if _, err := c.command(ctx, env, c.git, append(safeArgs, "read-tree", strings.TrimSpace(string(tree)))...); err != nil {
+		return errors.New("certify-c3: cannot build independent index")
+	}
+	if _, err := c.command(ctx, env, c.git, append(safeArgs, "update-index", "--really-refresh", "-q")...); err != nil {
+		return errors.New("certify-c3: tracked worktree content differs from the index")
+	}
+	return nil
 }
 func (c *certifier) command(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	callCtx, cancel := context.WithTimeout(ctx, c.options.CommandTimeout)
@@ -906,30 +768,12 @@ func parseStartSessionID(output []byte) (string, error) {
 	}
 	return id, nil
 }
-func resolveExecutable(candidates ...string) (string, error) {
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && info.Mode()&0o111 != 0 {
-			return candidate, nil
-		}
-	}
-	return "", errors.New("no fixed-path executable found")
-}
 func fileHash(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
-}
-func requireSocket(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return errors.New("not a socket")
-	}
-	return nil
 }
 func runCommand(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	return runCommandWithDelay(ctx, env, 40*time.Second, name, args...)
@@ -958,12 +802,4 @@ func runCommandWithDelay(ctx context.Context, env []string, waitDelay time.Durat
 			strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return output, nil
-}
-func sleepContext(ctx context.Context, duration time.Duration) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(duration):
-		return nil
-	}
 }

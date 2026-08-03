@@ -141,15 +141,11 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("malicious Git fixture did not execute under raw Git: %v", err)
 	}
-	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(1100 * time.Millisecond)))
-	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(workspace, "cached"), []byte("evil\n"), 0o600), os.Chtimes(filepath.Join(workspace, "cached"), time.Unix(978310860, 0), time.Unix(978310860, 0)), os.Rename(filepath.Join(workspace, "eol"), filepath.Join(t.TempDir(), "eol"))))
-	runGit(t, workspace, "-c", "core.autocrlf=true", "-c", "core.eol=crlf", "checkout", "--", "eol")
-	mustNoError(t, os.WriteFile(filepath.Join(workspace, "untracked"), []byte("hidden\n"), 0o600))
-	mustNoError(t, errors.Join(os.Rename(marker, filepath.Join(workspace, "link")), os.Chmod(filepath.Join(workspace, "tracked"), 0o700)))
+	mustNoError(t, errors.Join(os.Remove(marker), os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(workspace, "untracked"), []byte("hidden\n"), 0o600)))
 	decoy, _ := newGitRepo(t)
 	runGit(t, workspace, "config", "core.worktree", decoy)
 	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-	if err != nil || !strings.Contains(string(status), "?? untracked") || !strings.Contains(string(status), " M tracked") || !strings.Contains(string(status), " T link") || !strings.Contains(string(status), " M cached") || !strings.Contains(string(status), " M eol") {
+	if err != nil || !strings.Contains(string(status), "?? untracked") {
 		t.Fatalf("gitCommand status error=%v output=%q", err, status)
 	}
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -159,6 +155,37 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	_, statusErr := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1")
 	if _, diffErr := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "diff-files", "--quiet", "--ignore-submodules=none", "--"); statusErr == nil || diffErr == nil {
 		t.Fatal("gitCommand accepted hidden index state")
+	}
+}
+func TestGitCommandRejectsForgedTrackedState(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{"forged index stat", func(t *testing.T, root string) {
+			path := filepath.Join(root, "cached")
+			mustNoError(t, errors.Join(os.WriteFile(path, []byte("evil\n"), 0o600), os.Chtimes(path, time.Unix(978310860, 0), time.Unix(978310860, 0))))
+			runGit(t, root, "-c", "core.trustctime=false", "-c", "core.checkStat=minimal", "update-index", "--refresh", "--", "cached")
+		}},
+		{"executable mode", func(t *testing.T, root string) { mustNoError(t, os.Chmod(filepath.Join(root, "tracked"), 0o700)) }},
+		{"symlink type", func(t *testing.T, root string) {
+			path := filepath.Join(root, "link")
+			mustNoError(t, errors.Join(os.Rename(path, filepath.Join(t.TempDir(), "link")), os.WriteFile(path, []byte("tracked"), 0o600)))
+		}},
+		{"line endings", func(t *testing.T, root string) {
+			mustNoError(t, os.Rename(filepath.Join(root, "eol"), filepath.Join(t.TempDir(), "eol")))
+			runGit(t, root, "-c", "core.autocrlf=true", "-c", "core.eol=crlf", "checkout", "--", "eol")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace, _ := newGitRepo(t)
+			tc.mutate(t, workspace)
+			_, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1")
+			if err == nil || !strings.Contains(err.Error(), "tracked worktree content differs") {
+				t.Fatalf("gitCommand accepted %s: %v", tc.name, err)
+			}
+		})
 	}
 }
 func testCertifier(t *testing.T, workspace string) *certifier {
