@@ -24,7 +24,7 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	docker := filepath.Join(control, "docker")
 	mustNoError(t, os.WriteFile(docker, []byte("fixture\n"), 0o700))
 	runGit(t, control, "add", "docker")
-	runGit(t, control, "commit", "--quiet", "-m", "docker fixture")
+	runGit(t, control, "-c", "user.name=Workcell Test", "-c", "user.email=workcell-test@example.invalid", "commit", "--quiet", "-m", "docker fixture")
 	c := testCertifier(t, workload)
 	c.options.Root, c.workcell, c.docker, c.colima = control, filepath.Join(control, "tracked"), docker, "/fake/colima"
 	c.baseEnv = append(c.baseEnv, "WORKCELL_STATE_ROOT="+c.stateRoot)
@@ -131,7 +131,7 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	mustNoError(t, os.WriteFile(hook, []byte("#!/bin/sh\nprintf tracked >\""+marker+"\"\ncat\n"), 0o700))
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, ".gitattributes"), []byte("tracked filter=host\n"), 0o600))
 	runGit(t, workspace, "add", ".gitattributes")
-	runGit(t, workspace, "commit", "--quiet", "-m", "attributes")
+	runGit(t, workspace, "-c", "user.name=Workcell Test", "-c", "user.email=workcell-test@example.invalid", "commit", "--quiet", "-m", "attributes")
 	runGit(t, workspace, "config", "core.fsmonitor", hook)
 	runGit(t, workspace, "config", "filter.host.clean", hook)
 	runGit(t, workspace, "config", "filter.host.required", "true")
