@@ -142,14 +142,14 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 		t.Fatalf("malicious Git fixture did not execute under raw Git: %v", err)
 	}
 	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(1100 * time.Millisecond)))
-	statCacheMtime := time.Unix(978310860, 0)
-	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(workspace, "cached"), []byte("evil\n"), 0o600), os.Chtimes(filepath.Join(workspace, "cached"), statCacheMtime, statCacheMtime)))
+	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(workspace, "cached"), []byte("evil\n"), 0o600), os.Chtimes(filepath.Join(workspace, "cached"), time.Unix(978310860, 0), time.Unix(978310860, 0)), os.Rename(filepath.Join(workspace, "eol"), filepath.Join(t.TempDir(), "eol"))))
+	runGit(t, workspace, "-c", "core.autocrlf=true", "-c", "core.eol=crlf", "checkout", "--", "eol")
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, "untracked"), []byte("hidden\n"), 0o600))
 	mustNoError(t, errors.Join(os.Rename(marker, filepath.Join(workspace, "link")), os.Chmod(filepath.Join(workspace, "tracked"), 0o700)))
 	decoy, _ := newGitRepo(t)
 	runGit(t, workspace, "config", "core.worktree", decoy)
 	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-	if err != nil || !strings.Contains(string(status), "?? untracked") || !strings.Contains(string(status), " M tracked") || !strings.Contains(string(status), " T link") || !strings.Contains(string(status), " M cached") {
+	if err != nil || !strings.Contains(string(status), "?? untracked") || !strings.Contains(string(status), " M tracked") || !strings.Contains(string(status), " T link") || !strings.Contains(string(status), " M cached") || !strings.Contains(string(status), " M eol") {
 		t.Fatalf("gitCommand status error=%v output=%q", err, status)
 	}
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -177,7 +177,7 @@ func testCertifier(t *testing.T, workspace string) *certifier {
 		scratchRoot: workspace,
 		launchRoot:  workspace,
 		profile:     "wcl-profile",
-		baseEnv:     append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=4", "GIT_CONFIG_KEY_0=core.fileMode", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=core.symlinks", "GIT_CONFIG_VALUE_1=false", "GIT_CONFIG_KEY_2=core.trustctime", "GIT_CONFIG_VALUE_2=false", "GIT_CONFIG_KEY_3=core.checkStat", "GIT_CONFIG_VALUE_3=minimal"),
+		baseEnv:     append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=6", "GIT_CONFIG_KEY_0=core.fileMode", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=core.symlinks", "GIT_CONFIG_VALUE_1=false", "GIT_CONFIG_KEY_2=core.trustctime", "GIT_CONFIG_VALUE_2=false", "GIT_CONFIG_KEY_3=core.checkStat", "GIT_CONFIG_VALUE_3=minimal", "GIT_CONFIG_KEY_4=core.autocrlf", "GIT_CONFIG_VALUE_4=true", "GIT_CONFIG_KEY_5=core.eol", "GIT_CONFIG_VALUE_5=crlf"),
 	}
 }
 func mustNoError(t *testing.T, err error) {
@@ -190,8 +190,8 @@ func newGitRepo(t *testing.T) (string, string) {
 	mustNoError(t, err)
 	runGit(t, root, "init", "--quiet")
 	statCacheMtime := time.Unix(978310860, 0)
-	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(root, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(root, "cached"), []byte("base\n"), 0o600), os.Chtimes(filepath.Join(root, "cached"), statCacheMtime, statCacheMtime), os.Symlink("tracked", filepath.Join(root, "link"))))
-	runGit(t, root, "add", "tracked", "cached", "link")
+	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(root, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(root, "cached"), []byte("base\n"), 0o600), os.Chtimes(filepath.Join(root, "cached"), statCacheMtime, statCacheMtime), os.WriteFile(filepath.Join(root, "eol"), []byte("base\n"), 0o600), os.Symlink("tracked", filepath.Join(root, "link"))))
+	runGit(t, root, "add", "tracked", "cached", "eol", "link")
 	runGit(t, root, "-c", "user.name=Workcell Test", "-c", "user.email=workcell-test@example.invalid", "commit", "--quiet", "-m", "base")
 	return root, strings.TrimSpace(string(runGit(t, root, "rev-parse", "HEAD")))
 }
