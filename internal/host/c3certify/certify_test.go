@@ -27,6 +27,16 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	runGit(t, control, "-c", "user.name=Workcell Test", "-c", "user.email=workcell-test@example.invalid", "commit", "--quiet", "-m", "docker fixture")
 	c := testCertifier(t, workload)
 	c.options.Root, c.workcell, c.docker, c.colima = control, filepath.Join(control, "tracked"), docker, "/fake/colima"
+	infoExclude := filepath.Join(control, strings.TrimSpace(string(runGit(t, control, "rev-parse", "--git-path", "info/exclude"))))
+	runGit(t, control, "rm", "--cached", "tracked")
+	mustNoError(t, os.WriteFile(infoExclude, []byte("tracked\n"), 0o600))
+	c.options.PrecommitControlTree = strings.TrimSpace(string(runGit(t, control, "write-tree")))
+	if _, err := c.captureSnapshot(context.Background()); err == nil {
+		t.Fatal("pre-commit snapshot accepted info-excluded launcher replacement")
+	}
+	mustNoError(t, os.Remove(infoExclude))
+	runGit(t, control, "add", "tracked")
+	c.options.PrecommitControlTree = ""
 	c.baseEnv = append(c.baseEnv, "WORKCELL_STATE_ROOT="+c.stateRoot)
 	c.scratchRoot, _ = newGitRepo(t)
 	c.launchRoot, c.dockerConfig = filepath.Join(c.scratchRoot, "repo"), t.TempDir()

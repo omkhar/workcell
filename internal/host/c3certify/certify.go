@@ -218,8 +218,7 @@ func newCertifier(options Options, deps dependencies) (_ *certifier, resultErr e
 	if err := requireOwnedPathsAbsent(colimaRoot, colimaProfilePaths(colimaRoot, profile)...); err != nil {
 		return nil, err
 	}
-	statePaths := append(cachePaths, filepath.Join(stateRoot, "targets", "local_vm", "colima", profile))
-	if err := requireOwnedPathsAbsent(stateRoot, statePaths...); err != nil {
+	if err := requireOwnedPathsAbsent(stateRoot, append(cachePaths, filepath.Join(stateRoot, "targets", "local_vm", "colima", profile))...); err != nil {
 		return nil, err
 	}
 	env := []string{
@@ -726,20 +725,18 @@ func (c *certifier) dockerCommand(ctx context.Context, profile string, args ...s
 	if err := c.deps.socketExists(socket); err != nil {
 		return nil, fmt.Errorf("certify-c3: Workcell-owned Colima socket is unavailable: %s", socket)
 	}
-	env := append([]string{}, c.baseEnv...)
-	env = append(env, "DOCKER_CONFIG="+c.dockerConfig, "DOCKER_HOST=unix://"+socket)
+	env := append(append([]string{}, c.baseEnv...), "DOCKER_CONFIG="+c.dockerConfig, "DOCKER_HOST=unix://"+socket)
 	return c.command(ctx, env, c.docker, args...)
 }
 func (c *certifier) colimaCommand(ctx context.Context, args ...string) ([]byte, error) {
-	env := append([]string{}, c.baseEnv...)
-	env = append(env, "COLIMA_HOME="+c.colimaRoot)
+	env := append(append([]string{}, c.baseEnv...), "COLIMA_HOME="+c.colimaRoot)
 	return c.command(ctx, env, c.colima, args...)
 }
 func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte, error) {
 	return c.command(ctx, c.baseEnv, "/bin/bash", append([]string{c.workcell}, args...)...)
 }
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	safeArgs := []string{"--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.fileMode=true", "-c", "core.symlinks=true", "-c", "core.trustctime=true", "-c", "core.checkStat=default", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "diff.external=", "-c", "color.ui=false"}
+	safeArgs := []string{"--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=/dev/null", "-c", "core.excludesFile=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.fileMode=true", "-c", "core.symlinks=true", "-c", "core.trustctime=true", "-c", "core.checkStat=default", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "diff.external=", "-c", "color.ui=false"}
 	if len(args) == 0 || args[0] != "clone" {
 		safeArgs = append(safeArgs, "--work-tree="+dir)
 	}
@@ -783,8 +780,7 @@ func (c *certifier) verifyTrackedWorktree(ctx context.Context, safeArgs []string
 	if err != nil {
 		return errors.New("certify-c3: cannot materialize indexed tree")
 	}
-	env := append([]string{}, c.baseEnv...)
-	env = append(env, "GIT_INDEX_FILE="+filepath.Join(indexDir, "index"))
+	env := append(append([]string{}, c.baseEnv...), "GIT_INDEX_FILE="+filepath.Join(indexDir, "index"))
 	if _, err := c.command(ctx, env, c.git, append(safeArgs, "read-tree", strings.TrimSpace(string(tree)))...); err != nil {
 		return errors.New("certify-c3: cannot build independent index")
 	}
@@ -827,7 +823,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 		if _, err := c.gitCommand(ctx, c.options.Root, "diff-files", "--quiet", "--ignore-submodules=none", "--"); err != nil {
 			return snapshot{}, errors.New("certify-c3: pre-commit control snapshot has tracked worktree changes")
 		}
-		untracked, err := c.gitCommand(ctx, c.options.Root, "ls-files", "--others", "--exclude-standard", "--directory")
+		untracked, err := c.gitCommand(ctx, c.options.Root, "ls-files", "--others")
 		if err != nil || len(bytes.TrimSpace(untracked)) != 0 {
 			return snapshot{}, errors.New("certify-c3: pre-commit control snapshot has untracked residue")
 		}
@@ -856,10 +852,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 }
 func (c *certifier) gitText(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := c.gitCommand(ctx, dir, args...)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(string(out)), err
 }
 func parseStartSessionID(output []byte) (string, error) {
 	var id string
@@ -888,10 +881,7 @@ func resolveExecutable(candidates ...string) (string, error) {
 }
 func fileHash(path string) (string, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+	return fmt.Sprintf("%x", sha256.Sum256(data)), err
 }
 func runCommand(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	return runCommandWithDelay(ctx, env, 40*time.Second, name, args...)
