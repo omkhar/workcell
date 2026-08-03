@@ -27,6 +27,7 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	runGit(t, control, "commit", "--quiet", "-m", "docker fixture")
 	c := testCertifier(t, workload)
 	c.options.Root, c.workcell, c.docker, c.colima = control, filepath.Join(control, "tracked"), docker, "/fake/colima"
+	c.baseEnv = append(c.baseEnv, "WORKCELL_STATE_ROOT="+c.stateRoot)
 	c.scratchRoot, _ = newGitRepo(t)
 	c.launchRoot, c.dockerConfig = filepath.Join(c.scratchRoot, "repo"), t.TempDir()
 	ownedPaths := append(colimaProfilePaths(c.colimaRoot, c.profile), filepath.Join(c.stateRoot, "targets", "local_vm", "colima", c.profile))
@@ -48,7 +49,11 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 		if name == c.git {
 			return runCommand(ctx, env, name, args...)
 		}
-		if name == c.workcell {
+		if name == "/bin/bash" && args[0] == c.workcell {
+			args = args[1:]
+			if !strings.Contains(strings.Join(env, "\n"), "WORKCELL_STATE_ROOT="+c.stateRoot) {
+				return nil, errors.New("state-root override was not forwarded")
+			}
 			switch args[1] {
 			case "start":
 				id := fmt.Sprintf("session-%d", len(records)+1)
@@ -121,16 +126,27 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	}
 }
 
-func TestGitCommandDisablesRepositoryExecutionHooks(t *testing.T) {
+func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	workspace, _ := newGitRepo(t)
-	marker, fsmonitor := filepath.Join(t.TempDir(), "fsmonitor-ran"), filepath.Join(t.TempDir(), "fsmonitor.sh")
-	mustNoError(t, os.WriteFile(fsmonitor, []byte("#!/bin/sh\ntouch \""+marker+"\"\n"), 0o700))
-	runGit(t, workspace, "config", "core.fsmonitor", fsmonitor)
+	marker, hook := filepath.Join(t.TempDir(), "hook-ran"), filepath.Join(t.TempDir(), "hook.sh")
+	mustNoError(t, os.WriteFile(hook, []byte("#!/bin/sh\ntouch \""+marker+"\"\ncat\n"), 0o700))
+	mustNoError(t, os.WriteFile(filepath.Join(workspace, ".gitattributes"), []byte("tracked filter=host\n"), 0o600))
+	runGit(t, workspace, "add", ".gitattributes")
+	runGit(t, workspace, "commit", "--quiet", "-m", "attributes")
+	runGit(t, workspace, "config", "core.fsmonitor", hook)
+	runGit(t, workspace, "config", "filter.host.clean", hook)
+	runGit(t, workspace, "config", "filter.host.required", "true")
+	mustNoError(t, os.WriteFile(filepath.Join(workspace, "tracked"), []byte("changed\n"), 0o600))
+	runGit(t, workspace, "status", "--porcelain=v1")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("malicious Git fixture did not execute under raw Git: %v", err)
+	}
+	mustNoError(t, os.Remove(marker))
 	if _, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1"); err != nil {
 		t.Fatalf("gitCommand status error = %v", err)
 	}
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("repository-local fsmonitor executed on the host: %v", err)
+		t.Fatalf("repository-local Git hook executed on the host: %v", err)
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 const keepalive = `trap 'exit 0' TERM INT; while :; do sleep 1; done`
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var gitFilterSetting = regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`)
 
 type Options struct {
 	Root, Workspace              string
@@ -33,7 +34,6 @@ type Options struct {
 	PollAttempts                 int
 	PollInterval, CommandTimeout time.Duration
 }
-
 type dependencies struct {
 	command              func(context.Context, []string, string, ...string) ([]byte, error)
 	now                  func() time.Time
@@ -41,18 +41,15 @@ type dependencies struct {
 	socketExists         func(string) error
 	reapProfileProcesses func(context.Context, string) error
 }
-
 type evidence struct {
 	record     sessions.SessionRecord
 	recordPath string
 }
-
 type snapshot struct {
 	controlCommit, controlTree string
 	launcherHash, dockerHash   string
 	workloadCommit             string
 }
-
 type certifier struct {
 	options                                        Options
 	deps                                           dependencies
@@ -323,7 +320,6 @@ func newCertifier(options Options, deps dependencies) (*certifier, error) {
 		launchRoot: filepath.Join(scratchRoot, "repo"), dockerConfig: dockerConfig, profile: profile, baseEnv: env,
 	}, nil
 }
-
 func (c *certifier) prepareLaunchWorkspace(ctx context.Context, commit string) error {
 	if _, err := c.gitCommand(ctx, c.options.Workspace, "clone", "--quiet", "--no-hardlinks",
 		c.options.Workspace, c.launchRoot); err != nil {
@@ -334,7 +330,6 @@ func (c *certifier) prepareLaunchWorkspace(ctx context.Context, commit string) e
 	}
 	return nil
 }
-
 func (c *certifier) adoptOwnedRecords(ctx context.Context) error {
 	locations, err := sessions.ListSessionRecordLocationsInRoots(
 		[]string{c.stateRoot}, sessions.SessionListOptions{Workspace: c.launchRoot})
@@ -369,7 +364,6 @@ func (c *certifier) findOwnedRecord(ctx context.Context, id string) (sessions.Se
 	}
 	return record, path, nil
 }
-
 func (c *certifier) start(ctx context.Context) (*evidence, error) {
 	ack := c.deps.now().UTC().Format("2006-01-02")
 	args := []string{
@@ -401,7 +395,6 @@ func (c *certifier) start(ctx context.Context) (*evidence, error) {
 	}
 	return item, nil
 }
-
 func (c *certifier) waitRunning(ctx context.Context, id string) (sessions.SessionRecord, string, error) {
 	for attempt := 0; attempt < c.options.PollAttempts; attempt++ {
 		record, path, err := c.findOwnedRecord(ctx, id)
@@ -414,7 +407,6 @@ func (c *certifier) waitRunning(ctx context.Context, id string) (sessions.Sessio
 	}
 	return sessions.SessionRecord{}, "", fmt.Errorf("certify-c3: session did not become live: %s", id)
 }
-
 func (c *certifier) validatePair(ctx context.Context, a, b sessions.SessionRecord, workloadCommit string) error {
 	for _, record := range []sessions.SessionRecord{a, b} {
 		if !safeID.MatchString(record.SessionID) {
@@ -452,7 +444,6 @@ func (c *certifier) validatePair(ctx context.Context, a, b sessions.SessionRecor
 	}
 	return nil
 }
-
 func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.SessionRecord, commit string) error {
 	expected, err := c.expectedWorktree(ctx, record.SessionID)
 	if err != nil {
@@ -483,7 +474,6 @@ func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.Ses
 	}
 	return nil
 }
-
 func (c *certifier) proveMarker(
 	ctx context.Context,
 	present, absent sessions.SessionRecord,
@@ -503,7 +493,6 @@ func (c *certifier) proveMarker(
 	}
 	return nil
 }
-
 func proveHostMarkerPair(presentWorktree, absentWorktree, marker, content string) error {
 	presentMarker := filepath.Join(presentWorktree, marker)
 	info, err := os.Lstat(presentMarker)
@@ -519,7 +508,6 @@ func proveHostMarkerPair(presentWorktree, absentWorktree, marker, content string
 	}
 	return nil
 }
-
 func (c *certifier) requireRunning(ctx context.Context, record sessions.SessionRecord) error {
 	out, err := c.dockerCommand(ctx, record.Profile, "inspect", "-f", "{{.State.Running}}", record.ContainerName)
 	if err != nil || strings.TrimSpace(string(out)) != "true" {
@@ -527,7 +515,6 @@ func (c *certifier) requireRunning(ctx context.Context, record sessions.SessionR
 	}
 	return nil
 }
-
 func (c *certifier) waitStopped(ctx context.Context, record sessions.SessionRecord) error {
 	for attempt := 0; attempt < c.options.PollAttempts; attempt++ {
 		out, err := c.dockerCommand(ctx, record.Profile, "inspect", "-f", "{{.State.Running}}", record.ContainerName)
@@ -543,7 +530,6 @@ func (c *certifier) waitStopped(ctx context.Context, record sessions.SessionReco
 	}
 	return fmt.Errorf("certify-c3: session container did not stop independently: %s", record.ContainerName)
 }
-
 func (c *certifier) cleanup(ctx context.Context) error {
 	if c.cleanupTried {
 		return nil
@@ -639,13 +625,11 @@ func (c *certifier) cleanup(ctx context.Context) error {
 	}
 	return nil
 }
-
 func (c *certifier) cleanupBounded() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	return c.cleanup(ctx)
 }
-
 func (c *certifier) waitTerminal(ctx context.Context, item *evidence) error {
 	for attempt := 0; attempt < c.options.PollAttempts; attempt++ {
 		record, path, err := c.findOwnedRecord(ctx, item.record.SessionID)
@@ -664,7 +648,6 @@ func (c *certifier) waitTerminal(ctx context.Context, item *evidence) error {
 	}
 	return fmt.Errorf("certify-c3: session did not reach a terminal state: %s", item.record.SessionID)
 }
-
 func (c *certifier) expectedWorktree(ctx context.Context, id string) (string, error) {
 	if !safeID.MatchString(id) {
 		return "", fmt.Errorf("certify-c3: invalid session id: %q", id)
@@ -686,7 +669,6 @@ func (c *certifier) expectedWorktree(ctx context.Context, id string) (string, er
 	}
 	return filepath.Join(gitDir, "workcell-sessions", id, "repo"), nil
 }
-
 func (c *certifier) validateCleanupRecord(ctx context.Context, record sessions.SessionRecord) error {
 	if !safeID.MatchString(record.SessionID) || !safeID.MatchString(record.Profile) ||
 		sessions.ProveContainerAbsentForDelete(record.ContainerName, "") != nil ||
@@ -707,7 +689,6 @@ func (c *certifier) validateCleanupRecord(ctx context.Context, record sessions.S
 	}
 	return nil
 }
-
 func (c *certifier) proveRecordAbsent(item *evidence) error {
 	if item.recordPath == "" {
 		return fmt.Errorf("certify-c3: durable record path was not captured: %s", item.record.SessionID)
@@ -725,7 +706,6 @@ func (c *certifier) proveRecordAbsent(item *evidence) error {
 	}
 	return nil
 }
-
 func requirePlainDirectoryChain(root, target string) error {
 	relative, err := filepath.Rel(root, target)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -749,7 +729,6 @@ func requirePlainDirectoryChain(root, target string) error {
 	}
 	return nil
 }
-
 func removeOwnedPath(root, path string) error {
 	if err := requirePlainDirectoryChain(root, filepath.Dir(path)); err != nil {
 		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
@@ -762,7 +741,6 @@ func removeOwnedPath(root, path string) error {
 	}
 	return nil
 }
-
 func colimaProfilePaths(root, profile string) []string {
 	return []string{
 		filepath.Join(root, profile),
@@ -771,7 +749,6 @@ func colimaProfilePaths(root, profile string) []string {
 		filepath.Join(root, "_store", "colima-"+profile+".json"),
 	}
 }
-
 func runtimeImageCachePaths(stateRoot, profile string) ([]string, error) {
 	if !safeID.MatchString(profile) {
 		return nil, fmt.Errorf("invalid runtime image cache profile: %q", profile)
@@ -798,7 +775,6 @@ func runtimeImageCachePaths(stateRoot, profile string) ([]string, error) {
 	}
 	return paths, nil
 }
-
 func (c *certifier) proveContainerAbsent(ctx context.Context, profile, container string) error {
 	output, err := c.dockerCommand(ctx, profile, "ps", "-a", "--format", "{{.Names}}")
 	if err != nil {
@@ -806,7 +782,6 @@ func (c *certifier) proveContainerAbsent(ctx context.Context, profile, container
 	}
 	return sessions.ProveContainerAbsentForDelete(container, string(output))
 }
-
 func (c *certifier) dockerCommand(ctx context.Context, profile string, args ...string) ([]byte, error) {
 	if !safeID.MatchString(profile) {
 		return nil, fmt.Errorf("certify-c3: invalid Colima profile: %q", profile)
@@ -822,29 +797,41 @@ func (c *certifier) dockerCommand(ctx context.Context, profile string, args ...s
 	env = append(env, "DOCKER_CONFIG="+c.dockerConfig, "DOCKER_HOST=unix://"+socket)
 	return c.command(ctx, env, c.docker, args...)
 }
-
 func (c *certifier) colimaCommand(ctx context.Context, args ...string) ([]byte, error) {
 	env := append([]string{}, c.baseEnv...)
 	env = append(env, "COLIMA_HOME="+c.colimaRoot)
 	return c.command(ctx, env, c.colima, args...)
 }
-
 func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte, error) {
-	return c.command(ctx, c.baseEnv, c.workcell, args...)
+	return c.command(ctx, c.baseEnv, "/bin/bash", append([]string{c.workcell}, args...)...)
 }
-
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
 		"-c", "diff.external=", "-c", "color.ui=false", "-C", dir}
+	settings, err := c.command(ctx, c.baseEnv, c.git,
+		append(safeArgs, "config", "--null", "--name-only", "--includes", "--list")...)
+	if err != nil {
+		return nil, fmt.Errorf("certify-c3: inspect repository Git filters: %w", err)
+	}
+	for _, setting := range bytes.Split(settings, []byte{0}) {
+		name := string(setting)
+		match := gitFilterSetting.FindStringSubmatch(strings.ToLower(name))
+		if match == nil {
+			continue
+		}
+		value := ""
+		if match[1] == "required" {
+			value = "false"
+		}
+		safeArgs = append(safeArgs, "-c", name+"="+value)
+	}
 	return c.command(ctx, c.baseEnv, c.git, append(safeArgs, args...)...)
 }
-
 func (c *certifier) command(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	callCtx, cancel := context.WithTimeout(ctx, c.options.CommandTimeout)
 	defer cancel()
 	return c.deps.command(callCtx, env, name, args...)
 }
-
 func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 	controlCommit := "PENDING"
 	controlTree, err := c.gitText(ctx, c.options.Root, "write-tree")
@@ -901,7 +888,6 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 		workloadCommit: workloadCommit,
 	}, nil
 }
-
 func (c *certifier) gitText(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := c.gitCommand(ctx, dir, args...)
 	if err != nil {
@@ -909,7 +895,6 @@ func (c *certifier) gitText(ctx context.Context, dir string, args ...string) (st
 	}
 	return strings.TrimSpace(string(out)), nil
 }
-
 func parseStartSessionID(output []byte) (string, error) {
 	var id string
 	for _, line := range strings.Split(string(output), "\n") {
@@ -927,7 +912,6 @@ func parseStartSessionID(output []byte) (string, error) {
 	}
 	return id, nil
 }
-
 func resolveExecutable(candidates ...string) (string, error) {
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && info.Mode()&0o111 != 0 {
