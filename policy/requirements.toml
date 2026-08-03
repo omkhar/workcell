@@ -285,6 +285,19 @@ docs = [
   "docs/ci-threat-model.md",
 ]
 
+[functional.FR-015]
+title = "Native parallel strict sessions"
+summary = "Workcell supports overlapping same-repository strict sessions in distinct containers, isolated worktrees, and branches, with runtime cross-session write-invisibility, independent stop behavior, and bounded certifier cleanup."
+evidence = [
+  "scripts/certify-c3-parallel-sessions.sh",
+  "internal/host/c3certify/certify_test.go",
+  "tests/scenarios/shared/test-session-commands.sh",
+]
+docs = [
+  "docs/safe-path-expectations.md",
+  "docs/benchmark-evidence/c3-two-container-isolation-2026-07-15.md",
+]
+
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."

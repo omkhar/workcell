@@ -534,8 +534,11 @@ security-boundary product to prove.
 - **C2 (post-1.0, M):** session start latency program with cached images, an
   optional kept-warm lane, and a certification design that does not broaden the
   launcher with destructive controls; generic output remains benchmark-only
-- **C3 (next, L):** native parallel sessions — one agent per worktree,
-  branch, and isolated runtime, with session-record linkage
+- **C3 (implemented; locally certified 2026-08-03, L):** native parallel
+  sessions — one agent per worktree, branch, and isolated runtime, with
+  session-record linkage. The exact-tree pre-merge certification is bound to
+  signed activation commit `a26b750f`; shipped status depends on that commit
+  being reachable from `main`
 - **C4 (later, L):** container tooling inside the boundary as an explicit
   labeled lane that never weakens the outer boundary
 - **C5 (now, S):** syscall-shim performance baselines for the hooked

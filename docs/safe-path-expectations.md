@@ -125,20 +125,22 @@ always resolve to distinct clone paths and distinct branches. The live container
 name is NOT session-id-derived: it is assigned a random suffix at launch
 (`workcell-<agent>-<mode>-repo-<random>`), which makes concurrent containers
 distinct without depending on the session id.
-Proven vs deferred, kept honest:
+Evidence boundaries:
 
-- CI-PROVEN (this PR, host-side, no Colima): for two distinct session ids on the
+- CI-PROVEN (host-side, no Colima): for two distinct session ids on the
   same repo, the derivations produce distinct isolated clone paths and distinct
   branches, and clone-level write-invisibility holds (a write in clone A does not
   appear in clone B). The session-commands scenario runs the real clone/branch
   derivations directly and asserts both, needing only git—no live runtime.
-- LOCAL-OPERATOR-CERTIFICATION (deferred, needs Apple Silicon + Colima): the LIVE
-  two-container concurrent launch plus runtime cross-container non-interference (a
-  write inside session A's running container is invisible inside session B's).
-  This runtime container isolation is the boundary Workcell relies on generally,
-  but this PR's automated evidence covers only the clone/branch layer; the live
-  layer is certified locally because hosted CI has no Colima VM to launch
-  containers in.
+- LOCAL-OPERATOR-CERTIFIED (2026-08-03, Apple Silicon + Colima): the
+  maintainer-only `scripts/certify-c3-parallel-sessions.sh` workflow proved a
+  live overlapping two-container launch, symmetric runtime cross-container
+  write-invisibility, independent stop behavior, and bounded cleanup. The
+  exact-tree pre-merge certification is bound to signed activation commit
+  `a26b750f`; shipped status depends on that commit being reachable from
+  `main`. See
+  [`benchmark-evidence/c3-two-container-isolation-2026-07-15.md`](benchmark-evidence/c3-two-container-isolation-2026-07-15.md).
+  Hosted CI still cannot repeat the live Colima layer.
 
 The shared VM/kernel is not proven distinct here; pass a distinct
 `--colima-profile` to place a session on its own VM.

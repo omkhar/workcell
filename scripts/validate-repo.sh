@@ -156,6 +156,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-repo-readiness.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/check-public-contract.sh"
+  "${ROOT_DIR}/scripts/certify-c3-parallel-sessions.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/ci-plan.sh"
   "${ROOT_DIR}/scripts/bench/run-exec-guard-bench.sh"
