@@ -24,6 +24,7 @@ type colimaProcessReaperDependencies struct {
 	signal    func(int, syscall.Signal) error
 	sleep     func(context.Context, time.Duration) error
 	termDelay time.Duration
+	termPolls int
 	killDelay time.Duration
 }
 
@@ -43,6 +44,7 @@ func ReapColimaProfileProcesses(ctx context.Context, profile string) error {
 		signal:    syscall.Kill,
 		sleep:     sleepWithContext,
 		termDelay: time.Second,
+		termPolls: 5,
 		killDelay: 100 * time.Millisecond,
 	}
 	return reapColimaProfileProcesses(ctx, profile, deps)
@@ -62,15 +64,15 @@ func reapColimaProfileProcesses(
 			return err
 		}
 	}
-	if len(owned) > 0 {
+	survivors := owned
+	for poll := 0; poll < deps.termPolls && len(survivors) > 0; poll++ {
 		if err := deps.sleep(ctx, deps.termDelay); err != nil {
 			return err
 		}
-	}
-
-	survivors, err := currentProcessIdentities(owned, deps)
-	if err != nil {
-		return err
+		survivors, err = currentProcessIdentities(survivors, deps)
+		if err != nil {
+			return err
+		}
 	}
 	fresh, err := captureColimaProcessIdentities(ctx, profile, deps)
 	if err != nil {

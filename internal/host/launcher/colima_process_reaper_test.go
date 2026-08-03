@@ -72,6 +72,7 @@ func (f *reaperFake) dependencies() colimaProcessReaperDependencies {
 		},
 		sleep:     func(context.Context, time.Duration) error { return nil },
 		termDelay: time.Millisecond,
+		termPolls: 1,
 		killDelay: time.Millisecond,
 	}
 }
@@ -125,6 +126,28 @@ func TestReapColimaProfileProcessesSignalsBoundIdentity(t *testing.T) {
 				t.Fatalf("signals = %#v, want %#v", fake.signals, test.wantSignals)
 			}
 		})
+	}
+}
+
+func TestReapColimaProfileProcessesPreservesGracefulShutdownWindow(t *testing.T) {
+	fake := newReaperFake()
+	fake.killRemoves = true
+	deps := fake.dependencies()
+	deps.termDelay = time.Second
+	deps.termPolls = 5
+	var sleeps []time.Duration
+	deps.sleep = func(_ context.Context, delay time.Duration) error {
+		sleeps = append(sleeps, delay)
+		return nil
+	}
+	if err := reapColimaProfileProcesses(context.Background(), fake.profile, deps); err != nil {
+		t.Fatalf("reap error = %v", err)
+	}
+	want := []time.Duration{
+		time.Second, time.Second, time.Second, time.Second, time.Second, deps.killDelay,
+	}
+	if !slices.Equal(sleeps, want) {
+		t.Fatalf("sleep delays = %v, want %v", sleeps, want)
 	}
 }
 

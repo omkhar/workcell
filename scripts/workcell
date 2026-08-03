@@ -806,13 +806,13 @@ maybe_reap_stale_profile_processes() {
       return 0
       ;;
     Stopped)
-      reap_stale_profile_processes "${profile}"
+      reap_stale_profile_processes "${profile}" || return $?
       return 0
       ;;
   esac
 
   if ((status_rc == 3)) && profile_process_pids "${profile}" | grep -q .; then
-    reap_stale_profile_processes "${profile}"
+    reap_stale_profile_processes "${profile}" || return $?
   fi
 }
 
@@ -823,10 +823,10 @@ refresh_managed_profile() {
   PROFILE_VALIDATED=0
   remember_profile_runtime_image_for_refresh "${COLIMA_PROFILE}"
   stash_profile_audit_log "${COLIMA_PROFILE}"
-  reap_stale_profile_processes "${COLIMA_PROFILE}"
+  reap_stale_profile_processes "${COLIMA_PROFILE}" || return $?
   run_host_colima_with_timeout "${WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS:-30}" \
     delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
-  reap_stale_profile_processes "${COLIMA_PROFILE}"
+  reap_stale_profile_processes "${COLIMA_PROFILE}" || return $?
   remove_profile_state_dirs "${COLIMA_PROFILE}"
   if profile_process_pids "${COLIMA_PROFILE}" | grep -q .; then
     echo "Failed to fully tear down managed Colima profile ${COLIMA_PROFILE} during refresh." >&2
@@ -5918,7 +5918,7 @@ delete_unmanaged_profile() {
 
   HOST_COLIMA_BIN="${HOST_COLIMA_BIN:-$(resolve_host_tool colima /opt/homebrew/bin/colima /usr/local/bin/colima)}"
   export COLIMA_HOME="${COLIMA_STATE_ROOT}"
-  maybe_reap_stale_profile_processes "${profile}"
+  maybe_reap_stale_profile_processes "${profile}" || return $?
   run_host_colima delete --profile "${profile}" --force >/dev/null 2>&1 || true
   remove_profile_state_dirs "${profile}"
 
@@ -6989,7 +6989,7 @@ start_managed_profile() {
   prepare_colima_staging_cache_roots || return $?
 
   while :; do
-    maybe_reap_stale_profile_processes "${COLIMA_PROFILE}"
+    maybe_reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
     if run_command_with_debug_log colima-start \
       run_host_colima start \
       --profile "${COLIMA_PROFILE}" \
@@ -7017,7 +7017,7 @@ start_managed_profile() {
     fi
     if [[ "${start_status}" -ne 124 ]] && [[ "${attempt}" -lt "${max_attempts}" ]] &&
       colima_start_hit_recoverable_docker_boot_race; then
-      reap_stale_profile_processes "${COLIMA_PROFILE}"
+      reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
       refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima failed during Docker startup." || return 2
       echo "Retrying managed Colima profile ${COLIMA_PROFILE} after a Docker startup race (attempt $((attempt + 1))/${max_attempts})." >&2
       attempt=$((attempt + 1))
@@ -7026,7 +7026,7 @@ start_managed_profile() {
     if [[ "${start_status}" -ne 124 ]]; then
       return "${start_status}"
     fi
-    reap_stale_profile_processes "${COLIMA_PROFILE}"
+    reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
     refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima start timed out." || return 2
     echo "Retrying managed Colima profile ${COLIMA_PROFILE} after a startup timeout (attempt $((attempt + 1))/${max_attempts})." >&2
     attempt=$((attempt + 1))
