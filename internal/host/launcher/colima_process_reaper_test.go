@@ -7,12 +7,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestProcessGenerationIsStableForCurrentProcess(t *testing.T) {
+	first, err := processGeneration(os.Getpid())
+	if err != nil {
+		t.Fatalf("first process generation: %v", err)
+	}
+	second, err := processGeneration(os.Getpid())
+	if err != nil {
+		t.Fatalf("second process generation: %v", err)
+	}
+	if first == "" || first != second {
+		t.Fatalf("process generations = %q, %q, want matching non-empty values", first, second)
+	}
+}
+
+func TestProcessGenerationReportsMissingProcess(t *testing.T) {
+	if _, err := processGeneration(1 << 30); !IsProcessGone(err) {
+		t.Fatalf("missing process generation error = %v, want IsProcessGone", err)
+	}
+}
 
 type reaperSignal struct {
 	pid    int

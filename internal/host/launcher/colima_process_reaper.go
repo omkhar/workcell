@@ -44,7 +44,7 @@ func ReapColimaProfileProcesses(ctx context.Context, profile string) error {
 			}
 			return output, nil
 		},
-		started:   ProcessStartTime,
+		started:   processGeneration,
 		state:     processState,
 		signal:    syscall.Kill,
 		sleep:     sleepWithContext,
