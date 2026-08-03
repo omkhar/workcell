@@ -136,14 +136,19 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	runGit(t, workspace, "config", "core.fsmonitor", hook)
 	runGit(t, workspace, "config", "filter.host.clean", hook)
 	runGit(t, workspace, "config", "filter.host.required", "true")
+	runGit(t, workspace, "config", "status.showUntrackedFiles", "no")
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, "tracked"), []byte("changed\n"), 0o600))
 	runGit(t, workspace, "status", "--porcelain=v1")
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("malicious Git fixture did not execute under raw Git: %v", err)
 	}
+	mustNoError(t, os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600))
+	mustNoError(t, os.WriteFile(filepath.Join(workspace, "untracked"), []byte("hidden\n"), 0o600))
 	mustNoError(t, os.Remove(marker))
-	if _, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1"); err != nil {
-		t.Fatalf("gitCommand status error = %v", err)
+	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all")
+	mustNoError(t, err)
+	if !strings.Contains(string(status), "?? untracked") {
+		t.Fatalf("gitCommand hid untracked workload file: %q", status)
 	}
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("repository-local Git hook executed on the host: %v", err)

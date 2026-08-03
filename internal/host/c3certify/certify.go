@@ -29,10 +29,9 @@ var safeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var gitFilterSetting = regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`)
 
 type Options struct {
-	Root, Workspace              string
-	PrecommitControlTree         string
-	PollAttempts                 int
-	PollInterval, CommandTimeout time.Duration
+	Root, Workspace, PrecommitControlTree string
+	PollAttempts                          int
+	PollInterval, CommandTimeout          time.Duration
 }
 type dependencies struct {
 	command              func(context.Context, []string, string, ...string) ([]byte, error)
@@ -46,9 +45,7 @@ type evidence struct {
 	recordPath string
 }
 type snapshot struct {
-	controlCommit, controlTree string
-	launcherHash, dockerHash   string
-	workloadCommit             string
+	controlCommit, controlTree, launcherHash, dockerHash, workloadCommit string
 }
 type certifier struct {
 	options                                        Options
@@ -468,7 +465,7 @@ func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.Ses
 	if err != nil || strings.TrimSpace(string(head)) != commit {
 		return fmt.Errorf("certify-c3: isolated worktree does not match workload commit: %s", record.SessionID)
 	}
-	status, err := c.gitCommand(ctx, expected, "status", "--porcelain=v1")
+	status, err := c.gitCommand(ctx, expected, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil || len(bytes.TrimSpace(status)) != 0 {
 		return fmt.Errorf("certify-c3: isolated worktree is not clean: %s", record.SessionID)
 	}
@@ -806,8 +803,7 @@ func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte
 	return c.command(ctx, c.baseEnv, "/bin/bash", append([]string{c.workcell}, args...)...)
 }
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-		"-c", "diff.external=", "-c", "color.ui=false", "-C", dir}
+	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "color.ui=false", "-C", dir}
 	settings, err := c.command(ctx, c.baseEnv, c.git,
 		append(safeArgs, "config", "--null", "--name-only", "--includes", "--list")...)
 	if err != nil {
@@ -839,7 +835,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 		return snapshot{}, err
 	}
 	if c.options.PrecommitControlTree == "" {
-		status, err := c.gitCommand(ctx, c.options.Root, "status", "--porcelain=v1")
+		status, err := c.gitCommand(ctx, c.options.Root, "status", "--porcelain=v1", "--untracked-files=all")
 		if err != nil || len(bytes.TrimSpace(status)) != 0 {
 			return snapshot{}, errors.New("certify-c3: control-plane tree must be clean")
 		}
@@ -866,7 +862,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 			return snapshot{}, errors.New("certify-c3: pre-commit control snapshot has untracked residue")
 		}
 	}
-	workloadStatus, err := c.gitCommand(ctx, c.options.Workspace, "status", "--porcelain=v1")
+	workloadStatus, err := c.gitCommand(ctx, c.options.Workspace, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil || len(bytes.TrimSpace(workloadStatus)) != 0 {
 		return snapshot{}, errors.New("certify-c3: workload tree must be clean")
 	}
@@ -965,7 +961,6 @@ func runCommandWithDelay(ctx context.Context, env []string, waitDelay time.Durat
 	}
 	return output, nil
 }
-
 func sleepContext(ctx context.Context, duration time.Duration) error {
 	select {
 	case <-ctx.Done():
