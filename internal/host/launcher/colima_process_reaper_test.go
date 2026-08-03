@@ -23,9 +23,11 @@ type reaperFake struct {
 	profile     string
 	processes   map[int]string
 	started     map[int]string
+	states      map[int]string
 	signals     []reaperSignal
 	listErr     error
 	startErr    error
+	stateErr    error
 	signalErr   error
 	termRemoves bool
 	killRemoves bool
@@ -58,6 +60,16 @@ func (f *reaperFake) dependencies() colimaProcessReaperDependencies {
 			}
 			return started, nil
 		},
+		state: func(pid int) (string, error) {
+			if f.stateErr != nil {
+				return "", f.stateErr
+			}
+			state, exists := f.states[pid]
+			if !exists {
+				return "", processGoneErr{pid: pid}
+			}
+			return state, nil
+		},
 		signal: func(pid int, signal syscall.Signal) error {
 			f.signals = append(f.signals, reaperSignal{pid: pid, signal: signal})
 			if f.signalErr != nil {
@@ -67,6 +79,7 @@ func (f *reaperFake) dependencies() colimaProcessReaperDependencies {
 				signal == syscall.SIGKILL && f.killRemoves {
 				delete(f.processes, pid)
 				delete(f.started, pid)
+				delete(f.states, pid)
 			}
 			return nil
 		},
@@ -74,6 +87,7 @@ func (f *reaperFake) dependencies() colimaProcessReaperDependencies {
 		termDelay: time.Millisecond,
 		termPolls: 1,
 		killDelay: time.Millisecond,
+		killPolls: 1,
 	}
 }
 
@@ -83,6 +97,7 @@ func newReaperFake() *reaperFake {
 		profile:   profile,
 		processes: map[int]string{42: "/usr/local/bin/limactl hostagent /tmp/colima-" + profile + "/ha.pid"},
 		started:   map[int]string{42: "started-42"},
+		states:    map[int]string{42: "R"},
 	}
 }
 
@@ -131,23 +146,72 @@ func TestReapColimaProfileProcessesSignalsBoundIdentity(t *testing.T) {
 
 func TestReapColimaProfileProcessesPreservesGracefulShutdownWindow(t *testing.T) {
 	fake := newReaperFake()
-	fake.killRemoves = true
 	deps := fake.dependencies()
 	deps.termDelay = time.Second
 	deps.termPolls = 5
+	deps.killPolls = 10
 	var sleeps []time.Duration
 	deps.sleep = func(_ context.Context, delay time.Duration) error {
 		sleeps = append(sleeps, delay)
+		if len(sleeps) == deps.termPolls+deps.killPolls {
+			delete(fake.processes, 42)
+			delete(fake.started, 42)
+			delete(fake.states, 42)
+		}
 		return nil
 	}
 	if err := reapColimaProfileProcesses(context.Background(), fake.profile, deps); err != nil {
 		t.Fatalf("reap error = %v", err)
 	}
-	want := []time.Duration{
-		time.Second, time.Second, time.Second, time.Second, time.Second, deps.killDelay,
+	want := []time.Duration{time.Second, time.Second, time.Second, time.Second, time.Second}
+	for range deps.killPolls {
+		want = append(want, deps.killDelay)
 	}
 	if !slices.Equal(sleeps, want) {
 		t.Fatalf("sleep delays = %v, want %v", sleeps, want)
+	}
+}
+
+func TestReapColimaProfileProcessesPollsForKillCompletion(t *testing.T) {
+	fake := newReaperFake()
+	deps := fake.dependencies()
+	deps.killPolls = 3
+	killPoll := 0
+	deps.sleep = func(_ context.Context, delay time.Duration) error {
+		if delay == deps.killDelay {
+			killPoll++
+			if killPoll == 2 {
+				delete(fake.processes, 42)
+				delete(fake.started, 42)
+				delete(fake.states, 42)
+			}
+		}
+		return nil
+	}
+	if err := reapColimaProfileProcesses(context.Background(), fake.profile, deps); err != nil {
+		t.Fatalf("reap error = %v", err)
+	}
+	if killPoll != 2 {
+		t.Fatalf("kill polls = %d, want 2", killPoll)
+	}
+}
+
+func TestReapColimaProfileProcessesTreatsZombieAsTerminated(t *testing.T) {
+	fake := newReaperFake()
+	deps := fake.dependencies()
+	deps.signal = func(pid int, signal syscall.Signal) error {
+		fake.signals = append(fake.signals, reaperSignal{pid: pid, signal: signal})
+		if signal == syscall.SIGKILL {
+			fake.states[pid] = "Z+"
+		}
+		return nil
+	}
+	if err := reapColimaProfileProcesses(context.Background(), fake.profile, deps); err != nil {
+		t.Fatalf("reap error = %v", err)
+	}
+	want := []reaperSignal{{pid: 42, signal: syscall.SIGTERM}, {pid: 42, signal: syscall.SIGKILL}}
+	if !slices.Equal(fake.signals, want) {
+		t.Fatalf("signals = %#v, want %#v", fake.signals, want)
 	}
 }
 
@@ -166,6 +230,12 @@ func TestReapColimaProfileProcessesFailsBeforeSignaling(t *testing.T) {
 			name: "identity failure",
 			mutate: func(fake *reaperFake) {
 				fake.startErr = errors.New("start time failed")
+			},
+		},
+		{
+			name: "state failure",
+			mutate: func(fake *reaperFake) {
+				fake.stateErr = errors.New("state failed")
 			},
 		},
 		{
