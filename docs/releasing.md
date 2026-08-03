@@ -55,6 +55,9 @@ honestly in docs, status reports, and release commentary.
   `workcell-pr-lifecycle` skill in addition to this release runbook.
 - Wait for `main` to be green before pushing the release tag.
 - Follow the tag-triggered `Release` workflow through completion.
+- Before pushing the tag, verify the hosted-controls audit confirms that the
+  `release` environment permits only `v*` deployment tags, with no deployment
+  branches, variables, secrets, or administrator bypass.
 - Approve the `release` environment only after release preflight and install
   verification are green.
 - Verify that the repository-level immutable-release control is enabled before

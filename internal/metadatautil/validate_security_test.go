@@ -206,6 +206,10 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		`WORKCELL_RELEASE_NO_ATTEST = "false"`,
 		`WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"`,
 		"",
+		"[workflow_environment.release]",
+		"allow_admin_bypass = false",
+		`deployment_tags = ["v*"]`,
+		"",
 		"[workflow_environment.hosted-controls-audit]",
 		`required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]`,
 		"allow_admin_bypass = false",
@@ -375,6 +379,10 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}
 	releaseEnv := map[string]any{
 		"name": "release",
+		"deployment_branch_policy": map[string]any{
+			"custom_branch_policies": true,
+			"protected_branches":     false,
+		},
 		"protection_rules": []map[string]any{
 			releaseReviewRule,
 			{
@@ -383,6 +391,12 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 			},
 		},
 		"can_admins_bypass": false,
+	}
+	releaseVariables := map[string]any{
+		"variables": []map[string]any{},
+	}
+	releaseSecrets := map[string]any{
+		"secrets": []map[string]any{},
 	}
 	hostedControlsAuditEnv := map[string]any{
 		"name": "hosted-controls-audit",
@@ -420,6 +434,11 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 			{"name": "v*", "type": "tag"},
 		},
 	}
+	releaseDeploymentPolicies := map[string]any{
+		"branch_policies": []map[string]any{
+			{"name": "v*", "type": "tag"},
+		},
+	}
 	upstreamRefreshDeploymentBranches := map[string]any{
 		"branch_policies": []map[string]any{
 			{"name": "main", "type": "branch"},
@@ -444,6 +463,9 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		{"environment-hosted-controls-audit-variables.json", hostedControlsAuditVariables},
 		{"environment-hosted-controls-audit-secrets.json", hostedControlsAuditSecrets},
 		{"environment-release.json", releaseEnv},
+		{"environment-release-deployment-branch-policies.json", releaseDeploymentPolicies},
+		{"environment-release-variables.json", releaseVariables},
+		{"environment-release-secrets.json", releaseSecrets},
 		{"environment-upstream-refresh.json", upstreamRefreshEnv},
 		{"environment-upstream-refresh-deployment-branch-policies.json", upstreamRefreshDeploymentBranches},
 		{"environment-upstream-refresh-variables.json", upstreamRefreshVariables},
@@ -1327,5 +1349,30 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedEnvironmentBranchPolicy(t *t
 	}
 	if !strings.Contains(err.Error(), "must restrict deployment branches to main") {
 		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want deployment-branch rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsRejectsUnexpectedReleaseTagPolicy(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "environment-release-deployment-branch-policies.json"), func(content string) string {
+		return strings.Replace(content, `"v*"`, `"release/*"`, 1)
+	})
+
+	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+	if err == nil {
+		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted the wrong release tag policy")
+	}
+	if !strings.Contains(err.Error(), "workflow environment omkhar/workcell/release must restrict deployment tags to v*") {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want release tag-policy rejection", err)
 	}
 }

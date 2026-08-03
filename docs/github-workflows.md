@@ -183,7 +183,8 @@ reviewed inputs:
 - tag rulesets for `refs/tags/v*`
 - the `release` environment, with reviewer protection when the GitHub plan
   supports it and an explicitly documented lower-assurance fallback when it
-  does not
+  does not; it permits only `v*` deployment tags, no deployment branches, no
+  environment variables or secrets, and no administrator bypass
 - the `hosted-controls-audit` and `upstream-refresh` environments, including
   their exact secret and variable contents plus their disabled admin bypass
   posture

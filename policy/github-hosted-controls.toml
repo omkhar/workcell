@@ -78,6 +78,13 @@ immutable_github_releases = true
 WORKCELL_RELEASE_NO_ATTEST = "false"
 WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS = "false"
 
+[workflow_environment.release]
+# Publish jobs may deploy only from protected release tags. The environment has
+# no branch eligibility, variables, or secrets; its reviewer gate is defined
+# separately by release_environment above.
+allow_admin_bypass = false
+deployment_tags = ["v*"]
+
 [workflow_environment.hosted-controls-audit]
 required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]
 allow_admin_bypass = false
