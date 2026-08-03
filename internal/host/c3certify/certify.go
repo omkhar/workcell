@@ -87,7 +87,6 @@ func run(ctx context.Context, options Options, stdout io.Writer, deps dependenci
 	}
 	return c.execute(ctx, stdout)
 }
-
 func (c *certifier) execute(ctx context.Context, stdout io.Writer) (runErr error) {
 	defer func() {
 		if cleanupErr := c.cleanupBounded(); cleanupErr != nil {
@@ -803,7 +802,11 @@ func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte
 	return c.command(ctx, c.baseEnv, "/bin/bash", append([]string{c.workcell}, args...)...)
 }
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "color.ui=false", "-C", dir}
+	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "color.ui=false"}
+	if len(args) == 0 || args[0] != "clone" {
+		safeArgs = append(safeArgs, "--work-tree="+dir)
+	}
+	safeArgs = append(safeArgs, "-C", dir)
 	settings, err := c.command(ctx, c.baseEnv, c.git,
 		append(safeArgs, "config", "--null", "--name-only", "--includes", "--list")...)
 	if err != nil {
@@ -815,11 +818,7 @@ func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) 
 		if match == nil {
 			continue
 		}
-		value := ""
-		if match[1] == "required" {
-			value = "false"
-		}
-		safeArgs = append(safeArgs, "-c", name+"="+value)
+		safeArgs = append(safeArgs, "-c", name+"=", "-c", strings.TrimSuffix(name, match[1])+"required=false")
 	}
 	return c.command(ctx, c.baseEnv, c.git, append(safeArgs, args...)...)
 }

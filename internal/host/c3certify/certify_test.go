@@ -145,6 +145,8 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600))
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, "untracked"), []byte("hidden\n"), 0o600))
 	mustNoError(t, os.Remove(marker))
+	decoy, _ := newGitRepo(t)
+	runGit(t, workspace, "config", "core.worktree", decoy)
 	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all")
 	mustNoError(t, err)
 	if !strings.Contains(string(status), "?? untracked") {
@@ -159,8 +161,7 @@ func testCertifier(t *testing.T, workspace string) *certifier {
 	git, err := exec.LookPath("git")
 	mustNoError(t, err)
 	return &certifier{
-		options: Options{Root: workspace, Workspace: workspace, PollAttempts: 2,
-			PollInterval: time.Millisecond, CommandTimeout: 10 * time.Second},
+		options: Options{Root: workspace, Workspace: workspace, PollAttempts: 2, PollInterval: time.Millisecond, CommandTimeout: 10 * time.Second},
 		deps: dependencies{
 			command: runCommand, now: func() time.Time { return time.Unix(0, 0) },
 			sleep:                func(context.Context, time.Duration) error { return nil },
@@ -168,8 +169,7 @@ func testCertifier(t *testing.T, workspace string) *certifier {
 			reapProfileProcesses: func(context.Context, string) error { return nil },
 		},
 		git: git, colima: "/fake/colima",
-		stateRoot:   t.TempDir(),
-		colimaRoot:  t.TempDir(),
+		stateRoot: t.TempDir(), colimaRoot: t.TempDir(),
 		scratchRoot: workspace,
 		launchRoot:  workspace,
 		profile:     "wcl-profile",
