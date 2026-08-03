@@ -814,7 +814,7 @@ func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) 
 		}
 		safeArgs = append(safeArgs, "-c", name+"=", "-c", strings.TrimSuffix(name, match[1])+"required=false")
 	}
-	if len(args) > 0 && args[0] == "status" {
+	if len(args) > 0 && (args[0] == "status" || args[0] == "diff-files") {
 		if flags, err := c.command(ctx, c.baseEnv, c.git, append(safeArgs, "ls-files", "-v", "-z")...); err != nil || gitHiddenIndexState.Match(flags) {
 			return nil, errors.New("certify-c3: repository index hides tracked worktree state")
 		}
@@ -852,7 +852,7 @@ func (c *certifier) captureSnapshot(ctx context.Context) (snapshot, error) {
 		if headTree == controlTree {
 			return snapshot{}, errors.New("certify-c3: pre-commit control tree must differ from HEAD")
 		}
-		if _, err := c.gitCommand(ctx, c.options.Root, "diff-files", "--quiet", "--"); err != nil {
+		if _, err := c.gitCommand(ctx, c.options.Root, "diff-files", "--quiet", "--ignore-submodules=none", "--"); err != nil {
 			return snapshot{}, errors.New("certify-c3: pre-commit control snapshot has tracked worktree changes")
 		}
 		untracked, err := c.gitCommand(ctx, c.options.Root, "ls-files", "--others", "--exclude-standard", "--directory")

@@ -155,7 +155,8 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 		t.Fatalf("repository-local Git hook executed on the host: %v", err)
 	}
 	runGit(t, workspace, "update-index", "--assume-unchanged", "--skip-worktree", "tracked")
-	if _, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1"); err == nil {
+	_, statusErr := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1")
+	if _, diffErr := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "diff-files", "--quiet", "--ignore-submodules=none", "--"); statusErr == nil || diffErr == nil {
 		t.Fatal("gitCommand accepted hidden index state")
 	}
 }
@@ -210,7 +211,6 @@ func newIsolatedRecord(t *testing.T, workspace, commit, id, container string) se
 		WorktreePath: worktree, GitBranch: branch, ContainerName: container, CurrentAssurance: "managed-mutable",
 	}
 }
-
 func writeTestRecord(t *testing.T, c *certifier, record sessions.SessionRecord) string {
 	path := filepath.Join(c.stateRoot, "targets", "local_vm", "colima",
 		record.Profile, "sessions", record.SessionID+".json")
