@@ -796,7 +796,7 @@ func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte
 	return c.command(ctx, c.baseEnv, "/bin/bash", append([]string{c.workcell}, args...)...)
 }
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	safeArgs := []string{"--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "color.ui=false"}
+	safeArgs := []string{"--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.fileMode=true", "-c", "diff.external=", "-c", "color.ui=false"}
 	if len(args) == 0 || args[0] != "clone" {
 		safeArgs = append(safeArgs, "--work-tree="+dir)
 	}
