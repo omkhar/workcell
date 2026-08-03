@@ -176,6 +176,15 @@ func TestGitCommandRejectsForgedTrackedState(t *testing.T) {
 			mustNoError(t, os.Rename(filepath.Join(root, "eol"), filepath.Join(t.TempDir(), "eol")))
 			runGit(t, root, "-c", "core.autocrlf=true", "-c", "core.eol=crlf", "checkout", "--", "eol")
 		}},
+		{"external attributes", func(t *testing.T, root string) {
+			attributes := filepath.Join(t.TempDir(), "attributes")
+			mustNoError(t, errors.Join(os.WriteFile(attributes, []byte("* text eol=crlf\n"), 0o600), os.Remove(filepath.Join(root, "eol"))))
+			runGit(t, root, "config", "core.attributesFile", attributes)
+			runGit(t, root, "checkout", "--", "eol")
+			if status := runGit(t, root, "status", "--porcelain=v1"); strings.TrimSpace(string(status)) != "" {
+				t.Fatalf("external attributes fixture is not hidden from raw Git: %q", status)
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -249,7 +258,12 @@ func writeTestRecord(t *testing.T, c *certifier, record sessions.SessionRecord) 
 }
 func runGit(t *testing.T, dir string, args ...string) []byte {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	for _, setting := range os.Environ() {
+		if !strings.HasPrefix(setting, "GIT_CONFIG_") {
+			cmd.Env = append(cmd.Env, setting)
+		}
+	}
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
