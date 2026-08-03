@@ -227,6 +227,26 @@ func ValidateCanonicalWorkflowEnvironments(policy map[string]any, policyPath str
 		return err
 	}
 
+	release, ok := environments["release"]
+	if !ok {
+		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.release")
+	}
+	if len(release.RequiredSecrets) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare secrets for workflow_environment.release")
+	}
+	if len(release.Variables) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.release")
+	}
+	if !release.HasAllowAdminBypass || release.AllowAdminBypass {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.release.allow_admin_bypass = false")
+	}
+	if release.HasDeploymentBranches || len(release.DeploymentBranches) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not set workflow_environment.release.deployment_branches")
+	}
+	if !release.HasDeploymentTags || len(release.DeploymentTags) != 1 || release.DeploymentTags[0] != "v*" {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.release.deployment_tags = [\"v*\"]")
+	}
+
 	hostedControlsAudit, ok := environments["hosted-controls-audit"]
 	if !ok {
 		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.hosted-controls-audit")

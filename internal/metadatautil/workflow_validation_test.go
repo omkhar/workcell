@@ -1226,6 +1226,10 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 	t.Parallel()
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
+			"release": map[string]any{
+				"allow_admin_bypass": false,
+				"deployment_tags":    []any{"v*"},
+			},
 			"upstream-refresh": map[string]any{
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
@@ -1242,10 +1246,92 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 	}
 }
 
+func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsInvalidReleasePolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		release map[string]any
+		want    string
+	}{
+		{
+			name:    "missing admin bypass",
+			release: map[string]any{"deployment_tags": []any{"v*"}},
+			want:    "must set workflow_environment.release.allow_admin_bypass = false",
+		},
+		{
+			name:    "admin bypass enabled",
+			release: map[string]any{"allow_admin_bypass": true, "deployment_tags": []any{"v*"}},
+			want:    "must set workflow_environment.release.allow_admin_bypass = false",
+		},
+		{
+			name:    "unexpected secrets",
+			release: map[string]any{"required_secrets": []any{"RELEASE_TOKEN"}, "allow_admin_bypass": false, "deployment_tags": []any{"v*"}},
+			want:    "must not declare secrets for workflow_environment.release",
+		},
+		{
+			name:    "unexpected variables",
+			release: map[string]any{"variables": map[string]any{"RELEASE_REGION": "north"}, "allow_admin_bypass": false, "deployment_tags": []any{"v*"}},
+			want:    "must not declare public variables for workflow_environment.release",
+		},
+		{
+			name:    "deployment branches",
+			release: map[string]any{"allow_admin_bypass": false, "deployment_branches": []any{"main"}, "deployment_tags": []any{"v*"}},
+			want:    "must not set workflow_environment.release.deployment_branches",
+		},
+		{
+			name:    "missing deployment tags",
+			release: map[string]any{"allow_admin_bypass": false},
+			want:    "must set workflow_environment.release.deployment_tags = [\"v*\"]",
+		},
+		{
+			name:    "wrong deployment tag",
+			release: map[string]any{"allow_admin_bypass": false, "deployment_tags": []any{"release/*"}},
+			want:    "must set workflow_environment.release.deployment_tags = [\"v*\"]",
+		},
+		{
+			name:    "multiple deployment tags",
+			release: map[string]any{"allow_admin_bypass": false, "deployment_tags": []any{"v*", "v1.*"}},
+			want:    "must set workflow_environment.release.deployment_tags = [\"v*\"]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := map[string]any{
+				"workflow_environment": map[string]any{
+					"release": tt.release,
+					"hosted-controls-audit": map[string]any{
+						"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+						"allow_admin_bypass":  false,
+						"deployment_branches": []any{"main"},
+						"deployment_tags":     []any{"v*"},
+					},
+					"upstream-refresh": map[string]any{
+						"allow_admin_bypass":  false,
+						"deployment_branches": []any{"main"},
+					},
+				},
+			}
+
+			err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+			if err == nil {
+				t.Fatal("metadatautil.ValidateCanonicalWorkflowEnvironments() unexpectedly accepted invalid release policy")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("metadatautil.ValidateCanonicalWorkflowEnvironments() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUpstreamRefreshSecrets(t *testing.T) {
 	t.Parallel()
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
+			"release": map[string]any{
+				"allow_admin_bypass": false,
+				"deployment_tags":    []any{"v*"},
+			},
 			"hosted-controls-audit": map[string]any{
 				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
 				"allow_admin_bypass":  false,
@@ -1273,6 +1359,10 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 	t.Parallel()
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
+			"release": map[string]any{
+				"allow_admin_bypass": false,
+				"deployment_tags":    []any{"v*"},
+			},
 			"hosted-controls-audit": map[string]any{
 				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
 				"allow_admin_bypass":  false,
