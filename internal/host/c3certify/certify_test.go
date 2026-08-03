@@ -141,15 +141,16 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("malicious Git fixture did not execute under raw Git: %v", err)
 	}
-	mustNoError(t, os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600))
+	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(1100 * time.Millisecond)))
+	statCacheMtime := time.Unix(978310860, 0)
+	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(workspace, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(workspace, "cached"), []byte("evil\n"), 0o600), os.Chtimes(filepath.Join(workspace, "cached"), statCacheMtime, statCacheMtime)))
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, "untracked"), []byte("hidden\n"), 0o600))
 	mustNoError(t, errors.Join(os.Rename(marker, filepath.Join(workspace, "link")), os.Chmod(filepath.Join(workspace, "tracked"), 0o700)))
 	decoy, _ := newGitRepo(t)
 	runGit(t, workspace, "config", "core.worktree", decoy)
 	status, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-	mustNoError(t, err)
-	if !strings.Contains(string(status), "?? untracked") || !strings.Contains(string(status), " M tracked") || !strings.Contains(string(status), " T link") {
-		t.Fatalf("gitCommand hid untracked workload file: %q", status)
+	if err != nil || !strings.Contains(string(status), "?? untracked") || !strings.Contains(string(status), " M tracked") || !strings.Contains(string(status), " T link") || !strings.Contains(string(status), " M cached") {
+		t.Fatalf("gitCommand status error=%v output=%q", err, status)
 	}
 	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("repository-local Git hook executed on the host: %v", err)
@@ -176,7 +177,7 @@ func testCertifier(t *testing.T, workspace string) *certifier {
 		scratchRoot: workspace,
 		launchRoot:  workspace,
 		profile:     "wcl-profile",
-		baseEnv:     append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=core.fileMode", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=core.symlinks", "GIT_CONFIG_VALUE_1=false"),
+		baseEnv:     append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=4", "GIT_CONFIG_KEY_0=core.fileMode", "GIT_CONFIG_VALUE_0=false", "GIT_CONFIG_KEY_1=core.symlinks", "GIT_CONFIG_VALUE_1=false", "GIT_CONFIG_KEY_2=core.trustctime", "GIT_CONFIG_VALUE_2=false", "GIT_CONFIG_KEY_3=core.checkStat", "GIT_CONFIG_VALUE_3=minimal"),
 	}
 }
 func mustNoError(t *testing.T, err error) {
@@ -188,11 +189,10 @@ func newGitRepo(t *testing.T) (string, string) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	mustNoError(t, err)
 	runGit(t, root, "init", "--quiet")
-	runGit(t, root, "config", "user.name", "Workcell Test")
-	runGit(t, root, "config", "user.email", "workcell-test@example.invalid")
-	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(root, "tracked"), []byte("base\n"), 0o600), os.Symlink("tracked", filepath.Join(root, "link"))))
-	runGit(t, root, "add", "tracked", "link")
-	runGit(t, root, "commit", "--quiet", "-m", "base")
+	statCacheMtime := time.Unix(978310860, 0)
+	mustNoError(t, errors.Join(os.WriteFile(filepath.Join(root, "tracked"), []byte("base\n"), 0o600), os.WriteFile(filepath.Join(root, "cached"), []byte("base\n"), 0o600), os.Chtimes(filepath.Join(root, "cached"), statCacheMtime, statCacheMtime), os.Symlink("tracked", filepath.Join(root, "link"))))
+	runGit(t, root, "add", "tracked", "cached", "link")
+	runGit(t, root, "-c", "user.name=Workcell Test", "-c", "user.email=workcell-test@example.invalid", "commit", "--quiet", "-m", "base")
 	return root, strings.TrimSpace(string(runGit(t, root, "rev-parse", "HEAD")))
 }
 func newIsolatedRecord(t *testing.T, workspace, commit, id, container string) sessions.SessionRecord {
