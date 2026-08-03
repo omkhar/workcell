@@ -40,8 +40,12 @@ func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var matchedStatus string
 	for _, record := range records {
-		name, _ := record["name"].(string)
+		name, ok := record["name"].(string)
+		if !ok || name == "" {
+			return "", errors.New("profile inventory record has missing or invalid name field")
+		}
 		if name != profile {
 			continue
 		}
@@ -49,9 +53,52 @@ func ColimaProfileStatus(listJSON []byte, profile string) (string, error) {
 		if status == "" {
 			return "", errors.New("profile status missing status field")
 		}
-		return status, nil
+		if matchedStatus != "" {
+			return "", errors.New("profile inventory contains duplicate names")
+		}
+		matchedStatus = status
+	}
+	if matchedStatus != "" {
+		return matchedStatus, nil
 	}
 	return "", errNoMatch
+}
+
+func ColimaProfileProcessPIDs(psOutput []byte, profile string) ([]int, error) {
+	if profile == "" {
+		return nil, errors.New("colima profile is required")
+	}
+	instance := "colima-" + profile
+	var pids []int
+	seen := make(map[int]struct{})
+	for _, line := range strings.Split(string(psOutput), "\n") {
+		id, command, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		command = strings.TrimSpace(command)
+		fields := strings.Fields(command)
+		hostagent := len(fields) >= 2 && filepath.Base(fields[0]) == "limactl" && fields[1] == "hostagent" &&
+			(strings.Contains(command, "/"+instance+"/") || strings.HasSuffix(command, " "+instance))
+		mux := strings.HasPrefix(command, "ssh: ") &&
+			strings.HasSuffix(command, "/"+instance+"/ssh.sock [mux]")
+		if !hostagent && !mux {
+			continue
+		}
+		pid, err := strconv.Atoi(id)
+		if err != nil {
+			return nil, fmt.Errorf("parse Colima profile process pid: %w", err)
+		}
+		if pid <= 0 || strconv.Itoa(pid) != id {
+			return nil, fmt.Errorf("non-canonical Colima profile process pid: %s", id)
+		}
+		if _, exists := seen[pid]; exists {
+			return nil, fmt.Errorf("duplicate Colima profile process pid: %d", pid)
+		}
+		seen[pid] = struct{}{}
+		pids = append(pids, pid)
+	}
+	return pids, nil
 }
 
 func ProfileLockIsStale(lockDir string) (bool, error) {

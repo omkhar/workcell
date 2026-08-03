@@ -267,6 +267,7 @@ func helperSubcommands() []helperSubcommand {
 	return []helperSubcommand{
 		{"session-suffix", 0, 0, cmdHelperSessionSuffix},
 		{"colima-status", 1, 1, cmdHelperColimaStatus},
+		{"reap-colima-profile-processes", 1, 1, cmdHelperReapColimaProfileProcesses},
 		{"validate-colima-status", 1, 1, cmdHelperValidateColimaStatus},
 		{"run-host-colima-with-timeout", 1, -1, cmdHelperRunHostColimaWithTimeout},
 		{"docker-desktop-context-name", 0, 0, cmdHelperDockerDesktopContextName},
@@ -454,6 +455,10 @@ func cmdHelperColimaStatus(args []string) error {
 	}
 	fmt.Println(status)
 	return nil
+}
+
+func cmdHelperReapColimaProfileProcesses(args []string) error {
+	return launcher.ReapColimaProfileProcesses(context.Background(), args[0])
 }
 
 func cmdHelperValidateColimaStatus(args []string) error {
