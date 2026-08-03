@@ -30,11 +30,11 @@ ARG RUSTUP_VERSION
 ARG RUSTUP_INIT_LINUX_X86_64_SHA256
 ARG RUSTUP_INIT_LINUX_ARM64_SHA256
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:/usr/local/go/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap.env \

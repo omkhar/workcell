@@ -18,13 +18,13 @@ ARG SOURCE_DATE_EPOCH
 # One canonical, atomically replaced tuple feeds both shipped Dockerfiles.
 COPY --chmod=0444 runtime/container/debian-bootstrap.env /usr/local/share/workcell/debian-bootstrap.env
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 ENV TZ=UTC
 ENV npm_config_audit=false
 ENV npm_config_fund=false
 ENV npm_config_update_notifier=false
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap.env \
@@ -243,12 +243,13 @@ ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /workcell-rust
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
