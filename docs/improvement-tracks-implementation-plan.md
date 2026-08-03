@@ -530,16 +530,24 @@ here for continuity of the B6 track.
 
 ### C3: Native Parallel Sessions
 
-- Steps: design review (may start during v0.14) for worktree-aware workspace
-  handling (one agent per worktree/branch/isolated runtime); extend session
-  records with linkage across parallel sessions; define per-session resource
-  and identity boundaries; implement launch/inventory/diff flows for N
-  concurrent sessions per repo.
-- Exit gates: two concurrent sessions on one repo cannot interfere
-  (deterministic tests); session tooling renders parallel topology; docs
-  updated; works on the strict path.
-- Validation: scenario coverage including conflict cases; live exercise.
-- Size: L. Dependencies: C1 decision helps (per-session VMs).
+- Status: implemented and locally certified on 2026-08-03. The exact-tree
+  pre-merge certification is bound to signed activation commit `a26b750f`;
+  shipped status depends on that commit being reachable from `main`.
+- Delivered: worktree-aware session handling with one branch, isolated
+  worktree, and container per session; linked origin-repository metadata;
+  per-session resource and identity boundaries; and launch, inventory, and
+  diff flows for concurrent same-repository sessions.
+- Exit gates: deterministic tests prove clone/branch separation and
+  write-invisibility; session tooling renders the parallel topology; the live
+  strict-path certification proved two overlapping sessions could not observe
+  each other's markers and that one stopped independently while the other
+  remained live.
+- Validation: `test-session-commands.sh`, `internal/host/c3certify` tests, and
+  the live evidence in
+  `docs/benchmark-evidence/c3-two-container-isolation-2026-07-15.md`.
+- Size: L. Sequencing note: C3 was implemented and certified independently of
+  C2. C2 can improve parallel-session startup latency but does not gate C3; the
+  C1 decision can inform future per-session-VM isolation.
 
 ### D5: Modularize The Rust Interception Library
 
@@ -738,7 +746,8 @@ does not gate 1.0.
 
 - D1 → D2 → D3/D4; A3 + A4 → D5; D2 → D7 (shell portion)
 - B9 → B6; B1 → B2; B3 baseline before D3/D5 refactors land
-- C5 informs the post-1.0 C2 program; C1 decision informs C2/C3/C4
+- C5 informs the post-1.0 C2 program; C2 can improve C3 latency but does not
+  gate the completed C3; the C1 decision informs C2/C3/C4
 - E4 → E1 → E6; A2 → E5; D8 → G1 (inventory) → G1 (freeze); E5 → G1 (freeze)
 - G1 (inventory) → G3; A5 ↔ F1 coordinated; F1 → F2; G2 ↔ F1 redaction rules
 - A3/A4/D5 → B7 (part 2); everything → G4
