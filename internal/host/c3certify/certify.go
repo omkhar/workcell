@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -35,10 +34,8 @@ type Options struct {
 	PollInterval, CommandTimeout time.Duration
 }
 
-type commandFunc func(context.Context, []string, string, ...string) ([]byte, error)
-
 type dependencies struct {
-	command              commandFunc
+	command              func(context.Context, []string, string, ...string) ([]byte, error)
 	now                  func() time.Time
 	sleep                func(context.Context, time.Duration) error
 	socketExists         func(string) error
@@ -68,14 +65,13 @@ type certifier struct {
 }
 
 func Run(ctx context.Context, options Options, stdout io.Writer) error {
-	deps := dependencies{
+	return run(ctx, options, stdout, dependencies{
 		command:              runCommand,
 		now:                  time.Now,
 		sleep:                sleepContext,
 		socketExists:         requireSocket,
 		reapProfileProcesses: launcher.ReapColimaProfileProcesses,
-	}
-	return run(ctx, options, stdout, deps)
+	})
 }
 
 func run(ctx context.Context, options Options, stdout io.Writer, deps dependencies) error {
@@ -838,7 +834,9 @@ func (c *certifier) workcellCommand(ctx context.Context, args ...string) ([]byte
 }
 
 func (c *certifier) gitCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return c.command(ctx, c.baseEnv, c.git, append([]string{"-C", dir}, args...)...)
+	safeArgs := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+		"-c", "diff.external=", "-c", "color.ui=false", "-C", dir}
+	return c.command(ctx, c.baseEnv, c.git, append(safeArgs, args...)...)
 }
 
 func (c *certifier) command(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -938,16 +936,13 @@ func resolveExecutable(candidates ...string) (string, error) {
 	}
 	return "", errors.New("no fixed-path executable found")
 }
-
 func fileHash(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
 }
-
 func requireSocket(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -958,11 +953,9 @@ func requireSocket(path string) error {
 	}
 	return nil
 }
-
 func runCommand(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	return runCommandWithDelay(ctx, env, 40*time.Second, name, args...)
 }
-
 func runCommandWithDelay(ctx context.Context, env []string, waitDelay time.Duration, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
@@ -990,12 +983,10 @@ func runCommandWithDelay(ctx context.Context, env []string, waitDelay time.Durat
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-timer.C:
+	case <-time.After(duration):
 		return nil
 	}
 }

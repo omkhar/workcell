@@ -121,23 +121,32 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	}
 }
 
+func TestGitCommandDisablesRepositoryExecutionHooks(t *testing.T) {
+	workspace, _ := newGitRepo(t)
+	marker, fsmonitor := filepath.Join(t.TempDir(), "fsmonitor-ran"), filepath.Join(t.TempDir(), "fsmonitor.sh")
+	mustNoError(t, os.WriteFile(fsmonitor, []byte("#!/bin/sh\ntouch \""+marker+"\"\n"), 0o700))
+	runGit(t, workspace, "config", "core.fsmonitor", fsmonitor)
+	if _, err := testCertifier(t, workspace).gitCommand(context.Background(), workspace, "status", "--porcelain=v1"); err != nil {
+		t.Fatalf("gitCommand status error = %v", err)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository-local fsmonitor executed on the host: %v", err)
+	}
+}
+
 func testCertifier(t *testing.T, workspace string) *certifier {
 	git, err := exec.LookPath("git")
 	mustNoError(t, err)
 	return &certifier{
-		options: Options{
-			Root: workspace, Workspace: workspace, PollAttempts: 2,
-			PollInterval:   time.Millisecond,
-			CommandTimeout: 10 * time.Second,
-		},
+		options: Options{Root: workspace, Workspace: workspace, PollAttempts: 2,
+			PollInterval: time.Millisecond, CommandTimeout: 10 * time.Second},
 		deps: dependencies{
 			command: runCommand, now: func() time.Time { return time.Unix(0, 0) },
 			sleep:                func(context.Context, time.Duration) error { return nil },
 			socketExists:         func(string) error { return nil },
 			reapProfileProcesses: func(context.Context, string) error { return nil },
 		},
-		git:         git,
-		colima:      "/fake/colima",
+		git: git, colima: "/fake/colima",
 		stateRoot:   t.TempDir(),
 		colimaRoot:  t.TempDir(),
 		scratchRoot: workspace,
