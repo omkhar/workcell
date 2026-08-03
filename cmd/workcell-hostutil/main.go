@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
+	"github.com/omkhar/workcell/internal/host/runtimebuilder"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
 	"github.com/omkhar/workcell/internal/host/supportmatrix"
@@ -103,6 +105,8 @@ func run(args []string) error {
 		return cmdHelperSessionVerifyCli(args[1:])
 	case "session-sign-head":
 		return cmdHelperSessionSignHead(args[1:])
+	case "runtime-builder-cli":
+		return runtimebuilder.Main(args[1:], os.Stdout)
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
 	case "support-bundle-usage":
@@ -195,21 +199,31 @@ func runRelease(args []string) error {
 	}
 
 	switch args[0] {
-	case "create-payload":
-		if len(args) != 3 {
-			return releaseUsage()
-		}
-		return release.WriteGitHubReleaseCreatePayload(args[1], args[2])
-	case "metadata":
-		if len(args) < 4 {
-			return releaseUsage()
-		}
-		return release.WriteGitHubReleaseMetadata(args[1], args[3:], args[2])
-	case "encode-name":
+	case "classify-tag":
 		if len(args) != 2 {
 			return releaseUsage()
 		}
-		fmt.Println(release.EncodeReleaseAssetName(args[1]))
+		policy, err := release.ClassifyTag(args[1])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(policy)
+	case "publish":
+		if len(args) < 5 {
+			return releaseUsage()
+		}
+		releaseID, err := release.PublishGitHubRelease(
+			context.Background(),
+			os.Getenv("GITHUB_REPOSITORY"),
+			os.Getenv("GITHUB_TOKEN"),
+			args[1],
+			release.TagExpectation{ObjectSHA: args[2], PeeledCommitSHA: args[3]},
+			args[4:],
+		)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Uploaded sealed GitHub release assets and published %s (release id %d)\n", args[1], releaseID)
 		return nil
 	case "bundle-manifest":
 		if len(args) != 8 {
@@ -253,6 +267,7 @@ func helperSubcommands() []helperSubcommand {
 	return []helperSubcommand{
 		{"session-suffix", 0, 0, cmdHelperSessionSuffix},
 		{"colima-status", 1, 1, cmdHelperColimaStatus},
+		{"reap-colima-profile-processes", 1, 1, cmdHelperReapColimaProfileProcesses},
 		{"validate-colima-status", 1, 1, cmdHelperValidateColimaStatus},
 		{"run-host-colima-with-timeout", 1, -1, cmdHelperRunHostColimaWithTimeout},
 		{"docker-desktop-context-name", 0, 0, cmdHelperDockerDesktopContextName},
@@ -440,6 +455,10 @@ func cmdHelperColimaStatus(args []string) error {
 	}
 	fmt.Println(status)
 	return nil
+}
+
+func cmdHelperReapColimaProfileProcesses(args []string) error {
+	return launcher.ReapColimaProfileProcesses(context.Background(), args[0])
 }
 
 func cmdHelperValidateColimaStatus(args []string) error {
@@ -1034,7 +1053,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
 }
 
 func pathUsage() error {
@@ -1042,7 +1061,11 @@ func pathUsage() error {
 }
 
 func releaseUsage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil release <create-payload|metadata|encode-name|bundle-manifest> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: `usage: workcell-hostutil release COMMAND [args...]
+commands:
+  classify-tag TAG
+  publish TAG TAG_OBJECT_SHA PEELED_COMMIT_SHA ASSET...
+  bundle-manifest OUTPUT ARCHIVE_REF BUNDLE_NAME BUNDLE_PREFIX SOURCE_DATE_EPOCH BUNDLE_SHA256 CHECKSUMS_SHA256`}
 }
 
 func helperUsage() error {

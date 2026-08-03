@@ -13,7 +13,7 @@ const usageText = "Usage: workcell publish-pr [options]\n" +
 	"  --branch NAME                 Feature branch to create or switch to (required)\n" +
 	"  --base NAME                   Base branch for the PR (default: main)\n" +
 	"  --allow-non-main-base         Allow a lower-assurance draft PR against a non-main base\n" +
-	"  --gh-bin PATH                 Host GitHub CLI to use for PR creation\n" +
+	"  --gh-bin PATH                 Host GitHub CLI to use for PR publication\n" +
 	"  --snapshot index|worktree     Publish the current index or stage the worktree (default: worktree)\n" +
 	"  --title TEXT                  PR title\n" +
 	"  --title-file PATH             Read the PR title from PATH\n" +
@@ -46,6 +46,12 @@ const usageText = "Usage: workcell publish-pr [options]\n" +
 	"  - Host-side git commands explicitly bypass repo hooks during publication\n" +
 	"    because workspace hook content is untrusted; new commits are signed and\n" +
 	"    every commit being published must verify against host signing trust.\n" +
+	"  - After a verified push, publish-pr reuses the matching open pull request\n" +
+	"    in the pushed origin repository without editing its existing metadata.\n" +
+	"    Reuse fails if a non-main PR is ready or a certified-adapter PR lacks\n" +
+	"    the required approved-large-certified-adapter label.\n" +
+	"  - Origin must have exactly one push URL. GitHub operations use a\n" +
+	"    credential-free repository selector derived from that push URL.\n" +
 	"  - The default snapshot is worktree, which stages the current tracked and\n" +
 	"    untracked workspace changes with `git add -A` before committing.\n"
 

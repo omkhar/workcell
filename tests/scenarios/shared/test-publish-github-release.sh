@@ -14,22 +14,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-draft_ok_output="$("${ROOT_DIR}/scripts/publish-github-release.sh" --self-release-state-probe v9.9.9 true false)"
-grep -Fx 'publish-github-release-state-ok' <<<"${draft_ok_output}" >/dev/null
-
-set +e
-published_mutable_output="$("${ROOT_DIR}/scripts/publish-github-release.sh" --self-release-state-probe v9.9.9 false false 2>&1)"
-published_mutable_rc=$?
-set -e
-test "${published_mutable_rc}" -eq 1
-grep -F 'GitHub release v9.9.9 is already published; Workcell only uploads assets to draft releases.' <<<"${published_mutable_output}" >/dev/null
-
-set +e
-published_immutable_output="$("${ROOT_DIR}/scripts/publish-github-release.sh" --self-release-state-probe v9.9.9 false true 2>&1)"
-published_immutable_rc=$?
-set -e
-test "${published_immutable_rc}" -eq 1
-grep -F 'GitHub release v9.9.9 is already published and immutable; asset uploads are no longer allowed.' <<<"${published_immutable_output}" >/dev/null
+entrypoint_output="$("${ROOT_DIR}/scripts/publish-github-release.sh" --self-entrypoint-probe)"
+grep -Fx 'publish-github-release-entrypoint-ok' <<<"${entrypoint_output}" >/dev/null
 
 mkdir -p "${FIXTURE}" "${HOST_HOME}" "${HOST_XDG_CONFIG_HOME}/git"
 export HOME="${HOST_HOME}"
@@ -105,4 +91,4 @@ set -e
 test "${unsigned_tag_rc}" -eq 2
 grep -F 'must be an annotated signed tag object' <<<"${unsigned_tag_output}" >/dev/null
 
-echo "publish-github-release policy scenario passed"
+echo "publish-github-release entrypoint scenario passed"

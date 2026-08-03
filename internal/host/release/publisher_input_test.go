@@ -16,6 +16,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -285,6 +287,65 @@ func TestAssetInventoryMatchesBothAuthoritativeWorkflowLists(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowUsesSingleAuthoritativeTagPolicyGate(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join("..", "..", "..")
+	workflowData, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(workflowData)
+	if strings.Count(workflow, "release classify-tag") != 1 {
+		t.Fatalf("release workflow classify-tag invocation count = %d, want 1", strings.Count(workflow, "release classify-tag"))
+	}
+	if strings.Contains(workflow, "=~") || strings.Contains(workflow, `^v[0-9]`) {
+		t.Fatal("release workflow contains a competing release-tag regex")
+	}
+
+	var document struct {
+		Jobs map[string]struct {
+			Needs       yaml.Node         `yaml:"needs"`
+			Permissions map[string]string `yaml:"permissions"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflowData, &document); err != nil {
+		t.Fatalf("parse release workflow: %v", err)
+	}
+	tagPolicy, ok := document.Jobs["tag-policy"]
+	if !ok {
+		t.Fatal("release workflow is missing tag-policy job")
+	}
+	if len(tagPolicy.Permissions) != 1 || tagPolicy.Permissions["contents"] != "read" {
+		t.Fatalf("tag-policy permissions = %#v, want only contents: read", tagPolicy.Permissions)
+	}
+	for jobID, job := range document.Jobs {
+		if jobID == "tag-policy" {
+			continue
+		}
+		if !workflowNeedsJob(job.Needs, "tag-policy") {
+			t.Fatalf("release workflow job %q is not directly gated by tag-policy", jobID)
+		}
+	}
+
+	publisherData, err := os.ReadFile(filepath.Join(root, "scripts", "publish-github-release.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher := string(publisherData)
+	invocation := `"${HOSTUTIL_BIN}" release publish "${TAG_NAME}" "${TAG_OBJECT_SHA}" "${PEELED_COMMIT_SHA}" "$@"`
+	if strings.Count(publisher, invocation) != 1 {
+		t.Fatalf("publisher invocation %q count = %d, want 1", invocation, strings.Count(publisher, invocation))
+	}
+	if strings.Contains(publisher, "curl ") || strings.Contains(publisher, "api GET") {
+		t.Fatal("publisher shell must delegate GitHub release API policy to the Go publisher")
+	}
+	for _, binding := range []string{`"${TAG_REF}^{tag}"`, `"${TAG_REF}^{commit}"`} {
+		if strings.Count(publisher, binding) != 1 {
+			t.Fatalf("publisher tag binding %q count = %d, want 1", binding, strings.Count(publisher, binding))
+		}
+	}
+}
+
 func TestWorkflowInventoryParserAcceptsBothBundlePlaceholderForms(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "release.yml"))
@@ -322,6 +383,20 @@ func TestWorkflowInventoryParserAcceptsBothBundlePlaceholderForms(t *testing.T) 
 			}
 		})
 	}
+}
+
+func workflowNeedsJob(needs yaml.Node, wanted string) bool {
+	switch needs.Kind {
+	case yaml.ScalarNode:
+		return needs.Value == wanted
+	case yaml.SequenceNode:
+		for _, item := range needs.Content {
+			if item.Kind == yaml.ScalarNode && item.Value == wanted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestWorkflowInventoryParserRejectsMutations(t *testing.T) {

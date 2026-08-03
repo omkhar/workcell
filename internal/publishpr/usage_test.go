@@ -59,6 +59,7 @@ func TestUsageTextDocumentsNotes(t *testing.T) {
 		"--approved-large-certified-adapter is limited to reviewed adapter PRs",
 		"--allow-non-main-base is an explicit lower-assurance escape hatch",
 		"Host-side git commands explicitly bypass repo hooks during publication",
+		"publish-pr reuses the matching open pull request",
 		"The default snapshot is worktree",
 	} {
 		if !strings.Contains(got, want) {

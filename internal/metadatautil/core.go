@@ -20,11 +20,13 @@ import (
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
-var (
-	hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-)
+var hexDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 const missingTrackedInputMsg = "tracked release input is missing from the working tree; stage the deletion or restore the file before generating a verified build input manifest: %s"
+
+// HadolintChecksumManifestMaxBytes bounds release-manifest input accepted by
+// the updater parser.
+const HadolintChecksumManifestMaxBytes = 64 * 1024
 
 type ControlPlaneArtifact struct {
 	Kind        string
@@ -424,6 +426,34 @@ func ExtractCopilotSHA(dockerfilePath, targetArch string) (string, error) {
 		return "", fmt.Errorf("unable to extract COPILOT_SHA256 for %s", targetArch)
 	}
 	return match[1], nil
+}
+
+func HadolintManifestChecksum(manifest []byte, assetName string) (string, error) {
+	invalidManifest := func() error {
+		return fmt.Errorf("Hadolint checksum manifest must contain exactly one 64-hex digest for %s", assetName)
+	}
+	if len(manifest) > HadolintChecksumManifestMaxBytes || assetName == "" || strings.ContainsAny(assetName, "*\t\r\n ") {
+		return "", invalidManifest()
+	}
+
+	candidates := 0
+	digest := ""
+	for line := range strings.SplitSeq(string(manifest), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || (fields[1] != assetName && fields[1] != "*"+assetName) {
+			continue
+		}
+		candidates++
+		normalizedDigest := strings.ToLower(fields[0])
+		if len(fields) != 2 || fields[1] != "*"+assetName || !hexDigestPattern.MatchString(normalizedDigest) {
+			return "", invalidManifest()
+		}
+		digest = normalizedDigest
+	}
+	if candidates != 1 {
+		return "", invalidManifest()
+	}
+	return digest, nil
 }
 
 func ManifestChecksum(manifestPath, platform string) (string, error) {

@@ -9,7 +9,10 @@ PROFILE_VALIDATED=1
 
 stash_profile_audit_log() { :; }
 remember_profile_runtime_image_for_refresh() { :; }
-reap_stale_profile_processes() { :; }
+REAPER_FAIL=1
+reap_stale_profile_processes() {
+  [[ "${REAPER_FAIL}" -eq 0 ]]
+}
 run_host_colima_with_timeout() { return 124; }
 validate_colima_profile_name() { :; }
 target_provider_for_profile_state() { printf 'colima\n'; }
@@ -25,6 +28,16 @@ PROFILE_STATE_DIR="$(profile_target_state_dir "${COLIMA_PROFILE}")"
 PROFILE_STORE_PATH="$(profile_store_path "${COLIMA_PROFILE}")"
 mkdir -p "${PROFILE_STATE_DIR}" "${PROFILE_DIR}" "$(profile_lima_dir "${COLIMA_PROFILE}")" "$(profile_disk_dir "${COLIMA_PROFILE}")"
 printf '{}\n' >"${PROFILE_STORE_PATH}"
+if refresh_managed_profile "refreshing fixture profile with failed reaper"; then
+  echo "Expected refresh_managed_profile to propagate reaper failure" >&2
+  exit 1
+fi
+[[ -e "${PROFILE_STATE_DIR}" ]]
+[[ -e "${PROFILE_DIR}" ]]
+[[ -e "$(profile_lima_dir "${COLIMA_PROFILE}")" ]]
+[[ -e "$(profile_disk_dir "${COLIMA_PROFILE}")" ]]
+[[ -e "${PROFILE_STORE_PATH}" ]]
+REAPER_FAIL=0
 refresh_managed_profile "refreshing fixture profile"
 [[ ! -e "${PROFILE_STATE_DIR}" ]]
 [[ ! -e "${PROFILE_DIR}" ]]
