@@ -7548,7 +7548,7 @@ EOF
     grep -q "\"session_id\": \"${DETACHED_SESSION_ID}\"" "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"status": "exited"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"live_status": "stopped"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
-    grep -q '"exit_status": 0' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '"exit_status": "0"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"current_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"final_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     DETACHED_SESSION_MONITOR_COMMAND="$(ps -o command= -p "${DETACHED_SESSION_MONITOR_PID}" 2>/dev/null | head -n1 || true)"
