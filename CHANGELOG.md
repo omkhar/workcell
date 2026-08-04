@@ -6,7 +6,13 @@ This project follows a lightweight Keep a Changelog style.
 Historical release details before this file existed remain available in GitHub
 Releases.
 
-## Unreleased
+## v1.0.0 - 2026-08-04
+
+Workcell 1.0 freezes the supported operator contract and records a final GO
+decision for the Apple-Silicon macOS release boundary. Supported launch remains
+limited to strict Colima and lower-assurance Docker Desktop compatibility;
+remote macOS targets stay preview-only, and Linux and Windows remain blocked as
+operator hosts.
 
 ### Changed
 
@@ -16,6 +22,11 @@ Releases.
 
 ### Fixed
 
+- give detached provider sessions a real pseudoterminal while preserving the
+  controlled host send/attach channel, so interactive Tier 1 CLIs do not exit
+  immediately with a non-terminal stdin error; keep interactive attach portable
+  to the system Bash shipped by macOS; and keep graceful stop signal forwarding
+  inside the managed supervisor after the runtime drops privileges.
 - remove temporary Buildx resources after every runtime-image build attempt,
   with exact target, random identity, ownership, and inventory checks.
 - stage and hash the exact GitHub release asset inventory before the first

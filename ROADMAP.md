@@ -1,6 +1,7 @@
 # Roadmap
 
-Workcell is still pre-1.0. The roadmap must expand adoption without weakening
+Workcell 1.0 freezes the reviewed local boundary and operator contract. The
+roadmap must expand adoption without weakening
 the core promise: coding agents run behind explicit runtime boundaries,
 support tiers, diagnostics, and evidence. Delivered features belong in the
 changelog and user docs. This file records direction and sequencing, not a
@@ -181,8 +182,8 @@ improvement tracks below; `G` items are the 1.0 contract-and-operations track.
    release lenses — records no unresolved P0/P1 findings, and every support
    matrix row matches shipped behavior.
 
-The G4 evidence package and its go/no-go checklist live in
-[`docs/1.0-readiness-review-draft.md`](docs/1.0-readiness-review-draft.md); the
+The completed G4 evidence package and its GO checklist live in
+[`docs/1.0-readiness-review.md`](docs/1.0-readiness-review.md); the
 B6 (item 6) real-boundary certification lane disposition options are in
 [`docs/b6-disposition-options-draft.md`](docs/b6-disposition-options-draft.md).
 **Recorded maintainer decisions (2026-07-09):** B2 — defer dual-control
@@ -195,7 +196,8 @@ OpenSSF badge to post-1.0 (criterion 2, amended above). E6 — defer the rendere
 docs site, demos, and external benchmark publication. C2 — defer certification
 and its latency target to post-1.0; preserve the generic driver as benchmark-only
 after rejecting the broader dedicated-certifier design (criteria 3 and 7 amended
-above). See the readiness review for the recorded G4 checklist state.
+above). The 2026-08-04 readiness review records the completed checklist, exact
+evidence identities, scope decisions, and zero unresolved P0/P1 findings.
 
 ### Milestone Train
 
@@ -210,7 +212,7 @@ live in
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
 | v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
-| v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
+| v1.0 | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
 | post-1.0 | Reach expansion | Phases 13–19 remainder, C2, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Phase 13 (Linux `amd64` `local_compat` certification candidate) may land
@@ -476,20 +478,20 @@ OS-level sandboxes (Seatbelt/bubblewrap). Workcell's VM-plus-container
 boundary and staged-credential model match the containment doctrine the
 strongest vendors now publish; these items deepen that lead.
 
-- **A1 (now, M):** egress policy depth and target parity — document, extend,
+- **A1 (complete, M):** egress policy depth and target parity — document, extend,
   and parity-label the shipped strict default-deny allowlist rather than
   build a duplicate lane
-- **A2 (now, M):** repo-defined MCP and agent-config containment,
+- **A2 (complete, M):** repo-defined MCP and agent-config containment,
   deny-by-default in `strict` with acknowledged, audited exceptions
-- **A3 (now, M):** fuzzing expansion across the Rust shim and Go parsers,
+- **A3 (complete, M):** fuzzing expansion across the Rust shim and Go parsers,
   wired into continuous fuzzing
-- **A4 (now, S):** `SAFETY:` documentation for every unsafe Rust block plus a
+- **A4 (complete, S):** `SAFETY:` documentation for every unsafe Rust block plus a
   pre-audit checklist
-- **A5 (next, M):** signed, tamper-evident session audit records verifiable
+- **A5 (complete, M):** signed, tamper-evident session audit records verifiable
   from outside the agent
-- **A6 (next, M):** documented syscall/filesystem hardening profile with a
+- **A6 (complete, M):** documented syscall/filesystem hardening profile with a
   deterministic conformance check
-- **A7 (now, S):** OWASP Agentic Top 10 control mapping feeding the Phase 11
+- **A7 (complete, S):** OWASP Agentic Top 10 control mapping feeding the Phase 11
   evidence packet
 
 ### Track B: Supply Chain And Release Assurance
@@ -500,15 +502,15 @@ keyless Sigstore signing, SBOMs, and GitHub attestations. These items close
 the remaining gaps between that posture and the level enterprises will ask a
 security-boundary product to prove.
 
-- **B1 (now, M):** SLSA v1.0 gap analysis published in the provenance docs
+- **B1 (complete, M):** SLSA v1.0 gap analysis published in the provenance docs
 - **B2 (post-1.0, M):** dual-control release approval — deferred by the
   2026-07-09 criterion-6 amendment because no second trusted maintainer exists;
   1.0 uses the documented single-maintainer controls in `docs/releasing.md`
-- **B3 (now, M):** scheduled mutation-score lane with published score and
+- **B3 (complete, M):** scheduled mutation-score lane with published score and
   baseline regression gate, beyond today's release-preflight-only run
-- **B4 (now, S):** centralized tool pins and a permitted-GitHub-actions
+- **B4 (complete, S):** centralized tool pins and a permitted-GitHub-actions
   allowlist check
-- **B5 (now, S):** audit-trail retention policy with extended
+- **B5 (complete, S):** audit-trail retention policy with extended
   release-evidence retention and post-expiry attestation/Rekor guidance
 - **B6 (post-1.0, L):** real-boundary certification lane on Apple Silicon runner
   infrastructure, gated on the CI threat model — deferred to post-1.0 by the
@@ -517,9 +519,9 @@ security-boundary product to prove.
 - **B7 (post-1.0, S + L):** OpenSSF Best Practices badge and funded
   third-party boundary audit — both deferred to post-1.0 by the 2026-07-09
   criterion-2/6 amendment
-- **B8 (next, M):** CI efficiency and reliability program — nightly
+- **B8 (complete, M):** CI efficiency and reliability program — nightly
   reproducibility split, retries, flake tracking, cost visibility
-- **B9 (next, M):** CI/CD threat model covering secrets, runner trust tiers,
+- **B9 (complete, M):** CI/CD threat model covering secrets, runner trust tiers,
   attestation assumptions, and signing-compromise response
 
 ### Track C: Runtime Platform Evolution
@@ -537,11 +539,10 @@ security-boundary product to prove.
 - **C3 (implemented; locally certified 2026-08-03, L):** native parallel
   sessions — one agent per worktree, branch, and isolated runtime, with
   session-record linkage. The exact-tree pre-merge certification is bound to
-  signed activation commit `a26b750f`; shipped status depends on that commit
-  being reachable from `main`
+  signed activation commit `a26b750f`, which is reachable from reviewed `main`
 - **C4 (later, L):** container tooling inside the boundary as an explicit
   labeled lane that never weakens the outer boundary
-- **C5 (now, S):** syscall-shim performance baselines for the hooked
+- **C5 (complete, S):** syscall-shim performance baselines for the hooked
   exec/spawn paths
 
 ### Track D: Code Health And Consolidation
@@ -552,43 +553,47 @@ monolithic Rust interception library, a 8,910-line launcher script, a
 9,131-line `verify-invariants.sh`, and widespread helper duplication across
 120 shell scripts (for example, 25 separate `cleanup()` definitions).
 
-- **D1 (now, S):** language-boundary doctrine — Rust for the shim, Go for
+- **D1 (complete, S):** language-boundary doctrine — Rust for the shim, Go for
   logic, shell as thin glue
-- **D2 (now, M):** shared shell helper library plus a shellcheck lane over
+- **D2 (complete, M):** shared shell helper library plus a shellcheck lane over
   all scripts
-- **D3 (next, L):** migrate the `verify-invariants` and `container-smoke`
-  orchestration from bash to Go, keeping scenario parity
-- **D4 (next, M):** modularize the launcher and document its contract
-- **D5 (next, L):** modularize the Rust interception library into focused
-  modules
-- **D6 (later, M):** split oversized Go validators per format
-- **D7 (next, M):** property-based session-lifecycle tests, Go benchmarks,
-  and a shell unit-test lane
-- **D8 (now, S):** stability contracts for internal APIs, CLI surfaces, and
+- **D3 (complete, L):** migrate the static `verify-invariants` scope to Go;
+  retain the documented static residual, dynamic tail, and container-smoke
+  orchestration in bash by the recorded G4 narrowing
+- **D4 (complete, M):** modularize the launcher and document its contract
+- **D5 (partial; post-1.0 remainder, L):** the git-policy module is extracted;
+  carry the remaining Rust interception-library module splits post-1.0
+- **D6 (complete for 1.0, M):** split the oversized Go validators by major
+  format; retain the small inline validators and dispatcher-main refactor as
+  post-1.0 code-health work by the recorded G4 scope decision
+- **D7 (partial; post-1.0 remainder, M):** property-based session-lifecycle
+  tests and shell-protocol coverage shipped; carry Go benchmarks and the broader
+  shell unit-test lane post-1.0
+- **D8 (complete, S):** stability contracts for internal APIs, CLI surfaces, and
   a unified exit-code contract
 
 ### Track E: Documentation And Adoption
 
-- **E1 (now, M):** tiered documentation entry points and a slimmer README
-- **E2 (now, M):** maintained architecture diagrams in the system design doc
-- **E3 (now, S):** support-tier legend and a `--doctor`/`--inspect`
+- **E1 (complete, M):** tiered documentation entry points and a slimmer README
+- **E2 (complete, M):** maintained architecture diagrams in the system design doc
+- **E3 (complete, S):** support-tier legend and a `--doctor`/`--inspect`
   diagnostics interpretation guide
-- **E4 (now, S):** docs CI depth — link checking, orphan detection, status
+- **E4 (complete, S):** docs CI depth — link checking, orphan detection, status
   labels, freshness markers
-- **E5 (next, M):** injection-policy annotated schema with complete
+- **E5 (complete, M):** injection-policy annotated schema with complete
   per-provider examples
 - **E6 (post-1.0, M):** adoption growth kit — docs site, terminal demos,
   Homebrew tap, isolation-model architecture post backed by benchmarks;
   deferred by the 2026-07-09 criterion-7 amendment
-- **E7 (next, S):** contributor runbook depth and substantive adapter READMEs
+- **E7 (complete, S):** contributor runbook depth and substantive adapter READMEs
 
 ### Track F: Enterprise And Standards Alignment
 
-- **F1 (next, M):** OCSF-mapped audit export — the concrete Phase 17 format
+- **F1 (complete, M):** OCSF-mapped audit export — the concrete Phase 17 format
   decision
 - **F2 (later, M):** SPIFFE-style per-session identity groundwork feeding
   Phase 15
-- **F3 (now, S):** standards watchlist (MCP spec line, OWASP agentic
+- **F3 (complete, S):** standards watchlist (MCP spec line, OWASP agentic
   guidance, agent-identity drafts) with a review cadence
 
 ### Track G: 1.0 Contract And Operations
@@ -597,16 +602,15 @@ These items exist specifically to make 1.0 a truthful claim: a frozen public
 contract and proven day-two operations.
 
 - **G1 (complete, M):** the public contract inventory, v1 stability
-  classification, deprecation policy, and release-preflight drift gate are
-  versioned; the candidate-scoped G4 readiness record will supply exact
-  identities
-- **G2 (implemented, M):** `workcell support-bundle` ships with documented
+  classification, deprecation policy, release-preflight drift gate, and exact
+  G4 evidence identities are versioned
+- **G2 (complete, M):** `workcell support-bundle` ships with documented
   redaction rules
-- **G3 (candidate freshness pending, M):** install, upgrade, uninstall,
-  rollback, and `--gc` have repeatable evidence; the readiness register keeps
-  historical release-candidate evidence separate from the final candidate
-- **G4 (pending, S):** the cross-lens 1.0 readiness gate records fixed statuses,
-  exact candidate/evidence identities, and every explicit scope decision
+- **G3 (complete, M):** install, upgrade, uninstall, rollback, and `--gc` have
+  repeatable CI evidence plus published-release local certification
+- **G4 (complete, S):** the cross-lens 1.0 readiness gate records fixed
+  statuses, exact candidate/evidence identities, every explicit scope decision,
+  and no unresolved P0/P1 findings
 
 ### Sequencing Summary
 
