@@ -79,6 +79,7 @@ func subcommands() []subcommand {
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
 		{"hadolint-manifest-checksum", "ASSET_NAME", 1, 1, cmdHadolintManifestChecksum},
+		{"select-buildx-version", "CURRENT_VERSION CANDIDATE_VERSION", 2, 2, cmdSelectBuildxVersion},
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
@@ -368,6 +369,15 @@ func cmdInspectDebianBootstrap(args []string) error {
 		return err
 	}
 	fmt.Printf("%s\n", content)
+	return nil
+}
+
+func cmdSelectBuildxVersion(args []string) error {
+	version, err := metadatautil.SelectInstallableBuildxVersion(os.Stdin, args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(version)
 	return nil
 }
 

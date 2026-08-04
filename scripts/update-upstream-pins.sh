@@ -595,7 +595,8 @@ target_hadolint_sha_arm64="$(
 )"
 
 buildx_release_json="$(github_api_get 'https://api.github.com/repos/docker/buildx/releases/latest')"
-target_buildx_version="$(jq -r '.tag_name' <<<"${buildx_release_json}")"
+candidate_buildx_version="$(jq -r '.tag_name' <<<"${buildx_release_json}")"
+buildx_install_catalog_response="$(github_api_get 'https://api.github.com/repos/docker/actions-toolkit/contents/.github/buildx-releases.json?ref=main')"
 
 cosign_release_json="$(github_api_get 'https://api.github.com/repos/sigstore/cosign/releases/latest')"
 target_cosign_version="$(jq -r '.tag_name' <<<"${cosign_release_json}")"
@@ -653,6 +654,15 @@ current_hadolint_sha_amd64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PAT
 current_hadolint_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" HADOLINT_LINUX_ARM64_SHA256)"
 current_buildkit_image="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
 current_buildx_version="$(extract_yaml_scalar "${CI_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
+target_buildx_version="$({
+  cd "${ROOT_DIR}" || exit
+  printf '%s' "${buildx_install_catalog_response}" |
+    go run ./cmd/workcell-citools select-buildx-version "${current_buildx_version}" "${candidate_buildx_version}"
+})"
+unavailable_buildx_version=""
+if [[ "${target_buildx_version}" != "${candidate_buildx_version}" ]]; then
+  unavailable_buildx_version="${candidate_buildx_version}"
+fi
 current_docs_buildkit_image="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
 current_docs_buildx_version="$(extract_yaml_scalar "${DOCS_WORKFLOW_PATH}" WORKCELL_BUILDX_VERSION)"
 current_mutation_buildkit_image="$(extract_yaml_scalar "${MUTATION_WORKFLOW_PATH}" WORKCELL_BUILDKIT_IMAGE)"
@@ -821,6 +831,9 @@ print_summary() {
   print_summary_line "hadolint" "${current_hadolint_version}" "${target_hadolint_version}"
   print_summary_line "buildkit-image" "${current_buildkit_image}" "${target_buildkit_image}"
   print_summary_line "buildx-version" "${current_buildx_version}" "${target_buildx_version}"
+  if [[ -n "${unavailable_buildx_version}" ]]; then
+    printf '  buildx-candidate: %s (waiting for setup-buildx-action install catalog)\n' "${unavailable_buildx_version}"
+  fi
   print_summary_line "cosign-version" "${current_cosign_version}" "${target_cosign_version}"
   print_summary_line "upstream-refresh-cosign-version" "${current_upstream_refresh_cosign_version}" "${target_cosign_version}"
   print_summary_line "qemu-image" "${current_qemu_image}" "${target_qemu_image}"

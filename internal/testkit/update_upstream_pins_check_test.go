@@ -108,6 +108,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	assertUpdaterFixtureRun(t, checkRun, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, checkRun.CIToolsLog, map[string]int{
 		"hadolint-manifest-checksum": 2,
+		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     0,
 		"check-pinned-inputs":        0,
@@ -132,6 +133,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	assertUpdaterFixtureRun(t, applyRun, 0, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, applyRun.CIToolsLog, map[string]int{
 		"hadolint-manifest-checksum": 2,
+		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     1,
 		"check-pinned-inputs":        1,
@@ -166,6 +168,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	assertUpdaterFixtureRun(t, cleanRun, 0, updaterFixtureSummary(pins, targetManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, cleanRun.CIToolsLog, map[string]int{
 		"hadolint-manifest-checksum": 2,
+		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     0,
 		"check-pinned-inputs":        0,
@@ -201,6 +204,7 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	assertUpdaterResolutionLog(t, run.ResolutionLog, invalidPlan.Snapshot)
 	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{
 		"hadolint-manifest-checksum": 2,
+		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     1,
 		"check-pinned-inputs":        0,
@@ -644,7 +648,7 @@ func assertUpdaterCommandCounts(t *testing.T, commands []string, expected map[st
 	}
 	for command := range counts {
 		switch command {
-		case "extract-dockerfile-arg", "hadolint-manifest-checksum", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
+		case "extract-dockerfile-arg", "hadolint-manifest-checksum", "select-buildx-version", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
 		default:
 			t.Fatalf("unexpected real workcell-citools command %q; log=%q", command, commands)
 		}
@@ -1016,6 +1020,12 @@ curl() {
     'https://api.github.com/repos/docker/buildx/releases/latest')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
       printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_BUILDX_VERSION}"
+      ;;
+    'https://api.github.com/repos/docker/actions-toolkit/contents/.github/buildx-releases.json?ref=main')
+      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
+      local catalog
+      catalog="$(printf '{"%s":{"tag_name":"%s"}}' "${WORKCELL_FIXTURE_BUILDX_VERSION}" "${WORKCELL_FIXTURE_BUILDX_VERSION}" | base64 | tr -d '\n')"
+      printf '{"encoding":"base64","content":"%s"}\n' "${catalog}"
       ;;
     'https://api.github.com/repos/sigstore/cosign/releases/latest')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
