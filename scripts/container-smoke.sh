@@ -36,6 +36,7 @@ SMOKE_WORKSPACE=""
 INJECTION_FIXTURE_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 WORKSPACE_IMPORT_ROOT=""
+DETACHED_TTY_SMOKE_CONTAINER=""
 declare -a WORKSPACE_IMPORT_ARGS=()
 declare -a RUNTIME_SECURITY_ARGS=()
 declare -a COPILOT_SMOKE_TOKEN_HANDOFF_DIRS=()
@@ -467,6 +468,9 @@ prepare_smoke_workspace() {
 }
 
 cleanup() {
+  if [[ -n "${DETACHED_TTY_SMOKE_CONTAINER}" ]]; then
+    docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
+  fi
   cleanup_workcell_trusted_docker_client
   cleanup_workspace_scratch "${ROOT_DIR}" || true
   if [[ -n "${SMOKE_WORKSPACE}" ]]; then
@@ -3233,6 +3237,35 @@ if run_container codex bash -lc 'AGENT_NAME=codex WORKCELL_MODE=breakglass CODEX
   exit 1
 fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct-codex-breakglass.out
+
+DETACHED_TTY_SMOKE_CONTAINER="workcell-detached-tty-smoke-$$"
+docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
+if ! docker_cmd create \
+  --name "${DETACHED_TTY_SMOKE_CONTAINER}" \
+  -i -t \
+  --entrypoint /bin/bash \
+  "${IMAGE_TAG}" \
+  /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
+  /bin/bash -lc 'test -t 0 && test -t 1 && test -t 2 && test "$1" = "space value" && test "$2" = "single'\''quote" && test "$3" = '\''$(not-run)'\'' && printf "detached-tty-ok\\n"' \
+  bash \
+  'space value' \
+  "single'quote" \
+  '$(not-run)' \
+  >/dev/null; then
+  echo "Could not create the detached terminal smoke container" >&2
+  exit 1
+fi
+set +e
+DETACHED_TTY_SMOKE_OUTPUT="$(docker_cmd start -a "${DETACHED_TTY_SMOKE_CONTAINER}" | tr -d '\r')"
+DETACHED_TTY_SMOKE_STATUS="$?"
+set -e
+docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
+DETACHED_TTY_SMOKE_CONTAINER=""
+if [[ "${DETACHED_TTY_SMOKE_STATUS}" -ne 0 ]] || [[ "${DETACHED_TTY_SMOKE_OUTPUT}" != "detached-tty-ok" ]]; then
+  echo "Detached stdin wrapper did not give its managed child a terminal" >&2
+  printf '%s\n' "${DETACHED_TTY_SMOKE_OUTPUT}" >&2
+  exit 1
+fi
 
 populate_runtime_security_args ephemeral
 if docker_cmd run --rm \

@@ -3954,7 +3954,9 @@ session_attach_main() {
     "stdin_mode=${stdin_mode}" \
     "container_name=${container_name}"
   set +e
-  run_profile_docker_command "${profile}" attach "${attach_args[@]}" "${container_name}"
+  run_profile_docker_command "${profile}" attach \
+    ${attach_args[@]+"${attach_args[@]}"} \
+    "${container_name}"
   attach_status="$?"
   set -e
   if [[ "${attach_status}" -ne 0 ]]; then
@@ -9090,12 +9092,12 @@ fi
 DOCKER_RUN_ARGS=("${DOCKER_RUN[@]:${DOCKER_RUN_PREFIX_LEN}}")
 
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
+  # The managed detached-stdin wrapper supervises and reaps the provider as
+  # container PID 1. Docker's init cannot signal that unprivileged process
+  # after the entrypoint drops privileges.
   DOCKER_RUN=(
     "${HOST_DOCKER_BIN}" run
   )
-  if [[ -z "${COPILOT_TOKEN_HANDOFF_DIR}" ]]; then
-    DOCKER_RUN+=(--init)
-  fi
   DOCKER_RUN+=(-d -i -t "${DOCKER_RUN_ARGS[@]}")
 elif [[ -t 0 ]] && [[ -t 1 ]]; then
   mark_interactive_host_terminal_dirty

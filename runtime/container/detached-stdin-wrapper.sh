@@ -8,6 +8,13 @@ chmod 0700 "$(dirname "${stdin_path}")"
 mkfifo "${stdin_path}"
 chmod 0600 "${stdin_path}"
 exec 3<>"${stdin_path}"
+exec_path="$(mktemp "$(dirname "${stdin_path}")/session-exec.XXXXXX")"
+{
+  printf '#!/usr/bin/env bash\nexec'
+  printf ' %q' "$@"
+  printf '\n'
+} >"${exec_path}"
+chmod 0700 "${exec_path}"
 child_pid=""
 child_done=0
 child_status=0
@@ -24,7 +31,7 @@ forwarder_pid=$!
 cleanup() {
   kill "${forwarder_pid}" >/dev/null 2>&1 || true
   wait "${forwarder_pid}" >/dev/null 2>&1 || true
-  rm -f "${stdin_path}"
+  rm -f "${stdin_path}" "${exec_path}"
 }
 
 forward_child_signal() {
@@ -67,7 +74,7 @@ handle_signal() {
 trap cleanup EXIT
 trap 'handle_signal INT' INT
 trap 'handle_signal TERM' TERM
-"$@" <&3 &
+/usr/bin/script -qefc "${exec_path}" /dev/null <&3 &
 child_pid="$!"
 set +e
 wait "${child_pid}"
