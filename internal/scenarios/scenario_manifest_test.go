@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -121,6 +122,10 @@ func TestLoadScenariosAndListTSV(t *testing.T) {
 	want := "shared/example\tshared/test-example.sh\t0\tsecretless\tany\trepo-required\t0\nshared/manual\t\t0\tprovider-e2e\tmacos\trepo-required\t1\n"
 	if got.stdout != want {
 		t.Fatalf("unexpected list-tsv output: %q", got.stdout)
+	}
+	wantColumns := []string{"id", "test_file", "requires_credentials", "lane", "platform", "validation_tier", "manual"}
+	if !slices.Equal(ListTSVColumns(), wantColumns) {
+		t.Fatalf("ListTSVColumns() = %v, want %v", ListTSVColumns(), wantColumns)
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/scenarios"
 )
 
 // exitCodeSourceFiles are the repo-relative files searched for a literal,
@@ -27,23 +29,25 @@ var exitCodeSourceFiles = []string{
 }
 
 type publicContract struct {
-	ExitCodes               []string
-	OutputLinePrefixes      []string
-	SessionShowPrefixes     []string
-	SessionRecordFields     []string
-	SessionExportFields     []string
-	InjectionTables         []string
-	InjectionScalarRootKeys []string
+	ExitCodes                  []string
+	OutputLinePrefixes         []string
+	SessionShowPrefixes        []string
+	SessionRecordFields        []string
+	SessionExportFields        []string
+	InjectionTables            []string
+	InjectionScalarRootKeys    []string
+	ScenarioManifestTSVColumns []string
 }
 
 // CheckPublicContract validates that contractPath (policy/public-contract.toml)
 // matches the actual public surface embedded in the Workcell source tree
 // rooted at rootDir: the process exit-code convention, the stable
-// machine-readable output-line prefixes, the durable SessionRecord /
-// SessionExport JSON field sets, and the injection-policy table whitelist.
+// machine-readable output-line prefixes, the ordered scenario-manifest TSV
+// schema, the durable SessionRecord / SessionExport JSON field sets, and the
+// injection-policy table whitelist.
 //
-// Every assertion is a deterministic file read plus string/regex matching —
-// no Docker, no network, no subprocess execution. Mirrors
+// Every assertion is a deterministic source inspection — no Docker, no
+// network, no subprocess execution. Mirrors
 // ValidateOperatorContract's fail-closed style: an unreadable contract or
 // source file, or any mismatch between the documented and actual surface,
 // returns a non-nil error naming the file and the mismatch.
@@ -60,6 +64,9 @@ func CheckPublicContract(rootDir, contractPath string) error {
 		return err
 	}
 	if err := checkOutputLinePrefixes(rootDir, contractPath, contract.OutputLinePrefixes); err != nil {
+		return err
+	}
+	if err := checkScenarioManifestTSVColumns(contractPath, contract.ScenarioManifestTSVColumns); err != nil {
 		return err
 	}
 	if err := checkSessionShowPrefixes(rootDir, contractPath, contract.SessionShowPrefixes); err != nil {
@@ -125,16 +132,34 @@ func loadPublicContract(contractPath string) (publicContract, error) {
 	if err != nil {
 		return publicContract{}, err
 	}
+	scenarioManifestTSVColumns, err := requiredStringSliceTable(document, contractPath, "scenario_manifest_tsv", "columns")
+	if err != nil {
+		return publicContract{}, err
+	}
 
 	return publicContract{
-		ExitCodes:               exitCodes,
-		OutputLinePrefixes:      outputLinePrefixes,
-		SessionShowPrefixes:     sessionShowPrefixes,
-		SessionRecordFields:     sessionRecordFields,
-		SessionExportFields:     sessionExportFields,
-		InjectionTables:         injectionTables,
-		InjectionScalarRootKeys: injectionScalarRootKeys,
+		ExitCodes:                  exitCodes,
+		OutputLinePrefixes:         outputLinePrefixes,
+		SessionShowPrefixes:        sessionShowPrefixes,
+		SessionRecordFields:        sessionRecordFields,
+		SessionExportFields:        sessionExportFields,
+		InjectionTables:            injectionTables,
+		InjectionScalarRootKeys:    injectionScalarRootKeys,
+		ScenarioManifestTSVColumns: scenarioManifestTSVColumns,
 	}, nil
+}
+
+func checkScenarioManifestTSVColumns(contractPath string, columns []string) error {
+	emitted := scenarios.ListTSVColumns()
+	if slices.Equal(emitted, columns) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s scenario_manifest_tsv.columns must match the ordered columns emitted by internal/scenarios.ListTSV: got %q, want %q",
+		contractPath,
+		columns,
+		emitted,
+	)
 }
 
 func requiredStringSliceTable(document map[string]any, contractPath, table, key string) ([]string, error) {

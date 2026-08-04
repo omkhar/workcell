@@ -389,27 +389,53 @@ func ListTSV(manifestPath string, w io.Writer) error {
 		return err
 	}
 	for _, scenario := range scenarios {
-		requires := "0"
-		if scenario.RequiresCredentials {
-			requires = "1"
+		fields := listTSVFields(scenario)
+		values := make([]string, 0, len(fields))
+		for _, field := range fields {
+			values = append(values, field.value)
 		}
-		manual := "0"
-		if scenario.Manual {
-			manual = "1"
-		}
-		if _, err := fmt.Fprintln(w, strings.Join([]string{
-			scenario.ID,
-			scenario.TestFile,
-			requires,
-			scenario.Lane,
-			scenario.Platform,
-			scenario.ValidationTier,
-			manual,
-		}, "\t")); err != nil {
+		if _, err := fmt.Fprintln(w, strings.Join(values, "\t")); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type scenarioManifestTSVField struct {
+	column string
+	value  string
+}
+
+func listTSVFields(scenario Scenario) []scenarioManifestTSVField {
+	requires := "0"
+	if scenario.RequiresCredentials {
+		requires = "1"
+	}
+	manual := "0"
+	if scenario.Manual {
+		manual = "1"
+	}
+	return []scenarioManifestTSVField{
+		{column: "id", value: scenario.ID},
+		{column: "test_file", value: scenario.TestFile},
+		{column: "requires_credentials", value: requires},
+		{column: "lane", value: scenario.Lane},
+		{column: "platform", value: scenario.Platform},
+		{column: "validation_tier", value: scenario.ValidationTier},
+		{column: "manual", value: manual},
+	}
+}
+
+// ListTSVColumns returns the stable scenario-manifest row columns in emitted
+// order. The same field descriptors drive ListTSV, so inventory validation is
+// bound to the actual output rather than a parallel documentation constant.
+func ListTSVColumns() []string {
+	fields := listTSVFields(Scenario{})
+	columns := make([]string, 0, len(fields))
+	for _, field := range fields {
+		columns = append(columns, field.column)
+	}
+	return columns
 }
 
 func Usage(program string) string {

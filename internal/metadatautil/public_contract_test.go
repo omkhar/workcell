@@ -102,6 +102,22 @@ func TestCheckPublicContractRejectsBogusOutputPrefix(t *testing.T) {
 	}
 }
 
+func TestCheckPublicContractRejectsScenarioManifestTSVReorder(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	contractPath := mutatedContractCopy(t, root,
+		`columns = ["id", "test_file",`,
+		`columns = ["test_file", "id",`,
+	)
+
+	err := CheckPublicContract(root, contractPath)
+	if err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly accepted reordered scenario-manifest TSV columns")
+	}
+	if !strings.Contains(err.Error(), "ordered columns emitted by internal/scenarios.ListTSV") {
+		t.Fatalf("CheckPublicContract() error = %v, want ordered scenario-manifest TSV diagnostic", err)
+	}
+}
+
 func TestCheckPublicContractRejectsRemovalFromV1Freeze(t *testing.T) {
 	root := publicContractRepoRoot(t)
 	contractPath := mutatedContractCopy(t, root,
@@ -257,6 +273,49 @@ func TestV1ContractHistoryRejectsSynchronizedPublicRemoval(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "egress_enforcement=") || !strings.Contains(err.Error(), "removed historical") {
 		t.Fatalf("CheckV1ContractFreezeHistory() error = %v, want historical-removal diagnostic", err)
+	}
+}
+
+func TestV1ContractHistoryRejectsSynchronizedScenarioManifestTSVRewrite(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	publicContent, err := os.ReadFile(filepath.Join(root, "policy", "public-contract.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezeContent, err := os.ReadFile(defaultV1ContractFreezePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldColumns := `"id", "test_file", "requires_credentials"`
+	newColumns := `"test_file", "id", "requires_credentials"`
+	mutatedPublic := strings.Replace(string(publicContent), oldColumns, newColumns, 1)
+	mutatedFreeze := strings.Replace(string(freezeContent), oldColumns, newColumns, 1)
+	if mutatedPublic == string(publicContent) || mutatedFreeze == string(freezeContent) {
+		t.Fatal("synchronized scenario-manifest TSV mutation did not apply")
+	}
+	dir := t.TempDir()
+	publicPath := filepath.Join(dir, "public-contract.toml")
+	freezePath := filepath.Join(dir, "v1-contract-freeze.toml")
+	if err := os.WriteFile(publicPath, []byte(mutatedPublic), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(freezePath, []byte(mutatedFreeze), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkV1ContractFreeze(
+		publicPath,
+		filepath.Join(root, "policy", "operator-contract.toml"),
+		freezePath,
+	); err != nil {
+		t.Fatalf("current-state parity should accept the synchronized fixture, got %v", err)
+	}
+	err = CheckV1ContractFreezeHistory(defaultV1ContractFreezePath(root), freezePath)
+	if err == nil {
+		t.Fatal("history check unexpectedly accepted synchronized scenario-manifest TSV rewrite")
+	}
+	if !strings.Contains(err.Error(), "rewrote historical v1 scenario-manifest TSV columns") {
+		t.Fatalf("CheckV1ContractFreezeHistory() error = %v, want historical schema-rewrite diagnostic", err)
 	}
 }
 

@@ -16,7 +16,8 @@
 # parity checks — that remains operator-contract's job. This file covers the
 # lower-level cross-surface primitives: process exit codes, stable
 # machine-readable output-line prefixes, the durable session-record JSON
-# shape, and the injection-policy table whitelist.
+# shape, the ordered scenario-manifest TSV schema, and the injection-policy
+# table whitelist.
 
 [meta]
 version = "1"
@@ -30,6 +31,11 @@ codes = ["0", "1", "2", "3", "124", "126", "127", "128"]
 # tooling. See docs/stability-contract.md "Stable machine-readable output".
 [output_lines]
 prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest=", "egress_enforcement=", "session_verify=", "key_id=", "head_digest="]
+
+# Ordered columns emitted by `workcell-citools scenario-manifest list-tsv`.
+# This is a row schema: order is part of the v1 compatibility contract.
+[scenario_manifest_tsv]
+columns = ["id", "test_file", "requires_credentials", "lane", "platform", "validation_tier", "manual"]
 
 # The json tags of internal/host/sessions/sessions.go's SessionRecord and
 # SessionExport structs.

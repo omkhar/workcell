@@ -144,7 +144,9 @@ contract-like `key=value` / structured output:
 - `publish_pr_url=` (from `publish-pr`).
 - `mutation score: NN.NN% (k/t killed)` and `surviving mutants: …`.
 - audit digest lines: `record_digest=`, `prev_digest=`.
-- `scenario-manifest` TSV rows (tab-delimited).
+- `scenario-manifest` TSV rows (tab-delimited), with ordered columns `id`,
+  `test_file`, `requires_credentials`, `lane`, `platform`,
+  `validation_tier`, and `manual`.
 
 The full stable output-line prefix set enforced by `policy/public-contract.toml`
 `[output_lines].prefixes`:

@@ -132,6 +132,15 @@ func checkV1ContractFreeze(currentPublicContractPath, currentOperatorContractPat
 			return fmt.Errorf("%s must append current %s from %s: %s", freezePath, frozenSet.name, currentPublicContractPath, strings.Join(unfrozen, ", "))
 		}
 	}
+	if !slices.Equal(freeze.Public.ScenarioManifestTSVColumns, currentPublic.ScenarioManifestTSVColumns) {
+		return fmt.Errorf(
+			"%s v1 scenario-manifest TSV columns changed in %s: got %q, want %q",
+			freezePath,
+			currentPublicContractPath,
+			currentPublic.ScenarioManifestTSVColumns,
+			freeze.Public.ScenarioManifestTSVColumns,
+		)
+	}
 
 	workflowIDs := make([]string, 0, len(freeze.OperatorWorkflows))
 	for workflowID := range freeze.OperatorWorkflows {
@@ -205,6 +214,11 @@ func loadV1ContractFreezeText(text, label string) (v1ContractFreeze, error) {
 		}
 		*field.target = values
 	}
+	scenarioManifestTSVColumns, err := optionalStringSliceTable(document, label, "public_contract", "scenario_manifest_tsv_columns")
+	if err != nil {
+		return v1ContractFreeze{}, err
+	}
+	public.ScenarioManifestTSVColumns = scenarioManifestTSVColumns
 
 	rawWorkflows, ok := document["operator_workflows"].(map[string]any)
 	if !ok || len(rawWorkflows) == 0 {
@@ -232,6 +246,15 @@ func checkV1ContractFreezeSnapshots(prior, current v1ContractFreeze, priorLabel,
 		if missing := missingFrozenValues(priorSet.values, currentSets[index].values); len(missing) > 0 {
 			return fmt.Errorf("%s removed historical v1 %s from %s: %s", currentLabel, priorSet.name, priorLabel, strings.Join(missing, ", "))
 		}
+	}
+	if len(prior.Public.ScenarioManifestTSVColumns) > 0 && !slices.Equal(prior.Public.ScenarioManifestTSVColumns, current.Public.ScenarioManifestTSVColumns) {
+		return fmt.Errorf(
+			"%s rewrote historical v1 scenario-manifest TSV columns from %s: got %q, want %q",
+			currentLabel,
+			priorLabel,
+			current.Public.ScenarioManifestTSVColumns,
+			prior.Public.ScenarioManifestTSVColumns,
+		)
 	}
 
 	workflowIDs := make([]string, 0, len(prior.OperatorWorkflows))
@@ -262,6 +285,24 @@ func publicContractSets(contract publicContract) []namedContractSet {
 		{"injection tables", contract.InjectionTables},
 		{"injection scalar root keys", contract.InjectionScalarRootKeys},
 	}
+}
+
+func optionalStringSliceTable(document map[string]any, label, table, key string) ([]string, error) {
+	rawTable, ok := document[table].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must define a [%s] table", label, table)
+	}
+	values, found, err := MustStringSlice(rawTable[key])
+	if err != nil {
+		return nil, fmt.Errorf("%s [%s] %s: %w", label, table, key, err)
+	}
+	if !found {
+		return nil, nil
+	}
+	if len(values) == 0 {
+		return nil, fmt.Errorf("%s [%s] must not define an empty %s array", label, table, key)
+	}
+	return values, nil
 }
 
 func v1ContractHistoryLogArgs(relativePath string) []string {
