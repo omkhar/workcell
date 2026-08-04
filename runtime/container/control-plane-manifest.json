@@ -212,7 +212,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/detached-stdin-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
-      "sha256": "d715de1a87695aac871700b0b33b3845b176db5d73f4c285cb2922ca43660c03"
+      "sha256": "9802a89717992353b5ddee76fdf64ca678705c2b19efa1cb757eb2071b3259e8"
     },
     {
       "kind": "runtime-control-plane",

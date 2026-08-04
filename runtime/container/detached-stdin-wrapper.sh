@@ -54,20 +54,28 @@ forward_child_signal() {
   fi
 }
 
+first_child_of() {
+  local parent_pid="$1"
+  local candidate_pid=""
+
+  while read -r candidate_pid; do
+    if [[ "${candidate_pid}" =~ ^[1-9][0-9]*$ ]]; then
+      printf '%s\n' "${candidate_pid}"
+      return 0
+    fi
+  done < <(/usr/bin/ps -o pid= --ppid "${parent_pid}" 2>/dev/null)
+  return 1
+}
+
 discover_provider() {
   local attempt=0
   local pty_shell_pid=""
   local candidate_provider_pid=""
 
   for ((attempt = 0; attempt < 50; attempt++)); do
-    pty_shell_pid=""
-    if [[ -r "/proc/${child_pid}/task/${child_pid}/children" ]]; then
-      read -r pty_shell_pid _ <"/proc/${child_pid}/task/${child_pid}/children" || true
-    fi
-    if [[ "${pty_shell_pid}" =~ ^[1-9][0-9]*$ ]] &&
-      [[ -r "/proc/${pty_shell_pid}/task/${pty_shell_pid}/children" ]]; then
-      candidate_provider_pid=""
-      read -r candidate_provider_pid _ <"/proc/${pty_shell_pid}/task/${pty_shell_pid}/children" || true
+    pty_shell_pid="$(first_child_of "${child_pid}" || true)"
+    if [[ -n "${pty_shell_pid}" ]]; then
+      candidate_provider_pid="$(first_child_of "${pty_shell_pid}" || true)"
       if [[ "${candidate_provider_pid}" =~ ^[1-9][0-9]*$ ]] &&
         kill -0 "${candidate_provider_pid}" >/dev/null 2>&1; then
         provider_pid="${candidate_provider_pid}"
