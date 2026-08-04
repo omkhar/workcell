@@ -63,7 +63,7 @@ The milestone ordering answers the current landscape directly:
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
 | v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
-| v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
+| v1.0 | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
 | post-1.0 | Reach expansion | Phases 13–19 remainder, C2, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Items inside a milestone are independently shippable and individually
@@ -605,7 +605,7 @@ here for continuity of the B6 track.
 - Size: M. Dependencies: G1 inventory (formats must be versioned to prove
   compatibility).
 
-## Milestone v1.0-rc: Freeze And Gate
+## Milestone v1.0: Freeze And Gate
 
 ### G1 (part 2): Contract Freeze And Deprecation Policy
 
@@ -633,6 +633,11 @@ here for continuity of the B6 track.
   decisions recorded; criteria checklist complete with evidence links.
 - Validation: the recorded review itself.
 - Size: S (review) over the rc period. Dependencies: everything above.
+- Status (recorded 2026-08-04): COMPLETE. The six-lens review verified the
+  support and provider matrices, recorded every scope decision, closed its two
+  initial P1 findings and one subsequent Codex review finding, and finished
+  with no unresolved P0/P1 findings. Exact identities and evidence links are in
+  `docs/1.0-readiness-review.md`.
 
 ### D3 (complete): Orchestration Migration Finished
 
@@ -669,7 +674,7 @@ here for continuity of the B6 track.
 - Validation: existing pin-hygiene lanes before/after; mutation coverage.
 - Size: M. Dependencies: none; scheduled late to avoid churn against B4.
 
-- Status (recorded 2026-07-08, evidence-based): PARTIAL. The GitHub Actions
+- Historical status (recorded 2026-07-08, evidence-based): PARTIAL. The GitHub Actions
   workflow format is already extracted into
   `internal/metadatautil/pinnedinputs_workflows.go` (PR #453). The remaining
   split is a real behavior-preserving refactor lane, not a doc finalization:
@@ -687,15 +692,16 @@ here for continuity of the B6 track.
   D6 "largest dispatcher mains" clause (`cmd/workcell-hostutil/main.go` at 1,300
   lines) is likewise a separate refactor slice. This does not gate 1.0
   correctness — the validators already pass — it is a code-health split; the
-  maintainer should decide whether D6 (complete) is required for the 1.0-rc gate
-  or can carry into the rc window / post-1.0 as a code-health item.
+  G4 therefore had to decide whether D6 (complete) was required for the 1.0
+  gate or could carry into post-1.0 as a code-health item.
 - Update (recorded 2026-07-09): the largest pinned-input ecosystems are split
   into their own files (GitHub Actions workflows in `pinnedinputs_workflows.go`,
   Node/npm in `pinnedinputs_node.go`, and Docker in `pinnedinputs_docker.go`); the
   small Rust (~129 lines) and Python (~7 lines) validators remain inline as an
   accepted, non-oversized remainder. The D6 de-oversizing goal is met —
-  `pinnedinputs.go` is no longer oversized; the D6 gate closes once the G4
-  review records any accepted dispatcher-main remainder.
+  `pinnedinputs.go` is no longer oversized. G4 accepted the small inline
+  validators and remaining dispatcher-main refactor as post-1.0 code-health
+  work, so D6 is complete for the 1.0 gate.
 
 ## Post-1.0
 

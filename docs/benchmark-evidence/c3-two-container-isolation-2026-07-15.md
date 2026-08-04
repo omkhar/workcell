@@ -1,7 +1,7 @@
 # C3 — two-session isolation evidence
 
 Auditable evidence for the C3 isolation run recorded in
-[`../1.0-readiness-review-draft.md`](../1.0-readiness-review-draft.md) §6 Platform
+[`../1.0-readiness-review.md`](../1.0-readiness-review.md) §6 Platform
 row. Two same-repo detached sessions were started with `--session-workspace
 isolated` on `macos/arm64/local_vm/colima/strict` (profile `wcl-workcell-006e49ec`),
 then `session show` was captured for each.
