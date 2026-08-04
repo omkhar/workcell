@@ -1,7 +1,7 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:ae91dcc111a68c9d2d81ff2a17bda61be126426176fde6fe7d08ab13b7f50573
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
@@ -18,13 +18,13 @@ ARG SOURCE_DATE_EPOCH
 # One canonical, atomically replaced tuple feeds both shipped Dockerfiles.
 COPY --chmod=0444 runtime/container/debian-bootstrap.env /usr/local/share/workcell/debian-bootstrap.env
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 ENV TZ=UTC
 ENV npm_config_audit=false
 ENV npm_config_fund=false
 ENV npm_config_update_notifier=false
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # hadolint ignore=DL3008
 RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstrap.env \
@@ -222,7 +222,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.217
+ARG CLAUDE_VERSION=2.1.220
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -230,12 +230,12 @@ ARG CLAUDE_VERSION=2.1.217
 # bundles); to update manually, resolve the eligible stable version, verify
 # the GitHub release asset digests for both musl Linux tarballs, and refresh
 # the CODEX_SHA256 values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.145.0
+ARG CODEX_VERSION=0.146.0
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.73
+ARG COPILOT_VERSION=1.0.77
 ARG CODEX_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
 ARG RUST_VERSION=1.97.1
@@ -243,12 +243,13 @@ ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /workcell-rust
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
@@ -310,11 +311,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="40c53507ac669c1d438366c19760c22f52748a06e50e0fc0e353d2cb73425597"; \
+      CLAUDE_SHA256="159e4a51d796f3bf14677577100f7efb845611b1ceaf0c30cbd8d4650d942185"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="2630fc5dc6db61bc03f86b95daf47766e5ed5b61873f7bb7cfea764c5ac5a9ba"; \
+      CLAUDE_SHA256="674f61f20ff306f3100cf9200e4c36c4b70278b5bef2884549819b942a89c863"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -346,11 +347,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="d384f90bc842450b42bd675feef06a12a46a3b1ca97efcb22566b270e4a11227"; \
+      CODEX_SHA256="975bac91562abeedeb8f79636d51a86649b31f34a9de6a3bcb059565b6cf1f87"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="bfaf13c9ba34f2ad764e4a916c49cf7177aeba329cf0f719e2227566fc8d662a"; \
+      CODEX_SHA256="5ba3b9405543953081f661d0854d266f76e2abbe51d41349355a36de7673776a"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -393,11 +394,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="16f824ab3cdcf51a75ad907c84242805911cafc6519aaf58d09e0ae4eb1fc1cd"; \
+      COPILOT_SHA256="5bcf01b30bd74ce415cc93acb404885e0bc396cde037ca68efe2b8ec84f91e5a"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="8f9bb5f7e364c267265d1e24ac2aea69ed559ddb956719c6db12a353de6c5970"; \
+      COPILOT_SHA256="c6414f99c5b29b049a3b0929ba824f0ff0ae88b85eb52559be45631b96b00f4c"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -595,11 +596,11 @@ ENV CODEX_HOME=/state/agent-home/.codex
 ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
-# Defense-in-depth: default to a named unprivileged user so that direct
-# `docker run` without `--user root` stays non-root while still having a
-# deterministic writable session home and tmp dir. The host launcher passes
+# Defense-in-depth: default to the fixed unprivileged workcell UID/GID so that
+# direct `docker run` without `--user root` stays non-root while still having
+# a deterministic writable session home and tmp dir. The host launcher passes
 # `--user 0:0` explicitly so PID 1 can perform runtime-user setup before
 # dropping privileges via setpriv(1).
-USER workcell
+USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]

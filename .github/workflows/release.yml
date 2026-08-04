@@ -30,16 +30,31 @@ env:
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
-  WORKCELL_BUILDX_VERSION: v0.35.0
+  WORKCELL_BUILDX_VERSION: v0.36.0
   WORKCELL_COSIGN_VERSION: v3.1.2
   WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-  WORKCELL_SYFT_VERSION: v1.49.0
+  WORKCELL_SYFT_VERSION: v1.50.0
 
 jobs:
+  tag-policy:
+    name: Release tag policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Classify release tag
+        run: go run ./cmd/workcell-hostutil release classify-tag "${GITHUB_REF_NAME}" >/dev/null
+
   codeql-preflight:
     name: Release CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    needs: tag-policy
     permissions:
       actions: read # Read workflow metadata required by CodeQL helper actions.
       contents: read
@@ -81,6 +96,7 @@ jobs:
     # mirrors the already-reviewed native arm64 lane in ci.yml.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
+    needs: tag-policy
     permissions:
       contents: read
     outputs:
@@ -138,6 +154,7 @@ jobs:
     # combined runtime manifest that publish checks against.
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: tag-policy
     permissions:
       contents: read
     outputs:
@@ -183,6 +200,7 @@ jobs:
     # `needs` of build-arm64-image and release below.
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: tag-policy
     permissions:
       contents: read
     steps:
@@ -214,6 +232,7 @@ jobs:
     name: Release Copilot runtime image probe (arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    needs: tag-policy
     permissions:
       contents: read
     steps:
@@ -264,6 +283,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs:
+      - tag-policy
       - preflight-amd64-repro
       - preflight-arm64-repro
     environment:
@@ -353,10 +373,6 @@ jobs:
             echo "Wait for main checks to finish before re-running this release." >&2
             exit 1
           fi
-
-      - name: Validate release tag name
-        run: |
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 
       - name: Verify release tag signature
         env:
@@ -559,8 +575,8 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: e87b67160194884e375a46a12c57ccc904f762b53845f254fab7f17d98809c09
-          ZIZMOR_VERSION: 1.28.0
+          ZIZMOR_SHA256: dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839
+          ZIZMOR_VERSION: 1.29.0
         run: |
           curl -fsSL \
             --retry 3 \
@@ -644,6 +660,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     needs:
+      - tag-policy
       - preflight
     permissions:
       contents: read
@@ -733,6 +750,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     needs:
+      - tag-policy
       - codeql-preflight
       - preflight
       - preflight-arm64-copilot-runtime
@@ -792,6 +810,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs:
+      - tag-policy
       - codeql-preflight
       - preflight
       - preflight-arm64-copilot-runtime
@@ -811,6 +830,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Download preflight binding manifests
@@ -818,10 +838,6 @@ jobs:
         with:
           name: workcell-release-preflight
           path: dist/preflight
-
-      - name: Validate release tag name
-        run: |
-          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
 
       - name: Verify release tag signature
         env:

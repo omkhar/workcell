@@ -11,6 +11,71 @@ import (
 	"testing"
 )
 
+func TestC3CertificationEntrypointSanitizesBuildControl(t *testing.T) {
+	t.Parallel()
+
+	script := filepath.Join(repoRoot(t), "scripts", "certify-c3-parallel-sessions.sh")
+	bashEnvMarker := filepath.Join(t.TempDir(), "bash-env-ran")
+	functionMarker := filepath.Join(t.TempDir(), "function-ran")
+	bashEnv := filepath.Join(t.TempDir(), "bash-env")
+	if err := os.WriteFile(bashEnv, []byte(`printf injected >"`+bashEnvMarker+`"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	injectedFunction := `() { printf injected >"` + functionMarker + `"; }`
+	cmd := exec.Command(script, "--self-entrypoint-probe")
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"BASH_ENV":                         bashEnv,
+		"BASH_FUNC_exec%%":                 injectedFunction,
+		"BASH_FUNC_source%%":               injectedFunction,
+		"GOENV":                            filepath.Join(t.TempDir(), "go-env"),
+		"GOFLAGS":                          "-overlay=/tmp/workcell-hostile-overlay.json",
+		"GOTOOLCHAIN":                      "auto",
+		"GOWORK":                           filepath.Join(t.TempDir(), "go.work"),
+		"WORKCELL_C3_SANITIZED_ENTRYPOINT": "1",
+		"WORKCELL_GO_BIN":                  "/definitely-not-go",
+	})
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("entrypoint probe: %v: %s", err, output)
+	}
+	// Go reports an empty GOENV path when GOENV=off, then the other exact
+	// process-level controls.
+	if string(output) != "\noff\n-mod=readonly\nlocal\n" {
+		t.Fatalf("Go build control = %q", output)
+	}
+	for _, marker := range []string{bashEnvMarker, functionMarker} {
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("hostile shell control executed: %s: %v", marker, err)
+		}
+	}
+
+	const usage = "Usage: certify-c3-parallel-sessions.sh --workspace PATH [--precommit-control-tree SHA]\n"
+	cmd = exec.Command(script, "--help")
+	cmd.Env = canonicalBuildEnv(nil)
+	output, err = cmd.CombinedOutput()
+	if err != nil || string(output) != usage {
+		t.Fatalf("wrapper help = %q, %v", output, err)
+	}
+	cmd = exec.Command(script)
+	cmd.Env = canonicalBuildEnv(nil)
+	output, err = cmd.CombinedOutput()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 || string(output) != usage {
+		t.Fatalf("wrapper usage failure = %q, %v", output, err)
+	}
+
+	cmd = exec.Command(script,
+		"--workspace", "/definitely-not-a-workcell-workspace",
+		"--root", "/definitely-not-workcell")
+	cmd.Env = canonicalBuildEnv(nil)
+	output, err = cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "/definitely-not-a-workcell-workspace") ||
+		strings.Contains(string(output), "resolve control-plane root") {
+		t.Fatalf("wrapper-owned root was not pinned: %v: %s", err, output)
+	}
+}
+
 func TestVerifyInvariantsUsesDedicatedSanitizedEntrypoint(t *testing.T) {
 	t.Parallel()
 
@@ -125,6 +190,7 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 			"scripts/check-dead-code.sh",
 			"scripts/check-public-repo-hygiene.sh",
 			"scripts/check-pr-shape.sh",
+			"scripts/certify-c3-parallel-sessions.sh",
 			"scripts/generate-homebrew-formula.sh",
 			"scripts/install-workcell.sh",
 			"scripts/install.sh",
@@ -178,6 +244,74 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		if !strings.Contains(string(validateRepo), want) {
 			t.Fatalf("%s must lint and format %s", validateRepoPath, want)
 		}
+	}
+}
+
+func TestValidateRepoExecutesPublicContractHistoryGate(t *testing.T) {
+	t.Parallel()
+
+	validateRepoPath := filepath.Join(repoRoot(t), "scripts", "validate-repo.sh")
+	content, err := os.ReadFile(validateRepoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const directInvocation = `
+"${ROOT_DIR}/scripts/check-public-contract.sh"
+`
+	if !strings.Contains(string(content), directInvocation) {
+		t.Fatalf("%s must execute check-public-contract.sh without the self-entrypoint probe", validateRepoPath)
+	}
+}
+
+func TestPublicContractHistoryGateEstablishesCanonicalGitEnvironment(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	marker := filepath.Join(tempDir, "canonical-git-env")
+	goWrapper := filepath.Join(tempDir, "go")
+	wrapper := `#!/bin/bash -p
+set -euo pipefail
+[[ "${GIT_NO_REPLACE_OBJECTS:-}" == "1" ]]
+[[ "${GIT_CONFIG_NOSYSTEM:-}" == "1" ]]
+[[ "${GIT_CONFIG_SYSTEM:-}" == "/dev/null" ]]
+[[ "${GIT_CONFIG_GLOBAL:-}" == "/dev/null" ]]
+[[ "${GIT_CONFIG_COUNT:-}" == "1" ]]
+[[ "${GIT_CONFIG_KEY_0:-}" == "core.attributesFile" ]]
+[[ "${GIT_CONFIG_VALUE_0:-}" == "/dev/null" ]]
+[[ -z "${GIT_REPLACE_REF_BASE:-}" ]]
+printf 'canonical\n' >>"${WORKCELL_CANONICAL_GIT_MARKER:?}"
+`
+	if err := os.WriteFile(goWrapper, []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core]\n\tattributesFile = /tmp/workcell-hostile-attributes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-public-contract.sh")
+	cmd := exec.Command(scriptPath)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"GIT_CONFIG_GLOBAL":             filepath.Join(home, ".gitconfig"),
+		"GIT_NO_REPLACE_OBJECTS":        "0",
+		"GIT_REPLACE_REF_BASE":          "refs/workcell-hostile/",
+		"HOME":                          home,
+		"WORKCELL_CANONICAL_GIT_MARKER": marker,
+		"WORKCELL_GO_BIN":               goWrapper,
+	})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("public contract history gate: %v: %s", err, output)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(content), "canonical\n"); got != 2 {
+		t.Fatalf("canonical Git environment checks = %d, want 2", got)
 	}
 }
 

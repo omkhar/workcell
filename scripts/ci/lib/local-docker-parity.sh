@@ -1,5 +1,6 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 # shellcheck shell=bash
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 setup_workcell_ci_docker() {
   setup_workcell_trusted_docker_client
@@ -33,4 +34,35 @@ workcell_ci_docker() {
   else
     docker "$@"
   fi
+}
+
+require_workcell_ci_workspace_mount() {
+  local image="$1"
+  local workspace="$2"
+  local docker_bin=""
+  local context_explicit="false"
+
+  docker_bin="$(command -v docker 2>/dev/null || true)"
+  [[ -n "${docker_bin}" && "${docker_bin}" == /* ]] || {
+    echo "Missing required tool: docker" >&2
+    return 2
+  }
+  [[ -z "${WORKCELL_DOCKER_CONTEXT:-}" ]] || context_explicit="true"
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools \
+    validate-docker-workspace-bind \
+    "${docker_bin}" \
+    "${image}" \
+    "${workspace}" \
+    "${DOCKER_CONTEXT_NAME:-}" \
+    "${context_explicit}"
+}
+
+workcell_ci_workspace_mount_spec() {
+  local workspace="$1"
+  local readonly="$2"
+
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools \
+    docker-workspace-bind-mount \
+    "${workspace}" \
+    "${readonly}"
 }

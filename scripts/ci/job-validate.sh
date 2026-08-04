@@ -1,7 +1,7 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 workcell_validate_token_file_created=""
 if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
   workcell_validate_token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
@@ -143,6 +143,8 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
   # GitHub-hosted runners are exclusive per-job, so the planted-symlink
   # TOCTOU surface that motivates mktemp in scripts/build-and-test.sh is
   # not reachable here.  Keep the predictable path for CI.
+  require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${ROOT_DIR}"
+  validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${ROOT_DIR}" false)"
   validator_home="/tmp/workcell-home-${validator_uid}"
   validator_cache="${validator_home}/.cache"
   validator_tmp="${validator_home}/.tmp"
@@ -153,7 +155,7 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
   workcell_ci_docker run --rm \
     --user "${validator_uid}:${validator_gid}" \
     --entrypoint /bin/bash \
-    -v "${ROOT_DIR}:/workspace" \
+    --mount "${validator_workspace_mount}" \
     -w /workspace \
     -e HOME="${validator_home}" \
     -e XDG_CACHE_HOME="${validator_cache}" \

@@ -82,7 +82,7 @@
     },
     {
       "id": "shared/publish-pr",
-      "description": "Host-side publish-pr covers dry-run command rendering, signed publish-range enforcement, main-only base enforcement, and the explicit lower-assurance non-main draft handoff with repo hooks bypassed",
+      "description": "Host-side publish-pr covers dry-run command rendering, signed publish-range enforcement, matching open PR reuse, main-only base enforcement, and the explicit lower-assurance non-main draft handoff with repo hooks bypassed",
       "lane": "secretless",
       "platform": "any",
       "manual": false,
@@ -93,7 +93,7 @@
     },
     {
       "id": "shared/publish-github-release",
-      "description": "Host-side publish-github-release only mutates draft releases and fails closed for already-published mutable or immutable releases",
+      "description": "Host-side release publication sanitizes its shell entrypoint and requires an annotated signed release tag; sealed publisher behavior is covered by Go integration tests",
       "lane": "secretless",
       "platform": "any",
       "manual": false,

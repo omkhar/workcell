@@ -298,7 +298,7 @@ func TestCheckConfigSafetyRealRepo(t *testing.T) {
 }
 
 // runtimeHappyLauncher is a minimal scripts/workcell that satisfies all
-// ten runtime/gc invariants: the trusted Docker client seed, no
+// runtime/gc invariants: the trusted Docker client seed, no
 // DOCKER_CONFIG pin to the real host home, the buildx_cmd invocation, a
 // runtime_build_codex_arch body resolving both musl assets (and no gnu
 // asset), both hidden probes, both --gc cleanup helpers, the strict-mode
@@ -313,6 +313,10 @@ setup_workcell_trusted_docker_client() {
 
 runtime_build_image() {
   buildx_cmd build --tag workcell/runtime .
+}
+
+cleanup() {
+  cleanup_runtime_builder || true
 }
 
 runtime_build_codex_arch() {
@@ -373,6 +377,11 @@ func TestCheckRuntimeInvariants(t *testing.T) {
 			name:    "missing buildx_cmd build",
 			body:    strings.Replace(runtimeHappyLauncher, "buildx_cmd build", "buildx build", 1),
 			wantErr: "Expected scripts/workcell to invoke buildx through the trusted absolute plugin path",
+		},
+		{
+			name:    "exit trap omits builder cleanup",
+			body:    strings.Replace(runtimeHappyLauncher, "cleanup_runtime_builder || true", ":", 1),
+			wantErr: "Expected launcher exit cleanup to reap an active owned runtime-image builder",
 		},
 		{
 			// kindFunctionBlock: aarch64 musl asset removed from the block.
@@ -4502,7 +4511,8 @@ func TestCheckHostutilEgressRgRealRepo(t *testing.T) {
 // that satisfies all fifteen per-Dockerfile dockerfile-pin invariants: it consumes
 // the shared Debian bootstrap manifest and pins the apt
 // retry/timeout settings, the retry-and-discard TLS bootstrap download loop, the
-// fail-closed download/checksum/dpkg chain, and the unprivileged `USER workcell`
+// fail-closed download/checksum/dpkg chain, and the fixed unprivileged
+// `USER 65532:65532`
 // default.  Each snippet sits on its own physical line so the per-line evaluator
 // (regexMatchesAnyLine, `rg` parity) matches it exactly as ripgrep would.  Both
 // fixture Dockerfiles use this baseline; individual negative cases mutate one
@@ -4523,7 +4533,7 @@ RUN fetch_snapshot_bootstrap_package "${openssl_url}" /tmp/workcell-bootstrap-op
     && fetch_snapshot_bootstrap_package "${ca_url}" /tmp/workcell-bootstrap-ca-certificates.deb \
     && echo "${ca_sha256}  /tmp/workcell-bootstrap-ca-certificates.deb" | sha256sum -c - \
     && dpkg -i /tmp/workcell-bootstrap-openssl.deb /tmp/workcell-bootstrap-ca-certificates.deb
-USER workcell
+USER 65532:65532
 `
 
 func writeDockerfilePinsRepo(t *testing.T, runtimeDF, validatorDF string) string {
@@ -4608,11 +4618,11 @@ func TestCheckDockerfilePins(t *testing.T) {
 			// USER-default probe (second loop) missing from the validator
 			// Dockerfile: every pin probe passes for both Dockerfiles, then the
 			// validator's USER probe (last check) fires.
-			name:        "validator missing unprivileged USER default",
+			name:        "validator missing fixed unprivileged USER default",
 			runtimeDF:   dockerfilePinsHappyBody,
-			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER workcell", "USER root", 1),
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER 65532:65532", "USER root", 1),
 			wantRel:     validatorDockerfileRelPath,
-			wantSuffix:  "to default to the named unprivileged workcell user",
+			wantSuffix:  "to default to the fixed unprivileged workcell UID/GID",
 		},
 		{
 			// A missing runtime Dockerfile is empty content: its first probe fails,
@@ -4629,7 +4639,7 @@ func TestCheckDockerfilePins(t *testing.T) {
 			// ordering.
 			name:        "both broken runtime wins",
 			runtimeDF:   strings.Replace(dockerfilePinsHappyBody, "COPY --chmod=0444 runtime/container/debian-bootstrap.env", "COPY removed", 1),
-			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER workcell", "USER root", 1),
+			validatorDF: strings.Replace(dockerfilePinsHappyBody, "USER 65532:65532", "USER root", 1),
 			wantRel:     dockerfileRelPath,
 			wantSuffix:  "to copy the canonical Debian bootstrap manifest read-only",
 		},

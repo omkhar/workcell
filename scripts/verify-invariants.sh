@@ -270,6 +270,7 @@ UNMANAGED_PROFILE_NAME=""
 DETACHED_SESSION_ID=""
 DETACHED_SESSION_WORKSPACE=""
 DETACHED_SESSION_SOURCE_SENTINEL_PATH=""
+DETACHED_ATTACH_PID=""
 VERIFY_INVARIANTS_CLEANUP_ACTIVE=0
 ROOT_STRICT_SUPPORT_OUTPUT="$(
   go_verify_hostutil helper support-matrix-eval \
@@ -494,6 +495,25 @@ verify_profile_target_state_dir() {
   printf '%s/.local/state/workcell/targets/local_vm/colima/%s\n' "${REAL_HOME}" "${profile_name}"
 }
 
+terminate_verify_process_tree_by_pid() {
+  local target_pid="$1"
+  local child_pid=""
+
+  [[ -n "${target_pid}" ]] || return 0
+  while IFS= read -r child_pid; do
+    [[ -n "${child_pid}" ]] || continue
+    terminate_verify_process_tree_by_pid "${child_pid}"
+  done < <(pgrep -P "${target_pid}" 2>/dev/null || true)
+  kill "${target_pid}" >/dev/null 2>&1 || true
+}
+
+cleanup_detached_attach_probe() {
+  [[ -n "${DETACHED_ATTACH_PID}" ]] || return 0
+  terminate_verify_process_tree_by_pid "${DETACHED_ATTACH_PID}"
+  wait "${DETACHED_ATTACH_PID}" >/dev/null 2>&1 || true
+  DETACHED_ATTACH_PID=""
+}
+
 cleanup_detached_session_runtime() {
   local session_parent=""
 
@@ -613,6 +633,7 @@ cleanup() {
   trap - EXIT ERR
   set +e
 
+  cleanup_detached_attach_probe
   cleanup_detached_session_runtime
   delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME:-}"
   delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME:-}"
@@ -2966,7 +2987,7 @@ go_verify_citools workcell-bootstrap-egress "${ROOT_DIR}" || exit 1
 # tools/validator/Dockerfile: each pins the snapshot CA bundle / amd64+arm64
 # OpenSSL bootstrap packages, the apt retry/timeout settings, the retry-and-
 # discard TLS bootstrap download loop, the fail-closed download/checksum/dpkg
-# chain, and the unprivileged `USER workcell` default.  Migrated to Go (D3):
+# chain, and the fixed unprivileged `USER 65532:65532` default. Migrated to Go (D3):
 # internal/workcellhardening behind the workcell-citools workcell-dockerfile-pins
 # subcommand preserves the exact exit codes and stderr messages of the former
 # inline `for dockerfile` rg loops, including the per-line (`rg`-parity) regex
@@ -5020,6 +5041,13 @@ PROFILE_PROCESS_MATCH_HARNESS="$(mktemp)"
 } >"${PROFILE_PROCESS_MATCH_HARNESS}"
 /bin/bash "${PROFILE_PROCESS_MATCH_HARNESS}"
 rm -f "${PROFILE_PROCESS_MATCH_HARNESS}"
+PROFILE_PROCESS_REAPER_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reap_stale_profile_processes
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/profile-process-reaper.sh"
+} >"${PROFILE_PROCESS_REAPER_HARNESS}"
+/bin/bash "${PROFILE_PROCESS_REAPER_HARNESS}"
+rm -f "${PROFILE_PROCESS_REAPER_HARNESS}"
 COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_profile_status
@@ -6350,7 +6378,7 @@ test "${PUBLISH_PR_WORKTREE_SIGNATURE_LINE}" -lt "${PUBLISH_PR_WORKTREE_SHAPE_LI
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${PUBLISH_PR_DRY_RUN}"
 grep -q -- ' push --no-verify -u origin feature/publish-fixture ' <<<"${PUBLISH_PR_DRY_RUN}"
-grep -q -- 'gh pr create --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
+grep -q -- 'gh pr create -R .* --base main --head feature/publish-fixture --title Verify\\ PR\\ title --draft --body-file' <<<"${PUBLISH_PR_DRY_RUN}"
 
 git -C "${PUBLISH_PR_FIXTURE}" add tracked.txt
 PUBLISH_PR_INDEX_DRY_RUN="$("${ROOT_DIR}/scripts/workcell" publish-pr \
@@ -6402,7 +6430,7 @@ if grep -q -- ' commit --no-verify -S -F ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"; 
 fi
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
 grep -q -- ' push --no-verify -u origin feature/publish-existing-commits ' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
-grep -q -- 'gh pr create --base main --head feature/publish-existing-commits --title Existing\\ publish\\ branch --draft' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
+grep -q -- 'gh pr create -R .* --base main --head feature/publish-existing-commits --title Existing\\ publish\\ branch --draft' <<<"${PUBLISH_PR_EXISTING_DRY_RUN}"
 git -C "${PUBLISH_PR_FIXTURE}" switch -q "${PUBLISH_PR_FIXTURE_DEFAULT_BRANCH}"
 git -C "${PUBLISH_PR_FIXTURE}" branch -D feature/publish-existing-commits >/dev/null
 
@@ -6486,7 +6514,7 @@ grep -q '^publish_repo_owned_pr_checks_expected=0$' <<<"${PUBLISH_PR_NON_MAIN_DR
 grep -q '^publish_draft=1$' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 grep -q 'publish-pr preflight: repo-owned PR checks are not expected for --base feature/review-stack' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 grep -q 'normal main-based PR validation and merge gating do not apply to that PR shape' <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
-grep -q -- "gh pr create --base feature/review-stack --head feature/publish-non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
+grep -q -- "gh pr create -R .* --base feature/review-stack --head feature/publish-non-main-base --title Lower\\\\ assurance\\\\ non-main\\\\ base --draft --body ''" <<<"${PUBLISH_PR_NON_MAIN_DRY_RUN}"
 
 cat <<'EOF' >"${PUBLISH_PR_FIXTURE}/gh-untrusted"
 #!/usr/bin/env bash
@@ -7208,6 +7236,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     DETACHED_SESSION_START_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.start.out"
     DETACHED_SESSION_SHOW_RUNNING_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.show-running.out"
     DETACHED_SESSION_ATTACH_TYPESCRIPT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.attach.typescript"
+    DETACHED_SESSION_ATTACH_READY_SEND_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.send-attach-ready.out"
     DETACHED_SESSION_SEND_ALPHA_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.send-alpha.out"
     DETACHED_SESSION_SEND_BETA_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.send-beta.out"
     DETACHED_SESSION_DIFF_OUT="${BARRIER_VERIFY_ROOT}/debug/live-detached-session.diff.out"
@@ -7358,9 +7387,14 @@ EOF
     grep -q '^SESSION_READY$' "${DETACHED_SESSION_SENTINEL_PATH}"
     grep -q '^SESSION_MASKS_OK$' "${DETACHED_SESSION_SENTINEL_PATH}"
     DETACHED_ATTACH_STATUS=0
+    DETACHED_ATTACH_READY=0
+    DETACHED_ATTACH_READY_MESSAGE="attach-ready"
+    DETACHED_ATTACH_READY_SEND_COUNT=0
+    DETACHED_ATTACH_EARLY_STATUS=""
+    DETACHED_ATTACH_MESSAGES_RECEIVED=0
     (
       VERIFY_INVARIANTS_EXPECTED_FAILURE=1
-      run_typescript_probe_with_timeout 10 \
+      run_typescript_probe_with_timeout 30 \
         "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" \
         "${ROOT_DIR}/scripts/workcell" \
         session attach \
@@ -7368,7 +7402,43 @@ EOF
         --no-stdin
     ) &
     DETACHED_ATTACH_PID=$!
-    sleep 1
+    for ((ready_send_attempt = 0; ready_send_attempt < 5; ready_send_attempt++)); do
+      if ! run_workcell_verify session send \
+        --id "${DETACHED_SESSION_ID}" \
+        --message "${DETACHED_ATTACH_READY_MESSAGE}" >"${DETACHED_SESSION_ATTACH_READY_SEND_OUT}" 2>&1; then
+        echo "Expected detached session attach-readiness send to succeed" >&2
+        cat "${DETACHED_SESSION_ATTACH_READY_SEND_OUT}" >&2
+        exit 1
+      fi
+      DETACHED_ATTACH_READY_SEND_COUNT=$((DETACHED_ATTACH_READY_SEND_COUNT + 1))
+      for ((ready_poll_attempt = 0; ready_poll_attempt < 3; ready_poll_attempt++)); do
+        if grep -Fq "SESSION_RECV:${DETACHED_ATTACH_READY_MESSAGE}" "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" 2>/dev/null; then
+          DETACHED_ATTACH_READY=1
+          break 2
+        fi
+        if ! kill -0 "${DETACHED_ATTACH_PID}" >/dev/null 2>&1; then
+          if wait "${DETACHED_ATTACH_PID}"; then
+            DETACHED_ATTACH_EARLY_STATUS=0
+          else
+            DETACHED_ATTACH_EARLY_STATUS=$?
+          fi
+          DETACHED_ATTACH_PID=""
+          break 2
+        fi
+        if ((ready_poll_attempt < 2)); then
+          sleep 1
+        fi
+      done
+    done
+    if [[ "${DETACHED_ATTACH_READY}" != "1" ]]; then
+      echo "Detached session attach did not become ready before live send assertions" >&2
+      if [[ -n "${DETACHED_ATTACH_EARLY_STATUS}" ]]; then
+        echo "Detached session attach exited early with status ${DETACHED_ATTACH_EARLY_STATUS}" >&2
+      fi
+      cat "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" >&2 || true
+      cat "${DETACHED_SESSION_ATTACH_READY_SEND_OUT}" >&2 || true
+      exit 1
+    fi
     if ! run_workcell_verify session send --id "${DETACHED_SESSION_ID}" --message alpha >"${DETACHED_SESSION_SEND_ALPHA_OUT}" 2>&1; then
       echo "Expected detached session send(alpha) to succeed" >&2
       cat "${DETACHED_SESSION_SEND_ALPHA_OUT}" >&2
@@ -7382,13 +7452,42 @@ EOF
     grep -q "^session_id=${DETACHED_SESSION_ID}$" "${DETACHED_SESSION_SEND_ALPHA_OUT}"
     grep -q '^sent_bytes=6$' "${DETACHED_SESSION_SEND_ALPHA_OUT}"
     grep -q '^sent_bytes=5$' "${DETACHED_SESSION_SEND_BETA_OUT}"
+    for ((message_poll_attempt = 0; message_poll_attempt < 10; message_poll_attempt++)); do
+      if grep -Fq 'SESSION_RECV:alpha' "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" 2>/dev/null &&
+        grep -Fq 'SESSION_RECV:beta' "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" 2>/dev/null; then
+        DETACHED_ATTACH_MESSAGES_RECEIVED=1
+        break
+      fi
+      if ! kill -0 "${DETACHED_ATTACH_PID}" >/dev/null 2>&1; then
+        if wait "${DETACHED_ATTACH_PID}"; then
+          DETACHED_ATTACH_EARLY_STATUS=0
+        else
+          DETACHED_ATTACH_EARLY_STATUS=$?
+        fi
+        DETACHED_ATTACH_PID=""
+        break
+      fi
+      if ((message_poll_attempt < 9)); then
+        sleep 1
+      fi
+    done
+    if [[ "${DETACHED_ATTACH_MESSAGES_RECEIVED}" != "1" ]]; then
+      echo "Detached session attach did not stream the live send assertions" >&2
+      if [[ -n "${DETACHED_ATTACH_EARLY_STATUS}" ]]; then
+        echo "Detached session attach exited early with status ${DETACHED_ATTACH_EARLY_STATUS}" >&2
+      fi
+      cat "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" >&2 || true
+      exit 1
+    fi
     if wait "${DETACHED_ATTACH_PID}"; then
       DETACHED_ATTACH_STATUS=0
     else
       DETACHED_ATTACH_STATUS=$?
     fi
+    DETACHED_ATTACH_PID=""
     if [[ "${DETACHED_ATTACH_STATUS}" != "0" ]] && [[ "${DETACHED_ATTACH_STATUS}" != "124" ]]; then
       echo "Expected detached session attach to stream live output or timeout cleanly" >&2
+      echo "Detached session attach exited with status ${DETACHED_ATTACH_STATUS}" >&2
       cat "${DETACHED_SESSION_ATTACH_TYPESCRIPT}" >&2 || true
       exit 1
     fi
@@ -7462,7 +7561,7 @@ EOF
     fi
     grep -q "event=launch session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
     grep -q "event=attach-attempt session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
-    test "$(grep -c "event=command session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}")" = "2"
+    test "$(grep -c "event=command session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}")" = "$((DETACHED_ATTACH_READY_SEND_COUNT + 2))"
     grep -q "event=stop-request session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
     grep -q "event=exit session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_TIMELINE_OUT}"
     if ! run_workcell_verify session logs --id "${DETACHED_SESSION_ID}" --kind audit >"${DETACHED_SESSION_LOGS_AUDIT_OUT}" 2>&1; then

@@ -55,14 +55,18 @@ honestly in docs, status reports, and release commentary.
   `workcell-pr-lifecycle` skill in addition to this release runbook.
 - Wait for `main` to be green before pushing the release tag.
 - Follow the tag-triggered `Release` workflow through completion.
+- Before pushing the tag, verify the hosted-controls audit confirms that the
+  `release` environment permits only `v*` deployment tags, with no deployment
+  branches, variables, secrets, or administrator bypass.
 - Approve the `release` environment only after release preflight and install
   verification are green.
 - Verify that the repository-level immutable-release control is enabled before
   pushing a release tag.
 - Publish release assets through a draft GitHub release first, then publish
   the final release record only after the asset set is complete. The release
-  workflow handles that draft creation and final publication automatically; the
-  operator verifies the finished published release state.
+  workflow stages the exact asset inventory into private, unlinked, read-only
+  handles before its first GitHub mutation and uploads only those staged bytes.
+  The operator verifies the finished published release state.
 - Verify the published GitHub release, attached assets, and immutable-release
   state before concluding.
 - Do not rewrite or delete a failed release tag. Recover by patching `main` and
@@ -515,12 +519,40 @@ If the workflow enters a waiting state for the `release` environment:
 In `review-gated` mode, stop with the fourth checkpoint packet before approving
 the environment.
 
+The workflow starts with a read-only tag-policy gate. The gate and host-side
+publisher use the same Go tag-classification policy, and every later release
+job depends on the gate directly. The publisher also classifies the tag before
+its first GitHub release-API request.
+Unsupported tags therefore fail before a write-capable job or API mutation can
+run. Release candidates are published as prereleases and never become latest;
+final tags are non-prereleases and become latest only when their populated
+draft is published.
+
 In immutable-release mode, the release publisher must create or reuse a draft
-release, upload the full artifact set into that draft, and only then publish
-the final release record. If publication instead tries to upload assets into an
-already-published immutable release, treat that as a release-process bug,
-patch `main`, and cut the next patch release rather than rewriting the failed
-tag.
+release, stage and validate the full artifact set before the first GitHub
+mutation, upload only from the sealed staging handles, revalidate the exact
+uploaded inventory, and only then publish the final release record. Source-path
+changes after staging cannot change the uploaded bytes. The entrypoint also
+binds publication to the locally checked-out annotated tag object and its peeled
+commit; the Go publisher verifies that exact binding against GitHub before and
+after publication. If publication instead tries to upload assets into an
+already-published immutable release, treat that as a release-process bug, patch
+`main`, and cut the next patch release rather than rewriting the failed tag.
+If a create, delete, upload, or publish request fails after it starts, treat the
+hosted mutation outcome as ambiguous and inspect the exact-tag draft and asset
+inventory before recovery. Never retry a tag whose publication might have
+completed; recover with the next patch release.
+
+### Sealed publisher activation certification
+
+The sealed publisher was live-certified on 2026-08-02 in a maintainer-controlled
+private fixture repository with repository release immutability enabled. One
+run invoked the Go publisher directly and a second used the production
+`scripts/publish-github-release.sh` entrypoint. Each run used a distinct signed
+annotated release-candidate tag, verified the exact tag-object and peeled-commit
+binding, and published the exact 18-asset manifest. GitHub reported every asset
+as uploaded with a `sha256:` digest, both releases as immutable prereleases, and
+both tag signatures as verified with reason `valid`.
 
 After approving the environment in single-maintainer mode, leave a public PR
 follow-up comment so the self-review is visible in the same release thread. Use

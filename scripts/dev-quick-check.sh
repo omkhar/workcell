@@ -31,11 +31,11 @@ require_cargo_subcommand clippy
 
 shell_files=(
   "${ROOT_DIR}/scripts/bench/run-startup-bench.sh"
-  "${ROOT_DIR}/scripts/bench/startup-bench.sh"
   "${ROOT_DIR}/scripts/bootstrap-dev.sh"
   "${ROOT_DIR}/scripts/check-dead-code.sh"
   "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
   "${ROOT_DIR}/scripts/check-pr-shape.sh"
+  "${ROOT_DIR}/scripts/certify-c3-parallel-sessions.sh"
   "${ROOT_DIR}/scripts/ci-plan.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
   "${ROOT_DIR}/scripts/go-port-validate.sh"

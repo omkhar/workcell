@@ -571,23 +571,27 @@ target_rust_version="$(
 target_cargo_rust_version="$(semver_major_minor "${target_rust_version}")"
 rustup_stable_toml="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/rustup/release-stable.toml')"
 target_rustup_version="$(awk -F"'" '$1 == "version = " { print $2; exit }' <<<"${rustup_stable_toml}")"
-# SHA256 checksum bodies are at most ~80 bytes; cap the response so a
-# misbehaving CDN or compromised release host cannot serve a multi-GB
-# body that OOMs the maintainer's shell.  Mirrors the discipline applied
-# to the zizmor download below.
+# SHA256 checksum files and small manifests are bounded so a misbehaving CDN
+# or compromised release host cannot serve a multi-GB body that OOMs the
+# maintainer's shell. Mirrors the discipline applied to the zizmor download
+# below.
 CURL_CHECKSUM_GUARDS=(--max-time 60 --connect-timeout 15 --max-filesize 65536)
 target_rustup_sha_amd64="$(curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/x86_64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
 target_rustup_sha_arm64="$(curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/aarch64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
 
 hadolint_release_json="$(github_api_get 'https://api.github.com/repos/hadolint/hadolint/releases/latest')"
 target_hadolint_version="$(jq -r '.tag_name' <<<"${hadolint_release_json}")"
-hadolint_sha_amd64_url="$(github_release_asset_url "${hadolint_release_json}" 'hadolint-linux-x86_64.sha256')"
-hadolint_sha_arm64_url="$(github_release_asset_url "${hadolint_release_json}" 'hadolint-linux-arm64.sha256')"
+hadolint_checksums_url="$(github_release_asset_url "${hadolint_release_json}" 'checksums.sha256')"
+hadolint_checksums="$(
+  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_checksums_url}"
+)"
 target_hadolint_sha_amd64="$(
-  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_amd64_url}" | awk '{print $1}'
+  cd "${ROOT_DIR}" || exit
+  printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-x86_64'
 )"
 target_hadolint_sha_arm64="$(
-  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_sha_arm64_url}" | awk '{print $1}'
+  cd "${ROOT_DIR}" || exit
+  printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-arm64'
 )"
 
 buildx_release_json="$(github_api_get 'https://api.github.com/repos/docker/buildx/releases/latest')"

@@ -81,6 +81,19 @@ if [[ "${reaped}" != "reaped:workcell-workcell-ac42b1dc" ]]; then
   exit 1
 fi
 
+reap_stale_profile_processes() { return 23; }
+if maybe_reap_stale_profile_processes workcell-workcell-ac42b1dc; then
+  echo "Expected maybe_reap_stale_profile_processes to propagate reaper failure" >&2
+  exit 1
+elif [[ "$?" -ne 23 ]]; then
+  echo "Expected maybe_reap_stale_profile_processes to preserve reaper status 23" >&2
+  exit 1
+fi
+
+reap_stale_profile_processes() {
+  printf 'reaped:%s\n' "$1"
+}
+
 if [[ -n "$(maybe_reap_stale_profile_processes workcell-other)" ]]; then
   echo "Expected maybe_reap_stale_profile_processes to ignore Running profiles" >&2
   exit 1

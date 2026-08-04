@@ -9,6 +9,10 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/canonical-build-env.sh
+source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
+workcell_require_modern_privileged_bash "$@"
+workcell_require_canonical_build_environment
 CONTRACT_PATH="${ROOT_DIR}/policy/public-contract.toml"
 FREEZE_PATH="${ROOT_DIR}/policy/v1-contract-freeze.toml"
 

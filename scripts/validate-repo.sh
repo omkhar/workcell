@@ -156,11 +156,11 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-repo-readiness.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/check-public-contract.sh"
+  "${ROOT_DIR}/scripts/certify-c3-parallel-sessions.sh"
   "${ROOT_DIR}/scripts/build-and-test.sh"
   "${ROOT_DIR}/scripts/ci-plan.sh"
   "${ROOT_DIR}/scripts/bench/run-exec-guard-bench.sh"
   "${ROOT_DIR}/scripts/bench/run-startup-bench.sh"
-  "${ROOT_DIR}/scripts/bench/startup-bench.sh"
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/ci/build-validator-image.sh"
@@ -361,6 +361,7 @@ yamllint -d "{extends: default, rules: {comments: disable, document-start: disab
 
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
+"${ROOT_DIR}/scripts/check-public-contract.sh"
 "${ROOT_DIR}/scripts/verify-operator-contract.sh"
 "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
 

@@ -44,7 +44,7 @@ The milestone ordering answers the current landscape directly:
   default-deny allowlisting → A1 (v0.13) documents, extends, and brings
   target parity to that shipped control instead of building a duplicate lane
 - microVM-per-session backends with warm starts are the mainstream
-  comparison point → C1/C2 anchor v0.14
+  comparison point → C1 anchors v0.14; C2 is a post-1.0 program
 - parallel worktree-per-agent sessions are the 2026 unit of agent work →
   C3 is in 1.0 scope (v0.15), not a post-1.0 idea
 - upstream retires Gemini CLI personal-account tiers in June 2026 →
@@ -61,10 +61,10 @@ The milestone ordering answers the current landscape directly:
 |---|---|---|
 | v0.12 | Containment and hygiene | A2, A7, B3, B4, B5, D1, D2, E3, E4 |
 | v0.13 | Boundary depth and stability | A1, A3, A4, B1, C5, D8, E1, E2, F3, G1 (inventory) |
-| v0.14 | Platform, speed, and adoption | C1, C2, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
+| v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0-rc | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
+| post-1.0 | Reach expansion | Phases 13–19 remainder, C2, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
 
 Items inside a milestone are independently shippable and individually
 reviewable. Later-milestone items may start early when nothing earlier gates
@@ -343,15 +343,23 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
 
 ### C2: Session Start Latency Program
 
-- Steps: measure and publish the current cold/warm start breakdown; add
-  prebaked per-project image caching under the existing cache-profile
-  labeling; evaluate a kept-warm VM lane as an explicit labeled mode;
-  publish reproducible startup benchmarks; set and record the 1.0 latency
-  target.
-- Exit gates: measured improvement recorded; no new unlabeled assurance
-  downgrade; benchmark methodology published; 1.0 target met or re-scoped
-  with rationale.
-- Validation: benchmark lane; scenario coverage for cache-profile behavior.
+**Deferred to post-1.0 (recorded 2026-08-01).** The generic startup driver is
+benchmark-only: its caller-provided lifecycle hooks cannot prove the image,
+profile, session, or cleanup facts required for certification. A reviewed
+dedicated-certifier design was rejected because the required state controls would
+broaden the launcher with destructive maintainer operations. The preliminary
+2026-07-15 capture remains historical measurement evidence only; it does not meet
+or gate a 1.0 latency target.
+
+- Post-1.0 steps: measure and publish the current cold/warm start breakdown;
+  add prebaked per-project image caching under the existing cache-profile
+  labeling; evaluate a kept-warm VM lane as an explicit labeled mode; publish
+  reproducible startup benchmarks; and set any resulting latency target.
+- Post-1.0 exit gates: a certification design must prove lifecycle state without
+  widening the supported launcher surface before any performance claim or target.
+- 1.0 exit gate: recorded rationale in ROADMAP/G4; no C2 performance claim.
+- Validation: benchmark lane for non-certifying measurements; a future dedicated
+  certification review before any support or performance claim.
 - Size: M. Dependencies: C5 methodology; C1 informs the ceiling.
 
 ### B8: CI Efficiency And Reliability Program
@@ -415,9 +423,9 @@ isolation would be a stronger and lighter boundary than one shared Colima VM.
 ### E6: Adoption Growth Kit
 
 **Deferred to post-1.0 (2026-07-09 criterion-7 amendment).** 1.0 ships with
-in-repo markdown docs; C2 benchmark numbers remain required in
-`docs/session-startup-benchmarks.md` during Batch 3 local-operator
-certification. This detail section stays here for continuity of the E6 track.
+in-repo markdown docs. C2 remains post-1.0 and its generic benchmark output is
+not a certification substitute. This detail section stays here for continuity of
+the E6 track.
 
 - Steps: publish a rendered docs site from the existing markdown; record
   asciinema demos for the 5-minute path and one provider quickstart; ship a
@@ -522,17 +530,24 @@ here for continuity of the B6 track.
 
 ### C3: Native Parallel Sessions
 
-- Steps: design review (may start during v0.14) for worktree-aware workspace
-  handling (one agent per worktree/branch/isolated runtime); extend session
-  records with linkage across parallel sessions; define per-session resource
-  and identity boundaries; implement launch/inventory/diff flows for N
-  concurrent sessions per repo.
-- Exit gates: two concurrent sessions on one repo cannot interfere
-  (deterministic tests); session tooling renders parallel topology; docs
-  updated; works on the strict path.
-- Validation: scenario coverage including conflict cases; live exercise.
-- Size: L. Dependencies: C2 (latency makes parallel viable); C1 decision
-  helps (per-session VMs).
+- Status: implemented and locally certified on 2026-08-03. The exact-tree
+  pre-merge certification is bound to signed activation commit `a26b750f`;
+  shipped status depends on that commit being reachable from `main`.
+- Delivered: worktree-aware session handling with one branch, isolated
+  worktree, and container per session; linked origin-repository metadata;
+  per-session resource and identity boundaries; and launch, inventory, and
+  diff flows for concurrent same-repository sessions.
+- Exit gates: deterministic tests prove clone/branch separation and
+  write-invisibility; session tooling renders the parallel topology; the live
+  strict-path certification proved two overlapping sessions could not observe
+  each other's markers and that one stopped independently while the other
+  remained live.
+- Validation: `test-session-commands.sh`, `internal/host/c3certify` tests, and
+  the live evidence in
+  `docs/benchmark-evidence/c3-two-container-isolation-2026-07-15.md`.
+- Size: L. Sequencing note: C3 was implemented and certified independently of
+  C2. C2 can improve parallel-session startup latency but does not gate C3; the
+  C1 decision can inform future per-session-VM isolation.
 
 ### D5: Modularize The Rust Interception Library
 
@@ -611,6 +626,9 @@ here for continuity of the B6 track.
   matrix row against shipped behavior; record all scope decisions (for
   example an Antigravity certification deferral) explicitly; file and burn
   down any P0/P1 findings.
+- Decision (recorded 2026-08-01): C2's 1.0 latency target and certification are
+  deferred to post-1.0. The generic benchmark remains benchmark-only; the
+  rejected dedicated-certifier design does not create a launcher control surface.
 - Exit gates: no unresolved P0/P1 findings; matrices verified; scope
   decisions recorded; criteria checklist complete with evidence links.
 - Validation: the recorded review itself.
@@ -728,7 +746,8 @@ does not gate 1.0.
 
 - D1 → D2 → D3/D4; A3 + A4 → D5; D2 → D7 (shell portion)
 - B9 → B6; B1 → B2; B3 baseline before D3/D5 refactors land
-- C5 → C2 → C3; C1 decision informs C2/C3/C4
+- C5 informs the post-1.0 C2 program; C2 can improve C3 latency but does not
+  gate the completed C3; the C1 decision informs C2/C3/C4
 - E4 → E1 → E6; A2 → E5; D8 → G1 (inventory) → G1 (freeze); E5 → G1 (freeze)
 - G1 (inventory) → G3; A5 ↔ F1 coordinated; F1 → F2; G2 ↔ F1 redaction rules
 - A3/A4/D5 → B7 (part 2); everything → G4
