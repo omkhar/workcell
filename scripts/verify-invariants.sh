@@ -7286,7 +7286,7 @@ test -d /opt/workcell/host-inputs
 [[ -z "$(find /opt/workcell/host-inputs -mindepth 1 -print -quit)" ]]
 printf 'SESSION_MASKS_OK\n'
 printf 'SESSION_MASKS_OK\n' >>"/workspace/${WORKER_SENTINEL_REL}"
-trap 'printf "SESSION_STOPPING\n"; exit 0' TERM INT
+trap 'printf "SESSION_STOPPING\n"; printf "SESSION_STOPPING\n" >>"/workspace/${WORKER_SENTINEL_REL}"; exit 0' TERM INT
 while IFS= read -r line; do
   printf 'SESSION_RECV:%s\n' "${line}"
   printf 'SESSION_RECV:%s\n' "${line}" >>"/workspace/${WORKER_SENTINEL_REL}"
@@ -7549,6 +7549,7 @@ EOF
     grep -q '"status": "exited"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"live_status": "stopped"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"exit_status": "0"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '^SESSION_STOPPING$' "${DETACHED_SESSION_SENTINEL_PATH}"
     grep -q '"current_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"final_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     DETACHED_SESSION_MONITOR_COMMAND="$(ps -o command= -p "${DETACHED_SESSION_MONITOR_PID}" 2>/dev/null | head -n1 || true)"

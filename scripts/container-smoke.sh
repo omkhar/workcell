@@ -37,6 +37,7 @@ INJECTION_FIXTURE_ROOT=""
 INJECTION_BUNDLE_ROOT=""
 WORKSPACE_IMPORT_ROOT=""
 DETACHED_TTY_SMOKE_CONTAINER=""
+DETACHED_TTY_SMOKE_SENTINEL=""
 declare -a WORKSPACE_IMPORT_ARGS=()
 declare -a RUNTIME_SECURITY_ARGS=()
 declare -a COPILOT_SMOKE_TOKEN_HANDOFF_DIRS=()
@@ -3239,6 +3240,8 @@ fi
 grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct-codex-breakglass.out
 
 DETACHED_TTY_SMOKE_CONTAINER="workcell-detached-tty-smoke-$$"
+DETACHED_TTY_SMOKE_SENTINEL="${SMOKE_WORKSPACE}/detached-tty-stop-sentinel"
+rm -f "${DETACHED_TTY_SMOKE_SENTINEL}"
 docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
 # The nested shell expressions stay literal to verify exact argv transport.
 # shellcheck disable=SC2016
@@ -3248,7 +3251,7 @@ if ! docker_cmd create \
   --entrypoint /bin/bash \
   "${IMAGE_TAG}" \
   /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
-  /bin/bash -lc 'test -t 0 && test -t 1 && test -t 2 && test "$1" = "space value" && test "$2" = "single'\''quote" && test "$3" = '\''$(not-run)'\'' && printf "detached-tty-ok\\n"' \
+  /bin/bash -lc 'test -t 0 && test -t 1 && test -t 2 && test "$1" = "space value" && test "$2" = "single'\''quote" && test "$3" = '\''$(not-run)'\'' && printf "detached-tty-ok\\n"; trap '\''printf "detached-term-ok\\n" >/tmp/detached-term-ok; exit 0'\'' TERM; while :; do sleep 1; done' \
   bash \
   'space value' \
   "single'quote" \
@@ -3257,14 +3260,30 @@ if ! docker_cmd create \
   echo "Could not create the detached terminal smoke container" >&2
   exit 1
 fi
-set +e
-DETACHED_TTY_SMOKE_OUTPUT="$(docker_cmd start -a "${DETACHED_TTY_SMOKE_CONTAINER}" | tr -d '\r')"
-DETACHED_TTY_SMOKE_STATUS="$?"
-set -e
+docker_cmd start "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null
+DETACHED_TTY_SMOKE_READY=0
+for _ in $(seq 1 50); do
+  if docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" 2>&1 | tr -d '\r' | grep -qx 'detached-tty-ok'; then
+    DETACHED_TTY_SMOKE_READY=1
+    break
+  fi
+  sleep 0.1
+done
+if [[ "${DETACHED_TTY_SMOKE_READY}" != "1" ]]; then
+  echo "Detached stdin wrapper did not give its managed child a terminal" >&2
+  docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" >&2 || true
+  exit 1
+fi
+docker_cmd stop -t 10 "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null
+DETACHED_TTY_SMOKE_OUTPUT="$(docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" 2>&1 | tr -d '\r')"
+DETACHED_TTY_SMOKE_STATUS="$(docker_cmd inspect --format '{{.State.ExitCode}}' "${DETACHED_TTY_SMOKE_CONTAINER}")"
+docker_cmd cp "${DETACHED_TTY_SMOKE_CONTAINER}:/tmp/detached-term-ok" "${DETACHED_TTY_SMOKE_SENTINEL}" >/dev/null
 docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
 DETACHED_TTY_SMOKE_CONTAINER=""
-if [[ "${DETACHED_TTY_SMOKE_STATUS}" -ne 0 ]] || [[ "${DETACHED_TTY_SMOKE_OUTPUT}" != "detached-tty-ok" ]]; then
-  echo "Detached stdin wrapper did not give its managed child a terminal" >&2
+if [[ "${DETACHED_TTY_SMOKE_STATUS}" != "0" ]] ||
+  ! grep -qx 'detached-tty-ok' <<<"${DETACHED_TTY_SMOKE_OUTPUT}" ||
+  ! grep -qx 'detached-term-ok' "${DETACHED_TTY_SMOKE_SENTINEL}"; then
+  echo "Detached stdin wrapper did not preserve terminal or graceful-stop behavior" >&2
   printf '%s\n' "${DETACHED_TTY_SMOKE_OUTPUT}" >&2
   exit 1
 fi
