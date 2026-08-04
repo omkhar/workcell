@@ -97,14 +97,18 @@ All 13 workflows share a hardened baseline:
   `sha256sum -c`-verified against the digests in
   [`policy/tool-pins.toml`](../policy/tool-pins.toml).
 
-Only the release path escalates. The highest-privilege job is the `release`
-(publish) job in [`release.yml`](../.github/workflows/release.yml), which holds
-`id-token: write`, `attestations: write`, `artifact-metadata: write`,
-`contents: write`, and `packages: write` at once (OIDC signing, attestation and
-artifact-metadata publication, GitHub release creation, and GHCR push). That job — and the native arm64 image build/push job — run only inside
-the `release` deployment environment, which requires human approval and
-disallows admin bypass (see `[release_environment]` in the hosted-control
-policy). A handful of scanning jobs hold `security-events: write` for SARIF
+Only the release path escalates. The `release` artifact job holds
+`id-token: write`, `attestations: write`, `artifact-metadata: write`, and
+`packages: write` for OIDC signing, attestations, artifact metadata, and GHCR,
+but only `contents: read`. The separate final GitHub-release job holds only
+`actions: read` and `contents: write`; it downloads the sealed current-run
+artifact, refreshes hosted controls, and publishes the release. The artifact
+job and native arm64 image build/push job run only inside the `release`
+deployment environment, which requires human approval and disallows admin
+bypass (see `[release_environment]` in the hosted-control policy). The final
+job depends on that approved artifact job and runs in `hosted-controls-audit`
+so its admin-metadata proof is fresh. A handful of scanning jobs hold
+`security-events: write` for SARIF
 upload, and `scorecard.yml` holds `id-token: write` for Scorecard provenance;
 these are the expected minimum for those tools.
 
@@ -160,7 +164,7 @@ long-lived stored secret** in the whole workflow set:
 
 | Secret | Used in | Scope | Purpose | Sensitivity |
 |---|---|---|---|---|
-| `WORKCELL_HOSTED_CONTROLS_TOKEN` | [`hosted-controls.yml`](../.github/workflows/hosted-controls.yml), [`release.yml`](../.github/workflows/release.yml) preflight | **Environment-scoped** (`hosted-controls-audit`), `allow_admin_bypass = false`, `deployment_branches = ["main"]`, `deployment_tags = ["v*"]` | Provisioned as a read-only admin-metadata token so `scripts/run-hosted-controls-audit.sh` can read rulesets, environments, variables, and the immutable-release setting that the default `GITHUB_TOKEN` cannot; successful release preflight hands that immutable-setting result to the publisher without exposing the token to the publication job | **Intended** read-only. The repo checks the secret's *name* and *environment*, not the granted token scopes — GitHub does not expose a consuming repo's ability to introspect a PAT/App token's scopes — so read-only is a **provisioning discipline, not a repo-enforced guarantee**. Provision it with least privilege accordingly |
+| `WORKCELL_HOSTED_CONTROLS_TOKEN` | [`hosted-controls.yml`](../.github/workflows/hosted-controls.yml), [`release.yml`](../.github/workflows/release.yml) preflight and final publication gate | **Environment-scoped** (`hosted-controls-audit`), `allow_admin_bypass = false`, `deployment_branches = ["main"]`, `deployment_tags = ["v*"]` | Provisioned as a read-only admin-metadata token so `scripts/run-hosted-controls-audit.sh` can read rulesets, environments, variables, and the immutable-release setting that the default `GITHUB_TOKEN` cannot; the final job refreshes that proof, unsets the token, then publishes with its separate ephemeral `GITHUB_TOKEN` | **Intended** read-only. The repo checks the secret's *name* and *environment*, not the granted token scopes — GitHub does not expose a consuming repo's ability to introspect a PAT/App token's scopes — so read-only is a **provisioning discipline, not a repo-enforced guarantee**. Provision it with least privilege accordingly |
 
 Everything else is ephemeral and auto-minted:
 

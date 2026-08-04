@@ -812,6 +812,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
 		return err
 	}
+	if err := ValidateReleaseWorkflowPublicationGate(releaseWorkflow); err != nil {
+		return err
+	}
 	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
 		return errors.New(".github/workflows/release.yml must not keep referencing the old single-step multi-platform digest output")
 	}

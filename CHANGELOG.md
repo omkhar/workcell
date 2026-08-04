@@ -15,10 +15,11 @@ immutable-release check. The failed tag and draft remain untouched.
 
 ### Fixed
 
-- hand the successful `hosted-controls-audit` immutable-release precheck into
-  the publisher explicitly; retain the publisher's direct check when the token
-  can read the endpoint, and accept only GitHub's exact integration-permission
-  denial when that precheck is present.
+- recheck `hosted-controls-audit` in a minimal final publication job after the
+  release-approved artifact build, then hand that fresh result to the
+  publisher explicitly; retain the publisher's direct check when its default
+  token can read the endpoint, and accept only GitHub's exact
+  integration-permission denial when the fresh precheck is present.
 
 ## v1.0.0 - 2026-08-04
 

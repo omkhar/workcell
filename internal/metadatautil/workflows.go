@@ -22,7 +22,19 @@ type workflowDocument struct {
 }
 
 type workflowJob struct {
-	Name string `yaml:"name"`
+	Name        string    `yaml:"name"`
+	Needs       yaml.Node `yaml:"needs"`
+	Environment struct {
+		Name string `yaml:"name"`
+	} `yaml:"environment"`
+	Permissions map[string]string `yaml:"permissions"`
+	Steps       []workflowStep    `yaml:"steps"`
+}
+
+type workflowStep struct {
+	Name string            `yaml:"name"`
+	Env  map[string]string `yaml:"env"`
+	Run  string            `yaml:"run"`
 }
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
@@ -40,6 +52,56 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 		names = append(names, name)
 	}
 	return names, nil
+}
+
+// ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
+// credential in a minimal final job and requires its fresh check to complete
+// immediately before the default-token publisher runs.
+func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("parse release publication gate: %w", err)
+	}
+	releaseJob, ok := document.Jobs["release"]
+	if !ok {
+		return errors.New("release workflow must define the release artifact job")
+	}
+	if releaseJob.Permissions["contents"] != "read" {
+		return errors.New("release artifact job must keep contents permission read-only")
+	}
+	publishJob, ok := document.Jobs["publish-github-release"]
+	if !ok {
+		return errors.New("release workflow must define the final publish-github-release job")
+	}
+	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy and the release artifact job")
+	}
+	if publishJob.Environment.Name != "hosted-controls-audit" {
+		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
+	}
+	if len(publishJob.Permissions) != 2 || publishJob.Permissions["actions"] != "read" || publishJob.Permissions["contents"] != "write" {
+		return errors.New("final GitHub release publication job must grant only actions: read and contents: write")
+	}
+	for _, step := range publishJob.Steps {
+		if step.Name != "Recheck hosted controls and publish GitHub release assets" {
+			continue
+		}
+		if step.Env["WORKCELL_HOSTED_CONTROLS_REQUIRED"] != "1" ||
+			step.Env["WORKCELL_HOSTED_CONTROLS_TOKEN"] != "${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}" ||
+			step.Env["GITHUB_TOKEN"] != "${{ github.token }}" {
+			return errors.New("final GitHub release publication step must receive the required hosted-controls token and separate default mutation token")
+		}
+		auditIndex := strings.Index(step.Run, `./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`)
+		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
+		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`)
+		if auditIndex < 0 || unsetIndex <= auditIndex || publishIndex <= unsetIndex ||
+			!strings.Contains(step.Run[publishIndex:], "--immutable-releases-preverified-by-hosted-controls") {
+			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
+		}
+		return nil
+	}
+	return errors.New("release workflow must combine the fresh hosted-controls check and GitHub release publication in one reviewed step")
 }
 
 func CheckWorkflows(rootDir, policyPath string) error {

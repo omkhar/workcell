@@ -34,6 +34,56 @@ func installWorkflowToolStubs(t *testing.T, root string) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
+func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
+	const workflow = `jobs:
+  release:
+    permissions:
+      contents: read
+  publish-github-release:
+    needs:
+      - tag-policy
+      - release
+    environment:
+      name: hosted-controls-audit
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Recheck hosted controls and publish GitHub release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: |
+          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
+          unset WORKCELL_HOSTED_CONTROLS_TOKEN
+          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+            --immutable-releases-preverified-by-hosted-controls \
+            dist/workcell.tar.gz
+`
+	if err := metadatautil.ValidateReleaseWorkflowPublicationGate(workflow); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v", err)
+	}
+	for _, tc := range []struct {
+		name, old, replacement, want string
+	}{
+		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
+		{name: "depends on sealed artifacts", old: "      - release", replacement: "      - preflight", want: "depend directly"},
+		{name: "uses audit environment", old: "name: hosted-controls-audit", replacement: "name: release", want: "hosted-controls-audit"},
+		{name: "minimal permissions", old: "contents: write\n    steps:", replacement: "contents: write\n      packages: write\n    steps:", want: "grant only"},
+		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
+		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func writeWorkflowValidationFixtures(t *testing.T, workflowDir string) {
 	t.Helper()
 
