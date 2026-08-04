@@ -596,11 +596,11 @@ ENV CODEX_HOME=/state/agent-home/.codex
 ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
-# Defense-in-depth: default to a named unprivileged user so that direct
-# `docker run` without `--user root` stays non-root while still having a
-# deterministic writable session home and tmp dir. The host launcher passes
+# Defense-in-depth: default to the fixed unprivileged workcell UID/GID so that
+# direct `docker run` without `--user root` stays non-root while still having
+# a deterministic writable session home and tmp dir. The host launcher passes
 # `--user 0:0` explicitly so PID 1 can perform runtime-user setup before
 # dropping privileges via setpriv(1).
-USER workcell
+USER 65532:65532
 
 ENTRYPOINT ["/usr/local/bin/workcell-entrypoint"]

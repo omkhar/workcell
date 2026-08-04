@@ -2987,7 +2987,7 @@ go_verify_citools workcell-bootstrap-egress "${ROOT_DIR}" || exit 1
 # tools/validator/Dockerfile: each pins the snapshot CA bundle / amd64+arm64
 # OpenSSL bootstrap packages, the apt retry/timeout settings, the retry-and-
 # discard TLS bootstrap download loop, the fail-closed download/checksum/dpkg
-# chain, and the unprivileged `USER workcell` default.  Migrated to Go (D3):
+# chain, and the fixed unprivileged `USER 65532:65532` default. Migrated to Go (D3):
 # internal/workcellhardening behind the workcell-citools workcell-dockerfile-pins
 # subcommand preserves the exact exit codes and stderr messages of the former
 # inline `for dockerfile` rg loops, including the per-line (`rg`-parity) regex
