@@ -19,6 +19,24 @@ child_pid=""
 child_done=0
 child_status=0
 provider_pid=""
+container_tty_state=""
+container_tty_configured=0
+
+restore_container_tty() {
+  if [[ "${container_tty_configured}" == "1" ]] &&
+    [[ -n "${container_tty_state}" ]]; then
+    /usr/bin/stty "${container_tty_state}" </dev/tty >/dev/null 2>&1 || true
+  fi
+  container_tty_configured=0
+  container_tty_state=""
+}
+
+configure_container_tty() {
+  container_tty_state="$(/usr/bin/stty -g </dev/tty 2>/dev/null || true)"
+  [[ -n "${container_tty_state}" ]] || return 1
+  /usr/bin/stty raw -echo </dev/tty
+  container_tty_configured=1
+}
 
 forward_container_tty_input() {
   while :; do
@@ -32,6 +50,7 @@ forwarder_pid=$!
 cleanup() {
   kill "${forwarder_pid}" >/dev/null 2>&1 || true
   wait "${forwarder_pid}" >/dev/null 2>&1 || true
+  restore_container_tty
   rm -f "${stdin_path}" "${exec_path}"
 }
 
@@ -88,21 +107,58 @@ discover_provider() {
   return 1
 }
 
+sync_terminal_size() {
+  local rows=""
+  local columns=""
+
+  [[ -n "${provider_pid}" ]] || return 0
+  kill -0 "${provider_pid}" >/dev/null 2>&1 || return 0
+  read -r rows columns < <(/usr/bin/stty size </dev/tty 2>/dev/null || true)
+  if [[ "${rows}" =~ ^[1-9][0-9]*$ ]] &&
+    [[ "${columns}" =~ ^[1-9][0-9]*$ ]]; then
+    /usr/bin/stty rows "${rows}" cols "${columns}" \
+      <"/proc/${provider_pid}/fd/0" >/dev/null 2>&1 || true
+  fi
+}
+
+handle_terminal_resize() {
+  # Docker Desktop can emit a burst of SIGWINCH events while the container
+  # terminal settles. Let the burst coalesce before copying its final size to
+  # the provider PTY so a signal handled mid-burst cannot leave it stale.
+  /usr/bin/sleep 0.1
+  sync_terminal_size
+}
+
+wait_for_child() {
+  local status=0
+
+  while :; do
+    set +e
+    wait "${child_pid}"
+    status="$?"
+    set -e
+    if kill -0 "${child_pid}" >/dev/null 2>&1; then
+      continue
+    fi
+    child_status="${status}"
+    child_done=1
+    return 0
+  done
+}
+
 handle_signal() {
   local signal="$1"
   local status=0
 
   if [[ "${child_done}" == "1" ]]; then
-    trap - EXIT INT TERM
+    trap - EXIT INT TERM WINCH
     cleanup
     exit "${child_status}"
   fi
   forward_child_signal "${signal}"
   if [[ -n "${child_pid}" ]]; then
-    set +e
-    wait "${child_pid}" >/dev/null 2>&1
-    status="$?"
-    set -e
+    wait_for_child >/dev/null 2>&1
+    status="${child_status}"
   else
     case "${signal}" in
       INT) status=130 ;;
@@ -110,7 +166,7 @@ handle_signal() {
       *) status=128 ;;
     esac
   fi
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM WINCH
   cleanup
   exit "${status}"
 }
@@ -118,6 +174,10 @@ handle_signal() {
 trap cleanup EXIT
 trap 'handle_signal INT' INT
 trap 'handle_signal TERM' TERM
+if ! configure_container_tty; then
+  echo "Workcell could not configure the detached container terminal." >&2
+  exit 1
+fi
 /usr/bin/script -qefc "${exec_path}" /dev/null <&3 &
 child_pid="$!"
 if ! discover_provider && kill -0 "${child_pid}" >/dev/null 2>&1; then
@@ -126,12 +186,10 @@ if ! discover_provider && kill -0 "${child_pid}" >/dev/null 2>&1; then
   wait "${child_pid}" >/dev/null 2>&1 || true
   exit 1
 fi
-set +e
-wait "${child_pid}"
-status="$?"
-child_status="${status}"
-child_done=1
-trap - EXIT INT TERM
-set -e
+trap handle_terminal_resize WINCH
+sync_terminal_size
+wait_for_child
+status="${child_status}"
+trap - EXIT INT TERM WINCH
 cleanup
 exit "${status}"

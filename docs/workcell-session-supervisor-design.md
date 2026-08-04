@@ -146,8 +146,9 @@ bounded exception to the default Go language boundary: it is the container
 entrypoint's process-local adapter around `/usr/bin/script`, and must run as the
 detached container's PID 1 after the entrypoint drops privileges. Its only
 responsibilities are to keep the provider attached to a pseudo-terminal, relay
-the Workcell-owned input FIFO, forward container signals to that provider, reap
-the process tree, and return the provider's exit status.
+the Workcell-owned input FIFO in key-at-a-time terminal mode, synchronize
+terminal dimensions, forward container signals to that provider, reap the
+process tree, restore terminal state, and return the provider's exit status.
 
 Keeping that adapter in shell avoids adding another trusted runtime binary
 and build artifact solely to supervise commands that the entrypoint already

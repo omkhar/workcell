@@ -38,6 +38,7 @@ INJECTION_BUNDLE_ROOT=""
 WORKSPACE_IMPORT_ROOT=""
 DETACHED_TTY_SMOKE_CONTAINER=""
 DETACHED_TTY_SMOKE_SENTINEL=""
+DETACHED_TTY_ATTACH_PID=""
 declare -a WORKSPACE_IMPORT_ARGS=()
 declare -a RUNTIME_SECURITY_ARGS=()
 declare -a COPILOT_SMOKE_TOKEN_HANDOFF_DIRS=()
@@ -472,6 +473,10 @@ cleanup() {
   if [[ -n "${DETACHED_TTY_SMOKE_CONTAINER}" ]]; then
     docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
   fi
+  if [[ -n "${DETACHED_TTY_ATTACH_PID}" ]]; then
+    kill "${DETACHED_TTY_ATTACH_PID}" >/dev/null 2>&1 || true
+    wait "${DETACHED_TTY_ATTACH_PID}" >/dev/null 2>&1 || true
+  fi
   cleanup_workcell_trusted_docker_client
   cleanup_workspace_scratch "${ROOT_DIR}" || true
   if [[ -n "${SMOKE_WORKSPACE}" ]]; then
@@ -504,6 +509,21 @@ docker_cmd() {
   else
     docker "$@"
   fi
+}
+
+run_detached_tty_attach_probe() {
+  local transcript_path="$1"
+  shift
+  local -a command_args=("$@")
+  local command_string=""
+
+  if script --help 2>&1 | grep -q -- ' -c, --command '; then
+    printf -v command_string '%q ' "${command_args[@]}"
+    script -qef -c "${command_string% }" "${transcript_path}"
+    return
+  fi
+
+  script -qeF "${transcript_path}" "${command_args[@]}"
 }
 
 populate_runtime_security_args() {
@@ -1043,6 +1063,7 @@ run_container_with_injection_bundle_stdin() {
 
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
+  require_tool script
   setup_workcell_trusted_docker_client
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
     select_docker_context
@@ -1058,6 +1079,7 @@ if [[ "${1:-}" == "--self-test-host-path-hardening" ]]; then
 fi
 
 require_tool docker
+require_tool script
 trap cleanup EXIT
 cleanup_workspace_scratch "${ROOT_DIR}"
 prepare_smoke_workspace
@@ -3241,6 +3263,7 @@ grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct
 
 DETACHED_TTY_SMOKE_CONTAINER="workcell-detached-tty-smoke-$$"
 DETACHED_TTY_SMOKE_SENTINEL="${SMOKE_WORKSPACE}/detached-tty-stop-sentinel"
+DETACHED_TTY_ATTACH_TRANSCRIPT="${SMOKE_WORKSPACE}/detached-tty-attach.typescript"
 rm -f "${DETACHED_TTY_SMOKE_SENTINEL}"
 docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
 # The nested shell expressions stay literal to verify exact argv transport.
@@ -3251,7 +3274,7 @@ if ! docker_cmd create \
   --entrypoint /bin/bash \
   "${IMAGE_TAG}" \
   /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
-  /bin/bash -lc 'test -t 0 && test -t 1 && test -t 2 && test "$1" = "space value" && test "$2" = "single'\''quote" && test "$3" = '\''$(not-run)'\'' && printf "detached-tty-ok\\n"; trap '\''printf "detached-term-ok\\n" >/tmp/detached-term-ok; exit 0'\'' TERM; while :; do sleep 1; done' \
+  /bin/bash -lc 'test -t 0 && test -t 1 && test -t 2 && test "$1" = "space value" && test "$2" = "single'\''quote" && test "$3" = '\''$(not-run)'\'' && printf "detached-tty-ok\\n"; trap '\''stty size >/tmp/detached-size'\'' WINCH; trap '\''printf "detached-term-ok\\n" >/tmp/detached-term-ok; exit 0'\'' TERM; tty_state="$(stty -g)"; stty raw -echo; IFS= read -r -n 1 key; stty "${tty_state}"; printf "%s" "${key}" >/tmp/detached-key; while :; do sleep 1; done' \
   bash \
   'space value' \
   "single'quote" \
@@ -3274,7 +3297,58 @@ if [[ "${DETACHED_TTY_SMOKE_READY}" != "1" ]]; then
   docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" >&2 || true
   exit 1
 fi
+DETACHED_TTY_INITIAL_SIZE="$(docker_cmd exec "${DETACHED_TTY_SMOKE_CONTAINER}" \
+  /bin/bash -lc 'stty size </proc/1/fd/0' 2>/dev/null || true)"
+DETACHED_TTY_ATTACH_COMMAND=(docker)
+if [[ -n "${DOCKER_CONTEXT_NAME}" ]]; then
+  DETACHED_TTY_ATTACH_COMMAND+=(--context "${DOCKER_CONTEXT_NAME}")
+fi
+DETACHED_TTY_ATTACH_COMMAND+=(attach --sig-proxy=false "${DETACHED_TTY_SMOKE_CONTAINER}")
+(
+  (
+    sleep 1
+    printf x
+    sleep 5
+  ) |
+    run_detached_tty_attach_probe \
+      "${DETACHED_TTY_ATTACH_TRANSCRIPT}" \
+      /bin/bash -lc 'stty rows 41 cols 123; exec "$@"' -- \
+      "${DETACHED_TTY_ATTACH_COMMAND[@]}"
+) >/dev/null 2>&1 &
+DETACHED_TTY_ATTACH_PID=$!
+DETACHED_TTY_KEY=""
+DETACHED_TTY_SIZE=""
+DETACHED_TTY_OUTER_SIZE=""
+for _ in $(seq 1 100); do
+  DETACHED_TTY_KEY="$(docker_cmd exec "${DETACHED_TTY_SMOKE_CONTAINER}" cat /tmp/detached-key 2>/dev/null || true)"
+  DETACHED_TTY_SIZE="$(docker_cmd exec "${DETACHED_TTY_SMOKE_CONTAINER}" cat /tmp/detached-size 2>/dev/null || true)"
+  DETACHED_TTY_OUTER_SIZE="$(docker_cmd exec "${DETACHED_TTY_SMOKE_CONTAINER}" \
+    /bin/bash -lc 'stty size </proc/1/fd/0' 2>/dev/null || true)"
+  if [[ "${DETACHED_TTY_KEY}" == "x" ]] &&
+    [[ "${DETACHED_TTY_SIZE}" =~ ^[1-9][0-9]*\ [1-9][0-9]*$ ]] &&
+    [[ "${DETACHED_TTY_SIZE}" == "${DETACHED_TTY_OUTER_SIZE}" ]] &&
+    [[ "${DETACHED_TTY_SIZE}" != "${DETACHED_TTY_INITIAL_SIZE}" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ "${DETACHED_TTY_KEY}" != "x" ]] ||
+  [[ ! "${DETACHED_TTY_SIZE}" =~ ^[1-9][0-9]*\ [1-9][0-9]*$ ]] ||
+  [[ "${DETACHED_TTY_SIZE}" != "${DETACHED_TTY_OUTER_SIZE}" ]] ||
+  [[ "${DETACHED_TTY_SIZE}" == "${DETACHED_TTY_INITIAL_SIZE}" ]]; then
+  echo "Detached stdin wrapper did not relay key-at-a-time input and terminal size" >&2
+  printf 'key=%q initial_size=%q outer_size=%q provider_size=%q\n' \
+    "${DETACHED_TTY_KEY}" \
+    "${DETACHED_TTY_INITIAL_SIZE}" \
+    "${DETACHED_TTY_OUTER_SIZE}" \
+    "${DETACHED_TTY_SIZE}" >&2
+  cat "${DETACHED_TTY_ATTACH_TRANSCRIPT}" >&2 || true
+  exit 1
+fi
 docker_cmd stop -t 10 "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null
+kill "${DETACHED_TTY_ATTACH_PID}" >/dev/null 2>&1 || true
+wait "${DETACHED_TTY_ATTACH_PID}" >/dev/null 2>&1 || true
+DETACHED_TTY_ATTACH_PID=""
 DETACHED_TTY_SMOKE_OUTPUT="$(docker_cmd logs "${DETACHED_TTY_SMOKE_CONTAINER}" 2>&1 | tr -d '\r')"
 DETACHED_TTY_SMOKE_STATUS="$(docker_cmd inspect --format '{{.State.ExitCode}}' "${DETACHED_TTY_SMOKE_CONTAINER}")"
 docker_cmd cp "${DETACHED_TTY_SMOKE_CONTAINER}:/tmp/detached-term-ok" "${DETACHED_TTY_SMOKE_SENTINEL}" >/dev/null
