@@ -191,6 +191,10 @@ reviewed inputs:
 - `hosted-controls-audit` permits the `main` branch and protected `v*` release
   tags so scheduled/main audits and tag-triggered release preflight both use a
   dedicated environment gate for `WORKCELL_HOSTED_CONTROLS_TOKEN`
+- release publication explicitly records that the required preflight completed
+  this immutable-release check; the publisher still queries the endpoint with
+  its default token and accepts only GitHub's exact integration-permission
+  denial when that preverification is present
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_RELEASE_NO_ATTEST=false` and

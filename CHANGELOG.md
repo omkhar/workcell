@@ -6,6 +6,20 @@ This project follows a lightweight Keep a Changelog style.
 Historical release details before this file existed remain available in GitHub
 Releases.
 
+## v1.0.1 - 2026-08-04
+
+Supersedes v1.0.0, which was tagged but never published: its release workflow
+uploaded the complete asset inventory to a draft, then the default Actions
+token could not read the repository-administration endpoint used for the final
+immutable-release check. The failed tag and draft remain untouched.
+
+### Fixed
+
+- hand the successful `hosted-controls-audit` immutable-release precheck into
+  the publisher explicitly; retain the publisher's direct check when the token
+  can read the endpoint, and accept only GitHub's exact integration-permission
+  denial when that precheck is present.
+
 ## v1.0.0 - 2026-08-04
 
 Workcell 1.0 freezes the supported operator contract and records a final GO

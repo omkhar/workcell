@@ -1342,7 +1342,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          # The required preflight job verifies repository release immutability
+          # with the hosted-controls-audit token. The default Actions token
+          # cannot read that repository-administration endpoint, so the
+          # publisher accepts only its exact integration-permission denial
+          # after this explicit preverification handoff.
           ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+            --immutable-releases-preverified-by-hosted-controls \
             "dist/${BUNDLE_NAME}" \
             "dist/${BUNDLE_NAME}.sigstore.json" \
             dist/workcell.rb \

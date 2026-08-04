@@ -535,7 +535,14 @@ uploaded inventory, and only then publish the final release record. Source-path
 changes after staging cannot change the uploaded bytes. The entrypoint also
 binds publication to the locally checked-out annotated tag object and its peeled
 commit; the Go publisher verifies that exact binding against GitHub before and
-after publication. If publication instead tries to upload assets into an
+after publication. Release preflight verifies repository release immutability
+with the environment-scoped `WORKCELL_HOSTED_CONTROLS_TOKEN`. The publication
+job passes that successful preverification explicitly because its default
+Actions token cannot read the repository-administration endpoint; the publisher
+still attempts the direct check and accepts only GitHub's exact
+`Resource not accessible by integration` denial when the preverification is
+present. A disabled control or any other response still fails closed. If
+publication instead tries to upload assets into an
 already-published immutable release, treat that as a release-process bug, patch
 `main`, and cut the next patch release rather than rewriting the failed tag.
 If a create, delete, upload, or publish request fails after it starts, treat the
@@ -553,6 +560,16 @@ annotated release-candidate tag, verified the exact tag-object and peeled-commit
 binding, and published the exact 18-asset manifest. GitHub reported every asset
 as uploaded with a `sha256:` digest, both releases as immutable prereleases, and
 both tag signatures as verified with reason `valid`.
+
+The hosted-controls handoff was live-certified on 2026-08-04 with signed tag
+`v0.0.0-rc.3` in the same fixture. The fixture workflow first proved that its
+default Actions token received HTTP 403 with GitHub's exact
+`Resource not accessible by integration` response from the immutable-release
+administration endpoint. It then invoked the patched production Go publisher
+with the explicit preverification handoff and published release id `365146990`.
+[Workflow run 30949637336](https://github.com/omkhar/workcell-release-publisher-certification/actions/runs/30949637336)
+completed successfully; GitHub reported the resulting prerelease as immutable
+with the exact 18-asset inventory and a valid signed tag.
 
 After approving the environment in single-maintainer mode, leave a public PR
 follow-up comment so the self-review is visible in the same release thread. Use

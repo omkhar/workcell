@@ -828,6 +828,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
 		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
+		`--immutable-releases-preverified-by-hosted-controls`,
 	} {
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)

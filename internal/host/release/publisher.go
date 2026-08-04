@@ -33,8 +33,15 @@ type githubHTTPClient interface {
 }
 
 type githubReleasePublisher struct {
-	client     githubHTTPClient
-	afterStage func([]localAsset)
+	client                                githubHTTPClient
+	afterStage                            func([]localAsset)
+	immutableReleasesPreverifiedByControl bool
+}
+
+// PublishOptions records release controls that were verified outside the
+// publisher's default GitHub token boundary.
+type PublishOptions struct {
+	ImmutableReleasesPreverifiedByHostedControls bool
 }
 
 type githubReleaseAsset struct {
@@ -143,14 +150,17 @@ func validatePublishedReleaseItem(tagName string, item listedRelease) error {
 // draft GitHub release. Every source is copied into an unlinked read-only stage
 // before the first API mutation, and uploads read only from those staged
 // handles.
-func PublishGitHubRelease(ctx context.Context, repository, token, tag string, expectedTag TagExpectation, paths []string) (releaseID int64, retErr error) {
+func PublishGitHubRelease(ctx context.Context, repository, token, tag string, expectedTag TagExpectation, options PublishOptions, paths []string) (releaseID int64, retErr error) {
 	client := &http.Client{
 		Timeout: 15 * time.Minute,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("GitHub release publisher refuses HTTP redirects")
 		},
 	}
-	publisher := githubReleasePublisher{client: client}
+	publisher := githubReleasePublisher{
+		client:                                client,
+		immutableReleasesPreverifiedByControl: options.ImmutableReleasesPreverifiedByHostedControls,
+	}
 	return publisher.publish(ctx, repository, token, tag, expectedTag, paths)
 }
 
@@ -235,18 +245,43 @@ func (publisher githubReleasePublisher) publish(ctx context.Context, repository,
 	if err := publisher.verifyTagBinding(ctx, repository, token, tag, expectedTag); err != nil {
 		return 0, fmt.Errorf("reverify release tag before publication: %w", err)
 	}
-	immutableReleasesBody, _, err := publisher.requestOneOf(ctx, token, http.MethodGet, fmt.Sprintf("%s/repos/%s/immutable-releases", githubAPIOrigin, repository), "", nil, 0, http.StatusOK)
+	immutableReleasesBody, immutableReleasesStatus, err := publisher.requestOneOf(
+		ctx,
+		token,
+		http.MethodGet,
+		fmt.Sprintf("%s/repos/%s/immutable-releases", githubAPIOrigin, repository),
+		"",
+		nil,
+		0,
+		http.StatusOK,
+		http.StatusForbidden,
+	)
 	if err != nil {
 		return 0, fmt.Errorf("verify immutable releases before publication: %w", err)
 	}
-	var immutableReleases struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.Unmarshal(immutableReleasesBody, &immutableReleases); err != nil {
-		return 0, fmt.Errorf("decode GitHub immutable releases response: %w", err)
-	}
-	if !immutableReleases.Enabled {
-		return 0, errors.New("GitHub immutable releases response did not report enabled = true")
+	switch immutableReleasesStatus {
+	case http.StatusOK:
+		var immutableReleases struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.Unmarshal(immutableReleasesBody, &immutableReleases); err != nil {
+			return 0, fmt.Errorf("decode GitHub immutable releases response: %w", err)
+		}
+		if !immutableReleases.Enabled {
+			return 0, errors.New("GitHub immutable releases response did not report enabled = true")
+		}
+	case http.StatusForbidden:
+		const actionsTokenDenial = "Resource not accessible by integration"
+		message := githubAPIErrorMessage(immutableReleasesBody)
+		if !publisher.immutableReleasesPreverifiedByControl || message != actionsTokenDenial {
+			return 0, fmt.Errorf(
+				"verify immutable releases before publication: GitHub API returned HTTP %d: %s",
+				immutableReleasesStatus,
+				message,
+			)
+		}
+	default:
+		return 0, fmt.Errorf("verify immutable releases before publication: unexpected GitHub API status %d", immutableReleasesStatus)
 	}
 	if err := closeLocalAssets(assets); err != nil {
 		return 0, fmt.Errorf("close sealed release assets before publishing draft: %w", err)

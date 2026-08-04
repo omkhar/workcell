@@ -332,7 +332,7 @@ func TestReleaseWorkflowUsesSingleAuthoritativeTagPolicyGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := string(publisherData)
-	invocation := `"${HOSTUTIL_BIN}" release publish "${TAG_NAME}" "${TAG_OBJECT_SHA}" "${PEELED_COMMIT_SHA}" "$@"`
+	invocation := `"${HOSTUTIL_BIN}" release publish "${TAG_NAME}" "${TAG_OBJECT_SHA}" "${PEELED_COMMIT_SHA}" "--immutable-releases-preverified-by-hosted-controls=${IMMUTABLE_RELEASES_PREVERIFIED}" "$@"`
 	if strings.Count(publisher, invocation) != 1 {
 		t.Fatalf("publisher invocation %q count = %d, want 1", invocation, strings.Count(publisher, invocation))
 	}
