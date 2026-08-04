@@ -3476,8 +3476,8 @@ func dockerfilePinsChecks(rootDir string) []check {
 		df := rootDir + "/" + rel
 		cs = append(cs, check{
 			kind:       kindRegexPresent,
-			regex:      `^USER workcell$`,
-			message:    "Expected " + df + " to default to the named unprivileged workcell user",
+			regex:      `^USER 65532:65532$`,
+			message:    "Expected " + df + " to default to the fixed unprivileged workcell UID/GID",
 			targetFile: rel,
 		})
 	}
