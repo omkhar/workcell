@@ -8,7 +8,7 @@
 
 [tool_pins]
 cosign = "v3.1.2"
-buildx = "v0.36.0"
+buildx = "v0.36.1"
 buildkit = "moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
 qemu = "tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 syft = "v1.50.0"

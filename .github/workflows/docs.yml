@@ -73,7 +73,7 @@ env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
   # Pinned identically to ci.yml and release.yml so all three workflows
   # share validator-image layer caches deterministically.
-  WORKCELL_BUILDX_VERSION: v0.36.0
+  WORKCELL_BUILDX_VERSION: v0.36.1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
