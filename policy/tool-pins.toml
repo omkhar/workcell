@@ -8,11 +8,11 @@
 
 [tool_pins]
 cosign = "v3.1.2"
-buildx = "v0.35.0"
+buildx = "v0.36.0"
 buildkit = "moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
 qemu = "tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
-syft = "v1.49.0"
+syft = "v1.50.0"
 actionlint_version = "1.7.12"
 actionlint_sha256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-zizmor_version = "1.28.0"
-zizmor_sha256 = "e87b67160194884e375a46a12c57ccc904f762b53845f254fab7f17d98809c09"
+zizmor_version = "1.29.0"
+zizmor_sha256 = "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"
