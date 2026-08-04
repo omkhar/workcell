@@ -596,14 +596,17 @@ monolithic Rust interception library, a 8,910-line launcher script, a
 These items exist specifically to make 1.0 a truthful claim: a frozen public
 contract and proven day-two operations.
 
-- **G1 (next, M):** public contract inventory, freeze, and deprecation
-  policy — inventory early, freeze at 1.0-rc
-- **G2 (next, M):** `workcell support-bundle` command with documented
+- **G1 (complete, M):** the public contract inventory, v1 stability
+  classification, deprecation policy, and release-preflight drift gate are
+  versioned; the candidate-scoped G4 readiness record will supply exact
+  identities
+- **G2 (implemented, M):** `workcell support-bundle` ships with documented
   redaction rules
-- **G3 (next, M):** install lifecycle proof — install, upgrade, uninstall,
-  rollback, and `--gc` as repeatable evidence
-- **G4 (later, S):** recorded cross-lens 1.0 readiness gate review with all
-  scope decisions explicit
+- **G3 (candidate freshness pending, M):** install, upgrade, uninstall,
+  rollback, and `--gc` have repeatable evidence; the readiness register keeps
+  historical release-candidate evidence separate from the final candidate
+- **G4 (pending, S):** the cross-lens 1.0 readiness gate records fixed statuses,
+  exact candidate/evidence identities, and every explicit scope decision
 
 ### Sequencing Summary
 

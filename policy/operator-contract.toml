@@ -10,6 +10,16 @@ evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios
 requirements = ["functional.FR-001"]
 target_state = "retain"
 
+[workflows.launch_managed_claude]
+title = "Managed Claude launch"
+support = "supported"
+canonical = "workcell --agent claude --workspace /path/to/repo"
+discoverability = ["top-level-help", "readme"]
+docs = ["README.md", "docs/provider-matrix.md", "docs/examples/quickstart-claude.md"]
+evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh", "scripts/container-smoke.sh"]
+requirements = ["functional.FR-001"]
+target_state = "retain"
+
 [workflows.launch_managed_copilot]
 title = "Managed Copilot launch"
 support = "supported"
@@ -17,6 +27,66 @@ canonical = "workcell --agent copilot --workspace /path/to/repo"
 discoverability = ["top-level-help", "readme"]
 docs = ["README.md", "docs/provider-matrix.md", "docs/examples/quickstart-copilot.md"]
 evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "tests/scenarios/shared/test-copilot-session-dry-run.sh", "tests/scenarios/shared/test-copilot-provider-e2e.sh", "scripts/container-smoke.sh", "scripts/provider-e2e.sh"]
+requirements = ["functional.FR-001"]
+target_state = "retain"
+
+[workflows.launch_managed_gemini]
+title = "Managed Gemini launch"
+support = "supported"
+canonical = "workcell --agent gemini --workspace /path/to/repo"
+discoverability = ["top-level-help", "readme"]
+docs = ["README.md", "docs/provider-matrix.md", "docs/examples/quickstart-gemini.md"]
+evidence = ["tests/scenarios/shared/test-agent-launch-smoke.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh", "scripts/container-smoke.sh"]
+requirements = ["functional.FR-001"]
+target_state = "retain"
+
+[workflows.launch_mode]
+title = "Runtime assurance mode selection"
+support = "supported"
+canonical = "--mode strict"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/mode-map.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-004"]
+target_state = "retain"
+
+[workflows.launch_mode_development]
+title = "Development mode selection"
+support = "supported"
+canonical = "--mode development"
+discoverability = ["manpage"]
+docs = ["docs/mode-map.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-004"]
+target_state = "retain"
+
+[workflows.launch_mode_build]
+title = "Build mode selection"
+support = "supported"
+canonical = "--mode build"
+discoverability = ["manpage"]
+docs = ["docs/mode-map.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["scripts/verify-invariants.sh"]
+requirements = ["nonfunctional.NFR-002"]
+target_state = "retain"
+
+[workflows.launch_agent_autonomy]
+title = "Provider approval posture selection"
+support = "supported"
+canonical = "--agent-autonomy yolo|prompt"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/adapter-control-planes.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "scripts/verify-invariants.sh"]
+requirements = ["functional.FR-004"]
+target_state = "retain"
+
+[workflows.launch_dry_run]
+title = "Launch command preview"
+support = "supported"
+canonical = "--dry-run"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/safe-path-expectations.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios/shared/test-compat-target-dry-run.sh"]
 requirements = ["functional.FR-001"]
 target_state = "retain"
 

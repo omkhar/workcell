@@ -8,6 +8,12 @@ Releases.
 
 ## Unreleased
 
+### Changed
+
+- freeze the versioned v1 public contract under the published deprecation
+  policy while keeping candidate certification and final release readiness as
+  separate evidence gates.
+
 ### Fixed
 
 - remove temporary Buildx resources after every runtime-image build attempt,

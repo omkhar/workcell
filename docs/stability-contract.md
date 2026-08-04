@@ -1,9 +1,10 @@
 # Stability Contract
 
-This document records which parts of Workcell's surface are stable ahead of
-1.0, and the exit-code contract shared across the Rust launcher, the Go
-binaries, and the shell entrypoint. It is the pre-1.0 compatibility reference;
-G1 extends it into the versioned 1.0 contract.
+This document defines Workcell's versioned v1 compatibility surface for the
+1.0 release-candidate gate, including the exit-code contract shared across the
+Rust launcher, the Go binaries, and the shell entrypoint. Candidate and release
+identity remain recorded separately in the readiness review; this contract does
+not imply that live 1.0 certification is complete.
 
 **Contract version: 1.** The machine-checkable companion to this document is
 `policy/public-contract.toml`, enforced by `workcell-citools
@@ -14,20 +15,29 @@ field list and injection-policy table list below exactly match the
 `SessionRecord`/`SessionExport` JSON shape and the injection-policy table
 whitelist in code.
 
-"Stable" means the shape is not expected to change without a deprecation note.
-"Experimental" means it may change or be removed. Absence from this document is
-not a stability promise.
+"Stable" means the shape follows the deprecation policy below. "Experimental"
+means it may change or be removed. For v1, every workflow declared
+`support = "supported"` and `target_state = "retain"` in
+`policy/operator-contract.toml` is stable at its canonical syntax unless this
+document explicitly classifies part of it as experimental. Absence from this
+document and the operator contract is not a stability promise.
 
 ## Deprecation policy
 
-From 1.0 onward Workcell follows [semantic versioning](https://semver.org). The
-stable surfaces enumerated in this document carry a compatibility guarantee
-within a major version: the exit-code contract, the machine-readable output-line
-prefixes, the session-record/export field set, and the injection-policy table
-(enforced by `policy/public-contract.toml`), together with the stable
-`scripts/workcell` CLI flags and subcommands documented under
-[CLI stability](#cli-stability) (enforced via `policy/operator-contract.toml`).
-The guarantee:
+From the first release candidate that contains this freeze through the final
+1.0 release and subsequent v1 releases, Workcell follows
+[semantic versioning](https://semver.org). The stable surfaces enumerated in
+this document carry a compatibility guarantee within the major version: the
+exit-code contract, the machine-readable output-line prefixes, the
+session-record/export field set, and the injection-policy table (enforced by
+`policy/public-contract.toml` and the immutable
+[`policy/v1-contract-freeze.toml`](../policy/v1-contract-freeze.toml) baseline),
+together with the stable `scripts/workcell` CLI flags and subcommands documented
+under [CLI stability](#cli-stability) (enforced via
+`policy/operator-contract.toml` and the same baseline). Release preflight
+compares that floor with every prior version in Git history, so a coordinated
+edit of the live inventory and current floor cannot erase an earlier v1
+commitment. The guarantee:
 
 - **No breaking change to a stable surface ships in a patch or minor release.**
   A new field or prefix may be *added*; an existing one is not renamed, removed,
@@ -97,19 +107,27 @@ posture:
 
 ## CLI stability
 
-The user-facing CLI is `scripts/workcell`. Stable surface:
+The user-facing CLI is `scripts/workcell`. The canonical inventory is
+`policy/operator-contract.toml`; in summary, the stable surface includes:
 
 - Core flags: `--agent`, `--target`, `--mode`, `--workspace`, `--agent-autonomy`,
   `--dry-run`, `--prepare` / `--prepare-only`, and the introspection flags
-  `--doctor` / `--inspect` / `--logs` / `--auth-status` / `--gc`.
-- Subcommands: `publish-pr`; `session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export>`;
-  `auth <init|set|unset|status>`; `policy <show|validate|diff>`; `why`.
+  `--doctor` / `--inspect` / `--logs` / `--auth-status` / `--gc`, plus
+  `--repair-profile`, `--cache-profile`, `--session-workspace`, and `--version`.
+- Subcommands: `publish-pr`; `support-bundle`;
+  `session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify>`;
+  `auth <init|set|unset|status>`; `policy <show|validate|diff>`; and `why`.
+
+Stable syntax does not promote a target's support tier. The `aws-ec2-ssm` and
+`gcp-vm` target names remain stable inputs to preview-only, launch-blocked
+workflows as defined by the host support matrix.
 
 Experimental or explicitly gated (may change; already marked in `--help`):
 
 - `--agent antigravity` (recognized as planned but unsupported).
 - `--ui gui` (not implemented; fails closed).
-- preview targets `aws-ec2-ssm` and `gcp-vm`.
+- backend behavior and support status for the preview targets selected by
+  `aws-ec2-ssm` and `gcp-vm`; the selector spellings themselves are stable.
 - `--mode breakglass` (gated behind a dated `--ack-breakglass`),
   `--allow-arbitrary-command` (behind `--ack-arbitrary-command`),
   `--allow-control-plane-vcs` (behind `--ack-control-plane-vcs`), and
@@ -126,7 +144,9 @@ contract-like `key=value` / structured output:
 - `publish_pr_url=` (from `publish-pr`).
 - `mutation score: NN.NN% (k/t killed)` and `surviving mutants: …`.
 - audit digest lines: `record_digest=`, `prev_digest=`.
-- `scenario-manifest` TSV rows (tab-delimited).
+- `scenario-manifest` TSV rows (tab-delimited), with ordered columns `id`,
+  `test_file`, `requires_credentials`, `lane`, `platform`,
+  `validation_tier`, and `manual`.
 
 The full stable output-line prefix set enforced by `policy/public-contract.toml`
 `[output_lines].prefixes`:

@@ -41,7 +41,9 @@ boundary.
 
 ## Project status
 
-- pre-1.0 and still tightening the public contract
+- in the 1.0 release-candidate phase, with the v1 public contract frozen under
+  the published deprecation policy; exact candidate binding and final 1.0
+  readiness are still evidence-gated
 - Apple Silicon macOS hosts only today; Linux and Windows are not currently
   supported as launch hosts
 - local host-launched runtime first; cloud-facing paths today are the
@@ -141,6 +143,14 @@ workcell auth set \
   --credential copilot_github_token \
   --source /Users/example/.config/workcell/copilot-github-token.txt
 workcell --agent copilot --workspace /path/to/repo
+```
+
+Claude and Gemini use the same managed launch shape after their
+provider-specific auth is configured:
+
+```bash
+workcell --agent claude --workspace /path/to/repo
+workcell --agent gemini --workspace /path/to/repo
 ```
 
 See [docs/getting-started.md](docs/getting-started.md) for the release install

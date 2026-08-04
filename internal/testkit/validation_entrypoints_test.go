@@ -247,6 +247,74 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 	}
 }
 
+func TestValidateRepoExecutesPublicContractHistoryGate(t *testing.T) {
+	t.Parallel()
+
+	validateRepoPath := filepath.Join(repoRoot(t), "scripts", "validate-repo.sh")
+	content, err := os.ReadFile(validateRepoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const directInvocation = `
+"${ROOT_DIR}/scripts/check-public-contract.sh"
+`
+	if !strings.Contains(string(content), directInvocation) {
+		t.Fatalf("%s must execute check-public-contract.sh without the self-entrypoint probe", validateRepoPath)
+	}
+}
+
+func TestPublicContractHistoryGateEstablishesCanonicalGitEnvironment(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	marker := filepath.Join(tempDir, "canonical-git-env")
+	goWrapper := filepath.Join(tempDir, "go")
+	wrapper := `#!/bin/bash -p
+set -euo pipefail
+[[ "${GIT_NO_REPLACE_OBJECTS:-}" == "1" ]]
+[[ "${GIT_CONFIG_NOSYSTEM:-}" == "1" ]]
+[[ "${GIT_CONFIG_SYSTEM:-}" == "/dev/null" ]]
+[[ "${GIT_CONFIG_GLOBAL:-}" == "/dev/null" ]]
+[[ "${GIT_CONFIG_COUNT:-}" == "1" ]]
+[[ "${GIT_CONFIG_KEY_0:-}" == "core.attributesFile" ]]
+[[ "${GIT_CONFIG_VALUE_0:-}" == "/dev/null" ]]
+[[ -z "${GIT_REPLACE_REF_BASE:-}" ]]
+printf 'canonical\n' >>"${WORKCELL_CANONICAL_GIT_MARKER:?}"
+`
+	if err := os.WriteFile(goWrapper, []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[core]\n\tattributesFile = /tmp/workcell-hostile-attributes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-public-contract.sh")
+	cmd := exec.Command(scriptPath)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"GIT_CONFIG_GLOBAL":             filepath.Join(home, ".gitconfig"),
+		"GIT_NO_REPLACE_OBJECTS":        "0",
+		"GIT_REPLACE_REF_BASE":          "refs/workcell-hostile/",
+		"HOME":                          home,
+		"WORKCELL_CANONICAL_GIT_MARKER": marker,
+		"WORKCELL_GO_BIN":               goWrapper,
+	})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("public contract history gate: %v: %s", err, output)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(content), "canonical\n"); got != 2 {
+		t.Fatalf("canonical Git environment checks = %d, want 2", got)
+	}
+}
+
 func TestVerifyOperatorContractIgnoresAmbientHelpOverride(t *testing.T) {
 	t.Parallel()
 

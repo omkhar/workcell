@@ -1,4 +1,4 @@
-# Public contract inventory (G1 part 1).
+# Public contract inventory and v1 freeze (G1).
 #
 # Machine-checkable companion to docs/stability-contract.md, enforced by
 # `workcell-citools validate-public-contract` (internal/metadatautil's
@@ -7,11 +7,17 @@
 # authoritative source location; see CheckPublicContract for the exact
 # assertions and error messages.
 #
+# `policy/v1-contract-freeze.toml` is the append-only compatibility floor. The
+# validator rejects removals from either this inventory or the operator
+# inventory, requires compatible additions to be appended to that floor, and
+# compares the floor with every prior version in Git history.
+#
 # This does NOT duplicate policy/operator-contract.toml's CLI-flag/help-text
 # parity checks — that remains operator-contract's job. This file covers the
 # lower-level cross-surface primitives: process exit codes, stable
 # machine-readable output-line prefixes, the durable session-record JSON
-# shape, and the injection-policy table whitelist.
+# shape, the ordered scenario-manifest TSV schema, and the injection-policy
+# table whitelist.
 
 [meta]
 version = "1"
@@ -25,6 +31,11 @@ codes = ["0", "1", "2", "3", "124", "126", "127", "128"]
 # tooling. See docs/stability-contract.md "Stable machine-readable output".
 [output_lines]
 prefixes = ["host_os=", "host_arch=", "support_matrix_status=", "provider_bootstrap_", "target_kind=", "target_provider=", "workspace=", "assurance=", "publish_pr_url=", "mutation score:", "surviving mutants:", "record_digest=", "prev_digest=", "egress_enforcement=", "session_verify=", "key_id=", "head_digest="]
+
+# Ordered columns emitted by `workcell-citools scenario-manifest list-tsv`.
+# This is a row schema: order is part of the v1 compatibility contract.
+[scenario_manifest_tsv]
+columns = ["id", "test_file", "requires_credentials", "lane", "platform", "validation_tier", "manual"]
 
 # The json tags of internal/host/sessions/sessions.go's SessionRecord and
 # SessionExport structs.

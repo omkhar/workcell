@@ -361,6 +361,7 @@ yamllint -d "{extends: default, rules: {comments: disable, document-start: disab
 
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
 "${ROOT_DIR}/scripts/verify-control-plane-manifest.sh"
+"${ROOT_DIR}/scripts/check-public-contract.sh"
 "${ROOT_DIR}/scripts/verify-operator-contract.sh"
 "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
 

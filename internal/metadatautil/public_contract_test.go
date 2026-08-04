@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -98,6 +99,353 @@ func TestCheckPublicContractRejectsBogusOutputPrefix(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "totally_bogus_prefix_zz=") {
 		t.Fatalf("CheckPublicContract() error = %v, want mention of bogus prefix totally_bogus_prefix_zz=", err)
+	}
+}
+
+func TestCheckPublicContractRejectsScenarioManifestTSVReorder(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	contractPath := mutatedContractCopy(t, root,
+		`columns = ["id", "test_file",`,
+		`columns = ["test_file", "id",`,
+	)
+
+	err := CheckPublicContract(root, contractPath)
+	if err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly accepted reordered scenario-manifest TSV columns")
+	}
+	if !strings.Contains(err.Error(), "ordered columns emitted by internal/scenarios.ListTSV") {
+		t.Fatalf("CheckPublicContract() error = %v, want ordered scenario-manifest TSV diagnostic", err)
+	}
+}
+
+func TestCheckPublicContractRejectsRemovalFromV1Freeze(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	contractPath := mutatedContractCopy(t, root,
+		`, "egress_enforcement="`,
+		``,
+	)
+
+	err := CheckPublicContract(root, contractPath)
+	if err == nil {
+		t.Fatal("CheckPublicContract() unexpectedly accepted removal of a frozen v1 output prefix")
+	}
+	if !strings.Contains(err.Error(), "egress_enforcement=") || !strings.Contains(err.Error(), "v1 output-line prefixes") {
+		t.Fatalf("CheckPublicContract() error = %v, want frozen-prefix diagnostic", err)
+	}
+}
+
+func TestV1ContractFreezeRejectsCanonicalWorkflowChange(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	operatorPath := filepath.Join(root, "policy", "operator-contract.toml")
+	content, err := os.ReadFile(operatorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(
+		string(content),
+		`canonical = "--dry-run"`,
+		`canonical = "--preview-launch"`,
+		1,
+	)
+	if mutated == string(content) {
+		t.Fatal("operator-contract mutation did not apply")
+	}
+	mutatedPath := filepath.Join(t.TempDir(), "operator-contract.toml")
+	if err := os.WriteFile(mutatedPath, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = checkV1ContractFreeze(
+		filepath.Join(root, "policy", "public-contract.toml"),
+		mutatedPath,
+		defaultV1ContractFreezePath(root),
+	)
+	if err == nil {
+		t.Fatal("checkV1ContractFreeze() unexpectedly accepted changed canonical workflow syntax")
+	}
+	if !strings.Contains(err.Error(), "launch_dry_run") || !strings.Contains(err.Error(), "--dry-run") {
+		t.Fatalf("checkV1ContractFreeze() error = %v, want frozen workflow diagnostic", err)
+	}
+}
+
+func TestV1ContractFreezeRejectsUnfrozenSupportedWorkflow(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	freezePath := defaultV1ContractFreezePath(root)
+	content, err := os.ReadFile(freezePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(
+		string(content),
+		`launch_dry_run = "--dry-run"`+"\n",
+		"",
+		1,
+	)
+	if mutated == string(content) {
+		t.Fatal("v1 freeze mutation did not apply")
+	}
+	mutatedPath := filepath.Join(t.TempDir(), "v1-contract-freeze.toml")
+	if err := os.WriteFile(mutatedPath, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = checkV1ContractFreeze(
+		filepath.Join(root, "policy", "public-contract.toml"),
+		filepath.Join(root, "policy", "operator-contract.toml"),
+		mutatedPath,
+	)
+	if err == nil {
+		t.Fatal("checkV1ContractFreeze() unexpectedly accepted an unfrozen supported workflow")
+	}
+	if !strings.Contains(err.Error(), "must append current supported workflow launch_dry_run") {
+		t.Fatalf("checkV1ContractFreeze() error = %v, want append-only workflow diagnostic", err)
+	}
+}
+
+func TestV1ContractFreezeRejectsUnfrozenPublicAddition(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	publicContent, err := os.ReadFile(filepath.Join(root, "policy", "public-contract.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(
+		string(publicContent),
+		`"head_digest="]`,
+		`"head_digest=", "new_v1_prefix="]`,
+		1,
+	)
+	if mutated == string(publicContent) {
+		t.Fatal("public-contract addition did not apply")
+	}
+	publicPath := filepath.Join(t.TempDir(), "public-contract.toml")
+	if err := os.WriteFile(publicPath, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = checkV1ContractFreeze(
+		publicPath,
+		filepath.Join(root, "policy", "operator-contract.toml"),
+		defaultV1ContractFreezePath(root),
+	)
+	if err == nil {
+		t.Fatal("checkV1ContractFreeze() unexpectedly accepted an unfrozen public addition")
+	}
+	if !strings.Contains(err.Error(), "must append current output-line prefixes") || !strings.Contains(err.Error(), "new_v1_prefix=") {
+		t.Fatalf("checkV1ContractFreeze() error = %v, want append-only public diagnostic", err)
+	}
+}
+
+func TestV1ContractHistoryRejectsSynchronizedPublicRemoval(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	publicContent, err := os.ReadFile(filepath.Join(root, "policy", "public-contract.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezeContent, err := os.ReadFile(defaultV1ContractFreezePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutatedPublic := strings.Replace(string(publicContent), `, "egress_enforcement="`, "", 1)
+	mutatedFreeze := strings.Replace(string(freezeContent), `, "egress_enforcement="`, "", 1)
+	if mutatedPublic == string(publicContent) || mutatedFreeze == string(freezeContent) {
+		t.Fatal("synchronized public-contract mutation did not apply")
+	}
+	dir := t.TempDir()
+	publicPath := filepath.Join(dir, "public-contract.toml")
+	freezePath := filepath.Join(dir, "v1-contract-freeze.toml")
+	if err := os.WriteFile(publicPath, []byte(mutatedPublic), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(freezePath, []byte(mutatedFreeze), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkV1ContractFreeze(
+		publicPath,
+		filepath.Join(root, "policy", "operator-contract.toml"),
+		freezePath,
+	); err != nil {
+		t.Fatalf("current-state parity should accept the synchronized fixture, got %v", err)
+	}
+	err = CheckV1ContractFreezeHistory(defaultV1ContractFreezePath(root), freezePath)
+	if err == nil {
+		t.Fatal("history check unexpectedly accepted synchronized removal of a historical v1 prefix")
+	}
+	if !strings.Contains(err.Error(), "egress_enforcement=") || !strings.Contains(err.Error(), "removed historical") {
+		t.Fatalf("CheckV1ContractFreezeHistory() error = %v, want historical-removal diagnostic", err)
+	}
+}
+
+func TestV1ContractHistoryRejectsSynchronizedScenarioManifestTSVRewrite(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	publicContent, err := os.ReadFile(filepath.Join(root, "policy", "public-contract.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezeContent, err := os.ReadFile(defaultV1ContractFreezePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldColumns := `"id", "test_file", "requires_credentials"`
+	newColumns := `"test_file", "id", "requires_credentials"`
+	mutatedPublic := strings.Replace(string(publicContent), oldColumns, newColumns, 1)
+	mutatedFreeze := strings.Replace(string(freezeContent), oldColumns, newColumns, 1)
+	if mutatedPublic == string(publicContent) || mutatedFreeze == string(freezeContent) {
+		t.Fatal("synchronized scenario-manifest TSV mutation did not apply")
+	}
+	dir := t.TempDir()
+	publicPath := filepath.Join(dir, "public-contract.toml")
+	freezePath := filepath.Join(dir, "v1-contract-freeze.toml")
+	if err := os.WriteFile(publicPath, []byte(mutatedPublic), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(freezePath, []byte(mutatedFreeze), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkV1ContractFreeze(
+		publicPath,
+		filepath.Join(root, "policy", "operator-contract.toml"),
+		freezePath,
+	); err != nil {
+		t.Fatalf("current-state parity should accept the synchronized fixture, got %v", err)
+	}
+	err = CheckV1ContractFreezeHistory(defaultV1ContractFreezePath(root), freezePath)
+	if err == nil {
+		t.Fatal("history check unexpectedly accepted synchronized scenario-manifest TSV rewrite")
+	}
+	if !strings.Contains(err.Error(), "rewrote historical v1 scenario-manifest TSV columns") {
+		t.Fatalf("CheckV1ContractFreezeHistory() error = %v, want historical schema-rewrite diagnostic", err)
+	}
+}
+
+func TestV1ContractHistoryRejectsSynchronizedCanonicalRewrite(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	operatorContent, err := os.ReadFile(filepath.Join(root, "policy", "operator-contract.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezeContent, err := os.ReadFile(defaultV1ContractFreezePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutatedOperator := strings.Replace(string(operatorContent), `canonical = "--dry-run"`, `canonical = "--preview-launch"`, 1)
+	mutatedFreeze := strings.Replace(string(freezeContent), `launch_dry_run = "--dry-run"`, `launch_dry_run = "--preview-launch"`, 1)
+	if mutatedOperator == string(operatorContent) || mutatedFreeze == string(freezeContent) {
+		t.Fatal("synchronized operator-contract mutation did not apply")
+	}
+	dir := t.TempDir()
+	operatorPath := filepath.Join(dir, "operator-contract.toml")
+	freezePath := filepath.Join(dir, "v1-contract-freeze.toml")
+	if err := os.WriteFile(operatorPath, []byte(mutatedOperator), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(freezePath, []byte(mutatedFreeze), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := checkV1ContractFreeze(
+		filepath.Join(root, "policy", "public-contract.toml"),
+		operatorPath,
+		freezePath,
+	); err != nil {
+		t.Fatalf("current-state parity should accept the synchronized fixture, got %v", err)
+	}
+	err = CheckV1ContractFreezeHistory(defaultV1ContractFreezePath(root), freezePath)
+	if err == nil {
+		t.Fatal("history check unexpectedly accepted synchronized rewrite of historical v1 syntax")
+	}
+	if !strings.Contains(err.Error(), "launch_dry_run") || !strings.Contains(err.Error(), "rewrote historical") {
+		t.Fatalf("CheckV1ContractFreezeHistory() error = %v, want historical-rewrite diagnostic", err)
+	}
+}
+
+func TestV1ContractGitHistoryIncludesRemovedMergeParent(t *testing.T) {
+	root := publicContractRepoRoot(t)
+	original, err := os.ReadFile(defaultV1ContractFreezePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainVersion := strings.Replace(
+		string(original),
+		`"head_digest="]`,
+		`"head_digest=", "history_merge_prefix="]`,
+		1,
+	)
+	staleVersion := strings.Replace(
+		string(original),
+		`"head_digest="]`,
+		`"head_digest=", "stale_branch_prefix="]`,
+		1,
+	)
+	if mainVersion == string(original) || staleVersion == string(original) {
+		t.Fatal("merge-topology fixture mutation did not apply")
+	}
+
+	repo := t.TempDir()
+	runGitFixture(t, repo, "init", "-q")
+	runGitFixture(t, repo, "config", "user.name", "Workcell Test")
+	runGitFixture(t, repo, "config", "user.email", "workcell-test@example.invalid")
+	runGitFixture(t, repo, "config", "commit.gpgsign", "false")
+	freezePath := filepath.Join(repo, "policy", "v1-contract-freeze.toml")
+	if err := os.MkdirAll(filepath.Dir(freezePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(freezePath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitFixture(t, repo, "add", "policy/v1-contract-freeze.toml")
+	runGitFixture(t, repo, "commit", "-q", "-m", "initial floor")
+	runGitFixture(t, repo, "branch", "stale")
+
+	if err := os.WriteFile(freezePath, []byte(mainVersion), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitFixture(t, repo, "commit", "-qam", "append main commitment")
+
+	runGitFixture(t, repo, "switch", "-q", "stale")
+	if err := os.WriteFile(freezePath, []byte(staleVersion), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitFixture(t, repo, "commit", "-qam", "change stale branch")
+	runGitFixture(t, repo, "switch", "-q", "-")
+	merge := exec.Command("git", "-C", repo, "merge", "--no-ff", "stale", "-m", "merge stale branch")
+	if output, err := merge.CombinedOutput(); err == nil {
+		t.Fatalf("merge fixture unexpectedly avoided a conflict:\n%s", output)
+	}
+	// Resolve to the first parent's version. Default path simplification can
+	// then hide the second parent's stale_branch_prefix commitment; the
+	// production --full-history enumeration must still inspect and reject it.
+	if err := os.WriteFile(freezePath, []byte(mainVersion), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitFixture(t, repo, "add", "policy/v1-contract-freeze.toml")
+	runGitFixture(t, repo, "commit", "-q", "--no-edit")
+	runGitFixture(t, repo, "config", "log.showSignature", "true")
+
+	err = CheckV1ContractFreezeGitHistory(repo, freezePath)
+	if err == nil {
+		t.Fatal("history check unexpectedly accepted a merge that removed a parent commitment")
+	}
+	if !strings.Contains(err.Error(), "stale_branch_prefix=") {
+		t.Fatalf("CheckV1ContractFreezeGitHistory() error = %v, want removed merge-parent commitment", err)
+	}
+}
+
+func TestV1ContractHistoryLogArgsAreCompleteAndSignatureFree(t *testing.T) {
+	got := strings.Join(v1ContractHistoryLogArgs("policy/v1-contract-freeze.toml"), " ")
+	for _, want := range []string{"-c log.showSignature=false", "--full-history", "--format=%H", "-- policy/v1-contract-freeze.toml"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("v1ContractHistoryLogArgs() = %q, want %q", got, want)
+		}
+	}
+}
+
+func runGitFixture(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
 }
 

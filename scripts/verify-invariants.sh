@@ -7636,7 +7636,7 @@ EOF
       exit 1
     fi
     cp "${AUDIT_LOG}" "${AUDIT_SESSION_LOG}"
-    grep -q 'event=launch' "${AUDIT_SESSION_LOG}"
+    grep -Eq 'event=launch .* mode=build agent=codex ' "${AUDIT_SESSION_LOG}"
     grep -q 'record_digest=' "${AUDIT_SESSION_LOG}"
     grep -q 'execution_path=lower-assurance-debug-command' "${AUDIT_SESSION_LOG}"
     grep -q 'provider_native_sandbox_configured=disabled' "${AUDIT_SESSION_LOG}"
