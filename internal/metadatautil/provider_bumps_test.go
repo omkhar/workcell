@@ -1516,6 +1516,78 @@ func TestPlanProviderBumpsDoesNotDowngradeWhenCurrentClaudeVersionIsStillCooling
 	}
 }
 
+func TestSelectClaudeStableUsesLaterRegistryPublicationForCooloff(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.222", map[string]string{
+				"2.1.222": "2026-08-04T20:37:17Z",
+				"2.1.221": "2026-08-03T20:00:00Z",
+			})
+		case "/claude-release/2.1.222/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.222",
+  "buildDate": "2026-08-04T01:46:04Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "222-arm64"},
+    "linux-x64": {"checksum": "222-amd64"}
+  }
+}`))
+		case "/claude-release/2.1.221/manifest.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+  "version": "2.1.221",
+  "buildDate": "2026-08-03T19:00:00Z",
+  "platforms": {
+    "linux-arm64": {"checksum": "221-arm64"},
+    "linux-x64": {"checksum": "221-amd64"}
+  }
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	sources := ProviderBumpSources{
+		ClaudeRegistryURL:    server.URL + "/claude-registry",
+		ClaudeReleaseRootURL: server.URL + "/claude-release",
+	}
+	selection, err := selectClaudeStable(
+		"2.1.221",
+		time.Date(2026, time.August, 4, 11, 48, 0, 0, time.UTC),
+		"",
+		"",
+		sources,
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatalf("selectClaudeStable() during registry cool-off error = %v", err)
+	}
+	if selection.TargetVersion != "2.1.221" || selection.Changed {
+		t.Fatalf("Claude selection during registry cool-off = %#v, want current version", selection)
+	}
+
+	selection, err = selectClaudeStable(
+		"2.1.221",
+		time.Date(2026, time.August, 4, 21, 0, 0, 0, time.UTC),
+		"",
+		"",
+		sources,
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatalf("selectClaudeStable() after registry cool-off error = %v", err)
+	}
+	if selection.TargetVersion != "2.1.222" || !selection.Changed {
+		t.Fatalf("Claude selection after registry cool-off = %#v, want 2.1.222", selection)
+	}
+	if selection.PublishedAt != "2026-08-04T20:37:17Z" {
+		t.Fatalf("Claude PublishedAt = %q, want later registry publication", selection.PublishedAt)
+	}
+}
+
 func TestPlanProviderBumpsRejectsCurrentClaudeVersionAboveMaxVersion(t *testing.T) {
 	root := t.TempDir()
 	dockerfilePath := filepath.Join(root, "Dockerfile")

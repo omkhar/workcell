@@ -687,9 +687,10 @@ func selectGeminiStable(currentVersion string, cutoff time.Time, sources Provide
 }
 
 // claudeSelectionForCandidate fetches and validates the Claude release manifest
-// for a candidate version and assembles its ProviderBumpSelection, returning the
-// parsed build time so callers can apply the cool-off cutoff. Shared by the
-// approved-version and newest-stable resolution paths in selectClaudeStable.
+// for a candidate version and assembles its ProviderBumpSelection. It returns
+// the later of the registry publication and native build times so a delayed
+// stable-channel publication cannot shorten the configured cool-off. Shared by
+// the approved-version and newest-stable resolution paths in selectClaudeStable.
 func claudeSelectionForCandidate(candidate stableVersion, currentVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, time.Time, error) {
 	manifestURL := fmt.Sprintf("%s/%s/manifest.json", sources.ClaudeReleaseRootURL, candidate.Raw)
 	var manifest claudeManifest
@@ -703,6 +704,10 @@ func claudeSelectionForCandidate(candidate stableVersion, currentVersion string,
 	if err != nil {
 		return ProviderBumpSelection{}, time.Time{}, fmt.Errorf("parse Claude manifest buildDate for %s: %w", candidate.Raw, err)
 	}
+	availableAt := buildTime.UTC()
+	if candidate.Source.After(availableAt) {
+		availableAt = candidate.Source.UTC()
+	}
 	armChecksum := manifest.Platforms["linux-arm64"].Checksum
 	amdChecksum := manifest.Platforms["linux-x64"].Checksum
 	if armChecksum == "" || amdChecksum == "" {
@@ -712,13 +717,13 @@ func claudeSelectionForCandidate(candidate stableVersion, currentVersion string,
 		Channel:        "stable",
 		CurrentVersion: currentVersion,
 		TargetVersion:  candidate.Raw,
-		PublishedAt:    buildTime.UTC().Format(time.RFC3339),
+		PublishedAt:    availableAt.Format(time.RFC3339),
 		Changed:        candidate.Raw != currentVersion,
 		Checksums: map[string]string{
 			"arm64": armChecksum,
 			"amd64": amdChecksum,
 		},
-	}, buildTime, nil
+	}, availableAt, nil
 }
 
 func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion string, approvedVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
