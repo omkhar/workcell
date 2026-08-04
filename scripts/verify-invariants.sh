@@ -7271,6 +7271,11 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
 set -euo pipefail
 WORKER_SENTINEL_REL="${1:?missing detached-session sentinel path}"
 : >"/workspace/${WORKER_SENTINEL_REL}"
+test -t 0
+test -t 1
+test -t 2
+printf 'SESSION_TTY_OK\n'
+printf 'SESSION_TTY_OK\n' >>"/workspace/${WORKER_SENTINEL_REL}"
 printf 'SESSION_READY\n'
 printf 'SESSION_READY\n' >>"/workspace/${WORKER_SENTINEL_REL}"
 test -r /workspace/AGENTS.md
@@ -7281,7 +7286,7 @@ test -d /opt/workcell/host-inputs
 [[ -z "$(find /opt/workcell/host-inputs -mindepth 1 -print -quit)" ]]
 printf 'SESSION_MASKS_OK\n'
 printf 'SESSION_MASKS_OK\n' >>"/workspace/${WORKER_SENTINEL_REL}"
-trap 'printf "SESSION_STOPPING\n"; exit 0' TERM INT
+trap 'printf "SESSION_STOPPING\n"; printf "SESSION_STOPPING\n" >>"/workspace/${WORKER_SENTINEL_REL}"; exit 0' TERM INT
 while IFS= read -r line; do
   printf 'SESSION_RECV:%s\n' "${line}"
   printf 'SESSION_RECV:%s\n' "${line}" >>"/workspace/${WORKER_SENTINEL_REL}"
@@ -7386,6 +7391,7 @@ EOF
     fi
     grep -q '^SESSION_READY$' "${DETACHED_SESSION_SENTINEL_PATH}"
     grep -q '^SESSION_MASKS_OK$' "${DETACHED_SESSION_SENTINEL_PATH}"
+    grep -q '^SESSION_TTY_OK$' "${DETACHED_SESSION_SENTINEL_PATH}"
     DETACHED_ATTACH_STATUS=0
     DETACHED_ATTACH_READY=0
     DETACHED_ATTACH_READY_MESSAGE="attach-ready"
@@ -7542,6 +7548,8 @@ EOF
     grep -q "\"session_id\": \"${DETACHED_SESSION_ID}\"" "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"status": "exited"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"live_status": "stopped"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '"exit_status": "0"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
+    grep -q '^SESSION_STOPPING$' "${DETACHED_SESSION_SENTINEL_PATH}"
     grep -q '"current_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"final_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     DETACHED_SESSION_MONITOR_COMMAND="$(ps -o command= -p "${DETACHED_SESSION_MONITOR_PID}" 2>/dev/null | head -n1 || true)"

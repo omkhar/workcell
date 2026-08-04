@@ -493,7 +493,11 @@ if [[ "${detached_launch_blocked}" -eq 1 ]]; then
   grep -q 'Supported launch hosts today remain Apple Silicon macOS' <<<"${detached_start_blocked_output}"
 else
   detached_start_default_output="$(run_detached_start_dry_run direct "${DETACHED_START_WORKSPACE}")"
-  grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"
+  grep -Fq -- "docker run -d -i -t" <<<"${detached_start_default_output}"
+  if grep -Fq -- "docker run --init -d -i -t" <<<"${detached_start_default_output}"; then
+    echo "Detached session start kept Docker's init ahead of the managed session supervisor" >&2
+    exit 1
+  fi
   grep -Eq -- "-v ${DETACHED_START_WORKSPACE}/\\.git/workcell-sessions/.+/repo:/workspace($| )" <<<"${detached_start_default_output}"
   grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" <<<"${detached_start_default_output}"
   if grep -Fq -- "-v ${DETACHED_START_WORKSPACE}:/workspace" <<<"${detached_start_default_output}"; then
@@ -3109,7 +3113,7 @@ EOF_JSON
       esac
     }
 
-    attach_output="$(session_attach_main --id "${SESSION_ID}" --no-stdin)"
+    attach_output="$(session_attach_main --id "${SESSION_ID}")"
     send_output="$(session_send_main --id "${SESSION_ID}" --message resume)"
     stop_output="$(session_stop_main --id "${SESSION_ID}")"
     delete_output="$(session_delete_main --id "${SESSION_ID}")"
@@ -3131,7 +3135,7 @@ grep -q '^send_output=session_id=detached-lifecycle|sent_bytes=7|status=running|
 grep -q '^stop_output=session_id=detached-lifecycle|stop_requested=1|status=exited|live_status=stopped|control_mode=detached|target_kind=local_vm|target_provider=colima|target_id=wcl-detached-lifecycle|target_summary=local_vm/colima/wcl-detached-lifecycle|target_assurance_class=strict|runtime_api=docker|workspace_transport=workspace-mount|workspace='"${WORKSPACE_A}"'|display_workspace='"${WORKSPACE_A}"'|workspace_origin='"${WORKSPACE_A}"'|display_worktree='"${WORKSPACE_A}"'|worktree_path='"${WORKSPACE_A}"'|display_git_branch=none|git_branch=|assurance=managed-mutable|$' <<<"${session_lifecycle_output}"
 grep -q '^delete_output=session_id=detached-lifecycle|deleted=1|record_only=0|dry_run=0|removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal|kept=none|missing=none|unavailable=none|$' <<<"${session_lifecycle_output}"
 test -f "${SESSION_LIFECYCLE_AUDIT_LOG}"
-grep -q '^transport|wcl-detached-lifecycle|attach --no-stdin workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
+grep -q '^transport|wcl-detached-lifecycle|attach workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"
 grep -q '^transport|wcl-detached-lifecycle|exec --user ' "${SESSION_LIFECYCLE_RECORD}"
 grep -q '/state/tmp/workcell/session-stdin' "${SESSION_LIFECYCLE_RECORD}"
 grep -q '^transport|wcl-detached-lifecycle|stop workcell-session-fixture$' "${SESSION_LIFECYCLE_RECORD}"

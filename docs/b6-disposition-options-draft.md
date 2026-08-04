@@ -194,4 +194,4 @@ local-operator cert) to meet buyer expectations, and funding/ops for a
 lower-trust Apple Silicon runner is available before the freeze.
 
 Either way, the decision and its evidence basis must be recorded in the G4
-readiness review (see `docs/1.0-readiness-review-draft.md` §6).
+readiness review (see `docs/1.0-readiness-review.md` §6).

@@ -47,7 +47,11 @@ grep -q '^profile=.* mode=strict agent=copilot ' "${TMP_DIR}/session.stderr"
 grep -q '^target_kind=local_vm target_provider=colima ' "${TMP_DIR}/session.stderr"
 grep -q '^execution_path=managed-tier1 audit_log=' "${TMP_DIR}/session.stderr"
 grep -q '^session_assurance_initial=managed-mutable$' "${TMP_DIR}/session.stderr"
-grep -Fq -- "docker run --init -d -i -t" "${TMP_DIR}/session.stdout"
+grep -Fq -- "docker run -d -i -t" "${TMP_DIR}/session.stdout"
+if grep -Fq -- "docker run --init -d -i -t" "${TMP_DIR}/session.stdout"; then
+  echo "Copilot detached session kept Docker's init ahead of the managed session supervisor" >&2
+  exit 1
+fi
 grep -Fq -- "-e WORKCELL_DETACHED_STDIN_PATH=/state/tmp/workcell/session-stdin" "${TMP_DIR}/session.stdout"
 grep -Fq -- "workcell:local" "${TMP_DIR}/session.stdout"
 
