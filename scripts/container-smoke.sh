@@ -3240,6 +3240,8 @@ grep -q "Workcell blocked unsafe Codex override" /tmp/workcell-entrypoint-direct
 
 DETACHED_TTY_SMOKE_CONTAINER="workcell-detached-tty-smoke-$$"
 docker_cmd rm -f "${DETACHED_TTY_SMOKE_CONTAINER}" >/dev/null 2>&1 || true
+# The nested shell expressions stay literal to verify exact argv transport.
+# shellcheck disable=SC2016
 if ! docker_cmd create \
   --name "${DETACHED_TTY_SMOKE_CONTAINER}" \
   -i -t \
