@@ -812,6 +812,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
 		return err
 	}
+	if err := ValidateReleaseWorkflowPublicationGate(releaseWorkflow); err != nil {
+		return err
+	}
 	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
 		return errors.New(".github/workflows/release.yml must not keep referencing the old single-step multi-platform digest output")
 	}
@@ -828,6 +831,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
 		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
+		`--immutable-releases-preverified-by-hosted-controls`,
 	} {
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)

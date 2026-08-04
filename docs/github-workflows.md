@@ -81,8 +81,10 @@ adds the matching `approved-large-certified-adapter` PR label.
   visibility and plan support them
 - it uses pinned GitHub Actions and pinned Buildx, QEMU, Cosign, and Syft
   versions
-- it runs with minimal workflow-level permissions and only elevates the publish
-  job for package publication, OIDC, attestations, and release asset upload
+- it runs with minimal workflow-level permissions, keeps package publication,
+  OIDC, and attestations in the release-approved artifact job, and grants the
+  separate final publication job only artifact read and repository-content
+  write permissions
 
 That is also the current tested host-support limit for CI and tagged releases.
 Other macOS versions are not install-gated today.
@@ -191,6 +193,11 @@ reviewed inputs:
 - `hosted-controls-audit` permits the `main` branch and protected `v*` release
   tags so scheduled/main audits and tag-triggered release preflight both use a
   dedicated environment gate for `WORKCELL_HOSTED_CONTROLS_TOKEN`
+- after the release-approved job seals and uploads its workflow artifact, a
+  minimal final job in `hosted-controls-audit` refreshes the immutable-release
+  check immediately before publication; it removes the admin-metadata
+  credential before the publisher uses its default token and accepts only
+  GitHub's exact integration-permission denial with that fresh check
 - GitHub Actions SHA pinning
 - canonical repository variables such as
   `WORKCELL_RELEASE_NO_ATTEST=false` and

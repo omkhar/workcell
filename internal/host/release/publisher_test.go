@@ -34,6 +34,7 @@ type publisherClient struct {
 	latestBody                       any
 	beforePublish                    func()
 	disableImmutableReleases         bool
+	immutableReleasesForbidden       string
 	failTagRebindAfter, bindingReads int
 	requests                         []string
 }
@@ -115,6 +116,9 @@ func (client *publisherClient) Do(request *http.Request) (*http.Response, error)
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == releasePath:
 		return jsonResponse(http.StatusOK, client.record()), nil
 	case request.Method == http.MethodGet && request.URL.Host == "api.github.com" && request.URL.Path == immutableReleasesPath:
+		if client.immutableReleasesForbidden != "" {
+			return jsonResponse(http.StatusForbidden, map[string]string{"message": client.immutableReleasesForbidden}), nil
+		}
 		if client.disableImmutableReleases {
 			return jsonResponse(http.StatusOK, map[string]bool{"enabled": false}), nil
 		}
@@ -272,8 +276,50 @@ func TestPublisherRejectsDisabledImmutableReleasesBeforePublication(t *testing.T
 	paths, _ := writeAssets(t, "v1.0.0")
 	client := &publisherClient{t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
 		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte), disableImmutableReleases: true}
-	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
+	publisher := githubReleasePublisher{client: client, immutableReleasesPreverifiedByControl: true}
+	_, err := publisher.publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
 	if err == nil || !strings.Contains(err.Error(), "enabled = true") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
+		t.Fatalf("publish() error=%v requests=%q", err, client.requests)
+	}
+}
+
+func TestPublisherAcceptsActionsTokenImmutablePermissionDenialAfterHostedControlsPreverification(t *testing.T) {
+	paths, _ := writeAssets(t, "v1.0.0")
+	client := &publisherClient{
+		t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
+		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte),
+		immutableReleasesForbidden: "Resource not accessible by integration",
+	}
+	publisher := githubReleasePublisher{client: client, immutableReleasesPreverifiedByControl: true}
+	id, err := publisher.publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
+	if err != nil || id != client.releaseID || !slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
+		t.Fatalf("publish() = id %d error %v requests=%q", id, err, client.requests)
+	}
+}
+
+func TestPublisherRejectsActionsTokenImmutablePermissionDenialWithoutHostedControlsPreverification(t *testing.T) {
+	paths, _ := writeAssets(t, "v1.0.0")
+	client := &publisherClient{
+		t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
+		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte),
+		immutableReleasesForbidden: "Resource not accessible by integration",
+	}
+	_, err := (githubReleasePublisher{client: client}).publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
+	if err == nil || !strings.Contains(err.Error(), "Resource not accessible by integration") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
+		t.Fatalf("publish() error=%v requests=%q", err, client.requests)
+	}
+}
+
+func TestPublisherDoesNotMaskOtherImmutablePermissionDenialsAfterHostedControlsPreverification(t *testing.T) {
+	paths, _ := writeAssets(t, "v1.0.0")
+	client := &publisherClient{
+		t: t, tag: "v1.0.0", repository: "example/workcell", token: "token", releaseID: 42,
+		assets: []githubReleaseAsset{}, uploaded: make(map[string][]byte),
+		immutableReleasesForbidden: "API rate limit exceeded",
+	}
+	publisher := githubReleasePublisher{client: client, immutableReleasesPreverifiedByControl: true}
+	_, err := publisher.publish(context.Background(), client.repository, client.token, client.tag, TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}, paths)
+	if err == nil || !strings.Contains(err.Error(), "API rate limit exceeded") || slices.Contains(client.requests, "PATCH api.github.com/repos/example/workcell/releases/42") {
 		t.Fatalf("publish() error=%v requests=%q", err, client.requests)
 	}
 }

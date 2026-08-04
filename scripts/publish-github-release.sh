@@ -24,7 +24,7 @@ fi
 
 usage() {
   cat <<'EOF' >&2
-Usage: publish-github-release.sh TAG FILE...
+Usage: publish-github-release.sh TAG [--immutable-releases-preverified-by-hosted-controls] FILE...
 EOF
   exit 2
 }
@@ -33,6 +33,13 @@ EOF
 
 TAG_NAME="$1"
 shift
+
+IMMUTABLE_RELEASES_PREVERIFIED="false"
+if [[ "${1:-}" == "--immutable-releases-preverified-by-hosted-controls" ]]; then
+  IMMUTABLE_RELEASES_PREVERIFIED="true"
+  shift
+fi
+[[ $# -ge 1 ]] || usage
 
 HOSTUTIL_BIN="$(mktemp "${TMPDIR:-/tmp}/workcell-hostutil.XXXXXX")"
 
@@ -53,4 +60,4 @@ PEELED_COMMIT_SHA="$(git -C "${ROOT_DIR}" --no-replace-objects rev-parse --verif
   exit 2
 }
 
-"${HOSTUTIL_BIN}" release publish "${TAG_NAME}" "${TAG_OBJECT_SHA}" "${PEELED_COMMIT_SHA}" "$@"
+"${HOSTUTIL_BIN}" release publish "${TAG_NAME}" "${TAG_OBJECT_SHA}" "${PEELED_COMMIT_SHA}" "--immutable-releases-preverified-by-hosted-controls=${IMMUTABLE_RELEASES_PREVERIFIED}" "$@"

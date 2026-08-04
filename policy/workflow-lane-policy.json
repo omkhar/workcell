@@ -199,7 +199,13 @@
       "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "release publication remains GitHub-only"
+      "github_only_reason": "release artifact signing, attestation, and registry publication remain GitHub-only"
+    },
+    "release.yml/publish-github-release": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "final hosted-controls refresh and immutable GitHub release publication require environment-scoped GitHub credentials and hosted release state"
     },
     "release.yml/tag-policy": {
       "profiles": ["release-preflight"],

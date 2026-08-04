@@ -209,7 +209,11 @@ func runRelease(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(policy)
 	case "publish":
-		if len(args) < 5 {
+		if len(args) < 6 {
+			return releaseUsage()
+		}
+		const preverifiedOption = "--immutable-releases-preverified-by-hosted-controls="
+		if args[4] != preverifiedOption+"true" && args[4] != preverifiedOption+"false" {
 			return releaseUsage()
 		}
 		releaseID, err := release.PublishGitHubRelease(
@@ -218,7 +222,8 @@ func runRelease(args []string) error {
 			os.Getenv("GITHUB_TOKEN"),
 			args[1],
 			release.TagExpectation{ObjectSHA: args[2], PeeledCommitSHA: args[3]},
-			args[4:],
+			release.PublishOptions{ImmutableReleasesPreverifiedByHostedControls: args[4] == preverifiedOption+"true"},
+			args[5:],
 		)
 		if err != nil {
 			return err
@@ -1064,7 +1069,7 @@ func releaseUsage() error {
 	return &cliexit.ExitCodeError{Code: 2, Message: `usage: workcell-hostutil release COMMAND [args...]
 commands:
   classify-tag TAG
-  publish TAG TAG_OBJECT_SHA PEELED_COMMIT_SHA ASSET...
+  publish TAG TAG_OBJECT_SHA PEELED_COMMIT_SHA --immutable-releases-preverified-by-hosted-controls=true|false ASSET...
   bundle-manifest OUTPUT ARCHIVE_REF BUNDLE_NAME BUNDLE_PREFIX SOURCE_DATE_EPOCH BUNDLE_SHA256 CHECKSUMS_SHA256`}
 }
 
