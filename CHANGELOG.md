@@ -22,6 +22,8 @@ operator hosts.
 - refresh the release provider pins to Claude Code `2.1.221` and Copilot CLI
   `1.0.78` after the reviewed cool-off, including Claude's upstream
   permission-check bypass fix.
+- defer Docker Buildx pin refreshes until the candidate appears in the install
+  catalog used by `setup-buildx-action`, preventing premature CI updates.
 
 ### Fixed
 

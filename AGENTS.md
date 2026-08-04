@@ -63,6 +63,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 
 - Sign every commit. Do not create or rewrite commits in this repository
   without a verified signature from the maintainer identity.
+- When reviewing PR commit signatures, verify the published commits in the
+  base-to-head range. Do not require signatures on GitHub-generated merge
+  commits or reviewer-created test merges because those transient objects are
+  not publication commits.
 - Before signing a commit that introduces or materially changes a supported
   end-to-end workflow, backend, support-tier claim, or certification-only
   validation path, run the relevant live end-to-end certification
