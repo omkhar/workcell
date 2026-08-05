@@ -1,8 +1,7 @@
 # Governance
 
-Workcell is a maintainer-led open source project with an explicit bias toward
-auditable security boundaries, small reviewable changes, and clear operator
-contracts.
+The Workcell project has one maintainer. The project uses clear security
+boundaries, small changes, and clear operator contracts.
 
 ## Goals
 
@@ -70,9 +69,10 @@ problem, alternatives, and invariants that must remain intact.
 
 ## Stability and releases
 
-Workcell is currently pre-1.0. Breaking changes may happen, but they should be
-called out in [CHANGELOG.md](CHANGELOG.md), reflected in the docs, and kept
-deliberate rather than incidental.
+Workcell has a stable v1 public contract. Follow the
+[published deprecation policy](docs/stability-contract.md) for a breaking
+change. Record the change in
+[CHANGELOG.md](CHANGELOG.md), and update the applicable documents.
 
 Releases normally land through a short-lived release PR, followed by green
 post-merge `main` CI, a signed tag, the tagged `Release` workflow, and final

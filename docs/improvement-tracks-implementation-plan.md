@@ -1,7 +1,7 @@
 # Improvement Tracks Implementation Plan
 
 This document turns the
-[Path To 1.0](../ROADMAP.md#path-to-10) program and its
+[1.0 Program Record](../ROADMAP.md#10-program-record) and its
 [Engineering And Ecosystem Improvement Tracks](../ROADMAP.md#engineering-and-ecosystem-improvement-tracks)
 into a concrete, milestone-based implementation plan. The tracks came from
 the 2026-07 repository review (documentation, Rust/Go/shell source, tests,
@@ -745,8 +745,7 @@ identity and access (Phase 15), signed policy bundles (Phase 16), fleet
 inventory and audit export beyond F1 (Phase 17), the regulated-team proof
 harness and Windows investigation (Phase 18), and the managed-workstation
 preview plus Azure (Phase 19) continue under their existing exit gates.
-Phase 13 may land before 1.0 if its certification evidence arrives, but it
-does not gate 1.0.
+Phase 13 is work after 1.0. It creates no Linux support claim.
 
 ## Dependency Summary
 

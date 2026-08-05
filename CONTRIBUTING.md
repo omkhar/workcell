@@ -11,6 +11,10 @@ ergonomics second.
 - document lower-assurance paths instead of implying parity
 - sign every commit
 - use feature branches and pull requests; do not push directly to `main`
+- use ASD-STE100 Simplified Technical English Issue 9 for public prose
+
+See [docs/documentation-language.md](docs/documentation-language.md) for the
+project language rules.
 
 ## First-time setup
 
@@ -85,17 +89,30 @@ See [GitHub's docs on signing commits][sign-docs] for setup details.
    ./scripts/dev-quick-check.sh
    ```
 
-5. Before opening a PR, run the full local gate:
+5. Create a signed commit. Use Risk-Aware Commit Notation.
+6. Before publication, run the full local gate:
 
    ```bash
-   ./scripts/pre-merge.sh
+   ./scripts/pre-merge.sh --profile pr-parity
    ```
 
-6. Publish against `main` with the repo-local parity wrapper:
+7. Publish a draft PR against `main` with the repository wrapper:
 
    ```bash
-   ./scripts/repo-publish-pr.sh
+   ./scripts/repo-publish-pr.sh \
+     --branch feature-name \
+     --title "PR title" \
+     --body "Explain the change and its evidence." \
+     --commit-message "^D Describe the change (validation passes; user-visible documentation)"
    ```
+
+8. Post the standalone PR comment `@codex review`.
+9. Fix or disposition each finding.
+10. Resolve each review thread.
+11. Repeat the Codex review after each push.
+12. Require a clean Codex marker for the current head.
+13. Mark the PR ready only after all required checks and reviews pass.
+14. Check comments and review threads again immediately before merge.
 
 The pre-commit hook blocks unrelated commits when stable provider pin bumps are
 pending and points you at `./scripts/publish-provider-bump-pr.sh`.
@@ -119,18 +136,25 @@ concrete feature requests.
 
 ## Commit messages
 
-Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+Use Risk-Aware Commit Notation:
 
 ```text
-<type>: <description>
-
-[optional body]
+<risk><intention> <description> (risk reason; case reason)
 ```
 
-Common types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`.
+Risk symbols are `.`, `^`, `!`, and `@`. They mean safe, validated, risky,
+and broken.
 
-Keep the subject line under 72 characters. If the change touches the runtime
-boundary, trust model, or provider adapters, mention it in the body.
+Intention letters are `F`, `B`, `R`, and `D`. They mean feature, bug fix,
+refactor, and documentation. Use an uppercase letter for a user-visible change.
+
+Example:
+
+```text
+^D Update release status (validation passes; user-visible documentation)
+```
+
+See [the commit skill](.agents/skills/commit/SKILL.md) for the complete rules.
 
 ## Validation levels
 

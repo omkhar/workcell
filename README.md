@@ -4,16 +4,16 @@
 [![Docs](https://github.com/omkhar/workcell/actions/workflows/docs.yml/badge.svg)](https://github.com/omkhar/workcell/actions/workflows/docs.yml)
 [![Security](https://github.com/omkhar/workcell/actions/workflows/security.yml/badge.svg)](https://github.com/omkhar/workcell/actions/workflows/security.yml)
 
-Workcell runs coding agents inside a bounded local runtime on Apple Silicon
-macOS: a dedicated Colima VM plus a hardened container inside that VM. It ships
-Tier 1 adapters for Codex, Claude Code, GitHub Copilot CLI, and Gemini that
-seed each provider's native control plane without pretending provider config is
-the security boundary. Google Antigravity CLI remains a queued fail-closed
-follow-on; current releases do not support `--agent antigravity`.
+Workcell runs coding agents in a bounded local runtime on Apple Silicon macOS.
+The strict runtime uses a hardened container in a dedicated Colima VM.
+Workcell supports Tier 1 adapters for Codex, Claude Code, GitHub Copilot CLI,
+and Gemini. Each adapter uses the native provider control plane. Provider
+configuration is not the security boundary. Workcell does not support
+`--agent antigravity`.
 
-This project is for teams that want local agent velocity without turning the
-host home directory, keychain, provider state, or local sockets into the trust
-boundary.
+Use Workcell when a team needs local agents and an explicit runtime boundary.
+The safe path does not pass through the host home, keychain, provider state,
+or local sockets.
 
 ## Why Workcell
 
@@ -41,9 +41,8 @@ boundary.
 
 ## Project status
 
-- in the 1.0 release-candidate phase, with the v1 public contract frozen under
-  the published deprecation policy; exact candidate binding and final 1.0
-  readiness are still evidence-gated
+- `v1.0.2` is the first published 1.0 release.
+- the published deprecation policy governs the frozen v1 public contract
 - Apple Silicon macOS hosts only today; Linux and Windows are not currently
   supported as launch hosts
 - local host-launched runtime first; cloud-facing paths today are the
@@ -77,8 +76,8 @@ boundary.
   analytics plane; team rollout today relies on distributing reviewed
   host-side files
 
-Breaking changes should be called out in [CHANGELOG.md](CHANGELOG.md) and
-tracked in [ROADMAP.md](ROADMAP.md).
+The changelog identifies each breaking change. The roadmap identifies future
+work.
 
 ## Community
 
@@ -294,6 +293,7 @@ options.
 | Security reporting | [SECURITY.md](SECURITY.md) |
 | Stability and exit-code contract | [docs/stability-contract.md](docs/stability-contract.md) |
 | Standards watchlist | [docs/standards-watchlist.md](docs/standards-watchlist.md) |
+| Documentation language | [docs/documentation-language.md](docs/documentation-language.md) |
 
 ## Repository layout
 

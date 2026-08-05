@@ -2,22 +2,21 @@
 
 ## Supported Versions
 
-Workcell operates in single-maintainer release mode. Security fixes are applied
-to `main` (there are no long-lived release branches) and shipped only in the
-**latest released version**; there are no backports to earlier tags. A fix is
-delivered as the next release cut from `main` (patch release, or the next
-release candidate while the line is pre-1.0), so any release older than the
-newest one stops receiving fixes as soon as a newer release exists — including
-earlier release candidates, which are superseded in place.
+Workcell uses a single-maintainer release process. The maintainer applies
+security fixes to `main`. The repository has no long-lived release branches.
+Only the latest release gets security fixes. Workcell does not backport fixes
+to old tags. The maintainer ships a fix in the next release. Install the latest
+verified release to get the fix.
 
 | Version | Security fixes |
 | --- | --- |
 | Latest release | Yes |
-| Any earlier release / superseded pre-release | No — upgrade to the latest |
+| Any earlier release or pre-release | No. Install the latest release. |
 
-Always verify a release before installing it: `scripts/install-release.sh`
-checks the release's cosign signature and digest fail-closed before any bundle
-code runs (see [`docs/install-lifecycle.md`](docs/install-lifecycle.md)).
+Always verify a release before installation. `scripts/install-release.sh`
+verifies the signed checksum file and the asset digest. It fails closed before
+any bundle code starts. See
+[`docs/install-lifecycle.md`](docs/install-lifecycle.md).
 
 ## Signing key
 
