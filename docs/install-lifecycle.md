@@ -28,7 +28,7 @@ Each macOS job checks the bundle installer, the uninstaller, and the Homebrew fo
 | Verify a release asset | [`release_verify_test.go`](../internal/testkit/release_verify_test.go) checks missing tools, missing files, invalid signatures, and digest mismatches. | A live release check still needs published Sigstore data. |
 | Update an install | [`test-install-lifecycle.sh`](../tests/scenarios/shared/test-install-lifecycle.sh) checks that a new install replaces the launcher link. | The test uses local source trees. |
 | Roll back an install | The same scenario installs the earlier tree again and checks the launcher link. | The test uses local source trees. |
-| Uninstall | The macOS install jobs check the complete uninstall command. | The command removes managed state, profiles, caches, token handoff, and temporary files. |
+| Uninstall | The CI and release macOS matrices run the uninstaller without options. They confirm removal of the launcher and man-page links. | The jobs do not seed other Workcell cleanup targets or confirm their removal. These targets include state, profiles, caches, token handoff files, and cleanup scratch. |
 | Check cleanup rules | The install scenario checks `cleanup_workcell_temp_root` with an isolated root. | This check does not run host-wide cleanup. |
 | Run host-wide cleanup | A live `workcell --gc` run checks real Workcell state roots. | First, preserve all Workcell state and evidence that must remain. |
 | Read stored data | Session tests read version 1 records and reject an unknown version. | Workcell has not shipped a data migration. |
