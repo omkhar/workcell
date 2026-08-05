@@ -1,36 +1,44 @@
 # Mode Map
 
-Workcell uses two terms throughout the docs:
+Workcell uses these terms:
 
-- `Tier 1`: a provider CLI running fully inside the bounded Workcell runtime
-- `strict`: the default managed Tier 1 runtime mode
+- `Tier 1`: A provider CLI runs fully inside the bounded Workcell runtime.
+- `strict`: This term identifies the default managed Tier 1 mode.
 
-`--mode` selects one of four lanes:
+The `--mode` option selects one of four modes.
 
-| `--mode` | Intended use | Key properties |
+| Mode | Use | Main properties |
 |---|---|---|
-| `strict` | default provider lane | bounded VM plus container, reviewed network posture, repo control-plane masking, provider-focused entrypoint, `--agent-autonomy yolo` by default |
-| `development` | managed interactive development lane | same boundary and masking as `strict`, managed non-provider command execution, broader dependency egress, visibly lower assurance than `strict` |
-| `build` | image preparation and dependency refresh | broader egress for rebuild and preparation work |
-| `breakglass` | explicit higher-trust debugging path | requires `--ack-breakglass=YYYY-MM-DD` using today's UTC date; visibly lower assurance |
+| `strict` | Default provider work | Workcell uses the VM and container boundary, reviewed network controls, repository control-plane masks, the provider entrypoint, and default `--agent-autonomy yolo`. |
+| `development` | Managed interactive development | Workcell uses the same boundary and masks as `strict`. This mode permits managed non-provider commands and more dependency endpoints. It has lower assurance than `strict`. |
+| `build` | Image preparation and dependency updates | This mode permits the broader network access that the build path needs. |
+| `breakglass` | Higher-trust debugging | This mode requires `--ack-breakglass=YYYY-MM-DD` with the current UTC date. It has lower assurance than the managed modes. |
 
-`--container-mutability` is orthogonal to `--mode`: `ephemeral` (the
-default) allows package-manager mutations and labels the session
-`managed-mutable`, while `readonly` blocks package-manager writes and
-gives the strongest managed posture available — `--mode strict
---container-mutability readonly` is the lane to pick when no
-lower-assurance downgrade is acceptable.
+## Container mutability
 
-Other defaults that matter:
+The `--container-mutability` option is independent of `--mode`.
 
-- `--agent` is always required; there is no default provider
-- `--agent-autonomy yolo` is the default; `--agent-autonomy prompt` is the
-  explicit lower-assurance opt-out
-- `--cache-profile off` is the default
-- `--cache-profile standard` keeps a workspace-scoped persistent non-secret
-  cache plane for package and compiler caches, but it is an explicit
-  lower-assurance path
-- strict launches prepare the reviewed runtime image automatically when needed
-- interactive launches show a spinner with elapsed time by default; use
-  `--no-spinner` to force plain heartbeat updates instead
-- `--prepare` and `--prepare-only` remain useful when you want to make that step explicit
+- `ephemeral` is the default. It permits package-manager changes in the
+  disposable container and labels the session `managed-mutable`.
+- `readonly` blocks package-manager writes. Use `--mode strict
+  --container-mutability readonly` for the strongest managed posture.
+
+## Other defaults
+
+- You must select an agent with `--agent`.
+- `--agent-autonomy yolo` is the default. `--agent-autonomy prompt` is an
+  explicit lower-assurance choice.
+- `--cache-profile off` is the default.
+- `--cache-profile standard` keeps workspace-scoped package and compiler
+  caches. It does not keep secret provider state. It is an explicit
+  lower-assurance choice.
+- A strict launch prepares the reviewed runtime image when the image is missing
+  or stale.
+- An interactive launch shows a spinner and elapsed time. Use `--no-spinner`
+  for plain status updates.
+- Use `--prepare` or `--prepare-only` when you must prepare the image as a
+  separate step.
+
+See [invariants.md](invariants.md) for the controls that apply to each mode.
+See [safe-path-expectations.md](safe-path-expectations.md) for operator
+examples.

@@ -1,151 +1,162 @@
 # Security Invariants
 
-These invariants define the safe path. The priority order in the repository
-only applies after these constraints are satisfied.
+These invariants define the safe path. Repository priorities apply only after
+Workcell satisfies these constraints.
 
 ## 1. Host secrets stay outside the default trust boundary
 
-On the managed path, Workcell does not pass through:
+The managed path does not pass these host resources to the runtime:
 
-- host home directories
-- keychains or browser profiles
-- git credential helpers
+- home directories
+- keychains and browser profiles
+- Git credential helpers
 - `docker.sock`
-- SSH, GPG, or provider agent sockets
-- host provider-home state such as `~/.codex`, `~/.claude`, `~/.copilot`,
-  `~/.config/github-copilot`, `~/.cache/github-copilot`, or `~/.gemini`
+- SSH, GPG, and provider agent sockets
+- provider state such as `~/.codex`, `~/.claude`, `~/.copilot`,
+  `~/.config/github-copilot`, `~/.cache/github-copilot`, and `~/.gemini`
 
-Reusable auth enters the session only through explicit injection-policy inputs.
-The GitHub Copilot CLI adapter preserves the same invariant for host Copilot
-provider state (`~/.copilot`, `~/.config/github-copilot`,
-`~/.cache/github-copilot`), host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and
-ambient `gh auth token` fallback by accepting only `copilot_github_token`
-through the reviewed host-side staging path, removing the original token file
-from direct runtime mounts, moving it through a temporary handoff mount outside
-provider state and a transient runtime handoff file, re-execing the entrypoint
-without the token in its environment, and exporting it as
-`COPILOT_GITHUB_TOKEN` only for the managed child after the wrapper unlinks the
-handoff file. The
-planned Google Antigravity CLI adapter must preserve it for host Google account
-caches, browser profiles, keychains, host homes, and provider caches. Current
-releases do not support `--agent antigravity`.
+Reusable authentication enters a session only through reviewed injection-policy
+inputs.
+
+The Copilot adapter accepts only `copilot_github_token`. It does not use host
+Copilot state, `GH_TOKEN`, `GITHUB_TOKEN`, a host keychain, or `gh auth token`.
+Workcell gives the token only to the managed Copilot child through the reviewed
+temporary handoff. It does not retain the token in mounted provider state or in
+the entrypoint environment. See
+[Onboarding and Authentication](onboarding-and-auth.md#copilot-token-handoff).
+
+Workcell does not support Antigravity. A future adapter must not use host Google
+account state, browser profiles, keychains, home directories, or provider
+caches.
 
 ## 2. Writes stay inside the intended workspace
 
 The selected workspace is the durable writable mount. Provider homes are
-session-local state inside the runtime. Workcell's host-side staging roots under
-`~/Library/Caches/colima/workcell-host-inputs` and
-`~/Library/Caches/colima/workcell-shadow` are mounted into the managed Colima VM
-read-only so the runtime can consume reviewed injection bundles and masked
-workspace control-plane snapshots without widening durable write access.
-Host-side publication remains a separate action.
+session-local runtime state.
+
+Workcell uses these host staging roots:
+
+- `~/Library/Caches/colima/workcell-host-inputs`
+- `~/Library/Caches/colima/workcell-shadow`
+
+The managed Colima VM mounts these roots as read-only. These mounts do not give
+the runtime durable write access outside the selected workspace. GitHub
+publication remains a separate host action.
 
 ## 3. Repo policy must not silently widen trust
 
-Repo-local control-plane files are masked on the safe path and imported into
-provider homes as reviewed inputs. The masked set is the provider files
-`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.mcp.json`,
-`.github/mcp.json`, and `.github/copilot-instructions.md`; the provider,
-Copilot, and IDE directories `.codex/`, `.claude/`, `.copilot/`,
-`.gemini/`, `.github/instructions/`, `.github/copilot/`,
-`.github/hooks/`, `.github/agents/`, `.github/skills/`, `.agents/skills/`,
-`.vscode/`, `.idea/`, `.cursor/`, and `.zed/`; and git execution-control paths (`hooks`, `config`,
-`config.worktree`, and `worktrees` for the workspace repo and its
-submodules). The workspace should not be able to quietly take over the
-runtime control plane.
+Workcell masks repository control-plane files on the safe path. It imports only
+reviewed inputs into provider homes.
 
-The Copilot adapter explicitly accounts for Copilot-specific repo control-plane
-files such as `.github/copilot-instructions.md`, `.github/instructions/**`,
-`.github/mcp.json`, `.github/copilot/settings*.json`, and repo-local skill
-and hook directories by masking them on the safe path and launching Copilot with custom
-instructions disabled while blocking skill/dynamic-retrieval overrides. The
-planned Antigravity adapter must do the same for Antigravity-specific settings,
-plugin, MCP, hook, and instruction files before it can claim support.
+The mask includes these files:
+
+- `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, and `.mcp.json`
+- `.github/mcp.json` and `.github/copilot-instructions.md`
+
+The mask includes these directories:
+
+- `.codex/`, `.claude/`, `.copilot/`, and `.gemini/`
+- `.github/instructions/`, `.github/copilot/`, `.github/hooks/`,
+  `.github/agents/`, and `.github/skills/`
+- `.agents/skills/`
+- `.vscode/`, `.idea/`, `.cursor/`, and `.zed/`
+
+Workcell also masks Git execution-control paths for the workspace repository and
+its submodules. These paths are `hooks`, `config`, `config.worktree`, and
+`worktrees`.
+
+The Copilot adapter also masks Copilot settings, instructions, MCP files,
+skills, and hooks. It disables custom instructions and blocks skill and dynamic
+retrieval overrides.
+
+A future Antigravity adapter must mask its settings, plugins, MCP files, hooks,
+and instructions before it can claim support.
 
 ## 4. Network posture is explicit
 
-`strict`, `development`, `build`, and `breakglass` are distinct runtime
-profiles. Workcell
-does not rely on provider prompts to describe network posture after the fact.
+`strict`, `development`, `build`, and `breakglass` are separate modes. Workcell
+does not use a provider prompt as a network control.
 
-`strict` sets `NETWORK_POLICY=allowlist`, and on the `colima` target the launcher
-enforces it as a fail-closed, dual-stack, default-deny egress firewall:
-`iptables`/`ip6tables` rules in the VM's `DOCKER-USER` chain ACCEPT only the
-reviewed `host:port` allowlist and `DROP` the rest, aborting rather than run
-without IPv6 containment. Only the colima target applies this per-session
-allowlist (the launch summary states which with an `egress_enforcement=` label);
-other targets rely on their own controls. Operators may extend or tighten the
-allowlist only through the reviewed injection-policy `[network]` surface
-(`allow_endpoints`/`deny_endpoints`), which can never disable the default or
-change `NETWORK_POLICY`. See the [`[network]` egress section](injection-policy.md#network-egress-network).
+The `strict` mode sets `NETWORK_POLICY=allowlist`. On Colima, Workcell applies a
+fail-closed dual-stack firewall in the VM `DOCKER-USER` chain. It permits only
+reviewed `host:port` entries and drops other egress. It stops the launch if it
+cannot contain IPv6.
 
-The full set of outbound `host:port` endpoints the allowlist may resolve is the
-reviewed [outbound-endpoint inventory](outbound-endpoints.md), captured in
-`policy/hardening-profile.toml` and cross-checked against the launcher by the
-`hardening-profile-conformance` invariant.
+Only Colima applies the per-session allowlist. Other targets use their own
+network controls. The launch summary states the result in
+`egress_enforcement=`.
+
+The injection policy can add or deny endpoints through `[network]`. It cannot
+disable the default policy or change `NETWORK_POLICY`. See
+[Network egress](injection-policy.md#network-egress-network).
+
+The reviewed endpoint inventory is in
+[outbound-endpoints.md](outbound-endpoints.md). The machine-readable source is
+`policy/hardening-profile.toml`.
 
 ## 4a. Container hardening posture is captured and drift-checked
 
-The runtime container's syscall/filesystem hardening posture — dropped
-capabilities (`--cap-drop ALL`, with only `SETUID`/`SETGID` re-added for the
-mutable-mode mapped-user re-exec), `--security-opt no-new-privileges:true`,
-`--read-only` rootfs, the hardened `nosuid,nodev`(`,noexec`) tmpfs mounts,
-`--pids-limit`, and the mapped non-root `--user` — is captured as the reviewed
-`policy/hardening-profile.toml` artifact. The `hardening-profile-conformance`
-invariant asserts scripts/workcell still applies every declared literal and
-contains none of the forbidden ones (`--privileged`, `seccomp=unconfined`), so a
-posture weakening fails CI.
+The runtime container uses these controls:
+
+- drops all capabilities
+- adds only `SETUID` and `SETGID` for the mutable-mode mapped-user step
+- uses `no-new-privileges`
+- uses a read-only root file system in `readonly` sessions
+- uses hardened `nosuid`, `nodev`, and applicable `noexec` temporary mounts
+- sets a process limit
+- runs as a mapped nonroot user
+
+`policy/hardening-profile.toml` records this posture. The
+`hardening-profile-conformance` invariant checks the launcher. It also rejects
+`--privileged` and `seccomp=unconfined`.
 
 ## 5. Destructive or trust-widening actions need defense in depth
 
-The runtime boundary is primary, but Workcell also uses provider-side defenses
-where they help:
+The runtime boundary is the primary control. Provider controls add defense in
+depth:
 
 - Codex requirements and rules
-- Claude reviewed settings and Bash hook
-- Gemini managed settings and trusted-folder seeding
+- Claude managed settings and Bash hook
+- Gemini managed settings and trusted-folder seed
 
-These are guardrails, not substitutes for the runtime boundary.
+These controls do not replace the runtime boundary.
 
 ## 6. Lower-assurance paths are labeled
 
-Examples:
+Examples include:
 
 - `--agent-autonomy prompt`
 - `--cache-profile standard`
 - `development`
-- package mutation inside a mutable container
+- package changes in a mutable container
 - `--allow-control-plane-vcs`
 - `--allow-repo-mcp`
 - `--allow-arbitrary-command`
 - `breakglass`
-- host-side debug or transcript capture
-- any Copilot or future Antigravity telemetry, OpenTelemetry, or content-capture
-  enablement
+- host debug logs or transcript capture
+- Copilot or future Antigravity telemetry and content capture
 
-Workcell records those choices in launch or runtime state instead of implying
-they are equivalent to the default path.
+Workcell records these choices in launch or runtime state.
 
 ## 7. Autonomous runs remain auditable
 
-The launcher keeps durable host-side audit metadata for real sessions. Full
-debug logs, file traces, and transcripts are separate explicit choices rather
-than ambient defaults.
+The launcher keeps durable host session metadata. Full debug logs, file traces,
+and transcripts require separate operator options.
 
 ## Profile expectations
 
 | Profile | Expected posture |
 |---|---|
-| `strict` | default provider lane; reviewed mounts, explicit network posture, repo control-plane masking |
-| `strict --container-mutability readonly` | strongest managed lane; package-manager writes blocked |
-| `development` | managed interactive lane; same boundary and masking as `strict` with managed non-provider command execution and broader dependency egress |
-| `build` | broader egress for image preparation and dependency refresh |
-| `breakglass` | explicit higher-trust lane requiring acknowledgement |
+| `strict` | Default provider path with reviewed mounts, explicit network controls, and control-plane masks |
+| `strict --container-mutability readonly` | Strongest managed path with package-manager writes blocked |
+| `development` | Managed interactive path with the same boundary and masks, non-provider commands, and more dependency endpoints |
+| `build` | Image preparation path with broader build endpoints |
+| `breakglass` | Explicit higher-trust path with dated acknowledgement |
 
 ## Non-goals
 
-Workcell does not claim:
+Workcell does not claim that:
 
-- that provider hooks or rules are the primary boundary
-- that host-native GUIs are equivalent to Tier 1
-- that release provenance proves the full local macOS boundary on its own
+- provider hooks or rules are the primary boundary
+- host-native graphical applications are equal to Tier 1
+- release provenance proves the local macOS runtime boundary

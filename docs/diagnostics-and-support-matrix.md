@@ -1,49 +1,50 @@
-# Diagnostics and the support matrix
+# Diagnostics and the Support Matrix
 
-`workcell --doctor` and `workcell --inspect` emit host and
-`support_matrix_*` key=value lines derived from
-[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv). This
-page explains each field and how an operator should act on the resolved row.
+`workcell --doctor` and `workcell --inspect` print host and
+`support_matrix_*` fields. Workcell gets these fields from
+[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv).
 
-## Emitted fields
+## Fields
 
 <!-- support-matrix-fields:begin -->
 | Field | Meaning |
 |---|---|
-| `host_os` | Detected host operating system (for example `macos`, `linux`). |
-| `host_arch` | Detected host CPU architecture (for example `arm64`, `amd64`). |
-| `host_distro` | Detected Linux distribution ID, or `none` off Linux. |
-| `host_distro_version` | Detected Linux distribution version, or `none` off Linux. |
-| `support_matrix_status` | Row status for the resolved host and target: `supported`, `preview-only`, `validation-host-only`, or `unsupported`. |
-| `support_matrix_launch` | Whether operator launch is `allowed` or `blocked` for the resolved combination. |
-| `support_matrix_evidence` | Evidence tier backing the row: `certification-only`, `repo-required`, `manual-only`, or `none`. |
-| `support_matrix_validation_lane` | Named validation lane for the row, or `none`. |
-| `support_matrix_reason` | Human-readable reason string for the resolved status. |
+| `host_os` | Detected host operating system, such as `macos` or `linux`. |
+| `host_arch` | Detected host CPU architecture, such as `arm64` or `amd64`. |
+| `host_distro` | Detected Linux distribution ID. The value is `none` on other systems. |
+| `host_distro_version` | Detected Linux distribution version. The value is `none` on other systems. |
+| `support_matrix_status` | Status of the matching row: `supported`, `preview-only`, `validation-host-only`, or `unsupported`. |
+| `support_matrix_launch` | Launch decision for the matching row: `allowed` or `blocked`. |
+| `support_matrix_evidence` | Evidence class for the row: `certification-only`, `repo-required`, `manual-only`, or `none`. |
+| `support_matrix_validation_lane` | Name of the validation lane, or `none`. |
+| `support_matrix_reason` | Reason for the status and launch decision. |
 <!-- support-matrix-fields:end -->
 
-`--inspect` and `--doctor` also print additional launch-state fields,
-including `target_kind`, `target_provider`, and `target_assurance_class` for
-the selected target. Use those to confirm which non-default target was
-resolved.
+The commands also print launch-state fields. These fields include
+`target_kind`, `target_provider`, and `target_assurance_class`. Use them to
+confirm the selected target.
 
-## Triage decision tree
+## Operator decision
 
-1. If `support_matrix_launch=allowed`:
-   - With `support_matrix_status=supported`, proceed only for the resolved row and only with the evidence its `support_matrix_evidence` names (for current supported rows this is `certification-only`) as recorded in `policy/host-support-matrix.tsv`.
-   - With any other status, treat the row as inconsistent for operator launch, stop, and follow `support_matrix_reason`.
-2. If `support_matrix_launch=blocked`:
-   - With `support_matrix_status=preview-only`, treat the row as preview or certification-only. It is not an operator launch host.
-   - With `support_matrix_status=validation-host-only`, use the host only for the named validation lane, such as `trusted-linux-amd64-validator`.
-   - With `support_matrix_status=unsupported`, do not launch. Read `support_matrix_reason` for the unsupported boundary.
-   - With any other status, follow the blocked launch decision first and do not treat the row as supported.
+First, read `support_matrix_launch`.
 
-## No implicit support claim
+- If the value is `allowed`, continue only when
+  `support_matrix_status=supported`. Use only the evidence that
+  `support_matrix_evidence` specifies.
+- If the value is `blocked`, do not start an operator session.
 
-No tier, assurance class, or status confers a support claim on its own.
-Supported launch paths still require the live certification evidence recorded in
-[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv).
+If `support_matrix_launch=blocked`, read `support_matrix_status`:
 
-For the vocabulary behind each value, see
-[`docs/support-tiers.md`](support-tiers.md). The canonical source for the
-resolved matrix row is
-[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv).
+- `preview-only`: Use the row only for its documented preview or certification
+  work.
+- `validation-host-only`: Use the host only for
+  `support_matrix_validation_lane`.
+- `unsupported`: Do not launch. Read `support_matrix_reason`.
+- `supported` or any unexpected value: Stop. The blocked decision has
+  priority.
+
+No field gives support by itself. A supported launch requires one matching row
+with `status=supported`, `launch=allowed`, and the required evidence.
+
+See [support-tiers.md](support-tiers.md) for all values. For a possible runtime
+boundary breach, use [incident-response.md](incident-response.md).
