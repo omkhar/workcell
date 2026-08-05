@@ -23,9 +23,13 @@ Remove Workcell-owned local install links and managed host state:
 
 Preserved on purpose:
   - ~/.config/workcell/*
-  - user-specified debug log, file trace log, and transcript files
   - shared host packages such as colima, docker, gh, git, and go
   - unrelated Colima profiles and caches
+
+Log safety:
+  - A user-selected log path is not exempt from removal targets.
+  - The uninstaller removes a log directly under /tmp or $TMPDIR if the current user owns the log and its name matches a Workcell cleanup pattern.
+  - Use --dry-run, then copy required evidence outside each reported removal path.
 EOF
 }
 
@@ -455,5 +459,6 @@ else
   fi
 fi
 
-echo "Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files."
-echo "Preserved shared host packages installed outside Workcell."
+echo "Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles."
+echo "User-selected log paths are not exempt from removal targets."
+echo "The uninstaller removes logs directly under /tmp or \$TMPDIR if the current user owns them and their names match Workcell cleanup patterns."

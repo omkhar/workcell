@@ -80,8 +80,10 @@ The uninstaller removes these Workcell-owned items:
 - Workcell caches and token handoff data
 - Workcell temporary files
 
-The uninstaller preserves `~/.config/workcell` and user-specified log files.
-It also preserves shared host packages and unrelated Colima profiles.
+The uninstaller preserves `~/.config/workcell`, shared host packages, and unrelated Colima profiles.
+The uninstaller removes a user-selected log if the log is inside a removal target.
+The uninstaller removes a log directly under `/tmp` or `$TMPDIR` if the current user owns the log and its name matches a Workcell cleanup pattern.
+Copy required evidence outside each removal path that the dry run reports.
 
 `workcell --gc` removes stale cache, temporary, session-audit, and runtime state.
 It does not provide a dry-run option.
