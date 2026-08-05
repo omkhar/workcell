@@ -26,16 +26,14 @@ adapter baseline.
 | GitHub Copilot CLI | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, host-mounted token handoff plus transient runtime handoff, logs, and `~/.config/github-copilot` | supported Copilot token credential: `copilot_github_token`, staged through reviewed host-side inputs, removed from direct runtime mounts including the staged direct-mount copy, passed through a temporary handoff mount outside provider state, scrubbed from PID 1 by running the Workcell entrypoint without Docker `--init` for token handoff launches, and exported as `COPILOT_GITHUB_TOKEN` only to the managed child after unlinking the runtime handoff file; host `gh` auth, host keychains, host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`), custom instructions, and skill/dynamic-retrieval surfaces are not safe-path inputs |
 | Gemini | `settings.json`, rendered `GEMINI.md`, `.env`, `oauth_creds.json`, `projects.json`, `trustedFolders.json` | `breakglass` restores Gemini's own folder-trust prompt; `gcloud_adc` is supplemental to Vertex config in `gemini_env` |
 
-## Current and planned provider control planes
+## Current and unsupported provider control planes
 
 GitHub Copilot CLI is seeded as a Tier 1 provider adapter. The adapter owns a
 session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, token handoff, logs, and
-cache/config directories. It rejects host `~/.copilot`, keychain access,
-host `~/.config/github-copilot`, host `~/.cache/github-copilot`, `GH_TOKEN`,
-`GITHUB_TOKEN`, ambient GitHub CLI fallback, custom instructions, repo-local
-skill/dynamic-retrieval expansion, unreviewed plugin or MCP expansion,
-remote-control sharing, and provider auto-update state as implicit Tier 1
-inputs.
+cache/config directories. It rejects host Copilot state, keychain access, and
+ambient GitHub CLI auth. It also rejects custom instructions and unreviewed
+control-plane expansion. It does not permit remote control or provider
+auto-update state.
 
 Shared cross-provider state can also seed the current supported adapters:
 
@@ -46,12 +44,11 @@ Shared cross-provider state can also seed the current supported adapters:
 That GitHub CLI state must not become a Copilot safe-path auth input unless a
 separate reviewed Copilot path explicitly allows it.
 
-Google Antigravity CLI is also a planned fail-closed adapter. Before support is
-claimed, the Antigravity adapter must pin official CLI provenance, own
-session-local provider home/cache/settings state, and explicitly map or block
-subagents, plugins, MCP, sandbox settings, permissions, hooks, and any shared
-desktop/IDE state. Host Google account caches, browser profiles, keychains,
-host homes, and provider caches must not become implicit Tier 1 inputs.
+Google Antigravity CLI is an unsupported fail-closed scaffold. Before support,
+the adapter must pin official CLI provenance. It must own session-local provider
+state. It must map or block each provider control surface. Host account state,
+browser profiles, keychains, home directories, and provider caches must stay
+excluded.
 
 ## Instruction layering
 
@@ -75,9 +72,8 @@ control plane masked on the safe path.
 | `--agent-autonomy prompt` | `--ask-for-approval on-request` | `--permission-mode default` | `--available-tools=view,create,edit,apply_patch,grep,glob` | `--approval-mode default` |
 
 Copilot maps prompt and yolo modes through the reviewed provider wrapper,
-blocks shell access by omission from `--available-tools`, and rejects
-user-supplied flags that silently widen trust. Antigravity autonomy mappings
-are intentionally absent until its adapter lands.
+blocks shell access by omission from `--available-tools`, and rejects unsafe
+user flags. Antigravity has no autonomy mapping because it is unsupported.
 
 Unsafe provider-native attempts to override those managed flags are blocked on
 the managed path.
@@ -105,10 +101,10 @@ copy only when:
 
 ### Codex native sandbox
 
-Workcell pins Codex's own Linux shell sandbox off on the managed path.
-Workcell's outer VM-plus-container boundary remains the primary isolation
-control, and the current Codex Linux sandbox requires unprivileged user
-namespaces that are not available inside the Tier 1 container.
+Workcell turns off the Codex Linux shell sandbox on the managed path. The
+Workcell VM and container boundary remains the primary isolation control. The
+Codex sandbox needs unprivileged user namespaces. The Tier 1 container does not
+provide them.
 
 ### Claude hook coverage
 
@@ -124,12 +120,10 @@ path so masked ephemeral sessions do not force a restart-based trust prompt.
 
 ### Provider trust and permissions
 
-Copilot support treats permissive CLI options, saved permissions, remote
-control, plugins, hooks, skills, MCP/LSP config, custom instructions,
-repository-local Copilot settings, and dynamic retrieval as managed
-control-plane inputs. Current releases stage only the reviewed session-local
-Copilot home/cache and explicit token input mount, not host Copilot or ambient
-GitHub CLI state.
+Workcell controls permissive CLI options, saved permissions, and remote control.
+It also controls plugins, hooks, skills, MCP, LSP, instructions, and dynamic
+retrieval. The current release stages only reviewed session-local state and the
+explicit token input.
 
 Antigravity support must do the same once official CLI provenance identifies
 its settings, permission, plugin, MCP, hook, and instruction surfaces. Current
@@ -146,15 +140,13 @@ Workcell ships no live MCP defaults in the adapter baselines. Reviewed MCP
 state must arrive through explicit operator inputs, not ambient workspace
 content.
 
-Repo-defined MCP server-definition surfaces (`.mcp.json`, `.github/mcp.json`)
-are classified `deny` in every non-breakglass mode: an untrusted workspace can
-otherwise wire the agent to arbitrary MCP servers, a boundary/exfil risk. The
-launcher overlays a neutralized, schema-valid empty config (`{"mcpServers": {}}`,
-matching the shipped `adapters/claude/mcp-template.json` baseline) over each
-surface so the repo-defined servers never reach the provider process while the
-config stays parseable, and it fails closed — an unparsable or malformed
-workspace config is replaced wholesale rather than honored. This deny is independent of `--allow-control-plane-vcs`: acknowledging
-control-plane Git visibility does not lift it.
+Workcell classifies repo MCP files as `deny` outside breakglass. An untrusted
+workspace can otherwise configure an arbitrary MCP server.
+
+The launcher masks each file with a valid empty configuration. Thus, repo MCP
+servers do not reach the provider. Workcell replaces an invalid configuration
+and fails closed. The `--allow-control-plane-vcs` option does not lift this
+deny.
 
 An operator opts a workspace's MCP configs back in with the explicit,
 `ack-required` pair `--allow-repo-mcp` plus a dated `--ack-repo-mcp=YYYY-MM-DD`.

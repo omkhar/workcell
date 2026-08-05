@@ -1,14 +1,13 @@
 # Quickstart: GitHub Copilot CLI
 
-This quickstart covers the Workcell Tier 1 Copilot CLI path. It uses one
-explicit credential key, `copilot_github_token`. Workcell stages that token
-through reviewed host-side inputs and removes the token file plus staged
-direct-mount copy from direct runtime mounts for Copilot sessions. For
-auth-required provider launches, Workcell converts the token to a temporary
-host-mounted token handoff outside mounted provider state, moves it through a
-transient runtime handoff file with the Workcell entrypoint as PID 1, unlinks
-the mounted handoff file, and exports it as
-`COPILOT_GITHUB_TOKEN` only for the managed Copilot child process.
+Use this guide for the Tier 1 Copilot CLI path. Copilot accepts one credential,
+`copilot_github_token`. Workcell stages the token from an explicit host input.
+It removes the original token file and its staged copy from direct mounts.
+
+For an authenticated start, Workcell uses a temporary token handoff. This
+handoff is outside provider state. The entrypoint remains PID 1 and removes the
+mounted file. The wrapper exports `COPILOT_GITHUB_TOKEN` only to the managed
+Copilot child.
 
 Do not rely on host `gh` auth, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`,
 host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`,
@@ -52,11 +51,9 @@ workcell --agent copilot --inspect --workspace /path/to/repo
 ```
 
 The managed runtime sets `COPILOT_HOME` and `COPILOT_CACHE_HOME` to
-Workcell-owned session-local paths. It does not mount host Copilot provider
-state (`~/.copilot`, `~/.config/github-copilot`,
-`~/.cache/github-copilot`), host keychains, or host GitHub CLI auth, and it
-does not copy the token into `COPILOT_HOME`. Workcell also disables Copilot
-custom instructions on the managed path.
+session-local paths. It does not mount host Copilot state, keychains, or host
+GitHub CLI auth. It does not copy the token to `COPILOT_HOME`. Workcell also
+disables Copilot custom instructions on the managed path.
 
 ## 4. Launch
 

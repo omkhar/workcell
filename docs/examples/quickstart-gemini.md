@@ -12,7 +12,7 @@ the strongest local boundary claim still depends on local Colima validation.
 
 ## 1. Create or update the injection policy
 
-API key or Vertex env-file path:
+Gemini Code Assist (GCA), API key, or Vertex environment file path:
 
 ```bash
 workcell auth init
@@ -55,11 +55,10 @@ workcell auth status --agent gemini
 workcell --agent gemini --auth-status --workspace /path/to/repo
 ```
 
-The staged `gemini_env` and `gemini_oauth` paths report
-`provider_bootstrap_path=direct-staged`. `gemini_projects` reports
-`provider_bootstrap_state=supplemental-only` because the project registry is a
-reviewed input, not a standalone auth mode. `gcloud_adc` remains a supplemental
-Vertex input for the same reason; see
+The `gemini_env` and `gemini_oauth` paths report
+`provider_bootstrap_path=direct-staged`. The `gemini_projects` path reports
+`provider_bootstrap_state=supplemental-only`. The project registry is not an
+auth mode. The `gcloud_adc` input is also a Vertex supplement. See
 [docs/examples/gemini-vertex-setup.md](gemini-vertex-setup.md) and
 [docs/provider-bootstrap-matrix.md](../provider-bootstrap-matrix.md) for the
 current manual handoff.

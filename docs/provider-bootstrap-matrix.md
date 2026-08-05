@@ -1,7 +1,6 @@
 # Provider Bootstrap Matrix
 
-This page records the reviewed host-side bootstrap and explainability contract
-for provider auth inputs.
+This page defines the host bootstrap contract for provider auth inputs.
 
 Use it with:
 
@@ -16,22 +15,20 @@ The host-side commands expose the same bootstrap summary on one reviewed path:
   resolver preprocessing
 - `workcell why` prints `bootstrap_*` for one credential decision
 
-Support tiers on this page mean:
+This page uses these support levels:
 
-- `repo-required`: host-side policy, staging, and explainability are proven by
-  deterministic repo validation
-- `certification-only`: the path needs live runtime or provider smoke before
-  Workcell claims it as supported
-- `manual`: the path is operator-driven, supplemental, or intentionally
-  fail-closed rather than fully automated on the reviewed path
+- `repo-required`: Repository tests prove policy, staging, and status output.
+- `certification-only`: A live runtime or provider test must pass before a
+  support claim.
+- `manual`: The path is supplemental, operator-driven, or intentionally
+  fail-closed.
 
-These tiers describe the Workcell bootstrap and staging contract. Live
-provider-authenticated UX remains the separate manual provider-e2e lane unless
-the evidence explicitly says otherwise.
+These levels apply to the Workcell bootstrap and staging contract. Provider
+authentication stays in the manual end-to-end lane unless evidence states a
+different level.
 
-Roadmap-only provider entries are called out separately. They are not accepted
-by `workcell auth`, `workcell --auth-status`, or `workcell why` until the
-matching adapter and evidence land.
+Unsupported providers appear in a separate section. The auth commands do not
+accept them.
 
 ## Current Matrix
 
@@ -43,52 +40,52 @@ matching adapter and evidence land.
 | Claude | direct staged `claude_api_key` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh` | helper-backed API key path |
 | Claude | `[credentials.claude_auth] resolver = "claude-macos-keychain"` | `host-export-scaffold` | `manual` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh` | records intent and stays fail-closed until a supported export path exists |
 | GitHub Copilot CLI | direct staged `copilot_github_token` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-commands.sh`, `tests/scenarios/shared/test-auth-status.sh`, `tests/scenarios/shared/test-policy-commands.sh`, `scripts/container-smoke.sh` | converted to a temporary host-mounted token handoff outside mounted provider state, removed from direct runtime mounts, consumed into a transient runtime handoff file with the Workcell entrypoint as PID 1, and exported to the managed Copilot child as `COPILOT_GITHUB_TOKEN`; host `gh` auth, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) are not auth sources |
-| Gemini | direct staged `gemini_env` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed API key or Vertex env-file path |
+| Gemini | direct staged `gemini_env` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed Gemini Code Assist (GCA), API key, or Vertex environment file path |
 | Gemini | direct staged `gemini_oauth` | `direct-staged` | `repo-required` | `tests/scenarios/shared/test-auth-status.sh` | reviewed cached Gemini OAuth path |
 | Gemini | direct staged `gemini_projects` supplement | `project-registry-supplement` | `manual` | `tests/scenarios/shared/test-auth-status.sh`, `internal/authpolicy/manage_test.go` | reviewed Gemini project registry input; not a standalone auth mode |
 | Gemini | direct staged `gcloud_adc` supplement | `vertex-supplement` | `manual` | `scripts/verify-invariants.sh`, `docs/examples/gemini-vertex-setup.md` | supplemental Vertex input only; not a standalone Gemini auth mode |
 
 ## Copilot CLI Bootstrap Notes
 
-Copilot support is intentionally limited to one direct staged credential:
-`copilot_github_token`. For auth-required launches, Workcell converts that
-file into a temporary host-mounted token handoff outside mounted provider
-state, removes the original token file from direct runtime mounts, deletes the
-staged direct-mount copy from the mounted injection bundle, stages it into a
-transient runtime handoff file, unlinks the mounted handoff file, re-execs the
-entrypoint
-without the token in its environment, keeps that entrypoint as PID 1 instead
-of Docker `--init` so `/proc/1/environ` is scrubbed, and exports its value as
-`COPILOT_GITHUB_TOKEN` only for the managed Copilot child process after the
-wrapper unlinks the handoff file. Copilot development-shell or debug-command
-launches also remove the token file and staged copy from direct runtime mounts
-without creating the handoff mount. It is not copied into `COPILOT_HOME`. Host
-Copilot provider state (`~/.copilot`, `~/.config/github-copilot`,
-`~/.cache/github-copilot`), host keychains, `GH_TOKEN`, `GITHUB_TOKEN`,
-ambient `gh auth token`, and whole-home state are not safe-path inputs.
+Copilot accepts only the staged `copilot_github_token` credential. Workcell
+removes the original token from direct runtime mounts. It also removes the
+staged copy from the mounted injection bundle.
 
-The deterministic bootstrap row is repo-required. Live provider-authenticated
-certification of a non-destructive `copilot -p` launch with staged credentials
-remains a maintainer pre-signing gate for changes that promote or materially
-alter the Copilot support claim.
+For an authenticated start, Workcell uses a temporary host-mounted handoff.
+This mount is outside provider state. The entrypoint moves the token to a
+temporary runtime file. It unlinks the mounted file. Then it uses `exec` to
+replace itself without the token environment.
 
-## Planned Antigravity CLI Bootstrap Track
+The entrypoint remains PID 1, without Docker `--init`. Thus,
+`/proc/1/environ` does not contain the token.
 
-Google Antigravity CLI is a planned fail-closed provider track, but it has no
-supported bootstrap row yet. Before it can join the current matrix, Workcell
-must pin the official install and auth model, add explicit staged Google auth
-material, and prevent host Google account state, browser profiles, keychains,
-host homes, and provider caches from becoming implicit inputs.
+The wrapper reads and unlinks the runtime file. It exports
+`COPILOT_GITHUB_TOKEN` only to the managed Copilot child. It does not copy the
+token to `COPILOT_HOME`. Development and debug commands do not receive a token
+handoff.
 
-The Antigravity bootstrap row is supportable only after deterministic
-auth-status, policy, bootstrap-summary, control-plane seeding, and
-unsafe-argument tests exist, plus live provider certification with staged
-credentials inside the managed runtime.
+Host Copilot state, keychains, ambient tokens, and whole-home state are not
+safe-path inputs.
+
+Repository tests prove the deterministic bootstrap row. The maintainer must run
+a live, authenticated `copilot -p` test before a signed commit changes the
+Copilot support claim.
+
+## Unsupported Antigravity CLI Scaffold
+
+Google Antigravity CLI has no supported bootstrap row. Workcell recognizes the
+provider name and stops before runtime preparation.
+
+Before support, Workcell must pin the official install and auth model. It must
+add explicit Google auth input. Host account state, browser profiles,
+keychains, home directories, and provider caches must stay excluded.
+
+Support also requires deterministic auth, policy, bootstrap, and unsafe-flag
+tests. A live provider test with staged credentials must pass.
 
 ## Remote Target Bootstrap
 
-Preview remote targets also carry an explicit host-side bootstrap contract.
-Today that matrix is:
+Preview remote targets also have a host bootstrap contract:
 
 | Target | Bootstrap path | Support | Evidence | Notes |
 |---|---|---|---|---|
@@ -115,5 +112,5 @@ The bootstrap summary fields also report the remaining operator handoff:
 - [Quickstart: Gemini](examples/quickstart-gemini.md)
 - [Gemini Vertex AI setup](examples/gemini-vertex-setup.md)
 
-There is no Antigravity quickstart until the matching CLI support lands with
-adapter, auth, and certification evidence.
+There is no Antigravity quickstart. Workcell must add the adapter, auth input,
+tests, and certification evidence before support.

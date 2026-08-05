@@ -12,29 +12,23 @@ through a native control-plane mapping.
 | GitHub Copilot CLI | CLI | Workcell-owned session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, and GitHub Copilot config/cache directories, host-mounted token handoff plus transient runtime handoff, logs, cache state, custom instructions disabled, and skill/dynamic-retrieval overrides blocked | `copilot_github_token` | supported Copilot token credential: a directly staged `copilot_github_token`; Workcell removes the token file and staged direct-mount copy from direct runtime mounts, passes a temporary handoff mount outside provider state, runs the Workcell entrypoint as PID 1 for token handoff launches, exports it as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child after unlinking the runtime handoff file, and does not use host `gh` auth, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, or host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
-### Upstream change: Gemini CLI retirement on June 18, 2026
+### Gemini CLI account change
 
-Google has announced that Gemini CLI stops serving requests for the free,
-Pro, and Ultra personal-account login tiers on June 18, 2026, in favor of
-the closed-source Antigravity CLI. Per the announcement, access continues
-for Gemini Code Assist Standard/Enterprise licenses and for paid Gemini /
-Gemini Enterprise Agent Platform API keys
-([announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)).
-**Reviewed posture: the Gemini Tier 1 adapter stays shipped and supported
-for the auth inputs Google keeps serving — `gemini_env`/`gemini_oauth` with
-a Code Assist Standard/Enterprise license or a paid Gemini API key;
-`gcloud_adc` remains the supplemental Vertex input to those modes, not a
-standalone post-June auth path.** The free, Pro, and Ultra personal-account
-OAuth login is what upstream retires; those accounts are refused by Google,
-not by Workcell, while the adapter, control-plane mapping, and pinned CLI
-remain intact. An Antigravity adapter is
-a committed follow-on provider-parity track with a different binary and
-control-plane surface, following the same Tier 1 evidence bar as every
-provider; sequencing is tracked in [ROADMAP.md](../ROADMAP.md).
+On June 18, 2026, Gemini CLI stopped service for free, Pro, and Ultra personal
+accounts. Gemini CLI access remains available through Gemini Code Assist
+Standard and Enterprise licenses. It also remains available through paid Gemini
+and Gemini Enterprise Agent Platform API keys. See the
+[Google announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/).
 
-## Planned provider parity
+The Gemini Tier 1 adapter remains supported for these active auth paths. Use
+`gemini_oauth` only for reviewed cached OAuth state. Use `gemini_env` for
+Gemini Code Assist (GCA), a paid API key, or Vertex environment configuration.
+Use `gcloud_adc` only as a Vertex supplement. It is not a standalone auth path.
+Google, not Workcell, refuses the retired account types.
 
-| Provider | Planned Tier 1 surface | Planned managed control plane | Planned auth input | Support status |
+## Unsupported provider scaffold
+
+| Provider | Target Tier 1 surface | Required control plane | Required auth input | Support status |
 |---|---|---|---|---|
 | Google Antigravity CLI | `workcell --agent antigravity --workspace ...` | session-local provider home/cache, settings, permissions, subagents, plugins, MCP, sandbox state, hooks, and reviewed instruction imports once official CLI provenance is pinned | explicit staged Google auth material, exact key names still pending official install/auth implementation | fail-closed scaffold; not current support |
 
@@ -44,19 +38,16 @@ is historical planning context; the current support boundary is the table
 above and the quickstart in
 [docs/examples/quickstart-copilot.md](examples/quickstart-copilot.md).
 
-GitHub documents Copilot CLI as a terminal agent with interactive and
-programmatic modes, environment-token auth, configurable `COPILOT_HOME`, and
-permissive tool flags such as `--allow-all` and `--yolo`. Workcell treats
-those product surfaces as implementation inputs that must stay mapped or
-blocked by the Workcell adapter. Live provider-authenticated `copilot -p`
-certification remains a maintainer pre-signing gate for changes that promote
-or materially alter the Copilot support claim.
+GitHub Copilot CLI has interactive and programmatic modes. It accepts an
+environment token and a configurable `COPILOT_HOME`. It also has permissive
+tool flags. The Workcell adapter maps or blocks these surfaces.
 
-Antigravity remains planned/fail-closed. Even where upstream CLI documentation
-exists, Workcell must still pin the supported install/auth path and land the
-same adapter, auth/bootstrap, unsafe-argument, control-plane masking,
-quickstart, scenario, and live-certification evidence before any Tier 1 support
-claim.
+A live, authenticated `copilot -p` test is a pre-signing gate. Run it before a
+signed commit changes the Copilot support claim.
+
+Antigravity remains unsupported and fails closed. Before support, Workcell must
+add a pinned install path, explicit auth, an adapter, tests, and live
+certification.
 
 For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
@@ -69,10 +60,9 @@ For provider auth maturity and rollout caveats, see
 - Tier 3: host-native GUI, cloud, or web-only guidance with no claim of
   equivalent local isolation
 
-Copilot cloud agent, Copilot IDE extensions, Antigravity desktop or IDE
-surfaces, and host-native provider CLI execution are Tier 3 unless a future
-integration makes them clients of the same bounded Workcell session plane. The
-planned support target is each local provider CLI adapter running inside Tier 1.
+Copilot cloud agent and Copilot IDE extensions are Tier 3. Antigravity desktop
+and IDE surfaces are also Tier 3. Host-native provider CLIs are Tier 3. Only a
+reviewed client of the bounded runtime can qualify for Tier 2.
 
 Do not force one provider's control model onto another. Keep one shared
 boundary and one thin adapter per product.
@@ -80,10 +70,10 @@ boundary and one thin adapter per product.
 ## Validation traceability
 
 Use [`policy/operator-contract.toml`](../policy/operator-contract.toml) for the
-supported operator workflow surface, [docs/requirements-validation.md](requirements-validation.md)
-for the machine-checked requirement and evidence mapping, and
-[docs/validation-scenarios.md](validation-scenarios.md) for the concrete
-scenario and script anchors behind the auth and control-plane caveats.
+operator workflow. Use
+[requirements-validation.md](requirements-validation.md) for requirement
+evidence. Use [validation-scenarios.md](validation-scenarios.md) for scenario
+and script references.
 
 The Tier 1, 2, and 3 rule is a support classification. It is not a claim that
 GUI, IDE, or cloud paths receive the same validation depth as the Tier 1 CLI

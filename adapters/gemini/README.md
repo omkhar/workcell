@@ -1,13 +1,13 @@
 # Gemini Adapter
 
-The Gemini adapter seeds Gemini CLI's session-local home from reviewed baselines
-and explicit injection inputs. Workcell's external VM-plus-container boundary is
-primary; Gemini's own sandbox is optional and not the Tier 1 boundary here.
+The Gemini adapter builds a session-local Gemini CLI home from reviewed
+baselines and explicit inputs. The Workcell VM and container runtime boundary
+is the primary control. The Gemini sandbox is not the Tier 1 boundary.
 
 ## Auth methods
 
-- `gemini_env` credential key — API key, GCA, or Vertex configuration seeded to
-  `~/.gemini/.env` (`internal/adapters/data.go`).
+- `gemini_env` credential key — API key, Gemini Code Assist (GCA), or Vertex
+  configuration seeded to `~/.gemini/.env` (`internal/adapters/data.go`).
 - `gemini_oauth` credential key — cached Gemini OAuth state seeded to
   `~/.gemini/oauth_creds.json`.
 - `gemini_projects` credential key — persisted project registry seeded to
@@ -51,14 +51,10 @@ Additional in-container session targets: `~/.gemini/.env`,
   `runtime/container/provider-wrapper.sh`).
 - Autonomy is set host-side via `workcell --agent-autonomy` (mapped to
   `--approval-mode`); provider-native overrides are not honored.
-- Unsafe-argument policy (`reject_unsafe_gemini_args` in
-  `runtime/container/provider-policy.sh`): the wrapper blocks
-  `--*dangerously*`, `--*bypass*permission*`, `--sandbox`, `--add-dir`,
-  `-y`/`--yolo`, and in-session `--approval-mode` overrides. These are rejected in
-  **every** mode including `breakglass`: `provider-wrapper.sh` re-checks arguments
-  (`WORKCELL_WRAPPER_CONTEXT=1`), so `container-smoke.sh` confirms breakglass
-  overrides still fail. Breakglass raises the sandbox floor, not the unsafe-flag
-  policy.
+- `reject_unsafe_gemini_args` blocks permission bypass, sandbox, extra
+  directory, yolo, and approval-mode flags.
+- These rules apply in all modes, including `breakglass`. Breakglass changes
+  the container posture. It does not change the provider unsafe-flag policy.
 
 ## See also
 

@@ -44,10 +44,9 @@ workcell auth set \
   --ack-host-resolver
 ```
 
-That resolver records the intended host-side auth source in policy, but the
-current Workcell implementation still aborts `--prepare-only` and launch flows
-unless a supported export path exists. Use it only to record intent for a
-future supported export and verify the configured-only state with
+The resolver records the intended host auth source. Workcell stops preparation
+and launch because no supported export path exists. Use this scaffold only to
+record policy intent. Check its state with
 `workcell auth status --agent claude`.
 
 ## 2. Optional explicit prepare

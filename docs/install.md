@@ -1,6 +1,7 @@
 # Install
 
-Workcell ships with a supported installer plus a tagged Homebrew formula asset.
+Workcell includes a supported installer and a Homebrew formula asset. Use
+[release-posture.md](release-posture.md) to find the current release tag.
 For the shortest end-to-end path, see the
 [5-minute path](../README.md#5-minute-path) in the README.
 
@@ -8,47 +9,43 @@ For the shortest end-to-end path, see the
 
 ### Verified release install (recommended)
 
-`scripts/install-release.sh` is the fail-closed install path. It downloads a
-tagged release bundle plus its signed `SHA256SUMS`, verifies the signature and
-the bundle digest **before** any bundle code runs, and only then extracts the
-bundle and hands off to its `scripts/install.sh`. Verifying before extraction is
-what makes it sound: a tampered bundle is rejected before its (also-tampered)
-installer could run.
+`scripts/install-release.sh` is the fail-closed install path. It downloads the
+release bundle and its signed `SHA256SUMS` file. It verifies the signature and
+bundle digest before it runs bundle code. It then extracts the bundle and runs
+`scripts/install.sh`.
+
+Install Git, GnuPG, and [`cosign`](https://github.com/sigstore/cosign) before
+you verify the tag. On macOS, use `brew install cosign git gnupg`.
+
+Import the maintainer signing key. Confirm its fingerprint against
+[`SECURITY.md`](../SECURITY.md#signing-key). Then use the signed release tag:
 
 ```bash
-# From a source checkout (or after placing install-release.sh and
-# verify-release-artifact.sh together in a scripts/ directory):
+git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
+cd workcell
+git tag -v vX.Y.Z
 ./scripts/install-release.sh --version vX.Y.Z
 ```
 
-Verification requires [`cosign`](https://github.com/sigstore/cosign) on `PATH`
-(`brew install cosign`). It is keyless: the script checks that the release's
-`SHA256SUMS` was signed by the Workcell release workflow's OIDC identity
-(`.../.github/workflows/release.yml@refs/tags/…`, issuer
-`https://token.actions.githubusercontent.com`) through Sigstore/Fulcio with a
-Rekor transparency entry, then binds the downloaded bundle to its entry in that
-verified `SHA256SUMS`. This automates the manual `cosign verify-blob` and
-`sha256sum -c` steps in
+The `git tag -v` command verifies the pre-verification installer before you run
+it. Do not use the installer from an arbitrary source checkout.
+
+The script checks the release-workflow OIDC identity and issuer. It checks the
+Sigstore bundle and Rekor entry. Then it checks the bundle digest in the
+verified `SHA256SUMS` file. These checks automate the manual steps in
 [provenance.md](provenance.md#verifying-release-assets).
 
-It **fails closed**: a missing `cosign`, absent verification material, a
-signature that does not verify against the pinned identity, or a digest mismatch
-each refuse the install with a non-zero exit and a clear error. Pass
-`--attestation` to additionally require `gh attestation verify` against the
-release workflow, and `--repo OWNER/REPO` to install from a fork or mirror.
+The script fails closed. It stops for a missing tool or verification file. It
+also stops for an invalid signature or digest. Use `--attestation` to require a
+GitHub attestation. Use `--repo OWNER/REPO` for a fork or mirror.
 
-Because this runs before the download is trusted, the installer pins its
-interpreter to the absolute `/bin/bash` (a system bash at `/bin/bash` is
-required — present on macOS and mainstream Linux) so a fake `bash` earlier in
-`PATH` cannot hijack it, and it resolves the tools it calls (`cosign`, `gh`,
-`curl`, `tar`, `sha256sum`) from a fixed trusted `PATH` (the system directories
-plus `/usr/local/bin` and `/opt/homebrew/bin`) rather than your ambient `PATH`,
-so a user-writable directory early in `PATH` cannot shadow them with a fake.
-Invoke it as `./scripts/install-release.sh` (which uses that trusted
-interpreter) — do not run it through an untrusted `bash …`. Install
-`cosign`/`gh` in one of those standard locations (`brew install cosign gh` does
-this). If yours live elsewhere, set `WORKCELL_INSTALL_TRUSTED_PATH` to a trusted
-`PATH` that includes them.
+The installer uses `/bin/bash` before it trusts the download. It finds its tools
+only in a fixed trusted `PATH`. Thus, an earlier user-writable directory cannot
+provide a false tool.
+
+Run `./scripts/install-release.sh` directly. Do not run it with an untrusted
+`bash`. Install `cosign` and `gh` in a standard location. If necessary, set
+`WORKCELL_INSTALL_TRUSTED_PATH` to a trusted path that contains them.
 
 #### Offline / air-gapped installs
 
@@ -68,9 +65,9 @@ run — the default is always verify-and-fail-closed.
 
 ### Tagged release bundle
 
-If you prefer to verify manually, download a tagged release bundle, verify it
-following [provenance.md](provenance.md#verifying-release-assets), unpack it, and
-run the supported installer:
+For manual verification, download the selected release bundle. Use the steps in
+[provenance.md](provenance.md#verifying-release-assets). Then unpack the bundle.
+Run the supported installer:
 
 ```bash
 tar -xzf workcell-vX.Y.Z.tar.gz
@@ -85,8 +82,8 @@ system unchanged and get a warning summary of anything still missing.
 
 ### Tagged Homebrew formula asset
 
-Tagged releases can publish a versioned `workcell.rb` asset. Download it from
-the release page and install it locally with Homebrew:
+Each supported release includes a versioned `workcell.rb` asset. Download it
+from the release page. Then install it with Homebrew:
 
 ```bash
 curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/workcell.rb
