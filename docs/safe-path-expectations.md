@@ -123,9 +123,10 @@ workcell session delete --id SESSION_ID --dry-run
 workcell session delete --id SESSION_ID
 ```
 
-`workcell session delete` requires a terminal session and refuses a running
-container. It removes the durable session record and only the recorded
-session-owned artifacts. It does not rewrite the shared profile audit log.
+`workcell session delete` requires a session with terminal status. It refuses a
+running session or container. It removes the durable session record and only
+the recorded session-owned artifacts. It does not rewrite the shared profile
+audit log.
 
 `workcell session list --verbose` adds target, workspace transport, Git branch,
 and worktree fields. `workcell session list --parallel` groups sessions by
