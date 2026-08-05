@@ -7,7 +7,7 @@ ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef273415
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.97.1-slim-trixie@sha256:5c6f46a6e4472ab1ca7ba7d494e6677f2f219ebc02f32025d3986f057635ec9c
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.97.1-slim-trixie@sha256:69153971349358535be9821190190f026a761f690c6b58c68a914d14ab2d610a
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
