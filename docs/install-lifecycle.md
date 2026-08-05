@@ -1,145 +1,135 @@
-# Install lifecycle proof
+# Install lifecycle evidence
 
-Workcell's day-two operations — install, upgrade-in-place, rollback, uninstall,
-and `workcell --gc` — each need repeatable evidence that they behave correctly
-and leave no orphaned Workcell-owned state. This page enumerates that evidence
-set and, for each item, states plainly whether it is **CI-automatable** (proven
-by GitHub-hosted runners or `go test`, with no special hardware or secrets) or
-**local-operator certification** (needs real Apple Silicon hardware or a
-genuinely published, cosign-signed release, and is recorded as operator
-evidence rather than faked in CI).
+Workcell checks install, update, rollback, uninstall, and cleanup operations.
+This page separates automated evidence from live operator evidence.
 
-The split is deliberate and honest: hosted runners can prove the non-container
-install-lifecycle mechanics — download, verify, extract, link, PATH, uninstall,
-the `--gc` cleanup contract, upgrade/rollback repointing, and config
-compatibility — but they cannot prove a live containerized launch (that needs
-Apple Silicon with nested virtualization for Colima/Docker), a unit test cannot
-exercise a real keyless Sigstore signature (that needs GitHub OIDC and a
-published release), and a live host-wide `--gc` is not safe to run in an
-automated lane (it reaps the real host's `/tmp` and home cache roots — see the
-remainder note).
+Automated evidence runs without special hardware or repository secrets.
+Live operator evidence needs a published release, Apple Silicon, or a local runtime.
 
-## Release matrix
+## Test matrix
 
-- Non-container mechanics run on the standard `validate` lane
-  (`ubuntu-latest`) via `go test ./...` and `scripts/run-scenario-tests.sh
-  --repo-required`.
-- The `install-verification` lane
-  ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) exercises the
-  bundle installer and Homebrew formula on the GitHub-hosted macOS matrix
-  (`macos-26`, `macos-15`), mirrored at release time in
-  [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+The standard validation lane runs on `ubuntu-latest`.
+It checks Go tests and the required repository scenarios.
 
-## Day-two evidence set
+The CI workflow also runs install checks on these GitHub-hosted Apple Silicon runners:
 
-| Operation | What is proven | Evidence | Class |
-| --- | --- | --- | --- |
-| Install (plain bundle) | `install.sh` links the launcher and man page, the launcher runs, and the Homebrew formula installs/uninstalls | `install-verification` lane | CI-automatable |
-| Verified install (`install-release.sh`) | download → `cosign`-verify fail-closed → extract → handoff to the bundle installer; a bad signature or a digest mismatch aborts **before** any bundle code runs | [`internal/testkit/install_release_e2e_test.go`](../internal/testkit/install_release_e2e_test.go) (offline fixture, stubbed `curl`/`cosign`) | CI-automatable for the orchestration + fail-closed logic; verification against a real published, cosign-signed release is the release/local remainder |
-| Verifier internals | `verify-release-artifact.sh` rejects a tampered artifact, a bad signature, absent material, and absent `cosign`; an acknowledged `--skip-verify` returns a distinct unverified code | [`internal/testkit/release_verify_test.go`](../internal/testkit/release_verify_test.go) | CI-automatable |
-| Upgrade-in-place | re-running the installer from a newer tree repoints the single launcher entry with no duplicate and no orphaned old link, and the new launcher runs | [`tests/scenarios/shared/test-install-lifecycle.sh`](../tests/scenarios/shared/test-install-lifecycle.sh) | CI-automatable |
-| Rollback | re-installing the prior tree repoints the launcher back, proving the operation is symmetric and pins no state forward | same scenario | CI-automatable |
-| Uninstall | the launcher and man symlinks are removed (no orphaned Workcell-owned install links); `~/.config/workcell` is preserved | `install-verification` lane (end to end on a hosted runner) | CI-automatable |
-| `workcell --gc` cleanup contract | the reap logic removes Workcell-owned, pattern-matching stale scratch in a **given** root and preserves unrelated files | [`tests/scenarios/shared/test-install-lifecycle.sh`](../tests/scenarios/shared/test-install-lifecycle.sh) exercises `cleanup_workcell_temp_root` at the function level against an **injected sandbox root**; [`internal/workcellhardening`](../internal/workcellhardening) covers the surfaces `--gc` must reap | CI-automatable |
-| `workcell --gc` end to end | a full live `--gc` cleans stale runtime/cache/temp state without harming user data | recorded operator run | local-operator certification (see safety note below) |
-| Config/schema compatibility | the current binary reads a persisted version-1 session record, and fails closed on an unrecognized future version | [`internal/host/sessions/sessions_test.go`](../internal/host/sessions/sessions_test.go) | CI-automatable |
-| Live launch | a containerized agent session actually launches on the release matrix | recorded launch evidence | local-operator certification (Apple Silicon) |
+- `macos-15`
+- `macos-26`
 
-## Config and schema compatibility
+The release workflow uses the same macOS runner matrix.
+Each macOS job checks the bundle installer, the uninstaller, and the Homebrew formula.
 
-An in-place upgrade only crosses a compatibility boundary if the newer binary
-must read an on-disk format an older install wrote in an older shape. Workcell's
-two runtime-persisted versioned formats are:
+## Evidence by operation
 
-- **Session records** (`~/.local/state/workcell/.../sessions/*.json`) —
-  `version` field, currently `1`
-  ([`internal/host/sessions/sessions.go`](../internal/host/sessions/sessions.go)).
-- **Injection policy** (`~/.config/workcell/injection-policy.toml`) — `version`
-  field, currently `1`.
+| Operation | Evidence | Limit |
+| --- | --- | --- |
+| Install from a local bundle | The macOS jobs check the launcher link, man-page link, Homebrew install, and Homebrew uninstall. | These jobs do not verify a downloaded release signature. |
+| Install a verified release | [`install_release_e2e_test.go`](../internal/testkit/install_release_e2e_test.go) checks download, verification, extraction, and installer handoff. | The test uses local `curl` and `cosign` fixtures. |
+| Verify a release asset | [`release_verify_test.go`](../internal/testkit/release_verify_test.go) checks missing tools, missing files, invalid signatures, and digest mismatches. | A live release check still needs published Sigstore data. |
+| Update an install | [`test-install-lifecycle.sh`](../tests/scenarios/shared/test-install-lifecycle.sh) checks that a new install replaces the launcher link. | The test uses local source trees. |
+| Roll back an install | The same scenario installs the earlier tree again and checks the launcher link. | The test uses local source trees. |
+| Uninstall | The macOS install jobs check the complete uninstall command. | The command removes managed state, profiles, caches, token handoff, and temporary files. |
+| Check cleanup rules | The install scenario checks `cleanup_workcell_temp_root` with an isolated root. | This check does not run host-wide cleanup. |
+| Run host-wide cleanup | A live `workcell --gc` run checks real Workcell state roots. | First, preserve all Workcell state and evidence that must remain. |
+| Read stored data | Session tests read version 1 records and reject an unknown version. | Workcell has not shipped a data migration. |
+| Start a runtime session | The strict and compatibility launch-smoke scenarios check real containers. | GitHub-hosted macOS runners do not provide the required nested virtualization. |
 
-**No versioned on-disk format crosses a boundary yet:** only version 1 has ever
-shipped, so an in-place upgrade to a newer binary reads the same version-1
-records it writes — there is no older-shape-to-newer-binary migration to
-perform today. Both formats validate strictly against their known version and
-reject anything else, so the boundary is *fail-closed*, not silently
-misinterpreted. Two tests pin this state as a contract:
+## Stored-format compatibility evidence
 
-- The current binary reads a persisted version-1 session record correctly (the
-  forward-read baseline for upgrade).
-- The current binary rejects a version-2 record with an explicit
-  `unsupported session record version` error.
+The install and update evidence on this page covers two versioned host formats:
 
-Together these ensure any future format bump must be a **deliberate, migrated,
-and tested** step — a silent break or an accidental version bump fails CI. The
-build-time-only formats (control-plane manifest, workflow-lane and provider-bump
-manifests) are validated at build/CI time and are not read across a runtime
-upgrade, so they are out of scope for day-two compatibility.
+- Session records use `version = 1`.
+- The injection policy uses `version = 1`.
 
-## Local-operator / published-release remainder
+Only version 1 has shipped.
+The current binary reads version 1 and rejects an unknown version.
+No released Workcell version needs a format migration.
 
-These are intentionally **not** faked in CI and are certified by the operator
-with recorded evidence:
+This list is not a complete inventory of versioned Workcell state.
+For example, signed audit records use a separate version 1 seal sidecar.
+Session verification checks that sidecar.
+See [signed session audit records](signed-session-audit-records.md).
 
-- **End-to-end `install-release.sh` against a genuinely published, cosign-signed
-  release** over the network (Sigstore/Fulcio/Rekor). The fixture test proves
-  the orchestration and fail-closed decisions offline; the real keyless
-  signature check against a real release tag is certified at release time.
-- **A live containerized launch** on Apple Silicon macOS (hosted runners lack
-  the nested virtualization Colima/Docker needs).
-- **A full live `workcell --gc`** across real host cache layouts. A live `--gc`
-  cannot be safely automated in the repo-required scenario: it reaps the
-  hard-coded `/tmp` scratch root and the passwd-derived real-home cache roots,
-  and neither can be redirected to a sandbox — `resolve_workcell_real_home`
-  prefers the passwd identity over `$HOME` (and rejects a mismatched
-  `WORKCELL_DOCKER_REAL_HOME` override), and the `/tmp` root has no override. So
-  a live `--gc` in CI could delete a developer's or runner's real Workcell
-  temp/cache state. The scenario therefore proves the reap **contract** at the
-  function level against an injected sandbox root, and the full live run is
-  operator-certified. (`scripts/uninstall.sh` reaps `/tmp` the same way, which
-  is why its end-to-end coverage lives in the hosted `install-verification`
-  lane, not the repo-required scenario.)
-- **A real cross-minor-version data migration**, which only becomes testable
-  once a second on-disk format version ships.
+Installed updates do not read build manifests.
+Validation reads those manifests during builds and repository checks.
 
-### Certification record
+## Cleanup safety
 
-Recorded local-operator certification on the maintainer host
-(macOS 26.5.2, `arm64`; Colima Docker 29.2.1; Docker Desktop 29.5.3):
+Preserve incident evidence before you run `workcell --gc` or the uninstaller.
+Follow the [incident response runbook](incident-response.md) for a suspected boundary failure.
 
-- **Verified install against the published, cosign-signed `v1.0.0-rc.2`
-  release** (2026-07-13): `install-release.sh --version v1.0.0-rc.2
-  --attestation` run end-to-end into an isolated `HOME` completed exit `0` — a
-  single command that downloaded the real release bundle, keyless-verified it
-  against the release signing identity (`Verified OK`, bundle
-  `sha256:d1cc3bba197ab09b195ad6a98b674d79299d6c9eca2a151798127a9f0a83dba9`),
-  passed the GitHub attestation gate that `--attestation` requires
-  (`GitHub attestation verified`), then extracted and installed a `workcell`
-  that reports `workcell v1.0.0-rc.2`. A **negative control** — the same bundle
-  with appended bytes, checked via `verify-release-artifact.sh` — was rejected
-  fail-closed with `digest mismatch` (the cosign signature on `SHA256SUMS`
-  still verified; the tampered tarball digest did not match the signed value),
-  confirming a tampered bundle cannot reach the installer.
-- **Live `workcell --gc`** from the verified `v1.0.0-rc.2` bundle completed
-  exit `0`, reporting the stale injection/session-audit/runtime-cache/
-  build-cache/temp state it cleaned.
-- **Live containerized launch on Apple Silicon** is certified by the two
-  boundary launch-smoke scenarios run on this host in the same session:
-  `tests/scenarios/shared/test-agent-launch-smoke.sh`
-  (`macos/arm64/local_vm/colima/strict`) and
-  `tests/scenarios/shared/test-docker-desktop-launch-smoke.sh`
-  (`macos/arm64/local_compat/docker-desktop/compat`), both passing against the
-  real runtime image on this hardware.
+For a Homebrew formula install, remove the formula first:
 
-## Relationship to forced consumer verification (CI threat model gap 1)
+```bash
+brew uninstall workcell
+```
 
-[ci-threat-model.md](ci-threat-model.md) tracks, as known gap 1, that verified
-install — now the *documented default* — is not yet *forced* across all
-documented install paths. The end-to-end fixture proof above closes the
-CI-automatable half of that gap's "exercise `install-release.sh` end to end"
-requirement — a tampered or unsigned bundle cannot reach the bundle installer —
-and the "against a real published release" half is now done (the Certification
-record above: `install-release.sh --attestation` against the published
-`v1.0.0-rc.2`). Fully closing the gap now requires only making verification the
-*forced* default across all flows and shipping a standalone verified installer
-bootstrap (so consumers need not clone the repo to obtain a trusted
-`install-release.sh`).
+Then use an extracted release bundle or a source checkout.
+From its root, preview every runtime-state removal target:
+
+```bash
+./scripts/uninstall.sh --dry-run
+```
+
+Review each path before you run `./scripts/uninstall.sh` without `--dry-run`.
+The uninstaller removes these Workcell-owned items:
+
+- launcher and man-page links
+- `~/.local/state/workcell`
+- managed Colima profiles and related data
+- Workcell caches and token handoff data
+- Workcell temporary files
+
+The uninstaller preserves `~/.config/workcell` and user-specified log files.
+It also preserves shared host packages and unrelated Colima profiles.
+
+`workcell --gc` removes stale cache, temporary, session-audit, and runtime state.
+It does not provide a dry-run option.
+It can remove Workcell state from another local run.
+Do not run host-wide cleanup as a repository scenario.
+
+An install, update, or rollback does not restore deleted state.
+
+## Published v1.0.2 record
+
+Release `v1.0.2` is the first published stable Workcell 1.0 release.
+The `Release` workflow run `30974305124` completed successfully on 2026-08-05.
+
+That run completed these install jobs:
+
+- `Release install verification (macos-15)`
+- `Release install verification (macos-26)`
+
+GitHub published an immutable release with 18 assets.
+Each asset has a GitHub SHA-256 digest.
+
+On 2026-08-05, the maintainer ran the shipped verified installer against `v1.0.2`.
+The installer source matched the `v1.0.2` tag.
+The run used an isolated home and `--no-install-deps`.
+
+The live run proved these results:
+
+- Cosign verified `SHA256SUMS` against the release workflow identity.
+- The bundle digest matched the signed value `c2a34aa1cf2c2119633cd0f04fc0470520ac44d1e22e1d74f409ff696fc38d1f`.
+- `gh attestation verify` accepted the source-bundle attestation.
+- The installer created the launcher and man-page links.
+
+The installed launcher reported `workcell v1.0.1`.
+This output does not match the `v1.0.2` release tag.
+The `v1.0.2` source bundle starts its changelog at `v1.0.1`.
+The launcher reads its version from that first changelog entry.
+
+Treat this result as a shipped version output defect.
+Do not use `workcell --version` to prove the `v1.0.2` bundle tag.
+Use the release tag, signed checksum, and verified bundle digest for that proof.
+
+## Consumer-verification gap
+
+The recommended release install verifies the bundle before extraction.
+Verification is not mandatory for every install path.
+
+An operator can run `install.sh` from a source tree or a manually downloaded bundle without signature verification.
+Also, the release does not publish `install-release.sh` as a separate asset.
+The operator must get that script from the repository.
+
+See [CI/CD threat model](ci-threat-model.md) for the tracked risk.

@@ -1,98 +1,109 @@
-# CI and Release Artifact Retention Policy
+# CI and release artifact retention policy
 
-This page records how long each GitHub Actions workflow keeps its uploaded
-artifacts and why, and how to verify a release after those artifacts expire.
+GitHub Actions keeps each workflow artifact for a fixed time.
+This page lists those times and their purpose.
 
-The machine-enforced source of truth is
-[`policy/retention-policy.json`](../policy/retention-policy.json), which binds
-each artifact name to its required `retention-days`. The
-`workcell-citools check-retention-policy` validator (run by
-`scripts/check-workflows.sh` in both local `pre-merge`/`pr-parity` and the
-`security.yml` lane) asserts that every `actions/upload-artifact` step sets an
-explicit `retention-days` (so no artifact silently inherits the repository
-default) and that each uploaded artifact's retention matches the policy exactly.
-Binding per artifact name — rather than per workflow — means moving a retention
-value from one artifact to another is still caught. The table below mirrors that
-policy for readability.
+[`policy/retention-policy.json`](../policy/retention-policy.json) is the source of truth.
+`workcell-citools check-retention-policy` checks the policy against all workflow files.
+
+The check requires an explicit `retention-days` value for each upload.
+It also requires the exact policy value for each artifact name.
+The local `pr-parity` gate and the `Security` workflow run this check.
 
 ## Retention by artifact
 
-| Workflow | Artifact | retention-days |
-|---|---|---|
-| bench.yml | exec-guard-bench-results | 14 |
-| ci.yml | workcell-ci-install-candidate | 7 |
-| fuzz.yml | fuzz-reproducers | 14 |
-| fuzz.yml | rust-fuzz-reproducers | 14 |
-| fuzz.yml | rust-fuzz-lockfile | 14 |
-| release.yml | workcell-release-preflight | 90 |
-| release.yml | workcell-release-install-candidate | 90 |
-| release.yml | workcell-release-artifacts | 7 |
-| security.yml | zizmor-sarif | 5 |
-| scorecard.yml | scorecard-sarif | 5 |
-| upstream-refresh.yml | upstream-refresh-candidate | 7 |
+| Workflow | Artifact | Days |
+| --- | --- | ---: |
+| `bench.yml` | `exec-guard-bench-results` | 14 |
+| `ci.yml` | `workcell-ci-install-candidate` | 7 |
+| `fuzz.yml` | `fuzz-reproducers` | 14 |
+| `fuzz.yml` | `rust-fuzz-reproducers` | 14 |
+| `fuzz.yml` | `rust-fuzz-lockfile` | 14 |
+| `release.yml` | `workcell-release-preflight` | 90 |
+| `release.yml` | `workcell-release-install-candidate` | 90 |
+| `release.yml` | `workcell-release-artifacts` | 7 |
+| `security.yml` | `zizmor-sarif` | 5 |
+| `scorecard.yml` | `scorecard-sarif` | 5 |
+| `upstream-refresh.yml` | `upstream-refresh-candidate` | 7 |
 
 ## Rationale
 
-- **`release.yml` — 90 and 7 days.** The release-preflight and
-  release-install-candidate artifacts are the buyer- and incident-facing
-  evidence for a tagged release (build inputs, install candidates, manifests);
-  they are kept **90 days** to give incident response and post-release audits a
-  usable window. The `workcell-release-artifacts` upload is kept at **7 days**
-  because every file in it is also published as a permanent GitHub Release
-  asset in the next step, so a long-lived workflow-artifact copy would be pure
-  redundant storage.
-- **`bench.yml` — 14 days.** The `exec-guard-bench-results` upload is the
-  Markdown report from a scheduled or on-demand microbenchmark run (the
-  exec-guard allow-path overhead and its cross-run stability). It is triage and
-  transcription evidence, not integrity provenance: the durable copy is the
-  reviewed baseline in [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md).
-  Fourteen days spans the weekly cadence with margin, matching the sibling
-  `fuzz.yml` evidence artifacts.
-- **`ci.yml` — 7 days.** The CI install candidate is a transient
-  per-PR/per-push build; it is only useful while the change is in flight, and
-  the durable release evidence is produced by `release.yml`.
-- **`fuzz.yml` — 14 days.** Two crash artifacts are uploaded only when a
-  scheduled fuzz run finds a crash: `fuzz-reproducers` carries the Go failing
-  inputs (`testdata/fuzz/<Target>/<hash>`), and `rust-fuzz-reproducers` carries
-  the Rust cargo-fuzz crash inputs (`fuzz/artifacts/<target>/<hash>`), each
-  needed to reproduce and fix the defect. Fourteen days spans the weekly cadence
-  with margin, so a crash from one run is still retrievable for triage after the
-  next run; the durable copy is the reproducer once committed as a regression
-  seed (see [fuzzing.md](fuzzing.md)). The `rust-fuzz-lockfile` artifact carries the
-resolved `fuzz/Cargo.lock` from each run; it is the committed lock's drift
-evidence and is kept the same **14 days** as the reproducers.
-- **`security.yml` — 5 days.** The `zizmor` audit job itself is the enforcement
-  gate: it fails the workflow on any finding. The `zizmor-sarif` upload is a
-  short-lived supplementary export of that run and is **not** ingested into
-  GitHub code scanning, so there is no durable copy after it expires — 5 days is
-  enough to inspect a specific run's SARIF; the durable signal is the pass/fail
-  gate and the workflow logs.
-- **`scorecard.yml` — 5 days.** The Scorecard SARIF is uploaded to GitHub code
-  scanning (`github/codeql-action/upload-sarif`), which is the authoritative,
-  durable copy; the 5-day `scorecard-sarif` artifact is only a short-lived
-  convenience copy of the same data.
-- **`upstream-refresh.yml` — 7 days.** The `upstream-refresh-candidate` bundle
-  (`patch`, `diffstat`, `metadata.json`) is an advisory operator signal for a
-  reviewed upstream-pin refresh, not integrity evidence; the authoritative
-  refresh PR is created later on the host. Seven days covers the review window
-  for a candidate before it is regenerated.
+### Release artifacts
 
-## Verifying a release after artifacts expire
+`workcell-release-preflight` contains four preflight manifests.
+The manifests bind build inputs, the control plane, the source bundle, and runtime images.
 
-Uploaded workflow artifacts are not the durable provenance record. After they
-expire, a release can still be verified from permanent sources:
+`workcell-release-install-candidate` contains the source bundle and Homebrew formula used by the macOS install jobs.
+Workcell keeps both artifacts for 90 days to support release review and incident checks.
 
-- **GitHub attestations.** When the reviewed hosted controls enable them,
-  release artifacts carry GitHub-native build provenance attestations. Verify a
-  downloaded artifact with `gh attestation verify <file> --repo omkhar/workcell`
-  (or the equivalent API), independent of whether the workflow artifact still
-  exists.
-- **Sigstore / Rekor transparency log.** The image, source bundle, Homebrew
-  formula asset, published image digest, checksums, build-input manifest,
-  control-plane manifest, builder-environment manifest, and both SBOMs are
-  signed with keyless Sigstore/Cosign. Those signatures are recorded in the
-  public Rekor transparency log, which is permanent — `cosign verify` and Rekor
-  lookups remain available long after any workflow artifact has aged out.
+`workcell-release-artifacts` contains the sealed 18-asset publication set.
+The final job publishes the same files as immutable GitHub release assets.
+Workcell keeps the workflow copy for seven days.
 
-See [provenance.md](provenance.md) and [github-workflows.md](github-workflows.md)
-for the full signing and attestation surface.
+### CI install artifact
+
+`workcell-ci-install-candidate` contains a temporary bundle, formula, and checksum data.
+The Apple Silicon install jobs use it during one CI run.
+Workcell keeps it for seven days.
+
+### Benchmark artifact
+
+`exec-guard-bench-results` contains the benchmark report.
+Workcell keeps it for 14 days, which covers the weekly schedule.
+
+The reviewed benchmark page is the durable baseline.
+See [syscall shim benchmarks](syscall-shim-benchmarks.md).
+
+### Fuzz artifacts
+
+The Go and Rust reproducer artifacts exist only after a crash.
+They contain inputs that reproduce that crash.
+
+`rust-fuzz-lockfile` contains the resolved fuzz lock file.
+Workcell keeps all three artifacts for 14 days.
+
+First, examine each crash in a private workspace.
+Remove credentials, personal data, and unrelated private content.
+Follow [`SECURITY.md`](../SECURITY.md#reporting) if the crash can affect security.
+Do not commit a sensitive reproducer before the fix or approved disclosure.
+
+See [fuzzing](fuzzing.md) for the triage process.
+
+### Security artifacts
+
+`zizmor-sarif` is a short-term copy of the workflow audit result.
+The `zizmor` job fails on each finding.
+GitHub code scanning does not receive this SARIF file.
+
+`scorecard-sarif` is a short-term copy of the Scorecard result.
+The workflow also sends that result to GitHub code scanning.
+
+Workcell keeps both convenience copies for five days.
+
+### Upstream refresh artifact
+
+`upstream-refresh-candidate` contains a patch, a diffstat, and metadata.
+It is advisory input for a host-side refresh PR.
+It is not release provenance.
+
+Workcell keeps the candidate for seven days.
+The scheduled workflow can publish a new candidate.
+The earlier artifact remains until GitHub deletes it or its retention time ends.
+
+## Verify a release after workflow artifacts expire
+
+Workflow artifacts are not the durable release record.
+Use these sources after a workflow artifact expires:
+
+- Download the immutable release assets and their Sigstore bundles.
+- Verify `SHA256SUMS` against its pinned release workflow identity.
+- Verify each downloaded release asset against the signed checksum list.
+- Use `gh attestation verify` for a subject that has a GitHub attestation.
+- Use `cosign verify` for the runtime image in GHCR.
+
+GitHub stores artifact attestations separately from workflow artifacts.
+GHCR stores the image signature and image attestations with the image.
+The public Rekor log records the Cosign signature entries.
+
+See [provenance](provenance.md) for exact verification commands.
+See [GitHub workflow design](github-workflows.md) for the workflow controls.
