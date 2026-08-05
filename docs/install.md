@@ -14,7 +14,10 @@ release bundle and its signed `SHA256SUMS` file. It verifies the signature and
 bundle digest before it runs bundle code. It then extracts the bundle and runs
 `scripts/install.sh`.
 
-First, import and confirm the maintainer key from
+Install Git, GnuPG, and [`cosign`](https://github.com/sigstore/cosign) before
+you verify the tag. On macOS, use `brew install cosign git gnupg`.
+
+Import the maintainer signing key. Confirm its fingerprint against
 [`SECURITY.md`](../SECURITY.md#signing-key). Then use the signed release tag:
 
 ```bash
@@ -27,11 +30,9 @@ git tag -v vX.Y.Z
 The `git tag -v` command verifies the pre-verification installer before you run
 it. Do not use the installer from an arbitrary source checkout.
 
-Verification requires [`cosign`](https://github.com/sigstore/cosign) on `PATH`.
-Install it with `brew install cosign`. The script checks the release-workflow
-OIDC identity and issuer. It checks the Sigstore bundle and Rekor entry. Then it
-checks the bundle digest in the verified `SHA256SUMS` file. These checks automate
-the manual steps in
+The script checks the release-workflow OIDC identity and issuer. It checks the
+Sigstore bundle and Rekor entry. Then it checks the bundle digest in the
+verified `SHA256SUMS` file. These checks automate the manual steps in
 [provenance.md](provenance.md#verifying-release-assets).
 
 The script fails closed. It stops for a missing tool or verification file. It
