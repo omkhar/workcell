@@ -126,6 +126,36 @@ Treat this result as a shipped version output defect.
 Do not use `workcell --version` to prove the `v1.0.2` bundle tag.
 Use the release tag, signed checksum, and verified bundle digest for that proof.
 
+## Certification record
+
+On 2026-07-13, the maintainer completed these checks for the published
+`v1.0.0-rc.2` release on an Apple Silicon host with macOS 26.5.2.
+The Colima scenario used Docker 29.2.1.
+The Docker Desktop scenario used Docker 29.5.3.
+
+The certification completed these checks:
+
+- `install-release.sh --version v1.0.0-rc.2 --attestation` completed with
+  exit code 0 in an isolated home.
+- Cosign verified the published `SHA256SUMS` signature against the release
+  workflow identity and reported `Verified OK`.
+- The verified bundle digest was
+  `d1cc3bba197ab09b195ad6a98b674d79299d6c9eca2a151798127a9f0a83dba9`.
+- `gh attestation verify` accepted the source-bundle attestation.
+- The installed launcher reported `workcell v1.0.0-rc.2`.
+- A negative control appended data to the bundle.
+  The verifier rejected that bundle with `digest mismatch` before installation.
+- A live `workcell --gc` command completed with exit code 0 and reported the
+  Workcell state that it removed.
+- `tests/scenarios/shared/test-agent-launch-smoke.sh` passed for
+  `macos/arm64/local_vm/colima/strict`.
+- `tests/scenarios/shared/test-docker-desktop-launch-smoke.sh` passed for
+  `macos/arm64/local_compat/docker-desktop/compat`.
+
+This record is historical release evidence.
+It does not certify release `v1.0.2`.
+Use the published `v1.0.2` record for current release evidence.
+
 ## Consumer-verification gap
 
 The recommended release install verifies the bundle before extraction.
