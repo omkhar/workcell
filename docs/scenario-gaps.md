@@ -1,64 +1,68 @@
 # Scenario Test Coverage Gaps
 
-This file tracks the main places where Workcell is documented or designed but
-not yet covered as deeply as the core secretless validation path.
+This page lists shipped surfaces that have less test coverage than the core
+secretless path.
 
-## Highest-value gaps
+## Highest-priority gaps
 
 ### Full macOS boundary proof
 
-The strongest local claim depends on the actual Colima plus
-Virtualization.Framework boundary. GitHub-hosted runners cannot prove that, so
-the best evidence today is still the local macOS certification lane:
-`./scripts/run-scenario-tests.sh --secretless-only --certification-only`.
+The macOS Colima runtime boundary depends on Colima and
+Virtualization.framework. GitHub-hosted runners cannot prove this boundary.
+The local certification lane provides the current evidence:
 
-### End-to-end authenticated coverage for every provider
+```bash
+./scripts/run-scenario-tests.sh --secretless-only --certification-only
+```
 
-Provider-authenticated smoke (`scripts/provider-e2e.sh`) is available for
-local use, but it requires a real macOS+Colima environment and live provider
-credentials and is not run in CI. Not every documented auth path has full
-automated end-to-end coverage across all providers.
+### Authenticated tests for each provider
 
-### Lower-assurance transition coverage
+`scripts/provider-e2e.sh` runs authenticated provider tests. It requires an
+Apple Silicon macOS host, Colima, and live provider credentials. CI does not run
+this path. Some documented authentication paths do not have complete live tests.
 
-Some downgrade paths are validated statically or by smoke tests but still need
-more explicit end-to-end scenarios, especially:
+### Lower-assurance transitions
 
-- prompt autonomy audit fields
-- package-mutation downgrade behavior
-- `breakglass` posture and audit output
+No end-to-end scenario completes these checks:
 
-## Provider-specific gaps
+- Start a prompt-autonomy session and verify its audit fields through session
+  finalization.
+- Change packages in a mutable container and verify the final assurance record.
+- Start a `breakglass` session and verify its posture and audit output.
+
+## Provider gaps
 
 ### Codex
 
-- more end-to-end coverage around rule mutability transitions
-- more explicit live coverage of host-side publication handoff
+- No end-to-end scenario changes rule mutability and verifies the final audit
+  record.
+- No live scenario completes the host-side publication handoff from a managed
+  session.
 
 ### Claude
 
-- deeper authenticated coverage for imported MCP state and prompt-autonomy
-  downgrade labeling
+- No authenticated scenario imports MCP state and verifies the runtime state.
+- No end-to-end scenario changes prompt autonomy and verifies its audit label.
 
 ### Gemini
 
-- more end-to-end coverage for Gemini OAuth reuse
-- more end-to-end coverage for Vertex plus `gcloud_adc`
-- more coverage for `breakglass` folder-trust restoration
+- No end-to-end scenario reuses cached Gemini OAuth and completes a provider
+  request.
+- No end-to-end scenario combines Vertex credentials with `gcloud_adc` and
+  completes a provider request.
+- No end-to-end scenario verifies folder-trust restoration after `breakglass`.
 
-### Planned and certification-only provider coverage
+### Copilot and Antigravity
 
-- Copilot live staged-credential certification remains certification-only and
-  outside repo-required CI
-- Antigravity adapter, auth, bootstrap, unsafe-argument, and control-plane
-  seeding coverage after implementation starts
-- Antigravity live staged-credential certification before any support claim
+- Copilot live staged-token certification stays outside repo-required CI.
+- Antigravity has no supported adapter, authentication input, bootstrap path,
+  control plane, scenario evidence, or live certification.
+- Complete Antigravity live certification before any support claim.
 
-## Why these gaps remain acceptable for now
+## Current evidence boundary
 
-The core repo-required path is covered by invariants, smoke tests, deterministic
-repo validation, reproducibility checks, and tagged release preflight. The open
-gaps are mostly at the edges: live-provider auth, local macOS proof, and
-explicit lower-assurance transitions. Copilot deterministic adapter evidence is
-covered; Antigravity remains a planned provider-parity track and unsupported
-until its adapter evidence lands.
+Repository invariants, smoke tests, deterministic scenarios, reproducibility
+checks, and release preflight cover the core path. The remaining gaps apply to
+live provider authentication, local macOS proof, and lower-assurance changes.
+Copilot has deterministic adapter evidence and a live certification gate.
+Antigravity remains unsupported.
