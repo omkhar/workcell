@@ -363,7 +363,7 @@ Create a signed release commit:
 
 ```sh
 git add -A
-git commit -S -m "release: ${VERSION}"
+git commit -S -m "^D Prepare ${VERSION} release (local release checks pass; user-visible release record)"
 ```
 
 ## 5. Publish the release PR from the host
@@ -377,7 +377,7 @@ local parity gate:
   --branch "${RELEASE_BRANCH}" \
   --title "${RELEASE_TITLE}" \
   --body "Prepare ${VERSION} release." \
-  --commit-message "release: ${VERSION}"
+  --commit-message "^D Prepare ${VERSION} release (local release checks pass; user-visible release record)"
 ```
 
 In `review-gated` mode, stop with the first checkpoint packet before running

@@ -31,8 +31,8 @@ The deterministic phase breakdown lives in
 Cross-cutting engineering, security-depth, and adoption improvements from the
 2026-07 repository review live in
 [Engineering And Ecosystem Improvement Tracks](#engineering-and-ecosystem-improvement-tracks)
-below. The release program that sequences those tracks, the remaining feature
-work, and the 1.0 criteria lives in [Path To 1.0](#path-to-10) below.
+below. The [1.0 Program Record](#10-program-record) contains the historical
+release criteria and deferred work.
 
 ## Product Direction
 
@@ -88,122 +88,47 @@ work, and the 1.0 criteria lives in [Path To 1.0](#path-to-10) below.
   adapter is a committed follow-on provider-parity track behind the same
   Tier 1 evidence bar (see [docs/provider-matrix.md](docs/provider-matrix.md)).
 
-## Path To 1.0
+## 1.0 Program Record
 
-Workcell 1.0 is a contract-stability and assurance claim, not a
-platform-reach claim. 1.0 means: the public operator contract is frozen under
-semantic versioning, the reviewed macOS boundary is certified and audit-ready,
-the supported provider set covers the current agent ecosystem, day-two
-operations are proven, and the release path meets the supply-chain bar
-enterprise buyers require. Platform expansion — Linux operator hosts, Windows,
-managed workstations — continues after 1.0 through the phase gates below and
-does not gate 1.0.
+Workcell published `v1.0.2` on 2026-08-05. This release completed the 1.0
+program. The `v1.0.0` and `v1.0.1` tags did not produce published releases.
 
-The competitive context shaping this bar: microVM-per-session runtimes with
-warm starts and per-session egress allowlists are now the mainstream
-comparison point; OS-level sandbox competitors have shipped bypass CVEs;
-repo-defined MCP servers are a proven one-keypress RCE class across three of
-the four currently supported provider CLIs; and enterprises evaluate agent
-runtimes
-against OWASP agentic guidance, SIEM-ready audit export, and SLSA supply-chain
-levels. Workcell's 1.0 bar leans into its differentiators — the strongest
-local boundary, staged credentials, host-side signing, signed evidence, and
-honest support labels — while closing the speed and parallelism gaps
-competitors treat as table stakes and surfacing controls it already ships,
-such as per-session egress allowlisting.
+The 1.0 program froze the public operator contract. It certified the reviewed
+macOS boundary and completed the reviewed release process. It did not add
+Linux, Windows, or managed workstation support.
 
 ### 1.0 Release Criteria
 
-1.0 ships when all of the following hold. Item identifiers refer to the
-improvement tracks below; `G` items are the 1.0 contract-and-operations track.
+The final review confirmed these results:
 
-1. Contract stability: CLI flags and stable output lines, exit codes, the
-   injection-policy schema, and session-record and export formats are
-   versioned, frozen, and covered by a published deprecation policy (G1); the
-   manpage and CLI reference are complete for the frozen surface.
-2. Boundary assurance: egress policy depth and target parity (A1),
-   repo-defined MCP and
-   agent-config containment (A2), hardening-profile conformance (A6),
-   expanded fuzzing (A3), documented unsafe-code invariants (A4), and signed
-   session audit records (A5) are landed. **[Amended 2026-07-09, recorded
-   maintainer decision:]** the third-party boundary audit (B7) is **deferred to
-   post-1.0** rather than required to be scheduled at 1.0. 1.0 boundary
-   assurance rests on the landed A1–A6 hardening plus the documented threat
-   model and invariants; the external audit remains a post-1.0 commitment (see
-   the phase table). Tradeoff recorded honestly: 1.0 ships without independent
-   third-party validation of the boundary, reflecting current maintainer
-   resourcing (no audit sponsor/funding).
-3. Platform: `macos/arm64` strict (Colima) and compat (Docker Desktop) are
-   certified on the release matrix; the Apple `container` backend decision
-   (C1) is recorded either way; native parallel sessions (C3) work on the
-   strict path. **[Amended 2026-08-01, recorded maintainer decision:]** C2
-   certification and its 1.0 latency target are deferred to post-1.0. The
-   generic startup driver remains benchmark-only because caller-provided hooks
-   cannot prove lifecycle state; the reviewed dedicated-certifier design was
-   rejected rather than broaden the launcher with destructive controls.
-4. Providers: the Tier 1 set covers the current agent ecosystem — Codex,
-   Claude Code, GitHub Copilot CLI, Gemini, and Google Antigravity CLI —
-   each through the same Tier 1 evidence bar. If upstream instability blocks
-   Antigravity live certification, 1.0 may ship with the fail-closed scaffold
-   plus an explicit recorded scope decision instead of a support claim.
-5. Operations: install, upgrade, uninstall, rollback, `--gc`, and support
-   bundles (G2) are proven end to end on the release matrix (G3).
-6. Release assurance: mutation-score gating (B3) and SLSA L3 gaps closed or
-   explicitly dispositioned (B1) are in place. **[Amended 2026-07-09, recorded
-   maintainer decision:]** dual-control releases (B2) are **deferred to
-   post-1.0** because Workcell has no second trusted maintainer today. For
-   1.0, the documented single-maintainer controls in
-   [`docs/releasing.md`](docs/releasing.md) are the compensating release
-   control: signed commits, protected `main` with strict CI, required release
-   approval, admin-merge audit trail, and public single-maintainer release
-   comments recording the version, exact head SHA, timestamp, and merge path.
-   Tradeoff recorded honestly: 1.0 has no independent second approver.
-   **[Amended 2026-07-09, recorded maintainer decision:]** the automated
-   real-boundary certification lane (B6, a self-hosted Apple-Silicon CI runner)
-   and the OpenSSF Best Practices badge (B7 part 1) are **deferred to post-1.0**
-   — no funding or hosting for a self-hosted runner is available, and the B7
-   track is deferred with the audit (criterion 2). In place of the automated B6
-   lane, 1.0 requires **local-operator certification of both launch boundaries
-   (strict Colima + compat Docker Desktop) on the maintainer's Apple-Silicon
-   host**, recorded in the readiness review. Tradeoff recorded honestly: the
-   live Colima/Apple-Silicon boundary is exercised by the maintainer locally,
-   not continuously in hosted CI (which runs only a Docker smoke lane on a
-   `ubuntu-latest` runner).
-7. Adoption surface: tiered docs (E1), architecture diagrams (E2), and the
-   support-tier and diagnostics guides (E3) are live. **[Amended 2026-07-09,
-   recorded maintainer decision:]** the rendered docs site with demos and
-   externally published reproducible benchmarks (E6) is **deferred to post-1.0**.
-   1.0 ships with in-repo markdown docs. C2 is deferred to post-1.0 and the
-   generic benchmark is not certification evidence. Tradeoff recorded honestly:
-   1.0 ships without the external rendered site, demo package, or a certified
-   latency claim.
-8. Readiness review: a cross-lens 1.0 gate review (G4) — product,
-   enterprise/security, adapter-maintainer, validation, docs/contract, and
-   release lenses — records no unresolved P0/P1 findings, and every support
-   matrix row matches shipped behavior.
+1. Workcell froze the v1 command and data contracts.
+2. Workcell shipped the A1 through A6 boundary controls.
+3. Workcell certified strict Colima and Docker Desktop compatibility on macOS.
+4. Workcell supported Codex, Claude Code, Copilot CLI, and Gemini.
+5. Workcell proved install, upgrade-in-place, rollback, uninstall,
+   `workcell --gc`, and support bundle operations.
+6. Workcell used mutation tests, signed history, provenance, and immutable
+   release controls.
+7. Workcell shipped the in-repository user and assurance documents.
+8. The G4 review had no open P0 or P1 findings.
 
-The completed G4 evidence package and its GO checklist live in
-[`docs/1.0-readiness-review.md`](docs/1.0-readiness-review.md); the
-B6 (item 6) real-boundary certification lane disposition options are in
-[`docs/b6-disposition-options-draft.md`](docs/b6-disposition-options-draft.md).
-**Recorded maintainer decisions (2026-07-09):** B2 — defer dual-control
-releases because no second trusted maintainer exists; use the single-maintainer
-controls in [`docs/releasing.md`](docs/releasing.md) for 1.0 (criterion 6,
-amended above). B6 — defer the automated Apple-Silicon runner (no funding);
-certify both boundaries by the local-operator discipline on the maintainer's
-host (criterion 6, amended above). B7 — defer the third-party boundary audit and
-OpenSSF badge to post-1.0 (criterion 2, amended above). E6 — defer the rendered
-docs site, demos, and external benchmark publication. C2 — defer certification
-and its latency target to post-1.0; preserve the generic driver as benchmark-only
-after rejecting the broader dedicated-certifier design (criteria 3 and 7 amended
-above). The 2026-08-04 readiness review records the completed checklist, exact
-evidence identities, scope decisions, and zero unresolved P0/P1 findings.
+The final G4 record is in
+[`docs/1.0-readiness-review.md`](docs/1.0-readiness-review.md). It contains the
+exact evidence and each deferred item.
+
+The maintainer deferred these items to work after 1.0:
+
+- a second release approver
+- an automated Apple Silicon boundary lane; see the
+  [B6 decision record](docs/b6-disposition-options-draft.md)
+- a third-party boundary audit and an OpenSSF badge
+- a rendered document site and external demos
+- a certified session start time claim
+- Google Antigravity CLI support
 
 ### Milestone Train
 
-Milestones are sequencing buckets on the existing release cadence; versions
-are indicative and may split. Per-item steps, exit gates, and dependencies
-live in
+These historical milestones led to 1.0. The detailed record is in
 [`docs/improvement-tracks-implementation-plan.md`](docs/improvement-tracks-implementation-plan.md).
 
 | Milestone | Theme | Contents |
@@ -213,11 +138,10 @@ live in
 | v0.14 | Platform, speed, and adoption | C1, B8, B9, D3 (start), D4, E5, E7, G2, Antigravity Tier 1 adapter track |
 | v0.15 | Enterprise evidence and release assurance | A5, A6, C3, D5, D7, F1, G3 |
 | v1.0 | Freeze and gate | G1 (freeze), G4, D3 (complete), D6 |
-| post-1.0 | Reach expansion | Phases 13–19 remainder, C2, C4, B2 (dual-control releases), B6 (automated real-boundary lane), B7 (badge + audit completion), E6 (rendered docs site + external demos), F2 |
+| post-1.0 | Reach expansion | Phases 13–19, C2, C4, B2, B6, B7, E6, F2 |
 
-Phase 13 (Linux `amd64` `local_compat` certification candidate) may land
-before or after 1.0 depending on certification evidence; it does not gate
-1.0 and 1.0 creates no Linux claim.
+Phase 13 is the next host support candidate. It does not create a Linux
+support claim.
 
 ## Next Provider And Target Phases
 
@@ -285,11 +209,9 @@ Exit gates:
 
 ### Provider Parity Phase: GitHub Copilot CLI Tier 1 Adapter Parity
 
-Status: documentation and contract surfaces now describe GitHub Copilot CLI as
-a Tier 1 provider adapter. Live provider-authenticated certification of a
-non-destructive `copilot -p` launch with staged credentials remains required
-before signing or publishing changes that promote or materially alter the
-Copilot support claim.
+Status: complete. Workcell supports GitHub Copilot CLI as a Tier 1 provider.
+The release process requires live provider certification before a material
+support claim change.
 
 Exit gates:
 
@@ -461,7 +383,7 @@ diagnostics, and (where applicable) live certification travel with the change.
 Horizons: `now` (next one to three releases), `next` (after the current
 provider and target phases stabilize), `later` (post-1.0 or gated on earlier
 items). Sizes: S/M/L. Milestone assignment for every item lives in the
-[Milestone Train](#milestone-train) under Path To 1.0, and the per-item
+[Milestone Train](#milestone-train) under the 1.0 Program Record, and the per-item
 implementation plan — steps, exit gates, dependencies, and validation
 expectations — lives in
 [`docs/improvement-tracks-implementation-plan.md`](docs/improvement-tracks-implementation-plan.md).
@@ -614,18 +536,15 @@ contract and proven day-two operations.
 
 ### Sequencing Summary
 
-Sequencing for all tracks now lives in the
-[Milestone Train](#milestone-train) under Path To 1.0. The v0.12 milestone
-(A2, A7, B3, B4, B5, D1, D2, E3, E4) is the suggested first slice: high
-impact, small-to-medium effort, no new support claims, and each item is
-independently shippable.
+The [Milestone Train](#milestone-train) records the historical sequence to
+1.0. The provider and target phases define the sequence after 1.0.
 
 ## Adoption Workstreams
 
 ### Open Source
 
-- publish a short supported quickstart for the strict macOS path
-- publish a clearly labeled Docker Desktop compat quickstart
+- maintain the supported quickstart for the strict macOS path
+- maintain the clear Docker Desktop compatibility instructions
 - keep the Copilot CLI quickstart tied to the explicit staged-token auth model
   and keep live certification tied to the staged-token provider-e2e gate
 - explain why Docker, devcontainers, prompt rules, and provider config are not
@@ -639,8 +558,8 @@ independently shippable.
 
 ### Enterprise
 
-- provide an enterprise evaluation guide, control evidence packet, deployment
-  decision tree, and pilot rollout plan
+- maintain the enterprise guide, evidence baseline, deployment choices, and
+  pilot plan
 - keep Copilot enterprise rollout material tied to licensing/policy
   prerequisites, token ownership, audit expectations, and the ban on host
   `~/.copilot`, keychain, and ambient GitHub CLI passthrough

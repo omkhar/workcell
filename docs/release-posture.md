@@ -1,6 +1,11 @@
 # Release Posture
 
-Tagged releases are rebuilt and verified before publication. The release path:
+The latest release is [`v1.0.2`](https://github.com/omkhar/workcell/releases/tag/v1.0.2).
+It is the first published 1.0 release. GitHub reports it as immutable. Its
+18-asset inventory has a SHA-256 digest for each asset.
+
+Workcell rebuilds and verifies each tagged release before publication. The
+release path does these checks:
 
 - reruns validation, smoke, and reproducibility checks
 - reruns repo-mounted validator and release-helper paths under an explicit

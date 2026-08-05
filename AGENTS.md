@@ -59,6 +59,19 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   instruction, runbook, or validator in a reviewable change rather than relying
   on conversational memory.
 
+## Documentation language
+
+- Use ASD-STE100 Simplified Technical English Issue 9 for public documents.
+- Use active voice and simple verb forms.
+- Limit an instruction to 20 words.
+- Limit a descriptive sentence to 25 words.
+- Put one instruction in each sentence.
+- Put no more than six sentences in one paragraph.
+- Keep commands, paths, identifiers, proper names, and quoted output exact.
+- Use the approved project technical nouns and technical verbs.
+- Review each new project term before use.
+- Check changed documents for current support and release facts.
+
 ## Mandatory rules
 
 - Sign every commit. Do not create or rewrite commits in this repository

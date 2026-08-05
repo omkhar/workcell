@@ -1,17 +1,34 @@
 <!-- markdownlint-disable MD024 -->
 # Changelog
 
-This project follows a lightweight Keep a Changelog style.
+This project uses a simple Keep a Changelog format.
 
-Historical release details before this file existed remain available in GitHub
-Releases.
+The GitHub Releases page contains old details that are not in this file.
+
+## v1.0.2 - 2026-08-05
+
+This release is the first published 1.0 release. The `v1.0.0` and
+`v1.0.1` tags did not produce published releases. Workcell preserves both
+failed tags.
+
+### Changed
+
+- Workcell updated the Debian snapshot after the release check found an
+  upstream change.
+- Workcell updated the pinned Rust toolchain image after the release check
+  found a new
+  image digest.
+- Workcell updated the pinned Node.js base image after the release check found
+  a new
+  image digest.
 
 ## v1.0.1 - 2026-08-04
 
-Supersedes v1.0.0, which was tagged but never published: its release workflow
-uploaded the complete asset inventory to a draft, then the default Actions
-token could not read the repository-administration endpoint used for the final
-immutable-release check. The failed tag and draft remain untouched.
+The `v1.0.1` attempt did not produce a published release. It replaced the
+`v1.0.0` attempt, which also did not produce a published release. The
+`v1.0.0` workflow uploaded all assets to a draft release. The default Actions
+token could not read the final immutable-release control. Workcell preserves
+the failed tags and draft release.
 
 ### Fixed
 
