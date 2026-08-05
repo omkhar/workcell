@@ -12,7 +12,11 @@ GitHub attestations add a second verification surface.
 ## What tagged releases publish
 
 The release publishes a multi-platform runtime image to GHCR.
-It also publishes 18 downloadable assets.
+The workflow also uploads 18 release assets.
+
+The GitHub release page lists 21 entries for `v1.0.2`.
+GitHub adds two source-code archives and one release-attestation entry to the 18 uploaded assets.
+Those three GitHub entries are not part of the sealed workflow artifact set.
 
 Nine assets contain release data:
 
@@ -46,11 +50,11 @@ Cosign signs each SBOM file as a release asset.
 
 [`v1.0.2`](https://github.com/omkhar/workcell/releases/tag/v1.0.2) is the first published stable Workcell 1.0 release.
 GitHub reports this release as final and immutable.
-GitHub also reports a SHA-256 digest for each of its 18 assets.
+GitHub also reports a SHA-256 digest for each of the 18 workflow-uploaded assets.
 
 The [`Release` workflow](https://github.com/omkhar/workcell/actions/runs/30974305124) completed successfully on 2026-08-05.
 Both Apple Silicon install-verification jobs passed.
-The final publisher uploaded the exact 18-asset publication set.
+The final publisher uploaded the exact 18-asset workflow publication set.
 
 The 2026-08-05 live install record verified the `v1.0.2` source bundle.
 Cosign verified `SHA256SUMS` against the release workflow identity.

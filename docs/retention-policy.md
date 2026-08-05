@@ -36,8 +36,9 @@ The manifests bind build inputs, the control plane, the source bundle, and runti
 `workcell-release-install-candidate` contains the source bundle and Homebrew formula used by the macOS install jobs.
 Workcell keeps both artifacts for 90 days to support release review and incident checks.
 
-`workcell-release-artifacts` contains the sealed 18-asset publication set.
-The final job publishes the same files as immutable GitHub release assets.
+`workcell-release-artifacts` contains the sealed 18-asset workflow publication set.
+The final job publishes the same 18 files as immutable GitHub release assets.
+GitHub adds its own source-code and release-attestation entries to the release page.
 Workcell keeps the workflow copy for seven days.
 
 ### CI install artifact

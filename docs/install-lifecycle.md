@@ -100,8 +100,9 @@ That run completed these install jobs:
 - `Release install verification (macos-15)`
 - `Release install verification (macos-26)`
 
-GitHub published an immutable release with 18 assets.
-Each asset has a GitHub SHA-256 digest.
+The workflow uploaded 18 assets to the immutable release.
+Each uploaded asset has a GitHub SHA-256 digest.
+The release page lists 21 entries because GitHub adds two source-code archives and one release-attestation entry.
 
 On 2026-08-05, the maintainer ran the shipped verified installer against `v1.0.2`.
 The installer source matched the `v1.0.2` tag.
