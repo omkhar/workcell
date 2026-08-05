@@ -20,6 +20,9 @@ immutable-release check. The failed tag and draft remain untouched.
   publisher explicitly; retain the publisher's direct check when its default
   token can read the endpoint, and accept only GitHub's exact
   integration-permission denial when the fresh precheck is present.
+- gate Claude refreshes on the later of stable-registry publication and native
+  manifest build times so delayed channel publication cannot shorten the
+  provider cool-off.
 
 ## v1.0.0 - 2026-08-04
 

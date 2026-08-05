@@ -11,6 +11,8 @@ channel = "stable"
 
 [provider.claude]
 channel = "stable"
+# Cool-off eligibility uses the later of the stable registry publication and
+# native release manifest build times.
 
 [provider.copilot]
 channel = "stable"
