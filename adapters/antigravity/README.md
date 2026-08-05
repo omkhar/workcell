@@ -1,16 +1,15 @@
 # Google Antigravity CLI Adapter
 
-This adapter directory is a fail-closed planning scaffold. Workcell recognizes
-`antigravity` as a planned Google Antigravity CLI provider id
-(`internal/providerid/providerid.go`), but it does not install, prepare,
-authenticate, or launch Antigravity yet. It is not in the supported-provider
-registry (`internal/adapters/data.go`) and `providerid.IsValid("antigravity")`
-returns false.
+This adapter directory is a fail-closed scaffold. Workcell recognizes
+`antigravity` as a provider name in `internal/providerid/providerid.go`.
+Workcell does not install, prepare, authenticate, or start Antigravity. The
+supported-provider registry does not include it. The function
+`providerid.IsValid("antigravity")` returns false.
 
 ## Auth methods
 
-None today. A future path must first pin official install and auth provenance,
-then stage only reviewed Google auth material into session-local provider state.
+None. A supported path must pin official install and auth provenance. It must
+stage only reviewed Google auth material in session-local provider state.
 Host Google account caches, browser profiles, keychains, host homes, and
 provider caches are not acceptable implicit safe-path inputs
 (`docs/injection-policy.md`, `docs/invariants.md` §1). No Antigravity credential
@@ -19,26 +18,23 @@ the matching adapter, validation, and docs land.
 
 ## Managed control-plane files
 
-None today. Before support is claimed the adapter must own session-local
-provider home/cache/settings state under `/state/agent-home` and explicitly map
-or block Antigravity's subagent, plugin, MCP, sandbox, permission, hook, and
-instruction surfaces (`docs/adapter-control-planes.md`).
+None. Before support, the adapter must own session-local provider state under
+`/state/agent-home`. It must map or block each Antigravity control surface. See
+`docs/adapter-control-planes.md`.
 
 ## Adapter behavior
 
-`workcell --agent antigravity` exits before runtime preparation with a
-"planned Workcell provider adapter, but it is not supported yet" diagnostic and
-a non-zero status (`scripts/workcell`). Support promotion requires the same
-review unit to add:
+`workcell --agent antigravity` exits before runtime preparation. It gives a
+"planned Workcell provider adapter, but it is not supported yet" diagnostic.
+One review unit must add all these controls before support:
 
-- an official pinned Antigravity CLI install path with provenance evidence
-- explicit Antigravity home and cache-state handling under `/state/agent-home`
-- a staged Google auth handoff that does not mount host Google account state,
-  browser profiles, keychains, host homes, or provider caches
-- provider-native unsafe-flag rejection in the Workcell wrapper
-  (`runtime/container/provider-policy.sh`)
-- deterministic dry-run and scenario coverage
-- a live provider certification run before any supported Tier 1 matrix claim
+- Pin the official Antigravity CLI install path and provenance.
+- Own Antigravity home and cache state under `/state/agent-home`.
+- Stage Google auth without a host account, browser, keychain, home, or cache
+  mount.
+- Reject provider unsafe flags in `runtime/container/provider-policy.sh`.
+- Add deterministic dry-run and scenario tests.
+- Pass live provider certification before a Tier 1 claim.
 
 ## See also
 

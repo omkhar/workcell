@@ -1,20 +1,17 @@
 # Codex Adapter
 
-The Codex adapter maps the shared Workcell boundary into Codex-native controls.
-It re-seeds a session-local Codex home from reviewed baselines on every launch;
-the runtime VM-plus-container boundary stays primary and Codex config is defense
-in depth, not the boundary.
+The Codex adapter maps the Workcell runtime to Codex controls. At each start,
+it builds a session-local Codex home from reviewed baselines. The VM and
+container runtime boundary is the primary control. Codex configuration gives
+additional protection.
 
 ## Auth methods
 
-- `codex_auth` credential key — a direct staged `auth.json` seeded to
-  `~/.codex/auth.json` (`internal/adapters/data.go`).
-- `codex-home-auth-file` resolver — a reviewed host-side Codex auth-file reuse
-  path; still host-side preprocessing only, not Keychain passthrough
-  (`internal/authresolve/resolve_credential_sources.go`).
-- Shared GitHub CLI (`github_hosts`, `github_config`) and SSH inputs apply
-  because Codex opts into shared credentials
-  (`sharedCredentialsEnabled: true` in `internal/adapters/data.go`).
+- `codex_auth` stages `auth.json` at `~/.codex/auth.json`. See
+  `internal/adapters/data.go`.
+- `codex-home-auth-file` reads the reviewed host Codex auth file. It does not
+  pass a keychain to the runtime.
+- Codex accepts the shared `github_hosts`, `github_config`, and SSH inputs.
 
 See [../../docs/injection-policy.md](../../docs/injection-policy.md) and
 [../../docs/provider-bootstrap-matrix.md](../../docs/provider-bootstrap-matrix.md).
@@ -48,40 +45,30 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
   session-local Codex home, and imports repo-local control-plane files only as
   masked, reviewed layers (`runtime/container/provider-wrapper.sh`,
   `runtime/container/home-control-plane.sh`).
-- Codex's own Linux `workspace-write` sandbox is pinned off on the managed path:
-  the current Codex Linux sandbox needs unprivileged user namespaces that are
-  unavailable inside the Tier 1 container.
+- Workcell turns off the Codex Linux `workspace-write` sandbox on the managed
+  path. That sandbox needs unprivileged user namespaces. The Tier 1 container
+  does not provide them.
 - `~/.codex/rules/` is read-only by default; it becomes a session-local writable
   copy only in explicit lower-assurance cases (see
   [../../docs/adapter-control-planes.md](../../docs/adapter-control-planes.md#codex-rules-mutability)).
-- Unsafe-argument policy (`reject_unsafe_codex_args` in
-  `runtime/container/provider-policy.sh`): **subcommands are deny-by-default**
-  over the pinned Codex subcommand namespace — only the read-only/session
-  surface is permitted (exec, review, login/logout, completion, doctor, apply,
-  resume, fork, archive/unarchive/delete, help, execpolicy, `features
-  list`); everything else is rejected (plugin, remote-control, exec-server,
-  mcp*, cloud*, responses-api-proxy, stdio-to-uds, update, sandbox, debug,
-  `features enable`/`disable`, and any unclassified/new subcommand). `app-server` is the
-  managed GUI backend and is permitted only as the bare no-arg launch; an
-  unknown first token is Codex prompt text. The classified set is pinned to the
-  version by
-  [`tests/fixtures/codex-subcommands.txt`](../../tests/fixtures/codex-subcommands.txt)
-  (a `CODEX_VERSION` bump fails CI until it is regenerated). The wrapper also
-  blocks `--yolo`/`--dangerously-bypass-*`, autonomy/network flags
-  (`--full-auto`, `-a`, `--add-dir`, `--search`, `--remote`,
-  `--remote-auth-token-env`, `--enable`, `--disable`, `--cd`,
-  `--sandbox danger-full-access`), off-mode `--profile`
-  values, and reserved `-c`/`--config` overrides of guarded namespaces
-  (features/plugins/marketplaces/mcp/hooks/sandbox/approval, incl. glued,
-  quoted/escaped, inline-table, and `profiles.<name>.<key>` spellings). All are
-  rejected in **every** mode including `breakglass` (`provider-wrapper.sh`
-  re-checks with `WORKCELL_WRAPPER_CONTEXT=1`); breakglass raises the sandbox
-  floor, not the unsafe-argument policy.
+- `reject_unsafe_codex_args` denies unapproved subcommands by default. See
+  `runtime/container/provider-policy.sh`.
+- The allowed set contains the reviewed read-only and session commands. The
+  fixture `tests/fixtures/codex-subcommands.txt` binds this set to the Codex
+  version.
+- The wrapper blocks plugin, cloud, remote-control, `exec-server`, update,
+  sandbox, debug, and unclassified subcommands.
+- It also blocks MCP servers, `responses-api-proxy`, and `stdio-to-uds`.
+- The wrapper permits `app-server` only as a bare start without arguments.
+- The wrapper also blocks unsafe autonomy, network, profile, and configuration
+  flags. This includes changes to guarded configuration namespaces.
+- These rules apply in all modes, including `breakglass`. Breakglass changes
+  the container posture. It does not change the provider unsafe-flag policy.
 - Final branch publication stays on the host through `workcell publish-pr`, not
   from inside the container session.
 
-Codex CLI is Tier 1 when it runs fully inside the bounded runtime. App support is
-only valid once it becomes a client of the same bounded executor.
+Codex CLI is Tier 1 when it runs fully in the bounded runtime. An app can be
+Tier 2 only when it is a client of the same bounded runtime.
 
 ## See also
 

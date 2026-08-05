@@ -7,11 +7,11 @@
 | GitHub Copilot CLI | CLI | session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, token handoff, custom instructions disabled, skill/dynamic-retrieval overrides blocked | [examples/quickstart-copilot.md](examples/quickstart-copilot.md) |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, `GEMINI.md`, `.env`, `projects.json` | [examples/quickstart-gemini.md](examples/quickstart-gemini.md) |
 
-Planned provider parity:
+Unsupported provider scaffold:
 
 | Provider | Target surface | Required before support |
 |---|---|---|
-| Google Antigravity CLI | planned fail-closed Tier 1 CLI adapter; not current support | `--agent antigravity`, pinned official install/auth provenance, explicit Google auth staging, session-local provider home/cache, unsafe-argument policy, quickstart, deterministic tests, and live provider certification |
+| Google Antigravity CLI | fail-closed scaffold; not supported | A supported adapter, explicit auth input, session-local provider state, tests, a quickstart, and live certification |
 
 GUI and IDE surfaces are lower assurance unless they act only as clients to
 the same bounded runtime.

@@ -1,7 +1,6 @@
 # Quickstart: Codex in Workcell
 
-This guide walks through the normal Codex path inside Workcell's bounded
-runtime.
+Use this guide to start Codex in the bounded Workcell runtime.
 
 It assumes a supported Apple Silicon macOS host. GitHub-hosted CI and
 tagged-release install verification currently cover `macos-26` and `macos-15`;
@@ -17,9 +16,8 @@ the strongest local boundary claim still depends on local Colima validation.
 
 ## 1. Create or update the injection policy
 
-Workcell does not pass host provider homes through to the session. Use the
-host-side auth helpers to create the policy and copy the reviewed auth file
-into Workcell's managed credential store:
+Workcell does not pass host provider homes to the session. Use the host auth
+commands to stage the reviewed auth file:
 
 ```bash
 workcell auth init
@@ -39,9 +37,9 @@ workcell auth set \
   --ack-host-resolver
 ```
 
-That resolver reuses the reviewed `~/.codex/auth.json` file on the host
-through the same staged bundle flow. It does not pass the host home through to
-the runtime.
+The resolver reads the reviewed host `~/.codex/auth.json` file. It stages the
+file through the same bundle flow. It does not pass the host home to the
+runtime.
 
 ## 2. Optional explicit prepare
 

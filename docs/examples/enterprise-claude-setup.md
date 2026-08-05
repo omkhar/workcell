@@ -1,19 +1,18 @@
 # Enterprise Claude Setup with Workcell
 
-This pattern is for teams that want a shared Claude baseline without mounting
-whole host homes into the runtime.
+Use this pattern for a shared Claude baseline. It does not mount host home
+directories in the runtime.
 
-It assumes supported Apple Silicon macOS hosts and the current local-first
-Workcell product shape. Workcell does not yet ship a centralized enterprise
-policy or session-administration plane; teams distribute reviewed host-side
-files through their existing host configuration workflow today.
+This pattern requires supported Apple Silicon macOS hosts. Workcell has no
+central enterprise policy or session administration service. Use your host
+configuration process to distribute reviewed files.
 
 ## Recommended split
 
 Keep these concerns separate:
 
 - org-wide instructions in `documents.common` or `documents.claude`
-- reviewed Claude API-key access in `credentials.claude_api_key`
+- reviewed Claude API key access in `credentials.claude_api_key`
 - reviewed MCP state in `credentials.claude_mcp`
 - optional fail-closed macOS resolver scaffold in `credentials.claude_auth`
 

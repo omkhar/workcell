@@ -1,7 +1,6 @@
 # Getting Started
 
-This guide is the shortest path from "I want to evaluate Workcell" to "I have
-an agent running inside the managed boundary."
+Use this guide to install Workcell and start an agent in the managed runtime.
 
 It assumes an Apple Silicon macOS host.
 Continuous CI and tagged-release install verification currently cover only
@@ -11,41 +10,34 @@ GitHub-hosted Apple Silicon `macos-26` and `macos-15`.
 
 ### Option A: verified release install (recommended)
 
-Always verify a release before installing it. `install-release.sh` is the
-one-command verified path: it downloads the tagged release bundle plus its
-signed `SHA256SUMS`, verifies the cosign signature and digest **fail-closed
-before any bundle code runs**, and only then extracts and installs.
+Always verify a release before you install it. `install-release.sh` is the
+verified install path. It downloads the release bundle and its signed
+`SHA256SUMS` file. It verifies the Cosign signature and digest before it runs
+bundle code. If verification fails, it stops the install.
 
-The verifier tools must already be on the host, because verification runs
-**before** the bundle installer (which is what installs the other host packages)
-gets to run. Install `cosign` plus `gnupg` and `git` (for the `git clone` +
-`git tag -v` below — macOS ships neither `gnupg` nor, on a clean host, `git`)
-first:
+Install the verification tools on the host before you run the installer.
+Install `cosign`, `gnupg`, and `git`:
 
 ```bash
 brew install cosign git gnupg
 ```
 
-`install-release.sh` is not published as a standalone release asset, so obtain
-it from the repository over TLS (a trusted source for the installer) rather than
-from the not-yet-verified bundle — clone the **release tag** (not the mutable
-default branch, since the pre-trust installer runs before any verification), then
-run it:
+The release does not include `install-release.sh` as a separate asset. Get it
+from the signed release tag. Do not get it from the mutable default branch.
+Use [release-posture.md](release-posture.md) to find the current release tag.
+First, import and confirm the maintainer key fingerprint from
+[SECURITY.md](../SECURITY.md#signing-key).
 
 ```bash
 git clone --branch vX.Y.Z --depth 1 https://github.com/omkhar/workcell.git
 cd workcell
-git tag -v vX.Y.Z        # verify the tag signature before running the installer
+git tag -v vX.Y.Z
 ./scripts/install-release.sh --version vX.Y.Z
 ```
 
-`git tag -v` authenticates the checked-out installer against the maintainer
-signing key **before** you run it — import and confirm the key fingerprint from
-[SECURITY.md](../SECURITY.md#signing-key) first. Arguments after `--` are
-forwarded to the bundle installer (e.g. `-- --no-install-deps` for a
-launcher-only install). A tampered or unsigned bundle is refused before its
-(also-tampered) installer could run — this is why verifying before extraction is
-sound.
+`git tag -v` checks the installer against the maintainer signing key. Arguments
+after `--` go to the bundle installer. For example, use
+`-- --no-install-deps` for a launcher-only install.
 
 For an **additional** GitHub attestation check, append `--attestation`. That
 step runs `gh attestation verify`, which queries the GitHub API, so it also
@@ -56,20 +48,16 @@ and network access:
 ./scripts/install-release.sh --version vX.Y.Z --attestation
 ```
 
-**Manual equivalent** (from the release page directly, or to inspect each step):
-download the bundle plus `SHA256SUMS` and `SHA256SUMS.sigstore.json` from GitHub
-Releases and verify before unpacking. The `cosign verify-blob` and `shasum`
-steps verify offline against the downloaded Sigstore bundle; the
-`gh attestation verify` step below mirrors the `--attestation` gate but
-**requires network access** (it fetches the attestation from the GitHub API by
-default). For a strictly offline/air-gapped install, omit that step — the cosign
-signature over `SHA256SUMS` plus the digest check is the offline-capable core
-guarantee — or pass a locally downloaded attestation with `--bundle`:
+For manual verification, download the bundle, `SHA256SUMS`, and
+`SHA256SUMS.sigstore.json`. Verify them before extraction. The Cosign and digest
+steps can run offline with the downloaded Sigstore bundle.
 
-The identity regex below is **anchored and escaped** (`^…\.…$`) so only the
-release tag is a wildcard — the exact pin `verify-release-artifact.sh` uses, not
-the illustrative unescaped form elsewhere in the docs (an unescaped `.` matches
-any character and can over-match the identity):
+The GitHub attestation step requires network access by default. Omit it for an
+offline install. You can also give it a local attestation with `--bundle`.
+
+The regex below anchors and escapes the fixed identity text (`^…\.…$`). Thus,
+only the release tag is variable. `verify-release-artifact.sh` uses the same
+expression.
 
 ```bash
 cosign verify-blob SHA256SUMS \
@@ -97,8 +85,8 @@ plus a final warning summary instead.
 
 ### Option B: Homebrew formula asset from a tagged release
 
-Each tagged release can publish a versioned `workcell.rb` formula asset that
-installs the same reviewed tree into Homebrew-managed `libexec`:
+Each supported release includes a `workcell.rb` formula asset. The formula
+installs the reviewed tree in the Homebrew `libexec` directory.
 
 ```bash
 curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/workcell.rb
@@ -106,7 +94,7 @@ curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/SHA256SUMS
 curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/SHA256SUMS.sigstore.json
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
 brew install --formula ./workcell.rb
@@ -177,16 +165,14 @@ workcell auth set \
 Do not use host `gh` auth, `GH_TOKEN`, `GITHUB_TOKEN`, host keychains, or host
 Copilot provider state (`~/.copilot`, `~/.config/github-copilot`,
 `~/.cache/github-copilot`) as Copilot readiness sources. Workcell stages only
-`copilot_github_token` and removes the token file plus staged direct-mount
-copy from direct runtime mounts for Copilot sessions. For auth-required
-provider launches, Workcell converts it to a temporary host-mounted token
-handoff outside mounted provider state, moves it through a transient runtime
-handoff file with the Workcell entrypoint as PID 1, unlinks the mounted handoff
-file, and exports it as `COPILOT_GITHUB_TOKEN` only for the managed Copilot
-child.
+`copilot_github_token`. It removes the original token file and its staged copy
+from direct mounts. For an authenticated start, Workcell uses a temporary token
+handoff. The handoff is outside provider state. The entrypoint remains PID 1
+and unlinks the mounted file. Workcell exports `COPILOT_GITHUB_TOKEN` only to
+the managed Copilot child.
 
 Google Antigravity CLI is not a supported agent yet. Do not configure
-`--agent antigravity`, planned credential keys, or host provider-home state
+`--agent antigravity`, unimplemented credential keys, or host provider state
 until the matching Workcell adapter support phase lands with docs and
 certification.
 
@@ -239,8 +225,8 @@ workcell --agent codex --agent-autonomy prompt --workspace /path/to/repo
 - [Copilot quickstart](examples/quickstart-copilot.md)
 - [Gemini quickstart](examples/quickstart-gemini.md)
 
-There is no Antigravity quickstart in current releases. That planned provider
-will get a quickstart only when Workcell support is implemented and certified.
+There is no Antigravity quickstart. Workcell must implement and certify support
+before it adds a quickstart.
 
 For team rollout patterns on today's local-first product, see
 [Enterprise rollout today](enterprise-rollout.md).
@@ -259,18 +245,14 @@ For team rollout patterns on today's local-first product, see
   older than 12 hours, so do **not** run it before preserving evidence for a
   suspected security incident — see the
   [incident-response runbook](incident-response.md).
-- **Bundle or source install** (Option A or C): `./scripts/uninstall.sh` removes
-  the `~/.local/bin` launcher link and man page, the managed host state under the
-  default state root (`~/.local/state/workcell`), and the Workcell-managed Colima
-  profiles and caches (both the legacy `workcell-*` and the current `wcl-*`
-  names), while leaving shared packages and unrelated profiles alone. Always run
-  `./scripts/uninstall.sh --dry-run` first — its output is the authoritative list
-  of what will be removed. It does **not** reach state written under a custom
-  `WORKCELL_STATE_ROOT`/`XDG_STATE_HOME`; remove that yourself.
-- **Homebrew formula install** (Option B): `brew uninstall workcell` removes the
-  formula tree, but not the runtime state a launched session created — so also
-  run `./scripts/uninstall.sh` (from a release bundle or source checkout) to
-  clear the managed state and Colima profiles.
+- **Bundle or source install**: First run `./scripts/uninstall.sh --dry-run`.
+  Then run `./scripts/uninstall.sh`. It removes Workcell links, state, profiles,
+  and caches. It preserves `~/.config/workcell`, including the injection policy
+  and managed credentials. It also keeps shared packages and unrelated profiles.
+  Remove custom `WORKCELL_STATE_ROOT` or `XDG_STATE_HOME` content separately.
+- **Homebrew formula install**: Run `brew uninstall workcell`. Then run
+  `./scripts/uninstall.sh` from a release bundle or source checkout. The second
+  command removes runtime state and Colima profiles.
 
 These are covered as repeatable day-two operations in
 [docs/install-lifecycle.md](install-lifecycle.md).

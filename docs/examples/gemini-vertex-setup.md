@@ -11,8 +11,8 @@ GOOGLE_CLOUD_PROJECT=my-project
 GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
-If your flow also needs ADC, export a reviewed copy and keep it as a separate
-credential file under Workcell-managed operator state.
+If you need ADC, export a reviewed copy. Keep it as a separate credential file
+in Workcell operator state.
 
 ## 2. Create the injection policy
 
