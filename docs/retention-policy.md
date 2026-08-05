@@ -96,9 +96,12 @@ The earlier artifact remains until GitHub deletes it or its retention time ends.
 Workflow artifacts are not the durable release record.
 Use these sources after a workflow artifact expires:
 
-- Download the immutable release assets and their Sigstore bundles.
-- Verify `SHA256SUMS` against its pinned release workflow identity.
-- Verify each downloaded release asset against the signed checksum list.
+- Download the required release-data assets and their matching Sigstore bundles.
+- Use Cosign and the matching bundle to verify each release-data asset against
+  the pinned release workflow identity.
+- Use the signed `SHA256SUMS` file to verify only the eight other release-data
+  assets that it names.
+- Do not check `SHA256SUMS` or a `.sigstore.json` file against that list.
 - Use `gh attestation verify` for a subject that has a GitHub attestation.
 - Use `cosign verify` for the runtime image in GHCR.
 
