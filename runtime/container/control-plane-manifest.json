@@ -56,7 +56,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/CLAUDE.md",
       "runtime_path": "/opt/workcell/adapters/claude/CLAUDE.md",
-      "sha256": "57ebc2c1f55c1e537f14db0a843f24e1273a016c184d4fae5e5ff5c6e673c8a5"
+      "sha256": "e74c5a705371f97125c36e9b8281f6b6b4476175211754cfabeb6089fae4c115"
     },
     {
       "kind": "adapter-baseline",
@@ -176,7 +176,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/gemini/GEMINI.md",
       "runtime_path": "/opt/workcell/adapters/gemini/GEMINI.md",
-      "sha256": "a06f4999ace204e3a1f1236c98a777d18e9eba24df8fbe0ddd623bd0fccc8cb9"
+      "sha256": "371f44f99b4a080286086493b470a6bf12d63bd6a9ce94e835f2a0a24b9a1c56"
     },
     {
       "kind": "runtime-control-plane",

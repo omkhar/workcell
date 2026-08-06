@@ -1,28 +1,34 @@
 # Invariant Test Plan
 
-The invariant suite answers one question: does the current implementation still
-match the documented security and control-plane contract?
+The invariant suite checks the documented runtime and control-plane contract.
 
-## Minimum checks
+## Positive checks
 
-The suite should keep verifying that:
+The suite verifies these conditions:
 
-1. the provider launches inside the container, not on the host
-2. the runtime receives only the reviewed host mounts
-3. host auth state and sockets stay out by default
-4. the selected workspace is the only writable host mount
-5. network posture is applied for the managed modes
-6. `breakglass` is explicit and visibly different
-7. provider control-plane files are present and loadable
-8. unsafe broad workspaces are rejected
+1. The provider starts in the container.
+2. The runtime receives only approved host mounts.
+3. The safe path rejects direct mounts of host authentication roots and all
+   host sockets. It permits only approved staged credential files.
+4. The selected workspace is the only general writable host mount. An approved
+   temporary credential handoff is one narrow exception. An approved non-secret
+   persistent-cache plane is another exception.
+5. Managed Colima modes apply the selected profile network policy.
+6. The launch output labels `breakglass` as lower assurance.
+7. Provider control-plane files are present and usable.
+8. Workcell rejects unsafe broad workspaces.
+
+The dry-run mount checks cover the fixed forbidden-path subset in
+`policy/forbidden-host-paths.toml`. Checks for provider-state sources also require a
+host-side validation lane.
 
 ## Negative checks
 
-The suite should fail if it finds:
+The suite fails when it detects these conditions:
 
-- `docker.sock` passthrough
-- host home passthrough
-- host provider-state passthrough
-- SSH or GPG agent socket passthrough
-- missing egress controls on the managed path
-- silent defaulting into `breakglass`
+- A Docker socket passes into the runtime.
+- A host home passes into the runtime.
+- A direct host provider-state mount passes into the runtime.
+- An SSH or GPG agent socket passes into the runtime.
+- A managed Colima allowlist mode has no egress rules.
+- A launch selects `breakglass` without explicit operator input.
