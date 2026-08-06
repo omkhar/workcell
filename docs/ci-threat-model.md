@@ -1,475 +1,391 @@
-# CI/CD Threat Model
+# CI/CD threat model
 
-This document is the threat model for Workcell's GitHub Actions CI/CD pipeline:
-what the pipeline protects, who could attack it, which controls exist today, and
-where the honest gaps are. It complements the runtime-boundary
-[threat model](threat-model.md) (which covers the local Colima/container
-sandbox) and the [provenance and signing](provenance.md) contract (which covers
-what a consumer can verify). It does not restate those; it focuses on the build,
-release, and secret-handling surface of the workflows themselves.
+This document describes threats to the Workcell GitHub Actions pipeline.
+It covers builds, releases, credentials, and GitHub-hosted controls.
 
-Every claim below is grounded in the workflows under `.github/workflows/`, the
-reviewed hosted-control policy in
-[`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml),
-and the pin policies in
-[`policy/tool-pins.toml`](../policy/tool-pins.toml) and
-[`policy/allowed-actions.toml`](../policy/allowed-actions.toml). Where a control
-is absent, this document says so rather than implying protection that does not
-exist.
+The runtime [threat model](threat-model.md) covers the local Workcell boundary.
+The [provenance contract](provenance.md) covers consumer verification.
+This document does not replace those documents.
+
+The controls below come from the workflows, policy files, and validation scripts.
+This document also identifies known gaps.
 
 ## Scope and assets
 
-The CI/CD pipeline protects:
+The pipeline protects these assets:
 
-- **Released-artifact integrity and provenance** — the runtime image published
-  to GHCR, the source bundle, the Homebrew formula, `SHA256SUMS`, the
-  deterministic build-input / control-plane / builder-environment manifests, and
-  both SPDX SBOMs, plus the Sigstore bundles and GitHub attestations that cover
-  the release (the SBOMs are attached to the image/source attestation subjects
-  rather than attested as standalone files — see [Attestation](#what-is-produced)).
-- **The chain of trust that lets a consumer verify those artifacts** — the
-  keyless Sigstore identity bound to the release workflow, the GitHub attestation
-  signer identity, and the maintainer's git commit/tag signing key.
-- **The repository supply chain** — the pinned action set, the pinned toolchain
-  (cosign, syft, buildx, buildkit, QEMU, actionlint, zizmor), and the reviewed
-  hosted controls (branch/tag rulesets, required checks, environments) that keep
-  a malicious change from silently reaching a release.
+- the multi-platform runtime image in GHCR
+- nine release-data assets and their nine Sigstore bundles
+- GitHub attestations for eight build-provenance subjects
+- the release workflow identity and the maintainer signing identity
+- pinned actions, tools, images, and provider inputs
+- branch, tag, environment, and immutable-release controls
 
-Out of scope for this document (covered elsewhere or by design):
+The nine release-data assets are:
 
-- the local macOS runtime boundary and the container sandbox — see the runtime
-  [threat model](threat-model.md) and [injection policy](injection-policy.md);
-- the correctness of the shipped product itself (memory safety, exec-guard
-  soundness) — see the [unsafe-code audit checklist](unsafe-code-audit-checklist.md);
-- social-engineering and physical-access attacks on the maintainer — out of
-  scope per [`SECURITY.md`](../SECURITY.md);
-- compromise of GitHub itself (the platform, Actions control plane, GHCR, or
-  Sigstore's public-good instances) as a trusted root. The pipeline treats these
-  as trusted infrastructure; a full compromise of GitHub's OIDC issuer or
-  Sigstore's Fulcio/Rekor is a residual risk, not a modeled mitigation.
+- the source bundle
+- the Homebrew formula
+- the image-digest file
+- the build-input manifest
+- the control-plane manifest
+- the builder-environment manifest
+- the source SBOM
+- the image SBOM
+- `SHA256SUMS`
+
+The release also signs the runtime image in GHCR.
+
+This document does not cover these subjects:
+
+- local runtime isolation
+- product-code correctness
+- physical access to the maintainer host
+- a complete compromise of GitHub, Fulcio, or Rekor
+
+The pipeline trusts GitHub-hosted Actions, GitHub OIDC, GHCR, Fulcio, and Rekor.
+A compromise of these services is a residual risk.
 
 ## Trust boundaries and runner tiers
 
 ### Runner tiers
 
-**Every workflow job runs on a GitHub-hosted runner.** The only labels in use
-are `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-26`, and `macos-15`. There are
-**no self-hosted runners** anywhere in the tree, so there is no
-persistent-runner tenancy boundary to defend: each job runs on a single-use
-ephemeral VM that GitHub tears down afterward. The release path in particular
-uses no self-hosted runners, which is what lets the SLSA Build-L2 claim in
-[provenance.md](provenance.md) hold.
+All workflow jobs use GitHub-hosted runners.
+The workflow files use these runner labels:
 
-This is a current-state property enforced indirectly rather than by a single
-"reject self-hosted" gate:
+- `ubuntu-latest`
+- `ubuntu-24.04-arm`
+- `macos-15`
+- `macos-26`
 
-- `scripts/verify-github-macos-release-test-runners.sh` confirms the macOS
-  labels match GitHub's authoritative `runner-images` list, so the release
-  matrix cannot silently target a stale or fake label;
-- `internal/metadatautil/pinnedinputs.go` pins specific runner label sets — the
-  CI reproducible-build matrix, the macOS install/release matrices, and the
-  presence of an arm64 release runner — so those cannot silently swap to
-  `self-hosted` without a reviewed diff to the pin set. It is **not** a global
-  guard over every `runs-on:` value: a job outside those checked sets (e.g. the
-  `release` publish job) could change its runner without tripping a pinned-input
-  diff, and relies on review instead (see the known gap on the self-hosted ban).
+The repository does not use a self-hosted runner.
+GitHub gives standard hosted jobs a new virtual machine.
 
-There is no policy rule that outright rejects the string `self-hosted`; the
-guarantee rests on label pinning plus review. This is called out again under
-[Known gaps](#known-gaps-and-future-work).
+Workcell pins the CI build matrix, macOS matrices, and arm64 release label.
+The checks do not reject every possible `self-hosted` string.
+Reviewers check all other `runs-on` values.
 
-### Privilege boundary within the workflows
+### Workflow authority
 
-All 13 workflows share a hardened baseline:
+The repository has 14 workflows.
+Each workflow starts with `permissions: {}`.
+Jobs that need authority declare job permissions.
+Other jobs inherit the empty workflow-level permission set.
 
-- **`permissions: {}` at the top level** — every workflow starts deny-all and
-  grants the narrowest per-job scope it needs. This is codified as
-  `default_workflow_token_permissions = "read"` in
-  [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml).
-- **`persist-credentials: false` on every `actions/checkout`** — no workflow
-  leaves the job's git credential on the runner filesystem.
-- **Every action is pinned to a full 40-character commit SHA** and its
-  `owner/repo` must appear in the reviewed allowlist
-  [`policy/allowed-actions.toml`](../policy/allowed-actions.toml). SHA pinning
-  fixes the code that runs; the allowlist restricts which publishers may run at
-  all. Both are enforced by `scripts/check-pinned-inputs.sh`. Tools fetched by
-  URL instead of as actions (actionlint, zizmor) are downloaded and then
-  `sha256sum -c`-verified against the digests in
-  [`policy/tool-pins.toml`](../policy/tool-pins.toml).
+Each checkout uses `persist-credentials: false`.
+Each action uses a full commit SHA.
+The action owner and repository must be in `policy/allowed-actions.toml`.
 
-Only the release path escalates. The `release` artifact job holds
-`id-token: write`, `attestations: write`, `artifact-metadata: write`, and
-`packages: write` for OIDC signing, attestations, artifact metadata, and GHCR,
-but only `contents: read`. The separate final GitHub-release job holds only
-`actions: read` and `contents: write`; it downloads the sealed current-run
-artifact, refreshes hosted controls, and publishes the release. The artifact
-job and native arm64 image build/push job run only inside the `release`
-deployment environment, which requires human approval and disallows admin
-bypass (see `[release_environment]` in the hosted-control policy). The final
-job depends on that approved artifact job and runs in `hosted-controls-audit`
-so its admin-metadata proof is fresh. A handful of scanning jobs hold
-`security-events: write` for SARIF
-upload, and `scorecard.yml` holds `id-token: write` for Scorecard provenance;
-these are the expected minimum for those tools.
+The release workflow has the main publication authority.
+Its release job can write packages, artifact metadata, and attestations.
+It can also request an OIDC token.
+Its final publisher has `contents: write` for the repository.
+The current publisher script uses this scope to create a release and upload assets.
 
-One non-release workflow also holds a write scope:
-[`upstream-refresh.yml`](../.github/workflows/upstream-refresh.yml) grants its
-scheduled/manual job `issues: write` to update a single rolling tracking issue
-with the latest upstream-candidate status (it keeps `contents: read`). When it
-detects changes it also uploads an internal `upstream-refresh-candidate`
-workflow artifact (the candidate patch, diffstat, and metadata) for maintainer
-review. It cannot publish **release** or signed artifacts, sign, or push code —
-its mutations are the tracking issue and that review-only workflow artifact — but
-auditors inventorying non-read `GITHUB_TOKEN` scopes and artifact channels should
-count it alongside the release path.
+The native arm64 release job can push an image by digest to GHCR.
+Release scan jobs can upload SARIF data.
 
-### Untrusted-fork boundary
+Other workflows also have write authority:
 
-The pull-request lanes (`ci.yml`, `security.yml`, `codeql.yml`, `mutation.yml`,
-`docs.yml`) run on the plain `pull_request` trigger. That means fork PR code
-executes with a **read-only** `GITHUB_TOKEN` and no access to environment-scoped
-secrets, so a malicious fork PR cannot exfiltrate the one stored secret or push
-anything. The heavy lanes (CodeQL, mutation, install verification, and the
-`reproducible-build-platform` 2×~45-minute rebuilds) are gated behind an
-`approved-heavy-ci` label so an unreviewed fork PR cannot spend that compute
-without maintainer opt-in. Reproducibility assurance is not lost: the gated
-rebuild still runs on every post-merge `main` push and is re-verified natively in
-`release.yml` preflight, and the required aggregate `Reproducible build` check
-(`if: always()`) passes green-on-skip for unlabeled PRs while still failing on any
-real build failure.
+- CodeQL and security jobs can upload SARIF data.
+- Scorecard can upload SARIF data and request an OIDC token.
+- Upstream refresh has repository-wide `issues: write` authority.
+- Upstream refresh also has `pull-requests: read` authority.
 
-**The only `pull_request_target` workflow is
-[`pr-base-policy.yml`](../.github/workflows/pr-base-policy.yml)**, and it is the
-hardened form of that pattern: it keeps `permissions: {}`, performs **no
-checkout**, uses **no external actions**, and reads only
-`github.event.pull_request.base.ref` / `.draft` from the trusted event context
-to enforce that ready PRs target `main`. Because it never checks out or executes
-untrusted PR code and holds no token or secret, it carries no exfiltration risk.
-It uses `pull_request_target` deliberately: a plain `pull_request` guard could be
-rewritten by the same-repo PR it is meant to police.
+The refresh script can create its label and tracking issue.
+It can also reopen or edit that issue.
+It can also upload a review-only candidate artifact.
+The job has no content-write or release-publication scope.
 
-### Cache-poisoning boundary
+The release environment protects artifact construction and image publication.
+The environment requires maintainer approval and does not permit administrator bypass.
 
-The validator-image buildx caches in `ci.yml`, `docs.yml`, and `mutation.yml`
-use a PR-keyed cache scope (`validator-pr-<number>`) distinct from the trusted
-`validator-main` scope, and write in `mode=max` only on `push` events. A fork PR
-therefore cannot poison the cache that trusted main/release builds consume.
+The final publisher uses the `hosted-controls-audit` environment.
+It refreshes the hosted-control proof before publication.
 
-## Secrets handling and rotation
+The release job uploads a current-run Actions artifact.
+The final publisher downloads that current-run artifact and publishes its files.
+The publisher trusts this handoff.
+It does not verify the new signatures or attestations after the handoff.
 
-### Inventory
+### Untrusted pull requests
 
-The pipeline is **almost entirely secret-free**. There is exactly **one
-long-lived stored secret** in the whole workflow set:
+The PR workflows use the `pull_request` event.
+GitHub reduces a fork token to read-only authority.
+Fork code also gets no environment secret.
 
-| Secret | Used in | Scope | Purpose | Sensitivity |
-|---|---|---|---|---|
-| `WORKCELL_HOSTED_CONTROLS_TOKEN` | [`hosted-controls.yml`](../.github/workflows/hosted-controls.yml), [`release.yml`](../.github/workflows/release.yml) preflight and final publication gate | **Environment-scoped** (`hosted-controls-audit`), `allow_admin_bypass = false`, `deployment_branches = ["main"]`, `deployment_tags = ["v*"]` | Provisioned as a read-only admin-metadata token so `scripts/run-hosted-controls-audit.sh` can read rulesets, environments, variables, and the immutable-release setting that the default `GITHUB_TOKEN` cannot; the final job refreshes that proof, unsets the token, then publishes with its separate ephemeral `GITHUB_TOKEN` | **Intended** read-only. The repo checks the secret's *name* and *environment*, not the granted token scopes — GitHub does not expose a consuming repo's ability to introspect a PAT/App token's scopes — so read-only is a **provisioning discipline, not a repo-enforced guarantee**. Provision it with least privilege accordingly |
+Trusted CodeQL and security jobs can request `security-events: write`.
+This authority lets those jobs upload SARIF data.
 
-Everything else is ephemeral and auto-minted:
+The `approved-heavy-ci` label controls expensive PR jobs.
+It controls CodeQL, mutation, platform reproducibility, and macOS installation checks.
 
-- **`GITHUB_TOKEN` / `github.token`** — used for `gh api` calls and GHCR login
-  via the pinned `docker/login-action`. Auto-issued per job, expires when the
-  job ends. When handed to a script it is either consumed directly from the
-  environment by `gh api` (e.g. `check-release-tag-signature.sh`) or, where a
-  script isolates it, written to a `mktemp` file under `umask 077` with
-  `GITHUB_TOKEN`/`GH_TOKEN` unset and the path passed via
-  `WORKCELL_GITHUB_API_TOKEN_FILE`, `rm -f`'d on an `EXIT` trap. Both are
-  acceptable for an auto-expiring job token; no workflow echoes a token. (The
-  file pattern matters more for the long-lived stored token below.)
-- **OIDC `id-token`** — minted for keyless signing/attestation in `release.yml`
-  and for Scorecard provenance. Short-lived; never stored.
+CodeQL, platform reproducibility, and macOS installation checks run on `main` pushes.
+Release preflight runs the platform and installation checks again.
+Mutation runs on approved PRs, schedules, and manual requests.
+The release-preflight validation profile also runs the mutation gate.
+A normal `main` push does not run the Mutation workflow.
 
-**Signing uses no stored key material at all** — see
-[Attestation and signing](#attestation-and-signing). The maintainer's git
-commit/tag signing key (GPG) is the one other long-lived signing credential in
-the system, but it lives on the maintainer's host, not in Actions secrets; CI
-only *verifies* signatures with it, never signs.
+The PR base policy uses `pull_request_target`.
+It has no permissions, checkout, external action, or untrusted code execution.
+It reads only the base branch and draft state.
 
-### Exposure paths
+### Cache boundary
 
-- The stored token flows into `scripts/run-hosted-controls-audit.sh` as an env
-  var. It is never echoed by the workflow, but any `set -x` or accidental print
-  inside that script would surface it — that script is the audit point for this
-  secret.
-- Because the token is environment-scoped and the environments disallow admin
-  bypass and restrict deployment branches/tags, a PR from a fork or a push to a
-  non-`main` branch cannot obtain it.
+CI and Mutation non-PR runs use `validator-main`.
+Docs non-PR runs use `validator-docs-main`.
+Each PR run uses its PR-specific scope.
+PR runs can read `validator-main` but write only to their PR scope.
+Scheduled and manual runs can write a minimal non-PR cache.
 
-### Rotation
+## Credentials and rotation
 
-Because the only long-lived secret is a **read-only** metadata token and
-signing is keyless, the rotation surface is small — but a rotation *procedure*
-was previously undocumented. The cadence and steps are:
+### Stored credential
 
-**`WORKCELL_HOSTED_CONTROLS_TOKEN` — rotate every 90 days and immediately on any
-suspected exposure:**
+The workflow files use one long-lived stored credential:
 
-1. Mint a replacement **fine-grained PAT** with the same read-only
-   administration/metadata scopes and an expiry ≤ 90 days. Do **not** store a
-   GitHub App *installation* token here — those expire after ~1 hour and the
-   scheduled/preflight jobs would fail on a stale secret; if a GitHub App is
-   preferred, store the App's credentials and mint the installation token at
-   workflow runtime instead.
-2. Update the secret in the `hosted-controls-audit` environment
-   (Settings → Environments), not at repo scope.
-3. Trigger `hosted-controls.yml` via `workflow_dispatch` and confirm the audit
-   passes with the new token.
-4. Revoke the old token (Developer settings → the token → Delete).
-5. Record the rotation date.
+| Credential | Location | Purpose | Limit |
+| --- | --- | --- | --- |
+| `WORKCELL_HOSTED_CONTROLS_TOKEN` | `hosted-controls-audit` environment | Read repository administration metadata for hosted-control audits | The repository cannot inspect the token scopes. Read-only authority is a provisioning rule. |
 
-**Git commit/tag signing key (GPG, maintainer host):** rotate on the key's own
-expiry or on suspected host compromise. Because this key underwrites the
-signed-commits ruleset and release-tag verification, treat its compromise as a
-signing-compromise incident (see below), not a routine rotation.
+This token does not trigger or publish a release.
+The current script removes it before the publication call.
 
-**`GITHUB_TOKEN` and OIDC tokens** need no rotation — they are ephemeral by
-construction.
+One final-publisher step receives both tokens.
+Checked-out audit code uses the stored token before the step removes it.
+A compromised audit script can use both tokens during this period.
+
+Give this token read-only access.
+Limit its access to repository administration metadata.
+Rotate it every 90 days and after a possible exposure.
+
+Use this rotation procedure:
+
+1. Create a replacement token with the required read-only scopes.
+2. Set an expiry of 90 days or less.
+3. Update the `hosted-controls-audit` environment secret.
+4. Run the Hosted controls workflow.
+5. Revoke the old token after the workflow passes.
+6. Record the rotation date.
+
+Do not store a short-lived GitHub App installation token as this secret.
+Mint an installation token during the workflow when you use an App.
+
+### Ephemeral credentials
+
+GitHub creates `GITHUB_TOKEN` for each job.
+The token expires after the job.
+
+CI, release, pin-hygiene, and upstream-refresh steps can use a temporary token file.
+These steps use mode `0600`, remove environment copies, and delete the file on exit.
+
+GitHub creates short-lived OIDC tokens for signing and attestations.
+Workcell does not store a Cosign private key.
+
+The maintainer signing key stays on the maintainer host.
+Host publication checks commit signatures.
+Release CI checks tag signatures.
+Neither path creates a maintainer signature.
 
 ## Attestation and signing
 
-The full producer/verifier contract lives in [provenance.md](provenance.md);
-this section states only the trust assumptions and gaps relevant to a threat
-model.
-
 ### What is produced
 
-- **Keyless Sigstore/Cosign signatures** for the image and ~9 release blobs.
-  Signing uses GitHub OIDC → Fulcio (short-lived certificate) → Rekor
-  transparency log, with `COSIGN_YES: "true"` and **no `--key` flag**. There is
-  **no long-lived cosign private key** to steal.
-- **GitHub-native attestations** (`actions/attest`) for the image digest, the
-  source bundle, the Homebrew formula, the image-digest file, the three
-  deterministic manifests, and `SHA256SUMS`. Fail-closed: absent an explicit
-  opt-out (`WORKCELL_RELEASE_NO_ATTEST`, pinned to `false` in
-  [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml)),
-  every release attests.
-- **SBOM attestations** (`actions/attest` with `sbom-path`) that attach each
-  SPDX-JSON SBOM to the **image-digest and source-bundle subjects** — the SBOM *describes* those
-  subjects; the `.spdx.json` files are not themselves attestation subjects.
-  Verify them via the image/source subject (`gh attestation verify <image>`), not
-  by pointing `gh attestation verify` at a `.spdx.json` file. The SBOM files are
-  additionally Cosign-signed as blobs (see the signatures above).
-- **BuildKit SLSA provenance** (`mode=max`) plus **SPDX-JSON SBOMs** (syft) for
-  source and image.
+Each successful tagged release publishes one signed multi-platform image.
+It also uploads nine release-data assets and nine Sigstore bundles.
 
-### Verification assumptions — and the gap
+Cosign uses GitHub OIDC, a short-lived Fulcio certificate, and Rekor data.
+The workflow does not use a `--key` option.
 
-Verification is **partly asymmetric**: the pipeline *produces* signatures,
-attestations, and SBOMs comprehensively. On the consumer side
-`scripts/install-release.sh` now verifies the release fail-closed before
-installing — **by default** the keyless cosign signature over `SHA256SUMS` plus
-binding the downloaded bundle's digest to its entry in that verified
-`SHA256SUMS`. GitHub attestation verification is **opt-in** via `--attestation`;
-the published SBOMs are for downstream SCA, not an install-time gate, so the
-installer does **not** verify them (see
-[known gap 1](#known-gaps-and-future-work)). Meanwhile **CI still does not verify
-Workcell's own release outputs**. The release workflow verifies inputs and
-reproducibility (tag signature via `check-release-tag-signature.sh`,
-byte-for-byte bundle reproducibility via `verify-release-bundle.sh`) but does
-not re-run `cosign verify` or `gh attestation verify` on the artifacts it just
-signed. (Publish-range commit signatures are checked separately by
-`check-publish-commit-signatures.sh` on the host-side publish-PR path, not by
-the release workflow.) The plain installers (`install.sh` →
-`install-workcell.sh`) install from a local checkout and do **not** download or
-verify a signed release artifact — that is what `install-release.sh` adds.
+The canonical repository creates build-provenance attestations for eight subjects:
 
-On the consumer side, `scripts/install-release.sh` automates the
-trust-establishing step: it verifies the signed `SHA256SUMS` and the bundle
-digest fail-closed (via `scripts/verify-release-artifact.sh`) before installing,
-so on that path the guarantee no longer depends on a user remembering the manual
-`cosign verify` / `gh attestation verify` commands in
-[provenance.md](provenance.md). As of the 1.0 docs this verified path is the
-**documented default for installing a tagged release** — the README Install
-section and getting-started recommend `install-release.sh` (obtained via a repo
-clone over TLS, since the installer is not itself a standalone release asset) or,
-from the release page, the manual `cosign verify` flow. Verification is not yet
-*forced*, however: the README's 5-minute quickstart still runs the plain
-`./scripts/install.sh` from an assumed local checkout, a user can otherwise
-choose an unverified install (`tar … && ./scripts/install.sh` or a hand-fetched
-bundle), and no standalone verified installer is
-published as a release asset — so the residual is a defaulting/bootstrap gap,
-not an absent capability (threat 8,
-[known gap 1](#known-gaps-and-future-work)). The verification identity that a consumer (or the installer) pins is the
-release workflow at a tag ref (`.../release.yml@refs/tags/.+`) with issuer
-`https://token.actions.githubusercontent.com`. What remains asymmetric is CI:
-the release workflow verifies inputs and reproducibility but still does not
-re-run `cosign verify` / `gh attestation verify` on the artifacts it just
-signed.
+- the runtime image
+- the source bundle
+- the Homebrew formula
+- the image-digest file
+- the build-input manifest
+- the control-plane manifest
+- the builder-environment manifest
+- `SHA256SUMS`
 
-SLSA posture is **Build L2, not L3** (self-documented in
-[provenance.md](provenance.md)): the image build and the provenance/signing
-steps run in the *same* job on the *same* runner, so a compromised build step
-could hand a forged digest to the attestation step. The build is also **pinned
-and reproducible but not hermetic** (live `apt`/`npm ci`/provider fetches).
+GitHub also attaches SBOM predicates to the image and source-bundle subjects.
+The two SBOM files are not attestation subjects.
+Cosign signs both SBOM files as release assets.
+
+The amd64 release job rebuilds from the archived source bundle.
+The native arm64 job builds from the checked-out signed tag.
+The workflow combines both platform digests into one image index.
+
+### Consumer verification
+
+`scripts/install-release.sh` verifies a tagged release before extraction.
+It verifies the Cosign signature for `SHA256SUMS`.
+It then compares the bundle digest with the signed checksum.
+
+The `--attestation` option also runs GitHub attestation verification.
+The installer does not use the SBOM files as an installation gate.
+
+An operator can select `--skip-verify` for an unverified installation.
+This option also requires `--i-understand-unverified-install`.
+
+The verified installer is the documented release-install path.
+However, a user can select a local path that does not verify the release.
+The installer also comes from a repository clone, not a signed standalone asset.
+
+### Pipeline verification gap
+
+The release workflow verifies inputs, the release-tag signature, and reproducibility.
+It does not verify the new release signatures after it creates them.
+
+The workflow does not run `cosign verify` on the new image or bundles.
+It also does not run `gh attestation verify` on the new attestations.
+This output-verification gap remains open.
+
+### SLSA posture
+
+Workcell claims SLSA v1.0 Build L2 for the eight build-provenance subjects.
+It does not claim Build L2 for the two SBOM files or nine Sigstore bundles.
+It does not claim Build L3.
+
+GitHub-hosted jobs create authentic platform provenance.
+Build and attestation steps still share one job and its OIDC authority.
+A compromised build step can give a false digest to the attestation step.
+
+The build is reproducible, pinned, and network-dependent.
+It is not hermetic.
 
 ## Threats and mitigations
 
-Residual risk is rated after the existing mitigation.
+Residual risk describes the risk after the current controls.
 
-| # | Threat / vector | Existing mitigation (source) | Residual risk |
-|---|---|---|---|
-| 1 | **Poisoned third-party action or transitive action** runs in a privileged job | Every `uses:` pinned to a full commit SHA and restricted to [`allowed-actions.toml`](../policy/allowed-actions.toml); enforced by `check-pinned-inputs.sh`; `zizmor` audits workflows in `security.yml` | Low: a pinned SHA can still be a compromised-at-tag commit; the allowlist bounds blast radius but does not detect a backdoored pinned commit |
-| 2 | **Compromised/poisoned build dependency** (apt, npm, provider tarball) enters the image | TLS-bootstrap `.deb`s and provider tarballs are `sha256`-verified against repo-hardcoded digests; apt uses a pinned Debian snapshot with signed repo metadata; Rust stage is hermetic (vendored, `--offline`) | Medium: build is **not hermetic** — `npm ci` and apt package contents are not repo-digest-pinned; a compromised upstream within the pinned snapshot window is possible. The pin updater resolves bootstrap paths and digests from `Packages.gz` over authenticated HTTPS and byte-verifies each `.deb`, but does not independently verify the index's Debian OpenPGP signature; the reviewed, signed repository update is the durable trust record. |
-| 3 | **Secret exfiltration via a malicious fork PR** | PR lanes run on `pull_request` with a read-only token and no environment secrets; the sole stored secret is environment-scoped with no admin bypass and `main`/`v*`-only deployment; the one `pull_request_target` job does no checkout and holds no secret | Low |
-| 4 | **Compromised runner** steals credentials or tampers with the build | 100% GitHub-hosted ephemeral single-use runners; no self-hosted tenancy; `persist-credentials: false`; least-privilege per-job tokens | Medium: no `harden-runner`/egress restriction on CI runners, so a compromised step has unrestricted network egress; build+sign share a runner (the L3 gap) |
-| 5 | **Signing-key compromise** | **No long-lived cosign key exists** (keyless OIDC/Fulcio); the git tag/commit key lives off-CI on the maintainer host; releases are immutable (`immutable_github_releases = true`) | Low for cosign; see [incident response](#signing-compromise-incident-response) for the OIDC-identity and GPG-key cases |
-| 6 | **Provenance / attestation forgery** | Attestations bound to the release workflow identity via OIDC; consumers pin `--certificate-identity` / `--signer-workflow`; Rekor transparency; fail-closed attestation pinned by policy | Medium: **Build L2, not L3** — a compromised build step in the same job could get a genuine attestation over a forged digest; and no consumer is *forced* to verify (threat 8) |
-| 7 | **Cache poisoning** from a fork PR into trusted builds | PR-keyed buildx cache scope distinct from `validator-main`; `mode=max` writes gated to `push` events | Low |
-| 8 | **Unverified consumer install** — user runs an artifact that was never verified | A fail-closed verified path is the **documented default**: `scripts/install-release.sh` downloads, verifies via `verify-release-artifact.sh` (`cosign verify-blob` of the signed `SHA256SUMS` against the pinned release-workflow identity, plus optional `gh attestation verify`), and only then installs; the README and getting-started lead with it (or the manual `cosign verify` flow from the release page); verification commands also documented in [provenance.md](provenance.md); immutable releases; `SHA256SUMS` signed | Medium: verified install is the documented default and fail-closed, **but not *forced*** — a user can still choose an unverified install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or any hand-fetched bundle), and the installer is obtained via a repo clone rather than a standalone signed release asset. Reduced from High, not eliminated, until verification is forced across all paths and a verified installer bootstrap ships (see [known gap 1](#known-gaps-and-future-work)) |
-| 9 | **Malicious change reaches a release** without review | Signed-commits + anti-rewrite branch ruleset; tag ruleset on `refs/tags/v*`; required status checks; `pr-base-policy.yml` forces `main` base; publish gated on tag-on-green-main and the `release` environment approval; the amd64 image is rebuilt from the archived source bundle (`context: dist/release-source`) | Medium: **single-maintainer** — the tag signer and the release approver are the same identity; no two-person review (a SLSA Source-track control, out of scope for v1.0 Build). The **arm64** image is built from the checked-out release tag (`context: .`), not the repackaged source archive, so only amd64 gets the archive-rebuild property; both platforms still derive from the same signed, immutable tag |
-| 10 | **Oversized/obfuscated PR** hides a malicious diff | `scripts/check-pr-shape.sh` caps PRs at ≤25 files, ≤1200 changed lines, ≤8 areas, 0 binaries (reviewed override raises limits for certified-adapter PRs only) | Low |
-| 11 | **Stored token leaks via script logging** | Token is environment-scoped read-only metadata; passed by env, never echoed by the workflow | Low: depends on `run-hosted-controls-audit.sh` never running `set -x` over the token |
+| ID | Threat | Current control | Residual risk |
+| --- | --- | --- | --- |
+| 1 | A poisoned action runs in a privileged job. | Full-SHA pins, the action allowlist, and pin checks restrict the action set. Zizmor checks other workflow risks. | Low. A reviewed pinned commit can still contain malicious code. |
+| 2 | A poisoned build dependency enters an image. | Workcell pins snapshots, provider digests, base images, tools, and Rust vendor data. | Medium. `apt` and `npm ci` still use network data. |
+| 3 | Fork code steals a secret. | GitHub makes fork tokens read-only. Fork code cannot use environment secrets. | Low. |
+| 4 | A runner steals authority or changes output. | GitHub-hosted ephemeral jobs, narrow tokens, and disabled checkout credentials reduce exposure. | Medium. Jobs do not restrict network egress. |
+| 5 | An attacker compromises a signing identity. | Cosign is keyless. The maintainer key stays outside CI. Releases are immutable. | Medium. Keyless signing removes stored Cosign keys, but it does not stop workflow-identity or maintainer-key misuse. |
+| 6 | A false artifact gets authentic provenance. | GitHub OIDC binds provenance to the release workflow. Consumers pin that identity. | Medium. Build and provenance authority share a job. |
+| 7 | Fork code poisons a trusted cache. | PR runs write only to PR-specific cache scopes. They can read `validator-main`. | Low. Non-PR runs can write `validator-main`. |
+| 8 | A consumer installs an unverified artifact. | The documented release installer verifies Cosign data and the bundle digest before extraction. | Medium. Other installation paths remain available. |
+| 9 | A malicious change reaches a release. | Signed commits, signed tags, required checks, environment approval, and immutable releases protect publication. | Medium. One maintainer signs and approves releases. |
+| 10 | A large or hidden change avoids review. | The PR shape gate limits files, lines, areas, and binary changes. | Low. A reviewed exception can raise the limits. |
+| 11 | Script logging exposes the stored token. | The token is environment-scoped and the workflows do not print it. | Low. Read-only scope remains a provisioning rule. |
 
 ## Signing-compromise incident response
 
-Because signing is keyless, "signing compromise" has three distinct shapes.
-Handle each explicitly.
+Immutable releases preserve the incident record.
+Do not delete a published tag or release.
+Do not replace a published release.
+Do not move a published tag.
 
-### A. Compromise of the release workflow identity (an attacker gets a genuine Sigstore/attestation signature)
+### Compromise: release workflow identity
 
-This is the case where an attacker manages to run code in the `release` job (or
-otherwise triggers a tag build) and obtains a legitimate OIDC-backed signature
-over a malicious artifact. There is no key to revoke; the response is to
-invalidate the release and re-establish a clean root.
+Use this procedure if the release workflow identity signs unauthorized content:
 
-1. **Detect.** Watch for unexpected tags/releases, a GHCR digest that does not
-   match preflight, or a Rekor entry for the release identity that no
-   maintainer initiated. The Rekor transparency log makes every keyless
-   signature publicly auditable — use it.
-2. **Contain.** Immediately disable the `release` environment approval (or
-   remove its reviewers) and pause tag creation. Rotate any GitHub credentials
-   (PAT/App) that could have triggered the workflow, including
-   `WORKCELL_HOSTED_CONTROLS_TOKEN`.
-3. **Invalidate.** Delete or yank the bad GHCR image tag and the GitHub release.
-   Because releases are immutable, publish a superseding release rather than
-   editing in place. Publish an advisory listing the compromised digest(s) so
-   consumers who pinned by digest can reject them.
-4. **Re-sign clean.** Rebuild from a known-good tagged commit on `main`, re-run
-   the full preflight, and publish a new signed/attested release with a new
-   version.
-5. **Communicate.** Open a GitHub Security Advisory (see
-   [`SECURITY.md`](../SECURITY.md)) naming the bad digests, the window, and the
-   safe replacement version and its verification identity.
+1. Disable the Release workflow.
+2. Block publication of new remote tags.
+3. Keep the release-environment reviewer rule enabled.
+4. Record the affected tags, image digests, assets, and Rekor entries.
+5. Revoke credentials that the attacker used.
+6. Rotate exposed credentials.
+7. Publish a security advisory that identifies the affected digests.
+8. Patch `main` through the normal PR, review, and validation process.
+9. Select a new patch version.
+10. Create the signed tag.
+11. Verify the signed tag.
+12. Enable the Release workflow.
+13. Permit publication of the selected tag.
+14. Push the signed tag.
+15. Follow the Release workflow to completion.
+16. Name the safe replacement version in the advisory.
 
-### B. Compromise of the git commit/tag signing key (GPG)
+Do not edit the affected immutable release.
+Do not reuse its tag.
 
-This key underwrites the signed-commits ruleset and release-tag verification. If
-the maintainer host or key is compromised:
+### Compromise: maintainer signing key
 
-1. **Revoke** the GPG key (publish a revocation certificate to the keyservers)
-   and remove it from the GitHub account's verified signing keys.
-2. **Generate** a new signing key, add it to GitHub, and update local signing
-   config. Do **not** move, delete, or re-sign an existing release tag — that
-   violates the immutable-release rule in [`releasing.md`](releasing.md) ("Never
-   move or rewrite an existing release tag") and destroys the audit trail.
-   Instead, if a published release is implicated, cut a **superseding release**:
-   a new signed commit on `main` and a new signed tag under the new key.
-3. **Audit** recent commits/tags for signatures made after the suspected
-   compromise; treat any that verify only under the revoked key as suspect and
-   re-review those changes.
-4. **Rotate** any secrets that lived on the same host (the
-   `WORKCELL_HOSTED_CONTROLS_TOKEN` if it was ever handled there).
-5. **Communicate** as in case A if any published release tag is implicated.
+Use this procedure after a maintainer-key compromise:
 
-### C. Compromise of the transparency/trust root (Sigstore or GitHub OIDC)
+1. Publish the key revocation data.
+2. Remove the key from the GitHub account.
+3. Create a new signing key.
+4. Register the new key.
+5. Audit commits and tags from the affected period.
+6. Publish an advisory for each affected release.
+7. Patch `main` through the normal PR process.
+8. Select a new patch version.
+9. Use the new key to create the signed tag.
+10. Verify the signed tag.
+11. Push the signed tag.
+12. Follow the Release workflow to completion.
 
-A compromise of Fulcio/Rekor or GitHub's OIDC issuer is a trusted-infrastructure
-failure outside Workcell's control. The response is to follow Sigstore's /
-GitHub's published incident guidance, treat all releases signed in the affected
-window as suspect, and re-sign from clean infrastructure once the root is
-restored. This is a residual risk, not a mitigated one.
+Do not re-sign an existing tag.
+Do not remove the immutable audit record.
 
-### Post-incident (all cases)
+### Compromise of a trust service
 
-- Write a short post-mortem and add it under [`docs/security/`](../SECURITY.md).
-- If the vector was a workflow weakness, fix the workflow and add a `zizmor` /
-  `check-pinned-inputs` guard so it cannot recur.
-- Re-run `scripts/verify-github-hosted-controls.sh` to confirm rulesets and
-  environments are intact.
+Fulcio, Rekor, and GitHub OIDC are trusted services.
+Follow the service incident instructions after a compromise.
+
+Treat releases from the affected period as suspect.
+Publish an advisory.
+Create a new patch release after the trust service is safe.
+
+### Post-incident work
+
+Write a post-incident report.
+Link the report from the [security policy](../SECURITY.md).
+Add a workflow or policy check when a repository control can prevent the event.
+Run the hosted-control audit again.
 
 ## Known gaps and future work
 
-These are real weaknesses in the current CI/CD posture, stated so they can be
-tracked or accepted deliberately:
+1. **Consumer verification is not mandatory.**
+   G3 is complete through lifecycle scenarios, hosted checks, and published `v1.0.2` evidence.
+   The verified installer checks Cosign data, checksums, and optional GitHub attestations.
+   However, local and manual installation paths can omit this verification.
+   The acknowledged `--skip-verify` option also omits verification.
+   Workcell also does not publish the installer as a signed standalone asset.
 
-1. **Forced consumer verification — PARTIALLY addressed (verified install is now
-   the documented default; not yet *forced*, and the installer bootstraps via a
-   repo clone).** A fail-closed verified install path now
-   exists: `scripts/install-release.sh` downloads, verifies, and only then
-   installs a tagged release via `scripts/verify-release-artifact.sh`, which by
-   default `cosign verify-blob`s the signed `SHA256SUMS` against the pinned
-   release workflow identity (`.../release.yml@refs/tags/.+`, issuer
-   `https://token.actions.githubusercontent.com`) and binds the bundle digest to
-   that verified list, optionally requiring `gh attestation verify`
-   (`--attestation`). A missing `cosign`, absent material, a bad signature, or a
-   digest mismatch each refuse the install; the only bypass is an explicit,
-   acknowledged `--skip-verify` for documented air-gapped installs (see
-   [install.md](install.md#verified-release-install-recommended)). The published
-   SBOMs are for downstream SCA and are deliberately **not** an install-time gate
-   (the installer does not verify them). The README and getting-started now lead
-   with this verified path (`install-release.sh`, obtained via a repo clone over
-   TLS, or the manual `cosign verify` flow from the release page). **This makes
-   verified install the documented default, but does not yet fully close the
-   gap:** verification is not *forced* — a user can still choose an unverified
-   install (`tar … && ./scripts/install.sh`, the plain `install.sh`, or a
-   hand-fetched bundle) — and the installer is bootstrapped from a repo clone
-   rather than a standalone signed release asset.
-   Homebrew installs verify at checksum level via the pinned `sha256` in
-   `workcell.rb`. **G3 progress:** `install-release.sh` is now exercised end to
-   end in CI against a locally built fixture release with stubbed `curl`/`cosign`
-   (`internal/testkit/install_release_e2e_test.go`), proving the full
-   download → verify → extract → handoff chain is fail-closed — a bad signature
-   or a digest mismatch aborts before the bundle installer runs. Part (b) below
-   is now done: the verified path has been exercised end-to-end against the
-   genuinely published, cosign-signed `v1.0.0-rc.2` release (`install-release.sh
-   --attestation` exit 0 with cosign + digest + attestation verified, plus a
-   tamper negative control — see
-   [install-lifecycle.md](install-lifecycle.md) §"Certification record"), so the
-   real keyless Sigstore signature path is proven, not just the offline fixture.
-   **Fully closing gap 1** now requires only (a) making verification *forced*
-   across all documented install flows and shipping a standalone verified
-   installer bootstrap (so consumers need not clone the repo to get a trusted
-   `install-release.sh`); tracked under **G3**, install-lifecycle proof; see
-   [install-lifecycle.md](install-lifecycle.md).
-2. **SLSA Build L3 not met (threat 6).** Build and provenance generation share a
-   job/runner, so provenance is forgeable by a compromised build step. Closing
-   it requires moving the build into an isolated trusted reusable workflow (or
-   `slsa-github-generator`). Self-documented in [provenance.md](provenance.md).
-3. **Build is not hermetic (threat 2).** Live `apt`/`npm ci`/provider fetches
-   during the image build are not fully repo-digest-pinned. Relatedly, only the
-   amd64 image is rebuilt from the archived source bundle; the arm64 image builds
-   from the checked-out release tag (`context: .`), so the archive-rebuild
-   provenance property is amd64-only (both platforms still derive from the same
-   signed tag).
-4. **No CI-runner egress hardening (threat 4).** No `step-security/harden-runner`
-   or equivalent restricts network egress on GitHub-hosted runners, so a
-   compromised step has open egress. (The product's own runtime sandbox has a
-   default-deny egress allowlist — that is a *product* control, not a CI one.)
-5. **No hard self-hosted-runner ban.** The all-GitHub-hosted guarantee rests on
-   exact label pinning plus review, not a rule that rejects a `self-hosted`
-   label outright. Future self-hosted Apple Silicon runner work would need an
-   explicit trust-tier policy first.
-6. **Single-maintainer review (threat 9).** No two-person review; the tag signer
-   and release approver are one identity. This is a SLSA Source-track control,
-   out of scope for the v1.0 Build-track claim, and a deliberate accepted risk
-   in single-maintainer mode.
-7. **Attestation opt-out exists.** `WORKCELL_RELEASE_NO_ATTEST=true` would ship a
-   release without GitHub SLSA attestations (cosign bundles remain). Mitigated
-   by pinning the variable to `false` in the hosted-control policy, but the code
-   path exists.
+2. **Workcell does not meet SLSA Build L3.**
+   Build steps and provenance authority share a job.
+   A trusted builder must separate these authorities.
+
+3. **The build is not hermetic.**
+   Image builds use network package sources.
+   The amd64 job builds from the archived source bundle.
+   The separate arm64 job builds from the checked-out signed tag.
+
+4. **CI runners do not have egress restrictions.**
+   A compromised workflow step can use the runner network.
+
+5. **No global rule rejects self-hosted runners.**
+   Pin checks cover the CI build matrix, macOS matrices, and arm64 release label.
+   Reviewers check all other `runs-on` values.
+
+6. **The repository has one maintainer.**
+   The same maintainer can sign a tag and approve the release environment.
+   Workcell does not claim independent approval or separation of duties.
+
+7. **The code can omit attestations.**
+   `WORKCELL_RELEASE_NO_ATTEST=true` disables GitHub attestations.
+   Hosted policy pins this value to `false` for the canonical repository.
+   Cosign signatures remain mandatory.
+
+8. **The release workflow does not verify its new outputs.**
+   It creates signatures and attestations but does not verify them in the same run.
+   Add independent post-production verification to close this gap.
 
 ## References
 
-- Runtime-boundary [threat model](threat-model.md) and
-  [OWASP agentic mapping](owasp-agentic-mapping.md)
-- [Provenance, signing, and SBOMs](provenance.md) — the full producer/verifier
-  contract and SLSA gap analysis
-- [Release posture](release-posture.md) and the [release runbook](releasing.md)
-- [GitHub workflow design](github-workflows.md) — the workflow inventory and
-  hosted-control catalog
+- Runtime [threat model](threat-model.md)
+- [OWASP agentic mapping](owasp-agentic-mapping.md)
+- [Provenance, signatures, and SBOMs](provenance.md)
+- [Release posture](release-posture.md)
+- [Release runbook](releasing.md)
+- [GitHub workflow design](github-workflows.md)
 - [Artifact retention policy](retention-policy.md)
-- [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml),
-  [`policy/tool-pins.toml`](../policy/tool-pins.toml),
-  [`policy/allowed-actions.toml`](../policy/allowed-actions.toml)
-- [`SECURITY.md`](../SECURITY.md) — reporting and disclosure
+- [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml)
+- [`policy/tool-pins.toml`](../policy/tool-pins.toml)
+- [`policy/allowed-actions.toml`](../policy/allowed-actions.toml)
+- [Security policy](../SECURITY.md)
