@@ -35,11 +35,11 @@ or local sockets.
 
 ## How it compares
 
-| Approach | Primary boundary | Provider-native control plane | Publication outside runtime | Lower-assurance paths called out |
+| Approach | Primary boundary | Provider-native control plane | Normal publication path | Lower-assurance paths called out |
 |---|---|---|---|---|
-| Host-native provider CLI | host user session | yes | no | rarely |
+| Host-native provider CLI | host user session | yes | host user session | rarely |
 | Generic container wrapper | container only, often mixed with host state | often partial | varies | often unclear |
-| Workcell strict | dedicated Colima VM plus hardened container | yes | yes | yes |
+| Workcell strict | dedicated Colima VM plus hardened container | yes | separate host workflow | yes |
 
 ## Project status
 
