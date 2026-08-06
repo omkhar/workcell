@@ -1,194 +1,192 @@
-# Stability Contract
+# Stability contract
 
-This document defines Workcell's versioned v1 compatibility surface for the
-1.0 release-candidate gate, including the exit-code contract shared across the
-Rust launcher, the Go binaries, and the shell entrypoint. Candidate and release
-identity remain recorded separately in the readiness review; this contract does
-not imply that live 1.0 certification is complete.
+This page defines the public compatibility contract for Workcell v1.
+Workcell published `v1.0.2` on 2026-08-05 as its first 1.0 release.
 
-**Contract version: 1.** The machine-checkable companion to this document is
-`policy/public-contract.toml`, enforced by `workcell-citools
-validate-public-contract` (`internal/metadatautil.CheckPublicContract`). It
-asserts that every exit code and output-line prefix documented below is
-actually emitted somewhere in the source tree, and that the session-record
-field list and injection-policy table list below exactly match the
-`SessionRecord`/`SessionExport` JSON shape and the injection-policy table
-whitelist in code.
+These files contain the machine-readable contract:
 
-"Stable" means the shape follows the deprecation policy below. "Experimental"
-means it may change or be removed. For v1, every workflow declared
-`support = "supported"` and `target_state = "retain"` in
-`policy/operator-contract.toml` is stable at its canonical syntax unless this
-document explicitly classifies part of it as experimental. Absence from this
-document and the operator contract is not a stability promise.
+- [`policy/public-contract.toml`](../policy/public-contract.toml) lists the public primitives.
+- [`policy/operator-contract.toml`](../policy/operator-contract.toml) lists the stable operator workflows.
+- [`policy/v1-contract-freeze.toml`](../policy/v1-contract-freeze.toml) contains the v1 compatibility floor.
+
+`workcell-citools validate-public-contract` checks the public primitives.
+`verify-operator-contract.sh` checks the operator workflows.
+Release preflight compares the v1 floor with each earlier version in Git history.
+
+The contract version is `1`.
+
+`Stable` means that this deprecation policy applies.
+`Experimental` interfaces have no compatibility guarantee.
+Workcell makes no compatibility promise for an unlisted public interface.
 
 ## Deprecation policy
 
-From the first release candidate that contains this freeze through the final
-1.0 release and subsequent v1 releases, Workcell follows
-[semantic versioning](https://semver.org). The stable surfaces enumerated in
-this document carry a compatibility guarantee within the major version: the
-exit-code contract, the machine-readable output-line prefixes, the
-session-record/export field set, and the injection-policy table (enforced by
-`policy/public-contract.toml` and the immutable
-[`policy/v1-contract-freeze.toml`](../policy/v1-contract-freeze.toml) baseline),
-together with the stable `scripts/workcell` CLI flags and subcommands documented
-under [CLI stability](#cli-stability) (enforced via
-`policy/operator-contract.toml` and the same baseline). Release preflight
-compares that floor with every prior version in Git history, so a coordinated
-edit of the live inventory and current floor cannot erase an earlier v1
-commitment. The guarantee:
+Workcell follows semantic versioning for stable v1 interfaces.
+These rules apply:
 
-- **No breaking change to a stable surface ships in a patch or minor release.**
-  A new field or prefix may be *added*; an existing one is not renamed, removed,
-  or given a changed meaning except across a major version bump.
-- **Deprecations are announced before removal.** A stable surface slated for
-  removal is first marked deprecated in [`CHANGELOG.md`](../CHANGELOG.md) and,
-  where it has a runtime presence, emits a documented deprecation notice. It
-  keeps working for at least one subsequent minor release, and its removal lands
-  only in a major version bump.
-- **Experimental surfaces** (labeled "Experimental" here, and anything absent
-  from this document) carry no such guarantee and may change or be removed in any
-  release.
-- **A security fix may override this policy** when a stable surface is itself the
-  vulnerability; any such change is called out in [`CHANGELOG.md`](../CHANGELOG.md)
-  and [`SECURITY.md`](../SECURITY.md).
+- A patch or minor release must not break a stable interface.
+- Workcell permits compatible additions to fields, prefixes, flags, and commands.
+- Workcell must announce a deprecation in [`CHANGELOG.md`](../CHANGELOG.md).
+- A deprecated runtime interface must show a documented deprecation notice.
+- The interface must work for at least one later minor release.
+- Workcell removes the interface only in a new major release.
 
-Workcell is currently in single-maintainer release mode
-([`SECURITY.md`](../SECURITY.md#supported-versions)), so only the latest release
-receives fixes; track it and read [`CHANGELOG.md`](../CHANGELOG.md) for
-deprecations before upgrading.
+Workcell permits an exception only when a stable interface causes a security vulnerability.
+Workcell must record that exception in `CHANGELOG.md` and [`SECURITY.md`](../SECURITY.md).
+
+Workcell uses a single-maintainer release process.
+Only the latest release gets security fixes.
+Read `CHANGELOG.md` before you upgrade.
 
 ## Exit-code contract
 
-The canonical convention across every entrypoint:
-
 | Code | Meaning |
-|------|---------|
-| 0 | success |
-| 2 | usage / precondition error (missing or unknown command, wrong arity, bad option, unmet precondition) |
-| 1 | runtime error (an operation attempted and failed) |
-| 3 | colima profile status: no matching profile (`workcell-hostutil colima-status`) |
-| 124 | colima operation timed out (mirrors GNU `timeout`) |
-| 126 | launcher: fail-closed policy block, or target not executable (`EACCES`) |
-| 127 | launcher: target not found (`ENOENT`) |
-| 128+N | launcher: supervised child terminated by signal N |
-| 0–255 | launcher: passthrough of the supervised child's own exit status |
+| ---: | --- |
+| `0` | The operation succeeded or made a documented clean skip. |
+| `1` | The operation started and failed at runtime. |
+| `2` | The command, option, argument, or precondition is not valid. |
+| `3` | `workcell-hostutil colima-status` did not find the requested profile. |
+| `124` | A Colima operation timed out. |
+| `126` | The launcher blocked execution or the target is not executable. |
+| `127` | The launcher did not find the target. |
+| `128+N` | Signal `N` terminated the supervised child process. |
 
-Per surface:
+The launcher returns the supervised child exit status without a change.
+That child status can equal a launcher-owned code.
+Use the diagnostic and command context to identify the source.
 
-- **Go binaries** (`workcell-citools`, `workcell-hostutil`, `workcell-colimautil`,
-  `workcell-runtimeutil`): usage/precondition errors exit **2**, runtime errors
-  exit **1**. The exit code is carried through the error chain by
-  `internal/cliexit.ExitCodeError{Code}`. Deterministic exit-code tests live in
-  each binary's `main_test.go`.
-- **Shell entrypoint** (`scripts/workcell`): usage/precondition failures exit
-  **2** (the dominant convention); a small set of host-precondition failures
-  exit **1** (see the recorded exception below). Runs under `set -euo pipefail`.
-- **Rust launcher** (`workcell-launcher`): fail-closed authorization refusals and
-  non-executable targets exit **126**; missing targets exit **127**; a supervised
-  child's exit status or signal (`128+N`) is passed through unchanged.
+The Go command tools use exit code `2` for usage and precondition errors.
+They use exit code `1` for runtime errors.
+`internal/cliexit.ExitCodeError` carries the code through the error chain.
+
+The `scripts/workcell` command uses exit code `2` for most precondition errors.
+It runs with `set -euo pipefail`.
 
 ### Recorded intentional exceptions
 
-These are deliberate and are documented rather than "fixed", because changing
-them would break existing shell↔Go parity or the launcher's fail-closed
-posture:
+Exit code `126` has two documented meanings.
+It can report a policy block or an `EACCES` execution error.
+Read the launcher diagnostic to identify the cause.
 
-- **Launcher 126 is overloaded** — it covers both a fail-closed policy block and
-  an exec `EACCES` (not executable). Both match the shell convention that 126
-  means "command found but not runnable". A caller distinguishes them by the
-  launcher's stderr diagnostic, not the code.
-- **Shell 1-vs-2 split for host preconditions** — "missing trusted host tool"
-  exits **1** while "missing host working directory" exits **2**. This split is
-  frozen for byte-for-byte parity with the Go translations
-  (`internal/publishpr/host_exec.go`) and is guarded by `internal/testkit`'s
-  bash↔Go parity harness.
+The shell uses two codes for host preconditions.
+If Workcell cannot find a trusted host tool, it returns exit code `1`.
+If Workcell cannot find the specified host working directory, it returns exit code `2`.
+
+This split preserves shell and Go parity.
+The parity tests in `internal/testkit` enforce it.
 
 ## CLI stability
 
-The user-facing CLI is `scripts/workcell`. The canonical inventory is
-`policy/operator-contract.toml`; in summary, the stable surface includes:
+`policy/operator-contract.toml` is the exact stable workflow inventory.
+`policy/v1-contract-freeze.toml` stores each frozen canonical command.
 
-- Core flags: `--agent`, `--target`, `--mode`, `--workspace`, `--agent-autonomy`,
-  `--dry-run`, `--prepare` / `--prepare-only`, and the introspection flags
-  `--doctor` / `--inspect` / `--logs` / `--auth-status` / `--gc`, plus
-  `--repair-profile`, `--cache-profile`, `--session-workspace`, and `--version`.
-- Subcommands: `publish-pr`; `support-bundle`;
-  `session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify>`;
-  `auth <init|set|unset|status>`; `policy <show|validate|diff>`; and `why`.
+The stable inventory includes these command groups:
 
-Stable syntax does not promote a target's support tier. The `aws-ec2-ssm` and
-`gcp-vm` target names remain stable inputs to preview-only, launch-blocked
-workflows as defined by the host support matrix.
+- managed Codex, Claude, Copilot, and Gemini launch commands
+- strict, development, and build modes
+- autonomy, target, workspace, prepare, repair, dry-run, and cache options
+- `publish-pr` and `support-bundle`
+- `auth`, `policy`, and `why`
+- `session` start, control, inspection, export, verification, and deletion commands
+- doctor, inspect, log, authentication-status, cleanup, and version options
 
-Experimental or explicitly gated (may change; already marked in `--help`):
+Use the policy file for the exact syntax.
+Do not infer stable syntax from this summary.
 
-- `--agent antigravity` (recognized as planned but unsupported).
-- `--ui gui` (not implemented; fails closed).
-- backend behavior and support status for the preview targets selected by
-  `aws-ec2-ssm` and `gcp-vm`; the selector spellings themselves are stable.
-- `--mode breakglass` (gated behind a dated `--ack-breakglass`),
-  `--allow-arbitrary-command` (behind `--ack-arbitrary-command`),
-  `--allow-control-plane-vcs` (behind `--ack-control-plane-vcs`), and
-  `--allow-repo-mcp` (behind a dated `--ack-repo-mcp`).
+Stable selector syntax does not change a target support tier.
+The host support matrix controls target support.
+Workcell supports strict Colima only on macOS arm64.
+Workcell supports Docker Desktop compatibility only on macOS arm64.
+The `aws-ec2-ssm` and `gcp-vm` selector names are stable.
+These remote targets remain preview-only and launch-blocked.
+
+The `--version` syntax is stable.
+The `v1.0.2` bundle reports `workcell v1.0.1`.
+The command reads the first changelog entry in that bundle.
+Do not use this output to authenticate the release tag.
+Verify the signed release tag, signed checksum, and bundle digest.
+
+Workcell does not guarantee compatibility for these preview interfaces:
+
+- Workcell does not implement `--ui gui`. The value fails closed.
+- Workcell does not guarantee backend behavior for `aws-ec2-ssm` or `gcp-vm`.
+
+`--agent antigravity` is a recognized but unsupported value.
+It fails closed.
+
+These higher-trust options require explicit acknowledgement:
+
+- `--mode breakglass` requires a dated `--ack-breakglass` value.
+- `--allow-arbitrary-command` requires a dated `--ack-arbitrary-command` value.
+- `--allow-control-plane-vcs` requires `--ack-control-plane-vcs`.
+- `--allow-repo-mcp` requires a dated `--ack-repo-mcp` value.
+
+Workcell rejects each option without its acknowledgement.
+These options reduce assurance or expose an additional control surface.
+Use an option only for its documented exception.
 
 ## Stable machine-readable output
 
-These lines are consumed by tests, CI, or other tooling and are treated as
-contract-like `key=value` / structured output:
+The public contract freezes these output prefixes:
 
-- session `show` metadata: `target_kind=`, `target_provider=`, `workspace=`,
-  `assurance=`, and peers.
-- support matrix: `host_os=`, `host_arch=`, `support_matrix_status=`.
-- `publish_pr_url=` (from `publish-pr`).
-- `mutation score: NN.NN% (k/t killed)` and `surviving mutants: …`.
-- audit digest lines: `record_digest=`, `prev_digest=`.
-- `scenario-manifest` TSV rows (tab-delimited), with ordered columns `id`,
-  `test_file`, `requires_credentials`, `lane`, `platform`,
-  `validation_tier`, and `manual`.
+| Prefix | Source |
+| --- | --- |
+| `host_os=` | Host support matrix and `scripts/workcell` |
+| `host_arch=` | Host support matrix and `scripts/workcell` |
+| `support_matrix_status=` | Host support matrix and `scripts/workcell` |
+| `provider_bootstrap_` | Authentication policy and `scripts/workcell` |
+| `target_kind=` | Session records and `scripts/workcell` |
+| `target_provider=` | Session records and `scripts/workcell` |
+| `workspace=` | Session records and `scripts/workcell` |
+| `assurance=` | Session records and `scripts/workcell` |
+| `publish_pr_url=` | PR publication output |
+| `mutation score:` | Mutation result output |
+| `surviving mutants:` | Mutation result output |
+| `record_digest=` | Audit output from `scripts/workcell` |
+| `prev_digest=` | Audit output from `scripts/workcell` |
+| `egress_enforcement=` | Egress output from `scripts/workcell` |
+| `session_verify=` | `session verify` output |
+| `key_id=` | `session verify` output |
+| `head_digest=` | `session verify` output |
 
-The full stable output-line prefix set enforced by `policy/public-contract.toml`
-`[output_lines].prefixes`:
+The `scenario-manifest` TSV schema also has a stable column order:
 
-| Prefix | Emitted by |
-|--------|------------|
-| `host_os=` | `internal/host/supportmatrix`, `scripts/workcell` |
-| `host_arch=` | `internal/host/supportmatrix`, `scripts/workcell` |
-| `support_matrix_status=` | `internal/host/supportmatrix`, `scripts/workcell` |
-| `provider_bootstrap_` | `internal/authpolicy`, `scripts/workcell` |
-| `target_kind=` | `internal/host/sessions`, `scripts/workcell` |
-| `target_provider=` | `internal/host/sessions`, `scripts/workcell` |
-| `workspace=` | `internal/host/sessions`, `scripts/workcell` |
-| `assurance=` | `internal/host/sessions`, `scripts/workcell` |
-| `publish_pr_url=` | `internal/publishpr` (via `internal/shellproto`) |
-| `mutation score:` | `cmd/workcell-citools` |
-| `surviving mutants:` | `cmd/workcell-citools` |
-| `record_digest=` | `scripts/workcell` |
-| `prev_digest=` | `scripts/workcell` |
-| `egress_enforcement=` | `scripts/workcell` |
-| `session_verify=` | `internal/sessionctl` (`session verify`) |
-| `key_id=` | `internal/sessionctl` (`session verify`) |
-| `head_digest=` | `internal/sessionctl` (`session verify`) |
+1. `id`
+2. `test_file`
+3. `requires_credentials`
+4. `lane`
+5. `platform`
+6. `validation_tier`
+7. `manual`
 
-The complete set of `key=` prefixes in the `session show --text` summary is
-enforced separately, by set-equality against `SessionShowLines`
-(`policy/public-contract.toml` `[session_show_prefixes]`).
+`policy/public-contract.toml` also freezes the complete `session show --text` prefix set.
+The validator compares that set with `SessionShowLines`.
 
 ## Injection-policy supported tables
 
-`internal/injection` accepts exactly five top-level tables in an injection
-policy TOML document: `documents`, `ssh`, `credentials`, `network`
-(single-bracket tables), and `copies` (the one supported `[[array-of-table]]`).
-Any other top-level table name is rejected. `[network]` carries only the egress
-`allow_endpoints`/`deny_endpoints` lists and cannot change the network-policy
-mode; see `docs/injection-policy.md` for the per-table schema and the egress
-mechanism.
+An injection policy accepts these five top-level tables:
+
+- `documents`
+- `ssh`
+- `credentials`
+- `copies`
+- `network`
+
+`copies` is the only supported array-of-table.
+The other four names use single tables.
+
+The policy root also accepts these scalar keys:
+
+- `version`
+- `includes`
+
+The `[network]` table accepts `allow_endpoints` and `deny_endpoints`.
+It cannot change the network-policy mode.
+See [Injection policy](injection-policy.md) for each table schema.
 
 ## Durable session-record fields
 
-`internal/host/sessions.SessionRecord`'s JSON field set (`session show`,
-`session export`, and the on-disk session record file):
+`SessionRecord` uses these stable JSON fields:
 
 `version`, `session_id`, `profile`, `target_kind`, `target_provider`,
 `target_id`, `target_assurance_class`, `runtime_api`, `workspace_transport`,
@@ -201,13 +199,13 @@ mechanism.
 `final_assurance`, `workspace_control_plane`, `workspace_repo_mcp`,
 `bootstrap_id`, `image_ref`.
 
-`SessionExport` (`session export`) wraps this in `session` and adds
-`audit_records`.
+`SessionExport` contains these stable fields:
+
+- `session`
+- `audit_records`
 
 ## Internal Go APIs
 
-All Go code lives under `internal/`, so it is not importable outside the module;
-"stable" here means a stable intra-module contract. The most depended-upon is
-`internal/cliexit` (the exit-code carrier used by every CLI). Treat other
-`internal/` package APIs as implementation detail that may change with their
-callers.
+Internal Go APIs are not part of the public v1 contract.
+Code outside this module cannot import packages under `internal/`.
+Workcell does not guarantee compatibility for those APIs.

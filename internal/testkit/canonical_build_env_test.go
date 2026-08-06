@@ -911,42 +911,53 @@ func TestCanonicalBuildEnvironmentScopeAndReachability(t *testing.T) {
 	}
 	text := string(content)
 	for _, want := range []string{
-		"G0a1a1 canonical-build-environment",
-		"three roots",
+		"Four reviewed scripts",
 		"`scripts/lib/canonical-build-env.sh`",
+		"`scripts/check-public-contract.sh`",
+		"direct-entrypoint mutation test",
+		"validation-entrypoint tests",
 		"exact `GOENV=off`",
 		"exact `GOWORK=off`",
 		"`GOPATH`, `GOCACHE`, and `GOMODCACHE`",
 		"`GOROOT_<major>_<minor>_{X64,ARM64}`",
-		"removed before any descendant runs",
-		"near-matches still fail closed",
+		"child process starts",
+		"rejects a near-match",
 		"explicitly lower assurance",
-		"G0a1a2",
-		"G0a1b",
-		"G0a1c",
-		"G0a2a",
-		"G0a2",
-		"G0b",
-		"arbitrary direct `go` invocations",
-		"whole local administrative plane",
+		"arbitrary direct `go` command",
+		"local Git administrative plane",
 		"`.git/info/attributes`",
 		"credential files",
-		"`HOME` (including `.netrc`)",
+		"under `HOME`, including `.netrc`",
 		"`PATH`",
 		"tool binaries",
 		"`BASH_ENV`",
-		"clears `CDPATH`",
+		"clear `CDPATH`",
 		"`CGO*`",
 		"`BASH_FUNC_*`",
 		"`SHELLOPTS`",
 		"`BASHOPTS`",
 		"`BASH_XTRACEFD`",
 		"descendant `CDPATH`",
-		"resident-only base selection",
-		"Release certification stays blocked",
+		"does not fetch",
+		"resident `origin/<base>`",
+		"separate zero-stat index",
+		"does not lock Git administrative state",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("validation scenario documentation must contain %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"G0a1a1",
+		"G0a1a2",
+		"G0a1b",
+		"G0a1c",
+		"G0a2",
+		"G0b",
+		"Release certification stays blocked",
+	} {
+		if strings.Contains(text, stale) {
+			t.Fatalf("validation scenario documentation contains stale milestone text %q", stale)
 		}
 	}
 }
