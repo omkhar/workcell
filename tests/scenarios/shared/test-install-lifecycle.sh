@@ -9,7 +9,8 @@
 # passwd identity over $HOME, and `/tmp` is hard-coded), so invoking them live
 # here could delete a developer's or CI runner's real Workcell temp/cache state.
 # They are therefore NOT invoked live in this scenario:
-#   - uninstall is proven end to end by the macOS install-verification CI lane;
+#   - hosted CI proves bundle installation and launcher-link and man-page-link
+#     removal. It does not prove complete bundle uninstall behavior;
 #   - `--gc`'s cleanup contract is asserted below at the FUNCTION level against
 #     an INJECTED sandbox root (never `/tmp`, never real home);
 #   - the live end-to-end `--gc` exercise is local-operator-certification

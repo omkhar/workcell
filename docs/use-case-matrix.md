@@ -27,8 +27,8 @@ workflows.
 | Session inventory, control, delete, logs, timeline, diff, and export | `tested` | `tests/scenarios/shared/test-session-commands.sh`, `internal/host/sessions/sessions_test.go` |
 | Isolated-session workspace preflight and direct-workspace remediation | `tested` | `tests/scenarios/shared/test-session-commands.sh` |
 | Persistent non-secret cache with `--cache-profile standard` | `tested` | `tests/scenarios/shared/test-assurance-dry-run.sh`, `scripts/verify-invariants.sh` |
-| Bundle install and uninstall on the hosted macOS matrix | `tested` | `tests/scenarios/shared/test-install-lifecycle.sh`, `internal/testkit/install_release_e2e_test.go`, `.github/workflows/ci.yml` `Install verification` jobs |
-| Homebrew install and uninstall on the hosted macOS matrix | `tested` | `.github/workflows/ci.yml` and `.github/workflows/release.yml` install-verification jobs |
+| Bundle installation and link removal on the hosted macOS matrix | `tested` | The `Install verification` jobs in `.github/workflows/ci.yml` and the `Release install verification` jobs in `.github/workflows/release.yml` prove bundle installation, launcher-link removal, and man-page-link removal. They do not prove complete bundle uninstall behavior. |
+| Homebrew installation and formula removal on the hosted macOS matrix | `tested` | `.github/workflows/ci.yml` and `.github/workflows/release.yml` install-verification jobs |
 | Release-bundle reproducibility | `tested` | `scripts/verify-release-bundle.sh`, `scripts/ci/job-validate.sh --profile release-preflight` |
 | Runtime-image reproducibility | `tested` | `scripts/verify-reproducible-build.sh`, `.github/workflows/ci.yml` `Reproducible build` jobs |
 | Sigstore signatures, SBOMs, and GitHub attestations | `tested` | Successful v1.0.2 `Release` workflow |

@@ -105,8 +105,8 @@ The final review confirmed these results:
 2. Workcell shipped the A1 through A6 boundary controls.
 3. Workcell certified strict Colima and Docker Desktop compatibility on macOS.
 4. Workcell supported Codex, Claude Code, Copilot CLI, and Gemini.
-5. Workcell proved install, upgrade-in-place, rollback, uninstall,
-   `workcell --gc`, and support bundle operations.
+5. Workcell shipped install, update, rollback, uninstall, `workcell --gc`, and
+   support-bundle workflows with documented evidence limits.
 6. Workcell used mutation tests, signed history, provenance, and immutable
    release controls.
 7. Workcell shipped the in-repository user and assurance documents.
@@ -418,11 +418,10 @@ strongest vendors now publish; these items deepen that lead.
 
 ### Track B: Supply Chain And Release Assurance
 
-CI is already strong: all 72 action references SHA-pinned, workflows start
-from `permissions: {}`, reproducible builds verified on amd64 and arm64,
-keyless Sigstore signing, SBOMs, and GitHub attestations. These items close
-the remaining gaps between that posture and the level enterprises will ask a
-security-boundary product to prove.
+CI requires a full commit SHA for each action reference.
+Workflows start from `permissions: {}`.
+CI also verifies reproducible amd64 and arm64 builds.
+Releases use keyless Sigstore signatures, SBOMs, and GitHub attestations.
 
 - **B1 (complete, M):** SLSA v1.0 gap analysis published in the provenance docs
 - **B2 (post-1.0, M):** dual-control release approval — deferred by the
@@ -469,11 +468,8 @@ security-boundary product to prove.
 
 ### Track D: Code Health And Consolidation
 
-The Go tree is in good shape (28.8k source lines, 82% test-to-code ratio,
-three direct dependencies). The concentration risks are a 2,288-line
-monolithic Rust interception library, a 8,910-line launcher script, a
-9,131-line `verify-invariants.sh`, and widespread helper duplication across
-120 shell scripts (for example, 25 separate `cleanup()` definitions).
+The main code-health risks are large implementation files and repeated shell helpers.
+Use generated, checked metrics before you add a numeric inventory here.
 
 - **D1 (complete, S):** language-boundary doctrine — Rust for the shim, Go for
   logic, shell as thin glue
@@ -528,8 +524,9 @@ contract and proven day-two operations.
   G4 evidence identities are versioned
 - **G2 (complete, M):** `workcell support-bundle` ships with documented
   redaction rules
-- **G3 (complete, M):** install, upgrade, uninstall, rollback, and `--gc` have
-  repeatable CI evidence plus published-release local certification
+- **G3 (complete, M):** install, update, uninstall, rollback, and `--gc` ship
+  with documented evidence limits. Hosted bundle checks prove installation
+  and link removal, not complete uninstall behavior.
 - **G4 (complete, S):** the cross-lens 1.0 readiness gate records fixed
   statuses, exact candidate/evidence identities, every explicit scope decision,
   and no unresolved P0/P1 findings

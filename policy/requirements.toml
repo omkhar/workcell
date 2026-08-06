@@ -376,7 +376,7 @@ docs = [
 
 [nonfunctional.NFR-006]
 title = "Continuously validated install matrix"
-summary = "CI and tagged release workflows continuously validate package install and uninstall behavior on the documented GitHub-hosted Apple Silicon macOS runners and keep that matrix tied to authoritative runner metadata."
+summary = "CI and tagged-release workflows validate bundle installation, launcher-link removal, man-page-link removal, Homebrew installation, and formula removal on documented GitHub-hosted Apple Silicon macOS runners. The workflows tie that matrix to authoritative runner metadata."
 evidence = [
   "scripts/verify-github-macos-release-test-runners.sh",
   "internal/metadatautil/workflow_validation_test.go",
