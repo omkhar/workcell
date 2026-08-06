@@ -380,6 +380,7 @@ summary = "CI and tagged-release workflows validate bundle installation, launche
 evidence = [
   "scripts/verify-github-macos-release-test-runners.sh",
   "internal/metadatautil/workflow_validation_test.go",
+  "internal/testkit/validation_entrypoints_test.go",
 ]
 docs = [
   "docs/github-workflows.md",
