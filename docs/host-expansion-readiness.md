@@ -1,91 +1,77 @@
 # Host Expansion Readiness
 
-This page records the Phase 12 readiness gate for Linux and Windows host
-promotion. It does not promote any new operator host.
+This page records the Phase 12 host-readiness gate. It also defines the Phase
+13 host promotion gate. It does not change operator support.
 
-Current support remains unchanged:
+Use
+[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv) for each
+support decision. Use [Support Tiers and Status Terms](support-tiers.md) for
+the permitted values.
 
-- Apple Silicon macOS is the reviewed operator-host launch path
-- Linux `amd64` is a trusted validation-host lane, not an operator launch host
-- Linux `arm64`, Raspberry Pi, Windows WSL2, and native Windows remain
-  unsupported operator-host targets
+## Support Fields
 
-## Support Tiers
+The host-support matrix keeps these decisions separate:
 
-| Tier | Meaning |
-|---|---|
-| `strict` | preserves the dedicated VM plus hardened container boundary and passes backend-specific invariant checks |
-| `compat` | lower-assurance supported path with explicit diagnostics, rollback, and support-matrix rows |
-| `preview` | limited rollout with explicit gates and no broad support claim |
-| `certification candidate` | implementation under live certification before support promotion |
-| `experimental` | investigation or prototype work with no support expectation |
-| `unsupported` | blocked by default with fail-closed diagnostics |
+- `target_assurance_class` defines the assurance class.
+- `status` defines the support status.
+- `launch` controls operator launch.
+- `evidence` defines the required evidence.
+- `validation_lane` names a validation path when one exists.
 
-`compat` is not strict parity. A host may move through `certification candidate`
-or `preview` without becoming broadly supported.
+The word `candidate` is a phase label. It is not a matrix value. Read the
+complete matrix row before you make a support decision.
 
-## Candidate Scope
+## Phase 13 Scope
 
-The roadmap sequences GitHub Copilot CLI Tier 1 provider parity before the
-Linux host-expansion slice. Phase 13 remains the next runtime-target candidate
-after that provider-parity work and may evaluate Linux `amd64` `local_compat`
-as a narrow candidate. That evaluation must select one distro/runtime matrix
-before implying Linux operator support. If that selected matrix cannot preserve
-Workcell's support boundary, the phase must record the blocker instead of
-substituting a different runtime silently.
+Phase 13 will evaluate one Linux amd64 `local_compat` combination. The phase
+must select one exact distribution, version, runtime, and `target_provider`.
+The repository has not made this selection.
 
-The active planning note for Copilot parity followed by Linux `amd64`
-`local_compat` research is
-[docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md).
-It is not a support promotion.
+The Linux amd64 Docker Desktop row stays `unsupported`, `blocked`, and
+`evidence=none`. A different runtime requires a new target-provider
+implementation and an exact matrix row.
 
-Later host tracks remain separate:
+The Phase 12 gate also applies to a future Windows promotion. All Windows rows
+stay `unsupported`, `blocked`, and `evidence=none`.
 
-- Linux `arm64` must identify package, runtime, kernel, cgroup, and live
-  hardware prerequisites separately from Linux `amd64`
-- Raspberry Pi must stay experimental until memory, disk I/O, SD-card
-  reliability, kernel, and workload limits are documented and certified
-- Windows WSL2 must document filesystem semantics, path translation, WSL/Docker
-  integration, credential isolation, packaging, and endpoint controls
-- native Windows must remain a separate investigation because its process,
-  filesystem, credential, and endpoint-control model differs from WSL2
+Phase 13 does not change Linux `strict` support. Linux `strict` support needs
+an equivalent dedicated VM plus container boundary.
 
-## Promotion Criteria
+## Promotion Gate
 
-Any future host promotion must land atomically with:
+One promotion change must include all these items:
 
-- a canonical host-support matrix row for the exact host OS, architecture,
-  distro, distro version, target kind, provider, and assurance class
-- fail-closed `doctor`, `inspect`, and launch diagnostics outside that row
-- install, uninstall, upgrade, rollback, and support-bundle guidance
-- deterministic repo-required tests for selection, unsupported combinations, and
-  remediation text
-- live certification evidence on real operator hosts when the support claim
-  depends on host behavior
-- documentation that distinguishes CI-proven, locally mirrored, and
-  certification-only evidence
+- Add the exact host and target row to the host-support matrix.
+- Add fail-closed launch behavior and clear diagnostics.
+- Add install, update, uninstall, rollback, and support-bundle procedures.
+- Add deterministic repository tests for the selected row.
+- Add negative tests for all unsupported combinations.
+- Complete live certification on a real operator host.
+- Update operator, support, and validation documents with the same claim.
 
-No Linux or Windows `strict` claim may land until an equivalent dedicated VM plus
-container boundary is implemented and proven for that host family.
+The live certification must test the same distribution, version, runtime, and
+provider that the matrix row names. The rollback must disable or remove the new
+path. Regression tests must protect the current supported paths.
 
 ## Fail-Closed Behavior
 
-Unsupported host combinations must remain blocked by default. Diagnostics should
-show:
+Workcell must block operator launch unless one row has `status=supported` and
+`launch=allowed`. Workcell must not select a different target automatically.
 
-- selected host OS and architecture
-- selected Linux distro and distro version, or `none` for non-Linux hosts
-- target kind, provider, and assurance class
-- support-matrix status and reason
-- whether evidence is repo-required, locally mirrored, certification-only, or
-  absent
-- the next supported action, such as using the current macOS path or running a
-  validation-host lane
+`workcell --doctor` and `workcell --inspect` must show the detected host, the
+selected target, and the complete support decision. If `launch=blocked`, both
+commands must give the reason. `workcell --doctor` must give the recommended
+action.
 
-There must be no automatic fallback from a blocked host to a different backend.
+Use [Diagnostics and the Support Matrix](diagnostics-and-support-matrix.md) for
+the exact diagnostic fields.
 
-## Quality Gate
+## Review Gate
 
-Host expansion changes are high-risk because support language can outrun proof.
-Every host-expansion change must remove vague support claims, duplicated matrix
-logic, and untested remediation text before validation is considered complete.
+Reviewers must reject a support claim that exceeds its evidence. Repository
+tests do not replace live certification. A validation host is not an operator
+host.
+
+Use [Runtime Target Expansion](runtime-target-expansion-plan.md) for the
+program rules. Use [Runtime Target Phase Record](runtime-target-phase-plan.md)
+for the phase sequence.
