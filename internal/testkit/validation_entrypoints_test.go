@@ -641,7 +641,8 @@ func TestUninstallRemovesWorkcellStateWithoutRequiringGo(t *testing.T) {
 
 	for _, want := range []string{
 		"resolve_real_home",
-		"Preserved shared host packages installed outside Workcell.",
+		"Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles.",
+		"The uninstaller removes logs directly under /tmp or \\$TMPDIR if the current user owns them and their names match Workcell cleanup patterns.",
 		"shared host packages such as colima, docker, gh, git, and go",
 	} {
 		if !strings.Contains(script, want) {

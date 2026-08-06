@@ -1,247 +1,323 @@
-# Provenance, Signing, and SBOMs
+# Provenance, signatures, and SBOMs
 
-Workcell releases publish verifiable artifacts, not just opaque downloads.
-The canonical release posture uses two verification surfaces:
+Workcell publishes signed release data for each successful tagged release.
+The release uses two verification systems:
 
-1. always-on keyless Sigstore/Cosign signing
-2. GitHub-native attestations as an additional publication surface
+1. Keyless Sigstore and Cosign signatures
+2. GitHub artifact attestations
 
-Sigstore is the portable baseline. GitHub attestations are additive.
+Sigstore is the required release signature system.
+GitHub attestations add a second verification surface.
 
 ## What tagged releases publish
 
-Tagged releases publish:
+The release publishes a multi-platform runtime image to GHCR.
+The workflow also uploads 18 release assets.
 
-- a multi-architecture runtime image to GHCR
-- a source bundle tarball
-- a versioned Homebrew formula asset (`workcell.rb`)
+The GitHub release page lists 21 entries for `v1.0.2`.
+GitHub adds two source-code archives and one release-attestation entry to the 18 uploaded assets.
+Those three GitHub entries are not part of the sealed workflow artifact set.
+
+Nine assets contain release data:
+
+- the source bundle
+- the Homebrew formula
+- the image digest
+- the build-input manifest
+- the control-plane manifest
+- the builder-environment manifest
+- the source SBOM
+- the image SBOM
 - `SHA256SUMS`
-- a published image digest file
-- a deterministic build-input manifest
-- a deterministic control-plane manifest
-- a deterministic builder-environment manifest
-- source and image SBOMs in SPDX JSON
-- a Sigstore bundle for the Homebrew formula asset
-- Sigstore bundles for the source bundle, published image digest file,
-  checksums, build-input manifest, control-plane manifest,
-  builder-environment manifest, and both SBOMs
-- keyless Sigstore signatures for the published image
-- GitHub attestations for the published image, image SBOM, source bundle,
-  source SBOM, Homebrew formula, published image digest file, checksums,
-  build-input manifest, control-plane manifest, and builder-environment
-  manifest when the reviewed hosted controls say the repository visibility and
-  GitHub plan support that publication path
+
+The other nine assets contain one Sigstore bundle for each release-data asset.
+The release also signs the runtime image in the container registry.
+
+By default, the release creates GitHub build-provenance attestations for these subjects:
+
+- the runtime image
+- the source bundle
+- the Homebrew formula
+- the image digest
+- the three JSON manifests
+- `SHA256SUMS`
+
+The release also attaches an SBOM predicate to the image and source-bundle subjects.
+The SBOM files are not attestation subjects.
+Cosign signs each SBOM file as a release asset.
+
+## Published v1.0.2 evidence
+
+[`v1.0.2`](https://github.com/omkhar/workcell/releases/tag/v1.0.2) is the first published stable Workcell 1.0 release.
+GitHub reports this release as final and immutable.
+GitHub also reports a SHA-256 digest for each of the 18 workflow-uploaded assets.
+
+The [`Release` workflow](https://github.com/omkhar/workcell/actions/runs/30974305124) completed successfully on 2026-08-05.
+Both Apple Silicon install-verification jobs passed.
+The final publisher uploaded the exact 18-asset workflow publication set.
+
+The 2026-08-05 live install record verified the `v1.0.2` source bundle.
+Cosign verified `SHA256SUMS` against the release workflow identity.
+GitHub accepted its source-bundle attestation.
+The signed source-bundle digest is:
+
+```text
+c2a34aa1cf2c2119633cd0f04fc0470520ac44d1e22e1d74f409ff696fc38d1f
+```
 
 ## What the release workflow proves
 
-Before publish, release preflight reruns:
+Release preflight checks these items before publication:
 
 - repository validation
-- container smoke
-- release-bundle reproducibility
+- container smoke tests
+- source-bundle reproducibility
 - runtime-image reproducibility
-- explicit nonroot validator and release-helper execution when the archived or
-  live repository is bind-mounted into verification containers
-- hosted-control auditing
-- authoritative-source verification of the GitHub-hosted Apple Silicon macOS
-  release install runner labels
-- upstream pinned Codex, Claude, Copilot, and Gemini release verification
-- fail-closed Google Antigravity provider promotion checks before any future
-  support claim
-- reviewed upstream pin verification across providers, Linux base images,
-  Linux toolchains, and release-build helper pins
-- release-bundle install/uninstall and Homebrew install/uninstall verification
-  on GitHub-hosted Apple Silicon `macos-26` and `macos-15`
+- nonroot validator and release-helper execution
+- hosted repository controls
+- Apple Silicon runner metadata
+- pinned provider releases
+- pinned base images and toolchains
+- bundle install and uninstall on `macos-15` and `macos-26`
+- Homebrew install and uninstall on the same runners
 
-The publish job then rebuilds from the archived source bundle, not the live
-checkout, and re-verifies upstream provider releases plus the reviewed upstream
-pin set from that archived source tree. It binds the published per-platform
-image digests, source bundle, build-input manifest, and control-plane manifest
-back to preflight results before signing and publication.
+The amd64 image job rebuilds from the archived source bundle.
+A separate native arm64 job builds from the checked-out signed tag.
+The amd64 job checks the archived provider pins again.
+The workflow binds both platform digests and the image manifests to the preflight results.
+It then signs and stages the release asset set.
+
+The final job checks hosted controls again.
+It removes the administration token before publication.
+It publishes only the sealed workflow artifact.
 
 ## Sigstore path
 
-The always-on path is:
+The Sigstore path uses these parts:
 
-- GitHub OIDC identity
-- keyless Cosign signing
-- Rekor-backed Sigstore bundles published with the release assets
+- the GitHub OIDC identity
+- short-lived Fulcio certificates
+- keyless Cosign signatures
+- Rekor transparency data in Sigstore bundles
 
-This path is the recommended verifier for consumers who want a portable,
-GitHub-independent check.
+This check does not need the GitHub attestation service.
+It still trusts the named GitHub release workflow identity.
 
 ## GitHub attestation path
 
-The canonical upstream repo publishes GitHub attestations fail-closed: every
-release attests its artifacts unless the opt-out is set. That posture is
-tracked through two repository variables:
+The canonical public repository creates GitHub attestations.
+Its hosted-control policy requires both repository variables below to be `false`:
 
-- `WORKCELL_RELEASE_NO_ATTEST=true` is the explicit opt-out; when unset,
-  releases attest (the earlier `WORKCELL_ENABLE_GITHUB_ATTESTATIONS` opt-in
-  was removed because a missing toggle silently produced unattested releases)
-- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=true` is only allowed when the
-  repository is private/internal and the GitHub plan actually supports private
-  artifact attestations
+- `WORKCELL_RELEASE_NO_ATTEST`
+- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS`
 
-This does not replace Sigstore. It adds:
+Do not set either variable to `true` in the canonical repository.
+The hosted-control check fails if a variable has a different value.
+Thus, a variable change alone cannot create an upstream release without attestations.
 
-- GitHub-native attestation UX and policy integration
-- subject-linked attestations for the image and selected release artifacts
+Do not use the old `WORKCELL_ENABLE_GITHUB_ATTESTATIONS` variable.
+The release workflow no longer uses that opt-in variable.
 
-Because GitHub attestations can add extra OCI attestation manifests next to the
-published image, Workcell validates multi-arch platform ordering separately
-from those attestation entries.
+A fork cannot enable an exception with a variable or policy-file change alone.
+It must first change and review both the hosted-control policy and its validator.
+This is a code-and-policy change, not an operator exception.
+A fork release without GitHub attestations has lower assurance.
+It must still create all Sigstore signatures.
 
-## Verifying the image
+GitHub attestations do not replace Sigstore signatures.
+They add GitHub policy data and subject lookup.
 
-Verify the image with Cosign:
+## Verify the image
+
+Select the exact release tag.
+Download these three files from that release:
+
+- `workcell-image.digest`
+- `SHA256SUMS`
+- `SHA256SUMS.sigstore.json`
+
+The `v1.0.2` GHCR package denied anonymous access during the 2026-08-05 check.
+Authenticate to GHCR with `read:packages` access before you verify that image.
+See [GitHub container registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
+
+Run the complete procedure in one Bash subshell.
+The subshell does not replace the current Docker configuration or exit trap.
+When the prompt appears, enter a token that has package access.
 
 ```bash
-cosign verify ghcr.io/omkhar/workcell@sha256:DIGEST \
-  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+(
+  set -euo pipefail
+
+  workcell_docker_config="$(mktemp -d)"
+  export DOCKER_CONFIG="${workcell_docker_config}"
+  trap 'rm -rf -- "${workcell_docker_config}"' EXIT
+
+  read -r -p 'GitHub user: ' workcell_github_user
+  read -r -s -p 'GHCR token: ' workcell_ghcr_token
+  printf '\n'
+  printf '%s' "${workcell_ghcr_token}" | docker login ghcr.io \
+    --username "${workcell_github_user}" --password-stdin
+  unset workcell_github_user
+
+  tag=v1.0.2
+  identity="https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/${tag}"
+
+  cosign verify-blob SHA256SUMS \
+    --bundle SHA256SUMS.sigstore.json \
+    --certificate-identity "${identity}" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+  expected="$(awk '$2 == "workcell-image.digest" {print $1}' SHA256SUMS)"
+  actual="$(shasum -a 256 workcell-image.digest | awk '{print $1}')"
+  test -n "${expected}" && test "${actual}" = "${expected}"
+
+  image_ref="$(cat workcell-image.digest)"
+  cosign verify "${image_ref}" \
+    --certificate-identity "${identity}" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+  GH_TOKEN="${workcell_ghcr_token}" gh attestation verify "oci://${image_ref}" \
+    --repo omkhar/workcell \
+    --cert-identity "${identity}" \
+    --source-ref "refs/tags/${tag}" \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com
+
+  unset workcell_ghcr_token
+  docker logout ghcr.io
+)
 ```
 
-If the canonical repo published GitHub attestations for that release, verify
-the same image with GitHub attestation tooling:
+`docker login` stores the credential only in the temporary configuration.
+The exit trap deletes that configuration after success or failure.
+For a fork release without GitHub attestations, omit the `gh attestation verify` command.
+
+## Verify release assets
+
+Select the exact release tag and asset.
+Download the asset and these two files from that release:
+
+- `SHA256SUMS`
+- `SHA256SUMS.sigstore.json`
+
+Verify the checksum signature first:
 
 ```bash
-gh attestation verify oci://ghcr.io/omkhar/workcell@sha256:DIGEST \
-  --repo omkhar/workcell \
-  --signer-workflow omkhar/workcell/.github/workflows/release.yml
-```
+tag=v1.0.2
+asset=workcell-v1.0.2.tar.gz
+identity="https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/${tag}"
 
-## Verifying release assets
-
-1. Download `SHA256SUMS`, `SHA256SUMS.sigstore.json`, and the assets you want
-   to verify, including `workcell.rb` if you plan to install through Homebrew.
-2. Verify the signed checksum file with Cosign.
-3. Verify the asset digests against `SHA256SUMS`.
-4. Optionally verify the directly signed Homebrew formula, JSON manifests, or
-   SBOMs with their own Sigstore bundles.
-
-Example:
-
-```bash
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/tags/.+' \
+  --certificate-identity "${identity}" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-
-sha256sum -c SHA256SUMS
 ```
 
-If you want GitHub's attestation view for the source bundle and the canonical
-repo published GitHub attestations for that release:
+On Linux, check the downloaded asset digest with `sha256sum`:
 
 ```bash
-gh attestation verify workcell-VERSION.tar.gz --repo omkhar/workcell \
-  --signer-workflow omkhar/workcell/.github/workflows/release.yml
+expected="$(awk -v name="${asset}" '$2 == name {print $1}' SHA256SUMS)"
+actual="$(sha256sum "${asset}" | awk '{print $1}')"
+test -n "${expected}" && test "${actual}" = "${expected}"
 ```
 
-## Host-side PR publication
+On macOS, check one asset with `shasum`:
 
-Release and publication changes enter review through host-side PR publication,
-not from inside the Tier 1 runtime. The supported `main`-based path uses
-`./scripts/repo-publish-pr.sh`, which verifies fresh local PR-parity evidence
-before delegating to `workcell publish-pr`.
+```bash
+expected="$(awk -v name="${asset}" '$2 == name {print $1}' SHA256SUMS)"
+actual="$(shasum -a 256 "${asset}" | awk '{print $1}')"
+test -n "${expected}" && test "${actual}" = "${expected}"
+```
 
-`workcell publish-pr` signs any new commit it creates and verifies every
-commit in the branch range being published before push or PR creation. The
-signature check uses host Git signing trust and ignores workspace-local signer
-configuration, stale tracking refs, and replacement refs as trust shortcuts.
+The command fails if the asset has no signed checksum entry.
+It also fails if the computed digest does not match.
+
+Use this optional GitHub check for a downloaded source bundle:
+
+```bash
+gh attestation verify "${asset}" \
+  --repo omkhar/workcell \
+  --cert-identity "${identity}" \
+  --source-ref "refs/tags/${tag}" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The verified installer runs the Cosign and digest checks before extraction.
+Add `--attestation` to require the GitHub check.
+
+The shipped installer pins the repository workflow but accepts any release tag identity.
+Use the manual procedure above when you require exact-tag certificate binding.
 
 ## SLSA v1.0 Build-track gap analysis
 
-SLSA v1.0 defines only the **Build track** (levels L1-L3); it has no Source
-track. Source-integrity controls such as two-person review belong to SLSA's
-Source track, which was added in a later version (v1.2, as Source L4 two-party
-review). This analysis is scoped to the v1.0 Build track, so the current Source
-track is out of scope and not claimed; source-integrity posture is noted
-separately below.
+[SLSA v1.0](https://slsa.dev/spec/v1.0/levels) defines Build levels L1 through L3.
+It does not define a Source track.
 
-Reproducibility and hermeticity are *not* Build L1-L3 requirements in v1.0; they
-are additive properties. Workcell's reproducibility work is credit beyond the
-required levels and does not by itself raise the Build-track level.
+For releases with GitHub attestations, Workcell claims Build L2 for the eight build-provenance subjects.
+Workcell does not claim a Build level for other release files or for releases that disable GitHub attestations.
+Workcell does not claim Build L3.
 
-**Current posture: Build L2 (met). Build L3 is partial — Workcell does not claim
-L3.**
+Reproducibility and hermeticity do not set a SLSA v1.0 Build level.
+They are separate build properties.
 
 ### Build L1 — provenance exists
 
-| Requirement | Status | Mechanism |
-|---|---|---|
-| Provenance describes the platform, process, and top-level inputs | Met | BuildKit SLSA provenance (`provenance: mode=max`) on both image builds; bare `actions/attest` SLSA build-provenance predicates for the image digest and seven release blobs (source bundle, Homebrew formula, image-digest file, the deterministic `workcell-build-inputs.json` / `workcell-control-plane.json` / `workcell-builder-environment.json` manifests, and `SHA256SUMS`); the image and source bundle additionally carry SBOM attestations (the SPDX SBOMs are the attested content, not themselves attested subjects — the `.spdx.json` files are Cosign-signed, not GitHub-attested); Cosign also signs the `.sigstore.json`-bundled assets |
-| Consistent build process | Met | one tag-triggered workflow builds a SHA-pinned Dockerfile with digest-pinned base images and toolchains |
-| Provenance distributed to consumers | Met | Cosign `.sigstore.json` bundles are published as downloadable release assets; the image SLSA/SBOM attestations are pushed to the registry (OCI), and the file attestations are held in GitHub's attestation store and retrieved with `gh attestation verify` (not as downloadable assets); verification is documented above |
+| Requirement | Status | Workcell evidence |
+| --- | --- | --- |
+| Provenance describes the build | Met | BuildKit creates image provenance. GitHub creates build-provenance predicates for eight subjects. |
+| The build process is consistent | Met | One tag workflow uses pinned actions, images, toolchains, and provider inputs. |
+| Consumers can get provenance | Met | GHCR stores image attestations. GitHub stores artifact attestations for release files. |
 
 ### Build L2 — hosted platform, authentic provenance
 
-| Requirement | Status | Mechanism |
-|---|---|---|
-| Build runs on hosted, dedicated infrastructure | Met | all build and publish jobs run on GitHub-hosted runners; the release path uses no self-hosted runners |
-| Provenance tied to the platform by signature | Met | keyless cosign signing and GitHub attestations, both via GitHub OIDC and Fulcio short-lived certificates (no long-lived signing key) |
-| Downstream verification validates authenticity | Met | the documented cosign commands pin the certificate identity to the release workflow at a tag ref and the GitHub OIDC issuer; the `gh attestation verify` examples pin the signer workflow with `--signer-workflow` |
+| Requirement | Status | Workcell evidence |
+| --- | --- | --- |
+| A hosted platform runs the build | Met | [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) run all release build and publish jobs. |
+| A signature ties provenance to that platform | Met | GitHub OIDC and Fulcio bind signatures to the release workflow. |
+| Downstream checks validate provenance authenticity | Met | [GitHub artifact attestations](https://docs.github.com/en/enterprise-cloud@latest/actions/concepts/security/artifact-attestations) and documented commands pin the workflow identity. |
 
-Build L2 is the highest level Workcell claims today.
+Build L2 is the highest level that Workcell claims for those eight subjects.
 
-### Build L3 — hardened builds, non-forgeable provenance
+### Build L3 — hardened builds
 
-| Requirement | Status | Path to close / non-goal |
-|---|---|---|
-| Isolated, ephemeral environment; runs cannot influence one another | Met | GitHub-hosted runners are single-use ephemeral VMs; the reproducibility harness additionally rebuilds with no cache and byte-compares independent builds |
-| Signing material inaccessible to build steps | Partial | there is no long-lived signing key to exfiltrate (ephemeral Fulcio certs), but the image build and the signing/attestation steps run in the same job on the same runner. Close by moving the build itself into an isolated reusable workflow so the build and provenance generation share one trusted context |
-| Provenance strongly resistant to tenant forgery | Partial | the provenance predicate is generated by `actions/attest` in the same job that ran the build. GitHub documents this exact configuration as Build L2; L3 requires the build to run inside the trusted reusable workflow. Merely attesting artifact digests handed up from the current build job does not suffice — a compromised build job could pass any digest. Close by the same build-in-reusable-workflow (or `slsa-framework/slsa-github-generator`) change |
+SLSA v1.0 adds two build-platform controls at L3.
 
-The L2-to-L3 gap is a closeable change: move the build itself into an isolated
-reusable workflow (or the SLSA GitHub generator) so the build and provenance
-generation run together in the trusted context. Attesting digests handed up from
-the current build job is not enough — the caller could supply any digest, and the
-trusted workflow would faithfully attest it. Until the build runs inside the
-trusted workflow, Workcell claims Build L2.
+| Requirement | Status | Workcell evidence or gap |
+| --- | --- | --- |
+| One run cannot influence another run | Not established | GitHub documents a new virtual machine for each standard hosted job. This fact does not prove every SLSA isolation condition. |
+| Build steps cannot access provenance signature material | Not met | Build and attestation steps share one job and its OIDC authority. |
+
+These gaps prevent a Build L3 claim.
+Move provenance authority outside user-defined build steps to close this gap.
+Use a trusted builder that enforces this separation.
 
 ### Hermeticity
 
-The image build is **pinned, integrity-checked, reproducible, and
-network-dependent — not hermetic**. It performs live network fetches: `apt`
-packages from a pinned Debian snapshot (verified by apt's signed repository
-metadata, not a repo-hardcoded checksum), `npm ci`, and provider-binary
-downloads. The TLS-bootstrap `.deb`s and provider tarballs are additionally
-verified against repo-hardcoded `sha256sum` values. Only the Rust compile stage
-is hermetic (vendored crates, `cargo build --locked --offline`).
-Hermeticity is not a Build L1-L3 requirement; closing it (vendoring the remaining
-inputs and building with the network disabled) is optional hardening.
+The image build is reproducible, pinned, and network-dependent.
+It is not hermetic.
+
+The build downloads these inputs:
+
+- Debian packages from a pinned snapshot
+- Node packages through `npm ci`
+- provider archives
+
+Repository checks validate provider archives with fixed digests.
+They also validate the OpenSSL and CA certificate bootstrap packages.
+APT validates Debian repository metadata.
+Only the vendored Rust compile stage runs offline.
 
 ### Source-integrity note (two-person review, outside SLSA v1.0)
 
-Two-person review is a source-integrity control outside SLSA v1.0's Build track.
-It belongs to SLSA's Source track (added in v1.2 as Source L4 two-party review),
-which this v1.0 Build-track analysis does not claim. It is a
-structural non-goal in single-maintainer mode. The release path nonetheless
-raises source-integrity
-assurance through signed annotated release tags (verified via GitHub's API and
-locally), a tag-ancestry check requiring the tag commit to be on `main`, a
-"main checks green" gate before publish, signed publish commits verified across
-the branch range, and a gated `release` deployment environment. These do not
-satisfy, and are not claimed to satisfy, two-person review.
+[SLSA v1.2 Source L4](https://slsa.dev/spec/v1.2/source-requirements#level-4-two-party-review) requires two-party review.
+Workcell operates in single-maintainer mode and does not claim Source L4.
 
-### Caveats
-
-- Claim **Build L2**, not L3: the runner is isolated, but provenance generation
-  is not isolated from the build job.
-- Reproducible and hermetic are distinct properties, and neither is a Build-track
-  level; the reproducibility story does not discharge the L3 isolation gap.
-- The default posture is fail-closed attestation. A release built with
-  `WORKCELL_RELEASE_NO_ATTEST=true` ships without GitHub SLSA attestations
-  (cosign bundles remain), which drops the provenance guarantee for that release.
+Workcell uses signed commits, signed tags, required checks, and public PR records.
+These controls do not replace two-party review.
 
 ## Scope note
 
-Release provenance proves how the published artifacts were built and signed. It
-does not, by itself, prove the entire local macOS runtime boundary. That still
-depends on Workcell's local runtime controls, local validation, and operator
-discipline.
+Release provenance describes published artifacts and their release workflow.
+It does not prove the local macOS runtime boundary.
 
-Continuous CI and tagged-release install verification are also intentionally
-narrow: they currently prove package installability only on GitHub-hosted
-Apple Silicon `macos-26` and `macos-15`.
+Local runtime assurance depends on the Workcell VM, container controls, validation, and operator actions.
+The hosted install matrix covers only Apple Silicon `macos-15` and `macos-26`.

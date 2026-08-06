@@ -33,7 +33,7 @@ it. Do not use the installer from an arbitrary source checkout.
 The script checks the release-workflow OIDC identity and issuer. It checks the
 Sigstore bundle and Rekor entry. Then it checks the bundle digest in the
 verified `SHA256SUMS` file. These checks automate the manual steps in
-[provenance.md](provenance.md#verifying-release-assets).
+[provenance.md](provenance.md#verify-release-assets).
 
 The script fails closed. It stops for a missing tool or verification file. It
 also stops for an invalid signature or digest. Use `--attestation` to require a
@@ -66,7 +66,7 @@ run — the default is always verify-and-fail-closed.
 ### Tagged release bundle
 
 For manual verification, download the selected release bundle. Use the steps in
-[provenance.md](provenance.md#verifying-release-assets). Then unpack the bundle.
+[provenance.md](provenance.md#verify-release-assets). Then unpack the bundle.
 Run the supported installer:
 
 ```bash
@@ -95,7 +95,7 @@ The formula declares the same required host dependencies: `colima`, `docker`,
 so Homebrew fails the install if the downloaded bundle's digest does not match —
 a checksum-level integrity check. For the full signed-provenance guarantee
 (keyless cosign signature over `SHA256SUMS`), verify `workcell.rb` and the
-bundle following [provenance.md](provenance.md#verifying-release-assets) before
+bundle following [provenance.md](provenance.md#verify-release-assets) before
 `brew install`, or use the verified release install above.
 
 ### Source checkout

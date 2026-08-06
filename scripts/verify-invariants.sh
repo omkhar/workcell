@@ -1754,6 +1754,8 @@ if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DI
   exit 1
 fi
 grep -q 'matching _store metadata' /tmp/workcell-uninstall-help.out
+grep -q 'A user-selected log path is not exempt from removal targets.' /tmp/workcell-uninstall-help.out
+grep -Fq "The uninstaller removes a log directly under /tmp or \$TMPDIR if the current user owns the log and its name matches a Workcell cleanup pattern." /tmp/workcell-uninstall-help.out
 
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall.out 2>&1; then
   echo "Expected scripts/uninstall.sh to succeed in a clean temporary HOME" >&2
@@ -1775,8 +1777,9 @@ test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
 test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
-grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall.out
-grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall.out
+grep -q 'Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles.' /tmp/workcell-uninstall.out
+grep -q 'User-selected log paths are not exempt from removal targets.' /tmp/workcell-uninstall.out
+grep -Fq "The uninstaller removes logs directly under /tmp or \$TMPDIR if the current user owns them and their names match Workcell cleanup patterns." /tmp/workcell-uninstall.out
 
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/install.sh" --debug >/tmp/workcell-install-debug.out 2>&1; then
   echo "Expected scripts/install.sh --debug to succeed in a clean temporary HOME" >&2
@@ -1897,8 +1900,9 @@ fi
 
 test ! -e "${INSTALL_VERIFY_HOME}/.local/bin/workcell"
 test ! -e "${INSTALL_VERIFY_HOME}/.local/share/man/man1/workcell.1"
-grep -q 'Preserved ~/.config/workcell and any user-specified debug/file-trace/transcript files.' /tmp/workcell-uninstall-debug.out
-grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall-debug.out
+grep -q 'Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles.' /tmp/workcell-uninstall-debug.out
+grep -q 'User-selected log paths are not exempt from removal targets.' /tmp/workcell-uninstall-debug.out
+grep -Fq "The uninstaller removes logs directly under /tmp or \$TMPDIR if the current user owns them and their names match Workcell cleanup patterns." /tmp/workcell-uninstall-debug.out
 
 CUSTOM_DEBUG_DIR="${INSTALL_VERIFY_HOME}/custom-workcell-debug"
 CUSTOM_DEBUG_DIR_REAL="$(go_verify_citools canonicalize-path "${CUSTOM_DEBUG_DIR}")"
@@ -1937,7 +1941,7 @@ if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DI
   cat /tmp/workcell-uninstall-custom-debug.out >&2
   exit 1
 fi
-grep -q 'Preserved shared host packages installed outside Workcell.' /tmp/workcell-uninstall-custom-debug.out
+grep -q 'Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles.' /tmp/workcell-uninstall-custom-debug.out
 
 INJECTION_POLICY_FIXTURE_ROOT="${BARRIER_VERIFY_ROOT}/injection-policy"
 INJECTION_STATE_ROOT="${INJECTION_POLICY_FIXTURE_ROOT}/xdg-state"
