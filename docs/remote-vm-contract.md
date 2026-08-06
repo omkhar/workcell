@@ -1,106 +1,72 @@
 # Remote VM Contract
 
-Workcell now carries one canonical preview-only `remote_vm` contract in
-[`policy/remote-vm-contract.json`](../policy/remote-vm-contract.json). This is
-the provider-neutral control-plane contract that later cloud adapters must
-reuse; it does not mean a production cloud backend ships today.
+## Authority and Status
 
-The contract is implemented and exercised through:
+[`policy/remote-vm-contract.json`](../policy/remote-vm-contract.json) defines
+the `remote_vm` contract. Each remote VM provider must use this contract.
 
-- [`internal/remotevm`](../internal/remotevm) for the typed contract,
-  canonical fake target, and reusable conformance harness
-- [`internal/remotevm/contract_test.go`](../internal/remotevm/contract_test.go)
-- [`internal/remotevm/fake_target_test.go`](../internal/remotevm/fake_target_test.go)
-- [`internal/remotevm/conformance_test.go`](../internal/remotevm/conformance_test.go)
+The contract does not create operator support. The host-support matrix gives
+the support and launch status.
 
-## Canonical Values
+## Fixed Contract Fields
 
-The canonical preview-only contract is:
+| Field | Required value |
+|---|---|
+| `target_kind` | `remote_vm` |
+| `target_assurance_class` | `compat` |
+| `support_boundary` | `preview-only` |
+| `runtime_api` | `brokered` |
+| `workspace_transport` | `remote-materialization` |
+| `access_model` | `brokered` |
 
-- `target_kind = remote_vm`
-- `target_provider = fake-remote` in the policy artifact, with
-  provider-specific adapters such as `aws-ec2-ssm` and `gcp-vm` reusing the
-  same contract values apart from the provider name itself
-- `target_assurance_class = compat`
-- `support_boundary = preview-only`
-- `runtime_api = brokered`
-- `workspace_transport = remote-materialization`
-- `access_model = brokered`
+The policy artifact uses `target_provider=fake-remote`. A provider-specific
+contract changes only this provider value. A separate access plan holds the
+provider broker data.
 
-Later provider adapters must not fork those control-plane meanings. Provider
-work can add provider-specific bootstrap details, but the shared session,
-audit, workspace-materialization, and conformance semantics stay the same.
+## Deterministic Contract Evidence
 
-## Workspace Materialization
+The repository uses `remotevm.FakeTarget` for deterministic contract tests. The
+AWS and GCP conformance fixtures also use this fake target.
 
-Remote workspaces are explicit and host-auditable. The canonical fake target
-materializes a reviewed source workspace into:
+The fake target copies the source workspace into its local target root. It
+excludes `.git` and records each copied entry in `materialization.json`.
 
-`targets/remote_vm/fake-remote/<target-id>/materializations/<materialization-id>/`
+This process is contract evidence only. It does not copy data to AWS or GCP.
+It does not start a Workcell remote session.
 
-That root contains:
+## Workspace Transfer Requirements
 
-- `workspace/` with the materialized remote workspace contents
-- `materialization.json` with the explicit entry manifest
+A live provider must copy the source workspace into its provider target root.
+It must exclude `.git` and record each copied entry in
+`materialization.json`.
 
-The canonical contract excludes `.git` from the materialized workspace and
-records the materialized tree in the manifest instead of treating a live host
-mount as the remote target. Provider-specific adapters reuse the same layout
-under their own provider root, for example:
+Workcell must not use a live host mount for a remote workspace. The transfer
+must be explicit and auditable.
 
-`targets/remote_vm/aws-ec2-ssm/<target-id>/materializations/<materialization-id>/`
+## Session and Audit Requirements
 
-`targets/remote_vm/gcp-vm/<target-id>/materializations/<materialization-id>/`
-
-## Bootstrap And Session Lifecycle
-
-Target bootstrap is explicit and file-backed:
-
-- `targets/remote_vm/fake-remote/<target-id>/bootstrap/bootstrap.json`
-
-Session records stay on the same Workcell-owned target-state tree:
-
-- `targets/remote_vm/fake-remote/<target-id>/sessions/<session-id>.json`
-
-The shared audit log for that target is:
-
-- `targets/remote_vm/fake-remote/<target-id>/workcell.audit.log`
-
-Required audit events are:
+The contract requires `bootstrap.json`, session records, and a target audit
+log. It requires these audit events:
 
 - `workspace_materialized`
 - `bootstrap_ready`
 - `session_started`
 - `session_finished`
 
-The canonical session contract uses:
+The fake target tests `status=running`, `status=exited`, and
+`assurance=compat-preview-brokered`. These are deterministic contract results,
+not live provider results.
 
-- `workspace_control_plane = host-brokered`
-- `status = running` at session start
-- `status = exited` at session finish
-- `assurance = compat-preview-brokered`
+## Provider Conformance Requirements
 
-## Reuse Rule For Later Providers
+Each provider must implement `remotevm.ConformanceTarget`. Each provider must
+pass `remotevm.RunConformance`.
 
-Later `remote_vm` providers such as `aws-ec2-ssm` and `gcp-vm` must implement
-the shared [`remotevm.ConformanceTarget`](../internal/remotevm/fake_target.go)
-interface and pass the shared
-[`remotevm.RunConformance`](../internal/remotevm/conformance.go) harness
-without redefining a provider-specific contract suite.
+A provider must not define a separate contract suite. A provider must limit
+additions to its provider-specific broker and bootstrap data.
 
-The first provider-specific preview adapter is
-`remote_vm/aws-ec2-ssm/compat`. Its typed contract stays on the shared
-control-plane meanings, adds broker metadata through
-[`internal/remotevm/aws_target.go`](../internal/remotevm/aws_target.go), and
-keeps live launch behind the separate certification-only rollout described in
-[docs/aws-ec2-ssm-preview.md](aws-ec2-ssm-preview.md).
+AWS and GCP do not implement live Workcell remote execution. Their preview
+documents define tools, broker tests, certification scope, and rollback:
 
-The second provider-specific preview adapter is `remote_vm/gcp-vm/compat`. It
-reuses the same conformance harness, adds IAP broker metadata through
-[`internal/remotevm/gcp_target.go`](../internal/remotevm/gcp_target.go), and
-keeps live launch behind the separate certification-only rollout described in
-[docs/gcp-vm-preview.md](gcp-vm-preview.md).
-
-That reuse rule was the Phase 5 boundary: provider work started only after
-this provider-neutral contract was fixed, documented, and proven
-deterministically in-repo.
+- [AWS EC2 SSM Preview](aws-ec2-ssm-preview.md)
+- [GCP VM Preview](gcp-vm-preview.md)
