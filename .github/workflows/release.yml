@@ -700,11 +700,21 @@ jobs:
             echo "Unable to locate extracted bundle root" >&2
             exit 1
           fi
+          test ! -e "${HOME}/.local/bin/workcell"
+          test ! -L "${HOME}/.local/bin/workcell"
+          test ! -e "${HOME}/.local/share/man/man1/workcell.1"
+          test ! -L "${HOME}/.local/share/man/man1/workcell.1"
           "${bundle_dir}/scripts/install.sh"
           "${HOME}/.local/bin/workcell" --help >/dev/null
+          test -e "${HOME}/.local/bin/workcell"
+          test -L "${HOME}/.local/bin/workcell"
+          test -e "${HOME}/.local/share/man/man1/workcell.1"
+          test -L "${HOME}/.local/share/man/man1/workcell.1"
           HOME="${HOME}" "${bundle_dir}/scripts/uninstall.sh"
           test ! -e "${HOME}/.local/bin/workcell"
+          test ! -L "${HOME}/.local/bin/workcell"
           test ! -e "${HOME}/.local/share/man/man1/workcell.1"
+          test ! -L "${HOME}/.local/share/man/man1/workcell.1"
 
       - name: Verify Homebrew formula install
         env:
