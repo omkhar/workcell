@@ -1,42 +1,44 @@
-# OWASP Agentic Top 10 Control Mapping
+# OWASP Agentic Top 10 control mapping
 
 This page maps the
 [OWASP Top 10 for Agentic Applications (2026)](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
-(ASI01–ASI10) to Workcell's actual controls. It is a posture map for
-reviewers, not a certification, an audit result, or a claim of conformance.
+to shipped Workcell controls.
+It is not a certification or a claim of conformance.
 
-Workcell is a runtime boundary, not an agent-safety layer. It does not prevent
-prompt injection, goal hijack, or context poisoning inside the agent — it
-contains their blast radius by keeping host credentials, host state, and
-host-side publication authority outside the boundary the agent runs in. (An
-operator can still explicitly inject specific credentials into a session, which
-shifts some of these boundaries — see ASI03 and ASI10.) Verdicts here are
-deliberately conservative:
+Workcell contains an agent in a runtime boundary.
+It does not analyze the goals, prompts, memory, or output of the agent.
+It also does not decide if agent behavior is safe.
 
-- **Covered** — the boundary structurally addresses the category (isolation,
-  not validation).
-- **Partial** — the boundary addresses some vectors while others remain open.
-- **Out of scope** — a single-provider local runtime does not implement the
-  surface the category describes (for example, inter-agent messaging).
+This mapping applies first to the default supported target:
 
-Every mechanism cited links to a control documented in this repository
-([threat model](threat-model.md), [invariants](invariants.md),
-[injection policy](injection-policy.md), and the release posture in the
-[README](../README.md)); anything not documented here is not claimed. This
-mapping describes the default `strict` safe path — lower-assurance lanes
-(`development`, `breakglass`, `--cache-profile standard`, `--agent-autonomy
-prompt` changes) shift several verdicts and are called out where they matter.
-See [support tiers](support-tiers.md) for the assurance vocabulary.
+- macOS on arm64
+- the `colima` target
+- the `strict` mode
+- the default `ephemeral` container mutability
 
-The `ASInn:2026` identifiers are the authoritative cross-reference for audits
-and keyword crosswalks. The category titles here are for readability; secondary
-sources vary on exact punctuation and annotations, so consult the linked OWASP
-source for canonical wording.
+The `docker-desktop` target is a supported compatibility path with lower assurance.
+Remote VM targets are preview or validation paths.
+The `apple-container` target is preview-only.
+Workcell blocks operator launch for this target.
+See [support tiers](support-tiers.md) for the current target matrix.
+
+This page uses these verdicts:
+
+- **Covered**: The runtime boundary directly addresses the category.
+- **Partial**: The boundary addresses some parts of the category.
+- **Out of scope**: Workcell does not provide the system that the category describes.
+
+The word **covered** means containment, not content validation.
+An operator can inject selected credentials into a session.
+This action gives the agent the authority of those credentials.
+
+The `ASInn:2026` identifiers are the audit cross-references.
+Use the linked OWASP source for the official category text.
 
 ## Coverage summary
 
 | Category | Verdict |
-|---|---|
+| --- | --- |
 | ASI01:2026 Agent Goal Hijack | Partial |
 | ASI02:2026 Tool Misuse and Exploitation | Partial |
 | ASI03:2026 Agent Identity and Privilege Abuse | Partial (strong) |
@@ -52,158 +54,239 @@ source for canonical wording.
 
 ### ASI01:2026 Agent Goal Hijack — Partial
 
-Manipulation of agent goals or plans through direct or indirect instruction
-injection. Workcell masks and re-seeds the repo control plane
-(`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.mcp.json`,
-`.github/copilot-instructions.md`, provider and IDE directories, and git
-`hooks`/`config`) so workspace content cannot silently take over the provider
-control plane; workspace instructions enter only as reviewed imports, and the
-VM-plus-container boundary contains the consequences.
+This category covers instructions that change an agent goal or plan.
 
-Honest limit: the runtime cannot prevent in-content prompt injection from
-steering the agent while it runs. It removes one hijack vector (control-plane
-takeover) and contains the blast radius.
+By default, Workcell masks the root control files for each provider in non-breakglass mode.
+It also masks Git hooks and paths that can change Git configuration.
+These controls stop workspace content from directly replacing the managed control plane.
+
+The acknowledged `--allow-control-plane-vcs` path exposes selected paths read-only.
+The acknowledged `--allow-repo-mcp` path exposes repository MCP files.
+Both paths lower assurance.
+`breakglass` exposes the live workspace control plane.
+
+In non-breakglass modes, Workcell imports supported root instruction files.
+This import applies to Codex, Claude, and Gemini.
+It reads each import from the live regular file in the workspace.
+It puts the import in the managed provider home.
+Copilot does not import a workspace instruction file.
+`breakglass` skips this import.
+
+Workcell does not validate the meaning of an imported instruction.
+It does not detect prompt injection in source files, issue text, tool output, or network data.
+The runtime boundary only limits the effects of a successful hijack.
 
 ### ASI02:2026 Tool Misuse and Exploitation — Partial
 
-Unsafe tool chaining, loops, or excessive invocations despite valid
-permissions. Durable host writes are confined to the selected workspace
-(in-container overlay and package state can still change under the default
-`ephemeral` mutability); the VM applies a reviewed egress posture and explicit
-network profiles; `--container-mutability
-readonly` blocks package-manager writes; git execution-control paths are
-masked; provider-side guardrails (Codex rules, the Claude bash hook, Gemini
-managed settings) are explicitly labeled secondary defenses, not the boundary.
+This category covers unsafe use of tools that the agent can access.
 
-Gap: there is no rate limiting, loop detection, or per-tool-call policy. Misuse
-within the boundary is bounded, not detected.
+The default Colima target puts the tools in a dedicated VM and a container.
+The selected network profile controls outbound destinations.
+On the default path, durable agent writes go to the workspace.
+Workcell masks Git hooks and mutable Git configuration.
+
+The default `ephemeral` container permits package changes inside the session.
+The `readonly` container mode blocks package-manager writes and gives stronger assurance.
+Provider rules and hooks are secondary controls.
+They are not the runtime boundary.
+
+Workcell does not limit tool-call rates.
+It does not detect loops or unsafe tool sequences.
+It contains tool misuse but does not identify it.
 
 ### ASI03:2026 Agent Identity and Privilege Abuse — Partial (strong)
 
-Delegated authority, ambiguous identity, and trust assumptions leading to
-unauthorized actions. This is Workcell's core design: no ambient host
-passthrough of home directories, keychains, git credential helpers,
-`docker.sock`, SSH/GPG/provider agent sockets, or provider-home state.
-Reusable credentials enter only through the operator-owned injection policy,
-staged host-side and mounted read-only; the Copilot token handoff re-execs
-without the token in its environment and unlinks the handoff file; credential
-sources under the workspace are rejected; `workcell why` explains each
-credential decision.
+This category covers misuse of identity and delegated authority.
 
-Gap: Workcell does not down-scope the injected provider token itself; the
-token's own privileges remain an operator and provider decision. There is also
-a session-local exception — for an interactive Gemini launch with no selected
-auth, Workcell starts Gemini so the operator can authenticate in-session rather
-than through the injection policy.
+The safe path does not pass ambient host credentials into the runtime.
+It excludes host homes, keychains, credential helpers, provider homes, and agent sockets.
+It also excludes `docker.sock` and provider authentication state.
+
+Reusable credentials enter through an operator-owned injection policy.
+The host copies selected credential sources into a staging area that the launcher owns.
+Only the staged copy enters the runtime through a mount with read-only access.
+Workcell rejects credential sources that are inside the workspace.
+`workcell why` explains each credential decision.
+
+The Copilot token path has a narrow exception.
+It uses a temporary handoff mount with read-write access.
+The runtime needs this access to remove the file.
+The runtime moves the token to a transient file and removes the mounted file.
+It then exports the token only to the Copilot child process that Workcell manages.
+
+Explicit credential injection increases session authority.
+Workcell does not reduce the privileges of an injected token.
+The operator and the provider control those privileges.
+
+A Gemini CLI launch can permit interactive authentication.
+This path requires a TTY and no provider arguments.
+Other managed Gemini operations that require authentication fail closed.
+After authentication, Gemini keeps this state in the provider home for the session.
 
 ### ASI04:2026 Agentic Supply Chain Vulnerabilities — Partial
 
-Compromise of external tools, MCP servers, schemas, or prompts the agent
-dynamically trusts. Repo-local `.mcp.json` and `.github/mcp.json` are masked on
-the safe path, so the workspace cannot inject MCP servers — MCP config enters
-only through the reviewed injection policy. For Workcell's own supply chain:
-pinned upstream provider verification, reproducible builds, keyless
-Sigstore/Cosign signing of the image, source bundle, SBOMs and manifests,
-GitHub attestations, and hosted-control audits.
+This category covers untrusted tools, MCP servers, schemas, and prompts.
 
-Gap: the threat model records MCP servers as operator-reviewed extension
-points. Workcell does not vet MCP server behavior.
+Workcell denies repository MCP files by default in each non-breakglass mode.
+The denied files are `.mcp.json` and `.github/mcp.json`.
+Default denial replaces each present MCP file in the repository with an empty configuration.
+An operator can use `--allow-repo-mcp` with a dated acknowledgement.
+
+Workcell records that this exception has lower assurance.
+The acknowledged path refuses symlinked MCP files.
+It also refuses parent directories that are symlinks.
+
+An injection policy can provide reviewed MCP configuration.
+Workcell does not inspect the behavior of an MCP server.
+The operator must review each server and its authority.
+
+Workcell pins its provider inputs, actions, tools, and container bases.
+Release controls include reproducible builds, SBOMs, signatures, and attestations.
+These controls protect the Workcell supply chain.
+They do not protect every tool that an agent can select at run time.
 
 ### ASI05:2026 Unexpected Code Execution — Covered (isolation)
 
-Agent-generated or agent-triggered code executing without validation or
-isolation. This is the primary purpose of the product: a dedicated Colima VM
-plus a hardened container as the execution boundary, durable writes limited to
-the workspace mount, host staging roots mounted read-only, no `docker.sock`,
-`readonly` container mutability as the strongest lane, git hook/config masking,
-and invariant plus container-smoke tests.
+This category covers code that runs without sufficient isolation.
 
-Caveat: "covered" means isolated, not validated. Code still runs with full
-effect inside the workspace; the host-side signed `publish-pr` gate protects
-what leaves it. The default lane is `--container-mutability ephemeral`, under
-which package-manager mutations run as root and in-container control-plane
-integrity is explicitly lower-assurance; `readonly` is the strongest
-(non-default) lane. The VM-plus-container isolation boundary holds either way —
-"covered" is about isolation of execution, not the integrity of state inside
-it.
+The default strict target uses a dedicated Colima VM and a hardened container.
+It does not mount `docker.sock` or host credential stores.
+By default, Workcell masks control-plane files in the workspace.
+It also masks Git hooks and paths that can change Git configuration.
+Host staging roots are read-only, except for the narrow Copilot handoff.
+
+This masking does not apply to `breakglass`.
+`--allow-control-plane-vcs` exposes selected control-plane paths read-only.
+`--allow-repo-mcp` exposes repository MCP files.
+Both acknowledged exceptions lower assurance.
+
+Invariant tests and container smoke tests verify configuration and container controls.
+Local certification verifies this boundary on a live Colima target in strict mode.
+
+The Docker Desktop target has the lower-assurance `compat` class.
+It does not provide the dedicated VM boundary of the Colima target.
+The Apple container target is preview-only.
+Workcell blocks its operator launch.
+
+Workcell does not validate code before it runs.
+Code can change the workspace and other writable session-local state.
+The default `ephemeral` container also permits root package changes.
+The `readonly` mode gives the strongest container posture that Workcell manages.
+
+GitHub publication is a separate host action on the normal path.
+This separation does not remove authority that an operator explicitly injects.
 
 ### ASI06:2026 Memory and Context Poisoning — Partial
 
-Injection or leakage of agent memory or contextual state that influences future
-reasoning. Provider-home state is session-local and rebuilt each launch from
-immutable adapter baselines plus reviewed imports, so poisoned provider-home
-state does not persist across sessions on the default path; `--cache-profile
-off` is the default and `standard` is an explicitly labeled lower-assurance
-choice.
+This category covers untrusted state that affects later reasoning.
 
-Gap: the workspace itself is durable, and the launcher imports the workspace's
-root instruction files (`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`) on each launch, so
-poisoned context committed into the workspace re-enters future sessions even
-with the home rebuild. Home-rebuild addresses provider-home poisoning, not
-poisoned workspace content, and Workcell does no in-session detection or
-sanitization of it.
+Workcell builds each provider home from an immutable adapter baseline.
+The default cache profile is `off`.
+With the `off` profile, provider-home state does not persist between sessions.
+The `standard` cache profile is an explicit lower-assurance choice.
+
+The workspace is durable.
+Root instruction files enter later Codex, Claude, and Gemini sessions automatically.
+Nested instruction files remain visible in the workspace for their path scope.
+Workcell does not validate the meaning of these files.
+
+A poisoned workspace can therefore affect later sessions.
+The provider-home rebuild does not remove this risk.
+Workcell does not detect or sanitize poisoned context.
 
 ### ASI07:2026 Insecure Inter-Agent Communication — Out of scope
 
-Manipulation of messages between agents, planners, and executors. Workcell runs
-a single provider-native process per session inside the boundary and implements
-no multi-agent messaging layer to secure. Any subagent traffic internal to a
-provider CLI stays inside the container boundary and outside Workcell's control
-plane.
+This category covers messages between agents, planners, and executors.
+
+Workcell can run more than one detached session.
+It does not connect those sessions through an inter-agent protocol.
+It also does not authenticate or validate messages between agents.
+
+A provider can implement its own subagent behavior.
+That behavior is outside the Workcell control plane.
+Workcell contains local provider processes.
+Provider service traffic can cross the network boundary.
+Workcell does not authenticate or validate provider-native subagent messages.
 
 ### ASI08:2026 Cascading Failures — Partial (containment)
 
-Small agent failures propagating through connected systems. The boundary
-structurally cuts the main propagation paths from a session into the host and
-org: no host credentials to pivot with unless the operator explicitly injects
-them, no docker socket, and no use of the host-side signed `publish-pr` flow
-(which blocks unsigned ranges and over-broad diffs) from inside the container.
+This category covers a failure that spreads through connected systems.
 
-Gap: Workcell does not orchestrate agent fleets and has no circuit-breaker or
-health mechanisms. It limits a cascade's reach; it does not manage cascades.
+The default strict target does not expose host credentials.
+It does not expose the Docker socket or host publication authority.
+The network profile also limits outbound destinations.
+
+Explicit credential injection can give the agent access to other systems.
+The effect depends on the authority of each injected credential.
+The Docker Desktop target does not supply a VM boundary that Workcell manages.
+
+Workcell does not manage an agent fleet.
+It has no circuit breaker, service-health controller, or cross-session failure policy.
+It limits access to some connected systems but does not manage a cascade.
 
 ### ASI09:2026 Human-Agent Trust Exploitation — Partial
 
-Exploiting human over-reliance through misleading explanations or authority
-framing. Workcell does not rely on provider prompts to describe network posture
-after the fact — posture claims come from the runtime, not the agent;
-lower-assurance choices are recorded in launch and runtime state rather than
-implied equivalent; the support-tier vocabulary prevents overclaiming; and
-`workcell session diff` compares actual workspace changes against the recorded
-clean git base and fails closed, so review rests on ground truth rather than
-the agent's narrative.
+This category covers unsafe human trust in agent statements or actions.
 
-Honest limits: `--agent-autonomy yolo` is the default (prompt-approval is the
-opt-out), and Workcell adds no in-loop human approval of individual agent
-actions.
+Workcell reports runtime posture from launcher and target state.
+It records lower-assurance choices in session and audit records.
+`workcell session diff` compares workspace changes with the clean Git base from launch.
+The command requires a clean launch workspace and recorded Git metadata.
+It refuses a linked worktree or an unavailable base commit.
+
+`workcell session verify --id SESSION_ID` verifies the audit chain and its signed seal.
+`workcell session timeline` shows the records for one session.
+`workcell session export` produces JSON or OCSF-mapped JSON Lines evidence.
+These commands give the operator evidence that is independent of agent statements.
+
+The default agent autonomy is `yolo`.
+Workcell does not require human approval for each agent action.
+An operator must still review changes and publication evidence.
 
 ### ASI10:2026 Rogue Agents — Partial (contain and audit)
 
-Agents acting beyond intended objectives through goal drift, collusion, or
-emergent behavior. Containment is identical to ASI05 and ASI03 — on the safe
-path a rogue agent cannot reach host secrets, use host-side publication
-authority, or escape the workspace. The important qualifier: publication is
-blocked only for host-side authority; if the operator explicitly injects
-publishing credentials (for example `github_hosts`/`github_config` or SSH
-material — an explicit credential-injection decision available on the strict
-path, not a lower-assurance lane), an agent can publish from inside the
-container using that injected authority. Containment adds host-side
-auditability: the profile audit log lives on the host, outside the contained
-agent's reach, and each record includes a chained digest of the prior record;
-durable host-side session records survive `--gc`. `workcell session timeline`
-prints the audit-log entries for a session, and `workcell session export`
-emits a JSON bundle of the session record plus its audit records.
+This category covers an agent that acts outside its intended objective.
 
-Gap: the chained digests provide the basis for order and corruption
-verification, but Workcell does not yet ship a verifier that checks the chain,
-and the chain is not externally anchored — so the audit log is evidence to
-review, not proof of tamper-evidence against a host-level attacker. There is
-no behavioral monitoring or rogue-behavior detection; discovery of a contained
-rogue agent is post-hoc via audit evidence.
+On the default strict path, the agent cannot use ambient host secrets.
+It also cannot use the credentials for host-side PR publication.
+The VM and container limit its access to the host.
+
+An operator can explicitly inject credentials into the session.
+The agent can use the authority of those credentials.
+Injected GitHub CLI state can permit HTTPS publication.
+SSH material can permit publication only when policy also permits the remote SSH endpoint.
+Workcell records the injection decision but does not prevent authorized use.
+
+The host keeps the profile audit log outside the runtime boundary.
+On chain-capable targets, each audit record has a record digest.
+Each later record includes the prior record digest.
+
+Workcell signs the final session head with a per-host ECDSA P-256 key.
+`workcell session verify` recomputes the chain and verifies this host signature.
+It fails closed if a record at or before the signed session head changes.
+It also fails closed if the seal is invalid or missing.
+
+`workcell session export` can produce a JSON bundle or an OCSF 1.3.0 stream.
+The OCSF output applies the shared redaction rules.
+`workcell --gc` does not delete durable session records.
+An operator must delete these records separately.
+
+The signed seal does not protect against host-root compromise.
+A host-root attacker can read the signing key and can sign a changed chain.
+The Apple container preview writes lifecycle records without signatures.
+Verification fails closed for these records.
+Workcell blocks operator launch for that target.
+
+Workcell does not detect rogue intent or behavior.
+It provides containment and evidence for later review.
 
 ## Sources
 
 - [OWASP Top 10 for Agentic Applications for 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
-- [Workcell threat model](threat-model.md), [invariants](invariants.md),
-  [injection policy](injection-policy.md), and
-  [enterprise evidence baseline](enterprise-evidence-baseline.md)
+- [Workcell threat model](threat-model.md)
+- [Workcell invariants](invariants.md)
+- [Injection policy](injection-policy.md)
+- [Support tiers](support-tiers.md)
+- [Signed session audit records](signed-session-audit-records.md)
+- [Enterprise evidence baseline](enterprise-evidence-baseline.md)
+- [Provenance and signing](provenance.md)
