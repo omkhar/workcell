@@ -99,6 +99,7 @@ It then compares the archive digest with the expected digest.
 It creates source-dependent manifests and the amd64 image from the extracted tree.
 It creates the formula from the verified archive digest.
 The native arm64 image job builds from the checked-out release tag.
+
 The workflow also creates the builder-environment manifest, image-digest file, software bills of materials, signatures, and checksums.
 The release job seals the assets in one workflow artifact.
 The final job publishes that sealed artifact.
