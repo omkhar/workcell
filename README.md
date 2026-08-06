@@ -21,8 +21,10 @@ or local sockets.
   mounts
 - keep provider adapters native: one shared boundary, thin provider-specific
   control-plane mapping
-- keep publication on the host: signed commits, signed-range verification, and
-  GitHub publication stay out of Tier 1
+- keep the normal publication workflow on the host: signed commits,
+  signed-range verification, and GitHub publication stay out of Tier 1
+- keep publication authority explicit: credential injection can give a
+  session publication authority
 - keep verification paths nonroot by default: runtime and validator images
   default to a named unprivileged `workcell` user, while repo-mounted
   validation lanes pass explicit caller UID/GID and isolated writable state,
@@ -33,11 +35,11 @@ or local sockets.
 
 ## How it compares
 
-| Approach | Primary boundary | Provider-native control plane | Host-side signed publication | Lower-assurance paths called out |
+| Approach | Primary boundary | Provider-native control plane | Publication outside runtime | Lower-assurance paths called out |
 |---|---|---|---|---|
 | Host-native provider CLI | host user session | yes | no | rarely |
 | Generic container wrapper | container only, often mixed with host state | often partial | varies | often unclear |
-| Workcell | dedicated Colima VM plus hardened container | yes | yes | yes |
+| Workcell strict | dedicated Colima VM plus hardened container | yes | yes | yes |
 
 ## Project status
 
@@ -110,7 +112,7 @@ links; the full index is in the [Docs map](#docs-map) below.
 - **Contributors — work on Workcell**: [repository layout](#repository-layout) ·
   [contributor workflow](CONTRIBUTING.md) ·
   [agent guidelines](AGENTS.md) ·
-  [improvement-tracks plan](docs/improvement-tracks-implementation-plan.md)
+  [1.0 delivery record](docs/improvement-tracks-implementation-plan.md)
 
 ## 5-minute path
 
@@ -163,9 +165,9 @@ host support boundary that `--doctor` and `--inspect` report.
 On Apple Silicon macOS, the recommended path is the one-command **verified
 release install**, which downloads a tagged release, verifies its cosign
 signature and digest fail-closed **before any bundle code runs**, and only then
-installs. `install-release.sh` is not a standalone release asset, so get it
-from the repository over TLS (a trusted source) rather than the unverified
-bundle — clone the repo, then run it:
+installs. `install-release.sh` is not a standalone release asset. Get it from
+the repository through TLS transport, not from the unverified bundle. Then
+authenticate the selected revision with the signed-tag check:
 
 ```bash
 brew install cosign git gnupg   # verifier tools must exist before verification runs (macOS ships neither gnupg nor, on a clean host, git)
@@ -196,18 +198,30 @@ it.
 For the Homebrew formula asset, the source checkout path, and the full host
 requirements, see [docs/install.md](docs/install.md).
 
-To reclaim stale runtime/cache/temp state without uninstalling, run
-`workcell --gc` (it reaps aged `session-audit` records, so do not run it before
-preserving evidence for a suspected incident — see
-[docs/incident-response.md](docs/incident-response.md)).
-`./scripts/uninstall.sh` (run `--dry-run` first — its output is the
-authoritative list) removes the launcher link, the managed state under the
-default state root (`~/.local/state/workcell`), and the Workcell-managed Colima
-profiles/caches (legacy `workcell-*` and current `wcl-*` names), leaving shared
-packages and unrelated profiles alone; it does not reach a custom
-`WORKCELL_STATE_ROOT`/`XDG_STATE_HOME` (remove that yourself). After a Homebrew
-formula install, `brew uninstall workcell` removes only the formula, so also run
-`./scripts/uninstall.sh` (from a bundle or checkout) to clear the runtime state.
+If you suspect an incident, preserve all available evidence before you run
+`workcell --gc`. See
+[docs/incident-response.md](docs/incident-response.md).
+To reclaim stale runtime, cache, and temporary state without an uninstall, run
+`workcell --gc`.
+It removes aged transient `session-audit.*` scratch, not durable session
+records.
+
+Run `./scripts/uninstall.sh --dry-run` before you uninstall Workcell.
+Its output is the authoritative list.
+The uninstall command removes the launcher link and the managed state under
+`~/.local/state/workcell`.
+It also removes Workcell-managed Colima profiles and caches.
+Workcell-managed profiles and caches use legacy `workcell-*` names or current
+`wcl-*` names.
+The command does not remove shared packages or unrelated profiles.
+
+The uninstall command does not reach a custom `WORKCELL_STATE_ROOT` or
+`XDG_STATE_HOME`.
+Remove that custom state separately.
+After a Homebrew formula install, `brew uninstall workcell` removes only the
+formula.
+Also run `./scripts/uninstall.sh` from a bundle or checkout to remove the
+runtime state.
 See [docs/install-lifecycle.md](docs/install-lifecycle.md).
 
 ## Command reference

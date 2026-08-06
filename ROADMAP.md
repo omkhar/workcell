@@ -78,15 +78,15 @@ release criteria and deferred work.
   Antigravity CLI is queued as the
   follow-on track; current releases do not support `--agent antigravity`, its
   credential keys, or a matching quickstart.
-- Upstream retires Gemini CLI for the free, Pro, and Ultra personal-account
-  login tiers on June 18, 2026 in favor of the closed-source Antigravity
-  CLI; Gemini Code Assist Standard/Enterprise licenses and paid Gemini API
-  keys keep access. Reviewed posture: the Gemini Tier 1 adapter stays
+- Google stopped Gemini CLI service for the free, Pro, and Ultra
+  personal-account login tiers on June 18, 2026. Google moved these users to
+  the closed-source Antigravity CLI. Gemini Code Assist Standard or Enterprise
+  licenses and paid Gemini API keys keep access. The Gemini Tier 1 adapter stays
   supported for the auth inputs Google keeps serving (licensed Code Assist
   or a paid Gemini API key, with `gcloud_adc` as the supplemental Vertex
-  input to those modes rather than a standalone path), and an Antigravity
-  adapter is a committed follow-on provider-parity track behind the same
-  Tier 1 evidence bar (see [docs/provider-matrix.md](docs/provider-matrix.md)).
+  input to those modes rather than a standalone path). The Antigravity adapter
+  remains a follow-on provider-parity track behind the same Tier 1 evidence bar.
+  See [docs/provider-matrix.md](docs/provider-matrix.md).
 
 ## 1.0 Program Record
 
@@ -321,19 +321,19 @@ Exit gates:
 - bundles can be distributed through MDM, Git, or future admin tooling without
   implying centralized remote execution
 
-### Phase 17: Fleet Inventory And Audit Export
+### Phase 17: Fleet Inventory And Centralized Audit Ingestion
 
-Make host-local Workcell records consumable by enterprise inventory and SIEM
-systems.
+Workcell already exports OCSF 1.3.0 JSON Lines for SIEM ingestion.
+The support bundle already supplies local install, policy, target, provider,
+and runtime evidence.
+This phase adds fleet inventory and centralized ingestion.
 
 Exit gates:
 
-- machine-readable session, target, policy, runtime, provider, assurance,
-  downgrade, and support-status metadata can be exported
-- redaction rules and privacy boundaries are documented
-- JSONL/SIEM-friendly export formats are stable enough for pilot use
-- support bundles include the evidence needed to diagnose install, policy,
-  target, provider, and runtime failures
+- fleet inventory can collect records from reviewed hosts
+- centralized ingestion preserves the documented redaction and privacy rules
+- exports include the missing support-status metadata
+- organizations can apply their retention policy to collected records
 
 ### Phase 18: Regulated-Team Proof Harness And Windows Investigation
 
@@ -380,12 +380,13 @@ tracks are direction and sequencing, not support claims. Every item lands
 under the same evidence bar as the phases above: docs, deterministic tests,
 diagnostics, and (where applicable) live certification travel with the change.
 
-Horizons: `now` (next one to three releases), `next` (after the current
-provider and target phases stabilize), `later` (post-1.0 or gated on earlier
-items). Sizes: S/M/L. Milestone assignment for every item lives in the
-[Milestone Train](#milestone-train) under the 1.0 Program Record, and the per-item
-implementation plan — steps, exit gates, dependencies, and validation
-expectations — lives in
+The `now` horizon means the next one to three releases.
+The `next` horizon starts after the current provider and target phases stabilize.
+The `later` horizon is post-1.0 or depends on earlier items.
+Items use S, M, and L size labels.
+Historical milestone assignment for every item lives in the
+[Milestone Train](#milestone-train) under the 1.0 Program Record. The final
+per-item delivery result lives in
 [`docs/improvement-tracks-implementation-plan.md`](docs/improvement-tracks-implementation-plan.md).
 
 ### Track A: Boundary Depth And Agent-Threat Defenses
@@ -396,9 +397,10 @@ Claude Code, Gemini CLI, and Copilot CLI (the TrustFall disclosure; Codex CLI
 was not in the disclosed set), prompt injection through PR titles and
 comments against agent PR-review integrations, recurring
 npm worm campaigns (Shai-Hulud and successors), and sandbox-bypass CVEs in
-OS-level sandboxes (Seatbelt/bubblewrap). Workcell's VM-plus-container
-boundary and staged-credential model match the containment doctrine the
-strongest vendors now publish; these items deepen that lead.
+OS-level sandboxes (Seatbelt/bubblewrap). These threats can act through
+repository control files, review text, dependencies, or sandbox bypasses.
+Workcell uses its VM-plus-container boundary and staged credentials to limit
+the effect of these threats. These tracks strengthen those controls.
 
 - **A1 (complete, M):** egress policy depth and target parity — document, extend,
   and parity-label the shipped strict default-deny allowlist rather than
@@ -428,7 +430,7 @@ Releases use keyless Sigstore signatures, SBOMs, and GitHub attestations.
   2026-07-09 criterion-6 amendment because no second trusted maintainer exists;
   1.0 uses the documented single-maintainer controls in `docs/releasing.md`
 - **B3 (complete, M):** scheduled mutation-score lane with published score and
-  baseline regression gate, beyond today's release-preflight-only run
+  baseline regression gate, beyond the former release-preflight-only run
 - **B4 (complete, S):** centralized tool pins and a permitted-GitHub-actions
   allowlist check
 - **B5 (complete, S):** audit-trail retention policy with extended
@@ -440,20 +442,24 @@ Releases use keyless Sigstore signatures, SBOMs, and GitHub attestations.
 - **B7 (post-1.0, S + L):** OpenSSF Best Practices badge and funded
   third-party boundary audit — both deferred to post-1.0 by the 2026-07-09
   criterion-2/6 amendment
-- **B8 (complete, M):** CI efficiency and reliability program — nightly
-  reproducibility split, retries, flake tracking, cost visibility
+- **B8 (complete, M):** CI efficiency and reliability program — the
+  `approved-heavy-ci` pull request label, main-push and release
+  reproducibility, retries, flake candidates, and workflow wall-clock reports
 - **B9 (complete, M):** CI/CD threat model covering secrets, runner trust tiers,
   attestation assumptions, and signing-compromise response
 
 ### Track C: Runtime Platform Evolution
 
-- **C1 (evaluated, L):** Apple `container` backend evaluation (macOS 26+) as
-  `local_vm/apple-container` — **recorded go/no-go: GO on the evaluation
-  (per-session VM, sub-second boot, confirmed on macOS 26.5.1);
-  `preview-only`/`blocked` and support-invisible; Colima stays the reviewed
-  default (and the only option below macOS 26); promotion to a supported
-  backend deferred post-1.0 pending the B6 certification lane.** See
-  [docs/apple-container-evaluation.md](docs/apple-container-evaluation.md)
+- **C1 (evaluated, L):** Workcell evaluated the Apple `container` backend on
+  macOS 26 as `local_vm/apple-container`. The result was GO for technical
+  feasibility. Three starts on an idle host took less than one second on macOS
+  26.5.1. Starts on a saturated host took 2–7 seconds.
+
+  The target remains `preview-only` and `blocked`. It has no support claim.
+  Workcell blocks operator launch. Colima remains the reviewed default and the
+  only supported `local_vm` option below macOS 26. Workcell can promote the
+  target only after the post-1.0 certification in B6. See
+  [docs/apple-container-evaluation.md](docs/apple-container-evaluation.md).
 - **C2 (post-1.0, M):** session start latency program with cached images, an
   optional kept-warm lane, and a certification design that does not broaden the
   launcher with destructive controls; generic output remains benchmark-only
@@ -496,8 +502,8 @@ Use generated, checked metrics before you add a numeric inventory here.
 - **E2 (complete, M):** maintained architecture diagrams in the system design doc
 - **E3 (complete, S):** support-tier legend and a `--doctor`/`--inspect`
   diagnostics interpretation guide
-- **E4 (complete, S):** docs CI depth — link checking, orphan detection, status
-  labels, freshness markers
+- **E4 (complete, S):** documentation CI checks links, orphans, spelling, man
+  pages, support-field parity, and public-contract drift
 - **E5 (complete, M):** injection-policy annotated schema with complete
   per-provider examples
 - **E6 (post-1.0, M):** adoption growth kit — docs site, terminal demos,
