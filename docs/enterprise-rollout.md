@@ -1,169 +1,169 @@
-# Enterprise Rollout Today
+# Enterprise rollout
 
 This page describes the current Workcell rollout model for teams.
 
-Workcell is local-first today:
+Workcell uses a local-first model.
+It supports Apple Silicon macOS hosts only.
+The primary product interface starts a local runtime from the host.
+Workcell does not supply a managed cloud worker or remote worker.
+It also does not supply a central policy, inventory, or analytics service.
 
-- supported hosts are Apple Silicon macOS only
-- the primary product surface is a host-launched local runtime
-- there is no Workcell-managed cloud or remote worker plane yet
-- there is no centralized Workcell policy, inventory, or analytics service yet
+Use [Enterprise evidence baseline](enterprise-evidence-baseline.md) for the current evidence map.
 
-The current rollout model is to distribute reviewed host-side files and let
-operators launch Workcell locally inside the shared VM-plus-container boundary.
-Use [enterprise-evidence-baseline.md](enterprise-evidence-baseline.md) as the
-current evidence map for architecture, support boundaries, audit retention,
-release provenance, and evaluation-only control mappings.
+## Evidence authority
 
-## Traceability note
+Use these sources for rollout decisions:
 
-- supported-host and release-window claims map to the validated install matrix
-- auth, policy, session, and host-publication claims map to the named anchors
-  in [validation-scenarios.md](validation-scenarios.md)
-- the "not centralized yet" bullets below are support-boundary statements, not
-  claims of automated proof
+- [`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv) defines host support.
+- [`policy/operator-contract.toml`](../policy/operator-contract.toml) defines supported workflows.
+- [Validation scenarios](validation-scenarios.md) identifies test evidence.
+- [Retention policy](retention-policy.md) defines hosted workflow artifact retention.
+- [Provenance](provenance.md) defines release verification.
 
-## What Workcell standardizes today
+A support statement does not prove an automated control.
+Use the named evidence for each claim.
 
-Workcell already gives teams one shared contract for:
+## Current team contract
 
-- the runtime boundary and runtime profiles
-- provider-home seeding and control-plane masking
-- the host-side injection-policy format
-- host-side auth, policy, and explainability commands
-- detached session records and host-side session control
-- host-side publication and release provenance
+Workcell supplies one team contract for these items:
 
-Those pieces are implemented in the product. They do not depend on a separate
-central administration plane.
+- runtime boundaries and runtime profiles
+- provider-state input and control-plane masks
+- host injection policies
+- host authentication and policy commands
+- detached session records and session control
+- host PR publication and release provenance
 
-## What stays host-local today
+These items do not require a central Workcell service.
 
-These parts are still local to each operator host:
+## Host-local state
+
+These items remain on each operator host:
 
 - Workcell installation and updates
-- `~/.config/workcell/` policy files and included fragments
-- managed credential material referenced by `workcell auth`
-- `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/`
-  durable session records
-- local launch history, retained debug logs, transcripts, and file traces
+- policy files under `~/.config/workcell/`
+- managed credential files that `workcell auth` uses
+- session records under the selected Workcell state root
+- launch history, debug logs, transcripts, and file traces
 
-If you want team-wide consistency today, distribute reviewed host-side files
-through your existing host configuration workflow rather than expecting
-Workcell to act as a central policy service.
+Use your existing host-configuration system to distribute reviewed files.
+Do not use Workcell as a central policy service.
 
-## Recommended rollout shape
+## Recommended rollout
 
-### 1. Standardize the support boundary
+### 1. Define the support boundary
 
-Roll out Workcell only to supported Apple Silicon macOS hosts and treat the
-current GitHub-hosted install matrix as the tested release window, not as proof
-for all macOS variants.
+Install Workcell only on supported Apple Silicon macOS hosts.
+Treat the hosted macOS matrix as a tested release window.
+Do not use that matrix as proof for all macOS versions.
 
-### 2. Distribute reviewed host-side files
+### 2. Distribute reviewed files
 
-Use your existing device-management, bootstrap, or dotfile workflow to place:
+Use your device-management or bootstrap system to place these files:
 
-- reviewed Workcell policy fragments under `~/.config/workcell/`
-- org-wide instruction docs referenced from `[documents]`
-- reviewed credential files referenced from `[credentials]`
-- reviewed SSH config and identity paths referenced from `[ssh]`
+- Workcell policy fragments under `~/.config/workcell/`
+- organization instructions that `[documents]` entries reference
+- credential files that `[credentials]` entries reference
+- SSH configuration and identity files that `[ssh]` entries reference
 
-Keep repo-local provider control files as imported inputs, not as the live
-control plane.
+Keep repository provider-control files as imported inputs.
+Do not use those files as the live control plane.
 
-### 3. Prefer direct staged auth inputs, with reviewed Codex host reuse when needed
+### 3. Use staged authentication
 
-Direct staged credentials are still the main supported auth path today.
+Use direct staged credentials as the primary authentication path.
 
-- Codex: `codex_auth`
-- Claude: `claude_auth`, `claude_api_key`, and `claude_mcp`
-- Gemini: `gemini_env`, `gemini_oauth`, and `gemini_projects`
-- Gemini Vertex supplement: `gcloud_adc`
+- Codex uses `codex_auth`.
+- Claude uses `claude_auth`, `claude_api_key`, and `claude_mcp`.
+- Gemini uses `gemini_env`, `gemini_oauth`, and `gemini_projects`.
+- Gemini Vertex can also use `gcloud_adc`.
+- Copilot uses `copilot_github_token`.
 
-Reviewed Codex host-auth reuse through `codex-home-auth-file` is also
-supported on the same staged host-owned path when a team wants to reuse the
-existing `~/.codex/auth.json` cache file instead of copying it into a separate
-managed location.
+Codex can reuse the reviewed host file that `codex-home-auth-file` selects.
+This path stages only the selected `auth.json` file.
 
-Current caveats:
+The Claude macOS resolver records operator intent but fails closed.
+No supported export path exists.
 
-- the built-in Claude macOS resolver scaffold can record intent, but it remains
-  fail-closed until a supported export path exists
-- `gcloud_adc` is supplemental to Vertex config, not a standalone Gemini auth
-  mode
-- GitHub Copilot CLI uses explicit `copilot_github_token` staging only; do not
-  distribute host Copilot provider state (`~/.copilot`,
-  `~/.config/github-copilot`, `~/.cache/github-copilot`), host GitHub CLI auth,
-  keychain/browser exports, `GH_TOKEN`, `GITHUB_TOKEN`, or broad provider tokens
-  as Workcell inputs
-- Google Antigravity CLI remains planned and unsupported; do not distribute its
-  host provider home, keychain/browser exports, ambient CLI auth, or broad
-  provider tokens as Workcell inputs
+`gcloud_adc` supplements Gemini Vertex configuration.
+It is not a separate Gemini authentication mode.
 
-See [injection-policy.md](injection-policy.md) for the current by-provider auth
-maturity summary and
-[provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) for the explicit
-repo-required versus manual bootstrap tiers.
+Do not distribute Copilot provider state, GitHub CLI authentication, keychain data, or ambient tokens.
+Antigravity is unsupported and fails closed.
+Do not distribute Antigravity provider state or credentials.
 
-The Copilot enterprise rollout gate must document organization policy and
-license prerequisites, token ownership, audit expectations,
-telemetry/content-capture posture, and the exact staged-token handoff before a
-team adopts it. The Antigravity gate must do the same before that planned
-provider can claim support.
+See [Injection policy](injection-policy.md) for the exact input schema.
+See [Provider bootstrap matrix](provider-bootstrap-matrix.md) for test tiers.
 
-Strict-mode Copilot support default-denies provider telemetry, OpenTelemetry,
-and content-capture environment variables. Future Antigravity support must
-preserve that posture. Any content-capture enablement must be lower assurance,
-explicitly acknowledged, audited, and covered by deterministic tests.
+Before a Copilot enterprise rollout, document these items:
 
-### 4. Scope shared GitHub and SSH inputs deliberately
+- organization policy and license requirements
+- token ownership
+- audit requirements
+- telemetry and content-capture policy
+- the exact staged-token path
 
-When teams want shared GitHub CLI or SSH behavior:
+Strict Copilot mode rejects provider telemetry and content-capture environment variables.
+Mark each exception as lower assurance.
+Document each exception.
+Acknowledge each exception.
+Audit each exception.
+Test each exception.
 
-- scope `github_hosts` and `github_config` with `providers = [...]`
-- keep SSH material in the `[ssh]` section rather than ad hoc copies
-- review MCP state explicitly instead of trusting ambient workspace config
+### 4. Limit shared GitHub and SSH inputs
 
-This keeps shared inputs least-privilege and visible in policy.
+Set `providers = [...]` on shared `github_hosts` and `github_config` inputs.
+Put SSH inputs in the `[ssh]` table.
+Review MCP state before you stage it.
 
-### 5. Keep publication on the host
+These steps keep shared inputs visible and limited.
 
-The supported publication path remains:
+### 5. Publish from the host
 
-1. run the provider inside Workcell
-2. review the resulting changes
-3. run local `pr-parity`, then publish from the host with
-   `./scripts/repo-publish-pr.sh`
+Use this publication sequence:
 
-Do not treat in-session git publication as equivalent to the host-side release
-and signing model.
+1. Run the provider inside Workcell.
+2. Review the changes.
+3. Run local `pr-parity`.
+4. Run `./scripts/repo-publish-pr.sh` on the host.
 
-## What is not centralized yet
+Do not publish from the managed session.
+Host publication preserves the reviewed signature and policy path.
 
-Workcell does not yet provide:
+## Interfaces that are not central
 
-- centralized policy distribution inside the product
-- org-wide RBAC, SSO, or SCIM features
-- centralized session inventory or usage analytics
-- a preserved-boundary GUI or IDE client path
-- remote or cloud-spawned workspaces
+Workcell does not supply these interfaces:
 
-Those are roadmap items, not part of the supported contract today.
+- central policy distribution
+- organization RBAC, SSO, or SCIM
+- central session inventory or usage analytics
+- a supported GUI or IDE client
+- supported remote or cloud workspaces
 
-## Assurance notes for rollout decisions
+These interfaces are outside the current support contract.
 
-- GitHub-hosted CI proves repo shape, smoke behavior, reproducibility, release
-  posture, and install/uninstall behavior on GitHub-hosted Apple Silicon
-  `macos-26` and `macos-15`.
-- GitHub-hosted CI does not prove the full local macOS Colima boundary.
-- The strongest boundary claim still depends on local validation and operator
-  discipline on supported hosts.
-- Lower-assurance paths such as `development`, `breakglass`, prompt autonomy,
-  package mutation, and host-side transcript capture should stay explicit in
-  rollout guidance.
+## Assurance limits
 
-## Related docs
+GitHub CI proves repository validation, smoke behavior, reproducibility, and release posture.
+
+On `macos-26` and `macos-15`, hosted CI proves these install properties:
+
+- bundle installation
+- launcher-link removal
+- man-page-link removal
+- Homebrew installation and formula removal
+
+Hosted CI does not prove complete bundle uninstall behavior.
+It also does not prove the strict local Colima boundary.
+
+Local certification supplies the current strict-boundary evidence.
+Follow the certification procedure.
+Record the result.
+
+Document each lower-assurance path in team instructions.
+These paths include development mode, breakglass, prompt autonomy, package changes, and host transcripts.
+
+## Related documents
 
 - [Getting started](getting-started.md)
 - [Injection policy](injection-policy.md)

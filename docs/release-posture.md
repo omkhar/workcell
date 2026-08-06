@@ -1,39 +1,53 @@
-# Release Posture
+# Release posture
 
 The latest release is [`v1.0.2`](https://github.com/omkhar/workcell/releases/tag/v1.0.2).
-It is the first published 1.0 release. GitHub reports it as immutable. Its
-18-asset inventory has a SHA-256 digest for each asset.
+It is the first published release in the 1.0 series.
+GitHub reports this release as immutable.
+GitHub also provides a SHA-256 digest for each release asset.
 
-Workcell rebuilds and verifies each tagged release before publication. The
-release path does these checks:
+The release workflow rebuilds and verifies each tagged release before publication.
+It does these checks:
 
-- reruns validation, smoke, and reproducibility checks
-- reruns repo-mounted validator and release-helper paths under an explicit
-  caller UID/GID with isolated writable home, cache, and tmp roots instead of
-  relying on ambient container-root defaults, including passwd-less caller UIDs
-- verifies from GitHub-owned sources that the release install matrix still
-  targets the newest two GitHub-hosted Apple Silicon macOS runner labels
-- refuses to publish if any reviewed provider, Linux base image, Linux
-  toolchain, or release-build pin is behind the latest tracked upstream
-- verifies pinned Codex, Claude, Copilot, and Gemini releases against upstream
-  metadata as part of the reviewed provider set; Antigravity gets the same
-  gate before any future support claim
-- publishes from the archived source bundle rather than the live checkout
-- gates publication on bundle and Homebrew install verification on
-  GitHub-hosted Apple Silicon `macos-26` and `macos-15`
-- signs the image, source bundle, Homebrew formula asset, published image
-  digest file, checksums, build-input manifest, control-plane manifest,
-  builder-environment manifest, and both SBOMs with keyless Sigstore/Cosign
-- publishes GitHub-native attestations when the reviewed hosted controls say
-  the repository visibility and GitHub plan support them for every published
-  primary release artifact, as an additional verification surface rather than a
-  replacement for Sigstore
+- It runs repository validation, container smoke tests, and reproducibility tests.
+- It runs repo-mounted validators and release helpers with an explicit caller user ID and group ID.
+- It gives those processes separate writable home, cache, and temporary directories.
+- It supports a caller user ID that has no password-file entry.
+- It verifies the two current GitHub-hosted Apple Silicon macOS runner labels.
+- It blocks publication when a reviewed provider, Linux image, toolchain, or release-build pin is out of date.
+- It verifies the pinned Codex, Claude, Copilot, and Gemini releases against upstream metadata.
+- It keeps Antigravity unsupported until that provider passes the same gate.
 
-That install matrix is the current release-gated support window. Other macOS
-versions may work, but they are not currently proven by tagged-release CI.
+The preflight job records the expected digest for its source archive.
+The release job creates and extracts an independent archive from the checked-out release tag.
+It compares that archive digest with the expected digest.
+It creates source-dependent manifests and the amd64 image from the extracted tree.
+It creates the Homebrew formula from the verified archive digest.
 
-Forks can keep the GitHub attestation gates off. The upstream repo treats
-those settings as hosted control-plane state and audits them accordingly.
+The native arm64 image job builds from the checked-out release tag.
+The workflow compares the published platform digests with the preflight data.
 
-See [provenance.md](provenance.md) and
-[github-workflows.md](github-workflows.md).
+The hosted install jobs prove these properties on Apple Silicon `macos-26` and `macos-15`:
+
+- bundle installation
+- launcher-link removal
+- man-page-link removal
+- Homebrew installation
+- formula removal
+
+The hosted jobs do not prove complete bundle uninstall behavior.
+The release gate tests installation on these two macOS versions only.
+Other macOS versions can work, but tagged-release CI does not prove them.
+
+The `release` environment gates image pushes and sealed-asset construction.
+The `hosted-controls-audit` environment gates release preflight and final GitHub release publication.
+
+The workflow uses Cosign to create keyless Sigstore signatures.
+It signs the image, source archive, Homebrew formula, image-digest file, checksums, manifests, and software bills of materials.
+It also creates GitHub attestations when the reviewed hosted controls permit them.
+GitHub attestations are an additional verification surface.
+They do not replace Sigstore signatures.
+
+Forks can keep the GitHub attestation gates off.
+The upstream repository audits those gates as hosted control-plane state.
+
+See [provenance.md](provenance.md) and [github-workflows.md](github-workflows.md).

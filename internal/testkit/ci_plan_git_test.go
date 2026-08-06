@@ -408,7 +408,7 @@ func TestCIPlanGitCollectorRejectsBaseFiltersBeforeExecution(t *testing.T) {
 			marker := fixture.configureFilter(driverName, driver)
 			fixture.writeFile("tracked.txt", []byte("worktree\n"), 0o644)
 			result := fixture.run("--base", "main")
-			if result.code == 0 || docsErr != nil || workflowDocsErr != nil || !bytes.Contains(docs, []byte("rejects nonregular or split-index state")) || !bytes.Contains(docs, []byte("conversion filters")) || !bytes.Contains(workflowDocs, []byte("fail-closed resident Git discovery")) ||
+			if result.code == 0 || docsErr != nil || workflowDocsErr != nil || !bytes.Contains(docs, []byte("rejects nonregular or split-index state")) || !bytes.Contains(docs, []byte("conversion filters")) || !bytes.Contains(workflowDocs, []byte("fails closed for unsafe Git state")) || !bytes.Contains(workflowDocs, []byte("disables Git conversion filters")) ||
 				!strings.Contains(result.stderr, "effective pinned attributes select conversion filter "+driverName+" for tracked.txt") ||
 				strings.Contains(result.stderr, marker) {
 				t.Fatalf("base %s/%s filter or scope docs failed: code=%d stderr=%q docs=%v/%v", driverName, driver, result.code, result.stderr, docsErr, workflowDocsErr)

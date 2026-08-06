@@ -1,233 +1,223 @@
-# GitHub Workflow Design
+# GitHub workflow design
 
-Workcell keeps the workflow set narrow and reviewable. GitHub automation should
-reinforce the runtime boundary and release posture, not replace them. Artifact
-retention for these workflows is documented and drift-checked in
-[retention-policy.md](retention-policy.md).
+Workcell uses a reviewed GitHub workflow set.
+The workflows support the runtime boundary and release process.
+They do not replace the runtime boundary.
 
-Workcell also keeps a machine-checked lane inventory so local parity and
-GitHub-only behavior do not drift silently:
+[Retention policy](retention-policy.md) defines workflow artifact retention.
 
-- [`policy/workflow-lane-policy.json`](../policy/workflow-lane-policy.json)
-  declares each expanded workflow lane's profiles, authority, and local mode
-- [`policy/workflow-lanes.json`](../policy/workflow-lanes.json) is the
-  generated manifest derived from the live workflow YAML plus that policy
-- `./scripts/verify-workflow-lanes.sh` fails if the manifest drifts
-- `./scripts/ci-plan.sh` explains which mirrored lanes apply locally and which
-  selected lanes remain GitHub-only for a given profile, event, labels, and
-  changed files
-- its fail-closed resident Git discovery rejects hidden/split-index state, shallow graphs, unsafe ancestry, mutable ignores, and present gitlinks; it neutralizes cached stats, ignores `.git/info/exclude`, and bypasses built-in conversions with raw bytes
+## Lane inventory
 
-That inventory underpins the local `./scripts/pre-merge.sh` profiles and the
-repo-local `./scripts/repo-publish-pr.sh` publication gate. For
-publication-grade `pr-parity`, `pre-merge.sh` buffers the complete local
-dispatch list before execution, then runs each selected local script once in
-declared `local_order`; a lane that reads standard input cannot consume or skip
-later dispatcher records, and `--skip-repro` is rejected.
-For the narrow certified-adapter exception, local parity evidence must be
-generated with `./scripts/pre-merge.sh --profile pr-parity --label
-approved-large-certified-adapter`; host publication must use `workcell
-publish-pr --approved-large-certified-adapter` through the repo wrapper, which
-adds the matching `approved-large-certified-adapter` PR label.
+These files define the machine-readable lane inventory:
+
+- [`policy/workflow-lane-policy.json`](../policy/workflow-lane-policy.json) defines each lane and its authority.
+- [`policy/workflow-lanes.json`](../policy/workflow-lanes.json) contains the generated lane manifest.
+
+`./scripts/verify-workflow-lanes.sh` rejects manifest drift.
+`./scripts/ci-plan.sh` shows the selected local and hosted lanes.
+
+The changed-file planner fails closed for unsafe Git state.
+It rejects split indexes, shallow graphs, unsafe ancestry, mutable ignore files, and present gitlinks.
+It ignores `.git/info/exclude` and disables Git conversion filters.
+
+`./scripts/pre-merge.sh` runs each selected local lane in `local_order`.
+It reads the complete plan before it starts a lane.
+Thus, a lane cannot consume a later plan record from standard input.
+
+For an approved large adapter PR, use both required options:
+
+```bash
+./scripts/pre-merge.sh \
+  --profile pr-parity \
+  --label approved-large-certified-adapter
+
+./scripts/repo-publish-pr.sh \
+  --approved-large-certified-adapter \
+  ...
+```
 
 ## Workflow inventory
 
 | Workflow | Purpose |
-|---|---|
-| `ci.yml` | repository validation, smoke, reproducibility, pin verification, and upstream release re-verification on pushes and PRs; package install/uninstall verification and the heavy per-platform reproducible-build lanes run only on pushes to `main`, manual dispatch, and PRs labeled `approved-heavy-ci`; the PR-shape job accepts `approved-large-certified-adapter` only for bounded, reviewed, live-certified adapter support PRs |
-| `pr-base-policy.yml` | trusted base-branch guard that keeps `main` as the supported ready-PR base and leaves non-`main` PR bases as draft-only lower-assurance review units |
-| `docs.yml` | fast spelling and manpage feedback for docs-only changes |
-| `security.yml` | repo-owned workflow contract checks, dependency review, and `zizmor` |
-| `codeql.yml` | code scanning for shipped Rust, Go, and JavaScript surfaces |
-| `scorecard.yml` | OpenSSF Scorecard analysis |
-| `pin-hygiene.yml` | scheduled re-validation of pinned inputs plus upstream refresh drift across providers, Linux base images, toolchains, and release-build pins |
-| `mutation.yml` | weekly-cron, manual, and `approved-heavy-ci`-gated lane that runs the mutation-score gate in the validator image via `scripts/ci/job-mutation.sh` and `scripts/ci/run-mutation-in-validator.sh` (GitHub-only; the same gate also runs locally in the release-preflight validate profile) |
-| `fuzz.yml` | weekly-cron and manual lane that spends an extended, time-bounded budget fuzzing the Go parser targets whose seed corpora already run as regression tests on every PR; see [fuzzing.md](fuzzing.md) |
-| `bench.yml` | optional weekly-cron and manual lane that builds the exec-guard cdylib and times the LD_PRELOAD shim's allow-path classification overhead against the unhooked libc baseline across two runs; not on the PR path; see [syscall-shim-benchmarks.md](syscall-shim-benchmarks.md) |
-| `ci-insights.yml` | scheduled, read-only CI observability lane that writes a weekly flaky-test report and CI cost report to each run's job summary; never gates PRs or releases; see [ci-efficiency-and-reliability.md](ci-efficiency-and-reliability.md) |
-| `upstream-refresh.yml` | scheduled and manual candidate generation for reviewed upstream pins, with later signed host-side PR publication |
-| `hosted-controls.yml` | drift detection for GitHub-hosted controls that live outside git |
-| `release.yml` | tagged release preflight, publication, signatures, SBOMs, manifests, and attestations |
+| --- | --- |
+| `bench.yml` | Measures exec-guard performance on a schedule or manual run. |
+| `ci-insights.yml` | Writes weekly flake and cost reports. See [CI reliability](ci-efficiency-and-reliability.md). |
+| `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, and PR-shape checks. |
+| `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
+| `docs.yml` | Checks spelling, links, contracts, and the man page. |
+| `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
+| `hosted-controls.yml` | Checks GitHub controls that are outside Git. |
+| `mutation.yml` | Runs the mutation-score gate on a schedule, manual run, or approved heavy PR. |
+| `pin-hygiene.yml` | Checks reviewed upstream and tool pins. |
+| `pr-base-policy.yml` | Requires `main` as the base for a ready PR. |
+| `release.yml` | Builds, verifies, signs, and publishes a release. |
+| `scorecard.yml` | Runs OpenSSF Scorecard analysis. |
+| `security.yml` | Checks workflow policy, dependencies, and GitHub Actions security. |
+| `upstream-refresh.yml` | Creates an advisory upstream-pin candidate and updates the tracking issue. |
 
-## Release workflow posture
+## CI routing
 
-`release.yml` is intentionally strict:
+Normal PRs run the required deterministic lanes.
+The `approved-heavy-ci` label enables these expensive PR lanes:
 
-- it verifies from GitHub-owned sources that the release install matrix still
-  matches the newest two GitHub-hosted Apple Silicon macOS runner labels
-- it publishes from the archived source bundle, not the live checkout
-- it runs repo-mounted validator and release-helper lanes under an explicit
-  caller UID/GID with isolated writable home, cache, and tmp roots rather than
-  relying on ambient container-root defaults; passwd-less caller UIDs get a
-  synthesized isolated home instead of collapsing to `/`
-- it re-verifies upstream provider releases and every reviewed upstream pin from the archived source tree before packaging and signing
-- it gates publication on release-bundle install/uninstall and Homebrew
-  install/uninstall verification on GitHub-hosted Apple Silicon `macos-26`
-  and `macos-15`
-- it runs a release-scoped CodeQL matrix so Go uses `autobuild` while Rust and
-  JavaScript keep buildless scanning
-- it binds publish outputs to preflight results before signing
-- it builds and reproducibility-verifies the `linux/arm64` runtime image on a
-  native `ubuntu-24.04-arm` runner instead of QEMU emulation, matching `ci.yml`;
-  the amd64 image stays native on `ubuntu-latest`, and publish assembles the
-  multi-arch manifest from both native digests after the preflight digest match
-- the native arm64 build/push job is gated on the same `release` environment as
-  publish, so no image reaches GHCR before the release approval
-- it refuses to publish when provider pins, Linux base images, Linux toolchains,
-  or release-build pins lag the latest tracked upstream versions
-- it signs release assets with keyless Sigstore/Cosign
-- it publishes GitHub attestations as an additional surface, not a
-  replacement, but only when the reviewed hosted controls say the repository
-  visibility and plan support them
-- it uses pinned GitHub Actions and pinned Buildx, QEMU, Cosign, and Syft
-  versions
-- it runs with minimal workflow-level permissions, keeps package publication,
-  OIDC, and attestations in the release-approved artifact job, and grants the
-  separate final publication job only artifact read and repository-content
-  write permissions
+- native amd64 and arm64 reproducible builds
+- install verification on `macos-26` and `macos-15`
+- CodeQL language jobs
+- mutation tests
 
-That is also the current tested host-support limit for CI and tagged releases.
-Other macOS versions are not install-gated today.
+Native reproducibility and install verification also run on each push to `main`.
+CodeQL also runs on each push to `main` and its weekly schedule.
+The mutation workflow also runs on its weekly schedule.
+All four lane groups support manual dispatch.
 
-## Upstream refresh workflow
+The aggregate reproducibility check passes on a normal PR when the platform matrix result is `skipped`.
+It requires both platform jobs on `main`, an approved heavy PR, or manual dispatch.
 
-`upstream-refresh.yml` is the dedicated candidate lane for reviewed upstream pins:
+## Hosted install evidence
 
-- it runs on a daily schedule and on manual dispatch
-- it installs the same pinned Cosign verifier release used by CI, release, and
-  pin-hygiene before provider release verification paths run
-- it refreshes provider pins, the Linux runtime and validator base images,
-  Debian snapshot, Go/Rust/Hadolint toolchains, and release-build helper pins
-- a Codex pin change fetches the exact tagged CLI source and advances the
-  command-inventory fixture only when the classified subcommand set is
-  unchanged; additions or removals stop refresh before pin mutation
-- it binds to the empty `upstream-refresh` GitHub environment as an out-of-tree
-  `main`-only gate with no hosted signing inputs
-- it uploads an advisory candidate bundle containing `patch`, `diffstat`, and
-  `metadata.json`
-- it opens or updates one rolling tracking issue instead of pushing a branch or
-  opening a PR from GitHub Actions
-- the authoritative refresh PR is created later on the host through
-  `./scripts/publish-upstream-refresh-pr.sh`, which recreates the refresh
-  locally, requires exact candidate identity matches when a candidate run is
-  cited, runs `pr-parity`, and then delegates to
-  `./scripts/repo-publish-pr.sh`
-- the candidate artifact and tracking issue are operator signals only; they are
-  not integrity evidence and do not replace the later signed host-side review
-  unit
+The hosted macOS jobs test five install properties:
 
-## Required reproducibility
+- bundle installation
+- launcher-link removal
+- man-page-link removal
+- Homebrew installation and formula removal
 
-`ci.yml` keeps the branch-protected `Reproducible build` context tied to the
-actual platform checks. The native amd64 and arm64 reproducible-build lanes are
-heavy (two ~45-minute no-cache double-builds), so they run on pushes to `main`,
-manual dispatch, and pull requests labeled `approved-heavy-ci` — the same
-heavy-lane gate that CodeQL, mutation, and install verification use — rather
-than on every fork PR ungated. On an unlabeled pull request the per-platform
-matrix is skipped and the aggregate `Reproducible build` context passes on that
-`skipped` result; on a push to `main`, a labeled PR, or dispatch it fails unless
-the per-platform matrix succeeds. Release-time reproducibility assurance is
-preserved independently of the PR path: every post-merge push to `main` runs the
-per-platform lanes, and `release.yml` re-verifies reproducibility natively in
-`preflight-amd64-repro` / `preflight-arm64-repro` before publish (see below).
+The jobs run `scripts/uninstall.sh` for the bundle.
+They assert only the two link removals after that command.
+They do not prove complete bundle uninstall behavior.
 
-`release.yml` uses the same native-runner split: the `preflight-arm64-repro`
-job reproducibility-verifies the arm64 runtime image on `ubuntu-24.04-arm` and
-feeds its digests into the preflight manifest, while the amd64 image is verified
-natively in `preflight`. `check-pinned-inputs` rejects any reintroduction of
-`docker/setup-qemu-action` into the release workflow.
+The Homebrew job verifies that `brew uninstall` removes the formula.
 
-`check-pinned-inputs` also gates the GitHub Actions supply chain: every `uses:`
-must be pinned by full commit SHA, and its `owner/repo` must appear in the
-reviewed allowlist
-[`policy/allowed-actions.toml`](../policy/allowed-actions.toml). SHA-pinning
-proves the integrity of a specific ref; the allowlist restricts which action
-publishers may run at all, so introducing a new action — even a correctly
-pinned one — requires a reviewed change to that policy.
+GitHub-hosted macOS does not prove the strict Colima boundary.
+Local certification supplies that proof.
 
-The CI/release tool pins (cosign, buildx, buildkit, QEMU, syft, actionlint,
-zizmor) have a reviewed chokepoint in
-[`policy/tool-pins.toml`](../policy/tool-pins.toml). The values still live inline
-in the workflows; `check-pinned-inputs` asserts every workflow copy equals the
-policy, and `scripts/update-upstream-pins.sh` rewrites the workflows and the
-policy together on a bump. The policy is the human-reviewed record kept in
-lockstep with the workflows, so a pin can never move without a reviewed diff to
-that file.
+## Release workflow
 
-`ci.yml` and `docs.yml` use the same explicit nonroot validator contract when
-they bind-mount the repository: the workflow computes the caller UID/GID,
-passes isolated writable roots, and creates those paths inside the validator
-before repo validation or docs checks run. That contract still holds when the
-caller UID lacks a passwd entry inside the image because the launcher
-synthesizes an isolated writable home for those lanes.
+The preflight job records the expected digest for its source archive.
+The release job independently creates and extracts its own archive from the checked-out release tag.
+It then compares the archive digest with the expected digest.
+It creates source-dependent manifests and the amd64 image from the extracted tree.
+It creates the formula from the verified archive digest.
+The native arm64 image job builds from the checked-out release tag.
 
-The mirrored local workflow bodies live under `scripts/ci/`:
+The workflow also creates the builder-environment manifest, image-digest file, software bills of materials, signatures, and checksums.
+The release job seals the assets in one workflow artifact.
+The final job publishes that sealed artifact.
 
-- `job-pr-shape.sh`
-- `job-validate.sh`
-- `job-docs.sh`
-- `job-pin-hygiene.sh`
-- `build-validator-image.sh`
-- `run-validate-in-validator.sh`
-- `run-docs-in-validator.sh`
+Release preflight does these checks:
 
-GitHub workflow YAML stays responsible for event routing, permissions, runners,
-and hosted-only concerns. The shared scripts keep the mirrorable job logic
-identical between local parity runs and GitHub CI.
+- repository validation and container smoke tests
+- provider and upstream-pin verification
+- source-bundle and runtime-image reproducibility
+- release input and control-plane manifests
+- hosted control verification
+- native amd64 and arm64 image builds
+- the hosted install evidence in this page
+- release CodeQL analysis
+
+The release uses native `ubuntu-latest` for amd64.
+It uses native `ubuntu-24.04-arm` for arm64.
+The workflow compares both platform digests with preflight data.
+Then it creates one multi-platform manifest.
+
+The `release` environment gates image pushes and sealed-asset construction.
+No image reaches GHCR before that gate.
+The `hosted-controls-audit` environment gates release preflight and final GitHub release publication.
+
+The release uses Cosign to create keyless Sigstore signatures.
+It also creates GitHub attestations when the reviewed hosted controls permit them.
+GitHub attestations do not replace Sigstore signatures.
+
+The final publisher has `actions: read` and `contents: write` permissions.
+It checks hosted controls immediately before publication.
+It removes the administration token before it uses the default publication token.
+
+## Upstream refresh
+
+`upstream-refresh.yml` runs each day and on manual dispatch.
+It checks these pin groups:
+
+- provider releases
+- Linux runtime and validator images
+- Debian snapshot data
+- Go, Rust, Hadolint, and release tools
+
+A Codex change also checks the classified command inventory.
+The workflow stops if the command set changes.
+
+The workflow uploads an advisory candidate bundle.
+That bundle contains `patch`, `diffstat`, and `metadata.json`.
+It also updates one tracking issue.
+
+The workflow does not push a branch or open a PR.
+Use `./scripts/publish-upstream-refresh-pr.sh` for host publication.
+That helper recreates the change, checks candidate identity, runs `pr-parity`, and uses the repository PR wrapper.
+
+The candidate artifact and issue are operator signals.
+They are not integrity evidence.
+
+## Action and tool pins
+
+Use a full commit SHA for each GitHub Action reference.
+List each publisher in [`policy/allowed-actions.toml`](../policy/allowed-actions.toml) before you use its action.
+
+A full commit SHA fixes the selected action version.
+The allowlist limits the action publishers.
+A new publisher requires a reviewed policy change.
+
+[`policy/tool-pins.toml`](../policy/tool-pins.toml) records the reviewed CI and release tools.
+`check-pinned-inputs` compares each workflow copy with that policy.
+`scripts/update-upstream-pins.sh` updates the workflow and policy copies together.
+
+## Validator identity
+
+`ci.yml` and `docs.yml` run the validator as the caller UID and GID.
+They use separate writable home, cache, and temporary roots.
+The launcher creates an isolated home if the caller has no passwd entry.
+
+The mirrored local jobs are under `scripts/ci/`.
+Workflow YAML controls events, permissions, runners, and hosted-only steps.
+The local scripts contain the shared job logic.
 
 ## Hosted controls
 
-Some release-relevant controls live outside git. Workcell still treats them as
-reviewed inputs:
+Some release controls are outside Git:
 
-- branch rulesets for signed commits, anti-rewrite protection, PR gating, and
-  required checks
-- tag rulesets for `refs/tags/v*`
-- the `release` environment, with reviewer protection when the GitHub plan
-  supports it and an explicitly documented lower-assurance fallback when it
-  does not; it permits only `v*` deployment tags, no deployment branches, no
-  environment variables or secrets, and no administrator bypass
-- the `hosted-controls-audit` and `upstream-refresh` environments, including
-  their exact secret and variable contents plus their disabled admin bypass
-  posture
-- `hosted-controls-audit` permits the `main` branch and protected `v*` release
-  tags so scheduled/main audits and tag-triggered release preflight both use a
-  dedicated environment gate for `WORKCELL_HOSTED_CONTROLS_TOKEN`
-- after the release-approved job seals and uploads its workflow artifact, a
-  minimal final job in `hosted-controls-audit` refreshes the immutable-release
-  check immediately before publication; it removes the admin-metadata
-  credential before the publisher uses its default token and accepts only
-  GitHub's exact integration-permission denial with that fresh check
-- GitHub Actions SHA pinning
-- canonical repository variables such as
-  `WORKCELL_RELEASE_NO_ATTEST=false` and
-  `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=false`
+- branch and tag rulesets
+- the `release` environment
+- the `hosted-controls-audit` environment
+- the `upstream-refresh` environment
+- repository variables for attestation policy
 
-`scripts/verify-github-hosted-controls.sh` audits those settings against
-`policy/github-hosted-controls.toml`.
+`scripts/verify-github-hosted-controls.sh` compares those controls with
+[`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml).
 
-## Public vs private behavior
+The canonical repository requires these variable values:
 
-The workflow set supports both public and private repos, but some features are
-conditional:
+- `WORKCELL_RELEASE_NO_ATTEST=false`
+- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=false`
 
-- private repos may need `WORKCELL_HOSTED_CONTROLS_TOKEN` for hosted-control
-  auditing
-- private code scanning and some SARIF uploads are opt-in because GitHub plan
-  support varies
-- public repos can publish GitHub attestations when enabled
-- private/internal repos only publish GitHub attestations when the reviewed
-  `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS` variable is explicitly set for
-  a GitHub plan that supports them
+The release environment permits protected `v*` tags only.
+It has no secret or variable content and no administrator bypass.
+
+## Public and private repositories
+
+The `hosted-controls-audit` environment requires `WORKCELL_HOSTED_CONTROLS_TOKEN`.
+This requirement applies to public and private repositories.
+Private code scans and SARIF uploads depend on the GitHub plan.
+
+The public repository creates GitHub attestations.
+A private repository needs reviewed policy and plan support before it creates them.
 
 ## Deliberate omissions
 
-Workcell does not use:
+Workcell does not use these workflow features:
 
-- general-purpose `pull_request_target` workflows; the only exception is
-  `pr-base-policy.yml`, which reads pull-request metadata from trusted
-  base-branch workflow code, keeps top-level `permissions: {}`, and must not
-  check out repository contents or use external actions
-- ambient PAT-style workflow credentials
-- GitHub-hosted macOS claims for the full Colima boundary
-- stale-issue or other bot churn unrelated to the runtime or release posture
+- general-purpose `pull_request_target` automation
+- ambient personal-access-token credentials
+- a hosted claim for the strict Colima boundary
+- unrelated stale-issue automation
+
+`pr-base-policy.yml` is the only `pull_request_target` exception.
+It uses trusted base-branch code and reads PR metadata only.
+It does not check out repository content or use an external action.

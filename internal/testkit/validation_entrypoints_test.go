@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestC3CertificationEntrypointSanitizesBuildControl(t *testing.T) {
@@ -715,7 +717,7 @@ func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	}
 }
 
-func TestGitHubWorkflowsContinuouslyVerifyInstallAndUninstall(t *testing.T) {
+func TestGitHubWorkflowsVerifyHostedInstallEvidence(t *testing.T) {
 	t.Parallel()
 
 	for _, workflowName := range []string{"ci.yml", "release.yml"} {
@@ -739,6 +741,140 @@ func TestGitHubWorkflowsContinuouslyVerifyInstallAndUninstall(t *testing.T) {
 			if !strings.Contains(workflow, want) {
 				t.Fatalf("%s does not contain %q", workflowPath, want)
 			}
+		}
+
+		var parsed struct {
+			Defaults struct {
+				Run struct {
+					Shell string `yaml:"shell"`
+				} `yaml:"run"`
+			} `yaml:"defaults"`
+			Jobs map[string]struct {
+				If              string     `yaml:"if"`
+				RunsOn          string     `yaml:"runs-on"`
+				Needs           yaml.Node  `yaml:"needs"`
+				ContinueOnError *yaml.Node `yaml:"continue-on-error"`
+				Defaults        struct {
+					Run struct {
+						Shell string `yaml:"shell"`
+					} `yaml:"run"`
+				} `yaml:"defaults"`
+				Strategy struct {
+					Matrix struct {
+						Include []struct {
+							Runner      string `yaml:"runner"`
+							RunnerLabel string `yaml:"runner_label"`
+						} `yaml:"include"`
+					} `yaml:"matrix"`
+				} `yaml:"strategy"`
+				Steps []struct {
+					Name            string     `yaml:"name"`
+					Run             string     `yaml:"run"`
+					If              string     `yaml:"if"`
+					ContinueOnError *yaml.Node `yaml:"continue-on-error"`
+					Shell           string     `yaml:"shell"`
+				} `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(content, &parsed); err != nil {
+			t.Fatalf("parse %s: %v", workflowPath, err)
+		}
+		if parsed.Defaults.Run.Shell != "bash --noprofile --norc -euo pipefail {0}" {
+			t.Fatalf("%s must use the strict Bash workflow default", workflowPath)
+		}
+		installJob, ok := parsed.Jobs["install-verification"]
+		if !ok {
+			t.Fatalf("%s must contain jobs.install-verification", workflowPath)
+		}
+		wantJobIf := ""
+		if workflowName == "ci.yml" {
+			wantJobIf = "${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci') }}"
+		}
+		if installJob.If != wantJobIf ||
+			installJob.RunsOn != "${{ matrix.runner }}" ||
+			installJob.ContinueOnError != nil ||
+			installJob.Defaults.Run.Shell != "" {
+			t.Fatalf("%s install-verification job metadata does not match the hosted evidence contract", workflowPath)
+		}
+		if workflowName == "ci.yml" {
+			if installJob.Needs.Kind != yaml.ScalarNode || installJob.Needs.Value != "validate" {
+				t.Fatalf("%s install-verification job must require validate", workflowPath)
+			}
+		} else if installJob.Needs.Kind != yaml.SequenceNode ||
+			len(installJob.Needs.Content) != 2 ||
+			installJob.Needs.Content[0].Value != "tag-policy" ||
+			installJob.Needs.Content[1].Value != "preflight" {
+			t.Fatalf("%s install-verification job must require tag-policy and preflight", workflowPath)
+		}
+		include := installJob.Strategy.Matrix.Include
+		if len(include) != 2 ||
+			include[0].Runner != "macos-26" || include[0].RunnerLabel != "macos-26" ||
+			include[1].Runner != "macos-15" || include[1].RunnerLabel != "macos-15" {
+			t.Fatalf("%s install-verification job must use the macos-26 and macos-15 matrix", workflowPath)
+		}
+		installerRun := ""
+		installerStepCount := 0
+		for _, step := range installJob.Steps {
+			if step.Name == "Verify release bundle installer" {
+				if step.If != "" || step.ContinueOnError != nil || step.Shell != "" {
+					t.Fatalf("%s release bundle installer step must use required default execution", workflowPath)
+				}
+				installerRun = step.Run
+				installerStepCount++
+			}
+		}
+		if installerStepCount != 1 {
+			t.Fatalf("%s must contain one release bundle installer step; got %d", workflowPath, installerStepCount)
+		}
+		executableLines := make([]string, 0)
+		for _, line := range strings.Split(installerRun, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			executableLines = append(executableLines, line)
+		}
+		missingBundleMessage := "Missing CI release bundle artifact"
+		if workflowName == "release.yml" {
+			missingBundleMessage = "Missing preflight release bundle artifact"
+		}
+		wantInstallerLines := []string{
+			`set -euo pipefail`,
+			`mkdir -p "${HOME}"`,
+			`bundle_path="$(find dist/install -maxdepth 1 -type f -name 'workcell-*.tar.gz' -print -quit)"`,
+			`if [[ -z "${bundle_path}" ]]; then`,
+			`echo "` + missingBundleMessage + `" >&2`,
+			`exit 1`,
+			`fi`,
+			`extract_root="${RUNNER_TEMP}/bundle-install"`,
+			`rm -rf "${extract_root}"`,
+			`mkdir -p "${extract_root}"`,
+			`tar -xzf "${bundle_path}" -C "${extract_root}"`,
+			`bundle_dir="$(find "${extract_root}" -mindepth 1 -maxdepth 1 -type d -name 'workcell-*' -print -quit)"`,
+			`if [[ -z "${bundle_dir}" ]]; then`,
+			`echo "Unable to locate extracted bundle root" >&2`,
+			`exit 1`,
+			`fi`,
+			`test ! -e "${HOME}/.local/bin/workcell"`,
+			`test ! -L "${HOME}/.local/bin/workcell"`,
+			`test ! -e "${HOME}/.local/share/man/man1/workcell.1"`,
+			`test ! -L "${HOME}/.local/share/man/man1/workcell.1"`,
+			`"${bundle_dir}/scripts/install.sh"`,
+			`"${HOME}/.local/bin/workcell" --help >/dev/null`,
+			`test -e "${HOME}/.local/bin/workcell"`,
+			`test -L "${HOME}/.local/bin/workcell"`,
+			`test -e "${HOME}/.local/share/man/man1/workcell.1"`,
+			`test -L "${HOME}/.local/share/man/man1/workcell.1"`,
+			`HOME="${HOME}" "${bundle_dir}/scripts/uninstall.sh"`,
+			`test ! -e "${HOME}/.local/bin/workcell"`,
+			`test ! -L "${HOME}/.local/bin/workcell"`,
+			`test ! -e "${HOME}/.local/share/man/man1/workcell.1"`,
+			`test ! -L "${HOME}/.local/share/man/man1/workcell.1"`,
+		}
+		gotInstallerRun := strings.Join(executableLines, "\n")
+		wantInstallerRun := strings.Join(wantInstallerLines, "\n")
+		if gotInstallerRun != wantInstallerRun {
+			t.Fatalf("%s must prove clean install, link creation, and complete link removal\nwant:\n%s\ngot:\n%s", workflowPath, wantInstallerRun, gotInstallerRun)
 		}
 	}
 

@@ -1861,9 +1861,10 @@ docker_cmd run --rm \
 grep -q '^copilot-pid1-stub-ok$' /tmp/workcell-copilot-pid1-stub.out
 
 COPILOT_METADATA_STUB="${SMOKE_WORKSPACE}/tmp/copilot-metadata-stub"
+COPILOT_METADATA_STUB_STAGE="${COPILOT_METADATA_STUB}.stage"
 COPILOT_METADATA_TOKEN_HANDOFF_DIR="$(copilot_token_handoff_dir_for_bundle "${INJECTION_BUNDLE_ROOT}/copilot")"
 COPILOT_METADATA_CONTAINER="workcell-copilot-metadata-smoke-$$"
-cat >"${COPILOT_METADATA_STUB}" <<'COPILOT_STUB'
+cat >"${COPILOT_METADATA_STUB_STAGE}" <<'COPILOT_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 test "${COPILOT_GITHUB_TOKEN:-}" = "copilot-smoke-token"
@@ -1877,7 +1878,9 @@ while :; do
   sleep 1
 done
 COPILOT_STUB
-chmod 0555 "${COPILOT_METADATA_STUB}"
+chmod 0555 "${COPILOT_METADATA_STUB_STAGE}"
+# Publish the executable mode and file contents together for the VM mount.
+mv "${COPILOT_METADATA_STUB_STAGE}" "${COPILOT_METADATA_STUB}"
 docker_cmd rm -f "${COPILOT_METADATA_CONTAINER}" >/dev/null 2>&1 || true
 docker_cmd run -d \
   --name "${COPILOT_METADATA_CONTAINER}" \

@@ -104,8 +104,11 @@ uses this support bundle to collect evidence and escalates through
 - active development happens on `main`
 - the latest tagged release is the primary install target
 - security fixes land on `main`; there are no long-lived release branches
-- CI and tagged-release install/uninstall verification currently run only on
+- hosted install checks in CI and tagged-release workflows currently run only on
   GitHub-hosted Apple Silicon `macos-26` and `macos-15`
+- these checks prove bundle installation, launcher-link removal,
+  man-page-link removal, Homebrew installation, and formula removal
+- they do not prove complete bundle uninstall behavior
 - other macOS versions are outside the current install verification matrix
 
 For major behavior changes, check [CHANGELOG.md](CHANGELOG.md) and

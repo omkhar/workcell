@@ -78,8 +78,10 @@ Release preflight checks these items before publication:
 - Apple Silicon runner metadata
 - pinned provider releases
 - pinned base images and toolchains
-- bundle install and uninstall on `macos-15` and `macos-26`
-- Homebrew install and uninstall on the same runners
+- bundle installation, launcher-link removal, and man-page-link removal on `macos-15` and `macos-26`
+- Homebrew installation and formula removal on the same runners
+
+The bundle job does not prove complete bundle uninstall behavior.
 
 The amd64 image job rebuilds from the archived source bundle.
 A separate native arm64 job builds from the checked-out signed tag.
