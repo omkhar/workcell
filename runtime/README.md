@@ -1,56 +1,55 @@
 # Runtime Boundary
 
-Tier 1 is a two-layer boundary:
+The strict local target uses two isolation layers:
 
-1. a dedicated Colima VM profile on macOS
-2. a hardened inner container inside that VM
+1. A dedicated Colima VM profile on macOS.
+2. A hardened runtime container in that VM.
 
-The VM is the main local isolation boundary. The container provides a reviewed,
-reproducible runtime for the supported providers.
+The VM is the main local boundary. The container supplies a reproducible
+provider runtime.
 
-## Goals
+Docker Desktop is a supported compatibility target on Apple Silicon macOS. It
+does not provide a dedicated Workcell VM or Workcell egress enforcement.
 
-- keep the safe path one command away
-- run the provider inside the boundary, not on the host
-- mount only the selected workspace as durable host state, with explicit
-  narrow per-session handoff directories only where a reviewed provider auth
-  path requires them
-- keep the container unprivileged by default, with a named nonroot `workcell`
-  user in the shipped runtime and validator images
-- enforce network posture at the VM layer
-- block common control-plane escape hatches on the managed path
+## Runtime goals
 
-The host launcher still starts the managed runtime with explicit `--user 0:0`
-only long enough for PID 1 to seed runtime state and then drop privileges.
-Repo-mounted validator and release-helper paths instead run under explicit
-caller UID/GID mappings with isolated writable home, cache, and tmp roots so
-the mounted checkout never depends on ambient container-root defaults. When an
-explicit caller UID has no passwd entry inside the image, the launcher
-synthesizes an isolated writable home for that lane. The local
-`scripts/build-and-test.sh --docker` validator snapshot uses that same
-contract.
+- Keep the safe path available through one command.
+- Run the provider inside the runtime boundary.
+- Mount only the selected workspace and the approved persistent-cache paths as
+  durable host data.
+- Use only narrow, approved credential handoffs.
+- Run provider processes with the mapped host UID and GID.
+- Block common control-plane escape paths.
+
+Mutable sessions start PID 1 as root to prepare runtime state. PID 1 then changes
+to the mapped UID and GID before it starts the provider. Read-only sessions start
+PID 1 with the mapped UID and GID.
+
+Validator and release-helper containers use the caller UID and GID. They use
+separate writable home, cache, and temporary directories.
 
 ## Runtime profiles
 
-- `strict`: default provider lane
-- `development`: managed interactive development lane
-- `build`: explicit build and image-preparation lane
-- `breakglass`: explicit higher-trust lane
+| Profile | Use |
+|---|---|
+| `strict` | Default provider session from the prepared image |
+| `development` | Managed interactive development |
+| `build` | Image preparation and build work |
+| `breakglass` | Explicit higher-trust work with lower assurance |
 
-`strict` runs from the reviewed prepared runtime image and auto-prepares it when
-missing or stale. Interactive repo work and dependency egress belong to
-`development` or `build`.
+Strict mode prepares a missing or stale image. Development and build profiles
+permit the dependency access that their documented plans require.
 
-## Main entrypoints
+## Main entry points
 
-- `scripts/workcell`: host launcher and operator entrypoint
-- `scripts/colima-egress-allowlist.sh`: VM-level network posture helper
-- `scripts/container-smoke.sh`: direct container smoke coverage
-- `scripts/verify-invariants.sh`: invariant checks
-- `scripts/build-and-test.sh`: repo-wide validation and local check entry point
-- `scripts/pre-merge.sh`: pinned validator-container pre-merge harness with optional disposable snapshots
+- `scripts/workcell` provides the operator CLI and host launcher.
+- `scripts/colima-egress-allowlist.sh` manages profile-wide Colima rules.
+- `scripts/container-smoke.sh` runs direct container checks.
+- `scripts/verify-invariants.sh` verifies security invariants.
+- `scripts/build-and-test.sh` runs repository validation.
+- `scripts/pre-merge.sh` runs the pinned pre-merge validator.
 
-## GUI status
+## Interface scope
 
-CLI is the implemented Tier 1 path today. GUI or IDE surfaces are lower
-assurance unless they become clients of the same bounded runtime.
+The supported Tier 1 interface is the CLI. GUI and IDE paths have lower
+assurance unless they use the same runtime boundary.

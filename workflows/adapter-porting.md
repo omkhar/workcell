@@ -1,78 +1,49 @@
 # Adapter Porting Workflow
 
-Use this checklist when adding or refactoring a provider adapter.
+Use this workflow when you add or change a provider adapter.
 
 ## Goal
 
-Preserve the shared Workcell boundary while mapping into the provider's native
-control plane. Do not blur the boundary and the adapter into one layer.
+Keep one shared runtime boundary and one thin provider adapter. Use the native
+provider control plane. Do not treat it as the security boundary.
 
-## Design order
+## Work sequence
 
-Optimize in this order:
+1. Confirm the supported target boundary and assurance status.
+2. List each provider file that Workcell owns, masks, seeds, or links.
+3. Use the smallest provider-native configuration surface.
+4. Add the seed path for the provider home.
+5. Block flags and paths that lower assurance without operator acknowledgment.
+6. Add invariant, scenario, and adapter tests.
+7. Run live certification for each new support claim.
+8. Update the provider matrix and operator documents.
+9. If host or target support changes, update the host-support matrix.
+10. Complete adversarial and Codex review loops.
 
-1. Developer experience
-2. Simplicity
-3. Security invariant preservation
-4. Performance
-5. Idiomatic correctness
+The seed path can use these ordered sources:
 
-That order only applies after the runtime boundary is fixed.
+1. Immutable adapter baseline.
+2. Supported repository instruction files.
+3. Explicit injection-policy documents.
 
-## Porting sequence
+Do not let repository content replace immutable adapter controls.
 
-### 1. Lock the shared boundary first
+## Required documentation
 
-Before touching provider specifics, confirm that the shared runtime still
-guarantees:
-
-- dedicated VM profile
-- hardened inner container
-- narrow mount set
-- explicit network posture
-- no host home, sockets, or ambient credential passthrough
-
-### 2. Define the native control plane
-
-Document exactly which provider files Workcell owns, seeds, links, or masks.
-Keep the list small and auditable.
-
-### 3. Keep the adapter thin
-
-Use the provider's native config surfaces where possible. Do not invent a fake
-universal provider config layer.
-
-### 4. Add the runtime seeding path
-
-Update the home-control-plane logic so the provider-facing home is rebuilt from:
-
-- the immutable adapter baseline
-- imported workspace docs
-- explicit injection-policy input
-
-### 5. Add deny-list and downgrade logic
-
-Block provider-native flags or workflows that would silently widen trust, and
-document any lower-assurance paths explicitly.
-
-### 6. Add validation with the adapter
-
-No adapter change is complete without matching invariant or smoke coverage.
-
-### 7. Update the docs in the same change
-
-At minimum, update:
+Update each document that the adapter change affects in the same change:
 
 - `docs/provider-matrix.md`
 - `docs/adapter-control-planes.md`
-- provider-specific quickstart or adapter README material if behavior changed
+- Provider quickstart.
+- Adapter README.
+- Injection policy.
+- Support and certification evidence.
 
 ## Review questions
 
-Before merging an adapter change, ask:
-
-1. Did this improve the workflow, or just add indirection?
-2. Is the provider config being mistaken for the primary boundary?
-3. Can repo content retake the control plane after this change?
-4. Are any lower-assurance paths clearly labeled?
-5. Is the new behavior covered by validation?
+1. Does the adapter preserve the runtime boundary?
+2. Can repository content replace a trusted control?
+3. Does each lower-assurance path have an explicit label?
+4. Do tests exercise the shipped path?
+5. Does live evidence support each new claim?
+6. Did the change add unnecessary abstraction?

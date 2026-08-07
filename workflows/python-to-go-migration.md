@@ -1,121 +1,42 @@
-# Python To Go Migration Workflow
+# Python-to-Go Migration Record
 
-Status: this migration is complete and no repo-owned Python remains. The
-workflow is retained as the reference pattern for future language ports.
+The repository migration from Python helper files to Go is complete. Some shell
+tests use inline Python for test data and assertions.
 
-Use this workflow when porting repo-owned Python helpers to Go.
+This page records the completed compatibility method. It is not an active
+migration plan.
 
-## Goal
+## Completed sequence
 
-Replace Python helper implementations without weakening the Workcell runtime
-boundary, broadening parser behavior, or creating compatibility drift at the
-shell/runtime boundary.
+1. The project recorded the Python behavior and security checks.
+2. Differential tests compared Python and Go with the same fixtures.
+3. Low-coupling tools moved before the policy and injection tools.
+4. Shared Go libraries replaced duplicate parser logic and path checks.
+5. Callers changed only after their parity tests passed.
+6. Validation moved after helper parity.
+7. The project removed the residual repo-owned Python helper files.
 
-## Design order
+The sequence covered these helper groups:
 
-Optimize in this order:
+- Scenario manifest tools.
+- Direct mount extraction.
+- PTY transcript tools.
+- Policy parser and renderer.
+- Credential source resolution.
+- Authentication policy management.
 
-1. Compatibility with current Python behavior
-2. Simplicity
-3. Security invariant preservation
-4. Performance
-5. Idiomatic correctness
+## Preserved gates
 
-That order applies only after the current boundary and assurance model stay
-intact.
+Each cutover compared these results:
 
-## Dependencies
+- Exit code.
+- Standard output and standard error.
+- JSON or TOML output.
+- File tree and content.
+- File modes.
+- Security error paths.
 
-Default to the Go standard library. Any non-stdlib dependency needs an explicit
-written rationale that explains why it is unavoidable, why a small local
-implementation is worse, and why the added supply-chain surface is justified.
+The migration kept shell entry points stable until the Go tools had parity.
 
-## Migration sequence
-
-### 1. Freeze the legacy baseline first
-
-Before porting anything, capture a passing baseline for:
-
-- `./scripts/verify-coverage.sh`
-- `./scripts/run-mutation-tests.sh`
-- `./scripts/run-scenario-tests.sh --repo-required`
-- `./scripts/verify-scenario-coverage.sh`
-- `./scripts/verify-control-plane-parity.sh`
-
-If the helper touches the live runtime boundary, also capture the local
-certification lane separately:
-
-- `./scripts/run-scenario-tests.sh --secretless-only --certification-only`
-
-### 2. Keep the shell contract stable
-
-Do not churn shell call sites more than once. Prefer stable Go binaries under
-`cmd/` plus extensionless wrappers when cutover begins. Keep Python as the
-oracle until parity is proven.
-
-### 3. Port leaf tools before the policy cluster
-
-Port in this order:
-
-1. `scenario_manifest`
-2. `extract_direct_mounts`
-3. `pty_transcript`
-4. shared policy library replacing `policy_bundle.py`
-5. `resolve_credential_sources`
-6. `manage_injection_policy`
-7. `render_injection_bundle`
-
-The policy and rendering cluster should move only after the shared parser and
-validation behavior exist in one Go library.
-
-### 4. Add parity gates before cutover
-
-For each helper, run Python and Go against the same fixtures and compare:
-
-- exit code
-- stdout/stderr
-- rewritten JSON or TOML
-- output file layout
-- file contents
-- file modes
-
-Normalize only fields that are inherently unstable, such as PTY transcript
-timestamps.
-
-### 5. Cut over call sites in batches
-
-After parity is green for a helper, switch all direct consumers of that helper
-in one change. Keep control-plane manifests, invariant checks, and validation
-scripts in sync with the new entrypoints.
-
-### 6. Replace validation plumbing after helper parity
-
-Only after the helper ports are stable should the repo remove:
-
-- Python mutation coverage for helper paths
-- residual helper-specific host-language invocations in shell validation
-
-### 7. Treat inline shell Python as a second migration wave
-
-Porting the helper entrypoints does not remove the remaining host-side utility
-logic embedded in shell scripts. Handle that second wave by domain rather than
-file-by-file.
-
-## Local validation matrix
-
-- Functional: differential Python-vs-Go fixture tests plus existing unit,
-  invariant, scenario, and smoke coverage.
-- Non-functional: startup time, max RSS, binary size, and output tree size on
-  fixed local fixtures.
-- Avoid hard performance thresholds for Docker, Colima, networked auth, or
-  TTY-scheduling-heavy paths.
-
-## Review questions
-
-Before merging any migration slice, ask:
-
-1. Did this preserve current Python behavior at the CLI and filesystem level?
-2. Did this keep the runtime boundary and control-plane masking rules intact?
-3. Did this reduce future cutover work, or only move code around?
-4. Are validation and invariant checks still exercising the migrated path?
-5. Is any remaining Python dependency explicit and temporary?
+For a future language port, create a new plan. Use fresh baseline evidence and
+tests for that change.

@@ -1,44 +1,58 @@
 # Maintainers
 
-## Current maintainers
+## Maintainer
 
-| GitHub | Role | Areas |
+| GitHub account | Role | Areas |
 |---|---|---|
-| `@omkhar` | Lead maintainer | runtime boundary, adapters, release posture, policy, docs |
+| `@omkhar` | Lead maintainer | Runtime, adapters, policy, releases, and documentation |
 
-## Current release mode
+## Single-maintainer operation
 
-- Workcell currently operates in single-maintainer release mode.
-- `@omkhar` may merge release PRs, approve the `release` environment, and cut
-  signed tags after required checks and comment sweeps succeed.
-- Asynchronous review from humans and configured async reviewers is expected
-  input but is not a substitute for an independent maintainer.
-- Release status should describe this honestly as single-maintainer operation,
-  not as multi-party approval.
+Workcell uses a single-maintainer release process. `@omkhar` can merge a pull
+request, approve the `release` environment, and create a signed tag.
 
-## Review expectations
+The maintainer must first complete all required checks and comment sweeps.
+Administrative merge authority can satisfy only the independent-approval
+requirement. It cannot override a commit-signature gate or the base-branch
+policy. It cannot override a failed repository check, an unresolved actionable
+comment, or a missing clean Codex review of the current head commit. It cannot
+override an unresolved review thread.
 
-- boundary- or policy-affecting changes should not merge without maintainer
-  review
-- contributor-facing docs should stay aligned with shipped behavior
-- release and provenance changes should include verification updates
-- every PR should be checked for top-level comments, inline review comments,
-  and unresolved review threads before merge
-- actionable comments from human or asynchronous reviewers should be addressed
-  or explicitly dispositioned before merge
-- comments should be checked again after CI turns green and immediately before
-  merge
+Do not describe this process as independent or multi-party approval.
 
-## Growth plan
+## Pull request review
 
-The project intends to add reviewers and maintainers over time, starting with:
+Apply these rules to every pull request:
 
-- runtime and policy review capacity
-- provider adapter review capacity
-- docs and onboarding review capacity
-- release and supply-chain review capacity
-- at least one backup release approver who can independently review or approve
-  security-sensitive release work when available
+1. Keep the pull request open for review.
+2. After every push, post a standalone issue comment with only
+   `@codex review`.
+3. Inspect issue comments, inline comments, formal reviews, and the trigger
+   reaction.
+4. React to each Codex finding.
+5. Fix or disposition each actionable finding.
+6. Run the required validation again.
+7. If a fix changes the branch, push a signed commit.
+8. After each new push, request another review.
+9. Resolve each addressed Codex thread.
+10. Require a fresh clean result for the current head commit.
+11. Continue until Codex reports no actionable finding for the current head.
+12. Check top-level comments, inline comments, formal reviews, and unresolved
+    threads.
+13. Check configured asynchronous reviewers.
+14. Repeat the comment sweep after CI succeeds and before merge.
 
-See [GOVERNANCE.md](GOVERNANCE.md) for the role model and
-[ROADMAP.md](ROADMAP.md) for the near-term priorities.
+An asynchronous review is advisory input. It is not an independent maintainer
+approval.
+
+## Future growth
+
+The project can add maintainers for these areas:
+
+- Runtime and policy.
+- Provider adapters.
+- Documentation and support for new contributors.
+- Release and supply chain.
+
+See [Governance](GOVERNANCE.md) for the role model. See the
+[Roadmap](ROADMAP.md) for planned work.

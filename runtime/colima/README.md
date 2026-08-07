@@ -1,33 +1,33 @@
 # Colima Design
 
-Workcell uses a dedicated Colima VM profile because that is the strongest
-practical local boundary available in the current macOS stack.
+Workcell uses a dedicated Colima profile for each workspace by default. The VM
+is the primary boundary for the strict macOS target.
 
 ## Boundary rules
 
-- use a dedicated profile per workspace by default
-- do not rely on Colima's shared `default` profile for Tier 1
-- mount only the selected workspace as writable host state, except for
-  explicit narrow per-session handoff directories such as the Copilot token
-  handoff mount
-- do not mount host homes, sockets, or broad source trees
-- enforce network posture at the VM layer
+- Do not use the shared Colima `default` profile for the strict target.
+- Mount only the selected workspace as writable durable host data.
+- Use only narrow, per-session credential handoff directories.
+- Do not mount a host home, socket, keychain, or broad source tree.
+- Apply the Workcell network policy at the VM layer.
 
-## Operational stance
+## Profile and mounts
 
-The host launcher derives a profile name from the workspace path unless the
-operator overrides it. The managed path validates the resulting Lima config and
-expects exactly one writable host mount for durable host state: the selected
-workspace. Auth handoffs that must cross the VM boundary, such as the Copilot
-token handoff, use a two-level shape: Workcell mounts a guarded parent staging
-root into Colima, then mounts only the per-session token handoff subdirectory
-into the container. These handoff directories stay outside provider state and
-must not become host homes, sockets, keychains, or broad credential stores.
+The launcher derives the profile name from the workspace path. The operator can
+select another profile.
 
-## What stays out
+The managed Lima configuration has one writable workspace mount: the selected
+workspace. A reviewed credential path can add a narrow handoff mount.
 
-- host home directories
-- host auth and agent sockets
-- keychain and browser-profile passthrough
-- host Docker control sockets
-- unrelated source trees
+The Copilot token path uses two mount levels. Workcell first mounts a guarded
+parent staging directory into the VM. It then mounts only the session token
+directory into the container.
+
+The handoff stays outside provider state. It must not become a host home,
+socket, keychain, or general credential store.
+
+## Network limit
+
+All containers in one Colima profile share the Workcell egress rules. The last
+launch replaces those rules. Do not run concurrent sessions with different
+complete endpoint sets in one profile.
