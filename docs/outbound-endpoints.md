@@ -16,8 +16,8 @@ runtime profile, credentials, and operator policy. It then removes each
 `deny_endpoints` entry.
 
 On Colima, Workcell resolves the result to IP addresses. It applies IPv4 and
-IPv6 `DOCKER-USER` rules. A host on an allowed shared IP address can remain
-reachable.
+IPv6 `DOCKER-USER` rules. A host on a shared IP address that the rules allow can
+remain reachable.
 
 The rules apply to one Colima profile. They are not session-specific. The last
 launch replaces the rules for all active containers in that profile.
@@ -28,7 +28,7 @@ state remains until a later allowlist launch applies new rules.
 Rule replacement is not atomic. The helper removes the old chains before it
 resolves endpoint names. It installs the final drop rules after allow rules.
 
-If name resolution or rule setup fails, active profile containers can have no
+If name resolution or rule setup fails, active profile containers can lose the
 Workcell default-deny rule. Stop the affected profile. Inspect its rules.
 
 Policy changes do not stop an established connection. The rules accept
@@ -77,7 +77,7 @@ When Gemini has no selected auth mode, the auth-recovery set adds these entries:
 
 ### Ephemeral runtime endpoints
 
-An ephemeral local launch adds the pinned Debian snapshot mirrors:
+An ephemeral local launch adds the pinned snapshot mirrors for Debian:
 
 - `snapshot-cloudflare.debian.org:443`
 - `snapshot.debian.org:443`
@@ -124,8 +124,8 @@ selected profile, not an operator environment override.
 The injection policy can add `[network].allow_endpoints`. These operator
 entries are not in the fixed tables above.
 
-`[network].deny_endpoints` removes exact entries after all additions. On an
-actual Colima allowlist session, an empty result stops the launch.
+`[network].deny_endpoints` removes exact entries after all additions. On a
+Colima allowlist session, an empty result stops the launch.
 
 The tables do not list other host names that use an allowed IP address.
 

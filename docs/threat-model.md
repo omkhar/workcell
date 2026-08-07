@@ -1,18 +1,21 @@
 # Runtime Boundary Threat Model
 
-This threat model covers the supported local Workcell launch targets. It also
+This threat model covers the supported local targets for Workcell. It also
 states the limits of preview targets and host-owned controls.
 
 For build and release threats, see the [CI/CD threat model](ci-threat-model.md).
 
 ## Support boundary
 
+The supported local rows below apply only to Apple Silicon macOS. Workcell
+blocks the corresponding Linux and Windows operator launches.
+
 | Target | Status | Runtime boundary | Network control |
 |---|---|---|---|
 | Colima `local_vm` | Supported strict target | Dedicated profile VM and runtime container | Workcell profile-wide allowlist |
 | Docker Desktop `local_compat` | Supported compatibility target | Docker Desktop and runtime container | No Workcell allowlist |
-| AWS and GCP `remote_vm` | Preview-only and launch-blocked | Dry-run broker plan only | Provider design only |
-| Apple container | Preview-only with no operator launch path | Evaluation code only | No operator-session control |
+| `aws-ec2-ssm` and `gcp-vm` `remote_vm` | Preview-only and launch-blocked | Dry-run broker plan only | Provider design only |
+| Apple `container` | Preview-only with no operator launch path | Evaluation code only | No operator-session control |
 
 ## Assets
 
@@ -61,8 +64,8 @@ protect a compromised operator account or host root.
 | Repository replaces provider controls | Host launcher and adapter | Runtime baseline | Use mutable repository control files as trusted baseline | Invariant tests and adapter tests |
 | Repository uses mutable native executables | Rust syscall shim | Runtime boundary | Execute protected native paths from mutable state | Rust tests and container validation |
 | Session receives a host socket or home | Host launcher | Host credentials and control plane | Mount forbidden host paths on the safe path | Dry-run invariant checks |
-| Session changes Git hooks or configuration | Host launcher and Rust shim | Workspace and Git history | Use mutable Git control paths or unsafe Git overrides | Git-policy tests and invariant checks |
-| Session sends unrestricted Colima traffic | Colima egress helper | Host and network boundary | Reach an IP and port outside the profile allowlist | Egress helper tests and launch summary |
+| Session changes Git hooks or configuration | Host launcher and Rust shim | Workspace and Git history | Use mutable control paths for Git or unsafe Git overrides | Git-policy tests and invariant checks |
+| Session sends unrestricted Colima traffic | Colima egress helper | Host and network boundary | Start a new connection outside the allowlist while final rules stay installed | Egress helper tests and launch summary |
 | Policy disables Colima enforcement | Host launcher | Network boundary | Change `NETWORK_POLICY` through injection policy | Injection parser tests |
 | Agent changes durable session history | Host audit appender and verifier | Audit log and seal | Change chained records without verification failure | Audit-seal tests and `session verify` |
 | Agent reads the signing key | Host launcher | Host signing key | Mount the private key into the runtime | Mount-source checks and support-bundle tests |
@@ -83,11 +86,11 @@ endpoints. Both inputs broaden the allowed set.
 | Docker Desktop has no Workcell allowlist. | Host or Docker Desktop controls determine egress. |
 | MCP servers and provider output remain untrusted. | The agent can act on hostile content within its granted tools. |
 | Audit signing uses a host key. | Host root can rewrite a chain and create a new valid seal. |
-| Initial legacy audit records have no chain. | Signed verification does not protect that initial prefix. |
+| Initial records from the legacy audit have no chain. | Signed verification does not protect that initial prefix. |
 | Explicit lower-assurance modes remain available. | The operator accepts their stated downgrade. |
 
-Do not run concurrent sessions with different network policies in one Colima
-profile.
+Do not run concurrent sessions with different complete endpoint sets in one
+Colima profile.
 
 ## Exclusions
 
