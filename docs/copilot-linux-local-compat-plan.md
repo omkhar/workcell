@@ -15,7 +15,7 @@ Workcell applies these controls:
 - A temporary handoff mount carries the token outside provider state.
 - The Workcell entrypoint removes the mounted token file before launch.
 - The wrapper exports `COPILOT_GITHUB_TOKEN` only to the managed child.
-- Workcell uses session-local Copilot home and cache directories.
+- Workcell uses session-local `COPILOT_HOME` and `COPILOT_CACHE_HOME`.
 - Workcell does not mount host GitHub CLI authentication or Copilot state.
 - Workcell disables custom instructions on the managed path.
 - Workcell blocks options that can bypass Workcell policy.
@@ -26,10 +26,9 @@ not use host `~/.copilot`, `~/.config/github-copilot`, or
 
 ## Certification Gate
 
-Before they sign a support-claim change, maintainers must complete
-non-destructive provider-e2e certification through Workcell with the staged
-`copilot_github_token` path. Repository tests do not replace this
-certification.
+Before you sign a support-claim change, complete non-destructive provider-e2e
+certification through Workcell. Use the staged `copilot_github_token` path.
+Repository tests do not replace this certification.
 
 ## Operator Sources
 

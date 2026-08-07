@@ -21,6 +21,23 @@ The host-support matrix keeps these decisions separate:
 The word `candidate` is a phase label. It is not a matrix value. Read the
 complete matrix row before you make a support decision.
 
+## Phase 12 Terms
+
+Phase 12 uses these planning terms. The terms do not replace matrix values.
+
+| Term | Meaning |
+|---|---|
+| `strict` | The target must keep the dedicated VM and container boundary. |
+| `compat` | The target has lower assurance and needs explicit diagnostics and rollback. |
+| `preview` | The target has limited evaluation and no operator support claim. |
+| `certification candidate` | The implementation needs live certification. |
+| `experimental` | The work is an investigation or prototype. |
+| `unsupported` | Workcell blocks operator launch by default. |
+
+Linux amd64, Linux arm64, Raspberry Pi, Windows WSL2, and native Windows are
+separate host tracks. Each track needs its own package, runtime, boundary, and
+live-host evidence.
+
 ## Phase 13 Scope
 
 Phase 13 will evaluate one Linux amd64 `local_compat` combination. The phase
@@ -35,13 +52,13 @@ The Phase 12 gate also applies to a future Windows promotion. All Windows rows
 stay `unsupported`, `blocked`, and `evidence=none`.
 
 Phase 13 does not change Linux `strict` support. Linux `strict` support needs
-an equivalent dedicated VM plus container boundary.
+an equivalent boundary with a dedicated VM and container.
 
 ## Promotion Gate
 
 One promotion change must include all these items:
 
-- Add the exact host and target row to the host-support matrix.
+- Replace the applicable wildcard row with the exact host and target row.
 - Add fail-closed launch behavior and clear diagnostics.
 - Add install, update, uninstall, rollback, and support-bundle procedures.
 - Add deterministic repository tests for the selected row.
@@ -55,7 +72,8 @@ path. Regression tests must protect the current supported paths.
 
 ## Fail-Closed Behavior
 
-Workcell must block operator launch unless one row has `status=supported` and
+Workcell must find the row that matches the detected host and selected target.
+It must block launch unless that row has `status=supported` and
 `launch=allowed`. Workcell must not select a different target automatically.
 
 `workcell --doctor` and `workcell --inspect` must show the detected host, the

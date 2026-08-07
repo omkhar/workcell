@@ -9,13 +9,13 @@ through a native control-plane mapping.
 |---|---|---|---|---|
 | Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | Workcell supports directly staged `codex_auth` and `codex-home-auth-file` host reuse. |
 | Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | Workcell supports directly staged `claude_auth` and `claude_api_key`. The built-in macOS resolver fails closed. |
-| GitHub Copilot CLI | CLI | Workcell-owned Copilot home, cache, and policy controls | `copilot_github_token` | Workcell supports a directly staged `copilot_github_token`. See the [GitHub Copilot CLI Delivery Record](copilot-linux-local-compat-plan.md). |
+| GitHub Copilot CLI | CLI | Session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, and `~/.config/github-copilot` | `copilot_github_token` | Workcell supports a directly staged `copilot_github_token`. See the [GitHub Copilot CLI Delivery Record](copilot-linux-local-compat-plan.md). |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
 ### Gemini CLI account change
 
-On June 18, 2026, Gemini CLI stopped service for free, Pro, and Ultra personal
-accounts. Gemini CLI access remains available through Gemini Code Assist
+On June 18, 2026, Google ended Gemini CLI service for free, Pro, and Ultra
+personal accounts. Gemini CLI access remains available through Gemini Code Assist
 Standard and Enterprise licenses. It also remains available through paid Gemini
 and Gemini Enterprise Agent Platform API keys. See the
 [Google announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/).
@@ -45,7 +45,7 @@ tool flags. The Workcell adapter maps or blocks these surfaces.
 Before you sign a Copilot support-claim change, complete the live certification
 in the Copilot delivery record.
 
-Antigravity remains unsupported and fails closed. Before support, Workcell must
+Antigravity remains unsupported and fails closed. Before Workcell supports Antigravity, it must
 add a pinned install path, explicit auth, an adapter, tests, and live
 certification.
 
