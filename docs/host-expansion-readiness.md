@@ -18,6 +18,19 @@ The host-support matrix keeps these decisions separate:
 - `evidence` defines the required evidence.
 - `validation_lane` names a validation path when one exists.
 
+## Evidence Lanes
+
+Phase 12 keeps these evidence lanes separate:
+
+- `CI-proven` evidence uses deterministic repository validation on GitHub.
+- `locally mirrored` evidence uses a lane with `local_mode=mirrored` on the selected host.
+- `certification-only` evidence uses live certification for the exact matrix row.
+
+The `evidence` field does not record every Phase 12 lane. CI-proven and locally
+mirrored deterministic checks use `repo-required`. Live-host certification uses
+`certification-only`. `manual-only` records supplemental verification. `none`
+makes no evidence claim.
+
 The word `candidate` is a phase label. It is not a matrix value. Read the
 complete matrix row before you make a support decision.
 
@@ -37,6 +50,18 @@ Phase 12 uses these planning terms. The terms do not replace matrix values.
 Linux amd64, Linux arm64, Raspberry Pi, Windows WSL2, and native Windows are
 separate host tracks. Each track needs its own package, runtime, boundary, and
 live-host evidence.
+
+Each track also needs install, update, uninstall, rollback, and support-bundle
+procedures.
+
+- Linux `amd64` and Linux `arm64` need separate package, runtime, kernel,
+  cgroup, and lifecycle prerequisites.
+- Raspberry Pi needs memory, disk I/O, SD-card reliability, kernel, and
+  workload-limit checks.
+- Windows WSL2 needs filesystem, path translation, WSL and Docker integration,
+  credential isolation, packaging, and endpoint controls.
+- Native Windows needs separate process, filesystem, credential, packaging,
+  and endpoint-control prerequisites.
 
 ## Phase 13 Scope
 
