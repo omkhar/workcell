@@ -86,17 +86,17 @@ Copilot has no document key. Its managed path disables custom instructions.
 <!-- schema:credentials:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `claude_auth` | Path or table | No | Claude | None | Claude authentication files. |
+| `claude_auth` | Path or table | No | Claude | None | Auth mirrors in `~/.claude/`, `~/.claude.json`, and `~/.config/claude-code/`. |
 | `claude_api_key` | Path or table | No | Claude | None | Helper-backed Claude API key. |
-| `claude_mcp` | Path or table | No | Claude | None | Claude MCP configuration. This is not an auth mode. |
-| `codex_auth` | Path or table | No | Codex | None | Codex `auth.json`. |
-| `copilot_github_token` | Path or table | No | Copilot | None | Token for the managed Copilot child. |
-| `gemini_env` | Path or table | No | Gemini | None | Gemini environment configuration. |
-| `gemini_oauth` | Path or table | No | Gemini | None | Gemini OAuth state. |
-| `gemini_projects` | Path or table | No | Gemini | None | Gemini project registry. This is supplemental input. |
-| `gcloud_adc` | Path or table | No | Gemini | None | Google ADC file. This is supplemental input. |
-| `github_hosts` | Table | No | Claude, Codex, Gemini | None | Shared GitHub CLI authentication. A provider list is required. |
-| `github_config` | Table | No | Claude, Codex, Gemini | None | Shared GitHub CLI configuration. A provider list is required. |
+| `claude_mcp` | Path or table | No | Claude | None | MCP configuration at `~/.mcp.json`. This is not an auth mode. |
+| `codex_auth` | Path or table | No | Codex | None | Codex auth at `~/.codex/auth.json`. |
+| `copilot_github_token` | Path or table | No | Copilot | None | Export as `COPILOT_GITHUB_TOKEN` only to the managed child. |
+| `gemini_env` | Path or table | No | Gemini | None | Gemini configuration at `~/.gemini/.env`. |
+| `gemini_oauth` | Path or table | No | Gemini | None | OAuth state at `~/.gemini/oauth_creds.json`. |
+| `gemini_projects` | Path or table | No | Gemini | None | Project registry at `~/.gemini/projects.json`. This is supplemental input. |
+| `gcloud_adc` | Path or table | No | Gemini | None | ADC at `~/.config/gcloud/application_default_credentials.json`. This is supplemental input. |
+| `github_hosts` | Table | No | Claude, Codex, Gemini | None | Shared auth at `~/.config/gh/hosts.yml`. Set a provider list. |
+| `github_config` | Table | No | Claude, Codex, Gemini | None | Shared config at `~/.config/gh/config.yml`. Set a provider list. |
 <!-- schema:credentials:end -->
 
 Each value can be a direct path or an entry table. The shared GitHub keys must
@@ -157,6 +157,11 @@ Workcell rejects group-writable or world-writable `known_hosts` files. It
 requires owner-only identity files.
 
 `allow_unsafe_config` lowers assurance. It does not forward `SSH_AUTH_SOCK`.
+It skips the SSH directive safety check. It permits `Include` to load
+other configuration. It permits `LocalCommand`, `PermitLocalCommand`, and
+`ProxyCommand` to run commands. It permits `PKCS11Provider` and
+`SecurityKeyProvider` to load provider libraries. The displayed assurance
+status for the session does not change.
 
 ### Copy keys
 
@@ -193,7 +198,7 @@ Direct staged files are the primary supported credential path. See the
 evidence.
 
 Workcell supports `copilot_github_token` through the staged credential path.
-Workcell does not use host GitHub CLI or Copilot state.
+For Copilot, Workcell does not use host GitHub CLI or Copilot state.
 
 The managed Copilot wrapper removes the staged token from direct mounts. It
 uses a temporary host mount and a transient runtime file. The wrapper deletes
@@ -212,12 +217,14 @@ in an operator policy.
 
 The launcher builds `ALLOW_ENDPOINTS` from these sources:
 
-- Provider helper sets.
-- Broker helper sets.
-- Credential-derived endpoints.
+- `provider_endpoints`.
+- `provider_auth_recovery_extra_endpoints` for Gemini without selected auth.
+- `target_broker_endpoints`.
+- `credential_extra_endpoints`.
 - Versioned profile `EXTRA_ENDPOINTS`.
 - `[network].allow_endpoints`.
-- The two Debian snapshot mirrors for a non-remote ephemeral launch.
+- `snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443` for a
+  non-remote ephemeral launch.
 
 It removes every `[network].deny_endpoints` entry from the session list and the
 list for bootstrap build containers.
@@ -229,11 +236,13 @@ host names.
 The enforcement scope is one Colima profile. It is not one session. The last
 launch replaces the rules for all active containers in that profile.
 
-Workcell does not isolate concurrent sessions that use different network
-policies. A `breakglass` launch clears the Workcell allowlist for the profile.
-That clear state remains until a later allowlist launch applies new rules.
+Workcell does not isolate the profile-wide egress rules for concurrent sessions
+that use different complete endpoint sets. A `breakglass` launch clears the
+Workcell allowlist for the profile. That clear state remains until a later
+allowlist launch applies new rules.
 
-Do not run mixed policy sessions at the same time in one profile.
+Do not run sessions with different complete endpoint sets at the same time in
+one profile.
 
 `allow_endpoints` broadens the allowed set. `deny_endpoints` removes exact
 entries after all additions. Policy cannot change `NETWORK_POLICY` or disable
@@ -252,7 +261,8 @@ Other targets do not receive this allowlist. Their launch summary reports
 | Colima with allowlist | `allowlist` | Profile-wide IPv4 and IPv6 rules |
 | Colima with unrestricted network | `none` | None |
 | Docker Desktop | `none` | None |
-| Remote preview plan | `none` | None |
+| `aws-ec2-ssm` preview | `none` | None |
+| `gcp-vm` preview | `none` | None |
 
 The remote targets are launch-blocked. Their preview plans rely on provider
 firewall controls if live launch support ships later.
@@ -267,8 +277,9 @@ Adapters with native document support use this order:
 4. `documents.common`.
 5. Provider-specific policy document.
 
-The Copilot adapter masks the repository paths for Copilot instructions and
-settings. Its managed wrapper disables custom instructions.
+The Copilot adapter masks `.github/copilot-instructions.md`,
+`.github/instructions`, and `.github/copilot`. Its managed wrapper disables
+custom instructions.
 
 ## Examples
 
@@ -314,7 +325,8 @@ credentials, and copies.
 
 ## Explicit limits
 
-- The safe path does not accept arbitrary secret environment variables.
+- The safe path does not accept arbitrary environment variables that contain
+  secrets.
 - The safe path does not pass a complete host home.
 - `[[copies]]` cannot write Workcell control-plane paths.
 - Workcell does not forward `SSH_AUTH_SOCK`.
