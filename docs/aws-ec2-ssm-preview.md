@@ -51,8 +51,9 @@ The certification identity also needs these inspection permissions:
 The certification script runs outside the Workcell runtime boundary. It uses
 host AWS credentials. Workcell does not stage or isolate these credentials.
 
-The target must run and report SSM status `Online`. Its security groups must
-have no inbound rules. The direct broker command must succeed.
+The target must have the `running` state and the SSM status `Online`. Its
+security groups must have no inbound rules. The direct broker command must
+succeed.
 
 The script also checks Workcell diagnostics and the dry-run broker plan. It
 does not copy a workspace or start a Workcell remote session.

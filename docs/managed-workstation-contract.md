@@ -39,7 +39,7 @@ provider must define stop, recovery, and removal operations.
 Workcell's host control plane must control policy, diagnostics, and audit.
 Provider files and workspace rules must not control the Workcell boundary.
 
-The provider change must define the exact staged credential names. Workcell
+The provider change must define the exact names of staged credentials. Workcell
 must not use ambient provider authentication.
 
 Workcell must not mount host credential stores, agent sockets, Docker sockets,

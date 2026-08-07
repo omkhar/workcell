@@ -53,8 +53,8 @@ The certification script runs outside the Workcell runtime boundary. It uses
 host Google Cloud credentials. Workcell does not stage or isolate these
 credentials.
 
-The target must run and have no external NAT IP. The direct IAP broker command
-must succeed.
+The target must have the `RUNNING` status and no external NAT IP. The direct IAP
+broker command must succeed.
 
 The script also checks Workcell diagnostics and the dry-run broker plan. It
 does not copy a workspace or start a Workcell remote session.
