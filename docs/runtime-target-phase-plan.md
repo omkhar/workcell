@@ -1,558 +1,171 @@
-# Runtime Target Deterministic Phase Plan
-
-This document turns the runtime-target expansion program into deterministic
-delivery phases that can be completed, reviewed, and verified atomically. It
-complements:
-
-- [ROADMAP.md](../ROADMAP.md) for high-level direction
-- [docs/runtime-target-expansion-plan.md](runtime-target-expansion-plan.md) for
-  the durable program model
-- [docs/implement-first-delivery-plan.md](implement-first-delivery-plan.md) for
-  the current active slice
+# Runtime Target Phase Record
 
-Current repo status:
-
-- Phase 0 is implemented in the validation substrate
-- Phase 1 is implemented in the session platform and deterministic evidence
-- Phase 2 is implemented in the target-state migration and Colima
-  compatibility-read path
-- Phase 3 is implemented in the shared auth/bootstrap path, explicit bootstrap
-  explainability, and provider bootstrap support matrix
-- Phase 4 is implemented in the trusted validation-host lane, canonical
-  host-support matrix, and fail-closed unsupported-combination diagnostics
-- Phase 5 is implemented in the canonical remote VM contract, shared fake
-  target, and deterministic conformance harness
-- Phase 6 is implemented in the Docker Desktop compatibility backend,
-  deterministic compat diagnostics, and live certification smoke
-- Phase 7 is implemented in the AWS EC2 SSM preview backend, deterministic
-  broker-plan diagnostics, and live AWS SSM certification smoke
-- Phase 8 is implemented in the GCP VM preview backend, deterministic IAP
-  broker-plan diagnostics, and live GCP IAP certification smoke
-- Phase 9 is implemented as the later expansion decision gate: managed
-  workstations are the next funded lane, and Azure VM follows after that as the
-  next raw `remote_vm` lane
-- Phase 10 is implemented as the managed workstation contract and discovery gate
-- Phase 11 is implemented as the enterprise evidence baseline
-- Phase 12 is implemented as the host-expansion readiness gate
-- the roadmap sequences GitHub Copilot CLI Tier 1 adapter parity before the
-  Linux host-expansion slice resumes
-- Phase 13 remains the next runtime-target slice: Linux `amd64`
-  `local_compat` certification candidate
-- later phases remain planning targets until their code and evidence land
+This page records the result of each runtime-target phase. It is not a support
+matrix. Use
+[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv) for the
+current support decision.
 
-## Phase Completion Contract
+## Completion Rule
 
-Each phase is complete only when:
+A phase can change a support claim only when the same change includes:
 
-- code, docs, and support-boundary claims land in the same change set
-- `./scripts/validate-repo.sh` is green without depending on live Colima,
-  cloud state, or real provider credentials
-- environment-dependent runtime proof stays in explicit certification lanes
-  rather than the repo-required validation path
-- the phase does not overstate host, backend, or assurance support beyond what
-  the current evidence proves
+- the implementation and fail-closed diagnostics
+- the matrix and operator documents
+- deterministic repository tests
+- live certification when host or provider behavior controls the claim
+- an explicit rollback procedure
 
-Owner-lane default:
+Repository validation must not require live cloud state or real provider
+credentials. Live evidence belongs in a certification lane.
 
-- treat `EM`, `TL`, `contract and docs owner`, and `validation owner` as
-  distinct Codex-agent lanes or threads unless a later change or runbook names
-  specific humans explicitly
+## Delivered Phases
 
-## Phase 0: Validation substrate hardening
+### Phase 0: Validation substrate
 
-Goal:
+Workcell separates repository-required scenarios from certification-only
+scenarios. `./scripts/validate-repo.sh` does not require live Colima or cloud
+state.
 
-- separate deterministic repo-required validation from local runtime or cloud
-  certification smoke
+### Phase 1: Session platform and target model
 
-Deliverables:
+Workcell ships detached session control, inspection, logs, timeline, diff, and
+export. Session records include `target_kind`, `target_provider`,
+`target_assurance_class`, and `workspace_transport`.
 
-- scenario metadata distinguishes repo-required validation from certification
-  smoke
-- `./scripts/validate-repo.sh` runs only the repo-required scenario tier
-- local runtime smoke remains available through an explicit certification lane
-- docs explain which commands are repo-required versus certification-only
+### Phase 2: Target state and Colima driver
 
-Complete when:
+Session, audit, and lock state use Workcell-owned target roots. Compatibility
+reads preserve records that use the old Colima fields. Colima remains the
+default target.
 
-- repo validation no longer depends on live Colima or cloud state
-- certification smoke still has an explicit, documented invocation
+### Phase 3: Shared authentication and bootstrap
 
-## Phase 1: Session platform completion and target taxonomy freeze
+The launcher and operator tools use the reviewed host-owned authentication
+path. Workcell ships authentication status, credential explanations, and the
+provider bootstrap matrix.
 
-Goal:
+### Phase 4: Host-support matrix
 
-- finish the current session-platform slice while freezing `target kind`,
-  `assurance class`, and `workspace transport` as separate control-plane
-  concepts
-
-Deliverables:
-
-- coherent session inventory, inspection, and detached control surfaces
-- safer default worktree-per-session behavior where the current slice calls for
-  it
-- target-aware session rendering, diagnostics, and durable metadata
-
-Complete when:
+Workcell ships the canonical host-support matrix and target-aware diagnostics.
+Unsupported combinations fail closed. Linux amd64 remains a validation host,
+not an operator host.
 
-- the shipped session surface remains coherent under deterministic scenario and
-  unit coverage
-- target taxonomy is fixed in code, docs, and session records
+### Phase 5: Remote-VM contract
 
-## Phase 2: State-model decoupling and Colima driver extraction
+Workcell ships a provider-neutral `remote_vm` contract, a fake target, and a
+shared conformance harness. The contract requires explicit workspace
+materialization and brokered access.
 
-Goal:
+### Phase 6: Docker Desktop compatibility target
 
-- remove program-level Colima shaping while preserving the current strict
-  macOS behavior
+Workcell supports `local_compat/docker-desktop/compat` on macOS arm64. The
+target has deterministic tests and live certification. It has lower assurance
+than `local_vm/colima/strict`. Workcell does not use silent fallback.
 
-Deliverables:
+### Phase 7: AWS EC2 SSM preview
 
-- session, audit, and lock state no longer depend on `.colima` or `profile`
-  as the universal program model
-- compatibility reads preserve existing durable records
-- `colima` becomes an explicit driver on the new target model
+Workcell ships deterministic selection, diagnostics, state routing, and a
+reviewed AWS SSM broker plan. The macOS arm64 matrix row is `preview-only` and
+`blocked`. Live AWS use stays in its certification lane. The reviewed access
+model does not permit inbound public SSH.
+The certification lane validates broker access to the target. It does not
+start or certify a Workcell-managed remote session.
 
-Complete when:
+### Phase 8: GCP VM preview
 
-- migration fixtures pass
-- Colima parity is proven without user-visible regression
+Workcell ships deterministic selection, diagnostics, state routing, and a
+reviewed GCP IAP broker plan. The macOS arm64 matrix row is `preview-only` and
+`blocked`. Live GCP use stays in its certification lane. The certification
+lane requires a target that has no external NAT IP.
+The certification lane validates broker access to the target. It does not
+start or certify a Workcell-managed remote session.
 
-## Phase 3: Shared auth and bootstrap
+### Phase 9: Expansion decision
 
-Goal:
+Workcell selected managed-workstation contract work before a third raw VM
+provider. Phase 19 puts Azure work after the first managed-workstation provider
+preview.
 
-- move resolver coverage and provider bootstrap handoffs onto one reviewed
-  host-owned auth path
+### Phase 10: Managed-workstation contract
 
-Deliverables:
+Workcell defines `managed_workstation` as a separate target kind. The first
+discovery lane is `gcp-cloud-workstations`. No provider backend or operator
+target shipped in this phase.
 
-- broader resolver coverage on top of the shipped direct staged-auth path
-- explicit host-owned browser or setup handoffs where provider bootstrap still
-  needs them
-- shared diagnostics and explainability across launcher and operator tooling
-- updated provider/bootstrap support matrix that names which auth inputs and
-  bootstrap paths are repo-required, certification-only, or manual
-- clear separation between repo-required deterministic auth/bootstrap evidence
-  and live-provider certification or manual provider-e2e paths
-
-Complete when:
+### Phase 11: Enterprise evidence baseline
 
-- deterministic auth and bootstrap suites pass without live provider
-  dependence
-- the provider/bootstrap support matrix and rollout docs make the supported
-  resolver and bootstrap paths explicit enough to freeze scope for the phase
-- launcher, operator, and rollout docs describe the reviewed bootstrap and
-  explainability path without implying broader resolver support than the
-  current evidence proves
-- any remaining live-provider bootstrap checks stay explicitly documented as
-  certification-only or manual validation lanes
-
-## Phase 4: Trusted validation hosts and host-compatibility matrix
-
-Goal:
-
-- define the validation-host bridge and support matrix before broader host
-  claims
-
-Deliverables:
-
-- trusted `linux/amd64` validation-host lane
-- support matrix expressed as `host OS x target kind x assurance class`
-- versioned capability and support-matrix artifact that docs, diagnostics, and
-  rollout guidance derive from
-- backend-aware diagnostics that fail closed on unsupported combinations
-- deterministic fixture tests for unsupported host/backend combinations
-
-Complete when:
-
-- the machine-readable support matrix and validation-host invocation are
-  documented in the repo
-- target-aware diagnostics and fixture tests derive unsupported-combination
-  behavior from the same support-matrix artifact
-- target-aware diagnostics fail closed for unsupported host/backend
-  combinations
-- Linux and Windows support claims are limited to what the validation-host
-  evidence and docs prove
-
-Phase 4 exit ownership:
-
-- EM:
-  owns the support boundary for the validation-host lane and blocks broader
-  host claims that outrun the evidence
-- TL:
-  owns the integrated validation-host, diagnostics, and fail-closed behavior
-  across the code and fixture surfaces
-- contract and docs owner:
-  owns the canonical support-matrix artifact plus the rollout and operator
-  docs derived from it
-- validation owner:
-  owns repo-required unsupported-combination coverage and the validation-host
-  certification lane that bounds the supported host claims
-
-## Phase 5: Remote VM control-plane contract
-
-Goal:
-
-- define the provider-neutral remote VM contract before any cloud-specific
-  backend ships
-
-Deliverables:
-
-- explicit remote workspace materialization
-- reviewed brokered-access model
-- remote image/bootstrap contract and session/audit lifecycle
-- reusable fake remote target plus shared remote-VM conformance harness
-- fixture-backed deterministic tests that later cloud adapters can run
-  unchanged against that harness
-
-Complete when:
-
-- deterministic remote-contract tests pass without real cloud dependence
-- the shared fake remote target and conformance harness are in the repo and
-  later cloud adapters can consume them without redefining the contract
-- the remote workspace-materialization, brokered-access, and audit contract is
-  documented alongside the tests that prove it
-- the owning docs and validation surfaces point later provider phases at the
-  same canonical fake target and conformance harness rather than allowing
-  provider-specific forks of the contract
-
-Phase 5 exit ownership:
-
-- EM:
-  owns the remote-VM phase boundary, preview-scope guardrails, and the
-  decision that the shared contract is ready for provider-specific reuse
-- TL:
-  owns the fake remote target, shared conformance harness, and deterministic
-  contract integration
-- contract and docs owner:
-  owns the canonical remote-contract docs, support matrices, and operator
-  guidance that later provider phases must reuse
-- validation owner:
-  owns repo-required remote-contract evidence, certification-lane boundaries,
-  and harness reuse requirements for later provider phases
-
-## Phase 6 through Phase 9 exit ownership
-
-The following owner model applies to Phases 6 through 9:
-
-- EM:
-  owns support-boundary approval, rollout scope, and the final decision that a
-  target is ready to move forward
-- TL:
-  owns deterministic backend integration, shared harness reuse, and rollback
-  readiness
-- contract and docs owner:
-  owns support-matrix, rollout, and operator-verification updates in the same
-  change as target enablement
-- validation owner:
-  owns repo-required evidence, certification-lane definitions, and any
-  required live-smoke gating
-
-## Phase 6: Docker Desktop compatibility backend
-
-Goal:
-
-- ship the first cross-platform `compat` target without blurring it into the
-  current strict boundary
-
-Deliverables:
-
-- feature-flagged `docker-desktop` target
-- explicit `compat` labeling in docs, diagnostics, and session metadata
-- host-matrix certification evidence
-- repo-required target-selection, state-root-routing, and fail-closed
-  diagnostic tests for the `docker-desktop` path
-- explicit enable, disable, and rollback procedure back to the strict Colima
-  path without silent fallback
-
-Complete when:
-
-- the repo keeps `docker-desktop` support clearly lower assurance than the
-  current strict Colima path
-- deterministic backend-selection, state-root-routing, and fail-closed
-  diagnostic behavior is proven under repo-required tests
-- the support matrix, rollout guidance, and operator verification material all
-  describe the target as `compat` rather than implying strict parity
-- host-matrix certification evidence is published alongside the docs and
-  diagnostics that define the supported combinations
-- the owning EM, TL, contract/docs owner, and validation owner approve the
-  enablement, rollback path, and support boundary for the phase
-
-Phase 6 completion record:
-
-- repo-required deterministic evidence is green via
-  `tests/scenarios/shared/test-compat-target-dry-run.sh`
-- live certification evidence is green via
-  `tests/scenarios/shared/test-docker-desktop-launch-smoke.sh` on a healthy
-  Apple Silicon macOS Docker Desktop host
-- the support boundary remains explicit as
-  `local_compat/docker-desktop/compat`; Linux and Windows Docker Desktop
-  combinations remain blocked in the host-support matrix
-- rollback remains the explicit strict Colima path; there is no silent backend
-  fallback
-- in the current single-maintainer operating mode, the EM, TL, contract/docs,
-  and validation owner approvals are recorded together in this completion
-  update; this is an explicit phase-approval packet, not a claim of
-  independent human review
-
-## Phase 7: AWS remote VM backend
-
-Goal:
-
-- implement the remote VM contract on the first cloud provider as a preview
-  target
-
-Deliverables:
-
-- `aws-ec2-ssm` target
-- preview-only support boundary and limited rollout gate
-- audited lifecycle and brokered access
-- explicit remote workspace materialization on the reviewed host-owned model
-- no inbound public SSH requirement on the supported path
-
-Current implementation note:
-
-- deterministic `aws-ec2-ssm` target selection, support-matrix diagnostics,
-  rollout docs, and shared remote-VM conformance reuse are now versioned
-  in-repo
-- live AWS smoke remains a certification-only gate and is now versioned in
-  `tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh`
-
-Complete when:
-
-- deterministic adapter suites and the shared remote-VM conformance harness
-  pass
-- the canonical provider/bootstrap matrix and host-compat support matrix are
-  updated in the same change as the AWS rollout docs
-- the AWS-specific support-boundary, operator rollout path, and audited access
-  model are documented alongside the target enablement change
-- the preview-only support boundary and enablement gate are explicit in docs,
-  diagnostics, and rollout guidance
-- live AWS smoke remains certification-only
-- the owning EM, TL, contract/docs owner, and validation owner approve the
-  preview boundary, matrices, and evidence for the phase
-
-Phase 7 completion record:
-
-- repo-required deterministic evidence is green via
-  `tests/scenarios/shared/test-aws-remote-vm-dry-run.sh` and the shared
-  `internal/remotevm` conformance tests
-- live certification evidence is green via
-  `tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh` on a reviewed
-  SSM-managed Amazon Linux 2023 EC2 target
-- the support boundary remains explicit as
-  `remote_vm/aws-ec2-ssm/compat`; live launch remains blocked outside the
-  certification lane
-- the reviewed live path uses AWS Systems Manager Session Manager, requires no
-  inbound security-group rules, and keeps remote workspace materialization as
-  an explicit host-auditable broker plan
-- rollback remains explicit: stop using `--target aws-ec2-ssm`, return to
-  `--target colima`, and clear Workcell-owned AWS preview target state if
-  needed
-- in the current single-maintainer operating mode, the EM, TL, contract/docs,
-  and validation owner approvals are recorded together in this completion
-  update; this is an explicit phase-approval packet, not a claim of
-  independent human review
-
-## Phase 8: GCP remote VM backend
-
-Goal:
-
-- implement the same remote VM contract on a second provider
-
-Deliverables:
-
-- `gcp-vm` target with limited provider-specific delta
-- parity on lifecycle, audit, and workspace materialization semantics
-- reuse of the unchanged shared remote-VM conformance harness
-
-Current implementation note:
-
-- deterministic `gcp-vm` target selection, support-matrix diagnostics, rollout
-  docs, and shared remote-VM conformance reuse are now versioned in-repo
-- live GCP smoke remains a certification-only gate and is now versioned in
-  `tests/scenarios/shared/test-gcp-vm-launch-smoke.sh`
-
-Complete when:
-
-- deterministic adapter suites and the shared remote-VM conformance harness
-  pass
-- the canonical provider/bootstrap matrix and host-compat support matrix are
-  updated in the same change as the GCP rollout docs
-- the GCP-specific support-boundary, operator rollout path, and audited access
-  model are documented alongside the target enablement change
-- live GCP smoke remains certification-only
-- the owning EM, TL, contract/docs owner, and validation owner approve the
-  support boundary, matrices, and evidence for the phase
-
-Phase 8 completion record:
-
-- repo-required deterministic evidence is green via
-  `tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh` and the shared
-  `internal/remotevm` conformance tests
-- live certification evidence is isolated in
-  `tests/scenarios/shared/test-gcp-vm-launch-smoke.sh` and remains outside the
-  repo-required validation lane
-- the support boundary remains explicit as `remote_vm/gcp-vm/compat`; live
-  launch remains blocked outside the certification lane
-- the reviewed live path uses Google Cloud IAP SSH, requires no external NAT IP
-  on the reviewed VM, and keeps remote workspace materialization as an
-  explicit host-auditable broker plan
-- rollback remains explicit: stop using `--target gcp-vm`, return to
-  `--target colima`, and clear Workcell-owned GCP preview target state if
-  needed
-- in the current single-maintainer operating mode, the EM, TL, contract/docs,
-  and validation owner approvals are recorded together in this completion
-  update; this is an explicit phase-approval packet, not a claim of
-  independent human review
-
-## Phase 9: Later expansion decision gate
-
-Goal:
-
-- decide whether `azure-vm` or managed workstations become funded follow-on
-  work
-
-Deliverables:
-
-- recorded decision, rationale, and demand/support evidence
-- updated roadmap and program-plan references
-
-Complete when:
-
-- the next funded lane is explicit and the rejected paths are documented as
-  deferred rather than implied
-- the owning EM, TL, contract/docs owner, and validation owner record the
-  decision and its support-load implications in the planning surfaces
-
-Phase 9 completion record:
-
-- decision: fund managed workstation contract and discovery next, then return
-  to `azure-vm` as the following raw `remote_vm` provider lane
-- rationale: users have prioritized workstation-shaped environments over
-  another raw VM provider, while the shipped AWS and GCP remote VM previews are
-  enough evidence to defer the third raw VM adapter without weakening the
-  current remote-VM contract
-- support-load implication: managed workstations must remain a separate
-  `managed_workstation` target kind with their own lifecycle, identity,
-  workspace, policy, audit, and certification boundaries rather than being
-  folded into `remote_vm`
-- Azure implication: `azure-vm` is deferred, not rejected; it remains the next
-  raw `remote_vm` adapter once the managed-workstation contract slice has
-  recorded its support boundary and evidence model
-- owner-lane record: EM approves the user-demand-driven prioritization and
-  owns preview/GA support boundaries; TL owns the managed-workstation target
-  contract and any shared-harness reuse; contract/docs owner owns distinct
-  target-kind, matrix, rollout, and operator-verification surfaces; validation
-  owner owns deterministic evidence and any later certification-only live smoke
-  gates
-- in the current single-maintainer operating mode, these approvals are recorded
-  as distinct Codex-agent owner lanes, not as a claim of independent human
-  approval
-
-## Phase 10: Managed workstation contract and discovery
-
-Goal:
-
-- define the managed-workstation target contract before any provider-specific
-  managed-workstation backend ships
-
-Deliverables:
-
-- provider-neutral `managed_workstation` contract covering lifecycle,
-  workspace materialization, identity, policy, audit, and operator recovery
-- comparison against the existing `local_vm`, `local_compat`, and `remote_vm`
-  target kinds so support claims stay bounded
-- deterministic fake target and conformance expectations if the target kind is
-  implementable without live provider state
-- explicit discovery outcome for the first managed-workstation provider lane
-  and for the later `azure-vm` raw remote VM follow-on
-
-Complete when:
-
-- managed workstations have a documented contract, support boundary, and
-  evidence model distinct from raw remote VMs
-- any provider-specific follow-on implementation is named with its rollout and
-  certification gates
-- `azure-vm` remains explicitly deferred to the next raw `remote_vm` lane
-  rather than being silently dropped
-
-Phase 10 completion record:
-
-- the provider-neutral contract, lifecycle, identity, policy, audit, recovery,
-  and evidence expectations are recorded in
-  [`docs/managed-workstation-contract.md`](managed-workstation-contract.md)
-- `gcp-cloud-workstations` is named as the first managed-workstation discovery
-  lane
-- no provider backend, `--target` value, host-support matrix promotion, or new
-  support claim is shipped in this phase
-- `azure-vm` remains explicitly queued as the next raw `remote_vm` provider lane
-
-## Phase 11: Enterprise evidence baseline
-
-Goal:
-
-- produce the buyer-facing evidence packet needed for enterprise and regulated
-  evaluation without claiming external certification
-
-Deliverables:
-
-- architecture and data-flow evidence map
-- threat model, known gaps, support boundaries, and non-protections index
-- SBOM, provenance, reproducibility, release signing, and vulnerability-handling
-  summary
-- audit schema and retention expectations
-- SOC 2 and ISO 27001 control mappings as evaluation aids only
-
-Complete when:
-
-- the evidence baseline links to current repo-local source-of-truth docs
-- the baseline clearly distinguishes current evidence from roadmap gaps
-- control mappings avoid certification or compliance claims
-
-Phase 11 completion record:
-
-- [`docs/enterprise-evidence-baseline.md`](enterprise-evidence-baseline.md)
-  records the evidence packet, audit retention posture, known gaps, and control
-  mapping aids
-- no centralized policy, inventory, analytics, Linux, Windows, or managed
-  workstation support claim is shipped in this phase
-
-## Phase 12: Host-expansion readiness gate
-
-Goal:
-
-- define how Linux and Windows host candidates can be promoted without creating
-  premature support claims
-
-Deliverables:
-
-- support-tier definitions for `strict`, `compat`, `preview`, certification
-  candidate, experimental, and unsupported host states
-- packaging, install, uninstall, upgrade, rollback, and certification-host
-  scoping for Linux `amd64`, Linux `arm64`, Raspberry Pi, Windows WSL2, and
-  native Windows
-- evidence separation between CI-proven, locally mirrored, and
-  certification-only lanes
-- support-matrix promotion criteria and fail-closed diagnostic expectations
-
-Complete when:
-
-- current support rows remain unchanged unless promoted by evidence in the same
-  change
-- Linux and Windows operator-host support remains blocked by default
-- promotion criteria require docs, diagnostics, rollback, support-matrix rows,
-  and certification evidence to land together
-
-Phase 12 completion record:
-
-- [`docs/host-expansion-readiness.md`](host-expansion-readiness.md) records the
-  support tiers, candidate scope, promotion criteria, and fail-closed diagnostic
-  expectations
-- the roadmap sequences the GitHub Copilot CLI provider-parity phase before
-  Phase 13 runtime-target implementation work resumes
-- Phase 13 remains queued to evaluate a narrow Linux `amd64` `local_compat`
-  certification candidate
-- no Linux, Windows, Linux `arm64`, Raspberry Pi, or strict non-macOS support
-  claim is shipped in this phase
+Workcell ships an evidence map for architecture, threats, support boundaries,
+provenance, release controls, audit, and validation. Its control mappings are
+evaluation aids. They are not certification claims.
+
+### Phase 12: Host-expansion readiness
+
+Workcell defines the promotion gates for Linux and Windows. No Linux or Windows
+operator support shipped in this phase.
+
+## Other Delivered Target Work
+
+### GitHub Copilot CLI parity
+
+Workcell supports GitHub Copilot CLI as a Tier 1 provider adapter. This work
+completed before Phase 13. The provider support source is
+[`provider-matrix.md`](provider-matrix.md).
+
+### Apple `container` evaluation
+
+Workcell completed the C1 evaluation on Apple Silicon macOS 26. The result was
+GO for the technical evaluation. Workcell deferred operator promotion. The target
+remains `preview-only` and `blocked`. The CLI does not expose it as a target.
+Colima remains the default.
+
+## Planned Phases
+
+### Phase 13: Linux amd64 compatibility candidate
+
+The word `candidate` is a planning label, not a matrix status. Select one
+distribution, runtime, and exact `target_provider`. Keep each Phase 13 row
+`unsupported` and `blocked`. Do not add a support claim until one change includes
+the exact matrix row, host procedures, diagnostics, and rollback. The change
+must include repository tests and live host certification.
+
+### Phase 14: Linux arm64 and Raspberry Pi readiness
+
+Evaluate Linux arm64 separately from Linux amd64. Keep Raspberry Pi
+`unsupported` and `blocked`. A promotion change must document hardware limits
+and rollback. It must also include live certification on a real operator host.
+
+### Phase 15: Identity and access
+
+Define user, machine, service-account, group, and breakglass identity. Connect
+the identity record to session and audit events.
+
+### Phase 16: Signed policy bundles
+
+Define a signed and versioned organization policy bundle. Specify precedence,
+expiry, rollback, drift detection, and local override rules.
+
+### Phase 17: Fleet inventory and audit ingestion
+
+Add fleet inventory and centralized ingestion for the shipped OCSF audit
+records. Preserve the documented privacy and redaction rules.
+
+### Phase 18: Regulated-team proof harness and Windows investigation
+
+Add deterministic negative tests for forbidden mounts, sockets, credential
+stores, and workspace policy takeover. Investigate WSL2 and native Windows as
+separate targets. Keep Windows unsupported until the Windows promotion change
+includes all required evidence.
+
+### Phase 19: Managed workstation preview and Azure return
+
+Add the first managed-workstation provider preview only after its contract,
+diagnostics, rollback, and evidence exist. Then evaluate `azure-vm` on the
+shared remote-VM contract.
+
+## Status Sources
+
+- [Runtime target expansion](runtime-target-expansion-plan.md)
+- [Host expansion readiness](host-expansion-readiness.md)
+- [Provider matrix](provider-matrix.md)
+- [Requirements and validation](requirements-validation.md)
+- [Roadmap](../ROADMAP.md)
