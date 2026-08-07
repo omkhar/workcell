@@ -1,73 +1,107 @@
 # Unsafe-Code Pre-Audit Checklist
 
-Workcell's security boundary depends on a small, deliberately contained body of
-Rust `unsafe` code: the container-side exec/syscall interception shim
-(`runtime/container/rust/src/lib.rs`) and the launcher binaries
-(`runtime/container/rust/src/bin/`). This checklist is the pre-audit reference
-for reviewing that surface — before a release, a dependency bump that touches
-libc, or an external security audit.
+This checklist covers Rust `unsafe` code in the syscall shim and launcher
+binaries.
 
-## Enforcement in place
+Use it before a release, a relevant `libc` update, or an external audit.
 
-- Every `unsafe {}` block carries a `// SAFETY:` comment stating the invariant
-  that makes it sound. This is enforced by
-  `undocumented_unsafe_blocks = "deny"` in
-  `runtime/container/rust/Cargo.toml`, checked by
-  `cargo clippy --all-targets --locked --offline -- -D warnings` in
-  `scripts/validate-repo.sh`. A new undocumented `unsafe` block fails CI.
-- That clippy lint does not cover `unsafe extern "C" {` blocks, so
-  `scripts/validate-repo.sh` additionally requires a preceding `// SAFETY:`
-  comment on every `unsafe extern` block. A new undocumented FFI declaration
-  fails CI too.
-- `#![deny(unsafe_op_in_unsafe_fn)]` (`lib.rs`) forces every operation inside an
-  `unsafe fn` into an explicit `unsafe {}` block, so no unsafe operation is
-  implicitly covered by the function signature.
+## Scope
 
-## Unsafe surface inventory
+The first-party Rust surface is in these paths:
 
-The unsafe code falls into a few invariant classes. An auditor should confirm
-each block still belongs to its class and that the class invariant holds.
+- `runtime/container/rust/src/lib.rs`
+- `runtime/container/rust/src/bin/`
 
-| Class | What it does | Invariant to confirm |
+Each `unsafe {}` block and `unsafe extern` block must have a safety comment.
+The manual audit must map every unsafe site to one class below.
+
+## Automated checks
+
+Run the locked offline Clippy command:
+
+```sh
+cargo clippy --manifest-path runtime/container/rust/Cargo.toml \
+  --all-targets --locked --offline -- -D warnings
+```
+
+`runtime/container/rust/Cargo.toml` sets
+`undocumented_unsafe_blocks = "deny"`. Thus, Clippy rejects an `unsafe {}` block
+that has no `// SAFETY:` comment.
+
+Clippy does not check `unsafe extern "C"` blocks. `scripts/validate-repo.sh`
+requires a `// SAFETY:` comment immediately before each block.
+
+`lib.rs` also sets `#![deny(unsafe_op_in_unsafe_fn)]`. Each unsafe operation in
+an unsafe function must use an explicit unsafe block.
+
+These checks do not confirm that the inventory is complete. The manual review
+must map each first-party unsafe site to one class below.
+
+## Unsafe classes
+
+| Class | Operations | Required invariant |
 |---|---|---|
-| Niladic syscalls (`getpid`, `getppid`, `fork`) | no-argument syscalls | no preconditions; return value handled |
-| C-string ABI reads (`CStr::from_ptr`, `*ptr.add`) | reading intercepted `argv`/`envp`/path pointers | pointer is null-checked and points to a NUL-terminated string / NUL-sentinel array per the exec ABI |
-| `static mut environ` reads | reading libc's global env when no `envp` given | read in the calling thread with no concurrent `setenv`/`putenv` |
-| `dlsym(RTLD_NEXT)` + `transmute_copy` | resolving the next-chain libc symbol into a fn pointer | `T` is a pointer-sized `extern "C"` fn whose ABI matches the named symbol |
-| Syscall trampoline (`workcell_syscall_shim`) | entered from hand-written `global_asm!` | asm preserves the `syscall(long, ...)` ABI; per-number arg meanings |
-| LD_PRELOAD interposers + tail forwards | intercept then forward original args to real libc | args obey the interposed function's C ABI; forwarded unmodified |
-| Env mutation (`env::set_var`/`remove_var`) | Rust 2024 unsafe env writes | runs single-threaded before any thread/child spawns |
-| Signal-handler `kill` / `sigaction` setup | async-signal-safe teardown | only async-signal-safe calls; PID read via atomic |
+| Niladic system call | `getpid`, `getppid` | The call has no pointer input. The code handles its result. |
+| C pointer and string | `CStr::from_ptr`, pointer offsets, `getauxval` result | The code checks required pointers. Each string ends with NUL. Each array has a NUL sentinel. |
+| Path access | `access` | The path is a live NUL-terminated string. The code handles the result. |
+| FFI output buffer | `fstatat`, `MaybeUninit::assume_init` | The C call succeeds before Rust reads initialized output. |
+| File-descriptor lifecycle | `openat`, `close` | The code checks the new descriptor and closes it exactly once. |
+| Process lifecycle FFI | `execve`, `fork`, `_exit`, `waitpid` | The launcher is single-threaded at `fork`. Arguments match the C ABI. Parent and child paths handle ownership correctly. |
+| Error report FFI | `write`, `__errno_location`, `__error` | The buffer is valid. The code sets the thread-local error value to `EPERM`. |
+| Global environment read | `static mut environ` | No concurrent code changes the process environment. |
+| Dynamic symbol load | `dlsym(RTLD_NEXT)`, `transmute_copy` | The function type has pointer size and matches the named C symbol. |
+| Unsafe export | `#[unsafe(no_mangle)]` | The symbol has an intended export or interposition target. Its ABI matches that target. No unintended collision exists. |
+| System-call trampoline | `workcell_syscall_shim`, `global_asm!` | Assembly preserves the Linux `syscall(long, ...)` ABI. Each system-call number uses the correct arguments. |
+| Preload interposer | LD_PRELOAD wrappers and tail calls | The wrapper matches the C ABI. It passes the original arguments to libc. |
+| Environment change | `env::set_var`, `env::remove_var` | The launcher changes the environment before it creates a thread or child process. |
+| Test environment change | Test-only `env::remove_var` | The test has no concurrent environment access. |
+| Signal setup and teardown | `kill`, `sigaction`, `sigemptyset`, `std::mem::zeroed` | The handler uses async-signal-safe calls. Structures and handlers match the C ABI. |
 
-## High-scrutiny items (subtle invariants — review these first)
+This map assigns each first-party site group to an inventory class:
 
-1. **`workcell_syscall_shim` (`lib.rs`)** — safety is upheld by the
-   `global_asm!` trampoline, not by any Rust caller, and it reads all six
-   register args regardless of the variadic count. A change to the asm or to the
-   per-syscall arg handling must be re-audited against the kernel ABI.
-2. **`load_symbol` `transmute_copy` (`lib.rs`)** — `transmute_copy` skips the
-   size check; soundness rests on every instantiation of `T` being a
-   pointer-sized `extern "C"` fn pointer matching the named C symbol. Adding a
-   new interposer means adding a matching `Fn` type alias + `c"name"` pair.
-3. **`static mut environ` reads** — a shared mutable global; sound only absent
-   concurrent `setenv`/`putenv`, consistent with libc `getenv` semantics.
-4. **`env::set_var`/`remove_var` in the launchers** — the "no data race"
-   invariant holds only if these run before any thread is spawned. Confirm caller
-   ordering; note the default multithreaded test runner is the weak spot for the
-   `#[cfg(test)]` uses.
+| File and function group | Inventory class |
+|---|---|
+| `lib.rs`: process path and file-descriptor helpers | Niladic system call, path access, C pointer and string, FFI output buffer |
+| `lib.rs`: `report` and `errno_location` | Error report FFI |
+| `lib.rs`: `load_symbol` and symbol accessors | Dynamic symbol load |
+| `lib.rs`: `workcell_syscall_shim` | Unsafe export, system-call trampoline |
+| `lib.rs`: exported `exec*` and `posix_spawn*` functions | Unsafe export, preload interposer, C pointer and string, global environment read, FFI output buffer, file-descriptor lifecycle |
+| `bin/common/launcher_common.rs`: environment helpers | Environment change, global environment read |
+| `bin/common/launcher_common.rs`: `exec_request` | Process lifecycle FFI, global environment read |
+| `bin/common/launcher_common.rs`: signal helpers | Signal setup and teardown |
+| `bin/common/launcher_common.rs`: `spawn_and_wait_request` | Process lifecycle FFI, global environment read, signal setup and teardown |
+| `bin/workcell-launcher.rs`: `current_execfn` | C pointer and string |
+| `bin/workcell-launcher.rs`: environment cleanup test | Test environment change |
 
-## Pre-audit checklist
+Give special attention to these sites:
 
-- [ ] `cargo clippy … -D warnings` is green (zero `undocumented_unsafe_blocks`).
-- [ ] `#![deny(unsafe_op_in_unsafe_fn)]` is still present in `lib.rs`.
-- [ ] Every `unsafe {}` block's `// SAFETY:` comment still matches the code it
-      guards (no block was edited without updating its invariant).
-- [ ] No new `unsafe` construct falls outside the classes above; if it does, it
-      is documented and added to this inventory.
-- [ ] The high-scrutiny items are unchanged, or their changes were re-audited
-      against the relevant ABI (kernel syscall, libc symbol, signal-safety).
-- [ ] Any new LD_PRELOAD interposer pairs a `c"symbol"` literal with a matching
-      `extern "C" fn` type alias, and forwards the caller's original arguments
-      unmodified.
-- [ ] `libc` crate version bumps are reviewed for changed signatures on the
-      intercepted symbols.
+- `workcell_syscall_shim` reads all six register arguments. Review the assembly
+  and system-call behavior together.
+- `load_symbol` uses `transmute_copy`. Each type must have pointer size and
+  match the named C function signature.
+- `static mut environ` is shared mutable state. Confirm that no concurrent code
+  calls `setenv` or `putenv`.
+- Launcher environment changes must occur before thread or child creation.
+- `fstatat` output stays uninitialized until the C call succeeds.
+- `fork` creates two control paths. Confirm all `_exit`, `execve`, and `waitpid`
+  results and ownership rules.
+- The post-`fork` child formats errors before `_exit`. Confirm the launcher stays
+  single-threaded and no unsafe shared state is active at `fork`.
+
+## Manual release checklist
+
+- [ ] Run the locked offline Clippy command. Confirm exit code 0.
+- [ ] Confirm that each `unsafe {}` block has an accurate `// SAFETY:` comment.
+- [ ] Confirm that each `unsafe extern` block has a `// SAFETY:` comment immediately before it.
+- [ ] Confirm that `#![deny(unsafe_op_in_unsafe_fn)]` remains in `lib.rs`.
+- [ ] List each first-party unsafe site with `rg -n '\bunsafe\b' runtime/container/rust/src`.
+- [ ] Map each unsafe site to one class in this inventory.
+- [ ] Add each new unsafe class to this inventory.
+- [ ] Compare each changed interposer signature with the libc signature for that symbol.
+- [ ] Confirm that each interposer passes the original arguments to libc.
+- [ ] Review changes to the system-call trampoline against the Linux ABI.
+- [ ] Review each `libc` version change for affected signatures.
+- [ ] Confirm that each launcher changes environment variables before it creates a thread.
+- [ ] Confirm that each environment test has no concurrent environment access.
+- [ ] Confirm that Rust reads FFI output buffers only after the C call initializes them successfully.
+- [ ] Confirm that each process lifecycle path handles errors and child ownership.
