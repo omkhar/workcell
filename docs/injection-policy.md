@@ -160,8 +160,9 @@ requires owner-only identity files.
 It skips the SSH directive safety check. It permits `Include` to load
 other configuration. It permits `LocalCommand`, `PermitLocalCommand`, and
 `ProxyCommand` to run commands. It permits `PKCS11Provider` and
-`SecurityKeyProvider` to load provider libraries. The displayed assurance
-status for the session does not change.
+`SecurityKeyProvider` to load provider libraries.
+
+The displayed assurance status for the session does not change.
 
 ### Copy keys
 
