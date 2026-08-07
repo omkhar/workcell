@@ -13,7 +13,7 @@ The suite verifies these conditions:
 4. The selected workspace is the only general writable host mount. An approved
    temporary credential handoff is one narrow exception. An approved non-secret
    persistent-cache plane is another exception.
-5. Managed Colima modes apply the selected profile network policy.
+5. Managed Colima modes generate the network-policy plan for the selected profile.
 6. The launch output labels `breakglass` as lower assurance.
 7. Provider control-plane files are present and usable.
 8. Workcell rejects unsafe broad workspaces.
@@ -30,5 +30,5 @@ The suite fails when it detects these conditions:
 - A host home passes into the runtime.
 - A direct host provider-state mount passes into the runtime.
 - An SSH or GPG agent socket passes into the runtime.
-- A managed Colima allowlist mode has no egress rules.
+- A generated allowlist plan for a managed Colima mode has no egress rules.
 - A launch selects `breakglass` without explicit operator input.

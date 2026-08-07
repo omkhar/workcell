@@ -30,4 +30,4 @@ socket, keychain, or general credential store.
 
 All containers in one Colima profile share the Workcell egress rules. The last
 launch replaces those rules. Do not run concurrent sessions with different
-network policies in one profile.
+complete endpoint sets in one profile.

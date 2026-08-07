@@ -8,8 +8,8 @@ The strict local target uses two isolation layers:
 The VM is the main local boundary. The container supplies a reproducible
 provider runtime.
 
-Docker Desktop is a supported compatibility target. It does not provide a
-dedicated Workcell VM or Workcell egress enforcement.
+Docker Desktop is a supported compatibility target on Apple Silicon macOS. It
+does not provide a dedicated Workcell VM or Workcell egress enforcement.
 
 ## Runtime goals
 
