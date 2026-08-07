@@ -47,7 +47,7 @@ Signals that a session may have crossed a boundary:
   config) — are a tamper signal.
 - **Boundary/egress anomalies.** Unexpected outbound behavior on the managed
   Colima path, or host secrets/sockets that should never have been reachable
-  (see the [threat model controls](threat-model.md#controls)).
+  (see the [threat model controls](threat-model.md#abuse-paths-and-controls)).
 - **Live host state.** `workcell --agent <provider> --doctor` and
   `workcell --agent <provider> --inspect` report resolved profile, target, and
   launch/assurance state; use
