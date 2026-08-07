@@ -53,8 +53,8 @@ The certification script runs outside the Workcell runtime boundary. It uses
 host Google Cloud credentials. Workcell does not stage or isolate these
 credentials.
 
-The target must have the `RUNNING` status and no external NAT IP. The direct IAP
-broker command must succeed.
+The target must run and have no external NAT IP. The direct IAP broker command
+must succeed.
 
 The script also checks Workcell diagnostics and the dry-run broker plan. It
 does not copy a workspace or start a Workcell remote session.
@@ -79,7 +79,8 @@ matrix.
 Workcell does not provision or remove the cloud VM. If provider cleanup is
 necessary, the operator must use Google Cloud tools.
 
-Workcell must not select Colima or Docker Desktop automatically.
+After the operator selects `--target gcp-vm`, Workcell must not select Colima
+or Docker Desktop automatically.
 
 ## Authoritative Sources
 

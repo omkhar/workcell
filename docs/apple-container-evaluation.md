@@ -26,7 +26,7 @@ probe measures start time and reads VM isolation properties.
 ## Observed Results
 
 Three idle-host samples had a median warm start of approximately 857 ms. The
-fastest sample was 843 ms. On a busy host, the start time was two to seven
+fastest sample was 843 ms. A busy host produced results from two to seven
 seconds.
 
 The inspected container had a Linux kernel and hostname that differed from the
@@ -34,8 +34,8 @@ host. It had a `192.168.64.x` network address and an ext4 root on a `/dev/vd*`
 block device. These observations match the per-container VM model.
 
 The probe observed VM separation from the host. It did not compare two
-containers that ran at the same time. This result does not establish a stronger
-assurance claim for Workcell or operator support.
+concurrent containers. This result does not establish a stronger assurance
+claim for Workcell or operator support.
 
 ## Limits
 
