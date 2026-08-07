@@ -1,23 +1,16 @@
 # GCP VM Preview
 
-Workcell now exposes a preview-only `remote_vm/gcp-vm/compat` target selection
-path. This is intentionally narrower than the reviewed local Colima boundary:
+## Status
 
-- repo-required support today is deterministic target selection, diagnostics,
-  state-root routing, and shared remote-VM conformance reuse
-- live GCP execution remains certification-only
-- the reviewed live path must use brokered Google Cloud IAP access; inbound
-  public SSH is out of bounds for the supported path
+Workcell exposes a dry-run broker plan for `remote_vm/gcp-vm/compat`. The
+host-support matrix marks this target `preview-only` and `blocked` on macOS
+arm64.
 
-Use this page with:
+Workcell blocks operator launch. Workcell does not implement live remote
+launch. Live certification validates GCP IAP broker access and network posture
+only. It does not validate a Workcell-managed remote session.
 
-- [docs/remote-vm-contract.md](remote-vm-contract.md)
-- [docs/validation-scenarios.md](validation-scenarios.md)
-- [policy/host-support-matrix.tsv](../policy/host-support-matrix.tsv)
-
-## Canonical Preview Plan
-
-Inspect the reviewed broker plan without attempting live remote execution:
+## Dry-Run Command
 
 ```bash
 workcell \
@@ -28,53 +21,45 @@ workcell \
   --dry-run
 ```
 
-The dry-run path emits:
+The plan reports `runtime_api=brokered` and `remote_broker=gcp-iap-ssh`. It also
+reports `inbound_public_ssh=blocked` and `live_smoke=certification-only`.
 
-- `target_kind=remote_vm`
-- `target_provider=gcp-vm`
-- `target_assurance_class=compat`
-- `runtime_api=brokered`
-- `workspace_transport=remote-materialization`
-- `remote_access_model=brokered`
-- `remote_broker=gcp-iap-ssh`
-- `inbound_public_ssh=blocked`
-- `live_smoke=certification-only`
+## Required Tools and Infrastructure
 
-`workcell --doctor` exposes the same support boundary through
-`support_matrix_*` plus the required host tools.
+Install `gcloud` at `/opt/homebrew/bin/gcloud`, `/usr/local/bin/gcloud`, or
+`/usr/bin/gcloud`. Workcell also accepts a canonical path under the trusted
+prefixes in the [Launcher Contract](launcher-contract.md#launcher-reference).
 
-## Host Prerequisites
+Workcell must not use a `gcloud` executable under `$HOME`. The host must also
+have `jq`. Use `workcell --doctor` to confirm that Workcell can resolve
+`gcloud`. The command does not check `jq`.
 
-The preview target expects these host-side tools and dependencies:
+The target must be a Compute Engine VM without an external NAT IP. The project
+and VM must permit IAP TCP forwarding.
 
-- `gcloud` installed in a reviewed host-tool location such as
-  `/opt/homebrew/bin`, `/usr/local/bin`, `/opt/homebrew/share/google-cloud-sdk`,
-  or `/usr/local/share/google-cloud-sdk`; Workcell does not trust a `gcloud`
-  executable under `$HOME`
-- a running Compute Engine VM without an external NAT IP
-- IAP TCP forwarding enabled for the project and VM
-- OS Login or another reviewed SSH identity path for `gcloud compute ssh`
-- IAM permissions for `compute.instances.get`, `compute.projects.get`,
-  `iap.tunnelInstances.accessViaIAP`, and `oslogin.users.getLoginProfile`
+The operator must have these permissions:
 
-These are host prerequisites. They are not mounted into the reviewed local
-runtime boundary.
+- `compute.instances.get`
+- `compute.projects.get`
+- `iap.tunnelInstances.accessViaIAP`
+- `oslogin.users.getLoginProfile`
 
-## Live Certification Gate
+Host `gcloud` must have an SSH identity that can connect through IAP. Workcell
+does not stage or approve this identity.
 
-Live GCP use is intentionally blocked on the default launch path until the
-operator performs the separate certification run on reviewed infrastructure.
+## Certification Scope
 
-The certification lane must prove:
+The certification script runs outside the Workcell runtime boundary. It uses
+host Google Cloud credentials. Workcell does not stage or isolate these
+credentials.
 
-- the selected target is running and reachable through IAP
-- no inbound public SSH is required
-- remote workspace materialization stays explicit and host-auditable
-- the brokered lifecycle and audit story match the shared `remote_vm`
-  contract
+The target must run and have no external NAT IP. The direct IAP broker command
+must succeed.
 
-Run the certification smoke with an already reviewed IAP-reachable Compute
-Engine target:
+The script also checks Workcell diagnostics and the dry-run broker plan. It
+does not copy a workspace or start a Workcell remote session.
+
+## Certification Command
 
 ```bash
 WORKCELL_GCP_VM_PROJECT=my-project \
@@ -83,20 +68,22 @@ WORKCELL_GCP_VM_TARGET_ID=workcell-phase8-cert \
   bash ./tests/scenarios/shared/test-gcp-vm-launch-smoke.sh
 ```
 
-The smoke fails unless the target is running, has no external NAT IP, can run a
-brokered IAP SSH command, and matches the Workcell preview broker plan.
-
-Do not sign a commit that claims supported GCP preview delivery until that live
+Do not sign a commit that changes the GCP preview claim until live
 certification succeeds.
 
 ## Rollback
 
-Rollback is explicit:
+Do not use `--target gcp-vm`. Select a supported target from the host-support
+matrix.
 
-1. stop using `--target gcp-vm`
-2. return to the reviewed `--target colima` path
-3. remove any GCP preview target state under
-   `~/.local/state/workcell/targets/remote_vm/gcp-vm/`
+Workcell does not provision or remove the cloud VM. If provider cleanup is
+necessary, the operator must use Google Cloud tools.
 
-There is no silent fallback from the GCP preview target onto Colima or Docker
-Desktop.
+After the operator selects `--target gcp-vm`, Workcell must not select Colima
+or Docker Desktop automatically.
+
+## Authoritative Sources
+
+- [Remote VM Contract](remote-vm-contract.md)
+- [Host-Support Matrix](../policy/host-support-matrix.tsv)
+- [Validation Scenarios](validation-scenarios.md)
