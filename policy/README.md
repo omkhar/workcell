@@ -1,20 +1,23 @@
 # Policy Core
 
-`policy/` holds the shared contract layer for Workcell.
+The `policy/` directory contains the shared Workcell contracts.
 
-It exists to define what every adapter and workflow must preserve:
+Each adapter and workflow must preserve these rules:
 
-- the runtime boundary is primary
-- host secrets and control sockets stay out by default
-- network modes are explicit
-- `breakglass` is narrow and visibly lower assurance
-- hosted controls outside git still require explicit policy
+- The runtime boundary is the primary control.
+- The safe path excludes control sockets, unapproved secrets, ambient
+  authentication state, and direct provider-state mounts. It permits only an
+  approved staged credential handoff.
+- Each network mode is explicit.
+- `breakglass` is narrow and has lower assurance.
+- Hosted controls outside Git need an explicit policy record.
 
-Provider-native config does not live here. That belongs in `adapters/`.
+Provider-native configuration belongs in `adapters/`, not in this directory.
 
-`hardening-profile.toml` captures the runtime's reviewed container-hardening
-posture (dropped capabilities, `no-new-privileges`, read-only rootfs, hardened
-tmpfs mounts, PID limit, mapped non-root user) and the outbound-endpoint
-inventory. The `hardening-profile-conformance` invariant
-(`scripts/verify-invariants.sh`) fails closed when the launcher drifts from it.
-See [docs/outbound-endpoints.md](../docs/outbound-endpoints.md).
+`hardening-profile.toml` records container controls and fixed endpoint literals.
+The controls include dropped capabilities, `no-new-privileges`, a read-only root
+file system, hardened temporary mounts, a PID limit, and a mapped non-root user.
+
+The `hardening-profile-conformance` check compares the policy artifact with
+launcher source functions. See the [outbound endpoint inventory](../docs/outbound-endpoints.md)
+for the human-readable fixed sets and their limits.

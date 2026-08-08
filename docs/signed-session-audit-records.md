@@ -1,175 +1,167 @@
 # Signed Session Audit Records
 
-Workcell session audit records form a tamper-evident hash chain whose head is
-signed host-side. `workcell session verify --id SESSION_ID` recomputes the chain
-from the authoritative durable log and verifies that signature, so a reviewer
-outside the agent can detect tampering. This document specifies the record
-format, the signing and verification model, and — explicitly — what the model
-does and does not protect.
+For launched Colima and Docker Desktop sessions, Workcell writes chained audit
+records to a host-owned profile log. Each later chained record contains the
+prior digest.
 
-## Hash-chain format
+At finalization, Workcell attempts to sign the final session digest.
+`workcell session verify` checks the digest chain and the host signature.
 
-Every audit record is appended to a per-profile log under Workcell-owned target
-state, for example:
+This control detects offline record changes. It does not protect against a
+host-root attacker who has the signing key.
+
+## Security purpose
+
+The operator host owns the audit log and the signing key. The agent does not
+receive the signing key. Thus, an agent cannot create a valid host seal.
+
+The seal gives boundary integrity. It does not attest the identity of a remote
+signer. For release identity, see [Provenance](provenance.md).
+
+## Record format
+
+Workcell appends records to this target-aware path:
 
 ```text
-~/.local/state/workcell/targets/<target-kind>/<provider>/<profile>/workcell.audit.log
+${WORKCELL_STATE_ROOT}/targets/<target-kind>/<provider>/<profile>/workcell.audit.log
 ```
 
-`scripts/workcell`'s `append_audit_record_to_path` writes each record as
-whitespace-delimited `key=value` tokens:
+The default `WORKCELL_STATE_ROOT` is `~/.local/state/workcell`.
+
+Each line contains space-separated `key=value` fields:
 
 ```text
-timestamp=<ts> <event fields...> [prev_digest=<hex>] record_digest=<hex>
+timestamp=<time> <event-fields> [prev_digest=<hex>] record_digest=<hex>
 ```
 
-- `timestamp` is a UTC RFC 3339 second-resolution stamp.
-- The event fields are the record payload (for example
-  `event=exit session_id=<id> exit_status=0 ...`). Every session record carries
-  `session_id=<id>`.
-- `record_digest` chains the record to its predecessor:
+| Field | Writer | Required state | Meaning |
+|---|---|---|---|
+| `timestamp` | Host launcher | All records | UTC time in RFC 3339 format |
+| Event fields | Host launcher | All records | Event data in write order |
+| `session_id` | Host launcher | Session records | Session that owns the event |
+| `prev_digest` | Host launcher | Chained records after the chain root | Digest of the prior chained record |
+| `record_digest` | Host launcher | Chained records | Digest of this record and the prior digest |
 
-  ```text
-  record_digest = SHA-256( prev_digest \x00 timestamp \x00 arg0 \x00 arg1 ... )
-  ```
+Workcell calculates the record digest as follows:
 
-  computed by `hoststate.AuditRecordDigest`, where the args are the event-field
-  tokens in write order and `prev_digest` is the previous record's
-  `record_digest` (empty for the first record in the log).
-- `prev_digest` is omitted on the first record and present on every subsequent
-  record.
+```text
+SHA-256(prev_digest \x00 timestamp \x00 event_field_0 \x00 event_field_1 ...)
+```
 
-Because each digest folds in the previous digest, altering, reordering, or
-dropping any record changes every downstream digest — a standard tamper-evident
-chain. The **head** of a session is the `record_digest` of the last log record
-carrying that session's `session_id`.
+The first record with a digest has no `prev_digest`. A changed, missing, or
+reordered chained record breaks the chain.
 
-### Append serialization invariant
+A profile log can start with unchained legacy records. Digest-chain verification
+excludes this initial legacy prefix. Those records are outside signed integrity.
 
-The chain is linear only if appends are serialized: an appender reads the
-current tail's `record_digest` as the new record's `prev_digest`, so two
-concurrent detached-session control paths (`start`/`send`/`stop`) that read the
-same tail and both append would fork the chain and make verification reject a
-legitimate later record. `append_audit_record_to_path` therefore holds an
-exclusive per-log lock across the read-tail-plus-append critical section. The
-lock is the repo's atomic, crash-safe `acquire-profile-lock` primitive (an
-atomic `mkdir`+`rename` whose owner PID lets a crashed holder be reclaimed)
-applied to a `<audit-log>.lock` directory, so no external `flock(1)` is required
-— it is absent on the macOS host. The critical section is short but includes a
-cold `go` digest computation, so a waiter uses a bounded ~30s backoff (1500 ×
-20ms) to reliably outlast an in-progress append; on exhaustion (a genuinely
-stuck holder) the appender fails closed (skips the record) rather than fork the
-chain. Single-writer behavior is unchanged.
+The session head is the last `record_digest` for that `session_id`.
 
-## Seal (host-side signature)
+## Append lock
 
-When the runtime boundary finalizes a session (`finalize_session_audit`, after
-the terminal audit record is appended and the durable record is written),
-Workcell signs the session head:
+Workcell locks the profile audit log before it reads the tail and appends a
+record. The lock covers both operations.
 
-- **Key.** A per-host ECDSA P-256 key (the curve cosign uses by default) is
-  generated on first use under `~/.local/state/workcell/signing/` — directory
-  mode `0700`, private key `signing.key` mode `0600`. If that directory cannot
-  be created and confined to owner-only access, signing fails closed rather than
-  sign with an insecurely stored key.
-- **Signed message.** A domain-separated message binding the session id to the
-  recomputed head is signed, so a signature cannot be replayed onto a different
-  session or a different chain state.
-- **Seal file.** The signature is stored beside the durable session record as
-  `<session-id>.audit-sig` (host-owned, mode `0600`). It records the seal
-  version, session id, head digest, signing key id, algorithm, and the
-  base64 signature. Only the version, session id, key id, algorithm, and
-  signature are load-bearing; the head digest is informational because
-  verification always recomputes the head from the authoritative log.
-- **Public key.** The public half is written to
-  `~/.local/state/workcell/signing/<key-id>.pub` (PKIX PEM), where `<key-id>` is
-  a SHA-256 fingerprint prefix of the public key. `session verify` pins the
-  signature to the key id named in the seal.
+The lock uses the repository `acquire-profile-lock` operation. It does not
+require `flock` on macOS.
 
-This is a boundary/host signature, **not** an agent signature: the operator host
-signs on the trusted side of the runtime boundary, so the agent inside the
-sandbox never holds the signing key and cannot forge a seal.
+The appender uses approximately 30 seconds of sleep backoff. Helper execution
+can make the total wait longer. If the lock remains unavailable, the append
+operation fails.
 
-## Verification
+## Host seal
 
-`workcell session verify --id SESSION_ID` is read-only and fail-closed:
+Workcell attempts to sign the session head. If this operation fails, Workcell
+finalizes the session without a seal.
 
-1. Locate the durable session record and its authoritative audit log.
-2. Read the seal beside the record. A session with no seal fails closed.
-3. Recompute the hash chain over the authoritative log from the first record up
-   to and including the session head, rejecting any record that carries a
-   duplicate key (the same fail-closed rule the OCSF export applies).
-4. Verify the seal signature over the **recomputed** head using the pinned
-   public key named by the seal.
+Workcell uses these seal items:
 
-Exit codes: `0` verified, `1` verification failed (tamper, or a missing or
-invalid seal), `2` usage error. Output is passed through the shared support
-bundle redactor (the [G2](../SUPPORT.md) rule-set), so no secret leaks.
+| Item | Location | Content |
+|---|---|---|
+| Private key | `${WORKCELL_STATE_ROOT}/signing/signing.key` | ECDSA P-256 private key |
+| Public key | `${WORKCELL_STATE_ROOT}/signing/<key-id>.pub` | PKIX PEM public key |
+| Seal | Beside the session record as `<session-id>.audit-sig` | Session ID, key ID, algorithm, signature, and recorded head |
 
-### Corrupt (untokenizable) records
+Workcell creates the signing directory with mode `0700`. It creates the private
+key and seal with mode `0600`.
 
-The writer emits `event=` before `session_id=`, so a malformed field can make a
-record untokenizable before its `session_id` is reachable — and such a line
-cannot be attributed to a session at all. The genuine writer never emits an
-untokenizable record (it closes every bash ANSI-C `$'…'` block), so verification
-treats any untokenizable line as corruption or tamper and **fails closed**,
-rather than silently dropping an unreadable, appended same-session record as an
-unrelated non-member. A legitimate other-session record — even a torn/legacy
-line missing `record_digest` — still tokenizes and is attributed by its
-`session_id`, so it does not fail an unrelated session. The one accepted
-tradeoff is that a rare crash-truncation inside an ANSI-C block anywhere in the
-shared profile log fails verification for sessions reading it; that is the
-correct fail-closed posture for tamper-evident audit (a reviewer must
-investigate a log that cannot be parsed).
+The key ID is a prefix of the SHA-256 public-key fingerprint. The signed message
+binds the session ID to the calculated head. Therefore, a seal cannot apply to
+another session or chain state.
 
-### Key rotation
+The head value in the seal is information only. Verification calculates the
+head from the authoritative audit log.
 
-To rotate, an operator removes (or moves aside) `signing.key`; the next signing
-run generates a fresh key with a new key id. Old public keys are retained under
-the signing directory, so seals produced by an earlier key still verify against
-their recorded key id.
+If key storage is not owner-only, Workcell does not sign. If the lock or signer
+fails, Workcell reports a warning and lets finalization continue.
 
-## Trust model
+CAUTION: Preserve the old public key before you replace `signing.key`. Old seals
+require their recorded public keys.
 
-**Detected.** Any modification to the persisted audit records at or before a
-session's signed head:
+Do not put `signing.key` in a support bundle or incident report.
 
-- a flipped byte in any record field or digest;
-- a reordered or dropped record (chain linkage breaks or the head changes);
-- a forged duplicate key on a record;
-- an exported or copied log presented in place of the authoritative one (the
-  copy is not the persisted record the seal was computed over);
-- any session presented without a valid host seal.
+## Verification procedure
 
-**Not defended.** This is boundary integrity, not host compromise resistance:
+Run this read-only command:
 
-- A host-root attacker who can read `signing.key` can re-sign a tampered chain.
-  The seal proves the records were signed by a holder of the per-host key, not
-  that the host itself was never compromised.
-- The signing key protects records against parties **without** that key
-  (the sandboxed agent, a lower-privilege process, offline tampering of the log
-  or an exported copy) — not against the key holder.
-- Verification confirms integrity and host-side provenance; it is not an
-  identity attestation of a remote signer (contrast the release-artifact keyless
-  Sigstore flow in [provenance.md](provenance.md), whose trust anchor is a CI
-  workflow identity that does not exist at session runtime).
+```sh
+workcell session verify --id SESSION_ID
+```
 
-## Provider coverage
+The command does these steps:
 
-Signing covers providers whose audit records form a digest chain — the
-bash-launcher backends (colima, docker-desktop, aws-ec2-ssm, gcp-vm) whose
-session lifecycle is finalized by `finalize_session_audit`. The preview-only,
-launch-blocked `apple-container` target writes plain lifecycle audit lines
-without `prev_digest`/`record_digest`, so there is no chain to seal: such
-sessions are **unsigned**, and `workcell session verify` reports them
-fail-closed with a clear "no signable digest chain" reason. Signing the
-apple-container lifecycle (its own finalize path) is a documented follow-up; it
-is intentionally out of scope here rather than sealed with an unverifiable
-signature.
+1. It finds the durable session record and its authoritative profile log.
+2. It reads the seal beside the record.
+3. It recalculates the chain from the first record with a digest through the session head.
+4. It rejects each strictly checked record that contains a duplicate key.
+5. It loads the public key that the seal identifies.
+6. It checks the signature against the calculated head.
 
-## Coordination with OCSF export
+The command returns these exit codes:
 
-Signing adds a sidecar file and does not modify the audit log or the durable
-session record, so `workcell session export --format ocsf` is unchanged: signed
-sessions export exactly as before, and the export's own duplicate-key and
-cross-session fail-closed rules continue to apply.
+| Exit code | Result |
+|---|---|
+| `0` | Verification succeeded. |
+| `1` | Verification failed. The chain, seal, or key is missing or invalid. |
+| `2` | The command usage is invalid. |
+
+Every log line must tokenize. Each line for the selected session must also pass
+strict field validation. The last such line defines the session head.
+
+Workcell strictly validates all records through that head. It verifies the
+digest chain from the first record with a digest through the head. A later
+tokenizable record for another session stays outside strict validation.
+
+Require `session_verify=verified` before you rely on signed integrity. A
+terminal session without a seal does not meet this requirement.
+
+## Limits and provider coverage
+
+Verification detects these conditions:
+
+- A chained record changed from the first record with a digest through the signed head.
+- A chained record through the signed head is missing or in a different position.
+- A strictly checked record contains a duplicate key.
+- A different log replaces the authoritative log and changes signed content.
+- The seal or named public key is missing or invalid.
+
+Verification does not protect the initial unchained legacy prefix. It also does
+not detect a rewrite by a host-root attacker who can use the private key.
+
+The seal shows that the key holder signed the chain. It does not show whether an
+attacker compromised the operator host.
+
+Launched sessions have signed-chain support on these providers:
+
+- `colima`
+- `docker-desktop`
+
+The `aws-ec2-ssm` and `gcp-vm` targets are preview-only and launch-blocked.
+Workcell does not provide remote-session signatures because it cannot launch
+these targets.
+
+The preview-only `apple-container` target writes unchained lifecycle records.
+It has no operator launch path. Workcell cannot seal those records, and
+`session verify` fails with a `no signable digest chain` reason.
+
+`workcell session export --format ocsf` does not include the seal. It rejects
+duplicate keys and excludes records for another session.
