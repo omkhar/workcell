@@ -62,7 +62,7 @@ compares each marked table with the corresponding parser key set.
 | `credentials` | Table | No | Credential owner | None | Provider and shared GitHub credential sources. |
 | `ssh` | Table | No | All providers | None | SSH configuration, hosts, and identities. |
 | `copies` | Table array | No | All providers | None | Files or directories for non-reserved targets. |
-| `network` | Table | No | All providers | None | Endpoint additions and removals. Colima enforces the result. |
+| `network` | Table | No | All providers | None | Endpoint additions and removals. Colima enforces the result only with `NETWORK_POLICY=allowlist`. |
 <!-- schema:root:end -->
 
 An include path is relative to the file that contains it. Workcell rejects cycles,
@@ -184,9 +184,11 @@ sources for owner-only access and stages them as read-only.
 <!-- schema:network:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `allow_endpoints` | `host:port` array | No | All providers | None | Add exact endpoint entries. Colima enforces the result. |
-| `deny_endpoints` | `host:port` array | No | All providers | None | Remove exact entries after all additions. |
+| `allow_endpoints` | `host:port` or `[ipv6]:port` array | No | All providers | None | Add exact endpoint entries. Colima enforces the result only with `NETWORK_POLICY=allowlist`. |
+| `deny_endpoints` | `host:port` or `[ipv6]:port` array | No | All providers | None | Remove exact entries after all additions. |
 <!-- schema:network:end -->
+
+Each port must be 1 through 65535.
 
 Provider selectors accept `claude`, `codex`, `copilot`, and `gemini`.
 
@@ -230,9 +232,9 @@ The launcher builds `ALLOW_ENDPOINTS` from these sources:
 It removes every `[network].deny_endpoints` entry from the session list and the
 list for bootstrap build containers.
 
-On `colima`, Workcell enforces the result with IPv4 and IPv6 `DOCKER-USER`
-rules. The rules allow resolved IP addresses and ports. They do not filter TLS
-host names.
+On `colima` with `NETWORK_POLICY=allowlist`, Workcell enforces the result with
+IPv4 and IPv6 `DOCKER-USER` rules. The rules allow resolved IP addresses and
+ports. They do not filter TLS host names.
 
 The enforcement scope is one Colima profile. It is not one session. The last
 launch replaces the rules for all active containers in that profile.

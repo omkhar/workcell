@@ -88,7 +88,7 @@ network controls. The launch summary states the result in
 
 The injection policy can add or deny endpoints through `[network]`. It cannot
 disable the default policy or change `NETWORK_POLICY`. See
-[Network egress](injection-policy.md#network-egress-network).
+[Network egress](injection-policy.md#network-rules).
 
 The reviewed endpoint inventory is in
 [outbound-endpoints.md](outbound-endpoints.md). The machine-readable source is
