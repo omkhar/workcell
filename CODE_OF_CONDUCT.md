@@ -1,38 +1,36 @@
 # Code of Conduct
 
-Workcell is a security-focused engineering project. We expect discussion and
-review to stay direct, technical, and respectful.
+Workcell is a security-focused engineering project. Keep each discussion
+direct, technical, and respectful.
 
-## Expected behavior
+## Required behavior
 
-- assume good intent and argue from evidence
-- critique ideas, code, and tradeoffs without attacking people
-- make space for newcomers, operators, and maintainers with different levels of
-  context
-- be clear when a claim is a requirement, an inference, or a preference
-- respect the project's security boundaries and disclosure process
+- Assume good intent. Use evidence.
+- Critique work. Do not attack a person.
+- Give new contributors the context that they need.
+- Identify each requirement, inference, and preference.
+- Follow the security boundary and private disclosure process.
 
-## Unacceptable behavior
+## Prohibited behavior
 
-- harassment, intimidation, or personal attacks
-- discriminatory or demeaning language
-- repeated bad-faith arguing, dogpiling, or deliberate thread derailment
-- publishing private information without permission
-- pressuring contributors to disclose security-sensitive details publicly
+- Do not harass a person. Do not threaten a person. Do not attack a person.
+- Do not use discriminatory language. Do not insult a person.
+- Do not intentionally disrupt a discussion.
+- Do not publish private information without permission.
+- Do not request public disclosure of security-sensitive details.
 
 ## Scope
 
-This applies to repository discussions, issues, pull requests, releases, and
-other project spaces.
+This code applies to repository discussions, issues, pull requests, releases,
+and other project spaces.
 
-## Reporting
+## Reports
 
-For conduct concerns, contact the maintainer privately through GitHub. For
-security-sensitive behavior or disclosures, use the process in
-[SECURITY.md](SECURITY.md).
+Report a conduct concern to the maintainer at `omkhar@gmail.com`.
+For a security report, follow [`SECURITY.md`](SECURITY.md).
 
 ## Enforcement
 
-Maintainers may edit, hide, lock, or remove content that violates this code of
-conduct and may limit participation when needed to protect the project and its
-contributors.
+The maintainer can edit, hide, lock, or remove content that violates this code.
+The maintainer can also limit participation to protect contributors or the
+project.

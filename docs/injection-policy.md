@@ -154,7 +154,7 @@ The resolver removes `resolver` and `materialization`. It writes a staged
 <!-- schema:ssh:end -->
 
 Workcell rejects group-writable or world-writable `known_hosts` files. It
-requires owner-only identity files.
+requires owner-owned and owner-only SSH configuration and identity files.
 
 `allow_unsafe_config` lowers assurance. It does not forward `SSH_AUTH_SOCK`.
 It skips the SSH directive safety check. It permits `Include` to load
@@ -162,7 +162,7 @@ other configuration. It permits `LocalCommand`, `PermitLocalCommand`, and
 `ProxyCommand` to run commands. It permits `PKCS11Provider` and
 `SecurityKeyProvider` to load provider libraries.
 
-The displayed assurance status for the session does not change.
+The session status reports lower-assurance unsafe SSH configuration.
 
 ### Copy keys
 

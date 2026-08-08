@@ -1,146 +1,47 @@
-# Copilot And Linux Local Compat Plan
+# GitHub Copilot CLI Delivery Record
 
-Status: historical planning context for the Copilot provider-parity phase and
-active planning context for Linux `local_compat`. The current Copilot support
-boundary lives in [provider-matrix.md](provider-matrix.md) and
-[examples/quickstart-copilot.md](examples/quickstart-copilot.md). This page
-does not promote Linux hosts or Linux `local_compat` to supported
-operator-launch status.
+This page records the shipped GitHub Copilot CLI adapter. It does not define
+Linux host support.
 
-As of the Copilot provider-parity implementation, Workcell has deterministic
-adapter, auth, policy, pin-verification, and smoke evidence for
-`--agent copilot`. Live provider-authenticated `copilot -p` certification with
-staged credentials remains a maintainer pre-signing gate for support-claim
-changes. The Linux `amd64` `local_compat` path remains blocked until a selected
-distro/runtime matrix has live host evidence and fail-closed diagnostics.
+## Shipped Controls
 
-## Current External Facts
+Workcell supports GitHub Copilot CLI as a Tier 1 provider adapter. The adapter
+runs inside the bounded runtime.
 
-- GitHub announced Copilot CLI general availability on 2026-02-25 and describes
-  it as a terminal coding agent that can plan, edit files, run commands, and
-  iterate with user-controlled approval modes:
-  <https://github.blog/changelog/2026-02-25-github-copilot-cli-is-now-generally-available/>
-- GitHub documents Copilot CLI installation through npm, Homebrew, WinGet, or
-  the install script. The npm path requires Node.js 22 or later:
-  <https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli>
-- GitHub documents `COPILOT_GITHUB_TOKEN` as an environment-token auth path and
-  says supported token types include fine-grained PATs with the Copilot Requests
-  permission, Copilot CLI OAuth tokens, and GitHub CLI OAuth tokens. Classic
-  PATs are not supported:
-  <https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference>
-- GitHub documents repository-wide Copilot instructions in
-  `.github/copilot-instructions.md`, path-specific
-  `.github/instructions/**/*.instructions.md`, and `AGENTS.md`:
-  <https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/overview>
-- Debian lists `amd64` and `arm64` as official released ports, and Debian 13
-  release notes list `amd64`, `arm64`, `armel`, `armhf`, `ppc64el`, `riscv64`,
-  and `s390x` as officially supported architectures:
-  <https://www.debian.org/ports/> and
-  <https://ddp-team.pages.debian.net/release-notes/en/html/whats-new.html>
-- Ubuntu Server documentation lists `amd64`, `arm64`, `ppc64el`, and `s390x`
-  as supported 64-bit architectures:
-  <https://ubuntu.com/server/docs/tutorial/basic-installation/>
+Workcell applies these controls:
 
-Popularity signals are use-case dependent. Server-oriented sources favor
-Debian-family systems, while desktop and gaming signals vary and may favor
-Arch-derived or Fedora-derived systems in some cohorts. Workcell should treat
-those signals as prioritization inputs only, not proof of supportability.
+- Workcell accepts a directly staged `copilot_github_token` credential.
+- The host-owned credential path stages the token.
+- A temporary handoff mount carries the token outside provider state.
+- The Workcell entrypoint removes the mounted token file before launch.
+- The wrapper exports `COPILOT_GITHUB_TOKEN` only to the managed child.
+- Workcell uses session-local `COPILOT_HOME` and `COPILOT_CACHE_HOME`.
+- Workcell does not mount host GitHub CLI authentication or Copilot state.
+- Workcell disables custom instructions on the managed path.
+- Workcell blocks options that can bypass Workcell policy.
 
-## Proposed PR Sequence
+The adapter does not use host keychains, `GH_TOKEN`, or `GITHUB_TOKEN`. It does
+not use host `~/.copilot`, `~/.config/github-copilot`, or
+`~/.cache/github-copilot` state.
 
-The Copilot-specific rows are retained as the sequence that led to the current
-provider-parity change. Remaining rows continue to track Linux `local_compat`
-and follow-on validation work.
+## Certification Gate
 
-1. Copilot discovery and fail-closed scaffold.
-   Record current Copilot CLI product behavior, unsupported diagnostics, unsafe
-   flag inventory, and control-plane risks without claiming support.
+Before you sign a support-claim change, complete non-destructive provider-e2e
+certification through Workcell. Use the staged `copilot_github_token` path.
+Repository tests do not replace this certification.
 
-2. Copilot auth and bootstrap.
-   Add the `copilot_github_token` credential key, auth-status explainability,
-   host-only staged-token handoff, and tests proving that host Copilot
-   provider state (`~/.copilot`, `~/.config/github-copilot`,
-   `~/.cache/github-copilot`), `GH_TOKEN`, `GITHUB_TOKEN`, host keychains, and
-   ambient GitHub CLI auth do not become safe-path inputs.
+## Operator Sources
 
-3. Copilot managed home and control plane.
-   Add session-local `COPILOT_HOME` and `COPILOT_CACHE_HOME`, managed
-   provider state, reviewed instruction import rules, repo-local Copilot
-   control-plane masking, MCP/LSP/plugin/hook defaults, telemetry/content
-   capture posture, and deterministic tests.
+Use [Provider Matrix](provider-matrix.md) for the current support boundary. Use
+[Quickstart: GitHub Copilot CLI](examples/quickstart-copilot.md) for operator
+instructions.
 
-4. Copilot launch and unsafe argument policy.
-   Map Workcell autonomy modes to Copilot CLI options, block permissive
-   Copilot flags that would bypass Workcell policy, add scenario coverage, and
-   keep the live provider check certification-only.
+## Linux Host Work
 
-5. Copilot live certification and support claim. Completed for the Tier 1
-   adapter path: the support-claim commit requires a non-destructive live
-   `copilot -p` certification with a staged token moved through the reviewed
-   host-mounted token handoff and transient runtime handoff path, then exported
-   as `COPILOT_GITHUB_TOKEN` only to the managed child process. The supported
-   provider matrix, quickstart, operator contract, requirements, and
-   release-facing evidence now track that gate.
+Workcell completed the Tier 1 Copilot provider adapter. Phase 13 is the next
+runtime-target candidate. It will evaluate one exact Linux amd64
+`local_compat` combination.
 
-6. Linux `amd64` `local_compat` research.
-   Select the first candidate matrix narrowly. The default candidate should be
-   Debian-family `amd64` first, with Ubuntu LTS and Debian stable as the
-   evidence anchors. Fedora and Arch remain follow-up candidates unless the
-   selected runtime evidence proves their host behavior separately.
-
-7. Linux `amd64` `local_compat` candidate.
-   Add exact host-support matrix rows, unsupported-combination diagnostics,
-   install/rollback guidance, deterministic tests, and live host certification
-   evidence. Stop at certification candidate unless the evidence supports a
-   stronger support tier.
-
-8. Vulnerability-validation loop.
-   After the support work above has landed or is concretely blocked, run the
-   vulnerability-validation workflow on latest `main` in isolated local
-   validation. Each true issue becomes its own empirical proof, fix, regression
-   test, review, PR, merge, and merged-main follow-up cycle.
-
-9. Optimization loop.
-   After correctness and security gates are stable, optimize Workcell and
-   Workcell workflows with baseline measurements, targeted changes,
-   post-change measurements, and no weakened invariants. Keep performance PRs
-   separate from support-claim or security-fix PRs unless a measured bottleneck
-   blocks the supported workflow.
-
-## Support Matrix Direction
-
-Do not add a generic Linux launch row. Use exact rows by host OS, host
-architecture, target kind, provider, assurance class, and reason.
-
-Initial candidate rows should preserve this shape:
-
-| Host family | Host arch | Target kind | Provider | Assurance | Status before certification |
-|---|---|---|---|---|---|
-| Debian stable | `amd64` | `local_compat` | Docker Desktop or selected compatible runtime | `compat` | blocked or certification candidate |
-| Ubuntu LTS | `amd64` | `local_compat` | Docker Desktop or selected compatible runtime | `compat` | blocked or certification candidate |
-| Fedora Workstation/Server | `amd64` | `local_compat` | selected compatible runtime | `compat` | unsupported until separately reviewed |
-| Arch Linux | `amd64` | `local_compat` | selected compatible runtime | `compat` | unsupported until separately reviewed |
-
-The machine-readable matrix now includes `host_distro` and
-`host_distro_version` columns. Current Linux rows use `any` wildcards and keep
-launch blocked; future candidate rows can be narrowed to exact Debian stable,
-Ubuntu LTS, Fedora, or Arch versions before any live certification claim.
-
-## Pre-Signing Gates
-
-For any commit that promotes Copilot, Linux `local_compat`, a support tier, a
-backend, or a certification-only path:
-
-- run the relevant live certification before signing
-- record host OS, distro, distro version, architecture, runtime version,
-  kernel, cgroup mode, Docker security features, Workcell commit SHA, dirty
-  state, command, timestamp, and cleanup status
-- rerun contract parity validators and the focused scenario tests
-- keep unsupported combinations fail-closed with explicit remediation text
-
-## Review Discipline
-
-Every PR stays single-purpose and draft-first. Before merge, sweep top-level PR
-comments, inline comments, unresolved review threads, configured async
-reviewers, and repo-owned CI. After merge, follow the merged `main` workflows
-and run repo readiness checks when the task scope includes merge follow-up.
+Use [Host Expansion Readiness](host-expansion-readiness.md) for the promotion
+gate. Use [Runtime Target Phase Record](runtime-target-phase-plan.md) for the
+phase status.
