@@ -121,6 +121,13 @@ The image build path uses a larger fixed set.
 Versioned runtime profiles add `EXTRA_ENDPOINTS`. These entries are part of the
 selected profile, not an operator environment override.
 
+`gemini_env` credentials that select Vertex AI add
+`aiplatform.googleapis.com:443`. Each valid location value also adds
+`<location>-aiplatform.googleapis.com:443`. Workcell accepts
+`GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_REGION`, `CLOUD_ML_REGION`,
+`VERTEX_LOCATION`, and `VERTEX_AI_LOCATION`. The fixed tables and
+hardening-profile conformance check do not list these regional additions.
+
 The injection policy can add `[network].allow_endpoints`. These operator
 entries are not in the fixed tables above.
 
@@ -136,9 +143,13 @@ The fixed source functions are in these files:
 - `scripts/lib/launcher/egress-endpoints.sh`
 - `scripts/workcell`
 
-The `hardening-profile-conformance` check compares these functions with
-`policy/hardening-profile.toml`. It checks both directions. It does not check
-`EXTRA_ENDPOINTS` in the versioned profile files.
+The credential-derived endpoint source is
+`internal/injection/render_credentials.go`.
+
+The `hardening-profile-conformance` check compares the fixed source functions
+with `policy/hardening-profile.toml`. It checks both directions. It does not
+check credential-derived endpoints or `EXTRA_ENDPOINTS` in the versioned
+profile files.
 
 Add each helper endpoint to its source function and the policy artifact. Update
 each profile endpoint in the applicable profile files. Also update this page.
