@@ -1,283 +1,123 @@
-# Runtime Target Expansion Plan
-
-This document is the durable planning surface for Workcell's runtime-target and
-deployment-reach expansion. It complements:
+# Runtime Target Expansion
+
+This page records the Workcell runtime-target program. It separates shipped
+targets, evaluation work, and future targets.
 
-- [ROADMAP.md](../ROADMAP.md) for high-level direction and non-goals
-- [runtime-target-phase-plan.md](runtime-target-phase-plan.md) for the
-  deterministic delivery-phase breakdown
-- [docs/implement-first-delivery-plan.md](implement-first-delivery-plan.md) for
-  the active slice that is in flight now
+The authoritative support source is
+[`policy/host-support-matrix.tsv`](../policy/host-support-matrix.tsv). Read the
+complete matrix row before you make a support decision.
 
-It exists to keep the longer program coherent across iterations without
-turning the roadmap into a checklist or overloading the active-slice plan with
-later-phase decisions.
-
-## Current Contract
-
-Today Workcell's supported Tier 1 contract is:
-
-- Apple Silicon macOS host
-- dedicated Colima VM plus hardened container
-- host-owned control plane, policy, audit, and detached session flows
-
-This program does not relax that contract. It expands deployment reach by
-introducing explicit runtime-target classes, support tiers, and review gates so
-new targets can be added without overstating equivalence to the current strict
-path.
-
-## Terms
-
-- `target kind`: the execution shape being selected, such as `local_vm`,
-  `local_compat`, `remote_vm`, or `managed_workstation`
-- `assurance class`: the support tier attached to a target, such as `strict` or
-  `compat`
-- `workspace transport`: how the workspace reaches the runtime, such as local
-  mount, isolated worktree mount, or remote materialization
-
-These are separate concepts in the control plane, docs, diagnostics, and
-session records.
-`strict` is reserved for targets that preserve the dedicated VM plus hardened
-container boundary and pass backend-specific invariant checks. Other supported
-targets must stay labeled `compat` or another explicitly lower-assurance class.
-
-## Planning Principles
-
-- keep one shared boundary and many thin adapters; do not hide real provider
-  differences behind a fake universal abstraction
-- keep the host control plane authoritative for policy, diagnostics, and audit
-- preserve the active session-platform slice as state, diagnostics, and target
-  metadata evolve
-- require explicit scenario evidence and operator verification material before
-  broadening support claims
-- treat managed workstations as a separate product mode from raw remote VMs
-- keep Kubernetes-backed execution out of this program
-
-## Recommended Support Order
-
-### Current strict target
-
-- `colima` remains the strict macOS default
-
-### First compatibility target with cross-platform ambition
-
-- `docker-desktop` is the first `compat` target with a cross-platform
-  expansion path, but the current supported row is limited to macOS arm64 in
-  the canonical support matrix
-- the macOS Docker Desktop `compat` path requires Docker seccomp support but
-  does not claim the strict Colima path's AppArmor/SELinux daemon posture
-- Linux and Windows Docker Desktop rows remain blocked until host-expansion
-  gates promote them with scenario evidence and operator verification material
-- every supported `docker-desktop` row must stay explicitly lower assurance
-  than the current Colima path
-
-### Remote VM targets
-
-- `aws-ec2-ssm` is the first `remote_vm` target
-- `gcp-vm` is the second `remote_vm` target on the same control-plane contract
-- `azure-vm` is deferred, not rejected; it follows as the next raw `remote_vm`
-  provider lane after the managed-workstation contract and discovery slice
-
-### Managed workstation targets
-
-- managed workstation contract and discovery is the next funded lane because
-  users have prioritized workstation-shaped environments over another raw VM
-  provider
-- `gcp-cloud-workstations` remains a candidate managed-workstation provider
-  track, but provider-specific enablement must wait until the
-  `managed_workstation` target contract is recorded
-- other managed-workstation candidates are evaluated separately from the raw
-  remote VM program
-
-## Program Workstreams
-
-### 1. Session platform parity
-
-- preserve and extend the shipped session surface during target-model and state
-  migration
-- carry target, assurance, and workspace-transport rendering into session
-  inspection and control flows, not only `doctor` and `inspect`
-
-### 2. Runtime target and state model
-
-- introduce explicit target identity and capability reporting
-- generalize session, audit, and lock state away from Colima-specific paths
-  while preserving compatibility reads
-- keep `colima` behavior unchanged until the new model is proven
-
-### 3. Shared auth and bootstrap
-
-- broaden resolver coverage and bootstrap handoffs on the same host-owned auth
-  path used by launcher, diagnostics, and operator tooling
-- make remote-target auth dependencies explicit before any cloud preview
-
-### 4. Trusted validation hosts and host compatibility
-
-- define a narrow trusted `linux/amd64` validation-host lane before broad
-  non-macOS claims
-- express support as `host OS x target kind x assurance class`
-- keep one canonical versioned capability and support-matrix artifact that
-  docs, diagnostics, fixture tests, and rollout guidance derive from
-- do not claim Linux or Windows `strict` parity until the same guarantees are
-  proven there
-
-### 5. Backend delivery
-
-- keep backend selection and ordering in this program doc rather than pulling
-  it forward into the active auth/bootstrap slice
-- extract `colima` behind the new target model first
-- add `docker-desktop` as the first `compat` target
-- add `aws-ec2-ssm` as the first `remote_vm` target
-- add `gcp-vm` as the second `remote_vm` target
-- define managed workstations as the next funded product-mode track before
-  shipping any managed-workstation backend
-- return to `azure-vm` as the following raw `remote_vm` provider lane after the
-  managed-workstation contract and discovery slice
-- require later cloud adapters to pass the shared remote-VM conformance harness
-  rather than redefining contract suites per provider
-- keep both managed-workstation backends and `azure-vm` behind their recorded
-  support-boundary and evidence gates
-
-### 6. Scenario evidence and operator verification
-
-- expand authenticated, lower-assurance, session-supervisor, migration, and
-  remote-workspace scenario coverage as each phase lands
-- treat comparison material, operator verification guidance, and rollout docs
-  as exit criteria rather than post-hoc documentation
-
-## Phase Gates
-
-### Gate 1: target taxonomy approved
-
-- target kind, assurance class, and workspace transport are frozen as separate
-  concepts
-- no support claim weakens the current strict Colima contract
-
-### Gate 2: Colima parity complete
-
-- Colima runs unchanged through the new target model
-- session and audit state are no longer Colima-shaped at the program level
-- session-surface parity is preserved
-
-Current repo status:
-
-- Gate 1 is implemented
-- Gate 2 is implemented
-- Gate 3 is implemented
-- Gate 4 is implemented
-- Gate 5 is implemented
-- Gate 6 is implemented
-- Gate 7 is implemented
-- Gate 8 is implemented
-- Gate 9 is implemented
-- the roadmap sequences GitHub Copilot CLI Tier 1 provider parity before the
-  Linux `amd64` `local_compat` certification candidate resumes
-
-### Gate 3: compatibility target certified
-
-- `docker-desktop` is feature-flagged, explicitly `compat`, and backed by
-  target-aware diagnostics
-- deterministic target-selection, state-routing, and fail-closed behavior are
-  proven under repo-required tests
-- rollback to the strict Colima path is documented and operator-verifiable
-- the canonical support matrix and validation-host evidence bound the support
-  claim for each published host combination
-- Linux and Windows support claims remain limited to what the evidence proves
-
-### Gate 4: first remote VM preview
-
-- remote workspace materialization is explicit and auditable
-- the remote target uses reviewed brokered access and does not require inbound
-  public SSH
-- the shared remote-VM conformance harness stays authoritative for the preview
-- the support boundary remains preview-only and is reflected in canonical
-  matrices plus rollout guidance
-- shared auth/bootstrap, validation-host support matrices, and scenario
-  evidence are in place
-
-### Gate 5: second remote VM on the same contract
-
-- the second cloud provider fits the same control-plane and audit model with
-  limited provider-specific delta
-- the unchanged shared conformance harness and canonical matrices still bound
-  the support claim
-
-### Gate 6: later expansion decision
-
-- demand and support load justify whether `azure-vm` or managed workstations
-  become funded follow-on work
-
-Current decision:
-
-- managed workstation contract and discovery is funded next because users have
-  prioritized workstation-shaped environments
-- `azure-vm` is deferred to the following raw `remote_vm` provider lane and
-  remains on the same remote-VM contract rather than being rejected
-- managed workstations stay separate from raw remote VMs and must record a
-  distinct lifecycle, trust model, support boundary, and validation strategy
-
-### Gate 7: managed workstation contract and discovery
-
-- define the provider-neutral `managed_workstation` target contract before any
-  managed-workstation backend ships
-- record the first provider-specific managed-workstation lane and its
-  certification boundary
-- preserve `azure-vm` as the next raw `remote_vm` follow-on after the
-  managed-workstation contract slice
-
-Current gate record:
-
-- [`docs/managed-workstation-contract.md`](managed-workstation-contract.md)
-  records the contract, support boundary, evidence model, and
-  `gcp-cloud-workstations` discovery lane
-- no managed-workstation backend or support claim is promoted by this gate
-
-### Gate 8: enterprise evidence baseline
-
-- publish an enterprise evidence map that links architecture, threat model,
-  support boundaries, provenance, SBOM, release signing, audit retention, and
-  validation evidence to current repo-local sources
-- keep SOC 2 and ISO 27001 mappings as evaluation aids, not certification claims
-- keep current gaps explicit so evidence language does not outrun support
-
-Current gate record:
-
-- [`docs/enterprise-evidence-baseline.md`](enterprise-evidence-baseline.md)
-  records the Phase 11 evidence map
-- no centralized enterprise administration, compliance certification, or broader
-  host support claim is promoted by this gate
-
-### Gate 9: host-expansion readiness
-
-- define support tiers and promotion rules for Linux and Windows host candidates
-- require support-matrix rows, docs, diagnostics, rollback guidance, and
-  certification evidence to land together for any host promotion
-- keep unsupported host combinations fail-closed with no automatic backend
-  fallback
-
-Current gate record:
-
-- [`docs/host-expansion-readiness.md`](host-expansion-readiness.md) records the
-  Phase 12 readiness model
-- Linux and Windows operator hosts remain unsupported until later promotion
-  changes satisfy the gate
-
-## Program Non-Goals
-
-- automatic backend fallback
-- a flat backend abstraction that hides real provider and runtime differences
-- treating `compat` targets as equivalent to the current strict Colima path
-- Kubernetes-backed execution modes in this program
-- folding managed workstations into the same target class as raw remote VMs
-- Linux or Windows `strict` parity claims before the same guarantees are
-  implemented and validated
-
-## Maintenance Expectations
-
-- update [ROADMAP.md](../ROADMAP.md) when direction, support tiers, or
-  non-goals change
-- update this document when sequencing, target order, or review gates change
-- update [docs/implement-first-delivery-plan.md](implement-first-delivery-plan.md)
-  when the active slice or immediate next slice changes
-- keep docs, support claims, and automated evidence aligned in the same change
-  before new target claims are treated as supported
+## Shipped Target Model
+
+Workcell records these items separately:
+
+- `target_kind` identifies the execution shape.
+- `target_provider` identifies the target implementation.
+- `target_assurance_class` identifies the boundary class.
+- The host-support matrix `status` and `launch` fields control operator use.
+- `workspace_transport` identifies how the workspace enters the target.
+
+An assurance class does not give support by itself. For example, a `compat`
+target can be supported, preview-only, or unsupported.
+
+## Current Status
+
+| Target and host | Matrix status | Operator launch | Available evidence |
+|---|---|---|---|
+| `local_vm/colima/strict` on macOS arm64 | `supported` | allowed | live certification |
+| `local_compat/docker-desktop/compat` on macOS arm64 | `supported` | allowed | live certification |
+| `remote_vm/aws-ec2-ssm/compat` on macOS arm64 | `preview-only` | blocked | broker-plan evidence and a certification lane |
+| `remote_vm/gcp-vm/compat` on macOS arm64 | `preview-only` | blocked | broker-plan evidence and a certification lane |
+| `local_vm/apple-container/per-session-vm` on macOS 26 arm64 | `preview-only` | blocked | evaluation evidence and evidence from the certification probe |
+| Linux amd64 Colima, AWS, and GCP rows | `validation-host-only` | blocked | `trusted-linux-amd64-validator` only |
+| Linux amd64 Docker Desktop row | `unsupported` | blocked | none |
+| Linux arm64 and Windows target rows | `unsupported` | blocked | none |
+
+The Workcell CLI accepts `colima`, `docker-desktop`, `aws-ec2-ssm`, and
+`gcp-vm` as target values. It does not accept `apple-container`, a managed
+workstation, or Azure as an operator target.
+
+Workcell defines a managed-workstation contract. Workcell has no
+managed-workstation CLI target or host-support matrix row.
+
+The AWS and GCP values expose reviewed dry-run broker plans. The operator
+launch path blocks both values. They do not provide supported remote execution.
+
+## Delivered Program Results
+
+Workcell delivered these program results:
+
+- a target-kind model, an assurance-class model, and Workcell-owned target state
+- target-aware session and audit records
+- shared host-owned authentication and bootstrap diagnostics
+- a canonical host-support matrix with fail-closed diagnostics
+- a provider-neutral remote-VM contract and conformance harness
+- a supported Docker Desktop compatibility target on macOS arm64
+- AWS SSM and GCP IAP remote-VM preview plans
+- a provider-neutral managed-workstation contract
+- an enterprise evidence baseline
+- a host-expansion readiness gate
+- an Apple `container` evaluation with a fail-closed macOS 26 guard
+
+The detailed delivery record is in
+[`runtime-target-phase-plan.md`](runtime-target-phase-plan.md).
+
+## Active Candidate
+
+Phase 13 is the next host-support candidate. The word `candidate` is a planning
+label, not a matrix status. The phase will evaluate one exact Linux amd64
+`local_compat` combination. It does not create Linux operator support.
+
+Any promotion must include all of these items in one change:
+
+- one exact distribution, distribution version, runtime, and architecture row
+- one exact `target_provider` value
+- fail-closed launch and diagnostic behavior outside that row
+- install, update, rollback, uninstall, and support-bundle procedures
+- deterministic repository tests
+- live certification on a real operator host
+- matrix, operator, and validation documents that contain the same support claim
+
+All current Linux `local_compat` rows stay `unsupported` and `blocked` until a
+promotion change meets these requirements.
+
+Workcell must not claim Linux `strict` support until it has an equivalent
+dedicated VM plus container boundary. Deterministic tests and live certification
+must confirm the strict guarantees.
+
+## Later Sequence
+
+The roadmap records these later phases:
+
+1. Linux arm64 and Raspberry Pi readiness
+2. enterprise identity and access
+3. signed policy-bundle distribution
+4. fleet inventory and centralized audit ingestion
+5. regulated-team proof harness and Windows investigation
+6. a managed-workstation provider preview, followed by Azure VM work
+
+The first managed-workstation discovery lane is `gcp-cloud-workstations`.
+Workcell has not shipped that backend. Phase 19 evaluates `azure-vm` on the
+`remote_vm` contract.
+
+## Program Rules
+
+- Keep the host control plane authoritative for policy, diagnostics, and audit.
+- Keep one shared boundary and use a thin adapter for each provider.
+- Do not use provider configuration as the security boundary.
+- Do not use automatic backend fallback.
+- Keep `compat` lower assurance than `local_vm/colima/strict`.
+- Keep managed workstations separate from raw remote VMs.
+- Keep Kubernetes-backed execution outside this program.
+- Add support claims only when code, diagnostics, documents, and evidence agree.
+
+## Evidence Sources
+
+- [Support tiers and status terms](support-tiers.md)
+- [Runtime target phase record](runtime-target-phase-plan.md)
+- [Remote VM contract](remote-vm-contract.md)
+- [Managed workstation contract](managed-workstation-contract.md)
+- [Host expansion readiness](host-expansion-readiness.md)
+- [Apple container evaluation](apple-container-evaluation.md)
+- [Validation scenarios](validation-scenarios.md)
+- [Roadmap](../ROADMAP.md)

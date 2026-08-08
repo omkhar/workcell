@@ -65,9 +65,10 @@ procedures.
 
 ## Phase 13 Scope
 
-Phase 13 will evaluate one Linux amd64 `local_compat` combination. The phase
-must select one exact distribution, version, runtime, and `target_provider`.
-The repository has not made this selection.
+Phase 13 will evaluate one Linux amd64 `local_compat` combination. Docker
+Desktop is the candidate `target_provider`. The phase must select one exact
+distribution, distribution version, and Docker Desktop version. The repository
+has not made those selections.
 
 The Linux amd64 Docker Desktop row stays `unsupported`, `blocked`, and
 `evidence=none`. A different runtime requires a new target-provider

@@ -1,24 +1,16 @@
 # AWS EC2 SSM Preview
 
-Workcell now exposes a preview-only `remote_vm/aws-ec2-ssm/compat` target
-selection path. This is intentionally narrower than the reviewed local Colima
-boundary:
+## Status
 
-- repo-required support today is deterministic target selection, diagnostics,
-  state-root routing, and shared remote-VM conformance reuse
-- live AWS execution remains certification-only
-- the reviewed live path must use brokered AWS Systems Manager Session Manager
-  access; inbound public SSH is out of bounds for the supported path
+Workcell exposes a dry-run broker plan for
+`remote_vm/aws-ec2-ssm/compat`. The host-support matrix marks this target
+`preview-only` and `blocked` on macOS arm64.
 
-Use this page with:
+Workcell blocks operator launch. Workcell does not implement live remote
+launch. Live certification validates AWS SSM broker access and network posture
+only. It does not validate a Workcell-managed remote session.
 
-- [docs/remote-vm-contract.md](remote-vm-contract.md)
-- [docs/validation-scenarios.md](validation-scenarios.md)
-- [policy/host-support-matrix.tsv](../policy/host-support-matrix.tsv)
-
-## Canonical Preview Plan
-
-Inspect the reviewed broker plan without attempting live remote execution:
+## Dry-Run Command
 
 ```bash
 workcell \
@@ -29,50 +21,43 @@ workcell \
   --dry-run
 ```
 
-The dry-run path emits:
+The plan reports `runtime_api=brokered` and
+`remote_broker=aws-ssm-session-manager`. It also reports
+`inbound_public_ssh=blocked` and `live_smoke=certification-only`.
 
-- `target_kind=remote_vm`
-- `target_provider=aws-ec2-ssm`
-- `target_assurance_class=compat`
-- `runtime_api=brokered`
-- `workspace_transport=remote-materialization`
-- `remote_access_model=brokered`
-- `remote_broker=aws-ssm-session-manager`
-- `inbound_public_ssh=blocked`
-- `live_smoke=certification-only`
+## Required Tools and Infrastructure
 
-`workcell --doctor` exposes the same support boundary through
-`support_matrix_*` plus the required host tools.
+The host must have `aws`, `session-manager-plugin`, and `jq`. The target must be
+an EC2 instance that AWS Systems Manager manages.
 
-## Host Prerequisites
+The instance role must include `AmazonSSMManagedInstanceCore`. The preview
+broker plan requires these IAM actions:
 
-The preview target expects these host-side tools and dependencies:
+- `ec2:DescribeInstances`
+- `ssm:DescribeInstanceInformation`
+- `ssm:StartSession`
+- `ssm:ResumeSession`
+- `ssm:TerminateSession`
 
-- `aws`
-- `session-manager-plugin`
-- an EC2 instance managed by AWS Systems Manager
-- an instance profile that includes `AmazonSSMManagedInstanceCore`
-- IAM permissions for `ec2:DescribeInstances`,
-  `ssm:DescribeInstanceInformation`, `ssm:StartSession`,
-  `ssm:ResumeSession`, and `ssm:TerminateSession`
+The certification identity also needs these inspection permissions:
 
-These are host prerequisites. They are not mounted into the reviewed local
-runtime boundary.
+- `sts:GetCallerIdentity`
+- `ec2:DescribeSecurityGroups`
+- `iam:GetInstanceProfile`
+- `iam:ListAttachedRolePolicies`
 
-## Live Certification Gate
+## Certification Scope
 
-Live AWS use is intentionally blocked on the default launch path until the
-operator performs the separate certification run on reviewed infrastructure.
+The certification script runs outside the Workcell runtime boundary. It uses
+host AWS credentials. Workcell does not stage or isolate these credentials.
 
-The certification lane must prove:
+The target must run and report SSM status `Online`. Its security groups must
+have no inbound rules. The direct broker command must succeed.
 
-- the selected target is reachable through Session Manager
-- no inbound public SSH is required
-- remote workspace materialization stays explicit and host-auditable
-- the brokered lifecycle and audit story match the shared `remote_vm`
-  contract
+The script also checks Workcell diagnostics and the dry-run broker plan. It
+does not copy a workspace or start a Workcell remote session.
 
-Run the certification smoke with an already reviewed SSM-managed EC2 target:
+## Certification Command
 
 ```bash
 WORKCELL_AWS_EC2_SSM_REGION=us-east-1 \
@@ -80,22 +65,22 @@ WORKCELL_AWS_EC2_SSM_TARGET_ID=i-1234567890abcdef0 \
   bash ./tests/scenarios/shared/test-aws-ec2-ssm-launch-smoke.sh
 ```
 
-The smoke fails unless the target is running, SSM-online, attached to a role
-with `AmazonSSMManagedInstanceCore`, has no inbound security-group rules, can
-run a brokered Session Manager command, and matches the Workcell preview broker
-plan.
-
-Do not sign a commit that claims supported AWS preview delivery until that
-live certification succeeds.
+Do not sign a commit that changes the AWS preview claim until live
+certification succeeds.
 
 ## Rollback
 
-Rollback is explicit:
+Do not use `--target aws-ec2-ssm`. Select a supported target from the
+host-support matrix.
 
-1. stop using `--target aws-ec2-ssm`
-2. return to the reviewed `--target colima` path
-3. remove any AWS preview target state under
-   `~/.local/state/workcell/targets/remote_vm/aws-ec2-ssm/`
+Workcell does not provision or remove the cloud VM. If provider cleanup is
+necessary, the operator must use AWS tools.
 
-There is no silent fallback from the AWS preview target onto Colima or Docker
-Desktop.
+After the operator selects `--target aws-ec2-ssm`, Workcell must not select
+Colima or Docker Desktop automatically.
+
+## Authoritative Sources
+
+- [Remote VM Contract](remote-vm-contract.md)
+- [Host-Support Matrix](../policy/host-support-matrix.tsv)
+- [Validation Scenarios](validation-scenarios.md)
