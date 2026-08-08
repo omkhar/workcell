@@ -155,6 +155,7 @@ The resolver removes `resolver` and `materialization`. It writes a staged
 
 Workcell rejects group-writable or world-writable `known_hosts` files. It
 requires owner-owned and owner-only SSH configuration and identity files.
+Identity basenames must be unique. They must not be `config` or `known_hosts`.
 
 `allow_unsafe_config` lowers assurance. It does not forward `SSH_AUTH_SOCK`.
 It skips the SSH directive safety check. It permits `Include` to load
