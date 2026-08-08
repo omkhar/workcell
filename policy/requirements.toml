@@ -220,7 +220,6 @@ docs = [
   "docs/workcell-system-design.md",
   "docs/validation-scenarios.md",
   "docs/runtime-target-phase-plan.md",
-  "docs/implement-first-delivery-plan.md",
   "ROADMAP.md",
 ]
 
@@ -229,7 +228,7 @@ title = "Explicit compatibility backend selection"
 summary = "Workcell exposes explicit runtime target selection for the reviewed strict Colima path and the lower-assurance docker-desktop compat path, keeps per-target state roots distinct, and fails closed when a selected target is unsupported or unhealthy."
 workflows = ["launch_target_backend"]
 evidence = ["tests/scenarios/shared/test-compat-target-dry-run.sh", "tests/scenarios/shared/test-docker-desktop-launch-smoke.sh"]
-docs = ["README.md", "man/workcell.1", "docs/validation-scenarios.md", "docs/workcell-system-design.md", "docs/runtime-target-phase-plan.md", "docs/implement-first-delivery-plan.md"]
+docs = ["README.md", "man/workcell.1", "docs/validation-scenarios.md", "docs/workcell-system-design.md", "docs/runtime-target-phase-plan.md"]
 
 [functional.FR-012]
 title = "Preview AWS remote VM target"
