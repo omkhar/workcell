@@ -5,22 +5,22 @@ through a native control-plane mapping.
 
 ## Current support
 
-| Provider | Tier 1 surface today | Managed control plane | Long-lived auth inputs | Notes |
+| Provider | Tier 1 surface | Managed control plane | Staged inputs | Notes |
 |---|---|---|---|---|
-| Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | direct staged `codex_auth` and `codex-home-auth-file` host reuse are supported |
-| Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | direct staged `claude_auth` and `claude_api_key` are supported; the built-in macOS resolver scaffold remains fail-closed |
-| GitHub Copilot CLI | CLI | Workcell-owned session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, and GitHub Copilot config/cache directories, host-mounted token handoff plus transient runtime handoff, logs, cache state, custom instructions disabled, and skill/dynamic-retrieval overrides blocked | `copilot_github_token` | supported Copilot token credential: a directly staged `copilot_github_token`; Workcell removes the token file and staged direct-mount copy from direct runtime mounts, passes a temporary handoff mount outside provider state, runs the Workcell entrypoint as PID 1 for token handoff launches, exports it as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child after unlinking the runtime handoff file, and does not use host `gh` auth, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, or host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) |
+| Codex | CLI | `~/.codex/config.toml`, `managed_config.toml`, `requirements.toml`, rules, MCP config, rendered `AGENTS.md` | `codex_auth` | Workcell supports directly staged `codex_auth` and `codex-home-auth-file` host reuse. |
+| Claude | Claude Code CLI | `~/.claude/settings.json`, rendered `CLAUDE.md`, `.mcp.json`, auth mirrors, reviewed Bash hook | `claude_auth`, `claude_api_key`, `claude_mcp` | Workcell supports directly staged `claude_auth` and `claude_api_key`. The built-in macOS resolver fails closed. |
+| GitHub Copilot CLI | CLI | Session-local `COPILOT_HOME`, `COPILOT_CACHE_HOME`, and `~/.config/github-copilot` | `copilot_github_token` | Workcell supports a directly staged `copilot_github_token`. See the [GitHub Copilot CLI Delivery Record](copilot-linux-local-compat-plan.md). |
 | Gemini | Gemini CLI | `~/.gemini/settings.json`, rendered `GEMINI.md`, `.env`, OAuth creds, `projects.json`, trusted folders | `gemini_env`, `gemini_oauth`, `gemini_projects`, `gcloud_adc` | Gemini's own sandbox is not the Tier 1 boundary here; `gcloud_adc` is supplemental to Vertex config |
 
 ### Gemini CLI account change
 
-On June 18, 2026, Gemini CLI stopped service for free, Pro, and Ultra personal
-accounts. Gemini CLI access remains available through Gemini Code Assist
+On June 18, 2026, Google ended Gemini CLI service for free, Pro, and Ultra
+personal accounts. Gemini CLI access remains available through Gemini Code Assist
 Standard and Enterprise licenses. It also remains available through paid Gemini
 and Gemini Enterprise Agent Platform API keys. See the
 [Google announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/).
 
-The Gemini Tier 1 adapter remains supported for these active auth paths. Use
+The Gemini Tier 1 adapter supports these auth paths. Use
 `gemini_oauth` only for reviewed cached OAuth state. Use `gemini_env` for
 Gemini Code Assist (GCA), a paid API key, or Vertex environment configuration.
 Use `gcloud_adc` only as a Vertex supplement. It is not a standalone auth path.
@@ -30,22 +30,22 @@ Google, not Workcell, refuses the retired account types.
 
 | Provider | Target Tier 1 surface | Required control plane | Required auth input | Support status |
 |---|---|---|---|---|
-| Google Antigravity CLI | `workcell --agent antigravity --workspace ...` | session-local provider home/cache, settings, permissions, subagents, plugins, MCP, sandbox state, hooks, and reviewed instruction imports once official CLI provenance is pinned | explicit staged Google auth material, exact key names still pending official install/auth implementation | fail-closed scaffold; not current support |
+| Google Antigravity CLI | `workcell --agent antigravity --workspace ...` | Workcell must map or block settings, permissions, subagents, plugins, MCP, hooks, and instructions. | Workcell must define the exact staged credential names. | `unsupported`; Workcell has not pinned official CLI provenance. |
 
-The Copilot parity plan at
+The Copilot delivery record at
 [docs/copilot-linux-local-compat-plan.md](copilot-linux-local-compat-plan.md)
-is historical planning context; the current support boundary is the table
-above and the quickstart in
+describes the shipped controls. The current support boundary is the table above
+and the quickstart in
 [docs/examples/quickstart-copilot.md](examples/quickstart-copilot.md).
 
 GitHub Copilot CLI has interactive and programmatic modes. It accepts an
 environment token and a configurable `COPILOT_HOME`. It also has permissive
 tool flags. The Workcell adapter maps or blocks these surfaces.
 
-A live, authenticated `copilot -p` test is a pre-signing gate. Run it before a
-signed commit changes the Copilot support claim.
+Before you sign a Copilot support-claim change, complete the live certification
+in the Copilot delivery record.
 
-Antigravity remains unsupported and fails closed. Before support, Workcell must
+Antigravity remains unsupported and fails closed. Before Workcell supports Antigravity, it must
 add a pinned install path, explicit auth, an adapter, tests, and live
 certification.
 
@@ -53,12 +53,12 @@ For provider auth maturity and rollout caveats, see
 [docs/injection-policy.md](injection-policy.md) and
 [docs/provider-bootstrap-matrix.md](provider-bootstrap-matrix.md).
 
-## Tiering rule
+## Tier Rules
 
-- Tier 1: provider CLI runs fully inside the bounded runtime
-- Tier 2: GUI or IDE surface is only a client to that same bounded runtime
-- Tier 3: host-native GUI, cloud, or web-only guidance with no claim of
-  equivalent local isolation
+- A Tier 1 provider CLI runs fully inside the bounded runtime.
+- A Tier 2 GUI or IDE is a client of the bounded runtime.
+- A Tier 3 surface runs outside the bounded runtime. Workcell makes no
+  equivalent local isolation claim.
 
 Copilot cloud agent and Copilot IDE extensions are Tier 3. Antigravity desktop
 and IDE surfaces are also Tier 3. Host-native provider CLIs are Tier 3. Only a
