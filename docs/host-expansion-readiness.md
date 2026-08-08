@@ -86,15 +86,17 @@ One promotion change must include all these items:
 
 - Replace the applicable wildcard row with the exact host and target row.
 - Add fail-closed launch behavior and clear diagnostics.
+- Add a fail-closed gate for the selected Docker Desktop version.
 - Add install, update, uninstall, rollback, and support-bundle procedures.
 - Add deterministic repository tests for the selected row.
 - Add negative tests for all unsupported combinations.
 - Complete live certification on a real operator host.
 - Update operator, support, and validation documents with the same claim.
 
-The live certification must test the same distribution, version, runtime, and
-provider that the matrix row names. The rollback must disable or remove the new
-path. Regression tests must protect the current supported paths.
+The live certification must test the host and target that the exact matrix row
+names. It must also test the selected Docker Desktop version. The rollback must
+disable or remove the new path. Regression tests must protect the current
+supported paths.
 
 ## Fail-Closed Behavior
 

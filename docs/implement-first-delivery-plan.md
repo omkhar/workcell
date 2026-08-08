@@ -29,6 +29,7 @@ Before promotion, do all these actions:
 
 - Replace the wildcard row with one exact host and target row.
 - Block launch outside that row with clear diagnostics.
+- Add a fail-closed gate for the selected Docker Desktop version.
 - Add deterministic selection and negative tests.
 - Complete live certification on the selected operator host.
 - Add lifecycle, support-bundle, operator, and validation documents.
