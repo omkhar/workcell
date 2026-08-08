@@ -28,7 +28,7 @@ Phase 12 keeps these evidence lanes separate:
 
 The `evidence` field does not record every Phase 12 lane. CI-proven and locally
 mirrored deterministic checks use `repo-required`. Live-host certification uses
-`certification-only`. `manual-only` records supplemental verification. `none`
+`certification-only`. `manual-only` requires recorded manual verification. `none`
 makes no evidence claim.
 
 The word `candidate` is a phase label. It is not a matrix value. Read the
