@@ -190,6 +190,11 @@ sources for owner-only access and stages them as read-only.
 <!-- schema:network:end -->
 
 Each port must be 1 through 65535.
+A host name can contain ASCII letters, digits, periods, and hyphens. It must not
+start with a period or contain two periods.
+
+A numeric dotted value must be a valid IPv4 address. A bracketed value must be
+a valid IPv6 address.
 
 Provider selectors accept `claude`, `codex`, `copilot`, and `gemini`.
 
@@ -225,6 +230,9 @@ The launcher builds `ALLOW_ENDPOINTS` from these sources:
 - `provider_auth_recovery_extra_endpoints` for Gemini without selected auth.
 - `target_broker_endpoints`.
 - `credential_extra_endpoints`.
+- Google account authentication endpoints from a selected `gemini_env` mode.
+- Global and location-specific Vertex endpoints from a selected `gemini_env`
+  mode.
 - Versioned profile `EXTRA_ENDPOINTS`.
 - `[network].allow_endpoints`.
 - `snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443` for a
