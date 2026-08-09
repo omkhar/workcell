@@ -82,8 +82,9 @@ fail-closed dual-stack firewall in the VM `DOCKER-USER` chain. It permits only
 reviewed `host:port` entries and drops other egress. It stops the launch if it
 cannot contain IPv6.
 
-Only Colima applies the per-session allowlist. Other targets use their own
-network controls. The launch summary states the result in
+Only Colima applies the profile-wide allowlist. The last allowlist launch
+replaces rules for all active containers in that profile. Other targets use
+their own network controls. The launch summary states the result in
 `egress_enforcement=`.
 
 The injection policy can add or deny endpoints through `[network]`. It cannot
