@@ -1,88 +1,75 @@
-# Security Findings Validation - 2026-04-24
+# Security Finding Validation, 2026-04-24
 
 Repository: `omkhar/workcell`
+
 Validation branch: `codex/security-findings-remediation`
+
 Baseline commit: `e0268f7711ad3cb61102eb313c2f5b3715188a39`
-Patch state: main-based signed PR patch.
-Scope: four Codex scanner findings from the 2026-04-24 CSV export, validated against the PR #157 head.
 
-## Summary
+Scope: Four Codex scanner findings from the 2026-04-24 CSV export, validated
+against the PR 157 head.
 
-All four reported findings were genuine in the validated branch. The fixes are prepared as a separate security follow-up after PR #157 and should not be merged until #157 is on `main`.
+## Result
+
+All four findings were genuine. The [signed remediation commit](https://github.com/omkhar/workcell/commit/860e21f6dae310aafb14956c33fdc462faa5ee72) later merged to `main`.
 
 | ID | Component | Original severity | Result | Retriaged severity |
-| --- | --- | --- | --- | --- |
-| F1 | `scripts/repo-publish-pr.sh` | high | fixed | high |
-| F2 | `internal/metadatautil/validate.go` | medium | fixed | medium |
-| F3 | `internal/authresolve`, `scripts/workcell` | medium | fixed | high |
-| F4 | `internal/remotevm/fake_target.go` | informational | fixed | low |
+|---|---|---|---|---|
+| F1 | `scripts/repo-publish-pr.sh` | High | Fixed | High |
+| F2 | `internal/metadatautil/validate.go` | Medium | Fixed | Medium |
+| F3 | `internal/authresolve`, `scripts/workcell` | Medium | Fixed | High |
+| F4 | `internal/remotevm/fake_target.go` | Informational | Fixed | Low |
 
-## Findings
+## F1: Publication Tool Resolution
 
-### F1: Publication wrapper trusted tool resolution
+The publication wrapper used Git and jq from a caller-controlled path before it
+checked `pr-parity` evidence. This was a host code-execution and publication
+integrity risk.
 
-Original claim: the repo-local publication wrapper ran `git` and `jq` through caller-controlled `PATH` before enforcing PR-parity evidence.
+The fix gave the wrapper a sanitized trusted entry point and trusted absolute
+Git and jq paths. The regression test puts fake Bash, dirname, Git, and jq tools
+first in `PATH`. The wrapper creates the correct dry-run plan, and no fake tool
+runs.
 
-Verification result: genuine. The wrapper is host-side publication control-plane code, so hostile interpreter/tool resolution before parity enforcement is a host code execution and publication-integrity risk.
+## F2: `pull_request_target` YAML Bypass
 
-Fix: `scripts/repo-publish-pr.sh` now enters through the sanitized trusted entrypoint and resolves trusted absolute `git` and `jq` paths before parity checks.
+Line-pattern checks accepted inline YAML that hid job permissions, reusable
+workflow calls, or external actions.
 
-Evidence: `tests/scenarios/shared/test-publish-pr-dry-run.sh` includes a poisoned `PATH` with fake `bash`, `dirname`, `git`, and `jq`; the wrapper still publishes a dry-run plan and none of the fake tools execute.
+The fix parses the YAML AST. It rejects non-empty top-level permissions,
+job-level permissions, reusable workflow calls, action steps, and checkout in
+block or flow form. Unit tests cover each inline form.
 
-### F2: `pull_request_target` YAML parser bypass
+## F3: Codex Resolver Test Variable
 
-Original claim: line-oriented regex checks accepted inline YAML mappings that could hide job permissions, reusable workflows, or external action use.
+The launcher forwarded `WORKCELL_TEST_CODEX_AUTH_FILE`. The resolver could use
+that value instead of the fixed `~/.codex/auth.json` path. A caller could direct
+the resolver to another readable file.
 
-Verification result: genuine. Flow-style YAML bypassed the line regex shape while preserving the same workflow semantics.
+The fix removed the resolver support for that variable. The launcher rejects
+inherited harness-only resolver values before bundle preparation. Tests use a
+synthetic home or an internal probe that stages data.
 
-Fix: `isSafePullRequestTargetWorkflow` now parses the workflow YAML AST and rejects non-empty top-level permissions, job-level permissions, reusable workflow `uses`, step `uses`, and checkout regardless of block or flow style.
+Regression tests prove that the resolver ignores the legacy value, the launcher
+rejects it, and neither component forwards it.
 
-Evidence: `internal/metadatautil/workflow_validation_test.go` covers inline job permissions, inline job `uses`, inline step `uses`, and inline checkout.
+## F4: Fake Remote Target Path Traversal
 
-### F3: Codex resolver harness env disclosure
+The fake remote target joined target and session identifiers to state paths
+without a complete segment check. Public AWS target identifiers had a separate
+check, but the reusable fake target did not.
 
-Original claim: `WORKCELL_TEST_CODEX_AUTH_FILE` could redirect the Codex host-auth resolver to an arbitrary operator-readable file.
-
-Verification result: genuine. The launcher forwarded the test env var into resolver execution, and the resolver honored it as a replacement for the fixed `~/.codex/auth.json` contract.
-
-Fix: the resolver no longer recognizes `WORKCELL_TEST_CODEX_AUTH_FILE`; `scripts/workcell` rejects harness-only resolver env vars before bundle preparation and no longer forwards caller-controlled test resolver env. Tests use synthetic `HOME` fixtures or self-staging probe internals instead.
-
-Evidence: `internal/authresolve` includes a regression test proving the legacy env var is ignored. `internal/testkit` statically checks that the launcher rejects harness-only resolver env before bundle preparation and does not forward caller-controlled values.
-
-### F4: Fake remote VM path traversal
-
-Original claim: fake remote VM target IDs were joined directly into filesystem paths used by materialization removal and session record writes.
-
-Verification result: genuine, currently low severity. Public AWS CLI target IDs are separately constrained, but the internal fake target and conformance harness must be safe before reuse by later remote VM provider code.
-
-Fix: `FakeTarget` validates target provider, target ID, materialization ID, and session ID as single path segments before any state-root path join.
-
-Evidence: `internal/remotevm/fake_target_test.go` rejects traversal in target, provider, materialization, and session identifiers.
-
-## Review Lenses
-
-Applied review lenses: security exploitability, SWE fixability/regression risk, and engineering-management sequencing/scope. The review outcome is that all four findings are genuine and should be remediated. This patch is based on the merged Phase 7 mainline after PR #157. If reviewers want smaller review units, split by commit into publication/workflow hardening, credential resolver boundary, and remote VM confinement.
+The fix validates provider, target, materialization, and session identifiers as
+single path segments before a state-root join. Unit tests reject traversal in
+each identifier class.
 
 ## Validation
 
-Focused validation:
+The remediation passed focused authentication, metadata, remote-target, and
+test-kit Go tests. It also passed resolver, publication, manifest, operator
+contract, requirements, dead-code, repository-hygiene, and full repository
+validation.
 
-```sh
-go test ./internal/authresolve ./internal/authpolicy ./internal/metadatautil ./internal/remotevm ./internal/testkit
-bash ./tests/scenarios/shared/test-codex-resolver-launcher.sh
-bash ./tests/scenarios/shared/test-publish-pr-dry-run.sh
-bash ./scripts/verify-control-plane-manifest.sh
-```
-
-Contract and repo validation:
-
-```sh
-bash ./scripts/verify-operator-contract.sh
-bash ./scripts/verify-requirements-coverage.sh
-bash ./scripts/check-dead-code.sh
-bash ./scripts/check-public-repo-hygiene.sh
-/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh
-./scripts/workcell --gc
-```
-
-Result: all commands passed on the patched worktree.
+See the [PoC matrix](security-findings-2026-04-24-poc-matrix.md) and
+[mutation results](security-findings-2026-04-24-mutation-results.md) for the
+replayable evidence.

@@ -1,99 +1,72 @@
-# Requirements Validation
+# Requirements and Validation
 
-Workcell now keeps:
+Workcell keeps two machine-readable contract files:
 
-- a normative operator workflow contract in
-  [`policy/operator-contract.toml`](../policy/operator-contract.toml)
-- a requirement-to-doc-and-evidence mapping in
-  [`policy/requirements.toml`](../policy/requirements.toml)
+- [`policy/operator-contract.toml`](../policy/operator-contract.toml) defines
+  supported public workflows.
+- [`policy/requirements.toml`](../policy/requirements.toml) maps requirements to
+  documents and automated evidence.
 
-## Purpose
+## Operator Contract
 
 The operator contract defines:
 
-- which public workflows are supported
-- their canonical syntax and compatibility aliases
-- where those workflows must be discoverable
-- which docs and automated evidence currently back each public workflow
+- A stable identifier for each public workflow.
+- Canonical syntax and compatibility aliases.
+- Help, README, manpage, and document locations.
+- Automated evidence for the workflow.
+- Required remediation text and alias probes when applicable.
 
-The requirements matrix does three things:
+It is the command inventory source. The requirements matrix is not a command
+inventory.
 
-- names the current functional and nonfunctional requirements that the repo is
-  claiming as implemented
-- links functional requirements to stable workflow ids from the operator
-  contract
-- points each requirement at concrete automated evidence and supporting
-  documentation
+## Requirements Matrix
 
-This is meant to reduce drift between:
+The requirements matrix:
 
-- what the docs say Workcell does
-- what the tests and validation scripts actually prove
-- what maintainers treat as the supported contract
+- Lists current functional and nonfunctional requirements.
+- Links functional requirements to operator workflow identifiers.
+- Links each requirement to current evidence and documents.
 
-## Validation Rule
+Do not add planned behavior as an implemented requirement.
 
-`./scripts/verify-requirements-coverage.sh` validates that:
+## Validators
 
-- the matrix is syntactically valid
-- functional and nonfunctional requirement sections are both present
-- requirement ids and titles are unique
-- every requirement cites at least one automated evidence file
-- every evidence and documentation path is repo-relative and exists in the repo
-- every release-facing Markdown example and the current release-evaluation docs
-  (`docs/provider-matrix.md`, `docs/validation-scenarios.md`, and
-  `docs/enterprise-rollout.md` when present) appear in at least one requirement
-  `docs` array
+`./scripts/verify-requirements-coverage.sh` checks these conditions:
 
-`./scripts/verify-operator-contract.sh` validates that:
+- TOML syntax is valid.
+- Functional and nonfunctional sections exist.
+- Requirement identifiers and titles are unique.
+- Each requirement has at least one automated evidence file.
+- Each evidence and document path is repository-relative and exists.
+- Release examples occur in a requirement document list. The list also
+  includes `docs/provider-matrix.md`, `docs/validation-scenarios.md`, and
+  `docs/enterprise-rollout.md` when those files exist.
 
-- every public workflow in `policy/operator-contract.toml` is mapped to at
-  least one requirement
-- every requirement workflow reference resolves to a declared workflow id
-- every workflow-cited doc and evidence path exists and is also cited by the
-  referenced requirements
-- required help, README, and manpage surfaces contain the contract-declared
-  workflow syntax
-- compatibility aliases still pass their contract-declared alias probes
-- contract-declared remediation copy still exists in the launcher source
+`./scripts/verify-operator-contract.sh` checks these conditions:
 
-Both checks run through the normal validation entrypoints, including
-`./scripts/dev-quick-check.sh` and `./scripts/validate-repo.sh`.
+- Each public workflow maps to at least one requirement.
+- Each requirement workflow reference exists.
+- Workflow evidence and documents also occur in the linked requirements.
+- Each declared discovery surface contains the canonical syntax.
+- Compatibility aliases pass their declared probes.
+- Required remediation text remains in the launcher.
 
-## Scope
+Both validators run in the quick and full repository validation paths.
 
-The requirements matrix is intentionally not the command-inventory source of
-truth. It is about traceability for the supported repo contract, not every
-possible implementation detail.
-
-It should cover:
-
-- the main managed launch path
-- host-side operator commands
-- supported install and uninstall surfaces
-- auth and injection behavior
-- assurance and audit behavior
-- release and reproducibility guarantees
-- newly added product capabilities such as session inventory
-
-It should not be used to smuggle in speculative roadmap items that are not yet
-implemented.
-
-## Maintenance Rules
+## Maintenance Rule
 
 When a supported requirement changes:
 
-1. update `policy/operator-contract.toml` when the public workflow surface,
-   canonical syntax, discoverability, compatibility status, docs, or evidence
-   changes
-2. update `policy/requirements.toml`
-3. update or add the automated evidence
-4. update the docs that explain the requirement
-5. rerun both validators
+1. Update the operator contract if the public workflow, syntax, alias,
+   discovery surface, document, or evidence changes.
+2. Update the requirements matrix.
+3. Add or update automated evidence.
+4. Update the explanatory documents.
+5. Run both validators.
 
-If a requirement cannot point to real automated evidence, it is not ready to be
-claimed as part of the canonical supported contract.
+If a requirement has no automated evidence, do not claim it as part of the
+canonical supported contract.
 
-When adding a new Markdown file under `docs/examples/`, update
-`policy/requirements.toml` in the same change so the release-facing example
-docs remain machine-checked.
+When you add a Markdown file under `docs/examples/`, add it to an applicable
+requirement in the same change.
