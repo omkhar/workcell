@@ -306,18 +306,25 @@ Do not reuse its tag.
 
 Use this procedure after a maintainer-key compromise:
 
-1. Publish the key revocation data.
-2. Remove the key from the GitHub account.
-3. Create a new signing key.
-4. Register the new key.
-5. Audit commits and tags from the affected period.
-6. Publish an advisory for each affected release.
-7. Patch `main` through the normal PR process.
-8. Select a new patch version.
-9. Use the new key to create the signed tag.
-10. Verify the signed tag.
-11. Push the signed tag.
-12. Follow the Release workflow to completion.
+1. Disconnect the affected host from all networks.
+2. Preserve essential evidence under the [incident-response procedure](incident-response.md#4-evidence-preservation).
+3. Exclude private-key material from the evidence.
+4. Use a separate trusted system for all revocation, recovery, and release steps.
+5. Publish the key revocation data.
+6. Remove the key from the GitHub account.
+7. Revoke each other credential accessible from the affected host at its source.
+8. Record each revocation time.
+9. Rotate each revoked credential.
+10. Create a new signing key.
+11. Register the new key.
+12. Audit commits and tags from the affected period.
+13. Publish an advisory for each affected release.
+14. Patch `main` through the normal PR process.
+15. Select a new patch version.
+16. Use the new key to create the signed tag.
+17. Verify the signed tag.
+18. Push the signed tag.
+19. Follow the Release workflow to completion.
 
 Do not re-sign an existing tag.
 Do not remove the immutable audit record.
