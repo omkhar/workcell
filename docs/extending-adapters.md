@@ -32,7 +32,7 @@ substitute your real key and target.
      the reserved target makes the destination Workcell-owned so a `[[copies]]`
      entry cannot clobber it (see the "no writes into Workcell-managed
      control-plane paths" limit in
-     [injection-policy.md](injection-policy.md#deliberate-limits)).
+     [injection-policy.md](injection-policy.md#explicit-limits)).
    - Guardrail: `TestScopedCredentialKeysHaveContainerPaths` and
      `TestCredentialContainerPathsRootedAtHostInputs` in
      `internal/adapters/adapters_test.go` fail if the mount path is missing or
@@ -49,7 +49,7 @@ substitute your real key and target.
    pass Keychain or host-agent access into the runtime.
    - Invariant [§1 host secrets stay outside the default trust boundary](invariants.md#1-host-secrets-stay-outside-the-default-trust-boundary):
      resolver-backed auth is host-side preprocessing only
-     ([injection-policy.md](injection-policy.md#provider-auth-maturity)).
+     ([Provider Bootstrap Matrix](provider-bootstrap-matrix.md#current-matrix)).
 
 3. **Confirm rendering picks up the key.** Rendering is table-driven off
    `adapters.CredentialContainerPaths()` in
@@ -59,7 +59,7 @@ substitute your real key and target.
    - Invariant [§1](invariants.md#1-host-secrets-stay-outside-the-default-trust-boundary):
      a source under the workspace is rejected so the original secret path is not
      also exposed through the workspace mount
-     ([injection-policy.md](injection-policy.md#how-it-works)).
+     ([injection-policy.md](injection-policy.md#security-boundary)).
 
 4. **Seed the credential into the provider home.** In
    `runtime/container/home-control-plane.sh`, copy the mounted credential into
@@ -76,10 +76,12 @@ substitute your real key and target.
      the credential is copied from a read-only mount into session-local state and
      the direct mount is not persisted back into the baseline.
 
-5. **Document the key.** Add a row to the credential-keys table and the
-   provider-auth-maturity table in [injection-policy.md](injection-policy.md),
-   update [adapter-control-planes.md](adapter-control-planes.md) if the managed
-   file set changes, and add the key to the adapter's `README.md` auth section.
+5. **Document the key.** Add a row to the
+   [credential keys](injection-policy.md#credential-keys) table.
+   Add a row to the
+   [Provider Bootstrap Matrix](provider-bootstrap-matrix.md#current-matrix).
+   Update [adapter-control-planes.md](adapter-control-planes.md) if the managed
+   file set changes. Add the key to the adapter's `README.md` auth section.
    - Also update the operator status surface: `print_injection_status` in
      `scripts/workcell` prints a hard-coded `supported_credential_keys=...` list
      when no policy is loaded, so a new key is accepted by the table-driven Go
@@ -111,7 +113,7 @@ substitute your real key and target.
   (steps 2, 3, 4)
 - [§2 writes stay inside the intended workspace](invariants.md#2-writes-stay-inside-the-intended-workspace)
   (step 1: reserved target ownership)
-- Injection-policy [deliberate limits](injection-policy.md#deliberate-limits):
+- Injection-policy [explicit limits](injection-policy.md#explicit-limits):
   no arbitrary env-var secret injection, no `[[copies]]` into managed paths
   (steps 1, 3)
 

@@ -1,475 +1,379 @@
 # Injection Policy
 
-The safe path does not forward host homes, sockets, or provider state by
-default. The supported way to place stable material into Workcell sessions is
-an explicit operator-owned injection policy.
+Workcell does not pass host homes, sockets, or complete provider state to the
+safe path. Use an operator-owned injection policy for each approved input.
 
-## How it works
+Workcell can inject documents, credentials, SSH material, files, and endpoint
+entries. Credentials, copies, and SSH material can use provider and mode
+selectors.
 
-Each launch rebuilds the provider-facing home from:
+## Security boundary
 
-1. immutable adapter baselines
-2. workspace instruction imports
-3. explicit injected documents, credentials, copies, and SSH material
+Workcell validates each secret source on the host. Workcell stages the source
+in launcher-owned state.
 
-Secret-bearing inputs are handled more carefully than public inputs:
+Workcell mounts the staged source read-only. A crash can leave staged plaintext
+until cleanup.
 
-- provider credentials, SSH identities, and `classification = "secret"` copies
-  are validated on the host
-- they are mounted read-only into the runtime from launcher-owned staging
-  state, then copied into provider home only when provider-native files are
-  required, or consumed directly by the wrapper for Copilot
-- a crash can leave short-lived staged plaintext behind until later cleanup
+Store each credential source outside the mounted workspace. Workcell rejects a
+credential source inside the workspace.
 
-## Supported sections
+Workcell does not pass host keychains into the runtime. A successful resolver
+runs on the host and writes a regular staged file.
 
-| Section | Purpose |
-|---|---|
-| `[documents]` | common or provider-specific instruction fragments |
-| `[credentials]` | provider-native auth, MCP, and shared GitHub CLI state |
-| `[ssh]` | SSH config, known hosts, and identity files |
-| `[[copies]]` | explicit copied files or directories for non-reserved targets |
-| `[network]` | extend or tighten the per-session egress allowlist |
-| `includes = [...]` | compose a policy from smaller operator-owned fragments |
+## Policy commands
 
-`workcell auth init|set|unset|status` manages the entrypoint policy file only.
-`workcell policy show|validate|diff` inspects the merged policy, and
-`workcell why --credential ... --agent ... --mode ...` explains one credential
-decision, including out-of-scope cases, without launching the runtime. If a
-credential is declared by an
-included fragment, update that fragment directly.
+Use these commands for the entrypoint policy file:
 
-`workcell auth status` and `workcell --auth-status` report
-`provider_bootstrap_*` lines for the selected agent. `workcell why` reports the
-matching `bootstrap_*` lines for the selected credential so the operator can
-see whether the path is repo-required, certification-only, or manual.
+- `workcell auth init`
+- `workcell auth set`
+- `workcell auth unset`
+- `workcell auth status`
 
-Selectors let you scope entries to only some launches:
+Use these commands for the merged policy:
 
-- `providers = ["codex", "claude", "copilot", "gemini"]`
-- `modes = ["strict", "development", "build"]`
+- `workcell policy show`
+- `workcell policy validate`
+- `workcell policy diff`
 
-Credential entries can be either direct file sources or built-in host
-resolvers:
+Use `workcell why` to explain one credential decision. The command does not
+start a runtime.
 
-- `credentials.codex_auth = "/abs/path"`
-- `[credentials.claude_auth] resolver = "claude-macos-keychain"`
+```sh
+workcell why --credential CREDENTIAL --agent PROVIDER --mode MODE
+```
 
-Direct credential source files must live outside the mounted workspace. Workcell
-rejects credential sources under the workspace because the workspace itself is
-mounted into the runtime and would expose the original secret path in addition
-to the reviewed credential handoff.
-
-Resolver-backed credentials are still host-side preprocessing only. Workcell
-materializes them into ordinary files under the per-launch injection bundle; it
-does not pass Keychain access into the runtime.
-
-Today, `claude-macos-keychain` is a fail-closed resolver scaffold: it lets you
-record the intended host-side auth source in policy, but Workcell still aborts
-launch unless a supported export path exists.
+If an included fragment declares a value, change that fragment. The auth
+commands change only the entrypoint file.
 
 ## Schema reference
 
-This is the annotated, machine-checked schema for the injection policy. Every
-key below is grounded in the parser's accepted set, and a drift check
-(`TestInjectionPolicyDocSchemaMatchesParser` in
-`internal/injection/schema_doc_drift_test.go`) fails CI if a key is documented
-here but not accepted by the parser, or accepted by the parser but not
-documented here. "Applies to" names the provider(s) that actually consume a key;
-any provider's credential key still parses in a shared policy but is only
-provisioned for its owning provider.
+The tables in this section list the keys that the parsers accept. A Go test
+compares each marked table with the corresponding parser key set.
 
 ### Root keys
 
 <!-- schema:root:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `version` | integer | optional | all providers | `1` | policy schema version; only `1` is accepted |
-| `includes` | array of path strings | optional | all providers | none | compose the policy from operator-owned fragment files (resolved relative to the including file, kept within the entrypoint tree, no include cycles or repeats) |
-| `documents` | table | optional | see `[documents]` keys | none | instruction fragments layered into provider docs |
-| `credentials` | table | optional | see `[credentials]` keys | none | provider-native auth, MCP, and shared GitHub CLI state |
-| `ssh` | table | optional | all providers | none | SSH config, known hosts, and identity files |
-| `copies` | array of `[[copies]]` tables | optional | all providers | none | explicit copied files or directories for non-reserved targets |
-| `network` | table | optional | all providers (enforced on `colima`) | none | extend or tighten the per-session egress allowlist |
+| `version` | Integer | No | All providers | `1` | Schema version. Workcell accepts only `1`. |
+| `includes` | Path array | No | All providers | None | Operator-owned policy fragments. Paths stay in the entrypoint tree. |
+| `documents` | Table | No | Providers with document support | None | Instruction document sources. |
+| `credentials` | Table | No | Credential owner | None | Provider and shared GitHub credential sources. |
+| `ssh` | Table | No | All providers | None | SSH configuration, hosts, and identities. |
+| `copies` | Table array | No | All providers | None | Files or directories for non-reserved targets. |
+| `network` | Table | No | All providers | None | Endpoint additions and removals. Colima enforces the result only with `NETWORK_POLICY=allowlist`. |
 <!-- schema:root:end -->
 
-### `[documents]` keys
+An include path is relative to the file that contains it. Workcell rejects cycles,
+repeated files, and paths outside the entrypoint tree.
 
-Copilot deliberately has no document key: managed Copilot custom instructions
-are disabled, so there is no `documents.copilot`.
+### Document keys
 
 <!-- schema:documents:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `common` | path string | optional | all providers with native docs | none | provider-neutral instruction fragment (`documents.common`) |
-| `codex` | path string | optional | Codex | none | Codex-specific instruction fragment |
-| `claude` | path string | optional | Claude | none | Claude-specific instruction fragment |
-| `gemini` | path string | optional | Gemini | none | Gemini-specific instruction fragment |
+| `common` | Path | No | Providers with document support | None | Provider-neutral instructions. |
+| `codex` | Path | No | Codex | None | Codex instructions. |
+| `claude` | Path | No | Claude | None | Claude instructions. |
+| `gemini` | Path | No | Gemini | None | Gemini instructions. |
 <!-- schema:documents:end -->
 
-### `[credentials]` keys
+Copilot has no document key. Its managed path disables custom instructions.
 
-Each credential value is either a direct path string or a table (see credential
-entry sub-keys). `github_hosts` and `github_config` are shared GitHub CLI state:
-they must use the table form and set a `providers` list, and they are never
-provisioned for Copilot (Copilot opts out of shared credentials).
+### Credential keys
 
 <!-- schema:credentials:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `claude_auth` | path string or entry table | optional | Claude | none | Claude auth mirrors under `~/.claude/`, `~/.claude.json`, `~/.config/claude-code/` |
-| `claude_api_key` | path string or entry table | optional | Claude | none | helper-backed Claude API key access |
-| `claude_mcp` | path string or entry table | optional | Claude | none | reviewed Claude MCP config (`~/.mcp.json`) |
-| `codex_auth` | path string or entry table | optional | Codex | none | persisted Codex auth (`~/.codex/auth.json`) |
-| `copilot_github_token` | path string or entry table | optional | Copilot | none | staged GitHub token handoff, exported only as `COPILOT_GITHUB_TOKEN` to the managed child |
-| `gemini_env` | path string or entry table | optional | Gemini | none | Gemini API key, GCA, or Vertex configuration (`~/.gemini/.env`) |
-| `gemini_oauth` | path string or entry table | optional | Gemini | none | cached Gemini OAuth state (`~/.gemini/oauth_creds.json`) |
-| `gemini_projects` | path string or entry table | optional | Gemini | none | persisted Gemini project registry (`~/.gemini/projects.json`) |
-| `gcloud_adc` | path string or entry table | optional | Gemini | none | supplemental Vertex credential (`~/.config/gcloud/application_default_credentials.json`) |
-| `github_hosts` | entry table (requires `providers`) | optional | shared: Claude, Codex, Gemini | none | shared GitHub CLI auth (`~/.config/gh/hosts.yml`); not provisioned for Copilot |
-| `github_config` | entry table (requires `providers`) | optional | shared: Claude, Codex, Gemini | none | shared GitHub CLI config (`~/.config/gh/config.yml`); not provisioned for Copilot |
+| `claude_auth` | Path or table | No | Claude | None | Auth mirrors in `~/.claude/`, `~/.claude.json`, and `~/.config/claude-code/`. |
+| `claude_api_key` | Path or table | No | Claude | None | Helper-backed Claude API key. |
+| `claude_mcp` | Path or table | No | Claude | None | MCP configuration at `~/.mcp.json`. This is not an auth mode. |
+| `codex_auth` | Path or table | No | Codex | None | Codex auth at `~/.codex/auth.json`. |
+| `copilot_github_token` | Path or table | No | Copilot | None | Export as `COPILOT_GITHUB_TOKEN` only to the managed child. |
+| `gemini_env` | Path or table | No | Gemini | None | Validated Gemini authentication at `~/.gemini/.env`. See [Gemini environment file](#gemini-environment-file). |
+| `gemini_oauth` | Path or table | No | Gemini | None | OAuth state at `~/.gemini/oauth_creds.json`. |
+| `gemini_projects` | Path or table | No | Gemini | None | Project registry at `~/.gemini/projects.json`. This is supplemental input. |
+| `gcloud_adc` | Path or table | No | Gemini | None | ADC at `~/.config/gcloud/application_default_credentials.json`. This is supplemental input. |
+| `github_hosts` | Table | No | Claude, Codex, Gemini | None | Shared auth at `~/.config/gh/hosts.yml`. Set a provider list. |
+| `github_config` | Table | No | Claude, Codex, Gemini | None | Shared config at `~/.config/gh/config.yml`. Set a provider list. |
 <!-- schema:credentials:end -->
 
-### Credential entry sub-keys (`[credentials.<name>]` table form)
+Each value can be a direct path or an entry table. The shared GitHub keys must
+use a table with `providers`.
 
-A `[credentials.<name>]` table is validated in two stages, and each stage
-accepts a different key set. Both key sets below are machine-checked against
-their respective parser.
+Copilot does not receive shared GitHub CLI state.
 
-**Resolver form (pre-resolution).** This is the operator-authored table the
-credential resolver (`internal/authresolve`) reads *before* rendering. It may
-name a built-in host `resolver` (for example `codex-home-auth-file` or
-`claude-macos-keychain`) instead of a direct `source`; the resolver
-materializes the credential into a file and rewrites the entry to a `source`
-path for the next stage.
+### Gemini environment file
+
+Use `KEY=value` assignments in `gemini_env`. Workcell accepts these modes:
+
+| Mode | Required keys |
+|---|---|
+| Gemini API key | `GEMINI_API_KEY` |
+| Google Code Assist | `GOOGLE_GENAI_USE_GCA=true` |
+| Vertex API key | `GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_API_KEY` |
+| Vertex project | `GOOGLE_GENAI_USE_VERTEXAI=true`, a project key, and a location key |
+
+A project key is `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID`. A location
+key is `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_REGION`, `CLOUD_ML_REGION`,
+`VERTEX_LOCATION`, or `VERTEX_AI_LOCATION`.
+
+Only listed keys are valid. Values other than authentication selectors must not
+be empty. `GOOGLE_GENAI_USE_GCA` and `GOOGLE_GENAI_USE_VERTEXAI` accept only
+trimmed, case-insensitive `true` or `false` values. Do not set both selectors
+to `true`. Set `GOOGLE_API_KEY`
+only with `GOOGLE_GENAI_USE_VERTEXAI=true`. Set a project key when you set a
+location key.
+
+### Resolver entry keys
+
+The resolver reads these keys before it renders the policy:
 
 <!-- schema:credentials-entry-resolver:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `source` | path string | one of `source` or `resolver` is required | all credential keys | none | host path to the credential material; must live outside the mounted workspace; mutually exclusive with `resolver` |
-| `resolver` | string (`codex-home-auth-file` for `codex_auth`, `claude-macos-keychain` for `claude_auth`) | one of `source` or `resolver` is required | resolver-backed credential keys | none | built-in host resolver that materializes the credential before rendering; mutually exclusive with `source` |
-| `materialization` | string (`ephemeral` or `persistent`) | optional | resolver-backed credential keys | `ephemeral` | how the resolved credential is materialized; must stay `ephemeral` for resolver-backed auth |
-| `providers` | array of provider ids | optional (required for `github_hosts` and `github_config`) | all credential keys | in-scope providers | restrict the entry to the listed providers |
-| `modes` | array of mode ids | optional | all credential keys | all modes | restrict the entry to the listed modes |
+| `source` | Path | One of `source` or `resolver` | All credential keys | None | Direct host source outside the workspace. |
+| `resolver` | String | One of `source` or `resolver` | Supported resolver keys | None | Built-in host resolver. It cannot occur with `source`. |
+| `materialization` | `ephemeral` or `persistent` | No | Resolver entries | `ephemeral` | Resolved-file lifetime. Auth resolvers require `ephemeral`. |
+| `providers` | Provider array | No | All credential keys | In-scope providers | Provider selector. Shared GitHub keys require it. |
+| `modes` | Mode array | No | All credential keys | All modes | Mode selector. |
 <!-- schema:credentials-entry-resolver:end -->
 
-**Rendered form (post-resolution).** After resolution the resolver strips
-`resolver` and `materialization` and writes a `source` path, so the
-injection-policy renderer accepts only the keys below. A direct-source policy
-(no `resolver`) is already in this form and passes straight through.
+The supported resolvers are:
+
+- `codex-home-auth-file` for `codex_auth`
+- `claude-macos-keychain` for `claude_auth`
+
+The Claude resolver records the intended source. It stops the launch because
+Workcell does not provide a supported export path.
+
+### Rendered credential entry keys
+
+The resolver removes `resolver` and `materialization`. It writes a staged
+`source` for the renderer.
 
 <!-- schema:credentials-entry:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `source` | path string | required in table form | all credential keys | none | host path to the credential material; must live outside the mounted workspace |
-| `providers` | array of provider ids | optional (required for `github_hosts` and `github_config`) | all credential keys | in-scope providers | restrict the entry to the listed providers |
-| `modes` | array of mode ids | optional | all credential keys | all modes | restrict the entry to the listed modes |
+| `source` | Path | Yes | All credential keys | None | Staged or direct host source outside the workspace. |
+| `providers` | Provider array | No | All credential keys | In-scope providers | Provider selector. Shared GitHub keys require it. |
+| `modes` | Mode array | No | All credential keys | All modes | Mode selector. |
 <!-- schema:credentials-entry:end -->
 
-> **Scope:** the resolver-form table is machine-checked against the credential
-> resolver's accepted key set (`CredentialEntryKeys` in `internal/authresolve`);
-> the rendered-form table is machine-checked against the injection-policy
-> renderer's post-resolution key set (`internal/injection`). `resolver` and
-> `materialization` are consumed by the resolver to produce `source` and are not
-> accepted by the post-resolution renderer.
-
-### `[ssh]` keys
+### SSH keys
 
 <!-- schema:ssh:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `enabled` | boolean | optional | all providers | inferred from material presence | explicit on/off switch; `false` disables SSH injection even when material is present |
-| `config` | path string | optional | all providers | none | SSH config file; rejected if it contains risky directives unless `allow_unsafe_config` is set |
-| `known_hosts` | path string | optional | all providers | none | `known_hosts` file (must not be group/world-writable) |
-| `identities` | array of path strings | optional | all providers | none | private-key identity files (owner-only; basenames must not collide with reserved SSH files) |
-| `providers` | array of provider ids | optional | all providers | all providers | scope the SSH block to the listed providers |
-| `modes` | array of mode ids | optional | all providers | all modes | scope the SSH block to the listed modes |
-| `allow_unsafe_config` | boolean | optional | all providers | `false` | accept a lower-assurance config that would otherwise be rejected for risky directives |
+| `enabled` | Boolean | No | All providers | Inferred | Explicit SSH injection switch. |
+| `config` | Path | No | All providers | None | SSH configuration file. |
+| `known_hosts` | Path | No | All providers | None | Known-hosts file. |
+| `identities` | Path array | No | All providers | None | Private-key identity files. |
+| `providers` | Provider array | No | All providers | All providers | Provider selector. |
+| `modes` | Mode array | No | All providers | All modes | Mode selector. |
+| `allow_unsafe_config` | Boolean | No | All providers | `false` | Accept an SSH configuration with unsafe directives. |
 <!-- schema:ssh:end -->
 
-### `[[copies]]` entry keys
+Workcell rejects group-writable or world-writable `known_hosts` files. It
+requires owner-owned and owner-only SSH configuration and identity files.
+Identity basenames must be unique. They must not be `config` or `known_hosts`.
+
+`allow_unsafe_config` lowers assurance. It does not forward `SSH_AUTH_SOCK`.
+It skips the SSH directive safety check. It permits `Include` to load
+other configuration. It permits `LocalCommand`, `PermitLocalCommand`, and
+`ProxyCommand` to run commands. It permits `PKCS11Provider` and
+`SecurityKeyProvider` to load provider libraries.
+
+The session status reports lower-assurance unsafe SSH configuration.
+
+### Copy keys
 
 <!-- schema:copies:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `source` | path string | required | all providers | none | host file or directory to copy |
-| `target` | container path string | required | all providers | none | destination under `/state/agent-home` or `/state/injected`; must not be a reserved control-plane path |
-| `classification` | string (`public` or `secret`) | required | all providers | none | selects handling and file modes; `secret` sources are staged read-only and owner-validated |
-| `providers` | array of provider ids | optional | all providers | all providers | scope the copy to the listed providers |
-| `modes` | array of mode ids | optional | all providers | all modes | scope the copy to the listed modes |
+| `source` | Path | Yes | All providers | None | Host file or directory. |
+| `target` | Container path | Yes | All providers | None | Destination below `/state/agent-home` or `/state/injected`. |
+| `classification` | `public` or `secret` | Yes | All providers | None | Security controls and file mode. |
+| `providers` | Provider array | No | All providers | All providers | Provider selector. |
+| `modes` | Mode array | No | All providers | All modes | Mode selector. |
 <!-- schema:copies:end -->
 
-### `[network]` keys
+Workcell rejects writes to reserved control-plane targets. It checks secret
+sources for owner-only access and stages them as read-only.
+
+### Network keys
 
 <!-- schema:network:begin -->
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
-| `allow_endpoints` | array of `host:port` strings | optional | all providers (enforced on `colima`) | none | endpoints unioned into the allowlist (extend only) |
-| `deny_endpoints` | array of `host:port` strings | optional | all providers (enforced on `colima`) | none | endpoints subtracted from the allowlist after every allow source (deny wins) |
+| `allow_endpoints` | `host:port` or `[ipv6]:port` array | No | All providers | None | Add exact endpoint entries. Colima enforces the result only with `NETWORK_POLICY=allowlist`. |
+| `deny_endpoints` | `host:port` or `[ipv6]:port` array | No | All providers | None | Remove exact entries after all additions. |
 <!-- schema:network:end -->
 
-### Selector value domains
+Each port must be 1 through 65535.
+A host name can contain ASCII letters, digits, periods, and hyphens. It must not
+start with a period or contain two periods.
 
-`providers` and `modes` selectors (in `[credentials.<name>]`, `[ssh]`, and
-`[[copies]]`) accept only these values:
+A numeric dotted value must be a valid IPv4 address. A bracketed value must be
+a valid IPv6 address.
 
-- `providers`: `claude`, `codex`, `copilot`, `gemini`
-- `modes`: `strict`, `development`, `build`, `breakglass`
+Provider selectors accept `claude`, `codex`, `copilot`, and `gemini`.
 
-## Provider auth maturity
+Mode selectors accept `strict`, `development`, `build`, and `breakglass`.
 
-Direct staged credential files are the primary supported auth path today.
-Built-in host resolvers are still intentionally narrow:
+## Credential use
 
-- `codex-home-auth-file` is a reviewed Codex host-auth reuse path
-- `claude-macos-keychain` remains the fail-closed Claude macOS scaffold
+Direct staged files are the primary supported credential path. See the
+[provider bootstrap matrix](provider-bootstrap-matrix.md) for maturity and live
+evidence.
 
-See [provider-bootstrap-matrix.md](provider-bootstrap-matrix.md) for the
-current bootstrap tiers, handoffs, and evidence.
+Workcell supports `copilot_github_token` through the staged credential path.
+For Copilot, Workcell does not use host GitHub CLI or Copilot state.
 
-| Provider | Launch-ready inputs today | Additional reviewed inputs | Current caveats |
-|---|---|---|---|
-| Codex | direct staged `codex_auth` or the `codex-home-auth-file` resolver | shared GitHub CLI and SSH inputs via policy as needed | direct staged auth is still the default recommendation; host resolver reuse remains host-side preprocessing only |
-| Claude | `claude_auth`, `claude_api_key`, `claude_mcp` | shared GitHub CLI and SSH inputs via policy as needed | the built-in `claude-macos-keychain` resolver can record intent but remains fail-closed until a supported export path exists |
-| GitHub Copilot CLI | `copilot_github_token` | SSH inputs via policy as needed | staged through reviewed host-side inputs, removed from direct runtime mounts, passed through a temporary handoff mount outside provider state and a transient runtime handoff file, and exported as `COPILOT_GITHUB_TOKEN` only to the managed child process; shared GitHub CLI state, host keychains, `GH_TOKEN`, `GITHUB_TOKEN`, and host Copilot provider state (`~/.copilot`, `~/.config/github-copilot`, `~/.cache/github-copilot`) are not Copilot auth inputs |
-| Gemini | `gemini_env`, `gemini_oauth` | `gemini_projects` as a supplemental project registry input, `gcloud_adc` as a supplemental Vertex input, plus shared GitHub CLI and SSH inputs via policy as needed | `gemini_projects` and `gcloud_adc` are not standalone Gemini auth modes |
+The managed Copilot wrapper removes the staged token from direct mounts. It
+uses a temporary host mount and a transient runtime file. The wrapper deletes
+the runtime file before it starts the managed child.
 
-GitHub Copilot CLI is supported only through explicit staged token material:
-`copilot_github_token`, with session-local `COPILOT_HOME` and
-`COPILOT_CACHE_HOME` state. It does not pass through host Copilot provider
-state (`~/.copilot`, `~/.config/github-copilot`,
-`~/.cache/github-copilot`), host keychains, `GH_TOKEN`, `GITHUB_TOKEN`,
-ambient `gh auth token`, arbitrary BYOK provider env, or whole-home state.
-For auth-required launches, Workcell
-removes the reviewed staged token file from direct runtime mounts, deletes the
-staged direct-mount copy from the mounted injection bundle, converts the token
-into a temporary host-mounted token handoff outside mounted provider state,
-stages the value into a transient runtime handoff file, unlinks the mounted
-handoff file, re-execs the entrypoint without the token in its environment, keeps that
-entrypoint as PID 1 instead of Docker `--init` so `/proc/1/environ` is
-scrubbed, and exports its value as
-`COPILOT_GITHUB_TOKEN` only to the managed child after the wrapper unlinks the
-handoff file. Copilot development-shell or debug-command launches with a staged
-token also remove the token file and staged copy from direct runtime mounts,
-but do not create the handoff mount because the provider is not being
-authenticated.
+The wrapper exports `COPILOT_GITHUB_TOKEN` only to that child. The Workcell
+entrypoint stays as PID 1 and scrubs its environment.
 
-Google Antigravity CLI is also planned, but not launch-ready. Its future path
-must first pin official install and auth provenance, then stage only reviewed
-Google auth material into session-local provider state. Host Google account
-caches, browser profiles, keychains, host homes, and provider caches are not
-acceptable implicit safe-path inputs.
+See the [GitHub Copilot CLI delivery record](copilot-linux-local-compat-plan.md)
+for the complete token-transfer controls.
 
-## Credential keys
+Workcell does not support Google Antigravity CLI. Do not put Antigravity keys
+in an operator policy.
 
-| Key | Session target | Notes |
+## Network rules
+
+The launcher builds `ALLOW_ENDPOINTS` from these sources:
+
+- `provider_endpoints`.
+- `provider_auth_recovery_extra_endpoints` for a Gemini CLI launch with TTY
+  input and output, no selected auth, and no agent or provider arguments.
+  Dry-run, prepare-only, and arbitrary-command modes do not add these endpoints.
+- `target_broker_endpoints`.
+- `credential_extra_endpoints`.
+- Google account authentication endpoints from a selected `gemini_env` mode.
+- Global and location-specific Vertex endpoints from a selected `gemini_env`
+  mode.
+- Versioned profile `EXTRA_ENDPOINTS`.
+- `[network].allow_endpoints`.
+- `snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443` for a
+  non-remote ephemeral launch.
+
+It removes every `[network].deny_endpoints` entry from the session list and the
+list for bootstrap build containers.
+
+On `colima` with `NETWORK_POLICY=allowlist`, Workcell enforces the result with
+IPv4 and IPv6 `DOCKER-USER` rules. The rules allow resolved IP addresses and
+ports. They do not filter TLS host names.
+
+The enforcement scope is one Colima profile. It is not one session. The last
+launch replaces the rules for all active containers in that profile.
+
+On a Colima allowlist profile, a runtime-image rebuild temporarily applies the
+broader bootstrap endpoints to all active profile containers. Workcell restores
+`ALLOW_ENDPOINTS` after the build.
+
+Do not rebuild the profile while another profile container is active.
+
+Workcell does not isolate the profile-wide egress rules for concurrent sessions
+that use different complete endpoint sets. A `breakglass` launch clears the
+Workcell allowlist for the profile. That clear state remains until a later
+allowlist launch applies new rules.
+
+Do not run sessions with different complete endpoint sets at the same time in
+one profile.
+
+`allow_endpoints` broadens the allowed set. `deny_endpoints` removes exact
+entries after all additions. Policy cannot change `NETWORK_POLICY` or disable
+enforcement directly.
+
+A denied host can share an IP address with an allowed host. In that case, the
+denied host stays reachable at the IP layer.
+
+Host-side rebuild downloads do not use the Colima firewall.
+
+Other targets do not receive this allowlist. Their launch summary reports
+`egress_enforcement=none`.
+
+| Target state | `egress_enforcement` | Workcell enforcement |
 |---|---|---|
-| `codex_auth` | `~/.codex/auth.json` | persisted Codex auth |
-| `claude_auth` | Claude auth mirrors under `~/.claude/`, `~/.claude.json`, and `~/.config/claude-code/` | direct staged auth file is launch-ready; the built-in `claude-macos-keychain` resolver remains fail-closed scaffold only |
-| `claude_api_key` | helper-backed Claude API key access | avoids seeding a second plaintext key copy into the session |
-| `claude_mcp` | `~/.mcp.json` | reviewed Claude MCP config |
-| `gemini_env` | `~/.gemini/.env` | API key, GCA, or Vertex configuration |
-| `gemini_oauth` | `~/.gemini/oauth_creds.json` | cached Gemini OAuth state |
-| `gemini_projects` | `~/.gemini/projects.json` | persisted Gemini project registry |
-| `gcloud_adc` | `~/.config/gcloud/application_default_credentials.json` | supplemental Vertex credential, not a standalone Gemini auth mode |
-| `copilot_github_token` | session-local Copilot token handoff | converted to a temporary host-mounted token handoff outside mounted provider state, moved through a transient runtime handoff file with the Workcell entrypoint as PID 1, and exported as `COPILOT_GITHUB_TOKEN` only to the managed Copilot child process; the original token file and staged direct-mount copy are removed from direct runtime mounts and are not copied into provider state |
-| `github_hosts` | `~/.config/gh/hosts.yml` | shared GitHub CLI auth; prefer scoped nested tables |
-| `github_config` | `~/.config/gh/config.yml` | shared GitHub CLI config; prefer scoped nested tables |
+| Colima with allowlist | `allowlist` | Profile-wide IPv4 and IPv6 rules |
+| Colima with unrestricted network | `none` | None |
+| Docker Desktop | `none` | None |
+| `aws-ec2-ssm` preview | `none` | None |
+| `gcp-vm` preview | `none` | None |
 
-Future Antigravity credential keys are planned, not supported keys in current
-releases. They must not appear in operator policy until the matching adapter,
-validation, and docs land.
+The remote targets are launch-blocked. Their preview plans rely on provider
+firewall controls if live launch support ships later.
 
-## Network egress (`[network]`)
+## Instruction precedence
 
-`strict` mode ships a default-deny, per-session egress allowlist — the reviewed
-policy artifact for this control. On the `colima` target the launcher enforces it
-as a fail-closed, dual-stack firewall: `scripts/workcell` computes
-`ALLOW_ENDPOINTS` (the union of reviewed sources — provider/auth-recovery/broker
-endpoints, credential-derived endpoints, `[network].allow_endpoints`, profile
-`EXTRA_ENDPOINTS`, and the Debian snapshot mirrors
-`snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443`), de-dupes it, subtracts
-`[network].deny_endpoints`, and hands it to `scripts/colima-egress-allowlist.sh`,
-which programs `iptables`/`ip6tables` `DOCKER-USER` rules that ACCEPT each allowed
-`host:port` (IPv4 and IPv6) and `DROP` the rest. If `ip6tables` is unavailable the
-helper aborts rather than leave IPv6 unfiltered. Only the colima target applies
-these rules; the dispatch never changes based on policy content.
+Adapters with native document support use this order:
 
-Operators extend or tighten the allowlist only through the `[network]` table,
-never by disabling the default:
+1. Adapter baseline document.
+2. Repository `AGENTS.md`.
+3. Repository provider overlay, such as `CLAUDE.md` or `GEMINI.md`.
+4. `documents.common`.
+5. Provider-specific policy document.
 
-```toml
-[network]
-allow_endpoints = ["registry.internal.example:443"]  # add to the allowlist
-deny_endpoints  = ["chatgpt.com:443"]                 # remove from the allowlist
-```
+The Copilot adapter masks `.github/copilot-instructions.md`,
+`.github/instructions`, and `.github/copilot`. Its managed wrapper disables
+custom instructions.
 
-- `allow_endpoints` are unioned into the allowlist (they extend, never replace
-  the reviewed provider/credential endpoints).
-- `deny_endpoints` are subtracted by endpoint entry after every allow source, so
-  a denied `host:port` is removed even when a provider needs it (deny wins).
-  Because the match is exact, blocking the automatic Debian snapshot egress
-  requires denying **both** mirror endpoints —
-  `snapshot-cloudflare.debian.org:443` and `snapshot.debian.org:443` — since
-  denying only one still leaves the other reachable.
-- Each endpoint must be `host:port` or `[ipv6]:port` (port 1-65535, host
-  `^[A-Za-z0-9.-]+$`, no leading dot or `..`, IP-shaped hosts must be real IPs),
-  validated with the same grammar `scripts/colima-egress-allowlist.sh` applies.
-- Fail-closed: a malformed endpoint, empty string, unknown `[network]` key, or
-  non-array value aborts with an error naming the offending value.
+## Examples
 
-**No-weakening invariant:** `[network]` can only contribute endpoint lists; it
-cannot set `NETWORK_POLICY`, disable the allowlist, or switch to an unrestricted
-posture, so an injection policy never weakens the shipped default-deny allowlist.
+Keep each source outside the workspace. Workcell rejects operator-controlled
+symbolic links in source paths, parent paths, and copied directories. Use
+owner-only permissions for secret sources.
 
-**Scope:** `deny_endpoints` tighten IP-level VM/container egress (the session and
-the bootstrap build container). Two boundaries follow — a denied host sharing an
-IP with an allowed endpoint (e.g. a shared CDN) stays reachable at the IP layer,
-and the launcher's host-side rebuild fetches (release-URL resolution) are not
-gated. To fully block a host, drop overlapping allow_endpoints and prebuild the
-image.
-
-Per-session enforcement is a `colima`-only property; other targets rely on their
-own network controls and do not receive the `DOCKER-USER` allowlist. The launch
-summary prints an `egress_enforcement=` line next to `network_policy=...
-endpoints=...`:
-
-| Target | `egress_enforcement` | Per-session allowlist enforced |
-|---|---|---|
-| `colima` (allowlist) | `allowlist` | yes — `iptables`/`ip6tables` default-deny in `DOCKER-USER` |
-| `colima` (unrestricted, e.g. breakglass) | `none` | no — allowlist not applied |
-| `docker-desktop` | `none` | no — relies on Docker Desktop / host controls |
-| `aws-ec2-ssm` (preview) | `none` | no — relies on the VM's security groups |
-| `gcp-vm` (preview) | `none` | no — relies on the VM's own firewall |
-
-`egress_enforcement=allowlist` prints only for `colima` + allowlist, else `none`.
-
-## Example policies
-
-The example paths below are illustrative host locations; keep every source
-outside the mounted workspace and owner-only. See
-[docs/examples/injection-policy.toml](./examples/injection-policy.toml) for a
-combined document, credential, and copy example.
-
-### Codex
+### Provider credentials
 
 ```toml
 version = 1
 
 [credentials]
 codex_auth = "/home/example/secrets/codex-auth.json"
-```
-
-### Claude
-
-```toml
-version = 1
-
-[credentials]
 claude_auth = "/home/example/secrets/claude-auth.json"
-claude_mcp  = "/home/example/secrets/claude-mcp.json"
+copilot_github_token = "/home/example/secrets/copilot-token.txt"
+gemini_env = "/home/example/secrets/gemini.env"
 ```
 
-### GitHub Copilot CLI
+Provider-native keys apply only to the provider that owns them.
+
+### Shared GitHub CLI state
 
 ```toml
-version = 1
-
-[credentials]
-copilot_github_token = "/home/example/secrets/copilot-github-token.txt"
-```
-
-### Gemini
-
-```toml
-version = 1
-
-[credentials]
-gemini_env   = "/home/example/secrets/gemini.env"
-gemini_oauth = "/home/example/secrets/gemini-oauth.json"
-```
-
-### Multi-provider, single host
-
-One policy file on a single workstation can serve every provider. Provider-native
-credential keys are only provisioned for their owning provider, so they need no
-selector; shared GitHub CLI state must use the table form with an explicit
-`providers` list and is never provisioned for Copilot.
-
-```toml
-version = 1
-
-# Provider-native auth: each key is only provisioned for its owning provider.
-[credentials]
-codex_auth           = "/home/example/secrets/codex-auth.json"
-claude_auth          = "/home/example/secrets/claude-auth.json"
-copilot_github_token = "/home/example/secrets/copilot-github-token.txt"
-gemini_env           = "/home/example/secrets/gemini.env"
-
-# Shared GitHub CLI state must use the table form and scope its providers.
-# Copilot is intentionally excluded: it never receives shared gh state.
 [credentials.github_hosts]
-source    = "/home/example/secrets/gh-hosts.yml"
+source = "/home/example/secrets/gh-hosts.yml"
 providers = ["codex", "claude", "gemini"]
 
 [credentials.github_config]
-source    = "/home/example/secrets/gh-config.yml"
+source = "/home/example/secrets/gh-config.yml"
 providers = ["codex", "claude", "gemini"]
-
-# One shared instruction fragment plus a Codex-only delta.
-[documents]
-common = "/home/example/policy/common.md"
-codex  = "/home/example/policy/codex.md"
-
-# Extend the reviewed egress allowlist for an internal registry.
-[network]
-allow_endpoints = ["registry.internal.example:443"]
 ```
 
-## Instruction precedence
+### Network changes
 
-Provider docs are rendered in this order for adapters that enable native
-instruction files:
+```toml
+[network]
+allow_endpoints = ["registry.internal.example:443"]
+deny_endpoints = ["chatgpt.com:443"]
+```
 
-1. adapter baseline doc
-2. repo-local `AGENTS.md`
-3. repo-local provider overlay such as `CLAUDE.md` or `GEMINI.md`
-4. `documents.common`
-5. provider-specific document fragment
+See [the complete example](examples/injection-policy.toml) for documents,
+credentials, and copies.
 
-The Copilot adapter masks repo-local Copilot control-plane paths such as
-`.github/copilot-instructions.md`, `.github/instructions/**`, and
-`.github/copilot/settings*.json` instead of trusting them directly, and the
-managed wrapper launches with custom instructions disabled. The planned
-Antigravity adapter must define its instruction, settings, plugin, MCP, and
-hook files before any provider-specific instruction layering is supported.
-Current releases do not provide provider-specific instruction layering for
-Antigravity.
+## Explicit limits
 
-## Deliberate limits
-
-- no arbitrary environment-variable secret injection on the safe path
-- no whole-home passthrough
-- no writes into Workcell-managed control-plane paths through `[[copies]]`
-- no `SSH_AUTH_SOCK` forwarding
-- no assumption that one process inside the session is isolated from another
-  process in the same session
-- no host provider-home, keychain, browser-profile, ambient CLI auth, or broad
-  provider token state passthrough on Copilot or future Antigravity paths
-- no provider telemetry, OpenTelemetry, or content-capture environment
-  variables in `strict` mode unless a lower-assurance acknowledged path and
-  deterministic tests are added
-
-## Recommended usage
-
-- put org-wide guidance in `documents.common`
-- keep provider deltas in `documents.codex`, `documents.claude`, or
-  `documents.gemini`; Copilot custom instructions are disabled on the managed
-  path
-- use `[credentials]` for reusable auth, not `[[copies]]`
-- scope shared GitHub credentials with `providers = [...]`
-- keep secret inputs owner-only and avoid symlinks
-
-## Example
-
-See [docs/examples/injection-policy.toml](./examples/injection-policy.toml).
+- The safe path does not accept arbitrary environment variables that contain
+  secrets.
+- The safe path does not pass a complete host home.
+- `[[copies]]` cannot write Workcell control-plane paths.
+- Workcell does not forward `SSH_AUTH_SOCK`.
+- Processes in one session do not receive isolation from each other.
+- Copilot does not receive host provider homes, keychains, or ambient CLI auth.
+- Strict mode does not set provider telemetry or content-capture variables.
+- The Colima egress allowlist is profile-wide and uses IP addresses and ports.
