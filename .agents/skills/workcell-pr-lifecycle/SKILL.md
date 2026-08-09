@@ -55,7 +55,14 @@ helper recreates the change locally and calls `./scripts/repo-publish-pr.sh`.
 Serialize each push, base edit, title or body edit, and draft or ready
 transition.
 
-After each mutation:
+Treat the approved publisher's initial branch push and draft PR creation as one
+publication operation. After the pull request exists:
+
+1. Wait for its opening `Allowed PR base` run.
+2. Require that run to succeed before any later mutation.
+3. Confirm that `headRefOid` equals the published commit.
+
+After each later mutation:
 
 1. Wait for its own `Allowed PR base` run.
 2. Confirm that the run matches the current pull request state.
@@ -81,13 +88,32 @@ is advisory. It is not an independent approval.
 
 ## Codex Review
 
-Use `codex-pr-review-loop` for the Codex bot loop. It owns the trigger,
-response channels, bounded retry, clean-result interpretation, reactions, and
-thread resolution.
+Use `codex-pr-review-loop` for the Codex bot loop when it is available. It owns
+the trigger, response channels, bounded retry, clean-result interpretation,
+reactions, and thread resolution.
+
+If that skill is unavailable, use this fallback:
+
+1. Record the current UTC time.
+2. Post `@codex review` as a standalone pull request comment.
+3. Filter bot responses by `chatgpt-codex-connector[bot]`.
+4. Inspect later issue comments, inline comments, formal reviews, and trigger
+   reactions.
+5. Inspect all earlier unresolved Codex findings on the pull request.
+6. React with 👍 to each correct finding.
+7. React with 👎 only when direct evidence proves the finding false.
+8. Give a short written reason for each rebuttal or uncertain finding.
+9. Fix or rebut each actionable finding.
+10. Revalidate and push each signed fix before another review round.
+11. Repeat this fallback after every push.
+12. If no response appears in 15 minutes, post one more standalone trigger.
+13. Treat a second silence, usage limit, or connector failure as a blocker.
+14. Require a fresh clean marker for the current head before ready or merge.
+15. Resolve each fixed or rebutted thread with GitHub `resolveReviewThread`.
 
 After each push, stabilize the intended head and required local evidence. Then
-run the loop. Use only the review skill's bounded retry. Do not add manual retry
-triggers after a quota or connector response.
+run the loop. Use only the selected loop's bounded retry. Do not add manual
+retry triggers after a quota or connector response.
 
 Before ready and merge, inspect the required review surfaces again. Confirm
 that the clean result applies to the current head. Do not treat a `COMMENTED`
