@@ -11,4 +11,4 @@ repository-wide mutation test.
 | Restore the publication wrapper before hardening | F1 | `bash ./tests/scenarios/shared/test-publish-pr-dry-run.sh` | Killed |
 
 The targeted mutation result was 4 of 4 killed mutants. Full repository
-validation also ran the current Workcell mutation suite and passed.
+validation also ran the then-current Workcell mutation suite and passed.
