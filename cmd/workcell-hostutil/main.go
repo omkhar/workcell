@@ -279,9 +279,8 @@ func helperSubcommands() []helperSubcommand {
 		{"route-profile-docker-command", 1, -1, cmdHelperRouteProfileDockerCommand},
 		{"prepare-current-docker-client-plan", 1, -1, cmdHelperPrepareCurrentDockerClientPlan},
 		{"cleanup-stale-log-pointers", 1, 1, cmdHelperCleanupStaleLogPointers},
-		{"profile-lock-is-stale", 1, 1, cmdHelperProfileLockIsStale},
 		{"acquire-profile-lock", 2, 2, cmdHelperAcquireProfileLock},
-		{"write-profile-owner", 2, 2, cmdHelperWriteProfileOwner},
+		{"release-profile-lock", 2, 2, cmdHelperReleaseProfileLock},
 		{"cleanup-stale-session-audit-dirs", 1, 1, cmdHelperCleanupStaleSessionAuditDirs},
 		{"session-record-write", 2, -1, cmdHelperSessionRecordWrite},
 		{"session-list", 0, -1, runHelperSessionList},
@@ -632,19 +631,6 @@ func cmdHelperCleanupStaleLogPointers(args []string) error {
 	return hoststate.CleanupStaleLatestLogPointers(args[0])
 }
 
-func cmdHelperProfileLockIsStale(args []string) error {
-	stale, err := launcher.ProfileLockIsStale(args[0])
-	if err != nil {
-		return err
-	}
-	if stale {
-		fmt.Println("1")
-	} else {
-		fmt.Println("0")
-	}
-	return nil
-}
-
 func cmdHelperAcquireProfileLock(args []string) error {
 	pid, err := strconv.Atoi(args[1])
 	if err != nil {
@@ -662,12 +648,20 @@ func cmdHelperAcquireProfileLock(args []string) error {
 	return nil
 }
 
-func cmdHelperWriteProfileOwner(args []string) error {
+func cmdHelperReleaseProfileLock(args []string) error {
 	pid, err := strconv.Atoi(args[1])
 	if err != nil {
 		return fmt.Errorf("parse pid: %w", err)
 	}
-	return launcher.WriteProfileOwner(args[0], pid)
+	if err := launcher.ReleaseProfileLock(args[0], pid); err != nil {
+		if errors.Is(err, launcher.ErrProfileLockTransitionBusy) {
+			fmt.Println("0")
+			return nil
+		}
+		return err
+	}
+	fmt.Println("1")
+	return nil
 }
 
 func cmdHelperCleanupStaleSessionAuditDirs(args []string) error {
