@@ -91,7 +91,7 @@ Copilot has no document key. Its managed path disables custom instructions.
 | `claude_mcp` | Path or table | No | Claude | None | MCP configuration at `~/.mcp.json`. This is not an auth mode. |
 | `codex_auth` | Path or table | No | Codex | None | Codex auth at `~/.codex/auth.json`. |
 | `copilot_github_token` | Path or table | No | Copilot | None | Export as `COPILOT_GITHUB_TOKEN` only to the managed child. |
-| `gemini_env` | Path or table | No | Gemini | None | Gemini configuration at `~/.gemini/.env`. |
+| `gemini_env` | Path or table | No | Gemini | None | Validated Gemini authentication at `~/.gemini/.env`. See [Gemini environment file](#gemini-environment-file). |
 | `gemini_oauth` | Path or table | No | Gemini | None | OAuth state at `~/.gemini/oauth_creds.json`. |
 | `gemini_projects` | Path or table | No | Gemini | None | Project registry at `~/.gemini/projects.json`. This is supplemental input. |
 | `gcloud_adc` | Path or table | No | Gemini | None | ADC at `~/.config/gcloud/application_default_credentials.json`. This is supplemental input. |
@@ -103,6 +103,28 @@ Each value can be a direct path or an entry table. The shared GitHub keys must
 use a table with `providers`.
 
 Copilot does not receive shared GitHub CLI state.
+
+### Gemini environment file
+
+Use `KEY=value` assignments in `gemini_env`. Workcell accepts these modes:
+
+| Mode | Required keys |
+|---|---|
+| Gemini API key | `GEMINI_API_KEY` |
+| Google Code Assist | `GOOGLE_GENAI_USE_GCA=true` |
+| Vertex API key | `GOOGLE_GENAI_USE_VERTEXAI=true` and `GOOGLE_API_KEY` |
+| Vertex project | `GOOGLE_GENAI_USE_VERTEXAI=true`, a project key, and a location key |
+
+A project key is `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID`. A location
+key is `GOOGLE_CLOUD_LOCATION`, `GOOGLE_CLOUD_REGION`, `CLOUD_ML_REGION`,
+`VERTEX_LOCATION`, or `VERTEX_AI_LOCATION`.
+
+Only listed keys are valid. Values other than authentication selectors must not
+be empty. `GOOGLE_GENAI_USE_GCA` and `GOOGLE_GENAI_USE_VERTEXAI` accept only
+trimmed, case-insensitive `true` or `false` values. Do not set both selectors
+to `true`. Set `GOOGLE_API_KEY`
+only with `GOOGLE_GENAI_USE_VERTEXAI=true`. Set a project key when you set a
+location key.
 
 ### Resolver entry keys
 
