@@ -42,6 +42,7 @@ for its guarantees and legacy limits.
 durable session records. `workcell session delete` removes a stopped record. A
 full delete also removes the recorded stopped container, debug log, file-trace
 log, transcript log, session audit directory, and audit seal when they exist.
+
 It does not remove the recorded isolated clone. It does not rewrite the shared
 profile audit log.
 
@@ -97,5 +98,5 @@ These mappings help an evaluator find evidence. They are not conformance claims.
 | Secure development and suppliers | Pinned upstream checks, reproducible builds, SBOMs, and vulnerability reporting |
 | OWASP agentic applications | [OWASP Agentic Mapping](owasp-agentic-mapping.md), which is a conservative posture map |
 
-Update this evidence map in the same change as a support, release, audit, or
+Update this map in the same change as a support, release, audit, or
 runtime-boundary claim that changes the evidence map.
