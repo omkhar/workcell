@@ -1,114 +1,101 @@
 # Enterprise Evidence Baseline
 
-This page records the Phase 11 evidence baseline for enterprise evaluation. It
-is an evidence map, not a compliance certification or an independent audit
-report.
+This page records the Phase 11 evidence map. It is not a certification or an
+independent audit report.
 
-Workcell currently supports local-first rollout on reviewed Apple Silicon macOS
-hosts. Evidence for broader host support, centralized policy, fleet inventory,
-or managed-workstation execution must land in later phases before those become
-support claims.
+Workcell supports operator launch only on the allowed macOS arm64 matrix rows.
+Broader host support, centralized policy, fleet inventory, and a managed
+workstation need new implementation and evidence.
 
-## Evidence Packet
+## Evidence Map
 
 | Area | Current source |
 |---|---|
-| Architecture and data flow | [workcell-system-design.md](workcell-system-design.md) (with boundary-stack, policy-to-injection, and control-plane masking diagrams), [invariants.md](invariants.md), [adapter-control-planes.md](adapter-control-planes.md) |
-| Runtime and target boundaries | [remote-vm-contract.md](remote-vm-contract.md), [managed-workstation-contract.md](managed-workstation-contract.md), [host-expansion-readiness.md](host-expansion-readiness.md), [policy/host-support-matrix.tsv](../policy/host-support-matrix.tsv) |
-| Threat model and non-protections | [threat-model.md](threat-model.md), [invariants.md](invariants.md), [enterprise-rollout.md](enterprise-rollout.md) |
-| Validation evidence | [validation-scenarios.md](validation-scenarios.md), [requirements-validation.md](requirements-validation.md), [use-case-matrix.md](use-case-matrix.md) |
-| Release provenance, SBOMs, and signing | [provenance.md](provenance.md), [github-workflows.md](github-workflows.md), [releasing.md](releasing.md) |
-| Support boundary and rollout | [enterprise-rollout.md](enterprise-rollout.md), [provider-matrix.md](provider-matrix.md), [../SUPPORT.md](../SUPPORT.md), [../ROADMAP.md](../ROADMAP.md) |
+| Architecture and data flow | [System Design](workcell-system-design.md), [Invariants](invariants.md), [Adapter Control Planes](adapter-control-planes.md) |
+| Runtime and target boundaries | [Remote VM Contract](remote-vm-contract.md), [Managed Workstation Contract](managed-workstation-contract.md), [Host Expansion Readiness](host-expansion-readiness.md), [host-support matrix](../policy/host-support-matrix.tsv) |
+| Threats and non-protections | [Threat Model](threat-model.md), [Invariants](invariants.md), [Enterprise Rollout](enterprise-rollout.md) |
+| Validation | [Validation Scenarios](validation-scenarios.md), [Requirements and Validation](requirements-validation.md), [Use-Case Matrix](use-case-matrix.md) |
+| Release provenance | [Provenance](provenance.md), [GitHub Workflows](github-workflows.md), [Release Process](releasing.md) |
+| Support and rollout | [Enterprise Rollout](enterprise-rollout.md), [Provider Matrix](provider-matrix.md), [Support](../SUPPORT.md), [Roadmap](../ROADMAP.md) |
 
-## Audit Schema And Retention
+## Audit and Session Evidence
 
-Current audit and session evidence is host-local:
+Audit and session evidence is host-local. New state uses the Workcell-owned
+target-state tree. The exact root depends on the target kind, provider, and
+profile.
 
-- profile audit logs live under Workcell-owned target state, for example
-  `~/.local/state/workcell/targets/<target-kind>/<provider>/<profile>/workcell.audit.log`
-- audit records are append-only text records with timestamps, event fields,
-  assurance data, and chained record digests
-- launched sessions write durable JSON records under the same target-state root
-- session audit-chain heads are signed host-side, and
-  `workcell session verify` recomputes the chain from the authoritative log and
-  checks that signature — see
-  [signed-session-audit-records.md](signed-session-audit-records.md) for the
-  format and trust model (boundary/host-signed, not agent-signed)
-- `workcell session timeline` filters audit records for one session
-- `workcell session export` bundles a session record with matching audit records
-- durable session records intentionally survive `workcell --gc`
-- `workcell session delete` removes a stopped session record and recorded
-  session-owned artifacts, but it does not rewrite the shared profile audit log
+A launched session can create these records:
 
-Retention remains operator or organization owned. Workcell does not yet provide
-a centralized retention policy or fleet inventory. SIEM ingestion is served by
-the OCSF-mapped export below (an export format, not a hosted pipeline or
-retention service).
+- An append-only profile audit log with event, time, and assurance fields.
+- A chained digest for each supported audit record.
+- A durable JSON session record.
+- A best-effort host signature for the final session-chain head.
+- Pointers to the debug log, transcript log, file-trace log, session audit
+  directory, and shared audit log when the session record has these paths.
 
-### OCSF-Mapped Export
+`workcell session verify` recomputes the authoritative chain and checks the seal
+and public key. Use [Signed Session Audit Records](signed-session-audit-records.md)
+for its guarantees and legacy limits.
 
-`workcell session export --format ocsf` renders a session and its audit
-lifecycle records as [OCSF](https://schema.ocsf.io/) 1.3.0 JSON Lines — one
-**Application Lifecycle** event (`category_uid` 6, `class_uid` 6002) per line —
-so a SIEM can ingest Workcell session evidence without a bespoke parser. The
-default `--format json` bundle is unchanged.
+`workcell session timeline` selects audit records for one session.
+`workcell session export` creates a session bundle. `workcell --gc` preserves
+durable session records. `workcell session delete` removes a stopped record. A
+full delete also removes the recorded stopped container, debug log, file-trace
+log, transcript log, session audit directory, and audit seal when they exist.
+It does not remove the recorded isolated clone. It does not rewrite the shared
+profile audit log.
 
-- **Events.** One summary event for the session record (finished → `activity_id`
-  4 Stop, live → 3 Start), then one event per audit record (started/launch →
-  Start, finished/exit → Stop, else → 99 Other). `metadata.version` is the OCSF
-  schema version (`1.3.0`); `metadata.mapping_version` is the Workcell
-  field→OCSF mapping version (`2` for this multi-event stream) so consumers can
-  gate parsers on either axis independently.
-- **Redaction.** Every field is passed through the shared support-bundle
-  redactor (the same rule-set as [G2 support bundles](../SUPPORT.md)) before it
-  enters an event; there is no un-redacted output path. That redactor masks
-  credentials and tokens and rewrites the operator home prefix to `~` — it does
-  NOT scrub arbitrary non-home paths, so operational metadata such as
-  `session.workspace` or `session.git_branch` (e.g. `/tmp/project`) is retained
-  as-is beyond the home rewrite. Because that regex redaction cannot sanitize
-  arbitrary prose, any operator/agent FREE-FORM payload — the `argv` session
-  message and any unexpected/tampered audit key or value — is instead
-  HARD-REDACTED to a fixed placeholder rather than emitted, so a credential in
-  prose or split-CLI form cannot reach the export even though it evades the
-  regex rules.
-- **Tamper resistance.** A tampered audit line with a duplicate identity key
-  fails the export closed (no forged event); a record whose decoded `session_id`
-  does not match the exported session is dropped (no cross-session
-  attribution); a torn crash fragment maps to Unknown, not Success.
+The operator or organization owns retention. Workcell has no central retention
+service or fleet inventory.
 
-## Known Gaps
+## OCSF Export
 
-These are intentionally not claimed today:
+`workcell session export --format ocsf` writes OCSF 1.3.0 JSON Lines. Each line
+is an Application Lifecycle event with `category_uid` 6 and `class_uid` 6002.
+The default JSON bundle is unchanged.
 
-- independent SOC 2, ISO 27001, or similar certification
-- centralized Workcell RBAC, SSO, SCIM, analytics, or inventory
-- Linux, Windows, Linux `arm64`, or Raspberry Pi operator-host support
-- managed-workstation provider support
-- automatic backend fallback
-- proof that release provenance alone proves the full local runtime boundary
+The export has these properties:
+
+- It writes one summary event and one event for each audit record that matches
+  the session.
+- It records OCSF schema version `1.3.0` and Workcell mapping version `2`.
+- It applies the shared support-bundle redactor to each dynamic session or
+  audit string value.
+- It replaces free-form session messages and unexpected audit fields with a
+  fixed redaction value.
+- It stops on a duplicate audit identity key.
+- It drops an audit record when the decoded session identifier does not match
+  the exported session.
+- It maps a torn crash fragment to an unknown result, not a success result.
+
+The shared redactor masks credentials and tokens. It replaces the operator home
+prefix with `~`. It can retain any non-home path that does not match another
+redaction rule.
+
+## Claims That Workcell Does Not Make
+
+Workcell does not claim:
+
+- Independent SOC 2, ISO 27001, or equivalent certification.
+- Central Workcell RBAC, SSO, SCIM, analytics, retention, or inventory.
+- Linux or Windows operator-host support.
+- Managed-workstation provider support.
+- Automatic target fallback.
+- That release provenance proves the complete local runtime boundary.
 
 ## Control Mapping Aid
 
-The mappings below are evaluation aids for buyers and reviewers. They are not
-claims that Workcell is certified against those frameworks.
+These mappings help an evaluator find evidence. They are not conformance claims.
 
-| Framework area | Workcell evidence to inspect |
+| Framework area | Evidence to inspect |
 |---|---|
-| SOC 2 logical access and change management | host-side policy commands, signed PR publication, release provenance, hosted-control audits |
-| SOC 2 system operations and monitoring | validation scenarios, session audit records, release workflow evidence |
-| SOC 2 risk mitigation | threat model, invariants, support matrix, lower-assurance mode labeling |
-| ISO 27001 access control | injection policy, provider bootstrap matrix, host-owned credential staging |
-| ISO 27001 configuration and change management | operator contract, requirements traceability, signed commits, PR-parity validation |
-| ISO 27001 logging and monitoring | session records, audit logs, hosted-control audits, release attestations |
-| ISO 27001 secure development and supplier controls | pinned upstream verification, reproducible builds, SBOM publication, vulnerability reporting |
-| OWASP Top 10 for Agentic Applications (2026) | [owasp-agentic-mapping.md](owasp-agentic-mapping.md) — a conservative posture map, not a conformance claim |
+| Access and change management | Host policy commands, signed publication, provenance, and hosted-control audits |
+| Operations and monitoring | Validation scenarios, session audit records, and release workflow evidence |
+| Risk treatment | Threat model, invariants, support matrix, and lower-assurance labels |
+| Configuration management | Operator contract, requirements traceability, signed commits, and `pr-parity` evidence |
+| Logging | Session records, audit logs, hosted-control audits, and release attestations |
+| Secure development and suppliers | Pinned upstream checks, reproducible builds, SBOMs, and vulnerability reporting |
+| OWASP agentic applications | [OWASP Agentic Mapping](owasp-agentic-mapping.md), which is a conservative posture map |
 
-## Quality Gate
-
-Enterprise evidence must stay reviewable and current:
-
-- do not convert roadmap items into support claims
-- keep evidence links repo-local and machine-checked when practical
-- remove duplicated or vague assurance language during peer review
-- update the evidence map in the same change as any support-tier, release,
-  audit, or runtime-boundary change that affects it
+Update this evidence map in the same change as a support, release, audit, or
+runtime-boundary claim that changes the evidence map.
