@@ -1131,7 +1131,10 @@ cleanup() {
 
   cleanup_runtime_builder || true
   if [[ -n "${PROFILE_LOCK_DIR}" ]] && [[ -d "${PROFILE_LOCK_DIR}" ]]; then
-    rm -rf "${PROFILE_LOCK_DIR}"
+    if ! release_profile_lock "${PROFILE_LOCK_DIR}" "$$"; then
+      echo "Workcell: warning: could not release the managed runtime lock at ${PROFILE_LOCK_DIR}." >&2
+    fi
+    PROFILE_LOCK_DIR=""
   fi
 
   cleanup_workcell_trusted_docker_client
@@ -2569,18 +2572,11 @@ cleanup_stale_latest_log_pointers() {
   fi
 }
 
-profile_lock_is_stale() {
-  local lock_dir="$1"
-
-  go_hostutil helper profile-lock-is-stale "${lock_dir}"
-}
-
 acquire_profile_lock() {
   local profile="$1"
   local lock_dir=""
   local lock_parent=""
   local acquired_state=""
-  local stale_state=""
   local attempts=0
 
   lock_dir="$(profile_lock_dir_path "${profile}")"
@@ -2596,20 +2592,56 @@ acquire_profile_lock() {
       PROFILE_LOCK_DIR="${lock_dir}"
       return 0
     fi
-    if ! stale_state="$(profile_lock_is_stale "${lock_dir}")"; then
-      echo "Failed to inspect managed runtime lock state for profile ${profile}." >&2
-      return 1
-    fi
-    if [[ "${stale_state}" == "1" ]]; then
-      rm -rf "${lock_dir}"
-      continue
-    fi
     attempts=$((attempts + 1))
     if [[ "${attempts}" -eq 1 ]]; then
       echo "Waiting for the active Workcell session on profile ${profile} to release the managed runtime lock." >&2
     fi
     sleep 1
   done
+}
+
+release_profile_lock() {
+  local lock_dir="$1"
+  local holder_pid="$2"
+  local attempts=0
+  local released_state=""
+
+  while true; do
+    if ! released_state="$(go_hostutil helper release-profile-lock "${lock_dir}" "${holder_pid}")"; then
+      return 1
+    fi
+    if [[ "${released_state}" == "1" ]]; then
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    if [[ "${attempts}" -ge 1500 ]]; then
+      return 1
+    fi
+    sleep 0.02
+  done
+}
+
+capture_current_shell_process_pid() {
+  local physical_pid=""
+
+  WORKCELL_CURRENT_SHELL_PID=""
+  if [[ -n "${BASHPID:-}" ]]; then
+    WORKCELL_CURRENT_SHELL_PID="${BASHPID}"
+    return 0
+  fi
+
+  # Bash 3.2 keeps $$ unchanged in a background subshell. The trailing builtin
+  # keeps the command-substitution shell alive while its child reports that
+  # shell's parent, which is this physical shell process.
+  physical_pid="$(
+    /bin/sh -c '/bin/ps -o ppid= -p "$PPID"'
+    :
+  )"
+  physical_pid="${physical_pid//[[:space:]]/}"
+  if [[ ! "${physical_pid}" =~ ^[1-9][0-9]*$ ]]; then
+    return 1
+  fi
+  WORKCELL_CURRENT_SHELL_PID="${physical_pid}"
 }
 
 cleanup_stale_session_audit_dirs() {
@@ -2712,40 +2744,23 @@ append_audit_record() {
   append_audit_record_to_path "${audit_path}" "$@"
 }
 
-# acquire_audit_log_lock serializes audit-log appends. The hash chain reads the
-# current tail's record_digest as the next record's prev_digest, so two
-# concurrent detached-session control paths (start/send/stop) racing the
-# read+append would fork the chain and make the verifier reject a legitimate
-# later record. This reuses the atomic, crash-safe profile-lock primitive
-# (acquire-profile-lock + profile-lock-is-stale: an atomic mkdir-rename lock
-# whose owner PID lets a crashed holder be reclaimed) on a per-log lock dir, so
-# no external flock(1) is required (it is absent on the macOS host). The lock
-# HOLDER computes the record digest via go_hostutil, which routes through
-# `go run` and can take several seconds to compile the child on a cold/busy host;
-# a waiter must reliably outlast that or it would skip a legitimate terminal
-# audit/signing record and break the chain. So it uses a ~30s bounded backoff
-# (1500 x 20ms). Genuine exhaustion at ~30s means a real anomaly (a stuck
-# holder), not normal cold-start latency; there it fails closed (no append)
-# rather than fork the chain.
+# acquire_audit_log_lock serializes the tail read and append. The Go lock helper
+# serializes acquisition, stale reclaim, and release with a persistent advisory
+# guard. This prevents an earlier stale decision from deleting a new holder. The
+# directory lock remains held while Bash renders the record with printf %q. A
+# waiter uses a bounded ~30-second backoff and fails closed on exhaustion.
 acquire_audit_log_lock() {
   local lock_dir="$1"
   local attempts=0
   local acquired_state=""
-  local stale_state=""
-  # Record the ACTUAL holder process so profile_lock_is_stale can reclaim the lock
-  # when that process dies. append_audit_record_to_path and the signer can take
-  # this lock from inside a backgrounded ( ) subshell, where $$ is still the parent
-  # launcher PID, not the worker that does the cleanup rm -rf. BASHPID is the
-  # current process's own PID on bash 4+; the macOS host runs under /bin/bash 3.2
-  # which lacks BASHPID, so fall back to $$ there (${BASHPID:-$$}) — no unbound
-  # error under set -u, and on the host every audit-lock holder is a top-level
-  # process (launch shell, detached-monitor process, session-stop/-control command)
-  # whose $$ IS the real holder, so reclaim still works. This MUST be captured here
-  # in the holder's own context, NOT inside the go_hostutil "$( )" below: BASHPID
-  # inside a command substitution is that transient subshell's PID (already dead by
-  # the stale check). (acquire_profile_lock deliberately keeps $$: its owner is the
-  # top-level launch shell for the whole session.)
-  local holder_pid="${BASHPID:-$$}"
+  # Record the physical holder process so a later caller can reclaim a crashed
+  # worker's lock. Capture it before go_hostutil command substitution. That
+  # substitution has a transient PID which is dead at the next stale check.
+  # acquire_profile_lock keeps $$ because its owner is the top-level launcher.
+  local holder_pid=""
+
+  capture_current_shell_process_pid || return 1
+  holder_pid="${WORKCELL_CURRENT_SHELL_PID}"
 
   mkdir -p "$(dirname "${lock_dir}")"
   while true; do
@@ -2755,16 +2770,21 @@ acquire_audit_log_lock() {
     if [[ "${acquired_state}" == "1" ]]; then
       return 0
     fi
-    if stale_state="$(profile_lock_is_stale "${lock_dir}")" && [[ "${stale_state}" == "1" ]]; then
-      rm -rf "${lock_dir}"
-      continue
-    fi
     attempts=$((attempts + 1))
     if [[ "${attempts}" -ge 1500 ]]; then
       return 1
     fi
     sleep 0.02
   done
+}
+
+release_audit_log_lock() {
+  local lock_dir="$1"
+  local holder_pid=""
+
+  capture_current_shell_process_pid || return 1
+  holder_pid="${WORKCELL_CURRENT_SHELL_PID}"
+  release_profile_lock "${lock_dir}" "${holder_pid}"
 }
 
 append_audit_record_to_path() {
@@ -2802,7 +2822,10 @@ append_audit_record_to_path() {
       printf '\n'
     } >>"${audit_path}"
   ) || rc=$?
-  rm -rf "${lock_dir}" 2>/dev/null || true
+  if ! release_audit_log_lock "${lock_dir}"; then
+    echo "Workcell: warning: could not release audit-log lock for ${audit_path}." >&2
+    [[ "${rc}" -ne 0 ]] || rc=1
+  fi
   return "${rc}"
 }
 
@@ -3358,7 +3381,9 @@ sign_session_audit_head_explicit() {
     "--provider=${target_provider}" 2>/dev/null; then
     echo "Workcell: warning: could not sign session audit head for ${session_id}; session verify will report it unsigned." >&2
   fi
-  rm -rf "${lock_dir}" 2>/dev/null || true
+  if ! release_audit_log_lock "${lock_dir}"; then
+    echo "Workcell: warning: could not release audit-log lock after signing ${session_id}." >&2
+  fi
 }
 
 write_profile_image_marker() {

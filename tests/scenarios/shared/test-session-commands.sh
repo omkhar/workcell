@@ -809,7 +809,7 @@ awk '
 # out and skip.)
 RECLAIM_LOG="${TMP_DIR}/reclaim-audit/workcell.audit.log"
 reclaim_output="$(
-  bash -lc '
+  /bin/bash -lc '
     set -euo pipefail
     source "$1"
     trap - EXIT
@@ -874,8 +874,9 @@ slow_holder_output="$(
         if mkdir "$3" 2>/dev/null; then echo 1; else echo 0; fi
         return 0
       fi
-      if [[ "${1:-} ${2:-}" == "helper profile-lock-is-stale" ]]; then
-        echo 0
+      if [[ "${1:-} ${2:-}" == "helper release-profile-lock" ]]; then
+        rm -rf "$3"
+        echo 1
         return 0
       fi
       real_go_hostutil "$@"
@@ -973,8 +974,9 @@ signer_lock_output="$(
         if mkdir "$3" 2>/dev/null; then echo 1; else echo 0; fi
         return 0
       fi
-      if [[ "${1:-} ${2:-}" == "helper profile-lock-is-stale" ]]; then
-        echo 0
+      if [[ "${1:-} ${2:-}" == "helper release-profile-lock" ]]; then
+        rm -rf "$3"
+        echo 1
         return 0
       fi
       real_go_hostutil "$@"
@@ -999,7 +1001,7 @@ signer_lock_output="$(
       sleep 0.05
     done
     # Signer is provably blocked with no seal yet; release so it acquires and signs.
-    rm -rf "${LOCK_DIR}"
+    go_hostutil helper release-profile-lock "${LOCK_DIR}" "$$" >/dev/null
     wait "${signer_pid}"
     printf "blocked=%s\n" "${blocked}"
     printf "seal=%s\n" "$([[ -s "${RECORD_PATH%.json}.audit-sig" ]] && echo 1 || echo 0)"

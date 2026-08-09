@@ -8626,16 +8626,27 @@ if ! sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" | a
   /^[[:space:]]*fi$/ && state == 4 { state = 5; next }
   /^[[:space:]]*if \[\[ "\$\{acquired_state\}" == "1" \]\]; then$/ && state == 5 { state = 6; next }
   /^[[:space:]]*PROFILE_LOCK_DIR="\$\{lock_dir\}"$/ && state == 6 { state = 7; next }
-  /^[[:space:]]*return 0$/ && state == 7 { state = 8; next }
-  /^[[:space:]]*fi$/ && state == 8 { state = 9; next }
-  /^[[:space:]]*if ! stale_state="\$\(profile_lock_is_stale "\$\{lock_dir\}"\)"; then$/ && state == 9 { state = 10; next }
-  /^[[:space:]]*echo "Failed to inspect managed runtime lock state for profile \$\{profile\}\." >&2$/ && state == 10 { state = 11; next }
-  /^[[:space:]]*return 1$/ && state == 11 { state = 12; next }
-  /^[[:space:]]*fi$/ && state == 12 { state = 13; next }
-  /^[[:space:]]*if \[\[ "\$\{stale_state\}" == "1" \]\]; then$/ && state == 13 { state = 14; exit }
-  END { exit(state == 14 ? 0 : 1) }
+  /^[[:space:]]*return 0$/ && state == 7 { state = 8; exit }
+  END { exit(state == 8 ? 0 : 1) }
 '; then
-  echo "Expected workcell to acquire profile locks atomically and fail fast when lock state cannot be inspected" >&2
+  echo "Expected workcell to use the guarded profile-lock acquisition helper" >&2
+  exit 1
+fi
+
+if sed -n '/^acquire_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" |
+  grep -Eq 'profile_lock_is_stale|rm -rf.*lock_dir'; then
+  echo "Profile-lock acquisition must not reclaim lock directories in shell" >&2
+  exit 1
+fi
+
+if ! grep -Fq "release_profile_lock \"\${PROFILE_LOCK_DIR}\" \"\$\$\"" "${ROOT_DIR}/scripts/workcell"; then
+  echo "Expected workcell cleanup to use the guarded profile-lock release helper" >&2
+  exit 1
+fi
+
+if ! sed -n '/^release_profile_lock()/,/^}/p' "${ROOT_DIR}/scripts/workcell" |
+  grep -Fq "go_hostutil helper release-profile-lock \"\${lock_dir}\" \"\${holder_pid}\""; then
+  echo "Expected profile-lock release to use the guarded helper" >&2
   exit 1
 fi
 

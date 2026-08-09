@@ -61,8 +61,9 @@ The session head is the last `record_digest` for that `session_id`.
 Workcell locks the profile audit log before it reads the tail and appends a
 record. The lock covers both operations.
 
-The lock uses the repository `acquire-profile-lock` operation. It does not
-require `flock` on macOS.
+The lock uses the repository `acquire-profile-lock` operation. A Go-owned
+advisory lock serializes acquisition, stale reclaim, and release. This design
+does not require the external `flock` command on macOS.
 
 The appender uses approximately 30 seconds of sleep backoff. Helper execution
 can make the total wait longer. If the lock remains unavailable, the append

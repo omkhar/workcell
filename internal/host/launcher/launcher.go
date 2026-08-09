@@ -16,9 +16,15 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-var errNoMatch = errors.New("not found")
+var (
+	errNoMatch = errors.New("not found")
+	// ErrProfileLockTransitionBusy reports a contended transition guard.
+	ErrProfileLockTransitionBusy = errors.New("profile lock transition guard is busy")
+)
 
 func RandomHex(n int) (string, error) {
 	if n <= 0 {
@@ -101,9 +107,37 @@ func ColimaProfileProcessPIDs(psOutput []byte, profile string) ([]int, error) {
 	return pids, nil
 }
 
-func ProfileLockIsStale(lockDir string) (bool, error) {
+type profileLockOwner struct {
+	PID     int    `json:"pid"`
+	Started string `json:"started"`
+}
+
+func readProfileLockOwner(lockDir string) (profileLockOwner, error) {
 	ownerPath := filepath.Join(lockDir, "owner.json")
 	content, err := os.ReadFile(ownerPath)
+	if err != nil {
+		return profileLockOwner{}, err
+	}
+
+	var owner profileLockOwner
+	if err := json.Unmarshal(content, &owner); err != nil {
+		return profileLockOwner{}, fmt.Errorf("parse profile lock owner metadata: %w", err)
+	}
+	if owner.PID <= 0 || owner.Started == "" {
+		return profileLockOwner{}, fmt.Errorf("profile lock owner metadata is incomplete: %s", ownerPath)
+	}
+	return owner, nil
+}
+
+func observedProfileLockGeneration(owner profileLockOwner) (string, error) {
+	if strings.HasPrefix(owner.Started, "darwin:") || strings.HasPrefix(owner.Started, "linux:") {
+		return processGeneration(owner.PID)
+	}
+	return ProcessStartTime(owner.PID)
+}
+
+func ProfileLockIsStale(lockDir string) (bool, error) {
+	owner, err := readProfileLockOwner(lockDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return true, nil
@@ -111,32 +145,9 @@ func ProfileLockIsStale(lockDir string) (bool, error) {
 		return false, err
 	}
 
-	var owner struct {
-		PID     int    `json:"pid"`
-		Started string `json:"started"`
-	}
-	if err := json.Unmarshal(content, &owner); err != nil {
-		return false, fmt.Errorf("parse profile lock owner metadata: %w", err)
-	}
-	if owner.PID <= 0 || owner.Started == "" {
-		return false, fmt.Errorf("profile lock owner metadata is incomplete: %s", ownerPath)
-	}
-
-	alive, err := pidAlive(owner.PID)
+	observed, err := observedProfileLockGeneration(owner)
 	if err != nil {
-		return false, err
-	}
-	if !alive {
-		return true, nil
-	}
-
-	observed, err := ProcessStartTime(owner.PID)
-	if err != nil {
-		alive, killErr := pidAlive(owner.PID)
-		if killErr != nil {
-			return false, killErr
-		}
-		if !alive {
+		if IsProcessGone(err) {
 			return true, nil
 		}
 		return false, err
@@ -144,19 +155,43 @@ func ProfileLockIsStale(lockDir string) (bool, error) {
 	return observed != owner.Started, nil
 }
 
-// pidAlive reports whether signal 0 reaches pid. A missing process (ESRCH)
-// returns (false, nil); any other Kill error is surfaced.
-func pidAlive(pid int) (bool, error) {
-	if err := syscall.Kill(pid, 0); err != nil {
-		if errors.Is(err, syscall.ESRCH) {
-			return false, nil
-		}
-		return false, err
+// withProfileLockTransition serializes lock acquisition, stale reclaim, and
+// release. The sibling guard file persists so all callers lock the same inode.
+// The kernel releases the advisory lock if a helper process exits unexpectedly.
+func withProfileLockTransition(lockDir string, fn func() error) error {
+	if lockDir == "" || filepath.Clean(lockDir) == string(filepath.Separator) {
+		return errors.New("profile lock directory is required")
 	}
-	return true, nil
+	if err := os.MkdirAll(filepath.Dir(lockDir), 0o755); err != nil {
+		return err
+	}
+
+	guardPath := lockDir + ".guard"
+	fd, err := unix.Open(guardPath, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return fmt.Errorf("open profile lock transition guard: %w", err)
+	}
+	defer unix.Close(fd) //nolint:errcheck // the operation result is authoritative
+	if err := unix.Fchmod(fd, 0o600); err != nil {
+		return fmt.Errorf("set profile lock transition guard mode: %w", err)
+	}
+	for {
+		if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			if errors.Is(err, syscall.EINTR) {
+				continue
+			}
+			if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+				return ErrProfileLockTransitionBusy
+			}
+			return fmt.Errorf("lock profile transition guard: %w", err)
+		}
+		break
+	}
+	defer unix.Flock(fd, unix.LOCK_UN) //nolint:errcheck // closing the descriptor also releases the lock
+	return fn()
 }
 
-func AcquireProfileLock(lockDir string, pid int) (bool, error) {
+func acquireProfileLockUncoordinated(lockDir string, pid int) (bool, error) {
 	parentDir := filepath.Dir(lockDir)
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return false, err
@@ -187,8 +222,63 @@ func AcquireProfileLock(lockDir string, pid int) (bool, error) {
 	return true, nil
 }
 
+// AcquireProfileLock atomically acquires a free lock or reclaims a stale lock.
+// The transition guard prevents an earlier stale decision from deleting a new
+// holder that acquired the directory after another process released it.
+func AcquireProfileLock(lockDir string, pid int) (bool, error) {
+	var acquired bool
+	err := withProfileLockTransition(lockDir, func() error {
+		var err error
+		acquired, err = acquireProfileLockUncoordinated(lockDir, pid)
+		if err != nil || acquired {
+			return err
+		}
+		stale, err := ProfileLockIsStale(lockDir)
+		if err != nil {
+			return err
+		}
+		if !stale {
+			return nil
+		}
+		if err := os.RemoveAll(lockDir); err != nil {
+			return fmt.Errorf("remove stale profile lock: %w", err)
+		}
+		acquired, err = acquireProfileLockUncoordinated(lockDir, pid)
+		return err
+	})
+	if errors.Is(err, ErrProfileLockTransitionBusy) {
+		return false, nil
+	}
+	return acquired, err
+}
+
+// ReleaseProfileLock removes only the caller's lock while holding the same
+// transition guard used by acquisition and stale reclaim.
+func ReleaseProfileLock(lockDir string, pid int) error {
+	return withProfileLockTransition(lockDir, func() error {
+		owner, err := readProfileLockOwner(lockDir)
+		if err != nil {
+			return err
+		}
+		if owner.PID != pid {
+			return fmt.Errorf("profile lock owner pid is %d, not %d", owner.PID, pid)
+		}
+		started, err := observedProfileLockGeneration(owner)
+		if err != nil {
+			return err
+		}
+		if owner.Started != started {
+			return errors.New("profile lock owner process generation changed")
+		}
+		if err := os.RemoveAll(lockDir); err != nil {
+			return fmt.Errorf("release profile lock: %w", err)
+		}
+		return nil
+	})
+}
+
 func WriteProfileOwner(ownerPath string, pid int) error {
-	started, err := ProcessStartTime(pid)
+	started, err := processGeneration(pid)
 	if err != nil {
 		return err
 	}
