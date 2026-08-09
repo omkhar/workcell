@@ -1,198 +1,217 @@
 ---
 name: workcell-pr-lifecycle
-description: Publish, follow, and merge Workcell pull requests through the repo-approved host-side workflow. Use when the user asks to commit, raise a PR, follow checks, mark ready, address review feedback, or merge in the Workcell repository.
+description: Publish, review, follow, and merge Workcell pull requests through the approved host workflow. Use for signed commits, PR publication, checks, Codex bot review, comments, ready state, merge, or post-merge follow-up.
 ---
 
-# Workcell PR Lifecycle
+# Workcell Pull Request Lifecycle
 
-Use this skill only in the Workcell repository root, identified by:
+Use this skill only in the Workcell repository. Confirm that these files exist:
 
 - `AGENTS.md`
 - `scripts/workcell`
 - `policy/reviewer-identities.toml`
 
-Use it when a task includes any part of the Workcell pull request lifecycle:
+## Read First
 
-- preparing signed commits for publication
-- opening a PR
-- following PR checks
-- fixing CI or review feedback
-- marking a PR ready
-- merging a PR
-
-## Standing priorities
-
-Always prefer, in order:
-
-1. Simplicity
-2. Correctness
-3. Linting and clean validation
-4. Appropriate test coverage
-5. Security
-6. Performance
-7. Current idiomatic correctness
-
-These priorities apply only inside the repo invariants. Do not trade away the
-runtime boundary, explicit security guarantees, or host-side publication rules
-for convenience.
-
-Treat every user request as implicitly including peer review unless the user
-explicitly narrows that scope. For PR work, peer review means continuing
-through review, fixes, validation, another review pass, and hosted workflow
-follow-through until no actionable findings remain or a concrete blocker is
-reported.
-Treat that as a continuing loop with the same peers and review surfaces. If a
-comment sweep, thread sweep, CI rerun, or follow-up review produces new
-findings after a fix, keep iterating until every finding is resolved,
-explicitly dispositioned, or blocked by a concrete external constraint.
-Treat repeated PR friction, publication fallbacks, or hosted-check surprises as
-signals that the repo-local lifecycle instructions should improve. When a
-durable process lesson appears, capture it in a versioned repo-local update
-instead of leaving it as an unwritten workaround.
-
-## Read first
+Read:
 
 - `AGENTS.md`
 - `.agents/skills/commit/SKILL.md`
 - `policy/reviewer-identities.toml`
 
-If the task changes user-visible Workcell workflows, docs, or evidence, also
-use the repo-local `workcell-contract-parity` skill.
+For a public workflow or document change, also use
+`workcell-contract-parity`. For release work, read `docs/releasing.md`.
 
-If the task is release-bound, also read:
+## Publication Rules
 
-- `docs/releasing.md`
+- Sign each commit.
+- Use a feature branch.
+- Use `main` as the pull request base by default.
+- Keep a non-`main` pull request draft. Do not merge it.
+- Open each pull request as a draft.
+- Keep each review unit small and single-purpose.
+- Publish from the host with `./scripts/repo-publish-pr.sh`.
+- Before each publication, run `pr-parity` for the exact head and base.
+- Do not use `--allow-parity-override` for normal publication.
+- Treat missing or mismatched parity evidence as a blocker.
+- Use an override only when a repository runbook documents it.
+- Require explicit user authorization and acknowledgement for the override.
+- After you create a signed merge commit to resolve a base conflict, rerun
+  `pr-parity` for that exact head before publication.
+- Use the lower-level publication helper only for an exception that `AGENTS.md`
+  or a repository runbook permits.
+- If the commit changes a supported end-to-end workflow or backend, complete
+  live certification. Apply the same gate to a support-tier claim or
+  certification-only validation path. Complete certification before you sign
+  the commit.
+- Clean Workcell-owned residue when validation creates it.
 
-## Invariants
+The upstream-refresh workflow supplies advisory candidates. Authoritative
+refresh publication uses `./scripts/publish-upstream-refresh-pr.sh`. That
+helper recreates the change locally and calls `./scripts/repo-publish-pr.sh`.
 
-- Final GitHub publication is a host-side action. Use the repo-local
-  `./scripts/repo-publish-pr.sh` wrapper for `main`-based PRs so fresh local
-  parity evidence is enforced before it delegates to
-  `./scripts/workcell publish-pr`; do not normalize direct publication from
-  the Tier 1 session.
-- Upstream refresh candidate issues and artifacts from
-  `.github/workflows/upstream-refresh.yml` are advisory only. Authoritative
-  upstream refresh publication goes through the repo-local
-  `./scripts/publish-upstream-refresh-pr.sh` helper, which recreates the
-  refresh locally and then calls `./scripts/repo-publish-pr.sh`.
-- `main` is the only supported PR base by default. If a lower-assurance
-  non-`main` base path exists, keep that PR draft-only, treat it as
-  non-mergeable, and do not claim the normal `main`-based repo-owned
-  validation or merge gating exists for that branch shape.
-- Keep PRs reviewer-sized and single-purpose. Split broad work before
-  publication.
-- Sign every commit and use feature branches.
-- If the change introduces or materially changes a supported end-to-end
-  workflow, backend, support-tier claim, or certification-only validation
-  path, ensure the relevant live certification passed before the signed commit
-  was created. Do not use PR publication as a substitute for required
-  end-to-end certification.
-- Open the PR as a draft first. Mark it ready only after the review and check
-  gates below are satisfied.
-- Every PR must complete the Codex bot loop required by `AGENTS.md`. Workflow
-  step 9 defines the repository procedure; use the Codex PR review loop skill
-  when it is available.
-- Do not stop at PR creation. Follow repo-owned checks until they are green,
-  fix failures, and rerun the relevant local validation before pushing more
-  commits.
-- Serialize follow-up branch pushes and PR-base-policy-triggering mutations,
-  including title, body, or base edits and draft/ready transitions. Do not run
-  them concurrently or while `Allowed PR base` is in progress. For each push or
-  mutation, wait for that event's own policy run to appear, identify it against
-  the current PR state, and require it to settle successfully before another
-  push, mutation, or merge; after a push, also confirm the PR's `headRefOid`.
-  If it fails because the current PR state violates base policy, make only the
-  draft transition or base edit needed to restore a permitted state, then
-  follow the replacement policy run to success before another triggering
-  mutation or merge.
-- Sweep top-level comments, inline comments, unresolved review threads, and
-  configured async reviewers in `policy/reviewer-identities.toml`.
-- Mark the PR ready only after repo-owned checks are green and the review
-  surfaces have no actionable findings.
-- After marking ready, re-check checks and review surfaces again. Some repos
-  gate differently once a PR leaves draft.
-- If the task includes merging, re-check review surfaces immediately before
-  merge, then follow merged `main` workflows until all repo-owned lanes are
-  green. Scope hosted polling to the PR head SHA or merge SHA; historical
-  scheduled failures are triage inputs, not blockers for an unrelated SHA.
-- A single-maintainer admin merge may bypass only a missing independent
-  approval. It never bypasses required checks, commit-signature or base policy,
-  the current-head Codex clean marker, comment sweeps, or unresolved threads.
-- Do not accept failing repo-owned tests, checks, or workflows as acceptable
-  residue. Fix them or explicitly change the claimed guarantee in the same
-  review unit.
+## Hosted Mutation Order
 
-## Workflow
+Serialize each push, base edit, title or body edit, and draft or ready
+transition.
 
-1. Confirm the branch is reviewable and the local worktree only contains the
-   intended scope.
-2. Run any required live end-to-end certification before signing commits for
-   support-claim or backend changes.
-3. Create signed commits using the repo-local `commit` skill.
-4. Run the focused local validation for the change before publication.
-5. If validation, CI follow-up, or failed live runs created Workcell-owned
-   residue, run `./scripts/workcell --gc` or the narrow cleanup path before
-   publication. Do not leave temp roots, validator images, or over-budget
-   runtime-cache debris for later turns.
-6. Publish `main`-based PRs with host-side `./scripts/repo-publish-pr.sh`
-   using a draft PR by default. Only fall back to the lower-level
-   `./scripts/workcell publish-pr` path for explicit lower-assurance
-   non-`main` exceptions or other repo-approved special cases.
-7. Follow repo-owned checks to completion.
-   Prefer required-check polling for merge gating:
-   `gh pr checks <pr-number> --repo <owner/repo> --required --watch`. Use the
-   full check list only as an advisory sweep so skipped non-required lanes do
-   not obscure the merge decision.
-8. If a repo-owned check fails:
-   - inspect the failing GitHub Actions logs or PR checks
-   - fix the underlying issue locally
-   - rerun the smallest local validation that proves the fix
-   - push the signed follow-up commit host-side to the existing branch
-   - confirm `headRefOid` matches the pushed head and its `Allowed PR base` run
-     settled; require success unless the next change is the single corrective
-     draft transition or base edit needed to restore a permitted PR state
-   - continue following checks until green
-9. Run the Codex bot loop after the branch is at its intended head. Post the
-   standalone trigger, check every response channel, react to and resolve or
-   disposition findings, resolve Codex threads, and confirm the clean marker's
-   reviewed SHA matches the current head. Repeat this step after every push.
-10. Sweep top-level comments, inline comments, unresolved threads, and async
-   reviewer feedback.
-11. When checks are green and no actionable findings remain, mark the PR ready
-   unless the user explicitly asked to keep it draft. Do not mark non-`main`
-   base PRs ready; they stay lower-assurance draft-only review units.
-12. After marking ready, re-check checks and review surfaces again.
-13. If merge is part of the task, repeat the review sweep immediately before
-    merge, merge, then follow merged `main` workflows until repo-owned lanes
-    are green.
-14. After merge follow-up, run the aggregate repository readiness gate:
-    `./scripts/check-repo-readiness.sh --repo <owner/repo> --base main`. Use
-    `--watch` when CI or maintenance workflows are still active.
-15. If the task exposed a reusable PR-lifecycle or hosted-validation lesson,
-    update the relevant repo-local instructions in the same change stream or a
-    separate follow-on PR.
+After each mutation:
 
-## Validation
+1. Wait for its own `Allowed PR base` run.
+2. Confirm that the run matches the current pull request state.
+3. Require success before the next mutation.
+4. After a push, confirm that `headRefOid` equals the pushed commit.
 
-Always run the smallest local validation that proves the actual change. When
-the work updates repo-wide instructions or multiple docs/skills, finish with:
+If base policy fails because of the current state, make only the corrective
+draft or base change. Then wait for the replacement policy run.
 
-```sh
-/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh
+## Required Review Surfaces
+
+For each pull request, inspect:
+
+- Top-level comments.
+- Inline review comments.
+- Unresolved review threads.
+- Reviews and requested changes.
+- Configured asynchronous reviewers in
+  `policy/reviewer-identities.toml`.
+
+Fix or explicitly disposition each actionable finding. An asynchronous review
+is advisory. It is not an independent approval.
+
+## Codex Review
+
+Use `codex-pr-review-loop` for the Codex bot loop. It owns the trigger,
+response channels, bounded retry, clean-result interpretation, reactions, and
+thread resolution.
+
+After each push, stabilize the intended head and required local evidence. Then
+run the loop. Use only the review skill's bounded retry. Do not add manual retry
+triggers after a quota or connector response.
+
+Before ready and merge, inspect the required review surfaces again. Confirm
+that the clean result applies to the current head. Do not treat a `COMMENTED`
+review state as a clean result.
+
+When a reviewed commit identifier is available, resolve it in GitHub. Require
+the resolved commit to equal the current head. Report a blocker when required
+review evidence is unavailable or mismatched.
+
+## Efficient Multi-Agent Work
+
+When one operator manages a PR queue, finish the current PR before you publish
+the next PR. This reduces stale-base and review churn.
+
+Keep only one remote mutation active for a PR. Use one coordinator for
+publication, pushes, review triggers, state transitions, and merge.
+
+Other agents can review, validate, and poll in parallel. They must not mutate
+the same PR concurrently.
+
+When the active environment authorizes these models, use Luna for deterministic
+inventory and bounded polling. Use Terra for implementation and substantive
+peer review. Use Sol for security decisions, signing, publication, final
+integration, and merge.
+
+Otherwise, use an available model that meets the task risk.
+
+This routing does not authorize model selection, external spend, GitHub access,
+or signing.
+
+Use this compact JSON envelope for agent handoffs:
+
+```json
+{"u":"","op":"","state":"","repo":"","pr":0,"base":"","head":"","evidence":[],"findings":[],"tests":[],"blocker":"","next":""}
 ```
 
-Use the GitHub plugin helpers when they fit the task:
+Do not include credentials, tokens, or raw comment bodies. Reconstruct remote
+state before a mutation. Record reviewed heads, checks, reactions, replies, and
+thread states with stable identifiers.
 
-- `github:gh-fix-ci` for failing Actions lanes
-- `github:gh-address-comments` for actionable review feedback
+## Check and Merge Workflow
 
-## Blocking rule
+1. Confirm that the worktree contains only intended changes.
+2. Run required live certification.
+3. Create signed commits with the `commit` skill.
+4. Run focused local validation.
+5. For repo-wide instructions or multiple documents or skills, run
+   `/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh`.
+6. Run Workcell-owned cleanup when validation creates residue.
+7. Run `./scripts/pre-merge.sh --profile pr-parity`.
+8. Publish a draft pull request with `./scripts/repo-publish-pr.sh`.
+9. Follow all repository-owned checks.
+10. Complete the Codex review loop.
+11. Fix each check or review failure.
+12. Repeat each gate that the failure affects.
+13. Mark the pull request ready only when required checks succeed and the
+    review surfaces have no actionable finding.
+14. Wait for the ready-state base-policy run.
+15. Recheck the required review surfaces after ready.
+16. Immediately before merge, recheck the required review surfaces.
+17. Merge the pull request.
+18. Follow all workflows for the merged `main` commit.
+19. For release, cleanup, or a task that merges all pull requests, run the
+    repository readiness check.
 
-Do not call PR work complete while any of these remain true:
+Use required-check polling for the merge gate:
 
-- the branch has unpublished intended changes
-- repo-owned checks are still red or unreviewed
-- review surfaces still contain actionable findings
-- merged `main` workflows still show repo-owned failures for a merge task
-- `./scripts/check-repo-readiness.sh --base main` reports blocked after a
-  merge-everything or cleanup task
+```sh
+gh pr checks PR_NUMBER --repo OWNER/REPO --required --watch
+```
+
+Use the full check list as an advisory sweep. Skipped optional jobs must not hide
+a required failure.
+
+For release, cleanup, or a task that merges all pull requests, run after merge:
+
+```sh
+./scripts/check-repo-readiness.sh --repo OWNER/REPO --base main
+```
+
+Use `--watch` while workflows for the merge commit are active.
+
+## Single-Maintainer Admin Merge
+
+An admin merge can bypass only a missing independent approval. It cannot bypass:
+
+- A failed or pending required check.
+- The commit-signature gate.
+- Base policy.
+- The resolved current-head Codex reviewed OID.
+- An actionable comment.
+- An unresolved review thread.
+
+## Failure Rule
+
+Do not accept a failed repository-owned check or workflow.
+
+For a failure:
+
+1. Inspect the check and its logs.
+2. Fix the cause.
+3. Run the smallest local proof.
+4. Recheck the affected review and check gates.
+5. Run `./scripts/pre-merge.sh --profile pr-parity`.
+6. Push a signed follow-up commit from the host.
+7. Confirm the new head and base-policy run.
+8. Repeat review and checks.
+
+For a merge task, follow the merged `main` workflows to success. Historical
+scheduled failures for another SHA are triage inputs, not blockers for the
+current SHA.
+
+## Blocking Rule
+
+Do not report completion while any of these conditions is true:
+
+- The published pull request omits an intended change.
+- A repository-owned check reports a failure or lacks review.
+- A review surface has an actionable finding.
+- The Codex review loop is incomplete.
+- A merged-`main` workflow for the current merge reports a failure.
+- For release, cleanup, or a task that merges all pull requests, the readiness
+  check reports a blocker.
+
+If repeated friction exposes a durable process gap, update the repo-local
+instruction that owns the process. Use a separate review unit if the update
+does not match the active pull request purpose.

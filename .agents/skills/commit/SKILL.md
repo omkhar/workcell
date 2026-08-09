@@ -1,132 +1,114 @@
 ---
 name: commit
-description: Risk-Aware Commit Notation. Use when creating git commits to determine the correct prefix, risk level, and commit grouping.
+description: Apply Risk-Aware Commit Notation in Workcell. Use when an agent groups changes, selects a risk prefix, writes a message, or creates a signed commit.
 ---
 
 # Risk-Aware Commit Notation
 
-All commits in this repo use Risk-Aware Commit Notation. The first characters of
-the subject encode risk level and intention.
+Use this skill for each Workcell commit.
 
-## Standing priorities
+## Priorities
 
-Always prefer, in order:
+Use the repository priorities in this order:
 
-1. Simplicity
-2. Correctness
-3. Linting and clean validation
-4. Appropriate test coverage
-5. Security
-6. Performance
-7. Current idiomatic correctness
+1. Developer experience.
+2. Simplicity.
+3. Security invariants.
+4. Performance.
+5. Idiomatic correctness.
 
-These priorities apply only inside the repo invariants. Do not trade away the
-runtime boundary, explicit security guarantees, or host-side publication rules
-for convenience.
+Do not reduce a runtime boundary or an explicit security guarantee.
 
-## Format
+## Subject Format
 
-`<risk><intention> <description>`
+Use this format:
 
-## Risk Levels
+```text
+<risk><intent> <description> (risk reason; case reason)
+```
 
-| Symbol | Level | Guarantees |
-|--------|-------|------------|
-| `.` | Safe | Intended change + known & unknown invariants |
-| `^` | Validated | Intended change + known invariants |
-| `!` | Risky | Intended change only |
-| `@` | Broken | None |
+### Risk
 
-## Intentions
+| Symbol | Level | Claim |
+|---|---|---|
+| `.` | Safe | Structural proof and focused validation cover each applicable invariant |
+| `^` | Validated | Validation covers the intended change and known invariants |
+| `!` | Risky | Validation covers only the intended change |
+| `@` | Broken | Evidence does not prove the intended change |
 
-| Letter | Type | Meaning |
-|--------|------|---------|
-| **F/f** | Feature | Modify one behavioral aspect without affecting others |
-| **B/b** | Bugfix | Repair undesirable behavior, preserve everything else |
-| **R/r** | Refactoring | Restructure code without changing runtime behavior |
-| **D/d** | Documentation | Update info that doesn't impact code execution |
+Select a risk level only when the available evidence supports its claim.
 
-## Rules
+### Intent
 
-- Uppercase = primary/user-visible changes. Lowercase = supporting changes.
-- Features/bugfixes exceeding 8 lines of code (including tests) default to highest risk level.
-- Safe refactoring (`.r`) requires provable refactoring via automated tools or test-supported procedural refactoring.
-- Choose the risk level honestly. If you haven't verified invariants, use `!` or `@`.
-- Treat every user request as implicitly including peer review unless the user
-  explicitly narrows that scope.
-- When peer review finds an actionable issue, keep iterating through fixes,
-  validation, and another review pass until no actionable findings remain or a
-  concrete blocker is reported.
-- Treat that review loop as unbounded. If the peer or follow-up review pass
-  finds new issues after a fix, keep iterating with that peer until all
-  findings are resolved, explicitly dispositioned, or blocked by a concrete
-  external constraint.
-- Treat repeated user correction, recurring review friction, or repeated CI
-  surprises as a signal to improve the repo-local instructions. When a durable
-  gap is exposed, update the relevant repo-local skill, `AGENTS.md`, or
-  runbook in a reviewable change rather than relying on ad hoc memory.
+| Letter | Intent | Meaning |
+|---|---|---|
+| `F` or `f` | Feature | Change one behavior. |
+| `B` or `b` | Bug fix | Correct a defect and preserve other behavior. |
+| `R` or `r` | Refactor | Change structure without a behavior change. |
+| `D` or `d` | Documentation | Change information without an execution change. |
 
-## Commit Grouping
+Use uppercase for a primary or user-visible change. Use lowercase for a
+secondary change.
 
-- One intention per commit.
-- Minimize risk per commit.
-- Prefer small safe commits over fewer risky ones.
-- Keep the eventual PR human-reviewable. Do not bundle unrelated fixes,
-  opportunistic cleanup, and behavior changes into one remote review unit.
-  Split broad work before pushing.
-- Sign every commit.
-- Before signing a commit that introduces or materially changes a supported
-  end-to-end workflow, backend, support-tier claim, or certification-only
-  validation path, run the relevant live certification successfully. Do not
-  sign a support-claim commit while planning to gather certification later.
-- Use feature branches. Do not push directly to `main` or rewrite history.
-- Treat final GitHub publication as a host-side action.
-- Default remote review units to `main`-based pull requests. Keep non-`main`
-  base PRs draft-only and non-mergeable, and do not treat them as carrying the
-  same repo-owned PR validation guarantees as `main`-based review units.
-- For publish, PR follow-up, or merge work in this repository, use the
-  repo-local `workcell-pr-lifecycle` skill. Treat generic GitHub publication
-  skills as fallback only when the repo-local lifecycle instructions do not
-  cover the need.
-- Do not accept failing repo-owned tests, checks, or workflows as "good
-  enough." If a lane fails because of the change or a hosted-control drift
-  uncovered during the task, keep working until it is fixed or the guarantee is
-  explicitly changed in the same review unit.
-- If the task includes merging, do not stop at PR-green. Follow the merged
-  `main` workflows and fix any repo-owned failures they surface before calling
-  the work complete.
-- If the task includes publication, review comments, or follow-up CI, do not
-  stop at the first green run. Re-check review surfaces and continue until no
-  actionable findings remain.
-- When a commit changes a user-visible Workcell workflow, support tier, help
-  surface, repo-local operator docs, contract entry, or validation evidence,
-  land the matching contract/help/doc/test updates in the same change stream
-  unless the commit message explains the staged exception and why it is safe.
-- Remove dead code when it is discovered as part of the change, or explicitly
-  justify why it must remain.
-- Remove machine-specific details from public repo surfaces and clean repo
-  detritus before finalizing the change.
-- Treat Workcell-owned validation residue as part of repo detritus. Before
-  signing after local validation churn, run `./scripts/workcell --gc` or a
-  narrower cleanup path and confirm the worktree is not relying on leftover
-  temp files, validator images, or runtime-cache debris.
-- If commit hooks are bypassed, rerun the equivalent validations manually and
-  record the reason in the working notes or final report.
-- If a task teaches a reusable lesson about commit sizing, validation,
-  publication, or follow-up discipline, capture that lesson in the repo-local
-  instructions in the same change stream or in a separate follow-on PR.
+A feature or bug fix that changes more than eight code lines has the highest
+risk by default. Tests are part of this count. Use `.r` only when structural
+proof and focused tests prove the refactor.
 
-## Notation Justification in Commit Messages
+Use `!` when evidence proves only the intended change. Use `@` when evidence
+does not prove the intended change.
 
-After drafting each commit, add a terse parenthetical after the description explaining both the risk level and the uppercase/lowercase choice. Keep it to one clause each, separated by a semicolon.
+## Commit Scope
 
-Format: `(risk reason; case reason)`
+- Use one intent in each commit.
+- Keep the commit and pull request reviewable.
+- Split unrelated behavior, cleanup, and follow-up work.
+- Remove dead code that the change exposes, or give a reason to keep it.
+- Remove machine-specific data and repository debris.
+- Keep contract, help, document, policy, and test changes with each
+  user-visible workflow that they describe.
+- Run Workcell-owned garbage collection when validation creates Workcell-owned
+  residue.
 
-Examples:
+## Required Gates
+
+- Sign each commit with the verified maintainer identity.
+- Use a feature branch. Do not push directly to `main`.
+- Do not rewrite history without explicit user authority.
+- If the commit changes a supported workflow or backend, complete live
+  certification. Apply the same gate to a support-tier claim or certification
+  path. Complete certification before you sign the commit.
+- If a hook does not run, run its equivalent checks. Record why the hook did
+  not run.
+- Use the `workcell-pr-lifecycle` skill for publication, review, or merge work.
+- Publish a `main`-based pull request with
+  `./scripts/repo-publish-pr.sh` on the host.
+- Keep a non-`main` pull request draft. Do not merge it.
+
+## Review Loop
+
+Treat each request as a peer-review request unless the user removes that scope.
+
+After each finding:
+
+1. Fix or explicitly disposition it.
+2. Run validation that proves the correction.
+3. Request another review of the new state.
+4. Continue until no actionable finding remains or a concrete blocker exists.
+
+For a pull request, complete the exact-head Codex bot loop after every push.
+Check all comments, inline reviews, unresolved threads, and configured
+asynchronous reviewers.
+
+Do not accept a failed repository check. For a merge task, follow workflows for
+the merged `main` commit until they finish successfully.
+
+When repeated friction exposes a durable instruction gap, update the skill,
+runbook, or `AGENTS.md` that owns the process.
+
+## Examples
 
 - `^F Add --branch-exclude flag (tests pass; user-visible CLI flag)`
-- `^f Add FilterByBranchExclusion utility (existing tests green; supporting function, not user-facing)`
-- `^B Fix cache key collision (regression test added; user-visible bug)`
-- `^b Update call sites for new signature (compiles and tests green; supporting change for ^F above)`
-- `!F Add experimental diff parser (no tests yet; user-visible feature)`
-- `.r Extract helper, no behavior change (automated rename; internal restructure)`
+- `^f Add branch filter helper (tests pass; secondary function)`
+- `^B Fix cache key collision (regression test passes; user-visible defect)`
+- `^D Update target support record (docs checks pass; user-visible support status)`
+- `.r Rename parser helper (rename proof and focused tests pass; internal refactor)`
