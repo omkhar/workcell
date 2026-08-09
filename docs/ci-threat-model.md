@@ -278,26 +278,46 @@ Do not delete a published tag or release.
 Do not replace a published release.
 Do not move a published tag.
 
+### Maintainer-key evidence preservation
+
+Use this procedure before key revocation or recovery:
+
+1. Preserve Workcell session evidence with the [incident-response procedure](incident-response.md) when a session is affected.
+2. Create a new owner-only evidence directory on detached operator-controlled storage.
+3. Use read-only collection methods where available.
+4. Do not copy the private key, GnuPG home, agent sockets, or credential files.
+5. Preserve available host security, authentication, process, software-installation, shell-history, and malware-alert records from the suspected period.
+6. Record each collection source, unavailable record, failure, and UTC collection time.
+7. Record the compromised key fingerprint and suspected compromise time in the evidence directory.
+8. Export the compromised GnuPG public key to the evidence directory.
+9. Attach the storage read-only to a separate trusted system.
+10. Record each artifact source and SHA-256 digest before inspection.
+11. Keep raw host records private.
+12. Apply the [private-report redaction rules](incident-response.md#7-private-report) before sharing any evidence.
+13. Treat affected-host output as observed evidence, not independent integrity proof.
+
 ### Compromise: release workflow identity
 
 Use this procedure if the release workflow identity signs unauthorized content:
 
 1. Disable the Release workflow.
 2. Block publication of new remote tags.
-3. Keep the release-environment reviewer rule enabled.
-4. Record the affected tags, image digests, assets, and Rekor entries.
-5. Revoke credentials that the attacker used.
-6. Rotate exposed credentials.
-7. Publish a security advisory that identifies the affected digests.
-8. Patch `main` through the normal PR, review, and validation process.
-9. Select a new patch version.
-10. Create the signed tag.
-11. Verify the signed tag.
-12. Enable the Release workflow.
-13. Permit publication of the selected tag.
-14. Push the signed tag.
-15. Follow the Release workflow to completion.
-16. Name the safe replacement version in the advisory.
+3. Cancel each queued or active Release workflow run.
+4. Confirm that no queued or active Release workflow run remains.
+5. Keep the release-environment reviewer rule enabled.
+6. Record the affected tags, image digests, assets, and Rekor entries.
+7. Revoke credentials that the attacker used.
+8. Rotate exposed credentials.
+9. Publish a security advisory that identifies the affected digests.
+10. Patch `main` through the normal PR, review, and validation process.
+11. Select a new patch version.
+12. Create the signed tag.
+13. Verify the signed tag.
+14. Enable the Release workflow.
+15. Permit publication of the selected tag.
+16. Push the signed tag.
+17. Follow the Release workflow to completion.
+18. Name the safe replacement version in the advisory.
 
 Do not edit the affected immutable release.
 Do not reuse its tag.
@@ -306,18 +326,32 @@ Do not reuse its tag.
 
 Use this procedure after a maintainer-key compromise:
 
-1. Publish the key revocation data.
-2. Remove the key from the GitHub account.
-3. Create a new signing key.
-4. Register the new key.
-5. Audit commits and tags from the affected period.
-6. Publish an advisory for each affected release.
-7. Patch `main` through the normal PR process.
-8. Select a new patch version.
-9. Use the new key to create the signed tag.
-10. Verify the signed tag.
-11. Push the signed tag.
-12. Follow the Release workflow to completion.
+1. Disconnect the affected host from all networks.
+2. Use a separate trusted system for steps 3 through 7.
+3. Disable the Release workflow.
+4. Block publication of new remote tags.
+5. Cancel each queued or active Release workflow run.
+6. Confirm that no queued or active Release workflow run remains.
+7. Keep the release-environment reviewer rule enabled.
+8. Complete the [maintainer-key evidence procedure](#maintainer-key-evidence-preservation).
+9. Use a separate trusted system for all revocation, recovery, and release steps.
+10. Publish the key revocation data.
+11. Remove the key from the GitHub account.
+12. Revoke each other credential accessible from the affected host at its source.
+13. Record each revocation time.
+14. Rotate each revoked credential.
+15. Create a new signing key.
+16. Register the new key.
+17. Audit commits and tags from the affected period.
+18. Publish an advisory for each affected release.
+19. Patch `main` through the normal PR process.
+20. Select a new patch version.
+21. Use the new key to create the signed tag.
+22. Verify the signed tag.
+23. Enable the Release workflow.
+24. Permit publication of the selected tag.
+25. Push the signed tag.
+26. Follow the Release workflow to completion.
 
 Do not re-sign an existing tag.
 Do not remove the immutable audit record.
