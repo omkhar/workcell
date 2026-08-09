@@ -295,8 +295,9 @@ custom instructions.
 
 ## Examples
 
-Keep each source outside the workspace. Use owner-only permissions for secret
-sources.
+Keep each source outside the workspace. Workcell rejects operator-controlled
+symbolic links in source paths, parent paths, and copied directories. Use
+owner-only permissions for secret sources.
 
 ### Provider credentials
 
