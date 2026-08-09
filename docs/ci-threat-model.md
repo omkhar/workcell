@@ -286,11 +286,15 @@ Use this procedure before key revocation or recovery:
 2. Create a new owner-only evidence directory on detached operator-controlled storage.
 3. Use read-only collection methods where available.
 4. Do not copy the private key, GnuPG home, agent sockets, or credential files.
-5. Record the compromised key fingerprint, suspected compromise time, and UTC collection time in the evidence directory.
-6. Export the compromised GnuPG public key to the evidence directory.
-7. Attach the storage read-only to a separate trusted system.
-8. Record each artifact source and SHA-256 digest before inspection.
-9. Treat affected-host output as observed evidence, not independent integrity proof.
+5. Preserve available host security, authentication, process, software-installation, shell-history, and malware-alert records from the suspected period.
+6. Record each collection source, unavailable record, failure, and UTC collection time.
+7. Record the compromised key fingerprint and suspected compromise time in the evidence directory.
+8. Export the compromised GnuPG public key to the evidence directory.
+9. Attach the storage read-only to a separate trusted system.
+10. Record each artifact source and SHA-256 digest before inspection.
+11. Keep raw host records private.
+12. Apply the [private-report redaction rules](incident-response.md#7-private-report) before sharing any evidence.
+13. Treat affected-host output as observed evidence, not independent integrity proof.
 
 ### Compromise: release workflow identity
 
