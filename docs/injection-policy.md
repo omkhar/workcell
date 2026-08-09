@@ -249,7 +249,9 @@ in an operator policy.
 The launcher builds `ALLOW_ENDPOINTS` from these sources:
 
 - `provider_endpoints`.
-- `provider_auth_recovery_extra_endpoints` for Gemini without selected auth.
+- `provider_auth_recovery_extra_endpoints` for a Gemini CLI launch with TTY
+  input and output, no selected auth, and no agent or provider arguments.
+  Dry-run, prepare-only, and arbitrary-command modes do not add these endpoints.
 - `target_broker_endpoints`.
 - `credential_extra_endpoints`.
 - Google account authentication endpoints from a selected `gemini_env` mode.
@@ -269,6 +271,12 @@ ports. They do not filter TLS host names.
 
 The enforcement scope is one Colima profile. It is not one session. The last
 launch replaces the rules for all active containers in that profile.
+
+On a Colima allowlist profile, a runtime-image rebuild temporarily applies the
+broader bootstrap endpoints to all active profile containers. Workcell restores
+`ALLOW_ENDPOINTS` after the build.
+
+Do not rebuild the profile while another profile container is active.
 
 Workcell does not isolate the profile-wide egress rules for concurrent sessions
 that use different complete endpoint sets. A `breakglass` launch clears the
