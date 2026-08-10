@@ -18,7 +18,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+const (
+	validatorBindProbeTimeout   = 30 * time.Second
+	validatorBindCleanupTimeout = 5 * time.Second
+)
+
+var errValidatorBindProbeTimeout = errors.New("validator workspace bind probe timed out")
 
 const probeScript = `
 set -euo pipefail
@@ -45,6 +53,10 @@ func Require(ctx context.Context, options Options) error {
 }
 
 func require(ctx context.Context, options Options, command commandFunc) (result error) {
+	return requireWithProbeTimeout(ctx, options, command, validatorBindProbeTimeout)
+}
+
+func requireWithProbeTimeout(ctx context.Context, options Options, command commandFunc, timeout time.Duration) (result error) {
 	if !filepath.IsAbs(options.DockerBinary) {
 		return fmt.Errorf("validator Docker binary must be an absolute path")
 	}
@@ -77,6 +89,7 @@ func require(ctx context.Context, options Options, command commandFunc) (result 
 	if err != nil {
 		return fmt.Errorf("write validator workspace bind challenge: %w", err)
 	}
+	containerName := "workcell-validator-bind-" + value
 	// The challenge is a random non-secret freshness token. It must be readable
 	// when a rootless or userns-remapped daemon changes bind-mount ownership.
 	if err := os.Chmod(challengePath, 0o644); err != nil {
@@ -87,12 +100,12 @@ func require(ctx context.Context, options Options, command commandFunc) (result 
 		return err
 	}
 
-	args := make([]string, 0, 22)
+	args := make([]string, 0, 24)
 	if options.Context != "" {
 		args = append(args, "--context", options.Context)
 	}
 	args = append(args,
-		"run", "--rm",
+		"run", "--rm", "--name", containerName,
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"--entrypoint", "/bin/bash",
 		"--mount", mount,
@@ -101,10 +114,17 @@ func require(ctx context.Context, options Options, command commandFunc) (result 
 		options.Image,
 		"-c", probeScript,
 	)
-	if err := command(ctx, workspace, options.DockerBinary, args); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
+	probeCtx, cancel := context.WithTimeoutCause(ctx, timeout, errValidatorBindProbeTimeout)
+	defer cancel()
+	commandErr := command(probeCtx, workspace, options.DockerBinary, args)
+	if parentErr := ctx.Err(); parentErr != nil {
+		return withProbeCleanup(parentErr, command, workspace, options, containerName)
+	}
+	if errors.Is(context.Cause(probeCtx), errValidatorBindProbeTimeout) {
+		probeErr := fmt.Errorf("validator workspace bind probe after %s: %w", timeout, errValidatorBindProbeTimeout)
+		return withProbeCleanup(probeErr, command, workspace, options, containerName)
+	}
+	if commandErr != nil {
 		contextLabel := options.Context
 		if contextLabel == "" {
 			contextLabel = "default"
@@ -125,6 +145,20 @@ func require(ctx context.Context, options Options, command commandFunc) (result 
 		return fmt.Errorf("%s", message)
 	}
 	return nil
+}
+
+func withProbeCleanup(primary error, command commandFunc, workspace string, options Options, containerName string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), validatorBindCleanupTimeout)
+	defer cancel()
+	args := make([]string, 0, 5)
+	if options.Context != "" {
+		args = append(args, "--context", options.Context)
+	}
+	args = append(args, "rm", "--force", containerName)
+	if err := command(cleanupCtx, workspace, options.DockerBinary, args); err != nil {
+		return errors.Join(primary, fmt.Errorf("remove timed-out validator workspace bind probe: %w", err))
+	}
+	return primary
 }
 
 // MountSpec returns a Docker --mount CSV record for the workspace bind.
