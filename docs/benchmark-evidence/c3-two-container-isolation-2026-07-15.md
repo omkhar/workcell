@@ -1,21 +1,18 @@
-# C3 — two-session isolation evidence
+# C3 Two-Session Isolation Evidence
 
-Auditable evidence for the C3 isolation run recorded in
-[`../1.0-readiness-review.md`](../1.0-readiness-review.md) §6 Platform
-row. Two same-repo detached sessions were started with `--session-workspace
-isolated` on `macos/arm64/local_vm/colima/strict` (profile `wcl-workcell-006e49ec`),
-then `session show` was captured for each.
+This record contains a preliminary capture from 2026-07-15 and a certified run
+from 2026-08-03.
 
-> **Not a concurrent run.** The two sessions started **33 s apart** (19:36:40 vs
-> 19:37:13, below) and each taskless `codex` session exits within seconds, so
-> session A had already exited before session B started — they did **not** overlap
-> in time. This evidence therefore shows that the isolation *scheme* assigns
-> **distinct** containers/worktrees/branches to two sessions, but it does **not**
-> establish a live **concurrent** two-container run. This was the historical
-> 2026-07-15 conclusion. The 2026-08-03 certification below closes that
-> evidence gap with overlapping keepalive sessions.
+## Preliminary capture
 
-## Invocation
+The first capture started two isolated detached sessions on
+`macos/arm64/local_vm/colima/strict`.
+
+The sessions started 33 seconds apart. They did not overlap. The capture shows
+different container, worktree, and branch identifiers. It does not show
+concurrent isolation.
+
+### Preliminary command
 
 ```sh
 export REPO="$HOME/src/workcell"   # a clean git worktree
@@ -25,60 +22,59 @@ export REPO="$HOME/src/workcell"   # a clean git worktree
 for id in <ID1> <ID2>; do ./scripts/workcell session show --id "$id"; done
 ```
 
-## Captured `session show` fields (verbatim; home path generalized to `$HOME`)
+### Captured fields
 
-Session A — `20260715T193632Z-f4226b4e`:
+These normalized fields preserve the captured values. They do not preserve the
+command output format.
 
-```text
-"session_id":            "20260715T193632Z-f4226b4e"
-"target_provider":       "colima"
-"target_assurance_class":"strict"
-"status":                "failed"
-"workspace_root":        "$HOME/src/workcell"
-"worktree_path":         "$HOME/src/workcell/.git/workcell-sessions/20260715T193632Z-f4226b4e/repo"
-"git_branch":            "workcell/session-20260715T193632Z-f4226b4e"
-"container_name":        "workcell-codex-strict-repo-557c91b5"
-"started_at":            "2026-07-15T19:36:40Z"
-```
-
-Session B — `20260715T193705Z-2ae8e294`:
+Session A:
 
 ```text
-"session_id":            "20260715T193705Z-2ae8e294"
-"target_provider":       "colima"
-"target_assurance_class":"strict"
-"status":                "failed"
-"workspace_root":        "$HOME/src/workcell"
-"worktree_path":         "$HOME/src/workcell/.git/workcell-sessions/20260715T193705Z-2ae8e294/repo"
-"git_branch":            "workcell/session-20260715T193705Z-2ae8e294"
-"container_name":        "workcell-codex-strict-repo-0e6b0d64"
-"started_at":            "2026-07-15T19:37:13Z"
+session_id=20260715T193632Z-f4226b4e
+target_provider=colima
+target_assurance_class=strict
+status=failed
+workspace_root=$HOME/src/workcell
+worktree_path=$HOME/src/workcell/.git/workcell-sessions/20260715T193632Z-f4226b4e/repo
+git_branch=workcell/session-20260715T193632Z-f4226b4e
+container_name=workcell-codex-strict-repo-557c91b5
+started_at=2026-07-15T19:36:40Z
 ```
 
-## What this establishes — and what it does not
+Session B:
 
-- **Distinct** `container_name`, `worktree_path`, and `git_branch` under one shared
-  `workspace_root` → **structural** worktree-per-agent isolation on the strict path.
-- `status: failed` is expected here: a detached `codex` started with no task exits
-  non-zero within seconds. It does not affect the isolation attributes above, which
-  are assigned at session-start time.
-- This preliminary capture is **structural** evidence only. It does **not**
-  perform the runtime
-  non-interference check required by
-  [`../safe-path-expectations.md`](../safe-path-expectations.md). The certified
-  2026-08-03 run below performs that check.
+```text
+session_id=20260715T193705Z-2ae8e294
+target_provider=colima
+target_assurance_class=strict
+status=failed
+workspace_root=$HOME/src/workcell
+worktree_path=$HOME/src/workcell/.git/workcell-sessions/20260715T193705Z-2ae8e294/repo
+git_branch=workcell/session-20260715T193705Z-2ae8e294
+container_name=workcell-codex-strict-repo-0e6b0d64
+started_at=2026-07-15T19:37:13Z
+```
 
-## Certified concurrent run (2026-08-03)
+In this capture, a detached Codex session without a task exited with a failure
+status. The result did not change the resource identifiers that Workcell
+assigned at session start.
 
-This local-operator certification ran on
-`macos/arm64/local_vm/colima/strict`. It is bound to signed activation commit
-`a26b750f8d8c7957fc15a3f5c164c2df28f25b46` and its exact control-plane tree
-`726f485a609b88edcee7ee5ad88692d7aafdd501`. The certification was performed
-before merge. This evidence record is not itself a shipped-status claim; verify
-that the activation commit is reachable from `main` before treating it as
-shipped.
+## Certified concurrent run
 
-The exact-tree run used the new maintainer entrypoint:
+The maintainer ran the C3 certifier on 2026-08-03. The target was
+`macos/arm64/local_vm/colima/strict`.
+
+The evidence binds to these Git objects:
+
+| Item | Value |
+|---|---|
+| Signed activation commit | `a26b750f8d8c7957fc15a3f5c164c2df28f25b46` |
+| Control-plane tree | `726f485a609b88edcee7ee5ad88692d7aafdd501` |
+| Clean workload commit | `cc6bc6f8310d1f65ef03007024d4ec2e3f57fe7b` |
+
+The activation commit is reachable from `main`.
+
+### Command
 
 ```sh
 ./scripts/certify-c3-parallel-sessions.sh \
@@ -86,45 +82,46 @@ The exact-tree run used the new maintainer entrypoint:
   --precommit-control-tree 726f485a609b88edcee7ee5ad88692d7aafdd501
 ```
 
-The certifier used clean workload commit
-`cc6bc6f8310d1f65ef03007024d4ec2e3f57fe7b` and recorded:
+### Recorded result
 
 ```text
-date (UTC): 2026-08-03T18:17:15Z
-Workcell launcher SHA-256: e414864af41a89527582c891bb777f513816b2cccbfd63a48106e0f8fab0126d
-Docker client SHA-256: 49d98ab806e8678cd6341b09dad6389e5bcd8a46513de7651053bee3d8366e8d
-target: local_vm/colima/strict
-profile: wcl-c3-2305439552
-session A: 20260803T181448Z-82c58950
-container A: workcell-codex-strict-repo-e90ea0c8
-branch A: workcell/session-20260803T181448Z-82c58950
-session B: 20260803T181648Z-57e2dd25
-container B: workcell-codex-strict-repo-8b984979
-branch B: workcell/session-20260803T181648Z-57e2dd25
+date_utc=2026-08-03T18:17:15Z
+launcher_sha256=e414864af41a89527582c891bb777f513816b2cccbfd63a48106e0f8fab0126d
+docker_client_sha256=49d98ab806e8678cd6341b09dad6389e5bcd8a46513de7651053bee3d8366e8d
+target=local_vm/colima/strict
+profile=wcl-c3-2305439552
+session_a=20260803T181448Z-82c58950
+container_a=workcell-codex-strict-repo-e90ea0c8
+branch_a=workcell/session-20260803T181448Z-82c58950
+session_b=20260803T181648Z-57e2dd25
+container_b=workcell-codex-strict-repo-8b984979
+branch_b=workcell/session-20260803T181648Z-57e2dd25
 ```
 
-The exact worktree paths were certifier-owned isolated paths under the temporary
-workload clone. They are intentionally generalized here rather than publishing
-the maintainer host's private temporary-directory prefix.
+The certifier proved these properties:
 
-The certifier proved all of the following in one run:
+- Both sessions ran at the same time.
+- Each session had a different container, worktree, and branch.
+- A marker from session A did not occur in session B.
+- A marker from session B did not occur in session A.
+- Each marker occurred in its own session and host worktree.
+- Each container workspace matched its recorded host worktree.
+- Session A stopped while session B continued to run.
+- Cleanup removed both session records, containers, and isolated worktrees.
+- Cleanup removed the certifier Colima profile, target state, and image cache.
+- The control-plane tree did not change during certification.
 
-- sessions A and B overlapped and had distinct containers, isolated worktrees,
-  and branches;
-- a marker written through container A's `/workspace` was present in A's
-  recorded host worktree and absent from both container B and B's host
-  worktree; the symmetric B-to-A check also passed;
-- each container's `/workspace` matched its recorded host worktree;
-- session A stopped independently while session B remained running;
-- both session records, containers, and isolated worktrees were removed; and
-- the certifier-owned Colima profile, target state, and runtime-image-cache
-  entries were removed.
+An independent audit found no process or inventory entry for the exact profile.
+It found no Colima, profile, target, or cache path for that profile. It found no
+state-root name for either session or the profile. The audit also confirmed
+that the certified control-plane tree did not change.
 
-An independent post-run audit then found no exact profile process or Colima
-inventory entry, no exact Colima/profile/target/cache path, and no state-root
-name matching either session or the profile. It also confirmed the certified
-control-plane tree was unchanged.
+## Limit
 
-Scope limitation: the sessions used Workcell's explicitly acknowledged
-arbitrary-command keepalive path. This certifies the parallel strict runtime
-boundaries and lifecycle behavior; it does not certify provider interaction.
+The sessions used the acknowledged keepalive path for arbitrary commands. The run
+certifies parallel runtime boundaries and lifecycle behavior. It does not
+certify provider interaction. Both containers shared one Colima VM and kernel.
+This run does not certify VM-level separation.
+
+See the [safe-path expectations](../safe-path-expectations.md) for the C3
+requirement.
