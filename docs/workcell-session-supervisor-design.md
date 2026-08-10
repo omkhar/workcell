@@ -2,208 +2,152 @@
 
 ## Goal
 
-Workcell needs a session-supervisor layer so operators can reason about
-launches as durable session objects rather than as one-off foreground shell
-commands.
-
-This document describes the current shipped session-supervisor slice in the
-repository and the gaps that remain without weakening the existing boundary
-model.
-
-For the supported operator inventory, treat
-[`policy/operator-contract.toml`](../policy/operator-contract.toml) plus
-`workcell --help` as authoritative. This design note is explanatory.
+The session supervisor makes a launch a durable host-owned session. Use the
+[operator contract](../policy/operator-contract.toml) and `workcell --help` for
+the current command inventory. This page explains the design.
 
 ## Current Scope
 
-The current implementation provides durable host-side session records plus
-host-side inventory, observability, and detached-control commands:
+The session command group supplies these functions:
 
-- `workcell session list`
-- `workcell session show --id ...`
-- `workcell session logs --id ... --kind ...`
-- `workcell session timeline --id ...`
-- `workcell session diff --id ...`
-- `workcell session export --id ...`
-- `workcell session verify --id ...`
-- `workcell session start`
-- `workcell session attach`
-- `workcell session send`
-- `workcell session stop`
-- `workcell session delete`
+- Start, attach, send input, stop, and delete a detached session.
+- List sessions and show one durable record.
+- Read retained logs and a session audit timeline.
+- Compare a session workspace with its recorded clean Git base.
+- Export a session and the audit records for that session.
+- Verify the session audit chain and seal.
 
-Each launched session writes durable metadata under the Workcell-owned
-target-state root instead of relying only on the transient `session-audit.*`
-directory.
-
-Detached sessions default to `--session-workspace isolated`, so the detached
-path already points toward worktree-per-session operation on the safe path. The
-public CLI also supports `--session-workspace direct` when operators
-intentionally want a detached session to reuse the live workspace path.
-
-## Data Model
-
-Each session record stores the durable host-side view of one launch, including:
-
-- session identity and profile metadata
-- agent, mode, and UI
-- workspace root, workspace origin, and worktree path
-- git branch, head, and clean launch base when available
-- runtime container name, monitor PID, and live status
-- retained audit, debug, file-trace, and transcript paths
-- start, observe, and finish timestamps
-- initial, current, and final assurance state
-- workspace control-plane mode
-
-The durable record lives under the target-state root, by default:
-
-- `~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session_id>.json`
-
-Compatibility reads still accept older legacy records under
-`~/.colima/<profile>/sessions/<session_id>.json`. The transient
-`session-audit.*` directory remains separate and disposable.
+Detached sessions use `--session-workspace isolated` by default. This mode
+creates a host clone and branch for a supported Git workspace. The operator can
+select `direct` to reuse the live workspace. This selection is explicit.
 
 ## Why This Shape
 
-This design is intentionally host-owned.
+The host launcher owns session policy, durable state, and orchestration. The
+container is disposable. A transient `session-audit.*` directory does not store
+the session record.
 
-That matters because:
+For local Colima, a new record has this default shape:
 
-- the host launcher already owns the trusted control plane
-- the transient container should stay disposable
-- `--gc` already cleans transient audit dirs, Workcell-owned temp scratch, and
-  bounded runtime-image cache residue
-- durable session inventory should survive the transient session cleanup path
+```text
+~/.local/state/workcell/targets/local_vm/colima/<profile>/sessions/<session-id>.json
+```
 
-Storing records under a Workcell-owned target-state root instead of inside
-`session-audit.*` or the Colima runtime tree avoids confusing durable control
-state with ephemeral runtime scratch state.
+Compatibility reads also accept the legacy path under
+`~/.colima/<profile>/sessions/`. Workcell-owned garbage collection preserves
+durable session records. The operator uses `workcell session delete` to remove
+a stopped session record and selected recorded artifacts. It does not remove the
+recorded isolated clone.
+
+## Data Model
+
+A durable record can include:
+
+- Session, profile, agent, mode, and interface identity.
+- Target kind, provider, identifier, assurance class, and runtime API.
+- Workspace source, transport, root, path, and worktree.
+- Git branch, head, and clean launch base.
+- Container name, monitor process, recorded status, and live status.
+- Audit, debug, file-trace, and transcript paths.
+- Start, observation, and finish times.
+- Initial, current, and final assurance.
+- Control-plane state for the workspace.
+
+Use the Go session schema for the exact machine-readable fields.
 
 ## Audit Relationship
 
-The current implementation adds `session_id` to launch, control, assurance, and
-exit audit records in the target audit log, which by default lives beside the
-session records under
-`~/.local/state/workcell/targets/local_vm/colima/<profile>/workcell.audit.log`.
+Applicable audit records contain the session identifier. This key lets the host
+select records from a cumulative target audit log.
 
-That allows:
+The command group uses the key as follows:
 
-- the durable session record to stay machine-readable
-- `workcell session export` to bundle matching audit records
-- `workcell session timeline` to print the session-specific audit trail
-- `workcell session logs` to resolve one retained log for a recorded session
+- `session timeline` prints audit records for the session.
+- `session export` combines the durable record with audit records for the
+  session.
+- `session logs` resolves one retained file from the durable record.
+- `session verify` checks the authoritative audit chain and host seal.
 
-This is the bridge between human-readable audit history and machine-readable
-session metadata.
+The durable JSON record is machine-readable state. The audit log is the event
+history. Neither record replaces the other.
 
 ## User Experience
 
-`workcell session list` is optimized for a quick host-side inventory:
+`session list` prints a compact host inventory. Verbose output adds target,
+workspace transport, Git branch, and worktree fields.
 
-- session id
-- status and live status
-- agent and mode
-- profile
-- start time
-- assurance
-- workspace
+`session show` prints the full record. Its text form prints stable `key=value`
+lines.
 
-`workcell session list --verbose` adds target identity, target assurance,
-workspace transport, git branch, and worktree metadata without changing the
-default compact table.
+`session diff` compares the current workspace with the clean Git base. It stops
+if the launch workspace is dirty, the record has no clean base, or the host
+path is not a self-contained Git worktree.
 
-`workcell session show` returns the full durable record for one session, and
-`workcell session show --text` renders the same record as stable key=value
-lines, including target metadata, workspace transport, display workspace,
-branch, worktree, and artifact pointers.
+`session start`, `session send`, and `session stop` print stable text summaries
+for host automation.
 
-`workcell session logs` prints one retained audit, debug, file-trace, or
-transcript log for a recorded session.
-
-`workcell session timeline` prints the audit-log records that match one
-session.
-
-`workcell session diff` renders the current workspace status and diff against
-the clean git base recorded when the session started. It fails closed if the
-workspace was already dirty at launch, if no git base was recorded, or if the
-workspace is no longer a self-contained git worktree on the host.
-
-`workcell session export` returns the full record plus matching audit records,
-either to stdout or a user-selected host file.
-
-Detached sessions can be started, attached to, steered, and stopped from the
-host without introducing a separate always-on daemon or same-user local socket
-trust.
-`workcell session start`, `workcell session send`, and `workcell session stop`
-emit stable key=value summaries so detached-session control stays scriptable on
-the host.
+The control plane uses host files and processes. It does not add a Workcell
+daemon or a same-user trusted local socket.
 
 ## Runtime Language Boundary
 
-The host-side session policy, durable state, and orchestration remain in the Go
-session tooling. `runtime/container/detached-stdin-wrapper.sh` is a deliberate,
-bounded exception to the default Go language boundary: it is the container
-entrypoint's process-local adapter around `/usr/bin/script`, and must run as the
-detached container's PID 1 after the entrypoint drops privileges. Its only
-responsibilities are to keep the provider attached to a pseudo-terminal, relay
-the Workcell-owned input FIFO in key-at-a-time terminal mode, synchronize
-terminal dimensions, forward container signals to that provider, reap the
-process tree, restore terminal state, and return the provider's exit status.
+The host session plane is a Go and Bash system. Go owns the session-record
+schema and validates the command route. Bash dispatches the session subcommands.
+Go parses and validates inputs for attach, send, stop, delete, monitor,
+timeline, logs, and verify. `scripts/workcell` still owns live container checks,
+terminal state, artifact-path resolution, deletion, monitor lifecycle, and
+controls for send and stop operations.
 
-Keeping that adapter in shell avoids adding another trusted runtime binary
-and build artifact solely to supervise commands that the entrypoint already
-executes. The wrapper does not select policy, write durable session state, or
-implement host orchestration; additions in any of those areas belong in Go.
-If its process-local lifecycle responsibilities grow beyond this bounded list,
-move the supervisor to a dedicated Go runtime tool instead of extending the
-shell exception.
+The process-local shell adapter is
+[`detached-stdin-wrapper.sh`](../runtime/container/detached-stdin-wrapper.sh).
+The entry point starts the adapter after any required user change. Without file
+tracing, the adapter runs as container PID 1.
+
+The adapter can:
+
+- Keep the provider on a pseudo-terminal.
+- Relay the Workcell-owned input FIFO in key-at-a-time mode.
+- Synchronize terminal dimensions.
+- Forward container signals to the provider.
+- Reap the process tree.
+- Restore terminal state.
+- Return the provider exit status.
+
+It does not select policy, write durable host state, or do host
+orchestration. Move this adapter to a Go runtime tool if its responsibility
+expands beyond this list.
 
 ## Current Non-Goals
 
-The current slice does not yet attempt to implement:
+The shipped session plane does not provide:
 
-- a session queue or warm-pool system
-- pause or resume
-- checkpoints or forks
-- centralized multi-host inventory or analytics
-- preserved-boundary GUI or IDE clients
-- remote worker fleets
+- A queue or warm pool.
+- Pause, resume, checkpoint, or fork operations.
+- Central multi-host inventory or analytics.
+- A GUI or IDE client with the Tier 1 boundary claim.
+- A remote worker fleet.
 
 ## Remaining Work
 
-The remaining near-term work is to:
-
-- deepen validation coverage for detached-session transitions and
-  lower-assurance paths
-- add richer artifact browsing without weakening the host-owned model
-
-Longer-term product-direction items such as pause/resume, checkpoints, GUI
-clients, and enterprise inventory belong in [ROADMAP.md](../ROADMAP.md).
+This page describes shipped behavior. See [ROADMAP.md](../ROADMAP.md) for future
+work.
 
 ## Peer Review
 
+The shipped design retains these review decisions.
+
 ### Findings
 
-1. Durable records must not live in `session-audit.*`.
-   Reason: `--gc` already treats those directories as stale runtime scratch and
-   can delete them.
-
-2. Session export needs an explicit session key in the audit log.
-   Reason: profile audit logs are cumulative and otherwise cannot be filtered
-   safely to one launch.
-
-3. The session plane should stay host-side and file-based first.
-   Reason: introducing a daemon, sockets, or background workers before the data
-   model stabilizes would add complexity faster than it adds operator value.
+- Durable records do not use `session-audit.*` directories.
+- Audit records contain a session identifier.
+- The host uses a file-based control plane.
 
 ## Residual Risks
 
-- Durable session records intentionally survive `--gc`; operators delete them
-  with `workcell session delete` when their audit value ends.
-- Aborted launches rely on host cleanup logic to mark the record as aborted.
-- Detached-session control exists, but there is still no queue, pause/resume,
-  or centralized session administration plane.
+- Durable records stay until the operator deletes them.
+- An aborted launch depends on host cleanup to record the aborted state.
+- The control plane has no central session administrator.
+- The process-local adapter remains shell code inside the container.
 
-Those are acceptable for the current slice because the main goal here is to
-create durable, auditable session objects and bounded detached-session control
-without weakening the reviewed boundary.
+These limits do not change the host-owned boundary. Add new session functions
+only when their state, audit, cleanup, and assurance behavior are explicit.
