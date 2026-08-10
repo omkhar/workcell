@@ -13,15 +13,24 @@ policy boundary.
 
 ## Non-negotiables
 
-- Tier 1 runs inside a dedicated Colima VM profile plus a hardened inner
-  container. Do not treat the shared host as part of the trust boundary.
-- Do not mount host home directories, keychains, browser profiles, SSH/GPG
-  material, cloud credentials, or `docker.sock`.
-- Network is off by default. Only the build profile may opt into allowlisted
-  outbound access.
-- External MCP is opt-in and allowlisted. Never enable project-shipped MCP
-  servers automatically.
-- Destructive shell commands and history-rewriting git commands stay blocked.
+- The strict Tier 1 path uses a dedicated Colima profile and a hardened
+  container. Docker Desktop is a lower-assurance compatibility target.
+- Do not mount a host home, keychain, browser profile, credential store, or
+  `docker.sock`. Use only a narrow staged input that policy approves.
+- Keep network policy explicit. The managed Colima allowlist applies to the
+  complete profile. Docker Desktop has no Workcell egress enforcement.
+- The managed baseline ships no MCP servers. Workcell denies repository MCP by
+  default. In non-`breakglass` modes, the lower-assurance exception requires
+  `--allow-repo-mcp` and `--ack-repo-mcp=YYYY-MM-DD` with today's UTC date.
+- `breakglass` unmasks repository MCP surfaces after
+  `--ack-breakglass=YYYY-MM-DD` with today's UTC date. Workcell does not inspect
+  MCP server behavior.
+- Rules forbid the listed forms of recursive forced removal. Rules also forbid
+  `git reset --hard`. For force-push, rules forbid these patterns:
+  `git push <force-flag> ...` and
+  `git push origin <listed-branch> <force-flag>`. The other push forms can
+  require confirmation or match no rule. Do not claim that the rules block all
+  history changes.
 
 ## Working rules
 
@@ -31,8 +40,8 @@ policy boundary.
 - Prefer prompt over allow, and forbid over prompt for destructive actions.
 - Use `codex execpolicy check` when changing rules so the strictest decision is
   visible before merging.
-- Keep the configuration usable by default. One command should be enough to get
-  a safe session, and the safe session should not require a long checklist.
+- Keep the configuration usable by default. One command must start the safe
+  session without a long checklist.
 
 ## Review order
 
