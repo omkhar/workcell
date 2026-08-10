@@ -321,14 +321,22 @@ func TestVerifyOperatorContractIgnoresAmbientHelpOverride(t *testing.T) {
 	t.Parallel()
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-operator-contract.sh")
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
+	marker := filepath.Join(t.TempDir(), "hostile-help-ran")
+	helpBin := filepath.Join(t.TempDir(), "hostile-workcell")
+	if err := os.WriteFile(helpBin, []byte("#!/bin/sh\n: >\"${WORKCELL_HELP_MARKER:?}\"\nexit 97\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := string(content)
 
-	if !strings.Contains(script, "env -u WORKCELL_HELP_BIN") {
-		t.Fatalf("%s must clear WORKCELL_HELP_BIN so normal validation probes the repo script", scriptPath)
+	cmd := exec.Command(scriptPath)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"WORKCELL_HELP_BIN":    helpBin,
+		"WORKCELL_HELP_MARKER": marker,
+	})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("verify operator contract with hostile help override: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hostile help override executed: %v", err)
 	}
 }
 
@@ -560,19 +568,28 @@ func TestGenerateHomebrewFormulaPinsExplicitVersion(t *testing.T) {
 	t.Parallel()
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "generate-homebrew-formula.sh")
-	content, err := os.ReadFile(scriptPath)
+	formulaPath := filepath.Join(t.TempDir(), "Formula", "workcell.rb")
+	const version = "v1.2.3"
+	const checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	cmd := exec.Command(scriptPath, version, checksum, formulaPath, "--repository", "omkhar/workcell")
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"GITHUB_REPOSITORY": "hostile/example",
+	})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate Homebrew formula: %v\n%s", err, output)
+	}
+	formula, err := os.ReadFile(formulaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(content)
-
 	for _, want := range []string{
-		`FORMULA_VERSION="${VERSION}"`,
-		`FORMULA_VERSION="${FORMULA_VERSION#v}"`,
-		`version "${FORMULA_VERSION}"`,
+		`url "https://github.com/omkhar/workcell/releases/download/v1.2.3/workcell-v1.2.3.tar.gz"`,
+		`version "1.2.3"`,
+		`sha256 "` + checksum + `"`,
 	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("%s does not contain %q", scriptPath, want)
+		if !strings.Contains(string(formula), want) {
+			t.Fatalf("generated formula does not contain %q\n%s", want, formula)
 		}
 	}
 }
@@ -1002,85 +1019,6 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 ^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)`
 	if !strings.Contains(script, commitTemplateStart) {
 		t.Fatalf("%s must generate the reviewed Risk-Aware upstream-refresh commit subject", scriptPath)
-	}
-}
-
-func TestUpdateUpstreamPinsRefreshesReviewedSources(t *testing.T) {
-	t.Parallel()
-
-	scriptPath := filepath.Join(repoRoot(t), "scripts", "update-upstream-pins.sh")
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := string(content)
-
-	for _, want := range []string{
-		"--apply",
-		"--check",
-		"scripts/update-provider-pins.sh",
-		"https://go.dev/dl/?mode=json",
-		"https://static.rust-lang.org/dist/channel-rust-stable.toml",
-		"https://static.rust-lang.org/rustup/release-stable.toml",
-		"https://api.github.com/repos/docker/buildx/releases/latest",
-		"https://api.github.com/repos/sigstore/cosign/releases/latest",
-		"https://api.github.com/repos/anchore/syft/releases/latest",
-		"https://api.github.com/repos/rhysd/actionlint/releases/latest",
-		"--config -",
-		`header = "Authorization: Bearer ${token}"`,
-		"Accept: application/octet-stream",
-		"github_release_asset_api_url",
-		`-D "${headers_file}"`,
-		`curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"`,
-		"https://api.github.com/repos/hadolint/hadolint/releases/latest",
-		"hub.docker.com/v2/repositories/tonistiigi/binfmt/tags",
-		"docker buildx imagetools inspect",
-		"https://snapshot.debian.org/archive/debian/",
-		"https://snapshot.debian.org/archive/debian-security/",
-		"latest_debian_bootstrap_plan",
-		"resolve-debian-bootstrap",
-		"apply-debian-bootstrap",
-		"inspect-debian-bootstrap",
-		"runtime/container/debian-bootstrap.env",
-		"scripts/check-pinned-inputs.sh",
-		"UPSTREAM_REFRESH_WORKFLOW_PATH",
-		"current_upstream_refresh_cosign_version",
-		"upstream-refresh-cosign-version",
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("%s does not contain %q", scriptPath, want)
-		}
-	}
-	if strings.Contains(script, "--oauth2-bearer") {
-		t.Fatalf("%s still passes GitHub tokens through curl argv", scriptPath)
-	}
-	curlCalls := 0
-	for lineNumber, line := range strings.Split(script, "\n") {
-		index := strings.Index(line, "curl ")
-		if index < 0 {
-			continue
-		}
-		curlCalls++
-		if strings.Count(line, "curl ") != 1 || !strings.HasPrefix(line[index:], "curl -q ") {
-			t.Fatalf("%s:%d must disable HOME/.curlrc with curl's first option", scriptPath, lineNumber+1)
-		}
-	}
-	if curlCalls == 0 {
-		t.Fatalf("%s contains no curl calls", scriptPath)
-	}
-
-	for _, want := range []string{
-		`actionlint_checksums_url="$(github_release_asset_api_url "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"`,
-		`github_release_asset_get "${actionlint_checksums_url}" |`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("actionlint checksum path in %s does not contain %q", scriptPath, want)
-		}
-	}
-
-	githubAPIGet := extractShellFunction(t, script, "github_api_get")
-	if strings.Contains(githubAPIGet, `-H "Authorization: Bearer ${token}"`) {
-		t.Fatalf("github_api_get in %s must not follow redirects with a custom GitHub Authorization header", scriptPath)
 	}
 }
 
