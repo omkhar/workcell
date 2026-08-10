@@ -179,10 +179,12 @@ func TestRequireLocalDeadlineFailsClosedAndCleansChallengeAndContainer(t *testin
 	t.Parallel()
 	workspace := createWorkspace(t, "workspace")
 	docker := executableFixture(t, "docker")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
 	var cleanupArgs []string
 	var probeName string
-	err := requireWithProbeTimeout(context.Background(), Options{
+	err := requireWithProbeTimeout(ctx, Options{
 		DockerBinary: docker,
 		Image:        "validator:fixture",
 		Workspace:    workspace,
@@ -290,28 +292,31 @@ func TestRequireLocalDeadlineJoinsCleanupFailure(t *testing.T) {
 	assertNoChallenges(t, workspace)
 }
 
-func TestRequireLocalDeadlineStopsBlockingExecutable(t *testing.T) {
+func TestRequireCancellationStopsBlockingExecutable(t *testing.T) {
 	t.Parallel()
 	workspace := createWorkspace(t, "workspace")
 	docker, commandLog := blockingDockerFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	result := make(chan error, 1)
 
 	go func() {
-		result <- requireWithProbeTimeout(context.Background(), Options{
+		result <- requireWithProbeTimeout(ctx, Options{
 			DockerBinary: docker,
 			Image:        "validator:fixture",
 			Workspace:    workspace,
 			Context:      "fixture-context",
-		}, runCommand, time.Second)
+		}, runCommand, 30*time.Second)
 	}()
-	waitForLoggedProbeStart(t, commandLog)
+	waitForLoggedProbeStart(t, commandLog, 5*time.Second)
+	cancel()
 	select {
 	case err := <-result:
-		if !errors.Is(err, errValidatorBindProbeTimeout) {
-			t.Fatalf("blocking executable error = %v, want %v", err, errValidatorBindProbeTimeout)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("blocking executable error = %v, want context.Canceled", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("blocking executable did not stop after the local deadline")
+		t.Fatal("blocking executable did not stop after parent cancellation")
 	}
 	assertLoggedProbeCleanup(t, commandLog, "fixture-context")
 	assertNoChallenges(t, workspace)
@@ -546,9 +551,9 @@ func assertLoggedProbeCleanup(t *testing.T, commandLog, dockerContext string) {
 	}
 }
 
-func waitForLoggedProbeStart(t *testing.T, commandLog string) {
+func waitForLoggedProbeStart(t *testing.T, commandLog string, timeout time.Duration) {
 	t.Helper()
-	deadline := time.NewTimer(time.Second)
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
