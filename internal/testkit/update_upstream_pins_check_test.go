@@ -18,6 +18,12 @@ import (
 	"time"
 )
 
+const (
+	updaterFixtureActionlintAssetID = "424242"
+	updaterFixtureCurlVersion       = "8.7.1"
+	updaterFixtureRedirectURL       = "https://release-assets.githubusercontent.com/github-production-release-asset/12345678/01234567-89ab-cdef-0123-456789abcdef?sp=r&sv=fixture"
+)
+
 type updaterFixturePins struct {
 	RuntimeBase                  string
 	ValidatorBase                string
@@ -87,6 +93,31 @@ type updaterFixtureRun struct {
 	ResolutionLog string
 	CIToolsLog    []string
 	ProviderLog   []string
+	CurlCalls     []updaterFixtureCurlCall
+}
+
+type updaterFixtureCurlCall struct {
+	Kind   string
+	URL    string
+	Config string
+	Args   string
+}
+
+type updaterFixtureOptions struct {
+	Token                 string
+	CurlVersion           string
+	AssetID               string
+	AssetAPIResponse      string
+	AssetRedirectResponse string
+}
+
+func defaultUpdaterFixtureOptions() updaterFixtureOptions {
+	return updaterFixtureOptions{
+		CurlVersion:           updaterFixtureCurlVersion,
+		AssetID:               updaterFixtureActionlintAssetID,
+		AssetAPIResponse:      "redirect",
+		AssetRedirectResponse: "body",
+	}
 }
 
 func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
@@ -180,6 +211,167 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	}
 }
 
+func TestUpdateUpstreamPinsCredentialedRequestsKeepTokensOffArgvAndRedirects(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	targetPlan := updaterTargetDebianPlan()
+	targetManifest := updaterManifestFromPlan(targetPlan)
+	driftedManifest := updaterDriftedManifest(t, targetPlan.Snapshot)
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	fixtureRoot := writeUpdaterFixture(t, driftedManifest, 0o640)
+	const token = "fixture-github-token"
+
+	options := defaultUpdaterFixtureOptions()
+	options.Token = token
+	run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, targetPlan, "--check", options)
+	assertUpdaterFixtureRun(t, run, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
+	assertCredentialedUpdaterCurlCalls(t, run.CurlCalls, token)
+}
+
+func TestUpdateUpstreamPinsRequiresBoundedCurl(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	targetPlan := updaterTargetDebianPlan()
+	targetManifest := updaterManifestFromPlan(targetPlan)
+	driftedManifest := updaterDriftedManifest(t, targetPlan.Snapshot)
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	fixtureRoot := writeUpdaterFixture(t, driftedManifest, 0o640)
+
+	for _, tc := range []struct {
+		name        string
+		version     string
+		wantCode    int
+		wantMessage string
+	}{
+		{name: "minimum", version: "8.4.0", wantCode: 1, wantMessage: updaterFixtureSummary(pins, driftedManifest, targetManifest)},
+		{name: "older", version: "8.3.0", wantCode: 1, wantMessage: "curl 8.4.0 or newer is required"},
+		{name: "malformed", version: "not-a-version", wantCode: 1, wantMessage: "Unable to parse the curl version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			options := defaultUpdaterFixtureOptions()
+			options.CurlVersion = tc.version
+			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, targetPlan, "--check", options)
+			if run.Code != tc.wantCode {
+				t.Fatalf("update-upstream-pins exit code = %d, want %d\n%s", run.Code, tc.wantCode, run.Output)
+			}
+			if !strings.Contains(run.Output, tc.wantMessage) {
+				t.Fatalf("update-upstream-pins output = %q, want text %q", run.Output, tc.wantMessage)
+			}
+			assertUpdaterFixtureCurlVersionProbe(t, run.CurlCalls, tc.version)
+			if tc.version != "8.4.0" && updaterFixtureCurlKindCount(run.CurlCalls, "curl") != 0 {
+				t.Fatalf("unsupported curl version made HTTP requests: %#v", run.CurlCalls)
+			}
+		})
+	}
+}
+
+func TestUpdateUpstreamPinsConstrainsReleaseAssetRedirects(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	targetPlan := updaterTargetDebianPlan()
+	targetManifest := updaterManifestFromPlan(targetPlan)
+	driftedManifest := updaterDriftedManifest(t, targetPlan.Snapshot)
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	fixtureRoot := writeUpdaterFixture(t, driftedManifest, 0o640)
+
+	for _, tc := range []struct {
+		name             string
+		assetID          string
+		apiResponse      string
+		redirectResponse string
+		wantMessage      string
+		wantRedirects    int
+	}{
+		{name: "direct-body", apiResponse: "direct", wantMessage: updaterFixtureSummary(pins, driftedManifest, targetManifest)},
+		{name: "wrong-status", apiResponse: "status-301", wantMessage: "Unexpected GitHub release asset response 301"},
+		{name: "missing-location", apiResponse: "missing-location", wantMessage: "must include one Location header"},
+		{name: "duplicate-location", apiResponse: "duplicate-location", wantMessage: "must include one Location header"},
+		{name: "hostile-location", apiResponse: "hostile-location", wantMessage: "outside the allowed endpoint"},
+		{name: "second-hop", apiResponse: "redirect", redirectResponse: "redirect", wantMessage: "Unexpected GitHub release asset redirect response 302", wantRedirects: 1},
+		{name: "invalid-asset-id", assetID: `"invalid"`, apiResponse: "redirect", wantMessage: "Unable to resolve a numeric release asset ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			options := defaultUpdaterFixtureOptions()
+			options.Token = "fixture-github-token"
+			if tc.assetID != "" {
+				options.AssetID = tc.assetID
+			}
+			if tc.apiResponse != "" {
+				options.AssetAPIResponse = tc.apiResponse
+			}
+			if tc.redirectResponse != "" {
+				options.AssetRedirectResponse = tc.redirectResponse
+			}
+			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, targetPlan, "--check", options)
+			if run.Code != 1 {
+				t.Fatalf("update-upstream-pins exit code = %d, want 1\n%s", run.Code, run.Output)
+			}
+			if !strings.Contains(run.Output, tc.wantMessage) {
+				t.Fatalf("update-upstream-pins output = %q, want text %q", run.Output, tc.wantMessage)
+			}
+			if got := updaterFixtureCurlURLCount(run.CurlCalls, updaterFixtureRedirectURL); got != tc.wantRedirects {
+				t.Fatalf("release asset redirect calls = %d, want %d; calls=%#v", got, tc.wantRedirects, run.CurlCalls)
+			}
+			if updaterFixtureCurlURLCount(run.CurlCalls, "https://attacker.invalid/actionlint-checksums") != 0 {
+				t.Fatalf("hostile release metadata URL was requested: %#v", run.CurlCalls)
+			}
+		})
+	}
+}
+
+func TestGitHubReleaseAssetURLValidators(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "update-upstream-pins.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validators := extractShellFunction(t, string(content), "valid_github_release_asset_api_url") + "\n" +
+		extractShellFunction(t, string(content), "valid_github_release_asset_redirect_url") + "\n"
+
+	for _, tc := range []struct {
+		name      string
+		function  string
+		url       string
+		wantValid bool
+	}{
+		{name: "api-valid", function: "valid_github_release_asset_api_url", url: "https://api.github.com/repos/rhysd/actionlint/releases/assets/424242", wantValid: true},
+		{name: "api-http", function: "valid_github_release_asset_api_url", url: "http://api.github.com/repos/rhysd/actionlint/releases/assets/424242"},
+		{name: "api-userinfo", function: "valid_github_release_asset_api_url", url: "https://api.github.com@attacker.invalid/repos/rhysd/actionlint/releases/assets/424242"},
+		{name: "api-port", function: "valid_github_release_asset_api_url", url: "https://api.github.com:443/repos/rhysd/actionlint/releases/assets/424242"},
+		{name: "api-query", function: "valid_github_release_asset_api_url", url: "https://api.github.com/repos/rhysd/actionlint/releases/assets/424242?x=1"},
+		{name: "redirect-valid", function: "valid_github_release_asset_redirect_url", url: updaterFixtureRedirectURL, wantValid: true},
+		{name: "redirect-http", function: "valid_github_release_asset_redirect_url", url: strings.Replace(updaterFixtureRedirectURL, "https://", "http://", 1)},
+		{name: "redirect-userinfo", function: "valid_github_release_asset_redirect_url", url: strings.Replace(updaterFixtureRedirectURL, "release-assets.githubusercontent.com", "release-assets.githubusercontent.com@attacker.invalid", 1)},
+		{name: "redirect-port", function: "valid_github_release_asset_redirect_url", url: strings.Replace(updaterFixtureRedirectURL, "release-assets.githubusercontent.com", "release-assets.githubusercontent.com:443", 1)},
+		{name: "redirect-host", function: "valid_github_release_asset_redirect_url", url: strings.Replace(updaterFixtureRedirectURL, "release-assets.githubusercontent.com", "objects.githubusercontent.com", 1)},
+		{name: "redirect-extra-path", function: "valid_github_release_asset_redirect_url", url: strings.Replace(updaterFixtureRedirectURL, "?sp=", "/extra?sp=", 1)},
+		{name: "redirect-no-query", function: "valid_github_release_asset_redirect_url", url: strings.Split(updaterFixtureRedirectURL, "?")[0]},
+		{name: "redirect-fragment", function: "valid_github_release_asset_redirect_url", url: updaterFixtureRedirectURL + "#fragment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("/bin/bash", "-p", "-c", validators+tc.function+` "$1"`, "asset-url-validator", tc.url)
+			err := cmd.Run()
+			if tc.wantValid && err != nil {
+				t.Fatalf("%s rejected %q: %v", tc.function, tc.url, err)
+			}
+			if !tc.wantValid && err == nil {
+				t.Fatalf("%s accepted %q", tc.function, tc.url)
+			}
+		})
+	}
+}
+
 func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +418,7 @@ func TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments(t *testing.T) 
 	probePrefix := "set -euo pipefail\n" +
 		extractShellFunction(t, updaterFixtureHarness, "unexpected_fixture") + "\n" +
 		extractShellFunction(t, updaterFixtureHarness, "expect_fixture_curl_argv") + "\n" +
+		extractShellFunction(t, updaterFixtureHarness, "record_fixture_http_request") + "\n" +
 		extractShellFunction(t, updaterFixtureHarness, "curl") + "\n"
 	endpoints := []struct {
 		name string
@@ -475,6 +668,10 @@ func writeUpdaterFixtureFile(t *testing.T, root, rel, content string, mode fs.Fi
 }
 
 func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWrapperPath string, pins updaterFixturePins, plan updaterFixtureDebianPlan, mode string) updaterFixtureRun {
+	return runUpdaterFixtureWithOptions(t, fixtureRoot, scratchRoot, citoolsPath, goWrapperPath, pins, plan, mode, defaultUpdaterFixtureOptions())
+}
+
+func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWrapperPath string, pins updaterFixturePins, plan updaterFixtureDebianPlan, mode string, options updaterFixtureOptions) updaterFixtureRun {
 	t.Helper()
 
 	planJSON, err := json.Marshal(plan)
@@ -495,6 +692,18 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 	providerLogPath := filepath.Join(scratchRoot, "provider.log")
 	for _, logPath := range []string{resolutionLogPath, citoolsLogPath, providerLogPath} {
 		if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	curlLogPath := filepath.Join(t.TempDir(), "curl.log")
+	tokenFile := ""
+	if err := os.WriteFile(curlLogPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if options.Token != "" {
+		credentialDir := t.TempDir()
+		tokenFile = filepath.Join(credentialDir, "github-token")
+		if err := os.WriteFile(tokenFile, []byte(options.Token), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -522,13 +731,20 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 		"TZ=UTC",
 		"WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS=0",
 		"WORKCELL_FIXTURE_ACTIONLINT_SHA=" + pins.ActionlintSHA,
+		"WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID=" + options.AssetID,
 		"WORKCELL_FIXTURE_ACTIONLINT_VERSION=" + pins.ActionlintVersion,
+		"WORKCELL_FIXTURE_ASSET_API_RESPONSE=" + options.AssetAPIResponse,
+		"WORKCELL_FIXTURE_ASSET_REDIRECT_URL=" + updaterFixtureRedirectURL,
+		"WORKCELL_FIXTURE_ASSET_REDIRECT_RESPONSE=" + options.AssetRedirectResponse,
 		"WORKCELL_FIXTURE_BUILDKIT_DIGEST=" + buildkitDigest,
 		"WORKCELL_FIXTURE_BUILDKIT_TRACK=" + buildkitTrack,
 		"WORKCELL_FIXTURE_BUILDX_VERSION=" + pins.BuildxVersion,
 		"WORKCELL_FIXTURE_CITOOLS=" + citoolsPath,
 		"WORKCELL_FIXTURE_CITOOLS_LOG=" + citoolsLogPath,
 		"WORKCELL_FIXTURE_COSIGN_VERSION=" + pins.CosignVersion,
+		"WORKCELL_FIXTURE_CURL_LOG=" + curlLogPath,
+		"WORKCELL_FIXTURE_CURL_VERSION=" + options.CurlVersion,
+		"WORKCELL_FIXTURE_GITHUB_TOKEN=" + options.Token,
 		"WORKCELL_FIXTURE_REQUIRE_HOSTILE_CURLRC=1",
 		"WORKCELL_FIXTURE_DEBIAN_PLAN=" + string(planJSON),
 		"WORKCELL_FIXTURE_DEBIAN_SNAPSHOT=" + plan.Snapshot,
@@ -565,6 +781,9 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 		"https_proxy=http://127.0.0.1:1",
 		"no_proxy=",
 	}
+	if tokenFile != "" {
+		cmd.Env = append(cmd.Env, "WORKCELL_GITHUB_API_TOKEN_FILE="+tokenFile)
+	}
 	output, runErr := cmd.CombinedOutput()
 	curlConfig, err := os.ReadFile(filepath.Join(hostileHome, ".curlrc"))
 	if err != nil {
@@ -581,13 +800,15 @@ func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWr
 		}
 		code = exitErr.ExitCode()
 	}
-	return updaterFixtureRun{
+	run := updaterFixtureRun{
 		Code:          code,
 		Output:        string(output),
 		ResolutionLog: readUpdaterFixtureLog(t, resolutionLogPath),
 		CIToolsLog:    splitUpdaterFixtureLog(readUpdaterFixtureLog(t, citoolsLogPath)),
 		ProviderLog:   splitUpdaterFixtureLog(readUpdaterFixtureLog(t, providerLogPath)),
 	}
+	run.CurlCalls = readUpdaterFixtureCurlCalls(t, curlLogPath)
+	return run
 }
 
 func readUpdaterFixtureLog(t *testing.T, path string) string {
@@ -605,6 +826,100 @@ func splitUpdaterFixtureLog(content string) []string {
 		return nil
 	}
 	return strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+}
+
+func readUpdaterFixtureCurlCalls(t *testing.T, path string) []updaterFixtureCurlCall {
+	t.Helper()
+
+	var calls []updaterFixtureCurlCall
+	for _, line := range splitUpdaterFixtureLog(readUpdaterFixtureLog(t, path)) {
+		fields := strings.SplitN(line, "\t", 4)
+		if len(fields) != 4 {
+			t.Fatalf("malformed fixture curl record %q", line)
+		}
+		calls = append(calls, updaterFixtureCurlCall{
+			Kind:   fields[0],
+			URL:    fields[1],
+			Config: strings.ReplaceAll(fields[2], `\n`, "\n"),
+			Args:   fields[3],
+		})
+	}
+	return calls
+}
+
+func updaterFixtureCurlKindCount(calls []updaterFixtureCurlCall, kind string) int {
+	count := 0
+	for _, call := range calls {
+		if call.Kind == kind {
+			count++
+		}
+	}
+	return count
+}
+
+func assertUpdaterFixtureCurlVersionProbe(t *testing.T, calls []updaterFixtureCurlCall, version string) {
+	t.Helper()
+
+	count := 0
+	for _, call := range calls {
+		if call.Kind != "curl-version" {
+			continue
+		}
+		count++
+		if call.URL != version || call.Config != "" || call.Args != "-q --version" {
+			t.Fatalf("curl version probe = %#v, want version %q with -q first", call, version)
+		}
+	}
+	if count != 1 {
+		t.Fatalf("curl version probes = %d, want 1; calls=%#v", count, calls)
+	}
+}
+
+func updaterFixtureCurlURLCount(calls []updaterFixtureCurlCall, url string) int {
+	count := 0
+	for _, call := range calls {
+		if call.Kind == "curl" && call.URL == url {
+			count++
+		}
+	}
+	return count
+}
+
+func assertCredentialedUpdaterCurlCalls(t *testing.T, calls []updaterFixtureCurlCall, token string) {
+	t.Helper()
+
+	githubConfig := "header = \"Accept: application/vnd.github+json\"\nheader = \"Authorization: Bearer " + token + "\""
+	assetConfig := "header = \"Authorization: Bearer " + token + "\""
+	assetCalls := 0
+	redirectCalls := 0
+	assetURL := "https://api.github.com/repos/rhysd/actionlint/releases/assets/" + updaterFixtureActionlintAssetID
+	for _, call := range calls {
+		if call.Kind != "curl" {
+			continue
+		}
+		if strings.Contains(call.Args, token) || strings.Contains(call.Args, "Authorization:") || strings.Contains(call.Args, "--oauth2-bearer") {
+			t.Fatalf("credential leaked through curl argv: %#v", call)
+		}
+		switch {
+		case call.URL == assetURL:
+			assetCalls++
+			if call.Config != assetConfig || !strings.Contains(call.Args, "--config -") || strings.Contains(call.Args, "-fsSL") {
+				t.Fatalf("release asset curl capture = %#v, want config %q through stdin without redirects", call, assetConfig)
+			}
+		case call.URL == updaterFixtureRedirectURL:
+			redirectCalls++
+			if call.Config != "" || strings.Contains(call.Args, "--config") || strings.Contains(call.Args, "-fsSL") {
+				t.Fatalf("release asset redirect curl capture = %#v, want one uncredentialed request", call)
+			}
+		case strings.HasPrefix(call.URL, "https://api.github.com/"):
+			if call.Config != githubConfig || !strings.Contains(call.Args, "--config -") || strings.Contains(call.Args, "-fsSL") {
+				t.Fatalf("GitHub API curl capture = %#v, want config %q through stdin", call, githubConfig)
+			}
+		}
+	}
+	if assetCalls != 1 || redirectCalls != 1 {
+		t.Fatalf("credentialed curl captures release-asset=%d release-asset-redirect=%d, want 1, 1; calls=%#v", assetCalls, redirectCalls, calls)
+	}
 }
 
 func assertUpdaterFixtureRun(t *testing.T, run updaterFixtureRun, wantCode int, wantOutput, snapshot string) {
@@ -959,6 +1274,24 @@ expect_fixture_curl_argv() {
   fi
   shift
   expected=("$@")
+  if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${label}" == https://api.github.com/* ]]; then
+    local -a credentialed=()
+    for ((index = 0; index < ${#expected[@]}; index++)); do
+      if [[ "${expected[index]}" == "-H" && "${expected[index + 1]:-}" == "Accept: application/vnd.github+json" ]]; then
+        ((index++))
+        continue
+      fi
+      if [[ "${expected[index]}" == "-fsSL" ]]; then
+        credentialed+=(-fsS)
+        continue
+      fi
+      if [[ "${expected[index]}" == "${label}" ]]; then
+        credentialed+=(--config -)
+      fi
+      credentialed+=("${expected[index]}")
+    done
+    expected=("${credentialed[@]}")
+  fi
   if [[ "${#actual[@]}" -ne "${#expected[@]}" ]]; then
     unexpected_fixture curl "${label}: argv=${actual[*]}"
     return
@@ -969,6 +1302,40 @@ expect_fixture_curl_argv() {
       return
     fi
   done
+}
+
+record_fixture_http_request() {
+  [[ -n "${WORKCELL_FIXTURE_CURL_LOG:-}" ]] || return 0
+  local escaped_config="${3//$'\n'/\\n}"
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "${escaped_config}" "$4" >>"${WORKCELL_FIXTURE_CURL_LOG}"
+}
+
+expect_fixture_authenticated_asset_argv() {
+  local url="$1"
+  shift
+  if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" ]]; then
+    if [[ "$#" -ne 21 || "$1" != "-q" || "$2" != "-fsS" || "$3" != "--max-time" || "$4" != "60" || "$5" != "--connect-timeout" || "$6" != "15" || "$7" != "--max-filesize" || "$8" != "65536" || "$9" != "--proto" || "${10}" != "=https" || "${11}" != "-D" || -z "${12}" || "${13}" != "-o" || -z "${14}" || "${15}" != "-w" || "${16}" != "%{http_code}" || "${17}" != "-H" || "${18}" != "Accept: application/octet-stream" || "${19}" != "--config" || "${20}" != "-" || "${21}" != "${url}" ]]; then
+      unexpected_fixture curl "${url}: argv=$*"
+      return
+    fi
+    printf '%s\n%s\n' "${12}" "${14}"
+    return
+  fi
+  if [[ "$#" -ne 19 || "$1" != "-q" || "$2" != "-fsS" || "$3" != "--max-time" || "$4" != "60" || "$5" != "--connect-timeout" || "$6" != "15" || "$7" != "--max-filesize" || "$8" != "65536" || "$9" != "--proto" || "${10}" != "=https" || "${11}" != "-D" || -z "${12}" || "${13}" != "-o" || -z "${14}" || "${15}" != "-w" || "${16}" != "%{http_code}" || "${17}" != "-H" || "${18}" != "Accept: application/octet-stream" || "${19}" != "${url}" ]]; then
+    unexpected_fixture curl "${url}: argv=$*"
+    return
+  fi
+  printf '%s\n%s\n' "${12}" "${14}"
+}
+
+expect_fixture_asset_redirect_argv() {
+  local url="$1"
+  shift
+  if [[ "$#" -ne 17 || "$1" != "-q" || "$2" != "-fsS" || "$3" != "--max-time" || "$4" != "60" || "$5" != "--connect-timeout" || "$6" != "15" || "$7" != "--max-filesize" || "$8" != "65536" || "$9" != "--proto" || "${10}" != "=https" || "${11}" != "-D" || -z "${12}" || "${13}" != "-o" || -z "${14}" || "${15}" != "-w" || "${16}" != "%{http_code}" || "${17}" != "${url}" ]]; then
+    unexpected_fixture curl "${url}: argv=$*"
+    return
+  fi
+  printf '%s\n%s\n' "${12}" "${14}"
 }
 
 curl() {
@@ -986,7 +1353,42 @@ curl() {
       return
     fi
   fi
+  if [[ "$#" -eq 2 && "$1" == "-q" && "$2" == "--version" ]]; then
+    record_fixture_http_request curl-version "${WORKCELL_FIXTURE_CURL_VERSION}" "" "$*"
+    printf 'curl %s (fixture) libcurl/%s\n' "${WORKCELL_FIXTURE_CURL_VERSION}" "${WORKCELL_FIXTURE_CURL_VERSION}"
+    return
+  fi
   local url="${!#}"
+  local fixture_curl_config=""
+  local index=0
+  for ((index = 1; index <= $#; index++)); do
+    if [[ "${!index}" != "--config" ]]; then
+      continue
+    fi
+    local next_index=$((index + 1))
+    local config_source="${!next_index}"
+    if [[ "${config_source}" != "-" ]]; then
+      unexpected_fixture curl "${url}: unexpected curl config source ${config_source:-<missing>}"
+      return
+    fi
+    fixture_curl_config="$(cat)"
+    break
+  done
+  if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${url}" == https://api.github.com/repos/rhysd/actionlint/releases/assets/* ]]; then
+    local expected_asset_config="header = \"Authorization: Bearer ${WORKCELL_FIXTURE_GITHUB_TOKEN}\""
+    if [[ "${fixture_curl_config}" != "${expected_asset_config}" ]]; then
+      unexpected_fixture curl "${url}: credential config=${fixture_curl_config}"
+      return
+    fi
+  elif [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${url}" == https://api.github.com/* ]]; then
+    local expected_config="header = \"Accept: application/vnd.github+json\"
+header = \"Authorization: Bearer ${WORKCELL_FIXTURE_GITHUB_TOKEN}\""
+    if [[ "${fixture_curl_config}" != "${expected_config}" ]]; then
+      unexpected_fixture curl "${url}: credential config=${fixture_curl_config}"
+      return
+    fi
+  fi
+  record_fixture_http_request curl "${url}" "${fixture_curl_config}" "$*"
   case "${url}" in
     'https://go.dev/dl/?mode=json')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
@@ -1037,12 +1439,86 @@ curl() {
       ;;
     'https://api.github.com/repos/rhysd/actionlint/releases/latest')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"v%s","assets":[{"name":"actionlint_%s_checksums.txt","url":"https://fixture.invalid/actionlint-checksums"}]}\n' \
-        "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
+      printf '{"tag_name":"v%s","assets":[{"id":%s,"name":"actionlint_%s_checksums.txt","url":"https://attacker.invalid/actionlint-checksums"}]}\n' \
+        "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" "${WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
       ;;
-    'https://fixture.invalid/actionlint-checksums')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 65536 -H 'Accept: application/octet-stream' "${url}" || return
-      printf '%s  actionlint_%s_linux_amd64.tar.gz\n' "${WORKCELL_FIXTURE_ACTIONLINT_SHA}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
+    https://api.github.com/repos/rhysd/actionlint/releases/assets/*)
+      if [[ "${url}" != "https://api.github.com/repos/rhysd/actionlint/releases/assets/${WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID}" ]]; then
+        unexpected_fixture curl "${url}: unexpected release asset ID"
+        return
+      fi
+      local asset_paths
+      asset_paths="$(expect_fixture_authenticated_asset_argv "${url}" "$@")" || return
+      if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${fixture_curl_config}" != "header = \"Authorization: Bearer ${WORKCELL_FIXTURE_GITHUB_TOKEN}\"" ]]; then
+        unexpected_fixture curl "${url}: release asset credential config=${fixture_curl_config}"
+        return
+      fi
+      if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" == "" && "${fixture_curl_config}" != "" ]]; then
+        unexpected_fixture curl "${url}: unexpected release asset credential config=${fixture_curl_config}"
+        return
+      fi
+      local headers_file="${asset_paths%%$'\n'*}"
+      local body_file="${asset_paths#*$'\n'}"
+      case "${WORKCELL_FIXTURE_ASSET_API_RESPONSE}" in
+        direct)
+          : >"${headers_file}"
+          printf '%s  actionlint_%s_linux_amd64.tar.gz\n' "${WORKCELL_FIXTURE_ACTIONLINT_SHA}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" >"${body_file}"
+          printf '200'
+          ;;
+        redirect)
+          printf 'Location: %s\r\n' "${WORKCELL_FIXTURE_ASSET_REDIRECT_URL}" >"${headers_file}"
+          : >"${body_file}"
+          printf '302'
+          ;;
+        status-301)
+          printf 'Location: %s\r\n' "${WORKCELL_FIXTURE_ASSET_REDIRECT_URL}" >"${headers_file}"
+          : >"${body_file}"
+          printf '301'
+          ;;
+        missing-location)
+          : >"${headers_file}"
+          : >"${body_file}"
+          printf '302'
+          ;;
+        duplicate-location)
+          printf 'Location: %s\r\nLocation: %s\r\n' "${WORKCELL_FIXTURE_ASSET_REDIRECT_URL}" "${WORKCELL_FIXTURE_ASSET_REDIRECT_URL}" >"${headers_file}"
+          : >"${body_file}"
+          printf '302'
+          ;;
+        hostile-location)
+          printf 'Location: https://attacker.invalid/actionlint-checksums\r\n' >"${headers_file}"
+          : >"${body_file}"
+          printf '302'
+          ;;
+        *)
+          unexpected_fixture curl "${url}: asset API response=${WORKCELL_FIXTURE_ASSET_API_RESPONSE}"
+          ;;
+      esac
+      ;;
+    "${WORKCELL_FIXTURE_ASSET_REDIRECT_URL:-https://release-assets.githubusercontent.com/github-production-release-asset/12345678/01234567-89ab-cdef-0123-456789abcdef?sp=r&sv=fixture}")
+      local redirect_paths
+      redirect_paths="$(expect_fixture_asset_redirect_argv "${url}" "$@")" || return
+      if [[ "${fixture_curl_config}" != "" ]]; then
+        unexpected_fixture curl "${url}: redirect retained credential config=${fixture_curl_config}"
+        return
+      fi
+      local redirect_headers_file="${redirect_paths%%$'\n'*}"
+      local redirect_body_file="${redirect_paths#*$'\n'}"
+      case "${WORKCELL_FIXTURE_ASSET_REDIRECT_RESPONSE}" in
+        body)
+          : >"${redirect_headers_file}"
+          printf '%s  actionlint_%s_linux_amd64.tar.gz\n' "${WORKCELL_FIXTURE_ACTIONLINT_SHA}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" >"${redirect_body_file}"
+          printf '200'
+          ;;
+        redirect)
+          printf 'Location: %s\r\n' "${WORKCELL_FIXTURE_ASSET_REDIRECT_URL}" >"${redirect_headers_file}"
+          : >"${redirect_body_file}"
+          printf '302'
+          ;;
+        *)
+          unexpected_fixture curl "${url}: asset redirect response=${WORKCELL_FIXTURE_ASSET_REDIRECT_RESPONSE}"
+          ;;
+      esac
       ;;
     'https://api.github.com/repos/zizmorcore/zizmor/releases/latest')
       expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
