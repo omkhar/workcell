@@ -60,9 +60,9 @@ complete runs for each mode.
 
 ### Allow-path overhead (median of 5000 samples, 2 runs)
 
-The [2026-07-05 Bench workflow run](https://github.com/omkhar/workcell/actions/runs/28729189802)
-measured these values on a GitHub-hosted Linux runner. It used the release
-library with glibc.
+The [raw two-run report](benchmark-evidence/exec-guard-bench-2026-07-05.md)
+comes from the [2026-07-05 Bench workflow run](https://github.com/omkhar/workcell/actions/runs/28729189802).
+The run used a GitHub-hosted Linux runner and the release library with glibc.
 
 | Mode | Plain median (ns) | Guard median (ns) | Delta (ns) | Delta |
 |---|---|---|---|---|
@@ -123,3 +123,5 @@ not apply to macOS.
 
 To refresh this page, run the scheduled workflow. Copy the two-run medians and
 spreads from its artifact. Do not use one run as a published result.
+Preserve the complete report in `docs/benchmark-evidence/` before you publish
+new values.
