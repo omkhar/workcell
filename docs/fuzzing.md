@@ -1,165 +1,115 @@
 # Fuzzing
 
-Workcell fuzzes the hand-rolled parsers that sit on attacker- or
-contributor-influenceable input. Each target asserts a single invariant: for any
-input, the parser must not panic. An error return for malformed input is the
-expected, correct outcome; only a crash is a finding.
+Workcell fuzzes parsers and classifiers that process repository or
+attacker-controlled input. A target must not panic. A target must preserve its
+harness invariant.
 
 ## Where the targets live
 
-Fuzz targets are ordinary Go `Fuzz*` functions in `_test.go` files, each in the
-same package as the parser it exercises:
+### Go targets
 
-- `internal/metadatautil/fuzz_test.go`
-  - `FuzzExtractWorkflowUses` — the workflow-YAML `uses:` extractor that feeds
-    the default-deny GitHub Actions allowlist scan.
-  - `FuzzParseToolPins` — the `[tool_pins]` TOML parser behind
-    `policy/tool-pins.toml`.
-  - `FuzzValidateControlPlaneManifest` — the control-plane manifest JSON
-    validator.
-- `internal/tomlsubset/fuzz_test.go`
-  - `FuzzParse` — the TOML-subset parser that gates auth and injection policy.
-- `internal/injection/fuzz_test.go`
-  - `FuzzIsAllowedSystemSymlink` — the direct-mount source-chain oracle.
-  - `FuzzParseSSHDirective` — the SSH config directive parser.
+| Package | Target | Surface |
+|---|---|---|
+| `internal/metadatautil` | `FuzzExtractWorkflowUses` | GitHub Actions `uses` values |
+| `internal/metadatautil` | `FuzzParseToolPins` | Tool-pin TOML |
+| `internal/metadatautil` | `FuzzValidateControlPlaneManifest` | Control-plane manifest JSON |
+| `internal/tomlsubset` | `FuzzParse` | Policy TOML subset |
+| `internal/injection` | `FuzzIsAllowedSystemSymlink` | Direct-mount source chains |
+| `internal/injection` | `FuzzParseSSHDirective` | SSH configuration directives |
 
-Seed corpora are drawn from real repository configs (actual workflow files, the
-real `policy/tool-pins.toml`, and the committed control-plane manifest) plus
-enumerated malformed shapes, so the checked-in corpus reflects the inputs these
-parsers actually see.
+The seed corpus includes repository configuration and invalid forms. The
+`go test ./...` pull-request lane replays each saved seed.
 
 ### Rust exec-guard classifiers (cargo-fuzz)
 
-The `workcell_exec_guard` LD_PRELOAD guard (`runtime/container/rust/`) is fuzzed
-with [cargo-fuzz]/libFuzzer. Targets live in
-`runtime/container/rust/fuzz/fuzz_targets/`, one per A3 parser surface:
+The Rust targets use `cargo-fuzz` and libFuzzer.
 
-- `path_classification` — `classify_protected_runtime_path`,
-  `path_points_to_dynamic_loader`, and `classify_loader_target` (the path
-  validation / dynamic-loader classification surface).
-- `env_filtering` — `path_from_env_entries`, `env_has_unsafe_git_override`, and
-  `resolve_command_via_path_value` (the environment-filtering surface).
-- `git_config_parsing` — `git_config_spec_is_blocked`,
-  `git_config_key_is_blocked`, and `git_config_spec_value_is_explicit_safe` (the
-  git-config spec parsing surface).
+| Target | Surface |
+|---|---|
+| `path_classification` | Protected runtime paths and dynamic loaders |
+| `env_filtering` | Path lookup and unsafe Git environment values |
+| `git_config_parsing` | Git configuration keys and values |
 
-These classifiers are private in the shipped `cdylib`. They are exposed to the
-fuzz targets only through the `fuzz_api` module in `src/lib.rs`, which is gated
-`#[cfg(fuzzing)]` — cargo-fuzz sets `--cfg fuzzing`, so the widened surface never
-exists in the normal `cargo build`/`cargo test` or the released library. The
-crate adds `rlib` to `crate-type` purely so cargo-fuzz can link the lib; the
-`cdylib` artifact is unchanged. Seed corpora
-(`runtime/container/rust/fuzz/corpus/<target>/`) are real loader paths, environ
-entries, and git-config specs taken from the guard's own constants.
+The targets are in `runtime/container/rust/fuzz/fuzz_targets/`. Their seed data
+is in `runtime/container/rust/fuzz/corpus/`.
 
-[cargo-fuzz]: https://github.com/rust-fuzz/cargo-fuzz
+The release library does not export the private classifiers. Fuzz builds enable
+`fuzz_api` through `cfg(fuzzing)`.
 
 ## Running a target locally
 
-The seed corpus runs as a normal regression test on every PR:
+Run the Go seed tests:
 
 ```sh
 go test ./internal/metadatautil/ ./internal/tomlsubset/ ./internal/injection/
 ```
 
-To spend a bounded budget mutating the seeds for one target, name the target and
-its package:
+Run one target for one minute:
 
 ```sh
-go test ./internal/metadatautil/ -run '^$' -fuzz='^FuzzParseToolPins$' -fuzztime=1m
+go test ./internal/metadatautil/ -run '^$' \
+  -fuzz='^FuzzParseToolPins$' -fuzztime=1m
 ```
-
-`-fuzz` runs exactly one target in one package at a time; `-run '^$'` skips the
-ordinary unit tests so only the fuzzer runs.
 
 ### Rust targets
 
-The Rust targets need the nightly toolchain (libFuzzer's sanitizer/coverage
-codegen) and `cargo-fuzz`:
+Install the pinned tools:
 
 ```sh
-# Use the same dated nightly the scheduled lane pins
-# (WORKCELL_RUST_FUZZ_NIGHTLY in .github/workflows/fuzz.yml) so local runs match
-# CI; bump both together and refresh fuzz/Cargo.lock when moving it.
 rustup toolchain install nightly-2026-07-02
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
 
-The exec-guard crate pins crates.io to a vendored directory for its reproducible
-shipping build (`runtime/container/rust/.cargo/config.toml`), and the
-non-shipping fuzz crate's extra dependency (`libfuzzer-sys`) is not vendored. A
-local fuzz build therefore needs crates.io access for that one dependency, so
-`cargo +nightly-2026-07-02 fuzz build` will fail dependency resolution against the vendored
-config unless you first override it. Apply the same override the scheduled lane
-uses (see the `Rust fuzz` job in [`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml)):
-in `runtime/container/rust/.cargo/config.toml`, temporarily **remove** (or comment
-out) the `replace-with = "vendored-sources"` line so `crates.io` resolves from its
-built-in default registry. Do not add a second source pointed at the crates.io
-index — Cargo rejects that as a duplicate of the built-in `crates-io` source. Do
-this locally only and **do not commit it** — the committed vendored config is what
-release builds use.
+The release crate uses vendored sources. The fuzz crate also needs
+`libfuzzer-sys` from crates.io.
 
-Then, from `runtime/container/rust/`, build all targets or run one on its seed
-corpus for a bounded budget:
+For a local fuzz build, temporarily remove the `replace-with =
+"vendored-sources"` line from `runtime/container/rust/.cargo/config.toml`.
+Do not commit that change.
+
+Then run these commands from `runtime/container/rust/`:
 
 ```sh
 cargo +nightly-2026-07-02 fuzz build
-cargo +nightly-2026-07-02 fuzz run path_classification -- -max_total_time=25
+cargo +nightly-2026-07-02 fuzz run path_classification -- \
+  -max_total_time=25
 ```
 
 ## Scheduled lane
 
-`.github/workflows/fuzz.yml` runs weekly and on demand. It gives each target a
-few minutes of fuzzing, exercising every target above. The `Go fuzz` job runs
-the Go targets inside the validator image (via `scripts/ci/job-fuzz.sh` →
-`scripts/ci/run-fuzz-in-validator.sh`) so it uses the reviewed, pinned Go
-toolchain rather than the runner's ambient Go. The `Rust fuzz` job installs the
-nightly toolchain plus `cargo-fuzz` and runs each Rust target for a bounded
-`-max_total_time` budget. Neither job is on the PR path — the Go seed corpus
-already gates PRs through the normal `go test` lanes, and the Rust seed corpora
-are checked in — so the lane stays a scheduled, heavy sweep. Both jobs are
-registered in `policy/workflow-lane-policy.json` and reflected in
-`policy/workflow-lanes.json`; their crash-artifact retention is in
-`policy/retention-policy.json`.
+`.github/workflows/fuzz.yml` runs each target each week and on demand.
+
+The Go job uses the pinned validator image. The Rust job installs the pinned
+nightly toolchain and `cargo-fuzz` version.
+
+The workflow is not a pull request gate. The `go test ./...` pull-request lane
+replays the saved Go seed corpus. The scheduled or on-demand Rust job replays
+the saved Rust corpus.
+
+Workflow lane policy and retention policy record both jobs and their crash
+artifacts.
 
 ## Crash triage
 
 ### Go
 
-When the fuzzer finds a crash it writes a reproducer file at
-`testdata/fuzz/<Target>/<hash>` next to the target's package and fails the run.
-On the scheduled lane the failing job uploads those files as the
-`fuzz-reproducers` artifact before the runner workspace is discarded, so the
-exact input survives the run.
-To triage:
+For a Go crash:
 
-1. Retrieve the reproducer — from the failing run's `fuzz-reproducers` artifact
-   for a scheduled-lane crash, or from your working tree for a local one — and
-   commit it. It becomes a permanent regression seed and, once fixed, guards
-   against the crash returning.
-2. Reproduce it directly: `go test ./<package>/ -run='^<Target>$/<hash>$'`.
-3. Fix the parser so the input returns an error instead of panicking.
-4. Re-run the target with `-fuzz` to confirm the crash is gone and no new one
-   appears.
+1. Download the `fuzz-reproducers` artifact.
+2. Put the input in `PACKAGE/testdata/fuzz/TARGET/HASH`.
+3. Reproduce it with `go test ./PACKAGE -run='^TARGET$/HASH$'`.
+4. Fix the parser or classifier so the harness invariant holds.
+5. Commit the input as a regression seed.
+6. Run the target again.
 
 ### Rust
 
-When a Rust target crashes, libFuzzer prints the panic and writes the minimized
-failing input under `runtime/container/rust/fuzz/artifacts/<target>/`. The
-scheduled `Rust fuzz` job uploads that directory as the `rust-fuzz-reproducers`
-artifact on failure, so the exact input survives the run.
-To triage, from `runtime/container/rust/`:
+For a Rust crash:
 
-1. Retrieve the reproducer — from the failing run's `rust-fuzz-reproducers`
-   artifact for a scheduled-lane crash, or from `fuzz/artifacts/<target>/` for a
-   local one.
-2. Reproduce it directly by replaying the single input:
-   `cargo +nightly-2026-07-02 fuzz run <target> fuzz/artifacts/<target>/<crash-file>`.
-3. Optionally minimize it further: `cargo +nightly-2026-07-02 fuzz tmin <target>
-   fuzz/artifacts/<target>/<crash-file>`.
-4. Decide whether the crash is a real classifier bug (fix `src/lib.rs` so the
-   input is handled instead of panicking) or an over-aggressive target (fix the
-   harness). Add the minimized input to `fuzz/corpus/<target>/` as a permanent
-   regression seed.
-5. Re-run the target (`cargo +nightly-2026-07-02 fuzz run <target> -- -max_total_time=60`)
-   to confirm the crash is gone and no new one appears.
+1. Download the `rust-fuzz-reproducers` artifact.
+2. Put the input in `fuzz/artifacts/TARGET/`.
+3. Replay it with `cargo +nightly-2026-07-02 fuzz run TARGET PATH`.
+4. Minimize it with `cargo +nightly-2026-07-02 fuzz tmin TARGET PATH`.
+5. Fix the classifier or the harness.
+6. Put the minimized input in `fuzz/corpus/TARGET/`.
+7. Run the target again.
