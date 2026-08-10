@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,12 +18,7 @@ import (
 )
 
 const (
-	githubReleaseAssetMaxMetadataBytes = 200 << 20
-	githubReleaseAssetMaxBytes         = 64 << 10
-	githubReleaseAssetMaxTokenBytes    = 16 << 10
-	githubReleaseAssetTimeout          = 60 * time.Second
-	githubReleaseAssetConnectTimeout   = 15 * time.Second
-	githubReleaseAssetUserAgent        = "workcell-upstream-pins/1.0"
+	githubReleaseAssetTimeout = 60 * time.Second
 )
 
 var (
@@ -40,29 +34,31 @@ type githubReleaseAssetDocument struct {
 	} `json:"assets"`
 }
 
-type githubReleaseAssetDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 // FetchGitHubReleaseAsset selects one asset from releaseJSON and downloads it.
 // The authenticated API request cannot redirect automatically. A validated
 // release-assets URL gets one separate request without credentials.
 func FetchGitHubReleaseAsset(ctx context.Context, releaseJSON io.Reader, repository, assetName string) ([]byte, error) {
-	token, err := githubReleaseAssetToken()
+	return FetchGitHubReleaseAssetClass(ctx, releaseJSON, repository, assetName, "checksum")
+}
+
+// FetchGitHubReleaseAssetClass selects one release asset in a reviewed size
+// class. Checksums stay small while release archives use the updater's bounded
+// metadata-size ceiling.
+func FetchGitHubReleaseAssetClass(ctx context.Context, releaseJSON io.Reader, repository, assetName, assetClass string) ([]byte, error) {
+	maxBytes, err := githubReleaseAssetLimit(assetClass)
 	if err != nil {
 		return nil, err
 	}
-	return fetchGitHubReleaseAsset(ctx, newGitHubReleaseAssetClient(), releaseJSON, repository, assetName, token)
+	token, err := githubAPIToken()
+	if err != nil {
+		return nil, err
+	}
+	return fetchGitHubReleaseAsset(ctx, newGitHubReleaseAssetClient(), releaseJSON, repository, assetName, token, maxBytes)
 }
 
 func newGitHubReleaseAssetClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{
-		Timeout:   githubReleaseAssetConnectTimeout,
-		KeepAlive: 30 * time.Second,
-	}).DialContext
 	return &http.Client{
-		Transport: transport,
+		Transport: newUpstreamHTTPTransport(),
 		Timeout:   githubReleaseAssetTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -70,7 +66,7 @@ func newGitHubReleaseAssetClient() *http.Client {
 	}
 }
 
-func fetchGitHubReleaseAsset(ctx context.Context, client githubReleaseAssetDoer, releaseJSON io.Reader, repository, assetName, token string) ([]byte, error) {
+func fetchGitHubReleaseAsset(ctx context.Context, client upstreamHTTPDoer, releaseJSON io.Reader, repository, assetName, token string, maxBytes int64) ([]byte, error) {
 	apiURL, err := githubReleaseAssetAPIURL(releaseJSON, repository, assetName)
 	if err != nil {
 		return nil, err
@@ -88,7 +84,7 @@ func fetchGitHubReleaseAsset(ctx context.Context, client githubReleaseAssetDoer,
 
 	switch initial.StatusCode {
 	case http.StatusOK:
-		return readGitHubReleaseAssetBody(initial)
+		return readGitHubReleaseAssetBody(initial, maxBytes)
 	case http.StatusFound:
 		locations := initial.Header.Values("Location")
 		if len(locations) != 1 || locations[0] == "" {
@@ -110,7 +106,7 @@ func fetchGitHubReleaseAsset(ctx context.Context, client githubReleaseAssetDoer,
 		if redirect.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("unexpected GitHub release asset redirect response %d", redirect.StatusCode)
 		}
-		return readGitHubReleaseAssetBody(redirect)
+		return readGitHubReleaseAssetBody(redirect, maxBytes)
 	default:
 		return nil, fmt.Errorf("unexpected GitHub release asset response %d", initial.StatusCode)
 	}
@@ -123,11 +119,11 @@ func githubReleaseAssetAPIURL(releaseJSON io.Reader, repository, assetName strin
 	if assetName == "" || strings.ContainsAny(assetName, "\r\n") {
 		return "", errors.New("GitHub release asset name must be one line")
 	}
-	content, err := io.ReadAll(io.LimitReader(releaseJSON, githubReleaseAssetMaxMetadataBytes+1))
+	content, err := io.ReadAll(io.LimitReader(releaseJSON, upstreamMetadataMaxBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("read GitHub release metadata: %w", err)
 	}
-	if len(content) > githubReleaseAssetMaxMetadataBytes {
+	if len(content) > upstreamMetadataMaxBytes {
 		return "", errors.New("GitHub release metadata exceeds the size limit")
 	}
 	var document githubReleaseAssetDocument
@@ -155,12 +151,13 @@ func githubReleaseAssetAPIURL(releaseJSON io.Reader, repository, assetName strin
 	return fmt.Sprintf("https://api.github.com/repos/%s/releases/assets/%s", repository, assetID), nil
 }
 
-func githubReleaseAssetRequest(ctx context.Context, client githubReleaseAssetDoer, rawURL, token string, initial bool) (*http.Response, error) {
+func githubReleaseAssetRequest(ctx context.Context, client upstreamHTTPDoer, rawURL, token string, initial bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", githubReleaseAssetUserAgent)
+	req.Header.Set("Accept-Encoding", "identity")
+	req.Header.Set("User-Agent", upstreamUserAgent)
 	if initial {
 		req.Header.Set("Accept", "application/octet-stream")
 	}
@@ -187,43 +184,52 @@ func validGitHubReleaseAssetRedirectURL(rawURL string) bool {
 		githubReleaseRedirectPath.MatchString(parsed.Path)
 }
 
-func readGitHubReleaseAssetBody(response *http.Response) ([]byte, error) {
-	if response.Body == nil {
-		return nil, errors.New("GitHub release asset response has no body")
-	}
-	if response.ContentLength > githubReleaseAssetMaxBytes {
-		return nil, errors.New("GitHub release asset exceeds the size limit")
-	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, githubReleaseAssetMaxBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read GitHub release asset: %w", err)
-	}
-	if len(content) > githubReleaseAssetMaxBytes {
-		return nil, errors.New("GitHub release asset exceeds the size limit")
-	}
-	return content, nil
+func readGitHubReleaseAssetBody(response *http.Response, maxBytes int64) ([]byte, error) {
+	return readBoundedHTTPBody(response, maxBytes, "GitHub release asset")
 }
 
-func githubReleaseAssetToken() (string, error) {
+func githubReleaseAssetLimit(assetClass string) (int64, error) {
+	switch assetClass {
+	case "checksum":
+		return upstreamChecksumMaxBytes, nil
+	case "archive":
+		return upstreamMetadataMaxBytes, nil
+	default:
+		return 0, fmt.Errorf("unknown GitHub release asset class %q", assetClass)
+	}
+}
+
+func githubAPIToken() (string, error) {
 	raw := os.Getenv("WORKCELL_GITHUB_API_TOKEN")
-	if tokenFile := os.Getenv("WORKCELL_GITHUB_API_TOKEN_FILE"); tokenFile != "" {
+	fromFile := false
+	if raw == "" {
+		raw = os.Getenv("GITHUB_TOKEN")
+	}
+	if raw == "" {
+		raw = os.Getenv("GH_TOKEN")
+	}
+	if raw == "" && os.Getenv("WORKCELL_GITHUB_API_TOKEN_FILE") != "" {
+		fromFile = true
+		tokenFile := os.Getenv("WORKCELL_GITHUB_API_TOKEN_FILE")
 		file, err := os.Open(tokenFile)
 		if err != nil {
 			return "", fmt.Errorf("read WORKCELL_GITHUB_API_TOKEN_FILE: %w", err)
 		}
 		defer file.Close()
-		content, err := io.ReadAll(io.LimitReader(file, githubReleaseAssetMaxTokenBytes+1))
+		content, err := io.ReadAll(io.LimitReader(file, githubAPIMaxTokenBytes+1))
 		if err != nil {
 			return "", fmt.Errorf("read WORKCELL_GITHUB_API_TOKEN_FILE: %w", err)
 		}
-		if len(content) > githubReleaseAssetMaxTokenBytes {
+		if len(content) > githubAPIMaxTokenBytes {
 			return "", errors.New("WORKCELL_GITHUB_API_TOKEN_FILE exceeds the size limit")
 		}
 		raw = string(content)
 	}
-	raw = strings.TrimRight(raw, "\n")
+	if fromFile {
+		raw = strings.TrimRight(raw, "\n")
+	}
 	if strings.ContainsAny(raw, "\r\n") {
-		return "", errors.New("WORKCELL_GITHUB_API_TOKEN_FILE and WORKCELL_GITHUB_API_TOKEN must contain exactly one token line")
+		return "", errors.New("GitHub API token must contain exactly one token line")
 	}
 	return raw, nil
 }

@@ -20,7 +20,6 @@ import (
 
 const (
 	updaterFixtureActionlintAssetID = "424242"
-	updaterFixtureCurlVersion       = "8.7.1"
 )
 
 type updaterFixturePins struct {
@@ -103,14 +102,12 @@ type updaterFixtureCurlCall struct {
 }
 
 type updaterFixtureOptions struct {
-	Token       string
-	CurlVersion string
+	Token             string
+	RelativeTokenFile bool
 }
 
 func defaultUpdaterFixtureOptions() updaterFixtureOptions {
-	return updaterFixtureOptions{
-		CurlVersion: updaterFixtureCurlVersion,
-	}
+	return updaterFixtureOptions{}
 }
 
 func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
@@ -131,12 +128,14 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	checkRun := runUpdaterFixture(t, fixtureRoot, checkScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--check")
 	assertUpdaterFixtureRun(t, checkRun, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, checkRun.CIToolsLog, map[string]int{
-		"github-release-asset":       1,
+		"github-api-get":             7,
+		"github-release-asset":       3,
 		"hadolint-manifest-checksum": 2,
 		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     0,
 		"check-pinned-inputs":        0,
+		"upstream-get":               6,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(checkRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", checkRun.ProviderLog, want)
@@ -157,12 +156,14 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	applyRun := runUpdaterFixture(t, fixtureRoot, applyScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--apply")
 	assertUpdaterFixtureRun(t, applyRun, 0, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, applyRun.CIToolsLog, map[string]int{
-		"github-release-asset":       1,
+		"github-api-get":             7,
+		"github-release-asset":       3,
 		"hadolint-manifest-checksum": 2,
 		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     1,
 		"check-pinned-inputs":        1,
+		"upstream-get":               6,
 	})
 	if want := []string{"summary", "check", "apply"}; !reflect.DeepEqual(applyRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", applyRun.ProviderLog, want)
@@ -193,12 +194,14 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	cleanRun := runUpdaterFixture(t, fixtureRoot, cleanScratch, citoolsPath, goWrapperPath, pins, targetPlan, "--check")
 	assertUpdaterFixtureRun(t, cleanRun, 0, updaterFixtureSummary(pins, targetManifest, targetManifest), targetPlan.Snapshot)
 	assertUpdaterCommandCounts(t, cleanRun.CIToolsLog, map[string]int{
-		"github-release-asset":       1,
+		"github-api-get":             7,
+		"github-release-asset":       3,
 		"hadolint-manifest-checksum": 2,
 		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     0,
 		"check-pinned-inputs":        0,
+		"upstream-get":               6,
 	})
 	assertUpdaterScratchHasOnlyLogs(t, cleanScratch)
 	afterCleanCheck := snapshotUpdaterFixtureTree(t, fixtureRoot)
@@ -222,13 +225,17 @@ func TestUpdateUpstreamPinsCredentialedRequestsKeepTokensOffArgv(t *testing.T) {
 
 	options := defaultUpdaterFixtureOptions()
 	options.Token = token
+	options.RelativeTokenFile = true
 	run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, targetPlan, "--check", options)
 	assertUpdaterFixtureRun(t, run, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
-	assertCredentialedUpdaterCurlCalls(t, run.CurlCalls, token)
-	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{"github-release-asset": 1})
+	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{
+		"github-api-get":       7,
+		"github-release-asset": 3,
+		"upstream-get":         6,
+	})
 }
 
-func TestUpdateUpstreamPinsRequiresBoundedCurl(t *testing.T) {
+func TestUpdateUpstreamPinsDoesNotRequireCurlVersion(t *testing.T) {
 	t.Parallel()
 
 	pins := readUpdaterFixturePins(t)
@@ -240,31 +247,12 @@ func TestUpdateUpstreamPinsRequiresBoundedCurl(t *testing.T) {
 	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
 	fixtureRoot := writeUpdaterFixture(t, driftedManifest, 0o640)
 
-	for _, tc := range []struct {
-		name        string
-		version     string
-		wantCode    int
-		wantMessage string
-	}{
-		{name: "minimum", version: "8.4.0", wantCode: 1, wantMessage: updaterFixtureSummary(pins, driftedManifest, targetManifest)},
-		{name: "older", version: "8.3.0", wantCode: 1, wantMessage: "curl 8.4.0 or newer is required"},
-		{name: "malformed", version: "not-a-version", wantCode: 1, wantMessage: "Unable to parse the curl version"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			options := defaultUpdaterFixtureOptions()
-			options.CurlVersion = tc.version
-			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, targetPlan, "--check", options)
-			if run.Code != tc.wantCode {
-				t.Fatalf("update-upstream-pins exit code = %d, want %d\n%s", run.Code, tc.wantCode, run.Output)
-			}
-			if !strings.Contains(run.Output, tc.wantMessage) {
-				t.Fatalf("update-upstream-pins output = %q, want text %q", run.Output, tc.wantMessage)
-			}
-			assertUpdaterFixtureCurlVersionProbe(t, run.CurlCalls, tc.version)
-			if tc.version != "8.4.0" && updaterFixtureCurlKindCount(run.CurlCalls, "curl") != 0 {
-				t.Fatalf("unsupported curl version made HTTP requests: %#v", run.CurlCalls)
-			}
-		})
+	run := runUpdaterFixture(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, targetPlan, "--check")
+	assertUpdaterFixtureRun(t, run, 1, updaterFixtureSummary(pins, driftedManifest, targetManifest), targetPlan.Snapshot)
+	for _, call := range run.CurlCalls {
+		if call.Kind != "curl" || strings.Contains(call.Args, "--version") || strings.Contains(call.Args, "--max-filesize") {
+			t.Fatalf("updater used unsupported curl capability: %#v", call)
+		}
 	}
 }
 
@@ -291,12 +279,14 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 	}
 	assertUpdaterResolutionLog(t, run.ResolutionLog, invalidPlan.Snapshot)
 	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{
-		"github-release-asset":       1,
+		"github-api-get":             7,
+		"github-release-asset":       3,
 		"hadolint-manifest-checksum": 2,
 		"select-buildx-version":      1,
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     1,
 		"check-pinned-inputs":        0,
+		"upstream-get":               6,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(run.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", run.ProviderLog, want)
@@ -331,11 +321,11 @@ func TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments(t *testing.T) 
 			name string
 			args string
 		}{
-			{name: "missing-curlrc-disable", args: "-fsSI --max-time 120 --connect-timeout 15 --max-filesize 209715200"},
-			{name: "late-curlrc-disable", args: "-fsSI -q --max-time 120 --connect-timeout 15 --max-filesize 209715200"},
-			{name: "wrong-method", args: "-q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200"},
-			{name: "missing-size-bound", args: "-q -fsSI --max-time 120 --connect-timeout 15"},
-			{name: "extra-arguments", args: "-q -fsSI --max-time 120 --connect-timeout 15 --max-filesize 209715200 --retry 1"},
+			{name: "missing-curlrc-disable", args: "-fsSI --max-time 120 --connect-timeout 15"},
+			{name: "late-curlrc-disable", args: "-fsSI -q --max-time 120 --connect-timeout 15"},
+			{name: "wrong-method", args: "-q -fsSL --max-time 120 --connect-timeout 15"},
+			{name: "stale-size-bound", args: "-q -fsSI --max-time 120 --connect-timeout 15 --max-filesize 209715200"},
+			{name: "extra-arguments", args: "-q -fsSI --max-time 120 --connect-timeout 15 --retry 1"},
 		} {
 			malformed := malformed
 			t.Run(endpoint.name+"/"+malformed.name, func(t *testing.T) {
@@ -598,9 +588,14 @@ func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citool
 		t.Fatal(err)
 	}
 	if options.Token != "" {
-		credentialDir := t.TempDir()
-		tokenFile = filepath.Join(credentialDir, "github-token")
-		if err := os.WriteFile(tokenFile, []byte(options.Token), 0o600); err != nil {
+		credentialPath := filepath.Join(t.TempDir(), "github-token")
+		if options.RelativeTokenFile {
+			tokenFile = "github-token"
+			credentialPath = filepath.Join(scratchRoot, tokenFile)
+		} else {
+			tokenFile = credentialPath
+		}
+		if err := os.WriteFile(credentialPath, []byte(options.Token), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -637,7 +632,6 @@ func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citool
 		"WORKCELL_FIXTURE_CITOOLS_LOG=" + citoolsLogPath,
 		"WORKCELL_FIXTURE_COSIGN_VERSION=" + pins.CosignVersion,
 		"WORKCELL_FIXTURE_CURL_LOG=" + curlLogPath,
-		"WORKCELL_FIXTURE_CURL_VERSION=" + options.CurlVersion,
 		"WORKCELL_FIXTURE_GITHUB_TOKEN=" + options.Token,
 		"WORKCELL_FIXTURE_REQUIRE_HOSTILE_CURLRC=1",
 		"WORKCELL_FIXTURE_DEBIAN_PLAN=" + string(planJSON),
@@ -742,58 +736,6 @@ func readUpdaterFixtureCurlCalls(t *testing.T, path string) []updaterFixtureCurl
 	return calls
 }
 
-func updaterFixtureCurlKindCount(calls []updaterFixtureCurlCall, kind string) int {
-	count := 0
-	for _, call := range calls {
-		if call.Kind == kind {
-			count++
-		}
-	}
-	return count
-}
-
-func assertUpdaterFixtureCurlVersionProbe(t *testing.T, calls []updaterFixtureCurlCall, version string) {
-	t.Helper()
-
-	count := 0
-	for _, call := range calls {
-		if call.Kind != "curl-version" {
-			continue
-		}
-		count++
-		if call.URL != version || call.Config != "" || call.Args != "-q --version" {
-			t.Fatalf("curl version probe = %#v, want version %q with -q first", call, version)
-		}
-	}
-	if count != 1 {
-		t.Fatalf("curl version probes = %d, want 1; calls=%#v", count, calls)
-	}
-}
-
-func assertCredentialedUpdaterCurlCalls(t *testing.T, calls []updaterFixtureCurlCall, token string) {
-	t.Helper()
-
-	githubConfig := "header = \"Accept: application/vnd.github+json\"\nheader = \"Authorization: Bearer " + token + "\""
-	githubCalls := 0
-	for _, call := range calls {
-		if call.Kind != "curl" {
-			continue
-		}
-		if strings.Contains(call.Args, token) || strings.Contains(call.Args, "Authorization:") || strings.Contains(call.Args, "--oauth2-bearer") {
-			t.Fatalf("credential leaked through curl argv: %#v", call)
-		}
-		if strings.HasPrefix(call.URL, "https://api.github.com/") {
-			githubCalls++
-			if call.Config != githubConfig || !strings.Contains(call.Args, "--config -") || strings.Contains(call.Args, "-fsSL") {
-				t.Fatalf("GitHub API curl capture = %#v, want config %q through stdin", call, githubConfig)
-			}
-		}
-	}
-	if githubCalls == 0 {
-		t.Fatalf("credentialed updater made no GitHub API calls: %#v", calls)
-	}
-}
-
 func assertUpdaterFixtureRun(t *testing.T, run updaterFixtureRun, wantCode int, wantOutput, snapshot string) {
 	t.Helper()
 
@@ -835,7 +777,7 @@ func assertUpdaterCommandCounts(t *testing.T, commands []string, expected map[st
 	}
 	for command := range counts {
 		switch command {
-		case "extract-dockerfile-arg", "github-release-asset", "hadolint-manifest-checksum", "select-buildx-version", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs":
+		case "extract-dockerfile-arg", "github-api-get", "github-release-asset", "hadolint-manifest-checksum", "select-buildx-version", "inspect-debian-bootstrap", "apply-debian-bootstrap", "check-pinned-inputs", "upstream-get":
 		default:
 			t.Fatalf("unexpected real workcell-citools command %q; log=%q", command, commands)
 		}
@@ -1146,24 +1088,6 @@ expect_fixture_curl_argv() {
   fi
   shift
   expected=("$@")
-  if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${label}" == https://api.github.com/* ]]; then
-    local -a credentialed=()
-    for ((index = 0; index < ${#expected[@]}; index++)); do
-      if [[ "${expected[index]}" == "-H" && "${expected[index + 1]:-}" == "Accept: application/vnd.github+json" ]]; then
-        ((index++))
-        continue
-      fi
-      if [[ "${expected[index]}" == "-fsSL" ]]; then
-        credentialed+=(-fsS)
-        continue
-      fi
-      if [[ "${expected[index]}" == "${label}" ]]; then
-        credentialed+=(--config -)
-      fi
-      credentialed+=("${expected[index]}")
-    done
-    expected=("${credentialed[@]}")
-  fi
   if [[ "${#actual[@]}" -ne "${#expected[@]}" ]]; then
     unexpected_fixture curl "${label}: argv=${actual[*]}"
     return
@@ -1197,111 +1121,13 @@ curl() {
       return
     fi
   fi
-  if [[ "$#" -eq 2 && "$1" == "-q" && "$2" == "--version" ]]; then
-    record_fixture_http_request curl-version "${WORKCELL_FIXTURE_CURL_VERSION}" "" "$*"
-    printf 'curl %s (fixture) libcurl/%s\n' "${WORKCELL_FIXTURE_CURL_VERSION}" "${WORKCELL_FIXTURE_CURL_VERSION}"
-    return
-  fi
   local url="${!#}"
-  local fixture_curl_config=""
-  local index=0
-  for ((index = 1; index <= $#; index++)); do
-    if [[ "${!index}" != "--config" ]]; then
-      continue
-    fi
-    local next_index=$((index + 1))
-    local config_source="${!next_index}"
-    if [[ "${config_source}" != "-" ]]; then
-      unexpected_fixture curl "${url}: unexpected curl config source ${config_source:-<missing>}"
-      return
-    fi
-    fixture_curl_config="$(cat)"
-    break
-  done
-  if [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${url}" == https://api.github.com/repos/rhysd/actionlint/releases/assets/* ]]; then
-    local expected_asset_config="header = \"Authorization: Bearer ${WORKCELL_FIXTURE_GITHUB_TOKEN}\""
-    if [[ "${fixture_curl_config}" != "${expected_asset_config}" ]]; then
-      unexpected_fixture curl "${url}: credential config=${fixture_curl_config}"
-      return
-    fi
-  elif [[ "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" != "" && "${url}" == https://api.github.com/* ]]; then
-    local expected_config="header = \"Accept: application/vnd.github+json\"
-header = \"Authorization: Bearer ${WORKCELL_FIXTURE_GITHUB_TOKEN}\""
-    if [[ "${fixture_curl_config}" != "${expected_config}" ]]; then
-      unexpected_fixture curl "${url}: credential config=${fixture_curl_config}"
-      return
-    fi
-  fi
-  record_fixture_http_request curl "${url}" "${fixture_curl_config}" "$*"
+  record_fixture_http_request curl "${url}" "" "$*"
   case "${url}" in
-    'https://go.dev/dl/?mode=json')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
-      printf '[{"stable":true,"version":"go%s","files":[{"os":"linux","arch":"amd64","kind":"archive","sha256":"%s"},{"os":"linux","arch":"arm64","kind":"archive","sha256":"%s"}]}]\n' \
-        "${WORKCELL_FIXTURE_GO_VERSION}" "${WORKCELL_FIXTURE_GO_AMD64_SHA}" "${WORKCELL_FIXTURE_GO_ARM64_SHA}"
-      ;;
-    'https://static.rust-lang.org/dist/channel-rust-stable.toml')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
-      printf '[pkg.rust]\nversion = "%s (fixture)"\n' "${WORKCELL_FIXTURE_RUST_VERSION}"
-      ;;
-    'https://static.rust-lang.org/rustup/release-stable.toml')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
-      printf "version = '%s'\n" "${WORKCELL_FIXTURE_RUSTUP_VERSION}"
-      ;;
-    */x86_64-unknown-linux-gnu/rustup-init.sha256)
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 65536 "${url}" || return
-      printf '%s  rustup-init\n' "${WORKCELL_FIXTURE_RUSTUP_AMD64_SHA}"
-      ;;
-    */aarch64-unknown-linux-gnu/rustup-init.sha256)
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 65536 "${url}" || return
-      printf '%s  rustup-init\n' "${WORKCELL_FIXTURE_RUSTUP_ARM64_SHA}"
-      ;;
-    'https://api.github.com/repos/hadolint/hadolint/releases/latest')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"%s","assets":[{"name":"checksums.sha256","browser_download_url":"https://fixture.invalid/hadolint-checksums.sha256"}]}\n' "${WORKCELL_FIXTURE_HADOLINT_VERSION}"
-      ;;
-    'https://fixture.invalid/hadolint-checksums.sha256')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 65536 "${url}" || return
-      printf '%s' "${WORKCELL_FIXTURE_HADOLINT_CHECKSUMS}"
-      ;;
-    'https://api.github.com/repos/docker/buildx/releases/latest')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_BUILDX_VERSION}"
-      ;;
-    'https://api.github.com/repos/docker/actions-toolkit/contents/.github/buildx-releases.json?ref=main')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      local catalog
-      catalog="$(printf '{"%s":{"tag_name":"%s"}}' "${WORKCELL_FIXTURE_BUILDX_VERSION}" "${WORKCELL_FIXTURE_BUILDX_VERSION}" | base64 | tr -d '\n')"
-      printf '{"encoding":"base64","content":"%s"}\n' "${catalog}"
-      ;;
-    'https://api.github.com/repos/sigstore/cosign/releases/latest')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_COSIGN_VERSION}"
-      ;;
-    'https://api.github.com/repos/anchore/syft/releases/latest')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_SYFT_VERSION}"
-      ;;
-    'https://api.github.com/repos/rhysd/actionlint/releases/latest')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"v%s","assets":[{"id":%s,"name":"actionlint_%s_checksums.txt","url":"https://attacker.invalid/actionlint-checksums"}]}\n' \
-        "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" "${WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
-      ;;
-    'https://api.github.com/repos/zizmorcore/zizmor/releases/latest')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 -H 'Accept: application/vnd.github+json' "${url}" || return
-      printf '{"tag_name":"v%s","assets":[{"name":"zizmor-x86_64-unknown-linux-gnu.tar.gz","browser_download_url":"https://fixture.invalid/zizmor.tar.gz"}]}\n' "${WORKCELL_FIXTURE_ZIZMOR_VERSION}"
-      ;;
-    'https://fixture.invalid/zizmor.tar.gz')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 60 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
-      printf 'fixture-zizmor-archive'
-      ;;
-    'https://hub.docker.com/v2/repositories/tonistiigi/binfmt/tags?page_size=100')
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSL --max-time 120 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
-      printf '{"results":[{"name":"%s"}]}\n' "${WORKCELL_FIXTURE_QEMU_TAG}"
-      ;;
     https://snapshot.debian.org/archive/debian/*/dists/trixie/Release|\
     https://snapshot.debian.org/archive/debian/*/dists/trixie-updates/Release|\
     https://snapshot.debian.org/archive/debian-security/*/dists/trixie-security/Release)
-      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSI --max-time 120 --connect-timeout 15 --max-filesize 209715200 "${url}" || return
+      expect_fixture_curl_argv "${url}" "$@" -- -q -fsSI --max-time 120 --connect-timeout 15 "${url}" || return
       printf 'release %s\n' "${url}" >>"${WORKCELL_FIXTURE_RESOLUTION_LOG}"
       ;;
     *)
@@ -1334,6 +1160,29 @@ docker() {
   printf 'Name: %s\nDigest: sha256:%s\n' "${ref}" "${digest}"
 }
 
+fixture_require_citools_root() {
+  [[ "${PWD}" == "${WORKCELL_FIXTURE_ROOT}" ]] || {
+    unexpected_fixture go "workcell-citools cwd=${PWD}"
+    return
+  }
+}
+
+fixture_require_github_token_boundary() {
+  [[ "$*" != *"${WORKCELL_FIXTURE_GITHUB_TOKEN:-}"* || -z "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" ]] || {
+    unexpected_fixture go "GitHub token leaked through argv"
+    return
+  }
+  if [[ -n "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" ]]; then
+    [[ -r "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" && "$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")" == "${WORKCELL_FIXTURE_GITHUB_TOKEN}" ]] || {
+      unexpected_fixture go "invalid GitHub token file"
+      return
+    }
+  elif [[ -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
+    unexpected_fixture go "unexpected GitHub token file"
+    return
+  fi
+}
+
 go() {
   local command="${3:-}"
   if [[ "${1:-}" != "run" || "${2:-}" != "./cmd/workcell-citools" || "$#" -lt 3 ]]; then
@@ -1349,34 +1198,129 @@ go() {
     printf '%s\n' "${WORKCELL_FIXTURE_DEBIAN_PLAN}"
     return
   fi
-  if [[ "${command}" == "github-release-asset" ]]; then
-    [[ "${PWD}" == "${WORKCELL_FIXTURE_ROOT}" ]] || {
-      unexpected_fixture go "github-release-asset cwd=${PWD}"
+  if [[ "${command}" == "github-api-get" ]]; then
+    fixture_require_citools_root || return
+    fixture_require_github_token_boundary "$@" || return
+    [[ "$#" -eq 4 ]] || {
+      unexpected_fixture go "$*"
       return
     }
-    [[ "$#" -eq 5 && "$4" == "rhysd/actionlint" && "$5" == "actionlint_${WORKCELL_FIXTURE_ACTIONLINT_VERSION}_checksums.txt" ]] || {
+    printf '%s\n' "${command}" >>"${WORKCELL_FIXTURE_CITOOLS_LOG}"
+    case "$4" in
+      'https://api.github.com/repos/hadolint/hadolint/releases/latest')
+        printf '{"tag_name":"%s","assets":[{"id":424243,"name":"checksums.sha256"}]}\n' "${WORKCELL_FIXTURE_HADOLINT_VERSION}"
+        ;;
+      'https://api.github.com/repos/docker/buildx/releases/latest')
+        printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_BUILDX_VERSION}"
+        ;;
+      'https://api.github.com/repos/docker/actions-toolkit/contents/.github/buildx-releases.json?ref=main')
+        local catalog
+        catalog="$(printf '{"%s":{"tag_name":"%s"}}' "${WORKCELL_FIXTURE_BUILDX_VERSION}" "${WORKCELL_FIXTURE_BUILDX_VERSION}" | base64 | tr -d '\n')"
+        printf '{"encoding":"base64","content":"%s"}\n' "${catalog}"
+        ;;
+      'https://api.github.com/repos/sigstore/cosign/releases/latest')
+        printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_COSIGN_VERSION}"
+        ;;
+      'https://api.github.com/repos/anchore/syft/releases/latest')
+        printf '{"tag_name":"%s","assets":[]}\n' "${WORKCELL_FIXTURE_SYFT_VERSION}"
+        ;;
+      'https://api.github.com/repos/rhysd/actionlint/releases/latest')
+        printf '{"tag_name":"v%s","assets":[{"id":%s,"name":"actionlint_%s_checksums.txt"}]}\n' \
+          "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}" "${WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
+        ;;
+      'https://api.github.com/repos/zizmorcore/zizmor/releases/latest')
+        printf '{"tag_name":"v%s","assets":[{"id":424244,"name":"zizmor-x86_64-unknown-linux-gnu.tar.gz"}]}\n' "${WORKCELL_FIXTURE_ZIZMOR_VERSION}"
+        ;;
+      *)
+        unexpected_fixture go "$*"
+        ;;
+    esac
+    return
+  fi
+  if [[ "${command}" == "upstream-get" ]]; then
+    fixture_require_citools_root || return
+    printf '%s\n' "${command}" >>"${WORKCELL_FIXTURE_CITOOLS_LOG}"
+    case "$4" in
+      go-releases)
+        [[ "$#" -eq 4 ]] || {
+          unexpected_fixture go "$*"
+          return
+        }
+        printf '[{"stable":true,"version":"go%s","files":[{"os":"linux","arch":"amd64","kind":"archive","sha256":"%s"},{"os":"linux","arch":"arm64","kind":"archive","sha256":"%s"}]}]\n' \
+          "${WORKCELL_FIXTURE_GO_VERSION}" "${WORKCELL_FIXTURE_GO_AMD64_SHA}" "${WORKCELL_FIXTURE_GO_ARM64_SHA}"
+        ;;
+      rust-channel)
+        [[ "$#" -eq 4 ]] || {
+          unexpected_fixture go "$*"
+          return
+        }
+        printf '[pkg.rust]\nversion = "%s (fixture)"\n' "${WORKCELL_FIXTURE_RUST_VERSION}"
+        ;;
+      rustup-release)
+        [[ "$#" -eq 4 ]] || {
+          unexpected_fixture go "$*"
+          return
+        }
+        printf "version = '%s'\n" "${WORKCELL_FIXTURE_RUSTUP_VERSION}"
+        ;;
+      rustup-checksum)
+        [[ "$#" -eq 6 && "$5" == "${WORKCELL_FIXTURE_RUSTUP_VERSION}" ]] || {
+          unexpected_fixture go "$*"
+          return
+        }
+        case "$6" in
+          x86_64-unknown-linux-gnu)
+            printf '%s  rustup-init\n' "${WORKCELL_FIXTURE_RUSTUP_AMD64_SHA}"
+            ;;
+          aarch64-unknown-linux-gnu)
+            printf '%s  rustup-init\n' "${WORKCELL_FIXTURE_RUSTUP_ARM64_SHA}"
+            ;;
+          *)
+            unexpected_fixture go "$*"
+            ;;
+        esac
+        ;;
+      dockerhub-binfmt-tags)
+        [[ "$#" -eq 4 ]] || {
+          unexpected_fixture go "$*"
+          return
+        }
+        printf '{"results":[{"name":"%s"}]}\n' "${WORKCELL_FIXTURE_QEMU_TAG}"
+        ;;
+      *)
+        unexpected_fixture go "$*"
+        ;;
+    esac
+    return
+  fi
+  if [[ "${command}" == "github-release-asset" ]]; then
+    fixture_require_citools_root || return
+    fixture_require_github_token_boundary "$@" || return
+    [[ "$#" -eq 6 ]] || {
       unexpected_fixture go "$*"
       return
     }
     local release_json=""
     release_json="$(cat)"
-    jq -e --arg name "$5" --argjson id "${WORKCELL_FIXTURE_ACTIONLINT_ASSET_ID}" \
-      '[.assets[] | select(.name == $name and .id == $id)] | length == 1' \
-      <<<"${release_json}" >/dev/null || {
+    jq -e --arg name "$5" '[.assets[] | select(.name == $name and (.id | type) == "number")] | length == 1' <<<"${release_json}" >/dev/null || {
       unexpected_fixture go "invalid release metadata"
       return
     }
-    if [[ -n "${WORKCELL_FIXTURE_GITHUB_TOKEN:-}" ]]; then
-      [[ -r "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" && "$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")" == "${WORKCELL_FIXTURE_GITHUB_TOKEN}" ]] || {
-        unexpected_fixture go "invalid GitHub token file"
-        return
-      }
-    elif [[ -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
-      unexpected_fixture go "unexpected GitHub token file"
-      return
-    fi
     printf '%s\n' "${command}" >>"${WORKCELL_FIXTURE_CITOOLS_LOG}"
-    printf '%s  actionlint_%s_linux_amd64.tar.gz\n' "${WORKCELL_FIXTURE_ACTIONLINT_SHA}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
+    case "$4:$5:$6" in
+      rhysd/actionlint:actionlint_"${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"_checksums.txt:checksum)
+        printf '%s  actionlint_%s_linux_amd64.tar.gz\n' "${WORKCELL_FIXTURE_ACTIONLINT_SHA}" "${WORKCELL_FIXTURE_ACTIONLINT_VERSION}"
+        ;;
+      hadolint/hadolint:checksums.sha256:checksum)
+        printf '%s' "${WORKCELL_FIXTURE_HADOLINT_CHECKSUMS}"
+        ;;
+      zizmorcore/zizmor:zizmor-x86_64-unknown-linux-gnu.tar.gz:archive)
+        printf 'fixture-zizmor-archive'
+        ;;
+      *)
+        unexpected_fixture go "$*"
+        ;;
+    esac
     return
   fi
   printf '%s\n' "${command}" >>"${WORKCELL_FIXTURE_CITOOLS_LOG}"

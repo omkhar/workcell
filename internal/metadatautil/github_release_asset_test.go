@@ -111,13 +111,16 @@ func TestFetchGitHubReleaseAssetDirect(t *testing.T) {
 		if got := req.Header.Get("Accept"); got != "application/octet-stream" {
 			t.Fatalf("Accept = %q", got)
 		}
+		if got := req.Header.Get("Accept-Encoding"); got != "identity" {
+			t.Fatalf("Accept-Encoding = %q", got)
+		}
 		if got := req.Header.Get("Authorization"); got != "Bearer "+token {
 			t.Fatalf("Authorization = %q", got)
 		}
 		return githubReleaseAssetResponse(http.StatusOK, nil, body), nil
 	})
 
-	got, err := fetchGitHubReleaseAsset(context.Background(), client, testGitHubReleaseDocument("424242"), "rhysd/actionlint", testGitHubReleaseAssetName, token)
+	got, err := fetchGitHubReleaseAsset(context.Background(), client, testGitHubReleaseDocument("424242"), "rhysd/actionlint", testGitHubReleaseAssetName, token, upstreamChecksumMaxBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +143,7 @@ func TestFetchGitHubReleaseAssetRedirectDropsCredentials(t *testing.T) {
 		return githubReleaseAssetResponse(http.StatusOK, nil, body), nil
 	})
 
-	got, err := fetchGitHubReleaseAsset(context.Background(), client, testGitHubReleaseDocument("424242"), "rhysd/actionlint", testGitHubReleaseAssetName, token)
+	got, err := fetchGitHubReleaseAsset(context.Background(), client, testGitHubReleaseDocument("424242"), "rhysd/actionlint", testGitHubReleaseAssetName, token, upstreamChecksumMaxBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +156,7 @@ func TestFetchGitHubReleaseAssetRedirectDropsCredentials(t *testing.T) {
 	if requests[1].URL.String() != testGitHubReleaseRedirect {
 		t.Fatalf("redirect URL = %q", requests[1].URL)
 	}
-	if requests[1].Header.Get("Authorization") != "" || requests[1].Header.Get("Accept") != "" {
+	if requests[1].Header.Get("Authorization") != "" || requests[1].Header.Get("Accept") != "" || requests[1].Header.Get("Accept-Encoding") != "identity" {
 		t.Fatalf("redirect retained initial headers: %#v", requests[1].Header)
 	}
 }
@@ -171,8 +174,8 @@ func TestFetchGitHubReleaseAssetRejectsResponses(t *testing.T) {
 		{name: "duplicate location", responses: []*http.Response{githubReleaseAssetResponse(http.StatusFound, http.Header{"Location": []string{testGitHubReleaseRedirect, testGitHubReleaseRedirect}}, "")}, wantError: "must include one Location header"},
 		{name: "hostile location", responses: []*http.Response{githubReleaseAssetResponse(http.StatusFound, http.Header{"Location": []string{"https://attacker.invalid/file"}}, "")}, wantError: "outside the allowed endpoint"},
 		{name: "second redirect", responses: []*http.Response{githubReleaseAssetResponse(http.StatusFound, http.Header{"Location": []string{testGitHubReleaseRedirect}}, ""), githubReleaseAssetResponse(http.StatusFound, http.Header{"Location": []string{testGitHubReleaseRedirect}}, "")}, wantError: "unexpected GitHub release asset redirect response 302"},
-		{name: "declared oversized", responses: []*http.Response{{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("small")), ContentLength: githubReleaseAssetMaxBytes + 1}}, wantError: "exceeds the size limit"},
-		{name: "streamed oversized", responses: []*http.Response{githubReleaseAssetResponse(http.StatusOK, nil, strings.Repeat("x", githubReleaseAssetMaxBytes+1))}, wantError: "exceeds the size limit"},
+		{name: "declared oversized", responses: []*http.Response{{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("small")), ContentLength: upstreamChecksumMaxBytes + 1}}, wantError: "exceeds the size limit"},
+		{name: "streamed oversized", responses: []*http.Response{githubReleaseAssetResponse(http.StatusOK, nil, strings.Repeat("x", upstreamChecksumMaxBytes+1))}, wantError: "exceeds the size limit"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -185,7 +188,7 @@ func TestFetchGitHubReleaseAssetRejectsResponses(t *testing.T) {
 				index++
 				return response, nil
 			})
-			_, err := fetchGitHubReleaseAsset(context.Background(), client, testGitHubReleaseDocument("424242"), "rhysd/actionlint", testGitHubReleaseAssetName, "fixture-token")
+			_, err := fetchGitHubReleaseAsset(context.Background(), client, testGitHubReleaseDocument("424242"), "rhysd/actionlint", testGitHubReleaseAssetName, "fixture-token", upstreamChecksumMaxBytes)
 			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("fetchGitHubReleaseAsset() error = %v, want text %q", err, tc.wantError)
 			}
@@ -193,27 +196,82 @@ func TestFetchGitHubReleaseAssetRejectsResponses(t *testing.T) {
 	}
 }
 
-func TestGitHubReleaseAssetToken(t *testing.T) {
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN", "")
+func TestGitHubAPITokenPrecedenceAndLinePolicy(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(tokenFile, []byte("fixture-token"), 0o600); err != nil {
+	if err := os.WriteFile(tokenFile, []byte("file-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN_FILE", tokenFile)
-	if got, err := githubReleaseAssetToken(); err != nil || got != "fixture-token" {
-		t.Fatalf("githubReleaseAssetToken() = %q, %v", got, err)
+
+	for _, tc := range []struct {
+		name         string
+		workcell     string
+		github       string
+		gh           string
+		file         string
+		fileContents string
+		want         string
+		wantErr      string
+	}{
+		{name: "workcell wins", workcell: "workcell-token", github: "github-token", gh: "gh-token", file: tokenFile, want: "workcell-token"},
+		{name: "github wins", github: "github-token", gh: "gh-token", file: tokenFile, want: "github-token"},
+		{name: "gh wins", gh: "gh-token", file: tokenFile, want: "gh-token"},
+		{name: "file fallback", file: tokenFile, want: "file-token"},
+		{name: "trailing newline file", file: tokenFile, fileContents: "fixture-token\n", want: "fixture-token"},
+		{name: "trailing newline environment", workcell: "fixture-token\n", file: tokenFile, wantErr: "exactly one token line"},
+		{name: "internal newline file", file: tokenFile, fileContents: "fixture\ntoken\n", wantErr: "exactly one token line"},
+		{name: "environment bypasses unreadable file", workcell: "workcell-token", file: filepath.Join(t.TempDir(), "missing"), want: "workcell-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.fileContents != "" {
+				if err := os.WriteFile(tokenFile, []byte(tc.fileContents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(tokenFile, []byte("file-token\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("WORKCELL_GITHUB_API_TOKEN", tc.workcell)
+			t.Setenv("GITHUB_TOKEN", tc.github)
+			t.Setenv("GH_TOKEN", tc.gh)
+			t.Setenv("WORKCELL_GITHUB_API_TOKEN_FILE", tc.file)
+			got, err := githubAPIToken()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("githubAPIToken() error = %v, want text %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("githubAPIToken() = %q, %v, want %q", got, err, tc.want)
+			}
+		})
 	}
-	if err := os.WriteFile(tokenFile, []byte("fixture-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := githubReleaseAssetToken(); err != nil || got != "fixture-token" {
-		t.Fatalf("newline-terminated githubReleaseAssetToken() = %q, %v", got, err)
-	}
-	if err := os.WriteFile(tokenFile, []byte("fixture\ntoken\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := githubReleaseAssetToken(); err == nil || !strings.Contains(err.Error(), "exactly one token line") {
-		t.Fatalf("githubReleaseAssetToken() error = %v", err)
+}
+
+func TestGitHubReleaseAssetLimit(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		assetClass string
+		want       int64
+		wantErr    string
+	}{
+		{assetClass: "checksum", want: upstreamChecksumMaxBytes},
+		{assetClass: "archive", want: upstreamMetadataMaxBytes},
+		{assetClass: "unknown", wantErr: "unknown GitHub release asset class"},
+	} {
+		t.Run(tc.assetClass, func(t *testing.T) {
+			t.Parallel()
+			got, err := githubReleaseAssetLimit(tc.assetClass)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("githubReleaseAssetLimit(%q) error = %v, want text %q", tc.assetClass, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("githubReleaseAssetLimit(%q) = %d, %v, want %d", tc.assetClass, got, err, tc.want)
+			}
+		})
 	}
 }
 

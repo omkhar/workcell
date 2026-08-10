@@ -78,8 +78,9 @@ func subcommands() []subcommand {
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
+		{"github-api-get", "URL", 1, 1, cmdGitHubAPIGet},
+		{"github-release-asset", "REPOSITORY ASSET_NAME CLASS", 3, 3, cmdGitHubReleaseAsset},
 		{"hadolint-manifest-checksum", "ASSET_NAME", 1, 1, cmdHadolintManifestChecksum},
-		{"github-release-asset", "REPOSITORY ASSET_NAME", 2, 2, cmdGitHubReleaseAsset},
 		{"select-buildx-version", "CURRENT_VERSION CANDIDATE_VERSION", 2, 2, cmdSelectBuildxVersion},
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
@@ -111,6 +112,7 @@ func subcommands() []subcommand {
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
+		{"upstream-get", "PROFILE [VERSION TARGET]", 1, 3, cmdUpstreamGet},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
 		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
@@ -353,7 +355,29 @@ func cmdHadolintManifestChecksum(args []string) error {
 func cmdGitHubReleaseAsset(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	content, err := metadatautil.FetchGitHubReleaseAsset(ctx, os.Stdin, args[0], args[1])
+	content, err := metadatautil.FetchGitHubReleaseAssetClass(ctx, os.Stdin, args[0], args[1], args[2])
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(content)
+	return err
+}
+
+func cmdGitHubAPIGet(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	content, err := metadatautil.FetchGitHubAPI(ctx, args[0])
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(content)
+	return err
+}
+
+func cmdUpstreamGet(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	content, err := metadatautil.FetchUpstream(ctx, args)
 	if err != nil {
 		return err
 	}

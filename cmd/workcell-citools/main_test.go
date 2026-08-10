@@ -40,6 +40,12 @@ func TestUnknownCommandExitsWithUsageCode(t *testing.T) {
 	assertCitoolsUsageExit(t, "definitely-not-a-subcommand")
 }
 
+func TestUpstreamFetchCommandsRejectWrongArity(t *testing.T) {
+	assertCitoolsUsageExit(t, "github-api-get")
+	assertCitoolsUsageExit(t, "github-release-asset", "owner/repository", "asset")
+	assertCitoolsUsageExit(t, "upstream-get", "profile", "one", "two", "three")
+}
+
 // assertCitoolsUsageExit runs the binary (via the helper-process trick) with
 // the given argv tail and asserts a usage exit (code 2 + "usage:" on stderr).
 func assertCitoolsUsageExit(t *testing.T, argv ...string) {
