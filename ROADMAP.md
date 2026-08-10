@@ -177,7 +177,7 @@ claim.
 
 Exit gates:
 
-- architecture and data-flow diagrams exist
+- architecture and data-flow documentation exists
 - threat model, known gaps, support boundaries, and non-protections are public
 - SBOM, provenance, reproducibility, release signing, and vulnerability
   handling are summarized
@@ -499,7 +499,7 @@ Use generated, checked metrics before you add a numeric inventory here.
 ### Track E: Documentation And Adoption
 
 - **E1 (complete, M):** tiered documentation entry points and a slimmer README
-- **E2 (complete, M):** maintained architecture diagrams in the system design doc
+- **E2 (complete, M):** maintained architecture in the system design document
 - **E3 (complete, S):** support-tier legend and a `--doctor`/`--inspect`
   diagnostics interpretation guide
 - **E4 (complete, S):** documentation CI checks links, orphans, spelling, man
