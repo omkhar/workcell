@@ -1,12 +1,12 @@
 # Workcell Session Supervisor Design
 
-## Purpose
+## Goal
 
 The session supervisor makes a launch a durable host-owned session. Use the
 [operator contract](../policy/operator-contract.toml) and `workcell --help` for
 the current command inventory. This page explains the design.
 
-## Shipped Scope
+## Current Scope
 
 The session command group supplies these functions:
 
@@ -71,7 +71,7 @@ The command group uses the key as follows:
 The durable JSON record is machine-readable state. The audit log is the event
 history. Neither record replaces the other.
 
-## Operator Behavior
+## User Experience
 
 `session list` prints a compact host inventory. Verbose output adds target,
 workspace transport, Git branch, and worktree fields.
@@ -89,7 +89,7 @@ for host automation.
 The control plane uses host files and processes. It does not add a Workcell
 daemon or a same-user trusted local socket.
 
-## Process-Local Adapter
+## Runtime Language Boundary
 
 The host session plane is a Go and Bash system. Go owns the session-record
 schema and validates the command route. Bash dispatches the session subcommands.
@@ -117,7 +117,7 @@ It does not select policy, write durable host state, or do host
 orchestration. Move this adapter to a Go runtime tool if its responsibility
 expands beyond this list.
 
-## Non-Goals
+## Current Non-Goals
 
 The shipped session plane does not provide:
 
@@ -126,6 +126,21 @@ The shipped session plane does not provide:
 - Central multi-host inventory or analytics.
 - A GUI or IDE client with the Tier 1 boundary claim.
 - A remote worker fleet.
+
+## Remaining Work
+
+This page describes shipped behavior. See [ROADMAP.md](../ROADMAP.md) for future
+work.
+
+## Peer Review
+
+The shipped design retains these review decisions.
+
+### Findings
+
+- Durable records do not use `session-audit.*` directories.
+- Audit records contain a session identifier.
+- The host uses a file-based control plane.
 
 ## Residual Risks
 

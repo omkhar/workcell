@@ -23,7 +23,7 @@ The launcher gives clean host commands these values:
 - `LC_ALL=C` and `LANG=C`.
 - Only the additional variables that the applicable helper permits.
 
-## Host Tools
+### Required host tools
 
 The launcher does not use an inherited `PATH`. It uses fixed candidates or a
 fixed trusted path.
@@ -58,7 +58,7 @@ This resolver stops if it finds no Go binary. A direct launcher execution clears
 the inherited environment. A shebang-bypass process can supply a different
 value.
 
-## Host Environment
+### Environment expectations
 
 The launcher removes these environment values at startup:
 
@@ -77,7 +77,7 @@ On a shebang-bypass path, a caller can preserve unlisted variables and existing
 Go cache values. Thus, the direct shebang is part of the trusted launcher
 contract.
 
-## Exit Status
+### Exit codes
 
 The launcher uses these status values:
 
@@ -93,7 +93,7 @@ The launcher can also return the provider, container, build, or session-helper
 status without change. Use [Stability Contract](stability-contract.md) for the
 authoritative public exit behavior.
 
-## Test-Only Inputs
+### Test override flags
 
 The test inputs for host support can replace detected host fields only when both of
 these conditions are true:
@@ -115,24 +115,39 @@ The launcher always removes an inherited
 no parent-process gate. It exits with status `88` only after a managed profile
 refresh.
 
-## Host Detection Module
+## Host detection (`host-detect.sh`)
 
 [`host-detect.sh`](../scripts/lib/launcher/host-detect.sh) returns normalized,
-lowercase host fields during detection without a test override. An allowed test
-override passes through without a case change.
+lowercase host fields during detection without a test override. The module uses
+`uname`, `ps`, `tr`, `PPID`, environment values, `/etc/os-release`, and its own
+functions.
 
-| Function | Result |
-|---|---|
-| `detected_host_os` | `macos`, `linux`, `windows`, or a lowercase unknown value |
-| `detected_host_arch` | `arm64`, `amd64`, or a lowercase unknown value |
-| `detected_host_distro` | Linux `ID`, `unknown`, or `none` on a non-Linux host |
-| `detected_host_distro_version` | Linux `VERSION_ID`, then `VERSION_CODENAME`, `unknown`, or `none` |
+### `support_matrix_host_override_allowed()`
 
-`support_matrix_host_override_allowed` applies the two-part test gate described
-above. The module uses `uname`, `ps`, `tr`, `PPID`, environment values,
-`/etc/os-release`, and its own functions.
+This function applies the two-part test gate described above.
 
-## Clean Host Execution Module
+### `detected_host_os()`
+
+This function returns `macos`, `linux`, `windows`, or a lowercase unknown value.
+
+### `detected_host_arch()`
+
+This function returns `arm64`, `amd64`, or a lowercase unknown value.
+
+### `detected_host_distro()`
+
+This function returns the Linux `ID`, `unknown`, or `none` on a non-Linux host.
+
+### `detected_host_distro_version()`
+
+This function returns Linux `VERSION_ID`, then `VERSION_CODENAME`, `unknown`, or
+`none`.
+
+### Harness-only overrides
+
+An allowed test override passes through without a case change.
+
+## Trusted host-command execution (`host-exec.sh`)
 
 [`host-exec.sh`](../scripts/lib/launcher/host-exec.sh) supplies three functions.
 
@@ -154,18 +169,29 @@ This function uses the same clean environment in a caller-selected directory.
 If the directory does not exist, it prints a diagnostic and exits with status
 `2`. With no command after the directory, it returns success.
 
-## Go Host Utility Module
+## Go/Colima host-utility wrappers (`go-hostutil.sh`)
 
 [`go-hostutil.sh`](../scripts/lib/launcher/go-hostutil.sh) resolves the fixed Go
 binary and runs Go commands from the repository root in the clean host
 environment.
 
-| Function | Contract |
-|---|---|
-| `go_hostutil` | Run `cmd/workcell-hostutil` with the selected arguments. |
-| `run_go_hostutil_preserve_exit` | Recover the child status from Go's final `exit status N` diagnostic and return it. |
-| `go_hostutil_publish_pr` | Run host publication with an explicit allowlist of terminal, GPG, SSH, XDG, and GitHub variables. |
-| `go_colimautil` | Run `cmd/workcell-colimautil` with the selected arguments. |
+### `go_hostutil()`
+
+This function runs `cmd/workcell-hostutil` with the selected arguments.
+
+### `run_go_hostutil_preserve_exit()`
+
+This function recovers and returns the child status from Go's final
+`exit status N` diagnostic.
+
+### `go_hostutil_publish_pr()`
+
+This function runs host publication with an explicit allowlist of terminal,
+GPG, SSH, XDG, and GitHub variables.
+
+### `go_colimautil()`
+
+This function runs `cmd/workcell-colimautil` with the selected arguments.
 
 The publication function is a deliberate host-side exception. It can receive
 the ambient operator publication and signing environment. The Tier 1 runtime
@@ -173,29 +199,38 @@ does not receive this ambient state. Reviewed injection can stage selected
 GitHub CLI files and SSH identities. The supported pull-request publication
 workflow stays on the host.
 
-## Egress Endpoint Module
+## Egress-endpoint assembly (`egress-endpoints.sh`)
 
 [`egress-endpoints.sh`](../scripts/lib/launcher/egress-endpoints.sh) supplies
 helpers for fixed provider, target broker, and credential endpoint values. It
 also supplies list and host-alias helpers.
 
-### Endpoint sources
+### `provider_endpoints()`
 
-`provider_endpoints` returns the fixed service endpoints for Codex, Claude,
-Copilot, or Gemini. `target_broker_endpoints` adds the fixed AWS SSM or GCP IAP
-broker endpoints. `credential_extra_endpoints` adds fixed GitHub or Google
-authentication endpoints when the selected staged inputs need them.
+This function returns the fixed service endpoints for Codex, Claude, Copilot,
+or Gemini.
+
+### `target_broker_endpoints()`
+
+This function adds the fixed AWS SSM or GCP IAP broker endpoints.
+
+### `credential_extra_endpoints()`
+
+This function adds fixed GitHub or Google authentication endpoints when the
+selected staged inputs need them.
 
 The main launcher combines these values with authentication-recovery,
 injection-policy, profile-extra, and conditional Debian endpoints.
 
 Use [Outbound Endpoints](outbound-endpoints.md) for the full endpoint inventory.
 
-### List operations
+### `dedupe_endpoint_list()` / `subtract_endpoint_list()`
 
 `dedupe_endpoint_list` preserves the first occurrence of each endpoint.
 `subtract_endpoint_list` removes each denied endpoint and preserves the allow
 order. A deny value cannot add an endpoint.
+
+### `fail_empty_egress_after_deny()`
 
 If deny values remove every session endpoint, the check stops an enforced
 Colima allowlist session with status `1`. This session check does not apply to
@@ -203,11 +238,13 @@ Colima allowlist session with status `1`. This session check does not apply to
 stops only when a rebuild must use that bootstrap set. A prepared image can
 still launch when the session endpoint set is not empty.
 
-### Enforcement label and host aliases
+### `egress_enforcement_label()`
 
 `egress_enforcement_label` returns `allowlist` only for a Colima target with the
 allowlist policy. It returns `none` for Docker Desktop and the blocked remote
 preview targets.
+
+### `build_runtime_host_aliases()`
 
 `build_runtime_host_aliases` resolves the effective endpoint hosts and builds
 Docker `--add-host` arguments. It does nothing when the network policy is not
