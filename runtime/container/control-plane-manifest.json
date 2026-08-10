@@ -80,31 +80,31 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/AGENTS.md",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/AGENTS.md",
-      "sha256": "1ac10f9a44e3b23bdc9726f23c8138f79000649617ea7833572a6e1215489b6e"
+      "sha256": "96d7fd89abf99b88f58b6f3b296dc1caf4c7d5d496c91f3917e3983c61f06ee4"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/agents/anthropic_claude_compat.md",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/anthropic_claude_compat.md",
-      "sha256": "b685cd6881676ef12a87cf5e3cc3c1f2abda30b9e3bb2ffc51f5b0e4fad0f9b1"
+      "sha256": "4fabb3d5122b05ec0a5ea5953f0f85aba3b210a31341224b0c6abe9d3ba43363"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/agents/apple_platform_boundary.md",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/apple_platform_boundary.md",
-      "sha256": "19f6e07bc4c516a22284f5853152b3ffbabbe32241335686ba5b0a1bed8511d8"
+      "sha256": "50120fea0a20c200a8d8ae659101ef0bb982308fb34a5cdab39a9682d9db9dfb"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/agents/distinguished_security.md",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/distinguished_security.md",
-      "sha256": "e9c1ded048aea209491c7d5c7c792030b31be8582f424d25d8e6d80e1e740e49"
+      "sha256": "d7e0e92cbb23d65bb06eeb01990faf6c1d09c7564f0eb3296c20c2b8bf388946"
     },
     {
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/agents/openai_codex_platform.md",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/agents/openai_codex_platform.md",
-      "sha256": "83962765347a28cec878697e3a4e44a5ecda3e30a5daa9ff721f7e1c426ac318"
+      "sha256": "af6674e3ffb42b0ef9764dfa2b557a99f6f8b1faa960cf2fe92ce2dc02e8f27f"
     },
     {
       "kind": "adapter-baseline",

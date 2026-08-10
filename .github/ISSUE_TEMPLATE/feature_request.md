@@ -6,18 +6,23 @@ labels: enhancement
 assignees: ''
 ---
 
-**Summary**
-One-sentence description of the feature.
+## Summary
 
-**Motivation**
-What problem does this solve? Who benefits and how?
+Describe the feature in one sentence.
 
-**Proposed design**
-How should it work? If this touches the runtime boundary, trust model, or
-provider adapters, describe how invariants are preserved.
+## Problem
 
-**Alternatives considered**
-What other approaches did you consider, and why did you prefer this one?
+Describe the problem and the affected users.
 
-**Acceptance criteria**
-How will we know this is done? List concrete, testable outcomes.
+## Proposed Design
+
+Describe the operation. If it changes a runtime boundary, explain how it
+preserves each applicable invariant.
+
+## Alternatives
+
+List the alternatives and the reason that you did not select them.
+
+## Acceptance Criteria
+
+List specific testable results.

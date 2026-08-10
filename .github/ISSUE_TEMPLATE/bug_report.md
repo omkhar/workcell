@@ -6,28 +6,27 @@ labels: bug
 assignees: ''
 ---
 
-## Describe the bug
+## Describe the Defect
 
-A clear description of what the bug is. For docs or planning issues about a
-roadmap-only provider track (such as the planned Google Antigravity CLI
-parity), open a feature request instead and reference `docs/scenario-gaps.md`.
+Describe the defect. For a planned provider or roadmap item, open a feature
+request. Refer to `docs/scenario-gaps.md`.
 
-## To reproduce
+## Reproduction Steps
 
-Steps to reproduce the behavior:
+Give the steps that reproduce the defect:
 
 1. Run `...`
 2. Observe `...`
 3. Note the failure
 
-## Expected behavior
+## Expected Result
 
-What you expected to happen.
+Describe the expected result.
 
 ## Environment
 
-- OS: [e.g. macOS 15.4]
-- Workcell version: [e.g. v0.5.0 or commit SHA]
+- OS: [for example, macOS 26]
+- Workcell version: [release or commit SHA]
 - Provider: [Codex / Claude / Copilot / Gemini]
 - Mode: [strict / development / build / breakglass]
 - Docker version: `docker --version`
@@ -35,10 +34,9 @@ What you expected to happen.
 
 ## Relevant logs
 
-Paste any error output here. Redact tokens, keys, and personal paths.
+Paste the applicable error output. Remove tokens, keys, and personal paths.
 
 ## Security note
 
-If this bug could expose secrets, allow a sandbox escape, or bypass signing
-or provenance checks, please use the [private vulnerability reporting
-process](../../SECURITY.md) instead of opening a public issue.
+If the defect can expose a secret or bypass a security control, do not open a
+public issue. Use the [private process for vulnerability reports](../../SECURITY.md).
