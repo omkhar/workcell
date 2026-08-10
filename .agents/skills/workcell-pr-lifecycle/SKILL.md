@@ -26,6 +26,14 @@ For a public workflow or document change, also use
 
 - Sign each commit.
 - Use a feature branch.
+- Do not force-push a branch after pull request publication.
+- Use a new signed follow-up commit for each correction.
+- If history replacement is necessary, stop and request explicit user
+  authorization.
+- After authorization, create a new branch with a signed replacement commit.
+- Publish the replacement as a new draft pull request.
+- Link the old and replacement pull requests in both directions.
+- Close the old pull request after the replacement exists and the links exist.
 - Use `main` as the pull request base by default.
 - Keep a non-`main` pull request draft. Do not merge it.
 - Open each pull request as a draft.
@@ -45,6 +53,9 @@ For a public workflow or document change, also use
   certification-only validation path. Complete certification before you sign
   the commit.
 - Clean Workcell-owned residue when validation creates it.
+
+The no-force-push rule is an operator procedure. It does not configure or
+enforce GitHub branch protection.
 
 The upstream-refresh workflow supplies advisory candidates. Authoritative
 refresh publication uses `./scripts/publish-upstream-refresh-pr.sh`. That
