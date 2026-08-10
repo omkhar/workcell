@@ -187,145 +187,6 @@ github_release_asset_url() {
   printf '%s\n' "${asset_url}"
 }
 
-github_release_asset_api_url() {
-  local repo="$1"
-  local release_json="$2"
-  local asset_name="$3"
-  local asset_id=""
-
-  if [[ ! "${repo}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-    echo "Invalid GitHub release asset repository: ${repo}" >&2
-    return 1
-  fi
-  asset_id="$(jq -r --arg asset_name "${asset_name}" '.assets[] | select(.name == $asset_name) | .id | select(type == "number")' <<<"${release_json}")"
-  if [[ ! "${asset_id}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "Unable to resolve a numeric release asset ID for ${asset_name}" >&2
-    return 1
-  fi
-  printf 'https://api.github.com/repos/%s/releases/assets/%s\n' "${repo}" "${asset_id}"
-}
-
-valid_github_release_asset_api_url() {
-  [[ "$1" =~ ^https://api\.github\.com/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases/assets/[1-9][0-9]*$ ]]
-}
-
-valid_github_release_asset_redirect_url() {
-  local url="$1"
-  local remainder=""
-  local redirect_path=""
-  local redirect_query=""
-  local repository_id=""
-  local object_id=""
-
-  remainder="${url#https://release-assets.githubusercontent.com/github-production-release-asset/}"
-  if [[ "${remainder}" == "${url}" || "${remainder}" != *\?* ]]; then
-    return 1
-  fi
-  redirect_path="${remainder%%\?*}"
-  redirect_query="${remainder#*\?}"
-  IFS='/' read -r repository_id object_id <<<"${redirect_path}"
-  if [[ "${redirect_path}" != "${repository_id}/${object_id}" ]]; then
-    return 1
-  fi
-  if [[ ! "${repository_id}" =~ ^[1-9][0-9]*$ ]]; then
-    return 1
-  fi
-  if [[ ! "${object_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-    return 1
-  fi
-  if [[ -z "${redirect_query}" || "${redirect_query}" == *'#'* || "${redirect_query}" == *[[:space:]]* ]]; then
-    return 1
-  fi
-}
-
-github_release_asset_get() (
-  local url="$1"
-  local token
-  local body_file=""
-  local headers_file=""
-  local location=""
-  local location_lines=""
-  local redirect_status=""
-  local status=""
-
-  if ! valid_github_release_asset_api_url "${url}"; then
-    echo "Invalid GitHub release asset API URL: ${url}" >&2
-    exit 1
-  fi
-  token="$(github_api_token)"
-  headers_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-headers.XXXXXX")"
-  body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-body.XXXXXX")"
-  trap 'rm -f "${headers_file}" "${body_file}"' EXIT
-
-  if [[ -n "${token}" ]]; then
-    if ! status="$(
-      curl -q -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
-        --proto '=https' \
-        -D "${headers_file}" \
-        -o "${body_file}" \
-        -w '%{http_code}' \
-        -H "Accept: application/octet-stream" \
-        --config - \
-        "${url}" <<EOF
-header = "Authorization: Bearer ${token}"
-EOF
-    )"; then
-      echo "Unable to download the GitHub release asset: ${url}" >&2
-      exit 1
-    fi
-  elif ! status="$(
-    curl -q -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
-      --proto '=https' \
-      -D "${headers_file}" \
-      -o "${body_file}" \
-      -w '%{http_code}' \
-      -H "Accept: application/octet-stream" \
-      "${url}"
-  )"; then
-    echo "Unable to download the GitHub release asset: ${url}" >&2
-    exit 1
-  fi
-
-  case "${status}" in
-    200) ;;
-    302)
-      location_lines="$(sed -n 's/^[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*//p' "${headers_file}" | tr -d '\r')"
-      if [[ -z "${location_lines}" || "${location_lines}" == *$'\n'* ]]; then
-        echo "GitHub release asset redirect must include one Location header: ${url}" >&2
-        exit 1
-      fi
-      location="${location_lines}"
-      if ! valid_github_release_asset_redirect_url "${location}"; then
-        echo "GitHub release asset redirect is outside the allowed endpoint: ${location}" >&2
-        exit 1
-      fi
-      : >"${headers_file}"
-      : >"${body_file}"
-      if ! redirect_status="$(
-        curl -q -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
-          --proto '=https' \
-          -D "${headers_file}" \
-          -o "${body_file}" \
-          -w '%{http_code}' \
-          "${location}"
-      )"; then
-        echo "Unable to download the GitHub release asset redirect: ${location}" >&2
-        exit 1
-      fi
-      if [[ "${redirect_status}" != "200" ]]; then
-        echo "Unexpected GitHub release asset redirect response ${redirect_status}: ${location}" >&2
-        exit 1
-      fi
-      ;;
-    *)
-      echo "Unexpected GitHub release asset response ${status}: ${url}" >&2
-      exit 1
-      ;;
-  esac
-
-  cat "${body_file}"
-)
-
 github_tag_commit_sha() {
   local repo="$1"
   local tag="$2"
@@ -711,9 +572,11 @@ target_syft_version="$(jq -r '.tag_name' <<<"${syft_release_json}")"
 
 actionlint_release_json="$(github_api_get 'https://api.github.com/repos/rhysd/actionlint/releases/latest')"
 target_actionlint_version="$(jq -r '.tag_name | sub("^v"; "")' <<<"${actionlint_release_json}")"
-actionlint_checksums_url="$(github_release_asset_api_url 'rhysd/actionlint' "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"
 target_actionlint_sha="$(
-  github_release_asset_get "${actionlint_checksums_url}" |
+  cd "${ROOT_DIR}" || exit
+  printf '%s' "${actionlint_release_json}" |
+    go run ./cmd/workcell-citools github-release-asset \
+      'rhysd/actionlint' "actionlint_${target_actionlint_version}_checksums.txt" |
     awk '/actionlint_'"${target_actionlint_version}"'_linux_amd64\.tar\.gz$/ { print $1; exit }'
 )"
 
