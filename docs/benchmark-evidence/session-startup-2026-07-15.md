@@ -1,36 +1,28 @@
-# C2 session-start latency — raw capture (2026-07-15)
+# C2 Session-Start Raw Capture: 2026-07-15
 
-Raw generated report from the Batch-3 local-operator capture, preserved verbatim
-for reproducibility and audit. The published, interpreted result lives in
-[`../session-startup-benchmarks.md`](../session-startup-benchmarks.md#results);
-this file is the underlying evidence, including the `cache-hit` samples that are
-**not** promoted to a published tier (see that doc for why).
+This file preserves the preliminary Batch 3 capture. The interpreted result is
+in [Session-Start Benchmarks](../session-startup-benchmarks.md#results).
 
-## Exact invocation
+Do not use this capture as C2 certification. The capture has four known
+confounds.
 
-Driver: `scripts/bench/run-startup-bench.sh` (see
-[`../session-startup-benchmarks.md`](../session-startup-benchmarks.md#rerunning)).
-Environment for this capture (paths generalized; `$REPO` = the workspace,
-`$WCL_PROFILE` = `wcl-workcell-006e49ec`):
+## Invocation
 
-Shown **exactly as run** on 2026-07-15 (interactive zsh). The `WORKCELL_*`
-variables were `export`ed; the per-sample teardown was a shell **function**
-exported via `export -f` — a bash builtin that is a **no-op under zsh**, so the
-teardown never reached the driver's sub-shell and did not run between samples
-(recorded as a confound below):
+The operator used `./scripts/bench/run-startup-bench.sh` in an interactive Zsh
+session.
+The paths below use `$HOME` in place of the operator home.
 
 ```sh
-export REPO="$HOME/src/workcell"    # the workspace under test
-export WCL_PROFILE="wcl-workcell-006e49ec"   # the derived managed colima profile
+export REPO="$HOME/src/workcell"
+export WCL_PROFILE="wcl-workcell-006e49ec"
 
-# teardown: intended to run before each cold/cache-hit sample
 cleanup_sessions() {
   ./scripts/workcell session list 2>/dev/null | awk 'NR>1{print $1}' | while read -r id; do
-    ./scripts/workcell session stop   --id "$id" >/dev/null 2>&1 || true
+    ./scripts/workcell session stop --id "$id" >/dev/null 2>&1 || true
     ./scripts/workcell session delete --id "$id" >/dev/null 2>&1 || true
   done
 }
-export -f cleanup_sessions   # <-- silently a no-op under zsh; teardown never reached the driver
+export -f cleanup_sessions
 
 export WORKCELL_STARTUP_CMD='./scripts/workcell session start --agent codex --workspace $REPO --session-workspace direct'
 export WORKCELL_STARTUP_COLD_PREP='cleanup_sessions; DOCKER_HOST="unix://$HOME/.colima/$WCL_PROFILE/docker.sock" docker image rm -f workcell:local'
@@ -41,40 +33,30 @@ export WORKCELL_STARTUP_RUNS=2
 export WORKCELL_STARTUP_STABILITY_PCT=15
 ```
 
-For a clean recapture the teardown must actually run: invoke the driver under
-**bash** (so `export -f` works), or — because the driver `eval`s each prep hook
-once, so pipe/loop operators produced by expanding a nested `$VAR` are **not**
-re-parsed as operators — **inline the teardown pipeline literally in each
-`*_PREP` hook** or call a committed script. A real persistent kept-warm session
-must also be established for the `warm` tier (see confounds).
+The operator then ran the benchmark driver.
 
-## Provenance caveats — this is a PRELIMINARY, confounded capture
+## Known confounds
 
-- The measured command is a detached `session start`, which returns once the
-  session monitor is ready (a no-task `codex` then exits shortly after, in the
-  background — it does not affect the start-to-ready latency the harness times).
-- **No persistent kept-warm session.** `WARM_PREP` starts a detached session, but a
-  no-task `codex` exits within seconds, so no kept-warm session existed during the
-  `warm` samples. The `warm` tier therefore measures an **image-resident start**, not
-  the documented kept-warm lane — the `cold`→`warm` delta is an image-restore cost,
-  not a warm-lane win.
-- **`cold` is a tarball restore, not a first build.** `COLD_PREP` evicts only the
-  Docker image; Workcell's local image tarball remains, so `cold` reloads from the
-  tarball + boots. A no-tarball first-ever start additionally runs the one-time
-  `buildx` build (excluded here).
-- **Per-sample teardown did not actually run.** `$CLEAN` was exported as a shell
-  function via `export -f` under zsh (a bash-only builtin), so it did not reach the
-  harness sub-shell and no session teardown ran between samples. Detached no-task
-  sessions self-terminate within seconds, so live sessions did not accumulate across
-  the ~15 s inter-sample gaps — but this is an additional reason the capture is
-  preliminary, and a candidate contributor to the `cache-hit` anomaly.
-- **`cache-hit` is a real, unresolved anomaly — not noise.** The `cache-hit` medians
-  below (23.75 s / 24.73 s) are ~50–55% **slower** than `cold` (15.86 s / 15.96 s)
-  with no overlapping range. Running `--prepare-only` before each sample makes the
-  next start slower than evicting the image — counter-intuitive and **unexplained**.
-  Preserved here for investigation; not used to draw a published conclusion.
+| Confound | Effect |
+|---|---|
+| Zsh did not export the Bash function. | Per-sample session cleanup did not run. The taskless sessions stopped before the approximately 15-second gaps ended. |
+| The taskless warm session exited. | The warm samples measured an image-resident start, not a kept-warm session. |
+| The cold hook kept the local image archive. | Cold samples measured archive restore and boot, not a first build. |
+| Cache-hit samples were slower than cold samples. | The cause remains unknown, so no performance conclusion uses that tier. |
 
-## Generated report (verbatim)
+The benchmark measures the return from detached `session start`. The command
+returns when the session monitor is ready.
+
+For a new capture, set the preparation variable for each selected mode to an
+executable path. Set `WORKCELL_STARTUP_TEARDOWN` and
+`WORKCELL_STARTUP_TEARDOWN_VERIFY` to executable paths. If you select `warm`,
+also set `WORKCELL_STARTUP_WARM_PREP` and
+`WORKCELL_STARTUP_WARM_VERIFY` to executable paths. Put the measured executable
+and its arguments after `--`.
+
+## Generated report
+
+The data below preserves the generated report labels and values.
 
 - date (UTC): 2026-07-15T12:09:05Z
 - host: Darwin 25.5.0 arm64
@@ -108,3 +90,5 @@ must also be established for the `warm` tier (see confounds).
 | warm | 13457187000 | 13543427000 | 86240000 | 0.6 | STABLE |
 
 Stability gate: STABLE (max cross-run median spread 4.1% <= 15%).
+
+This stability result does not remove the confounds above.
