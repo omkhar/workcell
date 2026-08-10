@@ -80,7 +80,7 @@ The [roadmap milestone train](../ROADMAP.md#milestone-train) records the histori
 | ID | Result | Shipped record |
 | --- | --- | --- |
 | E1 | Complete | README entry points and the documentation map serve operators, evaluators, and contributors. |
-| E2 | Complete | The [system design](workcell-system-design.md) contains maintained architecture diagrams. |
+| E2 | Complete | The [system design](workcell-system-design.md) documents the maintained architecture. |
 | E3 | Complete | The [support tiers](support-tiers.md) and [diagnostics guide](diagnostics-and-support-matrix.md) define the emitted support fields. |
 | E4 | Complete | Documentation CI checks links, orphans, spelling, man pages, support-field parity, and public-contract drift. |
 | E5 | Complete | The [injection policy](injection-policy.md) has an annotated schema and provider examples. |
