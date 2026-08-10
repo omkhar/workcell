@@ -1,5 +1,13 @@
 #!/bin/bash -p
 workcell_upstream_pins_token_file_created=""
+if [[ -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" && "${WORKCELL_GITHUB_API_TOKEN_FILE}" != /* ]]; then
+  workcell_upstream_pins_invocation_dir="$(pwd -P)" || {
+    echo "Cannot resolve the updater invocation directory." >&2
+    exit 1
+  }
+  export WORKCELL_GITHUB_API_TOKEN_FILE="${workcell_upstream_pins_invocation_dir}/${WORKCELL_GITHUB_API_TOKEN_FILE}"
+  unset workcell_upstream_pins_invocation_dir
+fi
 if [[ "${WORKCELL_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   unset WORKCELL_UPSTREAM_PINS_TOKEN_FILE_CREATED
   if [[ -z "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
@@ -106,11 +114,9 @@ require_tool jq
 require_tool mktemp
 require_tool shasum
 
-# API response bodies are JSON/TOML; 200 MiB cap is well above realistic
-# upstream sizes (e.g. the Rust channel TOML is ~13 MiB and growing,
-# GitHub release lists are at most a few MiB) while still rejecting a
-# multi-GB body from a misbehaving or compromised endpoint.
-CURL_API_GUARDS=(--max-time 120 --connect-timeout 15 --max-filesize 209715200)
+# Response-body download policy lives in workcell-citools. curl remains only
+# for release assets and bodyless Debian Release probes.
+CURL_HEAD_GUARDS=(--max-time 120 --connect-timeout 15)
 DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-60}"
 MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
 
@@ -131,21 +137,17 @@ github_api_token() {
 }
 
 github_api_get() {
-  local url="$1"
-  local token
-  token="$(github_api_token)"
-  if [[ -n "${token}" ]]; then
-    curl -q -fsSL "${CURL_API_GUARDS[@]}" --config - "${url}" <<EOF
-header = "Accept: application/vnd.github+json"
-header = "Authorization: Bearer ${token}"
-EOF
-    return
-  fi
-  curl -q -fsSL "${CURL_API_GUARDS[@]}" -H "Accept: application/vnd.github+json" "${url}"
+  (
+    cd "${ROOT_DIR}" || exit
+    go run ./cmd/workcell-citools github-api-get "$1"
+  )
 }
 
-dockerhub_api_get() {
-  curl -q -fsSL "${CURL_API_GUARDS[@]}" "$1"
+upstream_get() {
+  (
+    cd "${ROOT_DIR}" || exit
+    go run ./cmd/workcell-citools upstream-get "$@"
+  )
 }
 
 github_release_asset_url() {
@@ -475,9 +477,9 @@ latest_debian_bootstrap_plan() {
   resolution_error_path="$(mktemp "${TMPDIR:-/tmp}/workcell-debian-bootstrap.XXXXXX")"
   for offset in $(seq 0 "${lookback_days}"); do
     stamp="$(date_stamp_for_offset "${offset}")"
-    if curl -q -fsSI "${CURL_API_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
-      curl -q -fsSI "${CURL_API_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
-      curl -q -fsSI "${CURL_API_GUARDS[@]}" "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
+    if curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie/Release" >/dev/null &&
+      curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian/${stamp}/dists/trixie-updates/Release" >/dev/null &&
+      curl -q -fsSI "${CURL_HEAD_GUARDS[@]}" "https://snapshot.debian.org/archive/debian-security/${stamp}/dists/trixie-security/Release" >/dev/null &&
       resolution="$(resolve_debian_bootstrap_pins "${stamp}" 2>"${resolution_error_path}")"; then
       rm -f "${resolution_error_path}"
       printf '%s\n' "${resolution}"
@@ -522,7 +524,7 @@ semver_major_minor() {
 }
 
 latest_qemu_tag() {
-  dockerhub_api_get "https://hub.docker.com/v2/repositories/tonistiigi/binfmt/tags?page_size=100" |
+  upstream_get dockerhub-binfmt-tags |
     jq -r '
         [
           .results[].name
@@ -545,13 +547,13 @@ latest_qemu_tag() {
       '
 }
 
-latest_go_json="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://go.dev/dl/?mode=json' | jq 'map(select(.stable == true)) | .[0]')"
+latest_go_json="$(upstream_get go-releases | jq 'map(select(.stable == true)) | .[0]')"
 target_go_toolchain="$(jq -r '.version | sub("^go"; "")' <<<"${latest_go_json}")"
 target_go_language="$(semver_patch_zero "${target_go_toolchain}")"
 target_go_sha_amd64="$(jq -r '.files[] | select(.os == "linux" and .arch == "amd64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 target_go_sha_arm64="$(jq -r '.files[] | select(.os == "linux" and .arch == "arm64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 
-rust_stable_toml="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/dist/channel-rust-stable.toml')"
+rust_stable_toml="$(upstream_get rust-channel)"
 target_rust_version="$(
   awk -F'"' '
     /^\[pkg\.rust\]$/ {
@@ -569,15 +571,13 @@ target_rust_version="$(
   ' <<<"${rust_stable_toml}"
 )"
 target_cargo_rust_version="$(semver_major_minor "${target_rust_version}")"
-rustup_stable_toml="$(curl -q -fsSL "${CURL_API_GUARDS[@]}" 'https://static.rust-lang.org/rustup/release-stable.toml')"
+rustup_stable_toml="$(upstream_get rustup-release)"
 target_rustup_version="$(awk -F"'" '$1 == "version = " { print $2; exit }' <<<"${rustup_stable_toml}")"
-# SHA256 checksum files and small manifests are bounded so a misbehaving CDN
-# or compromised release host cannot serve a multi-GB body that OOMs the
-# maintainer's shell. Mirrors the discipline applied to the zizmor download
-# below.
+# Release checksum files stay bounded so a misbehaving release host cannot
+# serve a multi-GB body that exhausts the maintainer's shell.
 CURL_CHECKSUM_GUARDS=(--max-time 60 --connect-timeout 15 --max-filesize 65536)
-target_rustup_sha_amd64="$(curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/x86_64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
-target_rustup_sha_arm64="$(curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "https://static.rust-lang.org/rustup/archive/${target_rustup_version}/aarch64-unknown-linux-gnu/rustup-init.sha256" | awk '{print $1}')"
+target_rustup_sha_amd64="$(upstream_get rustup-checksum "${target_rustup_version}" x86_64-unknown-linux-gnu | awk '{print $1}')"
+target_rustup_sha_arm64="$(upstream_get rustup-checksum "${target_rustup_version}" aarch64-unknown-linux-gnu | awk '{print $1}')"
 
 hadolint_release_json="$(github_api_get 'https://api.github.com/repos/hadolint/hadolint/releases/latest')"
 target_hadolint_version="$(jq -r '.tag_name' <<<"${hadolint_release_json}")"

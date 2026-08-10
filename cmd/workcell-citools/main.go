@@ -78,6 +78,7 @@ func subcommands() []subcommand {
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
+		{"github-api-get", "URL", 1, 1, cmdGitHubAPIGet},
 		{"hadolint-manifest-checksum", "ASSET_NAME", 1, 1, cmdHadolintManifestChecksum},
 		{"select-buildx-version", "CURRENT_VERSION CANDIDATE_VERSION", 2, 2, cmdSelectBuildxVersion},
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
@@ -110,6 +111,7 @@ func subcommands() []subcommand {
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
+		{"upstream-get", "PROFILE [VERSION TARGET]", 1, 3, cmdUpstreamGet},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
 		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
@@ -347,6 +349,28 @@ func cmdHadolintManifestChecksum(args []string) error {
 	}
 	fmt.Println(value)
 	return nil
+}
+
+func cmdGitHubAPIGet(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	content, err := metadatautil.FetchGitHubAPI(ctx, args[0])
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(content)
+	return err
+}
+
+func cmdUpstreamGet(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	content, err := metadatautil.FetchUpstream(ctx, args)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(content)
+	return err
 }
 
 func cmdResolveDebianBootstrap(args []string) error {
