@@ -131,7 +131,7 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 	if err := requireExactPackages(runtimeInstallBlocks[1], []string{"gcc", "libc6-dev"}, "Runtime builder", cfg.RuntimeDockerfilePath); err != nil {
 		return err
 	}
-	if err := requireExactPackages(validatorInstallBlocks[0], []string{"ca-certificates", "codespell", "curl", "gcc", "git", "groff-base", "jq", "libc6-dev", "llvm", "mandoc", "openssh-client", "procps", "shellcheck", "shfmt", "yamllint"}, "Validator", cfg.ValidatorDockerfilePath); err != nil {
+	if err := requireExactPackages(validatorInstallBlocks[0], []string{"acl", "ca-certificates", "codespell", "curl", "gcc", "git", "groff-base", "jq", "libc6-dev", "llvm", "mandoc", "openssh-client", "procps", "shellcheck", "shfmt", "yamllint"}, "Validator", cfg.ValidatorDockerfilePath); err != nil {
 		return err
 	}
 	goLanguageVersion, err := requireGoDirective(goModText, "go", goModPath)

@@ -42,6 +42,12 @@
       "local_script": "scripts/ci/job-pr-shape.sh",
       "local_order": 5
     },
+    "ci.yml/release-asset-acl": {
+      "profiles": ["pr-parity"],
+      "authority": "pr-parity",
+      "local_mode": "none",
+      "github_only_reason": "native Darwin release-asset ACL proof requires the hosted macOS filesystem and the exact Go toolchain"
+    },
     "ci.yml/reproducible-build": {
       "profiles": ["pr-parity"],
       "authority": "pr-parity",

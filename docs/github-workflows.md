@@ -58,6 +58,8 @@ For an approved large adapter PR, use both required options:
 ## CI routing
 
 Normal PRs run the required deterministic lanes.
+The `Release asset ACL (Darwin)` lane runs on every PR and `main` push.
+It uses `macos-15` and checks the exact Go toolchain.
 The `approved-heavy-ci` label enables these expensive PR lanes:
 
 - native amd64 and arm64 reproducible builds
@@ -90,6 +92,8 @@ The Homebrew job verifies that `brew uninstall` removes the formula.
 
 GitHub-hosted macOS does not prove the strict Colima boundary.
 Local certification supplies that proof.
+
+The release install matrix runs the same ACL script before it uses release artifacts.
 
 ## Release workflow
 

@@ -169,6 +169,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/ci/job-mutation.sh"
   "${ROOT_DIR}/scripts/ci/job-pin-hygiene.sh"
   "${ROOT_DIR}/scripts/ci/job-pr-shape.sh"
+  "${ROOT_DIR}/scripts/ci/job-release-asset-acl.sh"
   "${ROOT_DIR}/scripts/ci/job-validate.sh"
   "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh"
   "${ROOT_DIR}/scripts/ci/run-fuzz-in-validator.sh"

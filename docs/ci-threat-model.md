@@ -107,6 +107,11 @@ The final publisher downloads that current-run artifact and publishes its files.
 The publisher trusts this handoff.
 It does not verify the new signatures or attestations after the handoff.
 
+The release publisher rejects extended ACLs on source and staging file handles.
+The required Darwin lane checks the native macOS ACL interface on every PR and `main` push.
+The Linux validator fixture checks POSIX ACL handling before a release can publish.
+The release install matrix repeats the Darwin proof before it uses release artifacts.
+
 ### Untrusted pull requests
 
 The PR workflows use the `pull_request` event.

@@ -345,9 +345,12 @@ docs = [
 
 [nonfunctional.NFR-004]
 title = "Release provenance validation"
-summary = "Release artifacts, control-plane manifests, and signing metadata must remain validated and reproducible before publication, with the exact asset inventory sealed before any GitHub mutation and uploaded only from its staged read-only content."
+summary = "Release artifacts, control-plane manifests, signing metadata, and source and staging ACL state must remain validated before publication. The exact asset inventory must be sealed before any GitHub mutation and uploaded only from staged read-only content."
 evidence = [
+  "internal/host/release/asset_acl_darwin_test.go",
+  "internal/host/release/asset_acl_linux_test.go",
   "internal/host/release/publisher_test.go",
+  "scripts/ci/job-release-asset-acl.sh",
   "scripts/verify-release-bundle.sh",
   "scripts/verify-control-plane-manifest.sh",
   "scripts/verify-upstream-claude-release.sh",
@@ -359,6 +362,7 @@ docs = [
   "docs/releasing.md",
   "docs/provenance.md",
   "docs/github-workflows.md",
+  "docs/ci-threat-model.md",
 ]
 
 [nonfunctional.NFR-005]

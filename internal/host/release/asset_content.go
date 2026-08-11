@@ -67,6 +67,10 @@ type assetSource interface {
 	Close() error
 }
 
+type extendedACLSource interface {
+	rejectExtendedACL() error
+}
+
 type assetSourceOpener interface {
 	Open(string) (assetSource, error)
 }
@@ -108,7 +112,7 @@ func (openatAssetSourceOpener) Open(path string) (assetSource, error) {
 	if err := unix.Fstat(currentFD, &rootStat); err != nil {
 		return nil, errors.Join(fmt.Errorf("stat filesystem root for release asset %q: %w", path, err), closeUnixFD(currentFD, "release asset path parent"))
 	}
-	anchored, err := validateAssetDirectory(string(filepath.Separator), rootStat, false)
+	anchored, err := validateAssetDirectory(currentFD, string(filepath.Separator), rootStat, false)
 	if err != nil {
 		return nil, errors.Join(err, closeUnixFD(currentFD, "release asset path parent"))
 	}
@@ -145,6 +149,9 @@ func (openatAssetSourceOpener) Open(path string) (assetSource, error) {
 			if opened.Dev != expected.Dev || opened.Ino != expected.Ino || uint32(opened.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFREG) {
 				return nil, errors.Join(inputErrorf("release asset %q changed between inspection and open", path), closeUnixFD(nextFD, "release asset"), closeUnixFD(currentFD, "release asset path parent"))
 			}
+			if err := rejectExtendedACL(nextFD); err != nil {
+				return nil, errors.Join(fmt.Errorf("validate extended ACL for release asset %q: %w", path, err), closeUnixFD(nextFD, "release asset"), closeUnixFD(currentFD, "release asset path parent"))
+			}
 			if closeErr := closeUnixFD(currentFD, "release asset path parent"); closeErr != nil {
 				return nil, errors.Join(closeErr, closeUnixFD(nextFD, "release asset"))
 			}
@@ -158,7 +165,7 @@ func (openatAssetSourceOpener) Open(path string) (assetSource, error) {
 		if err := unix.Fstat(nextFD, &directoryStat); err != nil {
 			return nil, errors.Join(fmt.Errorf("stat release asset %q directory component %q: %w", path, component, err), closeUnixFD(nextFD, "release asset path component"), closeUnixFD(currentFD, "release asset path parent"))
 		}
-		nextAnchored, err := validateAssetDirectory(cleanPath, directoryStat, anchored)
+		nextAnchored, err := validateAssetDirectory(nextFD, cleanPath, directoryStat, anchored)
 		if err != nil {
 			return nil, errors.Join(err, closeUnixFD(nextFD, "release asset path component"), closeUnixFD(currentFD, "release asset path parent"))
 		}
@@ -171,7 +178,7 @@ func (openatAssetSourceOpener) Open(path string) (assetSource, error) {
 	return nil, errors.Join(errors.New("release asset path traversal ended without a file"), closeUnixFD(currentFD, "release asset path parent"))
 }
 
-func validateAssetDirectory(path string, stat unix.Stat_t, anchored bool) (bool, error) {
+func validateAssetDirectory(fd int, path string, stat unix.Stat_t, anchored bool) (bool, error) {
 	mode := uint32(stat.Mode)
 	if mode&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) || stat.Ino == 0 {
 		return false, inputErrorf("release asset %q contains a non-directory component", path)
@@ -181,15 +188,34 @@ func validateAssetDirectory(path string, stat unix.Stat_t, anchored bool) (bool,
 		if !ownedAndControlled {
 			return false, inputErrorf("release asset %q contains a directory below its owner-controlled anchor that is foreign-owned or writable by another user", path)
 		}
+		if err := validateAssetDirectoryACL(fd, path); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 	if stat.Uid == 0 && (mode&0o022 == 0 || mode&uint32(unix.S_ISVTX) != 0) {
-		return os.Geteuid() == 0 && mode&0o077 == 0 && mode&uint32(unix.S_ISVTX) == 0, nil
+		if os.Geteuid() != 0 || mode&0o077 != 0 || mode&uint32(unix.S_ISVTX) != 0 {
+			return false, nil
+		}
+		if err := validateAssetDirectoryACL(fd, path); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	if ownedAndControlled {
+		if err := validateAssetDirectoryACL(fd, path); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 	return false, inputErrorf("release asset %q contains an untrusted directory ancestor", path)
+}
+
+func validateAssetDirectoryACL(fd int, path string) error {
+	if err := rejectExtendedACL(fd); err != nil {
+		return fmt.Errorf("validate extended ACL for release asset directory %q: %w", path, err)
+	}
+	return nil
 }
 
 func canonicalAssetSourcePath(path, goos string) (string, error) {
@@ -277,7 +303,19 @@ func (source *openatAssetSource) Stat() (assetSourceStat, error) {
 	return assetSourceStatFromUnix(stat), nil
 }
 
+func (source *openatAssetSource) rejectExtendedACL() error {
+	return rejectExtendedACL(int(source.file.Fd()))
+}
+
 func (source *openatAssetSource) Close() error { return source.file.Close() }
+
+func validateAssetSourceACL(source assetSource) error {
+	aclSource, ok := source.(extendedACLSource)
+	if !ok {
+		return nil
+	}
+	return aclSource.rejectExtendedACL()
+}
 
 func inspectLocalAssets(paths []string) ([]localAsset, error) {
 	return inspectLocalAssetsWithOpener(paths, openatAssetSourceOpener{})
@@ -317,6 +355,9 @@ func inspectLocalAssetsWithOpener(paths []string, opener assetSourceOpener) ([]l
 		if stat.UID != uint32(os.Geteuid()) || stat.Mode&0o022 != 0 {
 			return nil, abortAssetInspection(assets, errors.Join(inputErrorf("release asset %q must be owned by the current user and not writable by another user", path), closeAssetSource(source, name)))
 		}
+		if err := validateAssetSourceACL(source); err != nil {
+			return nil, abortAssetInspection(assets, errors.Join(fmt.Errorf("validate extended ACL for release asset %q before staging: %w", path, err), closeAssetSource(source, name)))
+		}
 		stagedBytes, err = reserveReleaseAssetBytes(stagedBytes, stat.Size)
 		if err != nil {
 			return nil, abortAssetInspection(assets, errors.Join(fmt.Errorf("release asset %q: %w", path, err), closeAssetSource(source, name)))
@@ -333,8 +374,9 @@ func inspectLocalAssetsWithOpener(paths []string, opener assetSourceOpener) ([]l
 			written += probed
 		}
 		after, afterStatErr := source.Stat()
+		sourceACLErr := validateAssetSourceACL(source)
 		sourceCloseErr := closeAssetSource(source, name)
-		if copyErr != nil || afterStatErr != nil || sourceCloseErr != nil {
+		if copyErr != nil || afterStatErr != nil || sourceACLErr != nil || sourceCloseErr != nil {
 			var wrappedCopyErr error
 			if copyErr != nil {
 				wrappedCopyErr = fmt.Errorf("stage release asset %q content: %w", name, copyErr)
@@ -343,7 +385,11 @@ func inspectLocalAssetsWithOpener(paths []string, opener assetSourceOpener) ([]l
 			if afterStatErr != nil {
 				wrappedStatErr = fmt.Errorf("restat staged release asset %q source: %w", name, afterStatErr)
 			}
-			return nil, abortAssetInspection(assets, errors.Join(wrappedCopyErr, wrappedStatErr, sourceCloseErr, discardStagedAssetContent(stage, name)))
+			var wrappedACLErr error
+			if sourceACLErr != nil {
+				wrappedACLErr = fmt.Errorf("validate extended ACL for release asset %q after staging: %w", path, sourceACLErr)
+			}
+			return nil, abortAssetInspection(assets, errors.Join(wrappedCopyErr, wrappedStatErr, wrappedACLErr, sourceCloseErr, discardStagedAssetContent(stage, name)))
 		}
 		if stat != after {
 			return nil, abortAssetInspection(assets, errors.Join(inputErrorf("release asset %q changed while its content was staged", path), discardStagedAssetContent(stage, name)))
@@ -394,7 +440,7 @@ func createStagedAssetContent() (*stagedAssetWriter, error) {
 	if err := unix.Fstat(directoryFD, &directoryStat); err != nil {
 		return nil, errors.Join(fmt.Errorf("stat private release asset staging directory: %w", err), closeAssetContent(directory, "staging directory"), removeStagedAssetDirectoryPath(directoryPath))
 	}
-	if err := validateStagedAssetDirectoryStat(directoryStat); err != nil {
+	if err := validateStagedAssetDirectory(int(directory.Fd()), directoryStat); err != nil {
 		return nil, errors.Join(err, closeAssetContent(directory, "staging directory"), removeStagedAssetDirectoryPath(directoryPath))
 	}
 	stage := &stagedAssetWriter{
@@ -431,7 +477,7 @@ func createStagedAssetContent() (*stagedAssetWriter, error) {
 	if err := unix.Fstat(int(stage.file.Fd()), &stat); err != nil {
 		return nil, errors.Join(fmt.Errorf("stat release asset content stage: %w", err), discardStagedAssetContent(stage, "staging file"))
 	}
-	if err := validateStagedAssetStat(stat, 0, 1); err != nil {
+	if err := validateStagedAsset(int(stage.file.Fd()), stat, 0, 1); err != nil {
 		return nil, errors.Join(err, discardStagedAssetContent(stage, "staging file"))
 	}
 	return stage, nil
@@ -445,7 +491,7 @@ func sealStagedAssetContent(stage *stagedAssetWriter, name string, size int64) (
 	if err := unix.Fstat(int(stage.file.Fd()), &writerStat); err != nil {
 		return nil, errors.Join(fmt.Errorf("stat completed release asset %q content stage: %w", name, err), discardStagedAssetContent(stage, name))
 	}
-	if err := validateStagedAssetStat(writerStat, size, 1); err != nil {
+	if err := validateStagedAsset(int(stage.file.Fd()), writerStat, size, 1); err != nil {
 		return nil, errors.Join(err, discardStagedAssetContent(stage, name))
 	}
 
@@ -461,7 +507,7 @@ func sealStagedAssetContent(stage *stagedAssetWriter, name string, size int64) (
 	if err := unix.Fstat(readerFD, &readerStat); err != nil {
 		return nil, errors.Join(fmt.Errorf("stat release asset %q read-only content stage: %w", name, err), closeAssetContent(reader, name), discardStagedAssetContent(stage, name))
 	}
-	if err := validateStagedAssetStat(readerStat, size, 1); err != nil {
+	if err := validateStagedAsset(readerFD, readerStat, size, 1); err != nil {
 		return nil, errors.Join(err, closeAssetContent(reader, name), discardStagedAssetContent(stage, name))
 	}
 	if writerStat.Dev != readerStat.Dev || writerStat.Ino != readerStat.Ino {
@@ -482,7 +528,7 @@ func sealStagedAssetContent(stage *stagedAssetWriter, name string, size int64) (
 	if err := unix.Fstat(readerFD, &sealedStat); err != nil {
 		return nil, errors.Join(fmt.Errorf("stat sealed release asset %q content: %w", name, err), closeAssetContent(reader, name), discardStagedAssetContent(stage, name))
 	}
-	if err := validateStagedAssetStat(sealedStat, size, 0); err != nil {
+	if err := validateStagedAsset(readerFD, sealedStat, size, 0); err != nil {
 		return nil, errors.Join(err, closeAssetContent(reader, name), discardStagedAssetContent(stage, name))
 	}
 	if writerStat.Dev != sealedStat.Dev || writerStat.Ino != sealedStat.Ino {
@@ -502,7 +548,7 @@ func hashStagedAssetContent(reader *os.File, name string, size int64) (string, e
 	if err := unix.Fstat(int(reader.Fd()), &before); err != nil {
 		return "", fmt.Errorf("stat sealed release asset %q before hashing: %w", name, err)
 	}
-	if err := validateStagedAssetStat(before, size, 0); err != nil {
+	if err := validateStagedAsset(int(reader.Fd()), before, size, 0); err != nil {
 		return "", err
 	}
 	hash := sha256.New()
@@ -531,16 +577,22 @@ func hashStagedAssetContent(reader *os.File, name string, size int64) (string, e
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func validateStagedAssetDirectoryStat(stat unix.Stat_t) error {
+func validateStagedAssetDirectory(fd int, stat unix.Stat_t) error {
 	if uint32(stat.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) || uint32(stat.Mode)&0o777 != 0o700 || stat.Uid != uint32(os.Geteuid()) || stat.Ino == 0 {
 		return errors.New("release asset staging directory failed owner, mode, directory, or identity validation")
+	}
+	if err := rejectExtendedACL(fd); err != nil {
+		return fmt.Errorf("release asset staging directory has an extended ACL: %w", err)
 	}
 	return nil
 }
 
-func validateStagedAssetStat(stat unix.Stat_t, size int64, links uint64) error {
+func validateStagedAsset(fd int, stat unix.Stat_t, size int64, links uint64) error {
 	if uint32(stat.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFREG) || uint32(stat.Mode)&0o777 != 0o600 || stat.Uid != uint32(os.Geteuid()) || stat.Size != size || uint64(stat.Nlink) != links || stat.Ino == 0 {
 		return errors.New("release asset content stage failed owner, mode, size, regular-file, identity, or link-count validation")
+	}
+	if err := rejectExtendedACL(fd); err != nil {
+		return fmt.Errorf("release asset content stage has an extended ACL: %w", err)
 	}
 	return nil
 }

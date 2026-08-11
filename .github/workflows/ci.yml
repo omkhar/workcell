@@ -134,6 +134,21 @@ jobs:
       - name: Run Workcell container smoke
         run: ./scripts/container-smoke.sh
 
+  release-asset-acl:
+    name: Release asset ACL (Darwin)
+    needs: pr-shape
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify release asset ACL handling
+        run: ./scripts/ci/job-release-asset-acl.sh
+
   install-verification:
     name: Install verification (${{ matrix.runner_label }})
     if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'approved-heavy-ci') }}

@@ -532,10 +532,14 @@ In immutable-release mode, the release publisher must create or reuse a draft
 release, stage and validate the full artifact set before the first GitHub
 mutation, upload only from the sealed staging handles, revalidate the exact
 uploaded inventory, and only then publish the final release record. Source-path
-changes after staging cannot change the uploaded bytes. The entrypoint also
-binds publication to the locally checked-out annotated tag object and its peeled
-commit; the Go publisher verifies that exact binding against GitHub before and
-after publication. Release preflight verifies repository release immutability
+changes after staging cannot change the uploaded bytes. The entrypoint rejects
+extended ACLs on source and staging handles. Before publication, require the
+native Darwin ACL lane. Require the validator Linux ACL fixture to pass. The
+entrypoint also binds publication to the locally checked-out annotated tag
+object and its peeled commit.
+
+The Go publisher verifies that exact binding against GitHub before and after
+publication. Release preflight verifies repository release immutability
 with the environment-scoped `WORKCELL_HOSTED_CONTROLS_TOKEN`. After the
 release-approved job seals and uploads its workflow artifact, a minimal final
 job in `hosted-controls-audit` refreshes that check immediately before
@@ -543,8 +547,9 @@ publication and removes the admin-metadata credential before invoking the
 publisher. The publisher still attempts the direct check with its default
 Actions token and accepts only GitHub's exact
 `Resource not accessible by integration` denial when the fresh preverification
-is present. A disabled control or any other response still fails closed. If
-publication instead tries to upload assets into an
+is present. A disabled control or any other response still fails closed.
+
+If publication instead tries to upload assets into an
 already-published immutable release, treat that as a release-process bug, patch
 `main`, and cut the next patch release rather than rewriting the failed tag.
 If a create, delete, upload, or publish request fails after it starts, treat the
@@ -582,6 +587,18 @@ integration denial, and invoked the production publisher. [Workflow run
 published release id `365188077`; GitHub reports it as an immutable prerelease
 with the exact 18 digest-bearing assets and a valid signed tag. The temporary
 fixture environment secret was deleted immediately after the run.
+
+Release asset ACL rejection was live-certified on 2026-08-11 with signed tag
+`v0.0.0-rc.5` in the same fixture. Before tag creation, an ACL-bearing source
+failed during local asset inspection. The negative run created no tag or
+release. The corrected run published [release id
+`368796851`](https://github.com/omkhar/workcell-release-publisher-certification/releases/tag/v0.0.0-rc.5)
+with 18 digest-bearing assets. GitHub reports the prerelease as immutable and
+the signed tag as verified with reason `valid`.
+
+The certified non-document candidate fingerprint is
+`sha256:078903a66b1e3fc30e06a9c2d82152a999aac34f0ab71bc470d06ad4c77486c3`.
+The fingerprint covers the 19 changed non-document paths.
 
 After approving the environment in single-maintainer mode, leave a public PR
 follow-up comment so the self-review is visible in the same release thread. Use
