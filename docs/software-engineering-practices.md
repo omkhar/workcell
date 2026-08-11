@@ -309,6 +309,9 @@ Acceptance evidence:
 - Start the lane as a scheduled or approved trial on named high-risk packages.
 - Record its duration, resource cost, findings, and false signals.
 - Add negative, property, or mutation cases for high-impact decision branches.
+- Add extended ACL rejection to the release asset staging path.
+  Before you sign the change, publish an authorized immutable fixture release to
+  prove it.
 - Report mutation scope explicitly.
 - Produce coverage maps for selected critical Go package groups.
 - Set a ratchet only after reviewed baseline evidence supports it.
