@@ -6,9 +6,9 @@
 # These are intentionally restricted to substrings that have no legitimate
 # in-container counterpart: a bare `/.codex` would also match the
 # container path `/state/agent-home/.codex`, so provider-specific state
-# directories are deliberately excluded here. A future change can add a
-# host-side `-v` mount-source check to cover those without conflicting
-# with the in-container paths.
+# directories are deliberately excluded here. `scripts/verify-invariants.sh`
+# separately checks host-side mount sources without matching the in-container
+# paths.
 #
 # AGENTS.md sources the canonical narrative ("Keep host mounts minimal";
 # "Never pass through host sockets or auth state"); this file is the

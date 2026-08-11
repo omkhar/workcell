@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "record_type": "software-engineering-practices-assessment",
+  "repository": "omkhar/workcell",
+  "repository_commit": "e38f3036ff11a52aee2b04b10b854c51e4d6baf4",
+  "assessment_date": "2026-08-11",
+  "repository_inventory": {
+    "method": "tracked-file counts, exact text searches, line counts, and current repository configuration",
+    "exclusions": [
+      ".git content",
+      "untracked content",
+      "cached content",
+      "runtime/container/rust/vendor for non-vendor source conclusions"
+    ],
+    "commands": [
+      "git ls-files '*_test.go'",
+      "git ls-files 'tests/scenarios/*.sh' 'tests/scenarios/**/*.sh'",
+      "rg -n '#\\[test\\]' runtime/container/rust/src --glob '*.rs'",
+      "rg -n '^func Benchmark' --glob '*.go' .",
+      "rg -n 'go test.*-race' .github scripts policy",
+      "wc -l scripts/workcell scripts/verify-invariants.sh scripts/container-smoke.sh"
+    ],
+    "go_test_files": 147,
+    "rust_test_attributes": 30,
+    "scenario_scripts": 22,
+    "go_benchmark_functions": 0,
+    "configured_go_race_lanes_found": 0,
+    "selected_file_lines": {
+      "scripts/workcell": 9396,
+      "scripts/verify-invariants.sh": 8722,
+      "scripts/container-smoke.sh": 5227
+    },
+    "coverage_policy": {
+      "rust_launcher_minimum_percent": 90,
+      "internal_metadatautil_minimum_percent": 56,
+      "other_go_package_minimums_configured": 0
+    },
+    "mutation_policy": {
+      "expected_mutants": 14,
+      "required_score_percent": 100
+    }
+  },
+  "github_delivery_history": {
+    "collection_completed_at": "2026-08-11T10:30:30Z",
+    "window_start": "2026-07-11T10:19:10Z",
+    "window_end": "2026-08-11T10:19:10Z",
+    "window_hours": 744,
+    "method": {
+      "pull_requests": "cursor-paginated GraphQL searches for created and merged timestamps",
+      "actions": "31 exact daily REST ranges with pagination",
+      "reviews": "paginated review submissions and review threads",
+      "codex_review_triggers": "issue comments created in the window, from non-bot authors, whose trimmed body was exactly @codex review; every matching comment counted",
+      "release_runs": "paginated Actions and GitHub Release records"
+    },
+    "counts": {
+      "pull_requests_created_in_window": 106,
+      "pull_requests_merged_in_window": 102,
+      "pull_requests_closed_unmerged_in_window": 6,
+      "codex_review_triggers": 490,
+      "submitted_reviews": 470,
+      "review_threads": 305,
+      "pull_request_workflow_runs": 1433,
+      "workflow_success": 790,
+      "workflow_skipped": 539,
+      "workflow_failure": 13,
+      "workflow_cancelled": 91,
+      "workflow_later_attempts": 8
+    },
+    "durations_hours": {
+      "percentile_method": "linear interpolation",
+      "creation_to_merge_population": 102,
+      "creation_to_merge_p50": 0.91,
+      "creation_to_merge_p90": 49.46,
+      "workflow_wait_proxy_population": 101,
+      "workflow_wait_proxy_p50": 0.72,
+      "workflow_wait_proxy_p90": 51.13,
+      "workflow_wait_proxy_max": 120.73
+    },
+    "workflow_wait_proxy_definition": "pull request creation through the last completed branch-matched pull_request workflow before merge",
+    "limitations": [
+      "The workflow-wait proxy is not an individual workflow duration.",
+      "The workflow-wait proxy is not a proven critical path.",
+      "One merged pull request had no completed branch-matched pull_request workflow before merge and was excluded from the workflow-wait proxy.",
+      "Review-thread volume is not an actionable-finding count.",
+      "GitHub history does not identify production deployments.",
+      "GitHub history does not provide production service-level objectives.",
+      "The collection did not preserve raw comment bodies or contributor identities."
+    ]
+  },
+  "hosted_controls": {
+    "collection_completed_at": "2026-08-11T10:40:38Z",
+    "source": "GitHub repository ruleset API",
+    "main_rulesets": [
+      "main-integrity",
+      "main-review",
+      "main-status-checks"
+    ],
+    "required_status_checks": [
+      "Allowed PR base",
+      "Container smoke",
+      "GitHub Actions lint",
+      "GitHub Actions security analysis",
+      "Pull request shape",
+      "Reproducible build",
+      "Validate repository",
+      "Dependency review"
+    ],
+    "required_signatures": true,
+    "required_pull_request": true,
+    "required_thread_resolution": true,
+    "single_maintainer_admin_bypass": "pull_requests_only"
+  },
+  "record_limitations": [
+    "This file contains aggregate evidence, not raw GitHub API responses.",
+    "The repository snapshot will become historical after later commits.",
+    "Counts are risk indicators and do not prove quality.",
+    "This record makes no support, certification, compliance, or SLSA-level change."
+  ]
+}
