@@ -321,14 +321,22 @@ func TestVerifyOperatorContractIgnoresAmbientHelpOverride(t *testing.T) {
 	t.Parallel()
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-operator-contract.sh")
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
+	marker := filepath.Join(t.TempDir(), "hostile-help-ran")
+	helpBin := filepath.Join(t.TempDir(), "hostile-workcell")
+	if err := os.WriteFile(helpBin, []byte("#!/bin/sh\n: >\"${WORKCELL_HELP_MARKER:?}\"\nexit 97\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	script := string(content)
 
-	if !strings.Contains(script, "env -u WORKCELL_HELP_BIN") {
-		t.Fatalf("%s must clear WORKCELL_HELP_BIN so normal validation probes the repo script", scriptPath)
+	cmd := exec.Command(scriptPath)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"WORKCELL_HELP_BIN":    helpBin,
+		"WORKCELL_HELP_MARKER": marker,
+	})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("verify operator contract with hostile help override: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("hostile help override executed: %v", err)
 	}
 }
 
@@ -560,19 +568,28 @@ func TestGenerateHomebrewFormulaPinsExplicitVersion(t *testing.T) {
 	t.Parallel()
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "generate-homebrew-formula.sh")
-	content, err := os.ReadFile(scriptPath)
+	formulaPath := filepath.Join(t.TempDir(), "Formula", "workcell.rb")
+	const version = "v1.2.3"
+	const checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	cmd := exec.Command(scriptPath, version, checksum, formulaPath, "--repository", "omkhar/workcell")
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"GITHUB_REPOSITORY": "hostile/example",
+	})
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate Homebrew formula: %v\n%s", err, output)
+	}
+	formula, err := os.ReadFile(formulaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := string(content)
-
 	for _, want := range []string{
-		`FORMULA_VERSION="${VERSION}"`,
-		`FORMULA_VERSION="${FORMULA_VERSION#v}"`,
-		`version "${FORMULA_VERSION}"`,
+		`url "https://github.com/omkhar/workcell/releases/download/v1.2.3/workcell-v1.2.3.tar.gz"`,
+		`version "1.2.3"`,
+		`sha256 "` + checksum + `"`,
 	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("%s does not contain %q", scriptPath, want)
+		if !strings.Contains(string(formula), want) {
+			t.Fatalf("generated formula does not contain %q\n%s", want, formula)
 		}
 	}
 }

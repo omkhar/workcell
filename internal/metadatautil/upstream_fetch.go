@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -232,38 +231,4 @@ func readBoundedHTTPBody(response *http.Response, maxBytes int64, description st
 		return nil, fmt.Errorf("%s exceeds the size limit", description)
 	}
 	return content, nil
-}
-
-func githubAPIToken() (string, error) {
-	raw := os.Getenv("WORKCELL_GITHUB_API_TOKEN")
-	fromFile := false
-	if raw == "" {
-		raw = os.Getenv("GITHUB_TOKEN")
-	}
-	if raw == "" {
-		raw = os.Getenv("GH_TOKEN")
-	}
-	if raw == "" && os.Getenv("WORKCELL_GITHUB_API_TOKEN_FILE") != "" {
-		fromFile = true
-		file, err := os.Open(os.Getenv("WORKCELL_GITHUB_API_TOKEN_FILE"))
-		if err != nil {
-			return "", fmt.Errorf("read WORKCELL_GITHUB_API_TOKEN_FILE: %w", err)
-		}
-		defer file.Close()
-		content, err := io.ReadAll(io.LimitReader(file, githubAPIMaxTokenBytes+1))
-		if err != nil {
-			return "", fmt.Errorf("read WORKCELL_GITHUB_API_TOKEN_FILE: %w", err)
-		}
-		if len(content) > githubAPIMaxTokenBytes {
-			return "", errors.New("WORKCELL_GITHUB_API_TOKEN_FILE exceeds the size limit")
-		}
-		raw = string(content)
-	}
-	if fromFile {
-		raw = strings.TrimRight(raw, "\n")
-	}
-	if strings.ContainsAny(raw, "\r\n") {
-		return "", errors.New("GitHub API token must contain exactly one token line")
-	}
-	return raw, nil
 }

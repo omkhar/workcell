@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 )
@@ -118,52 +117,6 @@ func TestGitHubAPIClientRejectsAutomaticRedirects(t *testing.T) {
 	}
 	if client.Timeout != upstreamHTTPTimeout {
 		t.Fatalf("client timeout = %s, want %s", client.Timeout, upstreamHTTPTimeout)
-	}
-}
-
-func TestGitHubAPITokenPrecedenceAndFileBound(t *testing.T) {
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN", "workcell")
-	t.Setenv("GITHUB_TOKEN", "github")
-	t.Setenv("GH_TOKEN", "gh")
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN_FILE", "")
-	if got, err := githubAPIToken(); err != nil || got != "workcell" {
-		t.Fatalf("githubAPIToken() = %q, %v", got, err)
-	}
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN", "")
-	if got, err := githubAPIToken(); err != nil || got != "github" {
-		t.Fatalf("githubAPIToken() = %q, %v", got, err)
-	}
-	t.Setenv("GITHUB_TOKEN", "")
-	if got, err := githubAPIToken(); err != nil || got != "gh" {
-		t.Fatalf("githubAPIToken() = %q, %v", got, err)
-	}
-	t.Setenv("GH_TOKEN", "")
-	tokenFile := t.TempDir() + "/token"
-	if err := os.WriteFile(tokenFile, []byte("file-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN_FILE", tokenFile)
-	if got, err := githubAPIToken(); err != nil || got != "file-token" {
-		t.Fatalf("githubAPIToken() = %q, %v", got, err)
-	}
-	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("x", githubAPIMaxTokenBytes+1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := githubAPIToken(); err == nil || !strings.Contains(err.Error(), "size limit") {
-		t.Fatalf("githubAPIToken() error = %v", err)
-	}
-	for _, token := range []string{"bad\rtoken", "bad\ntoken"} {
-		t.Setenv("WORKCELL_GITHUB_API_TOKEN", token)
-		if _, err := githubAPIToken(); err == nil || !strings.Contains(err.Error(), "exactly one token line") {
-			t.Fatalf("githubAPIToken(%q) error = %v", token, err)
-		}
-	}
-	t.Setenv("WORKCELL_GITHUB_API_TOKEN", "")
-	if err := os.WriteFile(tokenFile, []byte("bad\nfile"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := githubAPIToken(); err == nil || !strings.Contains(err.Error(), "exactly one token line") {
-		t.Fatalf("githubAPIToken() accepted a multi-line token file: %v", err)
 	}
 }
 

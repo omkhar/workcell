@@ -115,112 +115,37 @@ require_tool mktemp
 require_tool shasum
 
 # Response-body download policy lives in workcell-citools. curl remains only
-# for release assets and bodyless Debian Release probes.
+# for bodyless Debian Release probes, which need no curl size-cap capability.
 CURL_HEAD_GUARDS=(--max-time 120 --connect-timeout 15)
 DEBIAN_SNAPSHOT_LOOKBACK_DAYS="${WORKCELL_DEBIAN_SNAPSHOT_LOOKBACK_DAYS:-60}"
 MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
 
-github_api_token() {
-  local token="${WORKCELL_GITHUB_API_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
-  if [[ -z "${token}" && -n "${WORKCELL_GITHUB_API_TOKEN_FILE:-}" ]]; then
-    if [[ ! -r "${WORKCELL_GITHUB_API_TOKEN_FILE}" ]]; then
-      echo "GitHub API token file is not readable: ${WORKCELL_GITHUB_API_TOKEN_FILE}" >&2
-      exit 1
-    fi
-    token="$(<"${WORKCELL_GITHUB_API_TOKEN_FILE}")"
-  fi
-  if [[ -n "${token}" && ("${token}" == *$'\n'* || "${token}" == *$'\r'*) ]]; then
-    echo "GitHub API token must be a single line" >&2
-    exit 1
-  fi
-  printf '%s' "${token}"
+run_upstream_citools() {
+  (
+    cd "${ROOT_DIR}" || exit
+    go run ./cmd/workcell-citools "$@"
+  )
 }
 
 github_api_get() {
-  (
-    cd "${ROOT_DIR}" || exit
-    go run ./cmd/workcell-citools github-api-get "$1"
-  )
+  run_upstream_citools github-api-get "$1"
 }
 
 upstream_get() {
+  run_upstream_citools upstream-get "$@"
+}
+
+github_release_asset() {
+  local release_json="$1"
+  local repository="$2"
+  local asset_name="$3"
+  local asset_class="$4"
+
   (
     cd "${ROOT_DIR}" || exit
-    go run ./cmd/workcell-citools upstream-get "$@"
+    printf '%s' "${release_json}" |
+      go run ./cmd/workcell-citools github-release-asset "${repository}" "${asset_name}" "${asset_class}"
   )
-}
-
-github_release_asset_url() {
-  local release_json="$1"
-  local asset_name="$2"
-  local asset_url
-  asset_url="$(jq -r --arg asset_name "${asset_name}" '.assets[] | select(.name == $asset_name) | .browser_download_url' <<<"${release_json}")"
-  if [[ -z "${asset_url}" || "${asset_url}" == "null" ]]; then
-    echo "Unable to resolve release asset ${asset_name}" >&2
-    exit 1
-  fi
-  printf '%s\n' "${asset_url}"
-}
-
-github_release_asset_api_url() {
-  local release_json="$1"
-  local asset_name="$2"
-  local asset_url
-  asset_url="$(jq -r --arg asset_name "${asset_name}" '.assets[] | select(.name == $asset_name) | .url' <<<"${release_json}")"
-  if [[ -z "${asset_url}" || "${asset_url}" == "null" ]]; then
-    echo "Unable to resolve release asset ${asset_name}" >&2
-    exit 1
-  fi
-  printf '%s\n' "${asset_url}"
-}
-
-github_release_asset_get() {
-  local url="$1"
-  local token
-  local body_file=""
-  local headers_file=""
-  local location=""
-  local status=""
-
-  token="$(github_api_token)"
-  if [[ -n "${token}" ]]; then
-    headers_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-headers.XXXXXX")"
-    body_file="$(mktemp "${TMPDIR:-/tmp}/workcell-release-asset-body.XXXXXX")"
-    trap 'rm -f "${headers_file}" "${body_file}"' RETURN
-
-    status="$(
-      curl -q -fsS "${CURL_CHECKSUM_GUARDS[@]}" \
-        -D "${headers_file}" \
-        -o "${body_file}" \
-        -w '%{http_code}' \
-        -H "Accept: application/octet-stream" \
-        --config - \
-        "${url}" <<EOF
-header = "Authorization: Bearer ${token}"
-EOF
-    )"
-    case "${status}" in
-      200)
-        cat "${body_file}"
-        ;;
-      3??)
-        location="$(sed -n 's/^[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*//p' "${headers_file}" | tail -n 1 | tr -d '\r')"
-        if [[ -z "${location}" ]]; then
-          echo "GitHub release asset redirect did not include a Location header: ${url}" >&2
-          exit 1
-        fi
-        curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${location}"
-        ;;
-      *)
-        echo "Unexpected GitHub release asset response ${status}: ${url}" >&2
-        exit 1
-        ;;
-    esac
-    rm -f "${headers_file}" "${body_file}"
-    trap - RETURN
-    return 0
-  fi
-  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" -H "Accept: application/octet-stream" "${url}"
 }
 
 github_tag_commit_sha() {
@@ -573,18 +498,12 @@ target_rust_version="$(
 target_cargo_rust_version="$(semver_major_minor "${target_rust_version}")"
 rustup_stable_toml="$(upstream_get rustup-release)"
 target_rustup_version="$(awk -F"'" '$1 == "version = " { print $2; exit }' <<<"${rustup_stable_toml}")"
-# Release checksum files stay bounded so a misbehaving release host cannot
-# serve a multi-GB body that exhausts the maintainer's shell.
-CURL_CHECKSUM_GUARDS=(--max-time 60 --connect-timeout 15 --max-filesize 65536)
 target_rustup_sha_amd64="$(upstream_get rustup-checksum "${target_rustup_version}" x86_64-unknown-linux-gnu | awk '{print $1}')"
 target_rustup_sha_arm64="$(upstream_get rustup-checksum "${target_rustup_version}" aarch64-unknown-linux-gnu | awk '{print $1}')"
 
 hadolint_release_json="$(github_api_get 'https://api.github.com/repos/hadolint/hadolint/releases/latest')"
 target_hadolint_version="$(jq -r '.tag_name' <<<"${hadolint_release_json}")"
-hadolint_checksums_url="$(github_release_asset_url "${hadolint_release_json}" 'checksums.sha256')"
-hadolint_checksums="$(
-  curl -q -fsSL "${CURL_CHECKSUM_GUARDS[@]}" "${hadolint_checksums_url}"
-)"
+hadolint_checksums="$(github_release_asset "${hadolint_release_json}" 'hadolint/hadolint' 'checksums.sha256' checksum)"
 target_hadolint_sha_amd64="$(
   cd "${ROOT_DIR}" || exit
   printf '%s' "${hadolint_checksums}" | go run ./cmd/workcell-citools hadolint-manifest-checksum 'hadolint-linux-x86_64'
@@ -606,21 +525,15 @@ target_syft_version="$(jq -r '.tag_name' <<<"${syft_release_json}")"
 
 actionlint_release_json="$(github_api_get 'https://api.github.com/repos/rhysd/actionlint/releases/latest')"
 target_actionlint_version="$(jq -r '.tag_name | sub("^v"; "")' <<<"${actionlint_release_json}")"
-actionlint_checksums_url="$(github_release_asset_api_url "${actionlint_release_json}" "actionlint_${target_actionlint_version}_checksums.txt")"
 target_actionlint_sha="$(
-  github_release_asset_get "${actionlint_checksums_url}" |
+  github_release_asset "${actionlint_release_json}" 'rhysd/actionlint' "actionlint_${target_actionlint_version}_checksums.txt" checksum |
     awk '/actionlint_'"${target_actionlint_version}"'_linux_amd64\.tar\.gz$/ { print $1; exit }'
 )"
 
 zizmor_release_json="$(github_api_get 'https://api.github.com/repos/zizmorcore/zizmor/releases/latest')"
 target_zizmor_version="$(jq -r '.tag_name | sub("^v"; "")' <<<"${zizmor_release_json}")"
-target_zizmor_url="$(github_release_asset_url "${zizmor_release_json}" 'zizmor-x86_64-unknown-linux-gnu.tar.gz')"
 target_zizmor_sha="$(
-  curl -q -fsSL \
-    --max-time 60 \
-    --connect-timeout 15 \
-    --max-filesize 209715200 \
-    "${target_zizmor_url}" |
+  github_release_asset "${zizmor_release_json}" 'zizmorcore/zizmor' 'zizmor-x86_64-unknown-linux-gnu.tar.gz' archive |
     shasum -a 256 |
     awk '{ print $1 }'
 )"

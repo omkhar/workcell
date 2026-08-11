@@ -42,6 +42,7 @@ func TestUnknownCommandExitsWithUsageCode(t *testing.T) {
 
 func TestUpstreamFetchCommandsRejectWrongArity(t *testing.T) {
 	assertCitoolsUsageExit(t, "github-api-get")
+	assertCitoolsUsageExit(t, "github-release-asset", "owner/repository", "asset")
 	assertCitoolsUsageExit(t, "upstream-get", "profile", "one", "two", "three")
 }
 

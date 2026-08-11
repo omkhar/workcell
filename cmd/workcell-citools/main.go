@@ -79,6 +79,7 @@ func subcommands() []subcommand {
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
 		{"github-api-get", "URL", 1, 1, cmdGitHubAPIGet},
+		{"github-release-asset", "REPOSITORY ASSET_NAME CLASS", 3, 3, cmdGitHubReleaseAsset},
 		{"hadolint-manifest-checksum", "ASSET_NAME", 1, 1, cmdHadolintManifestChecksum},
 		{"select-buildx-version", "CURRENT_VERSION CANDIDATE_VERSION", 2, 2, cmdSelectBuildxVersion},
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
@@ -349,6 +350,17 @@ func cmdHadolintManifestChecksum(args []string) error {
 	}
 	fmt.Println(value)
 	return nil
+}
+
+func cmdGitHubReleaseAsset(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	content, err := metadatautil.FetchGitHubReleaseAssetClass(ctx, os.Stdin, args[0], args[1], args[2])
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(content)
+	return err
 }
 
 func cmdGitHubAPIGet(args []string) error {
