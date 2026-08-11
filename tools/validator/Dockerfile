@@ -33,6 +33,7 @@ ARG RUSTUP_INIT_LINUX_ARM64_SHA256
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:/usr/local/go/bin:${PATH}
 ENV RUSTUP_HOME=/usr/local/rustup
+ENV WORKCELL_REQUIRE_NATIVE_ACL_TESTS=1
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -109,6 +110,7 @@ RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstra
   && printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' > /etc/apt/apt.conf.d/99workcell-validator-snapshot \
   && install_validator_packages() { \
        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+         acl \
          ca-certificates \
          codespell \
          curl \

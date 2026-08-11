@@ -84,6 +84,9 @@ func TestInspectLocalAssetsStagesStableUnlinkedContent(t *testing.T) {
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 || int(stat.Uid) != os.Geteuid() || stat.Nlink != 0 {
 		t.Fatalf("staged fd mode=%o uid=%d nlink=%d", stat.Mode, stat.Uid, stat.Nlink)
 	}
+	if err := rejectExtendedACL(int(stage.Fd())); err != nil {
+		t.Fatalf("rejectExtendedACL(sealed stage) = %v", err)
+	}
 	flags, err := unix.FcntlInt(stage.Fd(), unix.F_GETFL, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -294,6 +297,45 @@ func TestStagedContentSurvivesSameMetadataMutationAndPathSwap(t *testing.T) {
 			t.Fatalf("path swap changed opened stream: got %q, want %q", got, original)
 		}
 	})
+}
+
+func TestInspectLocalAssetsRejectsModeMutationAfterOpen(t *testing.T) {
+	path := writeAssetFile(t, "asset.bin", []byte("asset"))
+	base := openatAssetSourceOpener{}
+	opener := foundationOpenerFunc(func(candidate string) (assetSource, error) {
+		source, err := base.Open(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Chmod(candidate, 0o622); err != nil {
+			return nil, errors.Join(err, source.Close())
+		}
+		return source, nil
+	})
+	if _, err := inspectLocalAssetsWithOpener([]string{path}, opener); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("inspectLocalAssetsWithOpener() = %v, want ErrInvalidInput", err)
+	}
+}
+
+type aclMutationSource struct {
+	assetSource
+	mutate  func() error
+	mutated bool
+}
+
+func (source *aclMutationSource) Read(buffer []byte) (int, error) {
+	read, err := source.assetSource.Read(buffer)
+	if read > 0 && !source.mutated {
+		source.mutated = true
+		if mutationErr := source.mutate(); mutationErr != nil {
+			return read, mutationErr
+		}
+	}
+	return read, err
+}
+
+func (source *aclMutationSource) rejectExtendedACL() error {
+	return source.assetSource.(extendedACLSource).rejectExtendedACL()
 }
 
 func TestInspectionPreservesOperationalStatReadAndSourceCloseErrors(t *testing.T) {

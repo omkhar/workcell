@@ -232,6 +232,7 @@ func TestValidationGatesLintAllScenarioShellScripts(t *testing.T) {
 		`${ROOT_DIR}/scripts/check-dead-code.sh`,
 		`${ROOT_DIR}/scripts/check-public-repo-hygiene.sh`,
 		`${ROOT_DIR}/scripts/check-pr-shape.sh`,
+		`${ROOT_DIR}/scripts/ci/job-release-asset-acl.sh`,
 		`${ROOT_DIR}/scripts/install.sh`,
 		`${ROOT_DIR}/scripts/build-and-test.sh`,
 		`${ROOT_DIR}/scripts/install-dev-tools.sh`,

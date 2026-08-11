@@ -44,6 +44,7 @@ contexts = [
   "Pull request shape",
   "Validate repository",
   "Container smoke",
+  "Release asset ACL (Darwin)",
   "Reproducible build",
   "Dependency review",
   "GitHub Actions lint",
@@ -51,6 +52,8 @@ contexts = [
 ]
 
 [actions_policy]
+# The unlabelled macOS-15 release-asset ACL lane runs for every pull request and
+# main push. Release install verification repeats the same native proof before publication.
 # Release and CI workflows should run with the narrowest practical default
 # token posture and only permit pinned actions from GitHub or explicitly
 # trusted publishers.
