@@ -7,11 +7,99 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestReleaseAssetACLValidationFindsRunnerToolcacheGo(t *testing.T) {
+	t.Parallel()
+
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
+	if arch == "" {
+		t.Skipf("runner toolcache architecture is not covered: %s", runtime.GOARCH)
+	}
+	goMod, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedToolchain := ""
+	for _, line := range strings.Split(string(goMod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "toolchain" {
+			expectedToolchain = fields[1]
+			break
+		}
+	}
+	if expectedToolchain == "" {
+		t.Fatal("go.mod has no toolchain directive")
+	}
+
+	tempDir := t.TempDir()
+	toolBin := filepath.Join(tempDir, "toolcache", "go", strings.TrimPrefix(expectedToolchain, "go"), arch, "bin")
+	if err := os.MkdirAll(toolBin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(tempDir, "go-test-ran")
+	fakeGo := filepath.Join(toolBin, "go")
+	fakeGoScript := `#!/bin/sh
+case "$*" in
+  "env GOVERSION") printf '%s\n' "${WORKCELL_TEST_EXPECTED_GO}" ;;
+  "env GOOS") printf '%s\n' darwin ;;
+  "test ./internal/host/release -run ^TestReleaseAssetACLDarwin$")
+    : >"${WORKCELL_TEST_GO_MARKER}"
+    ;;
+  *) exit 64 ;;
+esac
+`
+	if err := os.WriteFile(fakeGo, []byte(fakeGoScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	pathDir := filepath.Join(tempDir, "path")
+	if err := os.Mkdir(pathDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"awk", "dirname", "uname"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(pathDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staleGo := filepath.Join(pathDir, "go")
+	staleGoScript := `#!/bin/sh
+if [ "$*" = "env GOVERSION" ]; then
+  printf '%s\n' go0.0.0
+  exit 0
+fi
+exit 64
+`
+	if err := os.WriteFile(staleGo, []byte(staleGoScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join(repoRoot(t), "scripts", "ci", "job-release-asset-acl.sh")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"AGENT_TOOLSDIRECTORY":      "",
+		"PATH":                      pathDir,
+		"RUNNER_TOOL_CACHE":         filepath.Join(tempDir, "toolcache"),
+		"WORKCELL_TEST_EXPECTED_GO": expectedToolchain,
+		"WORKCELL_TEST_GO_MARKER":   marker,
+	})
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("release ACL validation: %v: %s", err, output)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("runner toolcache Go did not run the Darwin ACL test: %v", err)
+	}
+}
 
 func TestC3CertificationEntrypointSanitizesBuildControl(t *testing.T) {
 	t.Parallel()
