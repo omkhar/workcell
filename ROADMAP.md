@@ -34,6 +34,9 @@ Cross-cutting engineering, security-depth, and adoption improvements from the
 below. The [1.0 Program Record](#10-program-record) contains the historical
 release criteria and deferred work.
 
+The current engineering baseline and measurable improvement plan live in
+[Software Engineering Practices](docs/software-engineering-practices.md).
+
 ## Product Direction
 
 - Position Workcell as an auditable runtime boundary for coding agents, not as
@@ -536,6 +539,31 @@ contract and proven day-two operations.
 - **G4 (complete, S):** the cross-lens 1.0 readiness gate records fixed
   statuses, exact candidate/evidence identities, every explicit scope decision,
   and no unresolved P0/P1 findings
+
+### Track H: Engineering Health And Delivery Feedback
+
+The canonical practices, evidence safeguards, dependencies, and acceptance
+measures live in
+[Software Engineering Practices](docs/software-engineering-practices.md).
+
+- **H1 (complete, S):** classified primary-source baseline, repository assessment,
+  measurement safeguards, and ordered improvement plan
+- **H2 (next, M):** deterministic engineering-health generator and one dated
+  versioned baseline
+- **H3 (after H2, M):** durable CI distributions, review wait states, and
+  unchanged-head trigger measurement
+- **H4 (after H1, M):** SLSA v1.2 Build and Source reassessment plus read-only
+  release-output verification
+- **H5 (after H2, M):** risk-based race, mutation, and critical-package
+  coverage evidence
+- **H6 (after H2, L):** one measured, behavior-preserving complexity
+  reduction per review unit
+- **H7 (after H2, M):** shared validation inventory and objective-driven
+  benchmarks
+- **H8 (after H1, M):** locked Rust vendor-refresh workflow with offline and
+  reproducibility checks
+- **H9 (external, L):** second maintainer, trusted Apple runner, third-party
+  boundary review, and honest OpenSSF badge assessment
 
 ### Sequencing Summary
 

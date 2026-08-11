@@ -58,6 +58,11 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - If validation or review exposes a recurring quality gap, fix the repo-local
   instruction, runbook, or validator in a reviewable change rather than relying
   on conversational memory.
+- Before broad engineering changes, read
+  `docs/software-engineering-practices.md`.
+- Preserve its evidence rules.
+- Measure repository health before adding a numeric quality target.
+- Use the smallest evidence-preserving review unit.
 
 ## Documentation language
 
@@ -104,10 +109,10 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   conflict-free subset (`docker.sock`, `SSH_AUTH_SOCK`, `/.ssh`,
   `/.aws`, `Library/Keychains`, `.gnupg`, `.git-credentials`) lives in
   `policy/forbidden-host-paths.toml` and is enforced by
-  `scripts/verify-invariants.sh` against the dry-run docker invocation;
-  the provider-state directories above (host `~/.codex`, etc.) need a
-  host-side `-v` mount-source check that the policy file deliberately
-  omits today.
+  `scripts/verify-invariants.sh` against the dry-run Docker invocation.
+  The same verifier checks host-side mount sources for the provider-state
+  directories above. The policy file omits their conflicting in-container
+  substrings.
 - Keep `breakglass` paths explicit, narrow, and separately documented.
 - Require explicit operator acknowledgement for `breakglass` or equivalent
   higher-trust paths.
