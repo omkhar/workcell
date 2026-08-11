@@ -218,7 +218,9 @@ func TestGitHubAPITokenPrecedenceAndLinePolicy(t *testing.T) {
 		{name: "file fallback", file: tokenFile, want: "file-token"},
 		{name: "trailing newline file", file: tokenFile, fileContents: "fixture-token\n", want: "fixture-token"},
 		{name: "trailing newline environment", workcell: "fixture-token\n", file: tokenFile, wantErr: "exactly one token line"},
+		{name: "carriage return environment", workcell: "fixture-token\r", file: tokenFile, wantErr: "exactly one token line"},
 		{name: "internal newline file", file: tokenFile, fileContents: "fixture\ntoken\n", wantErr: "exactly one token line"},
+		{name: "oversized file", file: tokenFile, fileContents: strings.Repeat("x", githubAPIMaxTokenBytes+1), wantErr: "size limit"},
 		{name: "environment bypasses unreadable file", workcell: "workcell-token", file: filepath.Join(t.TempDir(), "missing"), want: "workcell-token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

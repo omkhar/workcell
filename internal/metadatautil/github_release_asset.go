@@ -34,13 +34,6 @@ type githubReleaseAssetDocument struct {
 	} `json:"assets"`
 }
 
-// FetchGitHubReleaseAsset selects one asset from releaseJSON and downloads it.
-// The authenticated API request cannot redirect automatically. A validated
-// release-assets URL gets one separate request without credentials.
-func FetchGitHubReleaseAsset(ctx context.Context, releaseJSON io.Reader, repository, assetName string) ([]byte, error) {
-	return FetchGitHubReleaseAssetClass(ctx, releaseJSON, repository, assetName, "checksum")
-}
-
 // FetchGitHubReleaseAssetClass selects one release asset in a reviewed size
 // class. Checksums stay small while release archives use the updater's bounded
 // metadata-size ceiling.

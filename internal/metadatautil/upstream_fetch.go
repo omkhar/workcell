@@ -191,13 +191,7 @@ func upstreamFetchRequestFor(args []string) (upstreamFetchRequest, error) {
 }
 
 func fixedUpstreamFetchRequest(rawURL, redirectHost string, maxBytes int64, timeout time.Duration, responseDescription string) upstreamFetchRequest {
-	return upstreamFetchRequest{
-		url:                 rawURL,
-		redirectHost:        redirectHost,
-		maxBytes:            maxBytes,
-		timeout:             timeout,
-		responseDescription: responseDescription,
-	}
+	return upstreamFetchRequest{url: rawURL, redirectHost: redirectHost, maxBytes: maxBytes, timeout: timeout, responseDescription: responseDescription}
 }
 
 func newUpstreamFetchClient(request upstreamFetchRequest) *http.Client {
@@ -208,12 +202,7 @@ func newUpstreamFetchClient(request upstreamFetchRequest) *http.Client {
 			if len(via) >= 3 {
 				return errors.New("stopped after 3 upstream redirects")
 			}
-			if next.URL.Scheme != "https" ||
-				next.URL.Host != request.redirectHost ||
-				next.URL.User != nil ||
-				next.URL.Fragment != "" ||
-				next.URL.RawPath != "" ||
-				next.URL.Opaque != "" {
+			if next.URL.Scheme != "https" || next.URL.Host != request.redirectHost || next.URL.User != nil || next.URL.Fragment != "" || next.URL.RawPath != "" || next.URL.Opaque != "" {
 				return errors.New("upstream redirect is outside the reviewed HTTPS origin")
 			}
 			return nil
@@ -223,10 +212,7 @@ func newUpstreamFetchClient(request upstreamFetchRequest) *http.Client {
 
 func newUpstreamHTTPTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{
-		Timeout:   upstreamConnectTimeout,
-		KeepAlive: 30 * time.Second,
-	}).DialContext
+	transport.DialContext = (&net.Dialer{Timeout: upstreamConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
 	return transport
 }
 
