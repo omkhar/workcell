@@ -92,8 +92,8 @@ contracts or security invariants.
   only where they fit the language and problem.
 - **Single-responsibility principle:** Give each module one cohesive
   responsibility.
-- **Open-closed principle:** Extend stable behavior for demonstrated variation
-  without breaking existing contracts.
+- **Open-closed principle:** Extend stable behavior for demonstrated variation.
+  Preserve existing contracts.
 - **Liskov substitution principle:** Make each implementation preserve its
   interface contract and observable behavior.
 - **Interface segregation principle:** Give each caller the smallest interface
@@ -309,7 +309,7 @@ Acceptance evidence:
 - Start the lane as a scheduled or approved trial on named high-risk packages.
 - Record its duration, resource cost, findings, and false signals.
 - Add negative, property, or mutation cases for high-impact decision branches.
-- Add extended ACL rejection to the release asset staging path.
+- Add extended ACL rejection to the release-asset staging path.
   Before you sign the change, publish an authorized immutable fixture release to
   prove it.
 - Report mutation scope explicitly.
