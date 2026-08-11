@@ -95,8 +95,8 @@ One promotion change must include all these items:
 
 The certification record must identify the exact matrix row and Docker Desktop
 version. It must record the Workcell commit SHA, worktree dirty state, host
-kernel, cgroup mode, Docker security features, command, UTC timestamp, and
-cleanup status.
+kernel, and cgroup mode. It must also record Docker security features, the
+command, the UTC timestamp, and cleanup status.
 
 The live certification must test the host and target that the exact matrix row
 names. It must also test the selected Docker Desktop version. The rollback must
