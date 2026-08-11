@@ -481,6 +481,9 @@ delete_verify_colima_profile() {
   elif [[ -x /usr/local/bin/colima ]]; then
     /usr/local/bin/colima delete --profile "${profile_name}" --force >/dev/null 2>&1 || true
   fi
+  if ! go_verify_hostutil helper reap-colima-profile-processes "${profile_name}"; then
+    return 1
+  fi
   rm -rf \
     "${REAL_HOME}/.colima/${profile_name}" \
     "${REAL_HOME}/.local/state/workcell/targets/local_vm/colima/${profile_name}" \
@@ -5052,6 +5055,13 @@ PROFILE_PROCESS_REAPER_HARNESS="$(mktemp)"
 } >"${PROFILE_PROCESS_REAPER_HARNESS}"
 /bin/bash "${PROFILE_PROCESS_REAPER_HARNESS}"
 rm -f "${PROFILE_PROCESS_REAPER_HARNESS}"
+VERIFY_PROFILE_DELETE_REAPER_HARNESS="$(mktemp)"
+{
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/verify-invariants.sh" delete_verify_colima_profile
+  cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/verify-profile-delete-reaper.sh"
+} >"${VERIFY_PROFILE_DELETE_REAPER_HARNESS}"
+/bin/bash "${VERIFY_PROFILE_DELETE_REAPER_HARNESS}"
+rm -f "${VERIFY_PROFILE_DELETE_REAPER_HARNESS}"
 COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
 {
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_profile_status

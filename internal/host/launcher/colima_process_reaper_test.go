@@ -165,6 +165,26 @@ func TestReapColimaProfileProcessesSignalsBoundIdentity(t *testing.T) {
 	}
 }
 
+func TestReapColimaProfileProcessesReapsDetachedMux(t *testing.T) {
+	fake := newReaperFake()
+	fake.profile = "wcl-live-det-test"
+	fake.processes = map[int]string{
+		42: "/opt/homebrew/bin/limactl hostagent /tmp/colima-wcl-live-det-test/ha.pid",
+		43: "ssh: /tmp/colima-wcl-live-det-test/ssh.sock [mux]",
+	}
+	fake.started = map[int]string{42: "started-42", 43: "started-43"}
+	fake.states = map[int]string{42: "R", 43: "R"}
+	fake.termRemoves = true
+
+	if err := reapColimaProfileProcesses(context.Background(), fake.profile, fake.dependencies()); err != nil {
+		t.Fatalf("reap error = %v", err)
+	}
+	want := []reaperSignal{{pid: 42, signal: syscall.SIGTERM}, {pid: 43, signal: syscall.SIGTERM}}
+	if !slices.Equal(fake.signals, want) {
+		t.Fatalf("signals = %#v, want %#v", fake.signals, want)
+	}
+}
+
 func TestReapColimaProfileProcessesPreservesGracefulShutdownWindow(t *testing.T) {
 	fake := newReaperFake()
 	deps := fake.dependencies()
