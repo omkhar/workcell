@@ -75,6 +75,38 @@ collection work.
 
 ## Practice Baseline
 
+### Core Design Heuristics
+
+These heuristics guide design choices. They do not override repository
+contracts or security invariants.
+
+- Do not repeat yourself (DRY). Keep one authoritative definition for each
+  stable rule.
+- Do not combine coincidental duplication. Extract shared behavior only after
+  evidence proves one stable rule.
+- Keep it simple (KISS). Choose the simplest design that preserves contracts,
+  invariants, diagnostics, and operations.
+- YAGNI means that a demonstrated need justifies each new feature. Add no
+  abstraction, option, or workflow without a demonstrated need.
+- SOLID groups five object-oriented design principles. Apply these principles
+  only where they fit the language and problem.
+- **Single-responsibility principle:** Give each module one cohesive
+  responsibility.
+- **Open-closed principle:** Extend stable behavior for demonstrated variation.
+  Preserve existing contracts.
+- **Liskov substitution principle:** Make each implementation preserve its
+  interface contract and observable behavior.
+- **Interface segregation principle:** Give each caller the smallest interface
+  that it needs.
+- **Dependency inversion principle:** Make high-level policy depend on stable
+  interfaces, not provider or transport details.
+- Keep related behavior and data together.
+- Minimize coupling across runtime, policy, adapter, and workflow boundaries.
+- Make dependencies, ownership, and side effects explicit.
+- Prefer clear code over clever code.
+- Delete dead code. Do not keep speculative compatibility paths.
+- Preserve compatibility unless a reviewed migration changes the contract.
+
 ### Change Design And Review
 
 - Preserve the runtime boundary before optimizing convenience or speed.
@@ -277,6 +309,9 @@ Acceptance evidence:
 - Start the lane as a scheduled or approved trial on named high-risk packages.
 - Record its duration, resource cost, findings, and false signals.
 - Add negative, property, or mutation cases for high-impact decision branches.
+- Add extended ACL rejection to the release-asset staging path.
+  Before you sign the change, publish an authorized immutable fixture release to
+  prove it.
 - Report mutation scope explicitly.
 - Produce coverage maps for selected critical Go package groups.
 - Set a ratchet only after reviewed baseline evidence supports it.
