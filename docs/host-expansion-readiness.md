@@ -93,6 +93,11 @@ One promotion change must include all these items:
 - Complete live certification on a real operator host.
 - Update operator, support, and validation documents with the same claim.
 
+The certification record must identify the exact matrix row and Docker Desktop
+version. It must record the Workcell commit SHA, worktree dirty state, host
+kernel, and cgroup mode. It must also record Docker security features, the
+command, the UTC timestamp, and cleanup status.
+
 The live certification must test the host and target that the exact matrix row
 names. It must also test the selected Docker Desktop version. The rollback must
 disable or remove the new path. Regression tests must protect the current
