@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/host/auditlog"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/keystore"
 	"github.com/omkhar/workcell/internal/ocsf"
@@ -56,6 +57,45 @@ func writeLog(t *testing.T, dir string, lines []string) string {
 		t.Fatalf("write log: %v", err)
 	}
 	return path
+}
+
+func writeSizedLog(t *testing.T, path string, size int, fill byte) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	chunk := strings.Repeat(string(fill), 64<<10)
+	for size > 0 {
+		part := chunk
+		if len(part) > size {
+			part = part[:size]
+		}
+		if _, err := file.WriteString(part); err != nil {
+			t.Fatal(err)
+		}
+		size -= len(part)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSignRejectsOversizedAuditLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workcell.audit.log")
+	writeSizedLog(t, path, auditlog.MaxLineBytes+1, 'x')
+	if _, err := SignSessionHead(filepath.Join(t.TempDir(), "signing"), path, "colima", "sess-A", "t"); err == nil || !strings.Contains(err.Error(), "line") {
+		t.Fatalf("SignSessionHead() error = %v, want oversized-line rejection", err)
+	}
+}
+
+func TestSignRejectsOversizedAuditLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workcell.audit.log")
+	writeSizedLog(t, path, auditlog.MaxLogBytes+1, '\n')
+	if _, err := SignSessionHead(filepath.Join(t.TempDir(), "signing"), path, "colima", "sess-A", "t"); err == nil || !strings.Contains(err.Error(), "maximum size") {
+		t.Fatalf("SignSessionHead() error = %v, want oversized-log rejection", err)
+	}
 }
 
 func genuineLog(t *testing.T) []record {
