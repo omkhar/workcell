@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -298,6 +299,63 @@ func WriteProfileOwner(ownerPath string, pid int) error {
 		return err
 	}
 	return os.Chmod(ownerPath, 0o600)
+}
+
+// ObserveProcessGeneration returns the observed generation for a recorded
+// process owner. It preserves support for untagged legacy ps start-time records.
+func ObserveProcessGeneration(pid int, recorded string) (string, error) {
+	switch {
+	case strings.HasPrefix(recorded, "darwin:"):
+		if !validDarwinProcessGeneration(recorded) {
+			return "", errors.New("invalid darwin process generation")
+		}
+		if runtime.GOOS != "darwin" {
+			return "", fmt.Errorf("darwin process generation does not match %s host", runtime.GOOS)
+		}
+		return processGeneration(pid)
+	case strings.HasPrefix(recorded, "linux:"):
+		if !validLinuxProcessGeneration(recorded) {
+			return "", errors.New("invalid linux process generation")
+		}
+		if runtime.GOOS != "linux" {
+			return "", fmt.Errorf("linux process generation does not match %s host", runtime.GOOS)
+		}
+		return processGeneration(pid)
+	default:
+		return ProcessStartTime(pid)
+	}
+}
+
+func validDarwinProcessGeneration(recorded string) bool {
+	seconds, microseconds, ok := strings.Cut(strings.TrimPrefix(recorded, "darwin:"), ".")
+	if !ok || !isPositiveCanonicalInt64(seconds) || len(microseconds) != 6 || !isDecimal(microseconds) {
+		return false
+	}
+	value, err := strconv.ParseUint(microseconds, 10, 32)
+	return err == nil && value <= 999_999
+}
+
+func validLinuxProcessGeneration(recorded string) bool {
+	return isPositiveCanonicalUint64(strings.TrimPrefix(recorded, "linux:"))
+}
+
+func isPositiveCanonicalInt64(value string) bool {
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return err == nil && parsed > 0 && strconv.FormatInt(parsed, 10) == value
+}
+
+func isPositiveCanonicalUint64(value string) bool {
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	return err == nil && parsed > 0 && strconv.FormatUint(parsed, 10) == value
+}
+
+func isDecimal(value string) bool {
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ProcessStartTime returns the `ps -o lstart=` value for pid, or an error
