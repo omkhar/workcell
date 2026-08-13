@@ -700,22 +700,166 @@ workcell_trim_trailing_whitespace() {
   printf '%s' "${value%"${value##*[![:space:]]}"}"
 }
 
+# The host Go check runs before credentials cross into this container.
+# No Go policy binary ships here. This immutable script rechecks copied bytes
+# before provider launch. Fixed jq decodes values. The extracted Bash harness
+# checks parity and redaction.
+workcell_gemini_env_strip_comment() {
+  local raw_value="$1"
+  local value=""
+  local character=""
+  local quote=""
+  local backslash="\\"
+  local escaped=0
+  local index=0
+
+  while [[ "${index}" -lt "${#raw_value}" ]]; do
+    character="${raw_value:${index}:1}"
+    if [[ "${escaped}" == "1" ]]; then
+      value+="${character}"
+      escaped=0
+    elif [[ "${character}" == "${backslash}" && "${quote}" == '"' ]]; then
+      value+="${character}"
+      escaped=1
+    elif [[ "${character}" == "'" || "${character}" == '"' ]]; then
+      if [[ -z "${quote}" ]]; then
+        quote="${character}"
+      elif [[ "${quote}" == "${character}" ]]; then
+        quote=""
+      fi
+      value+="${character}"
+    elif [[ "${character}" == "#" && -z "${quote}" ]]; then
+      break
+    else
+      value+="${character}"
+    fi
+    index=$((index + 1))
+  done
+
+  value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
+  printf '%s\n' "${value}"
+}
+
+workcell_gemini_env_double_quote_escapes_are_safe() {
+  local value="$1"
+  local value_length="${#value}"
+  local character=""
+  local next_character=""
+  local unicode_escape=""
+  local index=1
+
+  while [[ "${index}" -lt "$((value_length - 1))" ]]; do
+    character="${value:${index}:1}"
+    if [[ "${character}" == "\\" ]]; then
+      index=$((index + 1))
+      [[ "${index}" -lt "$((value_length - 1))" ]] || return 0
+      next_character="${value:${index}:1}"
+      case "${next_character}" in
+        /)
+          return 1
+          ;;
+        u)
+          unicode_escape="${value:$((index + 1)):4}"
+          case "${unicode_escape}" in
+            0000 | [Dd][89A-Fa-f][0-9A-Fa-f][0-9A-Fa-f])
+              return 1
+              ;;
+          esac
+          index=$((index + 4))
+          ;;
+      esac
+    fi
+    index=$((index + 1))
+  done
+
+  return 0
+}
+
+workcell_gemini_env_assignment_value() {
+  local env_path="$1"
+  local line_number="$2"
+  local raw_value="$3"
+  local value=""
+  local value_length=0
+
+  value="$(workcell_gemini_env_strip_comment "${raw_value}")"
+  [[ -n "${value}" ]] || {
+    printf '\n'
+    return 0
+  }
+
+  value_length="${#value}"
+  case "${value:0:1}" in
+    '"')
+      if [[ "${value_length}" -lt "2" ]] || [[ "${value:${value_length}-1:1}" != '"' ]]; then
+        workcell_die "Malformed Gemini auth env file ${env_path} at line ${line_number}. Use KEY=value assignments."
+      fi
+      # Use the common Go and JSON escape grammar. JSON accepts `\/`, but Go
+      # rejects it. Reject other Go-only escapes rather than reinterpret them.
+      # Bash command substitution removes NUL bytes. Reject them before jq
+      # decodes one, or a selector such as tr\\u0000ue becomes true.
+      # Reject JSON-only slash escapes and all surrogate escapes. The scanner
+      # consumes backslash pairs, so valid literal backslash text stays valid.
+      if ! workcell_gemini_env_double_quote_escapes_are_safe "${value}"; then
+        workcell_die "Malformed Gemini auth env file ${env_path} at line ${line_number}. Use KEY=value assignments."
+      fi
+      # Reject jq's invalid-byte replacement before decoding. A literal U+FFFD
+      # is deliberately stricter than the host parser. An escaped U+FFFD works.
+      if ! value="$(printf '%s' "${value}" | jq -Rer 'select((explode | index(65533)) == null) | fromjson' 2>/dev/null)"; then
+        workcell_die "Malformed Gemini auth env file ${env_path} at line ${line_number}. Use KEY=value assignments."
+      fi
+      ;;
+    "'")
+      if [[ "${value_length}" -lt "2" ]] || [[ "${value:${value_length}-1:1}" != "'" ]]; then
+        workcell_die "Malformed Gemini auth env file ${env_path} at line ${line_number}. Use KEY=value assignments."
+      fi
+      value="${value:1:$((value_length - 2))}"
+      ;;
+    *)
+      if [[ "${value:${value_length}-1:1}" == "'" || "${value:${value_length}-1:1}" == '"' ]]; then
+        workcell_die "Malformed Gemini auth env file ${env_path} at line ${line_number}. Use KEY=value assignments."
+      fi
+      ;;
+  esac
+
+  printf '%s\n' "${value}"
+}
+
+workcell_gemini_env_value_is_blank() {
+  local value="$1"
+
+  # Keep this set equal to Go strings.TrimSpace: ASCII whitespace, U+0085,
+  # U+00A0, U+1680, U+2000 through U+200A, U+2028, U+2029, U+202F, U+205F,
+  # and U+3000.
+  printf '%s' "${value}" | jq -Rse '
+    explode | all(
+      . == 9 or . == 10 or . == 11 or . == 12 or . == 13 or . == 32 or
+      . == 133 or . == 160 or . == 5760 or
+      (. >= 8192 and . <= 8202) or
+      . == 8232 or . == 8233 or . == 8239 or . == 8287 or . == 12288
+    )
+  ' >/dev/null
+}
+
 workcell_env_file_assignment_value() {
   local env_path="$1"
   local expected_key="$2"
   local line=""
   local parsed_key=""
   local value=""
+  local line_number=0
 
   [[ -f "${env_path}" ]] || return 1
 
+  # shellcheck disable=SC2094 # The loop never writes the input file.
   while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_number=$((line_number + 1))
     line="${line%$'\r'}"
     line="$(workcell_trim_leading_whitespace "${line}")"
     [[ -n "${line}" ]] || continue
     [[ "${line}" == \#* ]] && continue
 
-    if [[ "${line}" == export[[:space:]]* ]]; then
+    if [[ "${line}" == "export "* ]]; then
       line="${line#export}"
       line="$(workcell_trim_leading_whitespace "${line}")"
     fi
@@ -725,16 +869,8 @@ workcell_env_file_assignment_value() {
       value="${BASH_REMATCH[2]}"
       [[ "${parsed_key}" == "${expected_key}" ]] || continue
 
-      value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
-
-      if [[ "${value}" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ ]]; then
-        value="${BASH_REMATCH[1]}"
-      elif [[ "${value}" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
-        value="${BASH_REMATCH[1]}"
-      else
-        value="${value%%#*}"
-        value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
-      fi
+      # shellcheck disable=SC2094 # The helper reads arguments and writes only stdout.
+      value="$(workcell_gemini_env_assignment_value "${env_path}" "${line_number}" "${value}")" || return 1
 
       printf '%s\n' "${value}"
       return 0
@@ -758,7 +894,7 @@ workcell_env_file_has_assignment_key() {
     [[ -n "${line}" ]] || continue
     [[ "${line}" == \#* ]] && continue
 
-    if [[ "${line}" == export[[:space:]]* ]]; then
+    if [[ "${line}" == "export "* ]]; then
       line="${line#export}"
       line="$(workcell_trim_leading_whitespace "${line}")"
     fi
@@ -778,8 +914,8 @@ workcell_env_file_boolean_value() {
   local expected_key="$2"
   local value=""
 
-  value="$(workcell_env_file_assignment_value "${env_path}" "${expected_key}" || true)"
-  [[ -n "${value}" ]] || return 1
+  workcell_env_file_has_assignment_key "${env_path}" "${expected_key}" || return 1
+  value="$(workcell_env_file_assignment_value "${env_path}" "${expected_key}")" || return 1
   value="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
 
   case "${value}" in
@@ -788,7 +924,7 @@ workcell_env_file_boolean_value() {
       return 0
       ;;
     *)
-      workcell_die "Invalid boolean in Gemini auth env file ${env_path}: ${expected_key}=${value}. Use true or false."
+      workcell_die "Invalid boolean in Gemini auth env file ${env_path} for ${expected_key}. Use true or false."
       ;;
   esac
 }
@@ -835,52 +971,53 @@ workcell_validate_gemini_env_file_syntax() {
   local line=""
   local parsed_key=""
   local value=""
+  local line_number=0
   # Keep duplicate-key tracking compatible with host-side Bash 3.2 invariant runs.
   local seen_keys=$'\n'
 
   [[ -f "${env_path}" ]] || return 0
 
+  # Bash read drops NUL bytes. Reject them before it processes the file.
+  if ! jq -n -e --rawfile env_file "${env_path}" '$env_file | explode | index(0) == null' >/dev/null 2>&1; then
+    workcell_die "Malformed Gemini auth env file ${env_path}. Use KEY=value assignments."
+  fi
+
+  # shellcheck disable=SC2094 # The loop never writes the input file.
   while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_number=$((line_number + 1))
     line="${line%$'\r'}"
     line="$(workcell_trim_leading_whitespace "${line}")"
     [[ -n "${line}" ]] || continue
     [[ "${line}" == \#* ]] && continue
 
-    if [[ "${line}" == export[[:space:]]* ]]; then
+    if [[ "${line}" == "export "* ]]; then
       line="${line#export}"
       line="$(workcell_trim_leading_whitespace "${line}")"
     fi
 
     if ! [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
-      workcell_die "Malformed Gemini auth env file ${env_path}: ${line}. Use KEY=value assignments."
+      workcell_die "Malformed Gemini auth env file ${env_path} at line ${line_number}. Use KEY=value assignments."
     fi
 
     parsed_key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
+    if ! workcell_gemini_env_key_is_supported "${parsed_key}"; then
+      workcell_die "Unsupported key in Gemini auth env file ${env_path} at line ${line_number}."
+    fi
+
     case "${seen_keys}" in
       *$'\n'"${parsed_key}"$'\n'*)
-        workcell_die "Gemini auth env file ${env_path} configures ${parsed_key} more than once."
+        workcell_die "Gemini auth env file ${env_path} configures ${parsed_key} more than once at line ${line_number}."
         ;;
     esac
     seen_keys+="${parsed_key}"$'\n'
 
-    if ! workcell_gemini_env_key_is_supported "${parsed_key}"; then
-      workcell_die "Unsupported key in Gemini auth env file ${env_path}: ${parsed_key}."
-    fi
-
-    value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
-    if [[ "${value}" =~ ^\"(.*)\"[[:space:]]*(#.*)?$ ]]; then
-      value="${BASH_REMATCH[1]}"
-    elif [[ "${value}" =~ ^\'(.*)\'[[:space:]]*(#.*)?$ ]]; then
-      value="${BASH_REMATCH[1]}"
-    else
-      value="${value%%#*}"
-      value="$(workcell_trim_trailing_whitespace "$(workcell_trim_leading_whitespace "${value}")")"
-    fi
+    # shellcheck disable=SC2094 # The helper reads arguments and writes only stdout.
+    value="$(workcell_gemini_env_assignment_value "${env_path}" "${line_number}" "${value}")" || return 1
 
     case "${parsed_key}" in
       GEMINI_API_KEY | GOOGLE_API_KEY | GOOGLE_CLOUD_PROJECT | GOOGLE_CLOUD_PROJECT_ID | GOOGLE_CLOUD_LOCATION | GOOGLE_CLOUD_REGION | CLOUD_ML_REGION | VERTEX_LOCATION | VERTEX_AI_LOCATION)
-        if [[ -z "${value}" ]]; then
+        if workcell_gemini_env_value_is_blank "${value}"; then
           workcell_die "Gemini auth env file ${env_path} sets ${parsed_key} but leaves it empty."
         fi
         ;;
@@ -899,11 +1036,19 @@ workcell_validate_gemini_env_auth_config() {
 
   [[ -f "${env_path}" ]] || return 0
 
-  workcell_validate_gemini_env_file_syntax "${env_path}"
-  gca_value="$(workcell_env_file_boolean_value "${env_path}" "GOOGLE_GENAI_USE_GCA" || true)"
-  vertex_value="$(workcell_env_file_boolean_value "${env_path}" "GOOGLE_GENAI_USE_VERTEXAI" || true)"
-  gemini_api_key="$(workcell_env_file_assignment_value "${env_path}" "GEMINI_API_KEY" || true)"
-  google_api_key="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_API_KEY" || true)"
+  workcell_validate_gemini_env_file_syntax "${env_path}" || return 1
+  if workcell_env_file_has_assignment_key "${env_path}" "GOOGLE_GENAI_USE_GCA"; then
+    gca_value="$(workcell_env_file_boolean_value "${env_path}" "GOOGLE_GENAI_USE_GCA")" || return 1
+  fi
+  if workcell_env_file_has_assignment_key "${env_path}" "GOOGLE_GENAI_USE_VERTEXAI"; then
+    vertex_value="$(workcell_env_file_boolean_value "${env_path}" "GOOGLE_GENAI_USE_VERTEXAI")" || return 1
+  fi
+  if workcell_env_file_has_assignment_key "${env_path}" "GEMINI_API_KEY"; then
+    gemini_api_key="$(workcell_env_file_assignment_value "${env_path}" "GEMINI_API_KEY")" || return 1
+  fi
+  if workcell_env_file_has_assignment_key "${env_path}" "GOOGLE_API_KEY"; then
+    google_api_key="$(workcell_env_file_assignment_value "${env_path}" "GOOGLE_API_KEY")" || return 1
+  fi
 
   if [[ "${gca_value}" == "true" ]] && [[ "${vertex_value}" == "true" ]]; then
     workcell_die "Gemini auth env file ${env_path} enables both GOOGLE_GENAI_USE_GCA and GOOGLE_GENAI_USE_VERTEXAI. Choose exactly one auth selector."
@@ -1001,7 +1146,8 @@ workcell_env_file_value_is_true() {
   local expected_key="$2"
   local value=""
 
-  value="$(workcell_env_file_boolean_value "${env_path}" "${expected_key}" || true)"
+  workcell_env_file_has_assignment_key "${env_path}" "${expected_key}" || return 1
+  value="$(workcell_env_file_boolean_value "${env_path}" "${expected_key}")" || return 1
   [[ "${value}" == "true" ]]
 }
 
@@ -1011,6 +1157,8 @@ workcell_gemini_selected_auth_type_from_env_file() {
 
   [[ -f "${env_path}" ]] || return 1
 
+  workcell_validate_gemini_env_auth_config "${env_path}" || return 1
+
   if workcell_env_file_value_is_true "${env_path}" "GOOGLE_GENAI_USE_GCA"; then
     printf 'oauth-personal\n'
     return 0
@@ -1019,7 +1167,9 @@ workcell_gemini_selected_auth_type_from_env_file() {
     printf 'vertex-ai\n'
     return 0
   fi
-  env_value="$(workcell_env_file_assignment_value "${env_path}" "GEMINI_API_KEY" || true)"
+  if workcell_env_file_has_assignment_key "${env_path}" "GEMINI_API_KEY"; then
+    env_value="$(workcell_env_file_assignment_value "${env_path}" "GEMINI_API_KEY")" || return 1
+  fi
   if [[ -n "${env_value}" ]]; then
     printf 'gemini-api-key\n'
     return 0
@@ -1033,7 +1183,9 @@ workcell_gemini_selected_auth_type() {
   local oauth_path="$2"
   local selected_auth_type=""
 
-  selected_auth_type="$(workcell_gemini_selected_auth_type_from_env_file "${env_path}" || true)"
+  if [[ -f "${env_path}" ]]; then
+    selected_auth_type="$(workcell_gemini_selected_auth_type_from_env_file "${env_path}")" || return 1
+  fi
   if [[ -z "${selected_auth_type}" ]] && [[ -f "${oauth_path}" ]]; then
     selected_auth_type="oauth-personal"
   fi

@@ -128,7 +128,7 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 	}
 	for key, value := range values {
 		if _, ok := geminiSupportedEnvKeys[key]; !ok {
-			return nil, fmt.Errorf("unsupported key in Gemini auth env file %s: %s", source, key)
+			return nil, fmt.Errorf("gemini auth env file %s contains an unsupported key", source)
 		}
 		if key != "GOOGLE_GENAI_USE_GCA" && key != "GOOGLE_GENAI_USE_VERTEXAI" && strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("gemini auth env file %s sets %s but leaves it empty", source, key)
@@ -206,7 +206,8 @@ func parseSimpleEnvFile(source Path) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, rawLine := range strings.Split(string(data), "\n") {
+	for lineNumber, rawLine := range strings.Split(string(data), "\n") {
+		lineNumber++
 		line := strings.TrimSpace(rawLine)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -216,32 +217,48 @@ func parseSimpleEnvFile(source Path) (map[string]string, error) {
 		}
 		idx := strings.Index(line, "=")
 		if idx < 0 {
-			return nil, fmt.Errorf("malformed Gemini auth env file %s: %s; use KEY=value assignments", source, strings.TrimSpace(rawLine))
+			return nil, fmt.Errorf("malformed Gemini auth env file %s at line %d: use KEY=value assignments", source, lineNumber)
 		}
 		key := strings.TrimSpace(line[:idx])
+		if !validEnvName(key) {
+			return nil, fmt.Errorf("malformed Gemini auth env file %s at line %d: use a valid environment variable name", source, lineNumber)
+		}
 		value := tomlsubset.StripComment(line[idx+1:])
 		if _, exists := values[key]; exists {
-			return nil, fmt.Errorf("gemini auth env file %s configures %s more than once", source, key)
+			return nil, fmt.Errorf("gemini auth env file %s repeats a key at line %d", source, lineNumber)
 		}
 		if value != "" && (value[0] == '\'' || value[0] == '"') {
 			if len(value) < 2 || value[len(value)-1] != value[0] {
-				return nil, fmt.Errorf("malformed Gemini auth env file %s: %s has an unterminated quoted value", source, key)
+				return nil, fmt.Errorf("malformed Gemini auth env file %s at line %d: quoted value is not terminated", source, lineNumber)
 			}
 			if value[0] == '"' {
 				parsed, err := strconv.Unquote(value)
 				if err != nil {
-					return nil, fmt.Errorf("malformed Gemini auth env file %s: %s has an invalid double-quoted value (%v)", source, key, err)
+					return nil, fmt.Errorf("malformed Gemini auth env file %s at line %d: double-quoted value is invalid", source, lineNumber)
 				}
 				value = parsed
 			} else {
 				value = value[1 : len(value)-1]
 			}
 		} else if value != "" && (strings.HasSuffix(value, "'") || strings.HasSuffix(value, "\"")) {
-			return nil, fmt.Errorf("malformed Gemini auth env file %s: %s has an unmatched trailing quote", source, key)
+			return nil, fmt.Errorf("malformed Gemini auth env file %s at line %d: value has an unmatched trailing quote", source, lineNumber)
 		}
 		values[key] = value
 	}
 	return values, nil
+}
+
+func validEnvName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, char := range value {
+		if char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || index > 0 && char >= '0' && char <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func parseEnvBooleanValue(values map[string]string, source Path, key string) (bool, error) {
@@ -251,7 +268,7 @@ func parseEnvBooleanValue(values map[string]string, source Path, key string) (bo
 	}
 	normalized := strings.ToLower(strings.TrimSpace(raw))
 	if normalized != "true" && normalized != "false" {
-		return false, fmt.Errorf("invalid boolean in Gemini auth env file %s: %s=%s; use true or false", source, key, raw)
+		return false, fmt.Errorf("invalid boolean in Gemini auth env file %s: %s must be true or false", source, key)
 	}
 	return normalized == "true", nil
 }
