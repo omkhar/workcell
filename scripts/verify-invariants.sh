@@ -8553,7 +8553,17 @@ GEMINI_AUTH_SELECTION_STDERR="$(mktemp)"
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_trim_trailing_whitespace
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_strip_comment
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_double_quote_escapes_are_safe
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_assignment_value
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_value_is_blank
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_env_file_assignment_value
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_env_file_has_assignment_key
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/runtime/container/home-control-plane.sh" workcell_gemini_env_key_is_supported
   printf '\n'
