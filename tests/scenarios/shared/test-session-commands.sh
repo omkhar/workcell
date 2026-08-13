@@ -1,5 +1,6 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-session-scenario.XXXXXX")"
