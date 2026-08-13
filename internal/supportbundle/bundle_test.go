@@ -157,7 +157,9 @@ func writeSessionRecord(t *testing.T, profileDir, name string, rec sessions.Sess
 	if err != nil {
 		t.Fatalf("marshal session record: %v", err)
 	}
-	mustWrite(t, filepath.Join(sessionsDir, name), string(data))
+	if err := os.WriteFile(filepath.Join(sessionsDir, name), data, 0o600); err != nil {
+		t.Fatalf("write session record: %v", err)
+	}
 }
 
 func mustMkdir(t *testing.T, dir string) {

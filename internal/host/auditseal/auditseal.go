@@ -20,6 +20,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/host/auditlog"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/keystore"
 	"github.com/omkhar/workcell/internal/ocsf"
@@ -127,74 +128,12 @@ type chainRecord struct {
 // (a LATER unrelated session's line never affects it); earlier interleaved
 // records ARE verified, each decoded strictly.
 func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (string, error) {
-	data, err := os.ReadFile(auditLogPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("auditseal: no audit log for session %s", sessionID)
-		}
-		return "", err
-	}
-
-	raw := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	lines := make([]string, 0, len(raw))
-	for _, line := range raw {
-		if line = strings.TrimSpace(line); line != "" {
-			lines = append(lines, line)
-		}
-	}
-
-	// Pass 1: locate the head. A line claims this session iff it has a session_id
-	// TOKEN == sessionID (argv-safe); a claiming line that fails strict decode is
-	// same-session tamper (fail closed), a non-claiming line is skipped (L209/L280).
-	lastMatch := -1
-	for i, line := range lines {
-		// Corruption gate: a malformed field can make a record untokenizable before
-		// its session_id (the writer emits `event=` first). The genuine writer never
-		// emits one, so fail closed rather than drop an unreadable same-session
-		// tamper as a non-member (a legitimate other-session torn line tokenizes).
-		if !ocsf.AuditLineTokenizable(line, targetProvider) {
-			return "", fmt.Errorf("auditseal: audit log has an untokenizable record at line %d (corruption or tamper)", i+1)
-		}
-		if !ocsf.AuditLineClaimsSession(line, targetProvider, sessionID) {
-			continue
-		}
-		if _, err := ocsf.DecodeAuditLineStrict(line, targetProvider); err != nil {
-			return "", fmt.Errorf("auditseal: audit record for session %s is malformed: %w", sessionID, err)
-		}
-		lastMatch = i
-	}
-	if lastMatch < 0 {
-		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
-	}
-
-	// No-chain provider guard: report ErrUnsupportedAuditChain ONLY when NONE of
-	// the session's chain-region records (lines[0..lastMatch]) carries a
-	// record_digest — the genuine no-chain provider (apple-container) emits a
-	// digest on NO record. Checking only the HEAD record would let an attacker on
-	// a chained provider (colima/docker) strip the head's record_digest, or append
-	// a no-digest record claiming the session AFTER a valid chain (making it the
-	// new head), and have real tamper misreported as "unsupported/unsigned"
-	// (HasSignableChain maps ErrUnsupportedAuditChain->false). If ANY record in the
-	// region has a digest the chain exists: fall through to pass 2, which anchors
-	// at the first digest-bearing line and fails "missing record_digest" on any
-	// post-root record (including the head) that lacks one. A decode error here is
-	// genuine tamper and is surfaced as such.
-	anyDigest := false
-	for i := 0; i <= lastMatch; i++ {
-		fields, err := ocsf.DecodeAuditLineStrict(lines[i], targetProvider)
-		if err != nil {
-			return "", fmt.Errorf("auditseal: %w", err)
-		}
-		if auditFieldsHaveKey(fields, "record_digest") {
-			anyDigest = true
-			break
-		}
-	}
-	if !anyDigest {
-		return "", ErrUnsupportedAuditChain
-	}
-
-	// Pass 2: strict chain verification over records 0..lastMatch. On an upgraded
+	// Verify the chain in one bounded stream. Reopening the path for separate
+	// passes could combine records from different file states during an append.
+	// Keep the verdict at each matching record, so unrelated later records retain
+	// the existing behavior and do not affect that session's head.
+	//
+	// On an upgraded
 	// profile the audit log can have legacy entries written BEFORE record_digest
 	// existed; the append path seeds prev_digest from the last existing digest (or
 	// "" if none), so there is exactly ONE chain root = the first physical line
@@ -203,57 +142,92 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 	// at that root with expectedPrev="". After the root, a line missing
 	// record_digest is stripped-digest tamper — only the leading prefix is skippable.
 	expectedPrev := ""
-	head := ""
+	chainHead := ""
 	started := false
-	for i := 0; i <= lastMatch; i++ {
-		fields, err := ocsf.DecodeAuditLineStrict(lines[i], targetProvider)
+	matched := false
+	matchedHead := ""
+	var chainErr error
+	var matchedErr error
+	logicalLine := 0
+	err := auditlog.ForEachLine(auditLogPath, func(rawLine string, _ int) error {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			return nil
+		}
+		i := logicalLine
+		logicalLine++
+		// A malformed field can make a record untokenizable before its session ID.
+		// The writer never emits such a record, so reject it as corruption.
+		if !ocsf.AuditLineTokenizable(line, targetProvider) {
+			return fmt.Errorf("auditseal: audit log has an untokenizable record at line %d (corruption or tamper)", i+1)
+		}
+		claimsSession := ocsf.AuditLineClaimsSession(line, targetProvider, sessionID)
+		fields, err := ocsf.DecodeAuditLineStrict(line, targetProvider)
 		if err != nil {
-			return "", fmt.Errorf("auditseal: %w", err)
+			if claimsSession {
+				return fmt.Errorf("auditseal: audit record for session %s is malformed: %w", sessionID, err)
+			}
+			if chainErr == nil {
+				chainErr = fmt.Errorf("auditseal: %w", err)
+			}
+			return nil
 		}
-		rec := chainRecord{}
-		hasDigest := false
-		for _, f := range fields {
-			switch f.Key {
-			case "timestamp":
-				rec.timestamp = f.Value
-			case "prev_digest":
-				rec.prevDigest = f.Value
-			case "record_digest":
-				rec.recordDigest = f.Value
-				hasDigest = true
-			default:
-				rec.args = append(rec.args, f.Key+"="+f.Value)
+		if chainErr == nil {
+			rec := chainRecord{}
+			hasDigest := false
+			for _, f := range fields {
+				switch f.Key {
+				case "timestamp":
+					rec.timestamp = f.Value
+				case "prev_digest":
+					rec.prevDigest = f.Value
+				case "record_digest":
+					rec.recordDigest = f.Value
+					hasDigest = true
+				default:
+					rec.args = append(rec.args, f.Key+"="+f.Value)
+				}
+			}
+			if !started && hasDigest {
+				started = true
+			}
+			if started {
+				switch {
+				case rec.recordDigest == "":
+					chainErr = fmt.Errorf("auditseal: audit chain broken at record %d: missing record_digest", i)
+				case hoststate.AuditRecordDigest(rec.prevDigest, rec.timestamp, rec.args) != rec.recordDigest:
+					chainErr = fmt.Errorf("auditseal: audit chain broken at record %d: recomputed digest does not match stored record_digest", i)
+				case rec.prevDigest != expectedPrev:
+					chainErr = fmt.Errorf("auditseal: audit chain broken at record %d: prev_digest does not link to the previous record", i)
+				default:
+					expectedPrev = rec.recordDigest
+					chainHead = rec.recordDigest
+				}
 			}
 		}
-		if !started {
-			if !hasDigest {
-				continue // contiguous legacy prefix before the chain root
+		if claimsSession {
+			matched = true
+			matchedHead = chainHead
+			matchedErr = chainErr
+			if matchedErr == nil && !started {
+				matchedErr = ErrUnsupportedAuditChain
 			}
-			started = true // first line carrying a record_digest is the chain root
 		}
-		if rec.recordDigest == "" {
-			return "", fmt.Errorf("auditseal: audit chain broken at record %d: missing record_digest", i)
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("auditseal: no audit log for session %s", sessionID)
 		}
-		want := hoststate.AuditRecordDigest(rec.prevDigest, rec.timestamp, rec.args)
-		if want != rec.recordDigest {
-			return "", fmt.Errorf("auditseal: audit chain broken at record %d: recomputed digest does not match stored record_digest", i)
-		}
-		if rec.prevDigest != expectedPrev {
-			return "", fmt.Errorf("auditseal: audit chain broken at record %d: prev_digest does not link to the previous record", i)
-		}
-		expectedPrev = rec.recordDigest
-		head = rec.recordDigest
+		return "", err
 	}
-	return head, nil
-}
-
-func auditFieldsHaveKey(fields []ocsf.AuditField, key string) bool {
-	for _, f := range fields {
-		if f.Key == key {
-			return true
-		}
+	if !matched {
+		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
 	}
-	return false
+	if matchedErr != nil {
+		return "", matchedErr
+	}
+	return matchedHead, nil
 }
 
 // HasSignableChain reports whether a session's audit records form a signable

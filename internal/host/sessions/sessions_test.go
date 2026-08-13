@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/host/auditlog"
 )
 
 func TestWriteSessionRecordRoundTrip(t *testing.T) {
@@ -587,6 +589,154 @@ func TestSessionTimelineRecordsIncludesMatchingAuditLines(t *testing.T) {
 	}
 }
 
+func writeSizedAuditLog(t *testing.T, path string, size int, fill byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	chunk := strings.Repeat(string(fill), 64<<10)
+	for size > 0 {
+		part := chunk
+		if len(part) > size {
+			part = part[:size]
+		}
+		if _, err := file.WriteString(part); err != nil {
+			t.Fatal(err)
+		}
+		size -= len(part)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTimelineFixture(t *testing.T, root, auditLogPath string) {
+	t.Helper()
+	writeSessionFixture(t, filepath.Join(root, "wcl-one", "sessions", "session-1.json"), SessionRecord{
+		Version:        1,
+		SessionID:      "session-1",
+		Profile:        "wcl-one",
+		Agent:          "codex",
+		Mode:           "strict",
+		Status:         "exited",
+		Workspace:      "/tmp/workspace-a",
+		StartedAt:      "2026-04-08T10:00:00Z",
+		FinishedAt:     "2026-04-08T10:05:00Z",
+		ExitStatus:     "0",
+		FinalAssurance: "managed-mutable",
+		AuditLogPath:   auditLogPath,
+	})
+}
+
+func TestSessionTimelineRecordsRejectsOversizedAuditLine(t *testing.T) {
+	root := t.TempDir()
+	auditLogPath := filepath.Join(root, "wcl-one", "workcell.audit.log")
+	writeSizedAuditLog(t, auditLogPath, auditlog.MaxLineBytes+1, 'x')
+	writeTimelineFixture(t, root, auditLogPath)
+	if _, err := SessionTimelineRecords(root, "session-1"); err == nil || !strings.Contains(err.Error(), "line") {
+		t.Fatalf("SessionTimelineRecords() error = %v, want oversized-line rejection", err)
+	}
+}
+
+func TestSessionTimelineRecordsRejectsOversizedAuditLog(t *testing.T) {
+	root := t.TempDir()
+	auditLogPath := filepath.Join(root, "wcl-one", "workcell.audit.log")
+	writeSizedAuditLog(t, auditLogPath, auditlog.MaxLogBytes+1, '\n')
+	writeTimelineFixture(t, root, auditLogPath)
+	if _, err := SessionTimelineRecords(root, "session-1"); err == nil || !strings.Contains(err.Error(), "maximum size") {
+		t.Fatalf("SessionTimelineRecords() error = %v, want oversized-log rejection", err)
+	}
+}
+
+func TestSessionTimelineRecordsDerivesCanonicalPathWhenRecordPathEmpty(t *testing.T) {
+	root := t.TempDir()
+	auditLogPath := filepath.Join(root, "wcl-one", "workcell.audit.log")
+	if err := os.MkdirAll(filepath.Dir(auditLogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(auditLogPath, []byte("session_id=session-1 event=launch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeTimelineFixture(t, root, "")
+	timeline, err := SessionTimelineRecords(root, "session-1")
+	if err != nil {
+		t.Fatalf("SessionTimelineRecords() error = %v", err)
+	}
+	if len(timeline) != 1 || timeline[0] != "session_id=session-1 event=launch" {
+		t.Fatalf("SessionTimelineRecords() = %v, want canonical record", timeline)
+	}
+}
+
+func TestSessionExportsRejectRedirectedAuditLogPath(t *testing.T) {
+	root := t.TempDir()
+	redirected := filepath.Join(root, "outside", "workcell.audit.log")
+	if err := os.MkdirAll(filepath.Dir(redirected), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(redirected, []byte("session_id=session-1 event=redirected\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeTimelineFixture(t, root, redirected)
+	for _, name := range []string{"export", "timeline"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "export" {
+				if _, err := ExportSessionRecord(root, "session-1"); err == nil || !strings.Contains(err.Error(), "canonical") {
+					t.Fatalf("ExportSessionRecord() error = %v, want canonical-path rejection", err)
+				}
+				return
+			}
+			if _, err := SessionTimelineRecords(root, "session-1"); err == nil || !strings.Contains(err.Error(), "canonical") {
+				t.Fatalf("SessionTimelineRecords() error = %v, want canonical-path rejection", err)
+			}
+		})
+	}
+}
+
+func TestSessionExportsRejectLinkedCanonicalAuditLog(t *testing.T) {
+	for _, linkType := range []string{"symlink", "hard-link"} {
+		t.Run(linkType, func(t *testing.T) {
+			root := t.TempDir()
+			auditLogPath := filepath.Join(root, "wcl-one", "workcell.audit.log")
+			if err := os.MkdirAll(filepath.Dir(auditLogPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			decoy := filepath.Join(root, "decoy.log")
+			if err := os.WriteFile(decoy, []byte("session_id=session-1 event=decoy\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if linkType == "symlink" {
+				err = os.Symlink(decoy, auditLogPath)
+			} else {
+				err = os.Link(decoy, auditLogPath)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTimelineFixture(t, root, auditLogPath)
+
+			for _, operation := range []string{"export", "timeline"} {
+				t.Run(operation, func(t *testing.T) {
+					if operation == "export" {
+						if _, err := ExportSessionRecord(root, "session-1"); err == nil {
+							t.Fatal("ExportSessionRecord() accepted a linked audit log")
+						}
+						return
+					}
+					if _, err := SessionTimelineRecords(root, "session-1"); err == nil {
+						t.Fatal("SessionTimelineRecords() accepted a linked audit log")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestReadSessionRecordRejectsUnknownJSONField(t *testing.T) {
 	t.Parallel()
 
@@ -602,6 +752,7 @@ func TestReadSessionRecordRejectsUnknownJSONField(t *testing.T) {
   "started_at": "2026-04-08T10:00:00Z",
   "unexpected": "value"
 }
+
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -612,6 +763,38 @@ func TestReadSessionRecordRejectsUnknownJSONField(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("ReadSessionRecord() error = %v, want unknown field failure", err)
+	}
+}
+
+func TestReadSessionRecordRejectsSymlinkAndOversizedFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	realPath := filepath.Join(root, "real.json")
+	if err := os.WriteFile(realPath, []byte(`{"session_id":"outside"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(root, "link.json")
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSessionRecord(linkPath); err == nil {
+		t.Fatal("ReadSessionRecord() followed a symlink")
+	}
+	if _, err := EncodeSessionRecord(linkPath, nil); err == nil {
+		t.Fatal("EncodeSessionRecord() followed a symlink")
+	}
+
+	largePath := filepath.Join(root, "large.json")
+	large := make([]byte, MaxSessionRecordBytes+1)
+	if err := os.WriteFile(largePath, large, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSessionRecord(largePath); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("ReadSessionRecord() oversized error = %v, want size rejection", err)
+	}
+	if _, err := EncodeSessionRecord(largePath, nil); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("EncodeSessionRecord() oversized error = %v, want size rejection", err)
 	}
 }
 

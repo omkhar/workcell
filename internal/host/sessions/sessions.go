@@ -14,6 +14,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/host/auditlog"
+	"golang.org/x/sys/unix"
 )
 
 type SessionRecord struct {
@@ -73,6 +76,9 @@ type SessionRecordLocation struct {
 	Record SessionRecord
 	Path   string
 }
+
+// MaxSessionRecordBytes bounds one persisted session record read.
+const MaxSessionRecordBytes int64 = 1 << 20
 
 func SessionDiffMetadataLines(record SessionRecord) []string {
 	record = normalizeSessionRecord(record)
@@ -378,13 +384,32 @@ func WriteSessionRecord(path string, updates map[string]string) error {
 // own atomic writer while reusing this exact serialization and validation.
 // WriteSessionRecord is a thin wrapper over it, so its behavior is unchanged.
 func EncodeSessionRecord(path string, updates map[string]string) ([]byte, error) {
-	var existing []byte
-	if data, err := os.ReadFile(path); err == nil {
-		existing = data
-	} else if !errors.Is(err, os.ErrNotExist) {
+	existing, err := readSessionRecordBytes(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	return encodeSessionRecordFrom(existing, updates, path)
+}
+
+func readSessionRecordBytes(path string) ([]byte, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	abs = canonicalSystemPath(filepath.Clean(abs))
+	parentFD, err := openAbsoluteDirectory(filepath.Dir(abs), false, defaultDescriptorFS(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(parentFD)
+	// Keep diagnostics on the caller's path. The canonical path is used only
+	// for the descriptor walk, so macOS aliases such as /var do not become
+	// /private paths before the support-bundle redactor sees the error.
+	file, err := readOwnerFileAt(parentFD, filepath.Base(abs), path, "session record", MaxSessionRecordBytes, false, 1)
+	if err != nil {
+		return nil, err
+	}
+	return file.data, nil
 }
 
 // EncodeSessionRecordFrom is EncodeSessionRecord over already-read existing bytes
@@ -507,15 +532,33 @@ func encodeSessionRecordFrom(existing []byte, updates map[string]string, source 
 	if err != nil {
 		return nil, err
 	}
-	return append(data, '\n'), nil
+	data = append(data, '\n')
+	if int64(len(data)) > MaxSessionRecordBytes {
+		return nil, fmt.Errorf("%s exceeds %d bytes", source, MaxSessionRecordBytes)
+	}
+	return data, nil
 }
 
 func ReadSessionRecord(path string) (SessionRecord, error) {
-	data, err := os.ReadFile(path)
+	data, err := readSessionRecordBytes(path)
 	if err != nil {
 		return SessionRecord{}, err
 	}
 	return DecodeSessionRecord(data, path)
+}
+
+// canonicalSystemPath removes platform aliases such as macOS /var and /tmp.
+// It does not resolve arbitrary descendants, so the descriptor walk can still
+// reject mutable state-directory symlinks.
+func canonicalSystemPath(path string) string {
+	for _, alias := range []string{"/var", "/tmp"} {
+		physical, err := filepath.EvalSymlinks(alias)
+		if err != nil || physical == alias || (path != alias && !strings.HasPrefix(path, alias+string(filepath.Separator))) {
+			continue
+		}
+		return physical + strings.TrimPrefix(path, alias)
+	}
+	return path
 }
 
 // DecodeSessionRecord parses, normalizes, and validates a session record from its
@@ -757,6 +800,7 @@ func FindSessionRecordInRoots(roots []string, sessionID string) (SessionRecord, 
 	return record, err
 }
 
+// FindSessionRecordWithPathInRoots finds one session and its canonical record path.
 func FindSessionRecordWithPathInRoots(roots []string, sessionID string) (SessionRecord, string, error) {
 	locations, err := ListSessionRecordLocationsInRoots(roots, SessionListOptions{})
 	if err != nil {
@@ -784,12 +828,16 @@ func ExportSessionRecord(root, sessionID string) (SessionExport, error) {
 }
 
 func ExportSessionRecordInRoots(roots []string, sessionID string) (SessionExport, error) {
-	record, err := FindSessionRecordInRoots(roots, sessionID)
+	record, recordPath, err := FindSessionRecordWithPathInRoots(roots, sessionID)
 	if err != nil {
 		return SessionExport{}, err
 	}
 
-	records, err := SessionAuditRecords(record)
+	auditLogPath, err := canonicalAuditLogPath(record, recordPath)
+	if err != nil {
+		return SessionExport{}, err
+	}
+	records, err := sessionAuditRecords(record, auditLogPath)
 	if err != nil {
 		return SessionExport{}, err
 	}
@@ -801,36 +849,39 @@ func SessionTimelineRecords(root, sessionID string) ([]string, error) {
 }
 
 func SessionTimelineRecordsInRoots(roots []string, sessionID string) ([]string, error) {
-	record, err := FindSessionRecordInRoots(roots, sessionID)
+	record, recordPath, err := FindSessionRecordWithPathInRoots(roots, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	return SessionAuditRecords(record)
+	auditLogPath, err := canonicalAuditLogPath(record, recordPath)
+	if err != nil {
+		return nil, err
+	}
+	return sessionAuditRecords(record, auditLogPath)
 }
 
-func SessionAuditRecords(record SessionRecord) ([]string, error) {
-	if record.AuditLogPath == "" {
-		return []string{}, nil
+func canonicalAuditLogPath(record SessionRecord, recordPath string) (string, error) {
+	canonical := filepath.Join(filepath.Dir(filepath.Dir(recordPath)), "workcell.audit.log")
+	if strings.TrimSpace(record.AuditLogPath) != "" && filepath.Clean(record.AuditLogPath) != filepath.Clean(canonical) {
+		return "", fmt.Errorf("session %q audit log path does not match its canonical location", record.SessionID)
 	}
+	return canonical, nil
+}
 
-	data, err := os.ReadFile(record.AuditLogPath)
+func sessionAuditRecords(record SessionRecord, auditLogPath string) ([]string, error) {
+	records := make([]string, 0)
+	err := auditlog.ForEachLine(auditLogPath, func(rawLine string, _ int) error {
+		line := strings.TrimSpace(rawLine)
+		if line != "" && auditLineHasSessionID(line, record.SessionID) {
+			records = append(records, line)
+		}
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return []string{}, nil
 		}
 		return nil, err
-	}
-
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	records := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if auditLineHasSessionID(line, record.SessionID) {
-			records = append(records, line)
-		}
 	}
 	return records, nil
 }
