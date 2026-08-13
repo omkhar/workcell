@@ -61,9 +61,6 @@ func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
 		}
 		entryHash := hoststate.DirectMountCacheKey(mount.Source, mount.MountPath)
 		stagedSource := filepath.Join(stagedRoot, entryHash)
-		if err := os.RemoveAll(stagedSource); err != nil {
-			return nil, err
-		}
 		if err := stageDirectMountEntry(mount.Source, stagedSource); err != nil {
 			return nil, err
 		}
@@ -163,7 +160,7 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 
 	switch kind {
 	case directMountSourceDir:
-		if err := os.MkdirAll(stagedSource, 0o755); err != nil {
+		if err := os.Mkdir(stagedSource, 0o700); err != nil {
 			return err
 		}
 		return copyDirContents(source, filepath.Clean(hostSource), stagedSource)
@@ -193,6 +190,10 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 // opened with openat(O_NOFOLLOW), so a parent path swapped after validation
 // cannot redirect staging to a different host tree.
 func copyDirContents(src *os.File, srcDisplay, dst string) error {
+	return copyDirContentsWithState(src, srcDisplay, dst, newInjectionDestinationState())
+}
+
+func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState) error {
 	entries, err := src.ReadDir(-1)
 	if err != nil {
 		return err
@@ -222,11 +223,15 @@ func copyDirContents(src *os.File, srcDisplay, dst string) error {
 		}
 		switch kind {
 		case directMountSourceDir:
-			if err := os.MkdirAll(target, childMode); err != nil {
+			if err := state.reserve(target, "directory"); err != nil {
 				child.Close()
 				return err
 			}
-			if err := copyDirContents(child, displayPath, target); err != nil {
+			if err := os.Mkdir(target, childMode); err != nil {
+				child.Close()
+				return err
+			}
+			if err := copyDirContentsWithState(child, displayPath, target, state); err != nil {
 				child.Close()
 				return err
 			}
@@ -234,6 +239,10 @@ func copyDirContents(src *os.File, srcDisplay, dst string) error {
 				return err
 			}
 		case directMountSourceRegular:
+			if err := state.reserve(target, "regular file"); err != nil {
+				child.Close()
+				return err
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				child.Close()
 				return err
@@ -267,7 +276,7 @@ func copyFileWithMode(src, dst string, _ os.FileMode) error {
 }
 
 func copyOpenFileWithMode(in *os.File, dst string, mode os.FileMode) error {
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, mode)
 	if err != nil {
 		return err
 	}
