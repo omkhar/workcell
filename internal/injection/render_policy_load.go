@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
@@ -175,6 +176,9 @@ func loadPolicyMetadataOverride(rawPath string) (string, []PolicySource, error) 
 // table whitelist (documents/ssh/credentials).
 func parseTOMLSubset(content string, policyPath Path) (map[string]any, error) {
 	policy := policyPath.String()
+	if !utf8.ValidString(content) {
+		return nil, fmt.Errorf("%s must contain valid UTF-8", policy)
+	}
 	subsetContent, copiesEntries, err := extractCopiesBlocks(content, policy)
 	if err != nil {
 		return nil, err

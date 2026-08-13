@@ -130,6 +130,9 @@ func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode st
 		if _, reserved := reservedSSHFilnames[source.Base()]; reserved {
 			return nil, fmt.Errorf("ssh.identities[%d] basename collides with a reserved SSH file: %s", index, source.Base())
 		}
+		if err := validateManifestPathField(source.Base(), fmt.Sprintf("ssh.identities[%d] basename", index)); err != nil {
+			return nil, err
+		}
 		if _, exists := seenIdentityTargets[source.Base()]; exists {
 			return nil, fmt.Errorf("ssh.identities contains duplicate target basename: %s", source.Base())
 		}

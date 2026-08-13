@@ -6,6 +6,7 @@ package injection
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/providerid"
+	"golang.org/x/sys/unix"
 )
 
 // allowedCopyEntryKeys is the parser-accepted key set for a single `[[copies]]`
@@ -144,15 +146,16 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 }
 
 func copySource(source, destination Path) (string, error) {
-	info, err := os.Stat(source.String())
+	sourceFile, _, kind, err := openDirectMountSource(source.String())
 	if err != nil {
 		return "", err
 	}
-	if info.IsDir() {
-		if err := ensureNoSymlinksWithin(source); err != nil {
+	defer sourceFile.Close()
+	if kind == directMountSourceDir {
+		if err := os.MkdirAll(destination.Parent().String(), 0o755); err != nil {
 			return "", err
 		}
-		if err := os.MkdirAll(destination.String(), 0o700); err != nil {
+		if err := os.Mkdir(destination.String(), 0o700); err != nil {
 			return "", err
 		}
 		destinationRoot, err := os.OpenRoot(destination.String())
@@ -160,38 +163,7 @@ func copySource(source, destination Path) (string, error) {
 			return "", err
 		}
 		defer destinationRoot.Close()
-		if err := filepath.Walk(source.String(), func(current string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(source.String(), current)
-			if err != nil {
-				return err
-			}
-			if rel == "." {
-				return nil
-			}
-			rel = filepath.Clean(rel)
-			if info.IsDir() {
-				if err := destinationRoot.MkdirAll(rel, 0o755); err != nil {
-					return err
-				}
-				return destinationRoot.Chmod(rel, 0o700)
-			}
-			data, err := os.ReadFile(current)
-			if err != nil {
-				return err
-			}
-			if parent := filepath.Dir(rel); parent != "." {
-				if err := destinationRoot.MkdirAll(parent, 0o755); err != nil {
-					return err
-				}
-			}
-			if err := destinationRoot.WriteFile(rel, data, 0o600); err != nil {
-				return err
-			}
-			return destinationRoot.Chmod(rel, 0o600)
-		}); err != nil {
+		if err := copyOpenDirectoryToRoot(sourceFile, destinationRoot, source.String(), ".", openDirectMountChild); err != nil {
 			return "", err
 		}
 		if err := os.Chmod(destination.String(), 0o700); err != nil {
@@ -199,7 +171,7 @@ func copySource(source, destination Path) (string, error) {
 		}
 		return "dir", nil
 	}
-	if !info.Mode().IsRegular() {
+	if kind != directMountSourceRegular {
 		return "", fmt.Errorf("injection source must be a file or directory: %s", source)
 	}
 	if err := os.MkdirAll(destination.Parent().String(), 0o755); err != nil {
@@ -210,17 +182,124 @@ func copySource(source, destination Path) (string, error) {
 		return "", err
 	}
 	defer parentRoot.Close()
-	data, err := os.ReadFile(source.String())
+	data, err := io.ReadAll(sourceFile)
 	if err != nil {
 		return "", err
 	}
-	if err := parentRoot.WriteFile(destination.Base(), data, 0o600); err != nil {
+	if err := writeFileExclusive(parentRoot, destination.Base(), data, 0o600); err != nil {
 		return "", err
 	}
 	if err := parentRoot.Chmod(destination.Base(), 0o600); err != nil {
 		return "", err
 	}
 	return "file", nil
+}
+
+// copyOpenDirectoryToRoot copies an already-open source directory. Each
+// descendant is opened from its parent descriptor without following links.
+func copyOpenDirectoryToRoot(
+	source *os.File,
+	destination *os.Root,
+	sourceDisplay, relative string,
+	openChild func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error),
+) error {
+	return copyOpenDirectoryToRootWithState(source, destination, sourceDisplay, relative, openChild, newInjectionDestinationState())
+}
+
+func copyOpenDirectoryToRootWithState(
+	source *os.File,
+	destination *os.Root,
+	sourceDisplay, relative string,
+	openChild func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error),
+	state *injectionDestinationState,
+) error {
+	entries, err := source.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		displayPath := filepath.Join(sourceDisplay, entry.Name())
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("injection source must not contain a symbolic link: %s", displayPath)
+		}
+		child, _, kind, err := openChild(source, entry.Name(), displayPath)
+		if err != nil {
+			if errors.Is(err, unix.ELOOP) {
+				return fmt.Errorf("injection source must not contain a symbolic link: %s", displayPath)
+			}
+			return fmt.Errorf("open injection source entry %s: %w", displayPath, err)
+		}
+		childRelative := filepath.Join(relative, entry.Name())
+		switch kind {
+		case directMountSourceDir:
+			err = state.reserve(childRelative, "directory")
+			if err == nil {
+				err = destination.Mkdir(childRelative, 0o700)
+			}
+			if err == nil {
+				err = copyOpenDirectoryToRootWithState(child, destination, displayPath, childRelative, openChild, state)
+			}
+		case directMountSourceRegular:
+			var data []byte
+			data, err = io.ReadAll(child)
+			if err == nil {
+				err = state.reserve(childRelative, "regular file")
+			}
+			if err == nil {
+				err = writeFileExclusive(destination, childRelative, data, 0o600)
+			}
+		default:
+			err = fmt.Errorf("injection source contains an unsupported entry: %s", displayPath)
+		}
+		closeErr := child.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+// injectionDestinationState reserves each target path before it is created.
+// The key is case-insensitive because the standard Apple filesystem treats
+// `A` and `a` as the same destination. Unicode normalization is separate work.
+type injectionDestinationState struct {
+	paths map[string]string
+}
+
+func newInjectionDestinationState() *injectionDestinationState {
+	return &injectionDestinationState{paths: make(map[string]string)}
+}
+
+func (s *injectionDestinationState) reserve(path, kind string) error {
+	key := strings.ToLower(filepath.Clean(path))
+	if previous, exists := s.paths[key]; exists {
+		return fmt.Errorf("injection destination path collision between %s and %s", previous, path)
+	}
+	s.paths[key] = fmt.Sprintf("%s (%s)", path, kind)
+	return nil
+}
+
+func writeFileExclusive(root *os.Root, path string, data []byte, perm os.FileMode) (retErr error) {
+	file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, closeErr)
+		}
+	}()
+	written, err := file.Write(data)
+	if err != nil {
+		return err
+	}
+	if written != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func stageFile(source, outputRoot Path, relpath string) error {
@@ -235,17 +314,28 @@ func stageFile(source, outputRoot Path, relpath string) error {
 			return err
 		}
 	}
-	data, err := os.ReadFile(source.String())
+	sourceFile, _, kind, err := openDirectMountSource(source.String())
 	if err != nil {
 		return err
 	}
-	if err := root.WriteFile(relpath, data, 0o600); err != nil {
+	defer sourceFile.Close()
+	if kind != directMountSourceRegular {
+		return fmt.Errorf("injection source must be a file: %s", source)
+	}
+	data, err := io.ReadAll(sourceFile)
+	if err != nil {
+		return err
+	}
+	if err := writeFileExclusive(root, relpath, data, 0o600); err != nil {
 		return err
 	}
 	return root.Chmod(relpath, 0o600)
 }
 
 func validateContainerTarget(candidate string) (string, error) {
+	if err := validateManifestPathField(candidate, "injection target"); err != nil {
+		return "", err
+	}
 	if containsParentPathSegment(candidate) {
 		return "", fmt.Errorf("injection target must not contain parent path segments: %s", candidate)
 	}

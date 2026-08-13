@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/omkhar/workcell/internal/host/authstate"
 	"github.com/omkhar/workcell/internal/pathutil"
@@ -118,8 +120,14 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 	if !ok || rawStr == "" {
 		return Path(""), fmt.Errorf("%s must be a non-empty string path", label)
 	}
+	if err := validateManifestPathField(rawStr, label); err != nil {
+		return Path(""), err
+	}
 	source, err := expandHostPath(rawStr, base)
 	if err != nil {
+		return Path(""), err
+	}
+	if err := validateManifestPathField(source.String(), label); err != nil {
 		return Path(""), err
 	}
 	info, err := os.Stat(source.String())
@@ -145,6 +153,20 @@ func validateSourcePath(raw any, label string, base Path) (Path, error) {
 		}
 	}
 	return source, nil
+}
+
+// validateManifestPathField rejects values that cannot safely pass through the
+// line- and unit-separator-delimited manifest readers in the runtime.
+func validateManifestPathField(value, label string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%s must contain valid UTF-8", label)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return fmt.Errorf("%s must not contain control or line-separator characters", label)
+		}
+	}
+	return nil
 }
 
 func expandHostPath(raw string, base Path) (Path, error) {
