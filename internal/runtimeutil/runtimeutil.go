@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	maxRuntimeManifestBytes        = rootio.MaxManifestBytes
-	maxRuntimeMountSpecBytes int64 = 1 * 1024 * 1024
+	maxRuntimeManifestBytes  = rootio.MaxManifestBytes
+	maxRuntimeMountSpecBytes = rootio.MaxDirectMountSpecBytes
 )
 
 type DirectMount struct {
@@ -143,10 +143,9 @@ func RewriteBundleCredentialOverride(manifestPath, mountSpecPath, credentialKey,
 	}
 	credential["source"] = overrideSource
 
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	data, err := rootio.MarshalCompactJSON(manifest, "bundle manifest", maxRuntimeManifestBytes)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
 	return rootio.WriteFileAtomicAtNoFollow(manifestParent, manifestName, data, 0o600, ".workcell-manifest-")
 }

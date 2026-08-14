@@ -5,6 +5,7 @@ package rootio
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,13 +18,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// MaxManifestBytes is the maximum accepted size for one runtime or injection
-// manifest. Callers use it for metadata JSON that describes the same bundle.
-const MaxManifestBytes int64 = 16 * 1024 * 1024
+const (
+	// MaxManifestBytes is the maximum accepted size for one runtime or injection
+	// manifest. Callers use it for metadata JSON that describes the same bundle.
+	MaxManifestBytes int64 = 16 * 1024 * 1024
+	// MaxDirectMountSpecBytes is the maximum accepted size for one direct-mount
+	// specification.
+	MaxDirectMountSpecBytes int64 = 1 * 1024 * 1024
+)
 
-// OpenParentDirectoryNoFollow opens every component of path's parent through
-// directory descriptors. It rejects parent symlinks and returns the cleaned
-// absolute path with the descriptor that names its parent.
+// OpenParentDirectoryNoFollow uses descriptors for the parent and rejects parent symlinks.
 func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 	cleaned, err := filepath.Abs(path)
 	if err != nil {
@@ -35,7 +39,6 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 	if parent != string(filepath.Separator) {
 		components = strings.Split(strings.TrimPrefix(parent, string(filepath.Separator)), string(filepath.Separator))
 	}
-
 	fd, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, "", err
@@ -48,7 +51,6 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 		}
 		fd = nextFD
 	}
-
 	parentFile := os.NewFile(uintptr(fd), parent)
 	if parentFile == nil {
 		_ = unix.Close(fd)
@@ -76,7 +78,6 @@ func ReadFileAtNoFollow(parent *os.File, name, label string, limit int64) ([]byt
 	if limit < 0 {
 		return nil, fmt.Errorf("%s has an invalid byte limit", label)
 	}
-
 	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
@@ -87,7 +88,6 @@ func ReadFileAtNoFollow(parent *os.File, name, label string, limit int64) ([]byt
 		return nil, fmt.Errorf("open %s: %s", label, name)
 	}
 	defer file.Close()
-
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -112,6 +112,42 @@ func ReadFileAtNoFollow(parent *os.File, name, label string, limit int64) ([]byt
 	return data, nil
 }
 
+// SameFileAtNoFollow compares existing leaf inodes without following symlinks.
+func SameFileAtNoFollow(firstParent *os.File, firstName string, secondParent *os.File, secondName string) (bool, error) {
+	if err := validateLeafName(firstName); err != nil {
+		return false, err
+	}
+	if err := validateLeafName(secondName); err != nil {
+		return false, err
+	}
+	var first, second unix.Stat_t
+	if err := unix.Fstatat(int(firstParent.Fd()), firstName, &first, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return false, err
+	}
+	if err := unix.Fstatat(int(secondParent.Fd()), secondName, &second, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return false, nil
+		}
+		return false, err
+	}
+	return first.Dev == second.Dev && first.Ino == second.Ino, nil
+}
+
+// MarshalCompactJSON returns compact newline-terminated JSON when it fits limit.
+func MarshalCompactJSON(value any, label string, limit int64) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("%s has an invalid byte limit", label)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) >= limit {
+		return nil, fmt.Errorf("%s exceeds the byte limit of %d", label, limit)
+	}
+	return append(data, '\n'), nil
+}
+
 // WriteFileAtomicAtNoFollow replaces name from an already trusted parent.
 // It writes a unique sibling with O_EXCL, sets mode before publication, then
 // uses renameat. renameat replaces a swapped leaf symlink instead of following it.
@@ -125,7 +161,6 @@ func WriteFileAtomicAtNoFollow(parent *os.File, name string, data []byte, mode o
 	if strings.Contains(tempPrefix, string(filepath.Separator)) {
 		return fmt.Errorf("temporary-file prefix must not contain a path separator: %s", tempPrefix)
 	}
-
 	parentFD := int(parent.Fd())
 	for attempt := 0; attempt < 32; attempt++ {
 		suffix, err := randomSuffix()
@@ -140,14 +175,12 @@ func WriteFileAtomicAtNoFollow(parent *os.File, name string, data []byte, mode o
 		if err != nil {
 			return err
 		}
-
 		file := os.NewFile(uintptr(fd), filepath.Join(parent.Name(), temporaryName))
 		if file == nil {
 			_ = unix.Close(fd)
 			_ = unix.Unlinkat(parentFD, temporaryName, 0)
 			return fmt.Errorf("create temporary file for %s", name)
 		}
-
 		if _, err := io.Copy(file, bytes.NewReader(data)); err != nil {
 			_ = file.Close()
 			_ = unix.Unlinkat(parentFD, temporaryName, 0)

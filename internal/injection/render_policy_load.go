@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/omkhar/workcell/internal/injectionpolicy"
+	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -119,11 +120,11 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 }
 
 func loadPolicyMetadataOverride(rawPath string) (string, []PolicySource, error) {
-	resolved, err := resolveAbsPath(rawPath)
+	resolved, err := pathutil.ExpandUserPathStrictRequireNonEmpty(rawPath)
 	if err != nil {
 		return "", nil, err
 	}
-	data, err := os.ReadFile(resolved)
+	data, err := rootio.ReadFileNoFollow(resolved, "policy metadata override", rootio.MaxManifestBytes)
 	if err != nil {
 		return "", nil, err
 	}

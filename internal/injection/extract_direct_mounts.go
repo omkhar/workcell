@@ -44,11 +44,11 @@ func RunExtractDirectMounts(manifestPath, mountSpecPath string) error {
 // the read through the atomic replacement. beforeManifestWrite is a test seam
 // for deterministic leaf mutation checks; production callers pass nil.
 func runExtractDirectMounts(manifestPath, mountSpecPath string, beforeManifestWrite func() error) error {
-	manifestInputPath, err := absoluteInputPath(manifestPath)
+	manifestInputPath, err := pathutil.ExpandUserPathStrictRequireNonEmpty(manifestPath)
 	if err != nil {
 		return err
 	}
-	mountSpecOutputPath, err := absoluteInputPath(mountSpecPath)
+	mountSpecOutputPath, err := pathutil.ExpandUserPathStrictRequireNonEmpty(mountSpecPath)
 	if err != nil {
 		return err
 	}
@@ -58,22 +58,42 @@ func runExtractDirectMounts(manifestPath, mountSpecPath string, beforeManifestWr
 		return err
 	}
 	defer manifestParent.Close()
-
-	directMounts, err := collectDirectMounts(manifest)
-	if err != nil {
-		return err
-	}
-
-	if err := writeIndentedJSONAtNoFollow(manifestParent, manifestName, manifest, 0o600, beforeManifestWrite); err != nil {
-		return err
-	}
-
 	mountSpecParent, cleanedMountSpecPath, err := rootio.OpenParentDirectoryNoFollow(mountSpecOutputPath)
 	if err != nil {
 		return err
 	}
 	defer mountSpecParent.Close()
-	if err := writeIndentedJSONAtNoFollow(mountSpecParent, filepath.Base(cleanedMountSpecPath), directMounts, 0o600, nil); err != nil {
+	mountSpecName := filepath.Base(cleanedMountSpecPath)
+	sameFile, err := rootio.SameFileAtNoFollow(manifestParent, manifestName, mountSpecParent, mountSpecName)
+	if err != nil {
+		return err
+	}
+	if sameFile {
+		return fmt.Errorf("direct mount specification must not alias injection manifest")
+	}
+
+	directMounts, err := collectDirectMounts(manifest)
+	if err != nil {
+		return err
+	}
+	manifestData, err := marshalInjectionManifest(manifest)
+	if err != nil {
+		return err
+	}
+	mountSpecData, err := marshalInjectionMountSpec(directMounts)
+	if err != nil {
+		return err
+	}
+
+	if err := writeJSONAtNoFollow(mountSpecParent, mountSpecName, mountSpecData, 0o600); err != nil {
+		return err
+	}
+	if beforeManifestWrite != nil {
+		if err := beforeManifestWrite(); err != nil {
+			return err
+		}
+	}
+	if err := writeJSONAtNoFollow(manifestParent, manifestName, manifestData, 0o600); err != nil {
 		return err
 	}
 	return nil
@@ -193,30 +213,8 @@ func openJSONObjectForRewrite(path string) (*os.File, string, map[string]any, er
 	return parent, name, manifest, nil
 }
 
-func writeIndentedJSONAtNoFollow(parent *os.File, name string, value any, mode os.FileMode, beforeWrite func() error) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if beforeWrite != nil {
-		if err := beforeWrite(); err != nil {
-			return err
-		}
-	}
+func writeJSONAtNoFollow(parent *os.File, name string, data []byte, mode os.FileMode) error {
 	return rootio.WriteFileAtomicAtNoFollow(parent, name, data, mode, ".workcell-manifest-")
-}
-
-func absoluteInputPath(raw string) (string, error) {
-	expanded, err := pathutil.ExpandUserPathStrictRequireNonEmpty(raw)
-	if err != nil {
-		return "", err
-	}
-	absolute, err := filepath.Abs(expanded)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(absolute), nil
 }
 
 func asObjectMap(value any, label string) (map[string]any, error) {

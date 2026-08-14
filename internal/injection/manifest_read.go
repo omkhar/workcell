@@ -7,12 +7,23 @@ import (
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
-// maxInjectionManifestBytes bounds each generated manifest read. It matches
-// the maximum selected injection file size.
-const maxInjectionManifestBytes = rootio.MaxManifestBytes
+const (
+	// maxInjectionManifestBytes bounds each generated manifest read and write.
+	maxInjectionManifestBytes = rootio.MaxManifestBytes
+	// maxInjectionMountSpecBytes bounds each generated direct-mount specification.
+	maxInjectionMountSpecBytes = rootio.MaxDirectMountSpecBytes
+)
 
 // readInjectionManifest opens the full path through descriptors. It rejects
 // leaf and parent symlinks before it reads one regular file.
 func readInjectionManifest(path string) ([]byte, error) {
 	return rootio.ReadFileNoFollow(path, "injection manifest", maxInjectionManifestBytes)
+}
+
+func marshalInjectionManifest(value any) ([]byte, error) {
+	return rootio.MarshalCompactJSON(value, "injection manifest", maxInjectionManifestBytes)
+}
+
+func marshalInjectionMountSpec(value any) ([]byte, error) {
+	return rootio.MarshalCompactJSON(value, "direct mount specification", maxInjectionMountSpecBytes)
 }

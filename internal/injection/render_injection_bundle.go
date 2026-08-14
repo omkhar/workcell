@@ -18,6 +18,7 @@ import (
 	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/providerid"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 const (
@@ -117,6 +118,12 @@ func ValidateRenderAgentMode(agent, mode string) error {
 }
 
 func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadata string) error {
+	return runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadata, nil)
+}
+
+// runRenderInjectionBundle keeps the manifest parent descriptor open through
+// publication. beforeManifestWrite gives tests a deterministic leaf-swap seam.
+func runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadata string, beforeManifestWrite func() error) error {
 	resolvedPolicyPath, err := resolveAbsPath(policyPath)
 	if err != nil {
 		return err
@@ -211,7 +218,7 @@ func RunRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 	}
 
 	manifestPath := filepath.Join(resolvedOutputRoot, "manifest.json")
-	if err := writeIndentedJSON(manifestPath, manifest, 0o600); err != nil {
+	if err := writeCompactJSON(manifestPath, manifest, 0o600, beforeManifestWrite); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout, manifestPath)
@@ -461,16 +468,22 @@ func sshMountSource(renderedSSH map[string]any, key string) (source, mountPath s
 	return "", "", false
 }
 
-func writeIndentedJSON(pathname string, value any, mode os.FileMode) error {
-	data, err := json.MarshalIndent(value, "", "  ")
+func writeCompactJSON(pathname string, value any, mode os.FileMode, beforeWrite func() error) error {
+	data, err := marshalInjectionManifest(value)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	if err := os.WriteFile(pathname, data, mode); err != nil {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(pathname)
+	if err != nil {
 		return err
 	}
-	return os.Chmod(pathname, mode)
+	defer parent.Close()
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return err
+		}
+	}
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(cleaned), data, mode, ".workcell-manifest-")
 }
 
 func secretCopyTargets(renderedCopies []map[string]any) []string {
