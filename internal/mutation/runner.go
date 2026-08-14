@@ -94,6 +94,55 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/injection"),
 	},
 	{
+		relativePath: "internal/injectionpolicy/reader.go",
+		original:     "flags := unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC | unix.O_NONBLOCK",
+		replacement:  "flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NONBLOCK",
+		label:        "injection policy no-follow open",
+		command:      goCmd("test", "./internal/injection"),
+	},
+	{
+		relativePath: "internal/injectionpolicy/reader.go",
+		original:     "if err := rejectPolicyACL(int(file.Fd())); err != nil {",
+		replacement:  "if err := rejectPolicyACL(int(file.Fd())); false && err != nil {",
+		label:        "injection policy ACL proof",
+		command:      goCmd("test", "./internal/injectionpolicy"),
+	},
+	{
+		relativePath: "internal/injectionpolicy/reader.go",
+		original:     "if r.files >= r.fileLimitCount {",
+		replacement:  "if false {",
+		label:        "injection policy file limit",
+		command:      goCmd("test", "./internal/injection"),
+	},
+	{
+		relativePath: "internal/injectionpolicy/reader.go",
+		original:     "if snapshot, ok := r.snapshots[path]; ok {",
+		replacement:  "if snapshot, ok := r.snapshots[path]; false && ok {",
+		label:        "injection policy snapshot reuse",
+		command:      goCmd("test", "./internal/injection"),
+	},
+	{
+		relativePath: "internal/injection/render_policy_load.go",
+		original:     "Sha256:   file.Sha256,",
+		replacement:  "Sha256: \"\",",
+		label:        "injection policy digest binding",
+		command:      goCmd("test", "./internal/injection"),
+	},
+	{
+		relativePath: "internal/injectionpolicy/reader.go",
+		original:     "confirmed, err := io.ReadAll(io.LimitReader(file, limit+1))",
+		replacement:  "confirmed := data",
+		label:        "injection policy confirmation read",
+		command:      goCmd("test", "./internal/injectionpolicy"),
+	},
+	{
+		relativePath: "internal/injectionpolicy/reader.go",
+		original:     "return before.dev == after.dev && before.ino == after.ino && before.mode == after.mode && before.uid == after.uid && before.gid == after.gid && before.nlink == after.nlink && before.size == after.size && before.modTime == after.modTime && before.changeTime == after.changeTime",
+		replacement:  "return true",
+		label:        "injection policy metadata comparison",
+		command:      goCmd("test", "./internal/injectionpolicy"),
+	},
+	{
 		relativePath: "internal/injection/render_injection_bundle.go",
 		original:     `"sendenv":             {},`,
 		replacement:  `// "sendenv":             {},`,
@@ -224,7 +273,7 @@ func runGoHelperMutations(repoRoot string) (killed, total int, survivors []strin
 			}
 			defer os.RemoveAll(tempRoot)
 
-			for _, relativePath := range []string{"cmd", "internal", "go.mod", "go.sum"} {
+			for _, relativePath := range []string{"adapters", "cmd", "docs", "internal", "policy", "go.mod", "go.sum"} {
 				if err := copyIntoTempRoot(repoRoot, tempRoot, relativePath); err != nil {
 					results <- result{label: tc.label, err: err}
 					return

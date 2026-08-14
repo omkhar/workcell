@@ -697,6 +697,19 @@ func TestGeminiProjectsOnlyStatusIsSupplemental(t *testing.T) {
 	mustContain(t, got.stdout, "provider_bootstrap_next_step=stage-reviewed-gemini-env-or-oauth")
 }
 
+func TestIncludedCredentialUsesAcceptedSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	policy, fragment := filepath.Join(dir, "policy.toml"), filepath.Join(dir, "fragment.toml")
+	writeFile(t, policy, "version = 1\nincludes = [\"fragment.toml\"]\n", 0o600)
+	writeFile(t, fragment, "version = 1\n[credentials.codex_auth]\nsource = \"/tmp/auth\"\n", 0o600)
+	afterCredentialBundleRead = func() { writeFile(t, fragment, "version = 1\n", 0o600) }
+	t.Cleanup(func() { afterCredentialBundleRead = nil })
+	err := ensureCredentialNotOnlyInIncludes(policy, map[string]any{}, "codex_auth", "set")
+	if err == nil || !strings.Contains(err.Error(), ": fragment.toml") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestSharedCredentialsAreScopedToRequestedAgent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -139,6 +139,27 @@ func TestPolicyMainShowRendersPolicy(t *testing.T) {
 	}
 }
 
+func TestPolicyMainDiffPinsEntrypointSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.toml")
+	if err := os.WriteFile(path, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	afterDiffEntrypointRead = func() {
+		if err := os.WriteFile(path, []byte("version = 1\n\n[network]\nallow_endpoints = [\"registry.example.test:443\"]\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { afterDiffEntrypointRead = nil })
+	var stdout, stderr bytes.Buffer
+	if err := runPolicyMain([]string{"diff", "--injection-policy", path}, &stdout, &stderr); err != nil {
+		t.Fatalf("diff: %v stderr=%q", err, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "diff_status=clean") {
+		t.Fatalf("diff output = %q, want pinned clean result", got)
+	}
+}
+
 func TestPolicyMainResolvesRelativePolicyFromBase(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "policy.toml"), []byte(minimalPolicy), 0o600); err != nil {
