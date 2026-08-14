@@ -17,6 +17,7 @@ import (
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/shellproto"
 )
 
@@ -305,6 +306,10 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 }
 
 func rejectWorkspaceCredentialSources(manifestPath, workspacePath string, requireWorkspaceDirectory bool) error {
+	return rejectWorkspaceCredentialSourcesWith(manifestPath, workspacePath, requireWorkspaceDirectory, pathWithin)
+}
+
+func rejectWorkspaceCredentialSourcesWith(manifestPath, workspacePath string, requireWorkspaceDirectory bool, within func(string, string) (bool, error)) error {
 	if strings.TrimSpace(workspacePath) == "" {
 		return nil
 	}
@@ -346,14 +351,18 @@ func rejectWorkspaceCredentialSources(manifestPath, workspacePath string, requir
 			return fmt.Errorf("resolve credentials.%s source for workspace validation: %w", key, err)
 		}
 		source = filepath.Clean(source)
-		if pathWithin(workspace, source) {
+		inside, err := within(workspace, source)
+		if err != nil {
+			return fmt.Errorf("compare credentials.%s source with workspace: %w", key, err)
+		}
+		if inside {
 			return fmt.Errorf("credentials.%s source must be outside the mounted workspace: %s", key, source)
 		}
 	}
 	return nil
 }
 
-func pathWithin(root, candidate string) bool {
+func pathWithin(root, candidate string) (bool, error) {
 	return pathWithinWithCase(root, candidate, hostPathComparisonCaseInsensitive())
 }
 
@@ -366,21 +375,8 @@ func hostPathComparisonCaseInsensitive() bool {
 	}
 }
 
-func pathWithinWithCase(root, candidate string, caseInsensitive bool) bool {
-	if root == "" || candidate == "" {
-		return false
-	}
-	root = filepath.Clean(root)
-	candidate = filepath.Clean(candidate)
-	if caseInsensitive {
-		root = strings.ToLower(root)
-		candidate = strings.ToLower(candidate)
-	}
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+func pathWithinWithCase(root, candidate string, caseInsensitive bool) (bool, error) {
+	return pathutil.WithinOrEqual(root, candidate, caseInsensitive)
 }
 
 // installSyntheticProbeEnv mirrors the bash branches that stage synthetic

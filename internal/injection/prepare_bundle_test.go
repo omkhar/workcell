@@ -5,10 +5,13 @@ package injection
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/pathutil"
 )
 
 func TestPrepareBundleNoPolicyClearsState(t *testing.T) {
@@ -147,14 +150,59 @@ func TestPathWithinCaseInsensitiveHostComparison(t *testing.T) {
 	root := filepath.Join(string(filepath.Separator), "Users", "maintainer", "Repo")
 	candidate := filepath.Join(string(filepath.Separator), "users", "maintainer", "repo", "copilot-token.txt")
 
-	if !pathWithinWithCase(root, candidate, true) {
+	inside, err := pathWithinWithCase(root, candidate, true)
+	if err != nil || !inside {
 		t.Fatalf("expected case-insensitive host comparison to treat %q as inside %q", candidate, root)
 	}
-	if pathWithinWithCase(root, candidate, false) {
+	inside, err = pathWithinWithCase(root, candidate, false)
+	if err != nil || inside {
 		t.Fatalf("expected case-sensitive comparison to preserve exact-case path boundaries")
 	}
-	if pathWithinWithCase(root, filepath.Join(string(filepath.Separator), "users", "maintainer", "repo-other", "token.txt"), true) {
+	inside, err = pathWithinWithCase(root, filepath.Join(string(filepath.Separator), "users", "maintainer", "repo-other", "token.txt"), true)
+	if err != nil || inside {
 		t.Fatalf("expected sibling case-variant path to stay outside workspace")
+	}
+}
+
+func TestPathWithinWithCaseRejectsUnicodeAliases(t *testing.T) {
+	inside, err := pathWithinWithCase("/tmp/café", "/tmp/cafe\u0301/file", false)
+	if err != nil || !inside {
+		t.Fatal("NFC child was outside")
+	}
+	inside, err = pathWithinWithCase("/tmp/straße", "/tmp/STRASSE/file", true)
+	if err != nil || !inside {
+		t.Fatal("case-fold child was outside")
+	}
+}
+
+func TestPathWithinRejectsInvalidInputs(t *testing.T) {
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	if _, err := pathWithin(invalid, "/tmp/source"); !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("invalid root error = %v", err)
+	}
+	if _, err := pathWithin("/tmp/root", invalid); !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("invalid candidate error = %v", err)
+	}
+}
+
+func TestRejectWorkspaceCredentialSourcesPropagatesComparisonError(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	credential := filepath.Join(root, "credential")
+	if err := os.WriteFile(credential, []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(root, "manifest.json")
+	if err := os.WriteFile(manifest, []byte(`{"credentials":{"x":{"source":"`+credential+`"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	comparisonErr := errors.New("comparison failed")
+	err := rejectWorkspaceCredentialSourcesWith(manifest, workspace, true, func(string, string) (bool, error) { return false, comparisonErr })
+	if !errors.Is(err, comparisonErr) {
+		t.Fatalf("error = %v, want comparison error", err)
 	}
 }
 

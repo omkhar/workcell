@@ -31,6 +31,9 @@ AWS and GCP conformance fixtures also use this fake target.
 The fake target copies the source workspace into its local target root. It
 excludes `.git` and records each copied entry in `materialization.json`.
 
+The fake target rejects destination names that collide after NFC normalization and Unicode case folding.
+It writes no content at a destination path it rejects for invalid UTF-8 data.
+
 This process is contract evidence only. It does not copy data to AWS or GCP.
 It does not start a Workcell remote session.
 

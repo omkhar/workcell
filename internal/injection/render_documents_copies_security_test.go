@@ -4,11 +4,159 @@
 package injection
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/pathutil"
 )
+
+func TestValidateInjectionDescendantNameRejectsInvalidUTF8WithoutDisclosure(t *testing.T) {
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	err := validateInjectionDescendantName(invalid)
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("entry-name error = %v", err)
+	}
+}
+
+func TestCopySourceRejectsUnsafeDescendantBeforeReadOnlyDestination(t *testing.T) {
+	for _, testCase := range unsafeInjectionDescendantNames {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "source")
+			if err := os.Mkdir(source, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(source, testCase.value), []byte("approved"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			destinationParent := filepath.Join(root, "read-only")
+			if err := os.Mkdir(destinationParent, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(destinationParent, 0o700) })
+			_, err := copySource(Path(source), Path(filepath.Join(destinationParent, "output")))
+			assertUnsafeInjectionDescendantError(t, err)
+		})
+	}
+}
+
+var unsafeInjectionDescendantNames = []struct {
+	name  string
+	value string
+}{
+	{name: "newline", value: "secret-prefix-\n"},
+	{name: "escape", value: "secret-prefix-\x1b"},
+	{name: "line separator", value: "secret-prefix-\u2028"},
+	{name: "paragraph separator", value: "secret-prefix-\u2029"},
+}
+
+func assertUnsafeInjectionDescendantError(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, pathutil.ErrUnsafePathControl) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("unsafe descendant error = %v", err)
+	}
+}
+
+func TestCopyOpenDirectoryToRootWithStateRejectsLinuxInvalidUTF8Symlink(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux permits invalid UTF-8 descendant names")
+	}
+	sourcePath := t.TempDir()
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	if err := os.Symlink("target", filepath.Join(sourcePath, invalid)); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destinationPath := t.TempDir()
+	destination, err := os.OpenRoot(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	err = copyOpenDirectoryToRootWithState(source, destination, sourcePath, ".", openDirectMountChild, newInjectionDestinationState())
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("copy error = %v", err)
+	}
+	entries, err := os.ReadDir(destinationPath)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("destination entries = %#v, %v", entries, err)
+	}
+}
+
+func TestInjectionDestinationStateRejectsUnsafeControlNames(t *testing.T) {
+	for _, testCase := range unsafeInjectionDescendantNames {
+		t.Run(testCase.name, func(t *testing.T) {
+			assertUnsafeInjectionDescendantError(t, newInjectionDestinationState().reserve(testCase.value, "regular file"))
+		})
+	}
+}
+
+func TestCopyOpenDirectoryToRootWithStateRejectsPreReservedUnicodeAlias(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "cafe\u0301"), []byte("approved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destinationPath := t.TempDir()
+	destination, err := os.OpenRoot(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	state := newInjectionDestinationState()
+	if err := state.reserve("café", "reserved"); err != nil {
+		t.Fatal(err)
+	}
+	err = copyOpenDirectoryToRootWithState(source, destination, sourceRoot, ".", openDirectMountChild, state)
+	if err == nil || !strings.Contains(err.Error(), "destination path collision") {
+		t.Fatalf("copy error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destinationPath, "cafe\u0301")); !os.IsNotExist(err) {
+		t.Fatalf("destination was written: %v", err)
+	}
+}
+
+func TestCopyOpenDirectoryToRootWithStateRejectsInvalidUTF8(t *testing.T) {
+	sourceRoot := t.TempDir()
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	if err := os.WriteFile(filepath.Join(sourceRoot, invalid), []byte("approved"), 0o600); err != nil {
+		err = newInjectionDestinationState().reserve(invalid, "regular file")
+		if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+			t.Fatalf("reservation error = %v", err)
+		}
+		return
+	}
+	source, err := os.Open(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destinationPath := t.TempDir()
+	destination, err := os.OpenRoot(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destination.Close()
+	err = copyOpenDirectoryToRootWithState(source, destination, sourceRoot, "target", openDirectMountChild, newInjectionDestinationState())
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("copy error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destinationPath, "target", invalid)); !os.IsNotExist(err) {
+		t.Fatalf("destination was written: %v", err)
+	}
+}
 
 func TestStageFileRejectsValidatedSourcePathReplacement(t *testing.T) {
 	root := t.TempDir()
@@ -363,6 +511,22 @@ func TestStageDirectMountsRejectsCaseInsensitiveDestinationCollision(t *testing.
 	_, err := StageDirectMounts(filepath.Join(root, "bundle"), specPath)
 	if err == nil || !strings.Contains(err.Error(), "destination path collision") {
 		t.Fatalf("StageDirectMounts error = %v, want destination collision", err)
+	}
+}
+
+func TestInjectionDestinationStateRejectsUnicodeAliases(t *testing.T) {
+	state := newInjectionDestinationState()
+	if err := state.reserve("credentials/café", "directory"); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.reserve("credentials/cafe\u0301", "regular file"); err == nil {
+		t.Fatal("NFC collision accepted")
+	}
+	if err := state.reserve("credentials/straße", "directory"); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.reserve("credentials/STRASSE", "regular file"); err == nil {
+		t.Fatal("case-fold collision accepted")
 	}
 }
 

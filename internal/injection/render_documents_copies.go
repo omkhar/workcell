@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/providerid"
 	"golang.org/x/sys/unix"
 )
@@ -152,6 +153,9 @@ func copySource(source, destination Path) (string, error) {
 	}
 	defer sourceFile.Close()
 	if kind == directMountSourceDir {
+		if err := validateInjectionDirectoryDescendants(sourceFile); err != nil {
+			return "", err
+		}
 		if err := os.MkdirAll(destination.Parent().String(), 0o755); err != nil {
 			return "", err
 		}
@@ -218,18 +222,22 @@ func copyOpenDirectoryToRootWithState(
 		return err
 	}
 	for _, entry := range entries {
-		displayPath := filepath.Join(sourceDisplay, entry.Name())
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("injection source must not contain a symbolic link: %s", displayPath)
+		name := entry.Name()
+		if err := validateInjectionDescendantName(name); err != nil {
+			return err
 		}
-		child, _, kind, err := openChild(source, entry.Name(), displayPath)
+		displayPath := filepath.Join(sourceDisplay, name)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("injection source must not contain a symbolic link: %q", displayPath)
+		}
+		child, _, kind, err := openChild(source, name, displayPath)
 		if err != nil {
 			if errors.Is(err, unix.ELOOP) {
-				return fmt.Errorf("injection source must not contain a symbolic link: %s", displayPath)
+				return fmt.Errorf("injection source must not contain a symbolic link: %q", displayPath)
 			}
-			return fmt.Errorf("open injection source entry %s: %w", displayPath, err)
+			return fmt.Errorf("open injection source entry %q: %w", displayPath, err)
 		}
-		childRelative := filepath.Join(relative, entry.Name())
+		childRelative := filepath.Join(relative, name)
 		switch kind {
 		case directMountSourceDir:
 			err = state.reserve(childRelative, "directory")
@@ -249,7 +257,7 @@ func copyOpenDirectoryToRootWithState(
 				err = writeFileExclusive(destination, childRelative, data, 0o600)
 			}
 		default:
-			err = fmt.Errorf("injection source contains an unsupported entry: %s", displayPath)
+			err = fmt.Errorf("injection source contains an unsupported entry: %q", displayPath)
 		}
 		closeErr := child.Close()
 		if err != nil {
@@ -262,9 +270,15 @@ func copyOpenDirectoryToRootWithState(
 	return nil
 }
 
+func validateInjectionDescendantName(name string) error {
+	if _, err := pathutil.CollisionKey(name); err != nil {
+		return fmt.Errorf("invalid injection source entry: %w", err)
+	}
+	return nil
+}
+
 // injectionDestinationState reserves each target path before it is created.
-// The key is case-insensitive because the standard Apple filesystem treats
-// `A` and `a` as the same destination. Unicode normalization is separate work.
+// The key uses NFC normalization and Unicode full case folding.
 type injectionDestinationState struct {
 	paths map[string]string
 }
@@ -274,11 +288,14 @@ func newInjectionDestinationState() *injectionDestinationState {
 }
 
 func (s *injectionDestinationState) reserve(path, kind string) error {
-	key := strings.ToLower(filepath.Clean(path))
-	if previous, exists := s.paths[key]; exists {
-		return fmt.Errorf("injection destination path collision between %s and %s", previous, path)
+	key, err := pathutil.CollisionKey(path)
+	if err != nil {
+		return fmt.Errorf("invalid injection destination path: %w", err)
 	}
-	s.paths[key] = fmt.Sprintf("%s (%s)", path, kind)
+	if previous, exists := s.paths[key]; exists {
+		return fmt.Errorf("injection destination path collision between %s and %q", previous, path)
+	}
+	s.paths[key] = fmt.Sprintf("%q (%s)", path, kind)
 	return nil
 }
 

@@ -15,6 +15,9 @@ in launcher-owned state.
 Workcell mounts the staged source read-only. A crash can leave staged plaintext
 until cleanup.
 
+Workcell rejects destination names that collide after NFC normalization and Unicode case folding.
+Workcell writes no content at a destination path it rejects for invalid UTF-8 data.
+
 Store each credential source outside the mounted workspace. Workcell rejects a
 credential source inside the workspace.
 

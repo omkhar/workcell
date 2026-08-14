@@ -4,16 +4,227 @@
 package injection
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
+	"github.com/omkhar/workcell/internal/pathutil"
+	"golang.org/x/sys/unix"
 )
+
+func TestCopyDirContentsWithStateRejectsPreReservedUnicodeAlias(t *testing.T) {
+	sourcePath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourcePath, "STRASSE"), []byte("approved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destination := t.TempDir()
+	state := newInjectionDestinationState()
+	if err := state.reserve(filepath.Join(destination, "straße"), "reserved"); err != nil {
+		t.Fatal(err)
+	}
+	err = copyDirContentsWithState(source, sourcePath, destination, state)
+	if err == nil || !strings.Contains(err.Error(), "destination path collision") {
+		t.Fatalf("copy error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "STRASSE")); !os.IsNotExist(err) {
+		t.Fatalf("destination was written: %v", err)
+	}
+}
+
+func TestCopyDirContentsWithStateRejectsInvalidUTF8Reservation(t *testing.T) {
+	sourcePath := t.TempDir()
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	if err := os.WriteFile(filepath.Join(sourcePath, invalid), []byte("approved"), 0o600); err != nil {
+		err = newInjectionDestinationState().reserve(invalid, "regular file")
+		if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+			t.Fatalf("reservation error = %v", err)
+		}
+		return
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destination := t.TempDir()
+	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState())
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("copy error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, invalid)); !os.IsNotExist(err) {
+		t.Fatalf("destination was written: %v", err)
+	}
+}
+
+func TestStageDirectMountsRejectsUnsafeDescendantBeforeReadOnlyDestination(t *testing.T) {
+	for _, testCase := range unsafeInjectionDescendantNames {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "source")
+			if err := os.Mkdir(source, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(source, testCase.value), []byte("approved"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bundleRoot := filepath.Join(root, "bundle")
+			stagedRoot := filepath.Join(bundleRoot, "direct-mounts")
+			if err := os.MkdirAll(bundleRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(stagedRoot, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(stagedRoot, 0o700) })
+			specPath := filepath.Join(root, "spec.json")
+			writeMountSpec(t, specPath, []map[string]any{{"source": source, "mount_path": "/opt/workcell/host-inputs/source"}})
+			_, err := StageDirectMounts(bundleRoot, specPath)
+			assertUnsafeInjectionDescendantError(t, err)
+		})
+	}
+}
+
+func TestCopyDirContentsWithStateRejectsLinuxInvalidUTF8SpecialFile(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux permits invalid UTF-8 descendant names")
+	}
+	sourcePath := t.TempDir()
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	if err := unix.Mkfifo(filepath.Join(sourcePath, invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	destination := t.TempDir()
+	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState())
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("copy error = %v", err)
+	}
+	entries, err := os.ReadDir(destination)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("destination entries = %#v, %v", entries, err)
+	}
+}
+
+func TestCopyDirContentsRejectsControlCharactersBeforeLogging(t *testing.T) {
+	for _, testCase := range unsafeInjectionDescendantNames {
+		t.Run(testCase.name, func(t *testing.T) {
+			sourcePath := t.TempDir()
+			if err := os.Symlink("target", filepath.Join(sourcePath, testCase.value)); err != nil {
+				t.Fatal(err)
+			}
+			source, err := os.Open(sourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer source.Close()
+			var output bytes.Buffer
+			previousOutput := log.Writer()
+			log.SetOutput(&output)
+			t.Cleanup(func() { log.SetOutput(previousOutput) })
+			err = copyDirContentsWithState(source, sourcePath, t.TempDir(), newInjectionDestinationState())
+			assertUnsafeInjectionDescendantError(t, err)
+			if output.Len() != 0 {
+				t.Fatalf("control name reached the log: %q", output.String())
+			}
+		})
+	}
+}
+
+func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
+	newSource := func(t *testing.T) *os.File {
+		t.Helper()
+		path := t.TempDir()
+		if err := os.WriteFile(filepath.Join(path, "entry"), []byte("data"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		source, err := os.Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = source.Close() })
+		return source
+	}
+
+	t.Run("other skips opener", func(t *testing.T) {
+		opened := false
+		err := validateInjectionDirectoryEntriesWith(newSource(t),
+			func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
+				return 0, directMountSourceOther, nil
+			},
+			func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error) {
+				opened = true
+				return newSource(t), 0, directMountSourceOther, nil
+			},
+		)
+		if err != nil {
+			t.Fatalf("validate entries: %v", err)
+		}
+		if opened {
+			t.Fatal("opener was called for an unsupported entry")
+		}
+	})
+
+	t.Run("classifier error propagates", func(t *testing.T) {
+		sentinel := errors.New("classify sentinel")
+		err := validateInjectionDirectoryEntriesWith(newSource(t),
+			func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
+				return 0, directMountSourceOther, sentinel
+			},
+			func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error) {
+				return nil, 0, directMountSourceOther, nil
+			},
+		)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("validate entries error = %v, want classifier sentinel", err)
+		}
+	})
+
+	for _, testCase := range []struct {
+		name string
+		err  error
+		skip bool
+	}{
+		{name: "ENXIO skips", err: unix.ENXIO, skip: true},
+		{name: "ENODEV skips", err: unix.ENODEV, skip: true},
+		{name: "EACCES propagates", err: unix.EACCES},
+		{name: "EIO propagates", err: unix.EIO},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := validateInjectionDirectoryEntriesWith(newSource(t),
+				func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
+					return 0, directMountSourceRegular, nil
+				},
+				func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error) {
+					return nil, 0, directMountSourceOther, testCase.err
+				},
+			)
+			if testCase.skip && err != nil {
+				t.Fatalf("validate entries error = %v, want nil", err)
+			}
+			if !testCase.skip && !errors.Is(err, testCase.err) {
+				t.Fatalf("validate entries error = %v, want %v", err, testCase.err)
+			}
+		})
+	}
+}
 
 func writeMountSpec(t *testing.T, path string, entries []map[string]any) {
 	t.Helper()
@@ -46,6 +257,25 @@ func TestStageDirectMountsRejectsDanglingSpecSymlink(t *testing.T) {
 
 	if _, err := StageDirectMounts(bundleRoot, specPath); err == nil {
 		t.Fatal("expected dangling mount-spec symlink to be rejected")
+	}
+}
+
+func TestStageDirectMountsRejectsUnicodeDestinationCollision(t *testing.T) {
+	bundleRoot := t.TempDir()
+	source := filepath.Join(bundleRoot, "source")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "café"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(source, "cafe\u0301"), 0o755); err != nil {
+		t.Skipf("filesystem does not permit distinct normalization aliases: %v", err)
+	}
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	writeMountSpec(t, specPath, []map[string]any{{"source": source, "mount_path": "/opt/workcell/host-inputs/source"}})
+	if _, err := StageDirectMounts(bundleRoot, specPath); err == nil || !strings.Contains(err.Error(), "destination path collision") {
+		t.Fatalf("StageDirectMounts error = %v, want destination collision", err)
 	}
 }
 
