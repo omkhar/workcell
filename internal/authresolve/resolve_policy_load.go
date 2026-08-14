@@ -4,7 +4,6 @@
 package authresolve
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,16 +12,21 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 func loadPolicyBundle(policyPath string) (map[string]any, []PolicySource, error) {
-	resolvedPolicyPath := filepath.Clean(policyPath)
-	entrypointRoot := filepath.Dir(resolvedPolicyPath)
-	return loadPolicyBundleRecursive(resolvedPolicyPath, entrypointRoot, nil, map[string]struct{}{})
+	return loadPolicyBundleWithReader(policyPath, injectionpolicy.NewBundleReader())
 }
 
-func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []string, loadedPaths map[string]struct{}) (map[string]any, []PolicySource, error) {
+func loadPolicyBundleWithReader(policyPath string, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
+	resolvedPolicyPath := filepath.Clean(policyPath)
+	entrypointRoot := filepath.Dir(resolvedPolicyPath)
+	return loadPolicyBundleRecursive(resolvedPolicyPath, entrypointRoot, nil, map[string]struct{}{}, reader)
+}
+
+func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []string, loadedPaths map[string]struct{}, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
 	if slices.Contains(activeStack, policyPath) {
 		cycle := append(append([]string{}, activeStack...), policyPath)
 		return nil, nil, fmt.Errorf("injection policy include cycle detected: %s", strings.Join(cycle, " -> "))
@@ -32,11 +36,11 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 	}
 	loadedPaths[policyPath] = struct{}{}
 
-	content, err := os.ReadFile(policyPath)
+	file, err := reader.Read(policyPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	loaded, err := parseTOMLSubset(string(content), policyPath)
+	loaded, err := parseTOMLSubset(string(file.Bytes), policyPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -75,7 +79,7 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 		if err != nil {
 			return nil, nil, err
 		}
-		includedPolicy, includedSources, err := loadPolicyBundleRecursive(includePath, entrypointRoot, nextStack, loadedPaths)
+		includedPolicy, includedSources, err := loadPolicyBundleRecursive(includePath, entrypointRoot, nextStack, loadedPaths, reader)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -96,24 +100,12 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot string, activeStack []
 	if err := validatePolicyCredentials(merged); err != nil {
 		return nil, nil, err
 	}
-	sourceSHA, err := policySHA256(policyPath)
-	if err != nil {
-		return nil, nil, err
-	}
 	policySources = append(policySources, PolicySource{
-		Path:   logicalPolicyPath(policyPath, entrypointRoot),
-		Sha256: sourceSHA,
+		Path:     logicalPolicyPath(policyPath, entrypointRoot),
+		Sha256:   file.Sha256,
+		Fragment: loaded,
 	})
 	return merged, policySources, nil
-}
-
-func policySHA256(policyPath string) (string, error) {
-	data, err := os.ReadFile(policyPath)
-	if err != nil {
-		return "", fmt.Errorf("read policy %s: %w", policyPath, err)
-	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + fmt.Sprintf("%x", sum[:]), nil
 }
 
 func validatePolicyInclude(raw any, label, base, entrypointRoot string) (string, error) {

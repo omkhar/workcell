@@ -184,21 +184,6 @@ func expandHostPath(raw string, base Path) (Path, error) {
 	return Path(abs), nil
 }
 
-func requirePathWithin(root, candidate Path, label string) error {
-	resolvedRoot, err := filepath.EvalSymlinks(root.String())
-	if err != nil {
-		return err
-	}
-	resolvedCandidate, err := filepath.EvalSymlinks(candidate.String())
-	if err != nil {
-		return err
-	}
-	if resolvedCandidate != resolvedRoot && !strings.HasPrefix(resolvedCandidate, resolvedRoot+string(filepath.Separator)) {
-		return fmt.Errorf("%s must stay within %s: %s", label, resolvedRoot, resolvedCandidate)
-	}
-	return nil
-}
-
 func requireNoSymlink(path Path, label string) error {
 	if info, err := os.Lstat(path.String()); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s must not be a symlink: %s", label, path)

@@ -368,6 +368,41 @@ credentials, and copies.
 
 ## Explicit limits
 
+### Policy reader trust boundary
+
+The policy reader accepts at most 16 MiB for one policy file.
+The reader accepts at most 64 MiB and 4,096 files for one include bundle.
+The limits include the entrypoint and each included policy file.
+The reader accepts a regular file only.
+The current user must own the file.
+Group and other users must not have write permission.
+
+The file must have exactly one hard link.
+Group and other users can read a policy file.
+On Darwin, it accepts only `group:everyone deny delete` with no ACL flags.
+On Linux, it rejects unproved ACL types and NFS, CIFS, and SMB descriptor filesystems.
+On Linux, it accepts POSIX ACLs on root-owned system ancestors only on ext2, ext3, ext4, XFS, Btrfs, tmpfs, and OverlayFS filesystems.
+The directory mode proves that the access ACL gives no non-owner write permission.
+A default ACL cannot change access to that existing ancestor.
+The reader checks each descendant separately.
+The reader rejects POSIX ACLs on policy files, current-user directories, and sticky transit directories.
+
+The reader opens each path component by descriptor.
+The descriptor walk rejects symbolic links that reach the reader.
+Some entrypoint callers resolve a selected symbolic link before this walk.
+It accepts non-writable root-owned ancestors and root-owned sticky transit directories before the user anchor.
+It requires current-user ownership below the user anchor.
+
+It rejects group or other write permission below that anchor.
+The reader rejects other foreign-owned ancestors and non-sticky writable ancestors.
+On Darwin, it canonicalizes `/var`, `/etc`, and `/tmp` below `/private` before the walk.
+
+The reader checks metadata before the first read and after the first and last bounded reads.
+It rejects identity, owner, group, mode, link-count, and size changes.
+It rejects byte-count and modification changes.
+It reads the descriptor again to reject same-length in-place changes.
+The parser and SHA-256 source record use the accepted descriptor snapshot.
+
 - The safe path does not accept arbitrary environment variables that contain
   secrets.
 - The safe path does not pass a complete host home.

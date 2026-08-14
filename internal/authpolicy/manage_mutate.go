@@ -328,6 +328,8 @@ func loadMutablePolicy(policyPath string) (map[string]any, error) {
 	return policy, nil
 }
 
+var afterCredentialBundleRead func()
+
 func ensureCredentialNotOnlyInIncludes(policyPath string, credentials map[string]any, credential string, command string) error {
 	if _, ok := credentials[credential]; ok || policyPath == "" {
 		return nil
@@ -335,6 +337,9 @@ func ensureCredentialNotOnlyInIncludes(policyPath string, credentials map[string
 	mergedPolicy, policySources, err := loadPolicyBundle(policyPath)
 	if err != nil {
 		return err
+	}
+	if afterCredentialBundleRead != nil {
+		afterCredentialBundleRead()
 	}
 	mergedCredentials, _ := mergedPolicy["credentials"].(map[string]any)
 	if mergedCredentials == nil {
@@ -345,11 +350,7 @@ func ensureCredentialNotOnlyInIncludes(policyPath string, credentials map[string
 	}
 	fragmentPath := ""
 	for _, source := range policySources {
-		sourcePolicy, err := loadRawPolicy(source.Path)
-		if err != nil {
-			return err
-		}
-		sourceCredentials, _ := sourcePolicy["credentials"].(map[string]any)
+		sourceCredentials, _ := source.Fragment["credentials"].(map[string]any)
 		if sourceCredentials != nil {
 			if _, ok := sourceCredentials[credential]; ok {
 				fragmentPath = source.Path

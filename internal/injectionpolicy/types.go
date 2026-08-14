@@ -30,4 +30,7 @@ type PolicySource struct {
 	// rely on the prefix to distinguish the digest from a bare hex
 	// string.
 	Sha256 string `json:"sha256"`
+	// Fragment is the parsed file from the accepted descriptor snapshot.
+	// It is internal bundle state and never appears in source metadata.
+	Fragment map[string]any `json:"-"`
 }

@@ -6,10 +6,13 @@ package authpolicy
 import (
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 )
+
+var afterDiffEntrypointRead func()
 
 func commandShow(policyPath string, stdout io.Writer) error {
 	policy, _, err := loadPolicyBundle(policyPath)
@@ -60,11 +63,19 @@ func commandValidate(policyPath string, stdout io.Writer) error {
 }
 
 func commandDiff(policyPath string, stdout io.Writer) error {
-	source, err := os.ReadFile(policyPath)
+	resolvedPolicyPath, err := filepath.Abs(policyPath)
 	if err != nil {
 		return err
 	}
-	policy, _, err := loadPolicyBundle(policyPath)
+	reader := injectionpolicy.NewBundleReader()
+	entrypoint, err := reader.ReadAndPin(resolvedPolicyPath)
+	if err != nil {
+		return err
+	}
+	if afterDiffEntrypointRead != nil {
+		afterDiffEntrypointRead()
+	}
+	policy, _, err := loadPolicyBundleWithReader(resolvedPolicyPath, reader)
 	if err != nil {
 		return err
 	}
@@ -72,7 +83,7 @@ func commandDiff(policyPath string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	sourceText := string(source)
+	sourceText := string(entrypoint.Bytes)
 	if sourceText == rendered {
 		fmt.Fprintln(stdout, "diff_status=clean")
 		return nil

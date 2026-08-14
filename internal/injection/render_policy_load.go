@@ -4,8 +4,6 @@
 package injection
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -15,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -24,38 +23,37 @@ func loadPolicyBundle(policyPath Path) (map[string]any, []PolicySource, error) {
 		return nil, nil, err
 	}
 	resolvedPolicy := Path(resolvedPolicyPath)
+	return loadPolicyBundleWithReader(resolvedPolicy, injectionpolicy.NewBundleReader())
+}
+
+func loadPolicyBundleWithReader(policyPath Path, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
 	loadedPaths := map[string]struct{}{}
-	merged, sources, err := loadPolicyBundleRecursive(resolvedPolicy, resolvedPolicy.Parent(), nil, loadedPaths)
+	merged, sources, err := loadPolicyBundleRecursive(policyPath, policyPath.Parent(), nil, loadedPaths, reader)
 	if err != nil {
 		return nil, nil, err
 	}
 	return merged, sources, nil
 }
 
-func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Path, loadedPaths map[string]struct{}) (map[string]any, []PolicySource, error) {
-	resolvedPolicyPath, err := resolveAbsPath(policyPath.String())
-	if err != nil {
-		return nil, nil, err
-	}
-	resolved := Path(resolvedPolicyPath)
-	if slices.Contains(activeStack, resolved) {
-		cycle := append(append([]Path{}, activeStack...), resolved)
+func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Path, loadedPaths map[string]struct{}, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
+	if slices.Contains(activeStack, policyPath) {
+		cycle := append(append([]Path{}, activeStack...), policyPath)
 		parts := make([]string, 0, len(cycle))
 		for _, p := range cycle {
 			parts = append(parts, p.String())
 		}
 		return nil, nil, fmt.Errorf("injection policy include cycle detected: %s", strings.Join(parts, " -> "))
 	}
-	if _, ok := loadedPaths[resolved.String()]; ok {
-		return nil, nil, fmt.Errorf("injection policy includes the same file more than once: %s", resolved)
+	if _, ok := loadedPaths[policyPath.String()]; ok {
+		return nil, nil, fmt.Errorf("injection policy includes the same file more than once: %s", policyPath)
 	}
-	loadedPaths[resolved.String()] = struct{}{}
+	loadedPaths[policyPath.String()] = struct{}{}
 
-	raw, err := os.ReadFile(resolved.String())
+	file, err := reader.Read(policyPath.String())
 	if err != nil {
 		return nil, nil, err
 	}
-	loaded, err := parseTOMLSubset(string(raw), resolved)
+	loaded, err := parseTOMLSubset(string(file.Bytes), policyPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -88,13 +86,13 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 	}
 	merged := map[string]any{"version": 1}
 	sources := make([]PolicySource, 0)
-	nextStack := append(append([]Path{}, activeStack...), resolved)
+	nextStack := append(append([]Path{}, activeStack...), policyPath)
 	for index, include := range includes {
-		includePath, err := validatePolicyInclude(include, fmt.Sprintf("includes[%d]", index), resolved.Parent(), entrypointRoot)
+		includePath, err := validatePolicyInclude(include, fmt.Sprintf("includes[%d]", index), policyPath.Parent(), entrypointRoot)
 		if err != nil {
 			return nil, nil, err
 		}
-		included, includedSources, err := loadPolicyBundleRecursive(includePath, entrypointRoot, nextStack, loadedPaths)
+		included, includedSources, err := loadPolicyBundleRecursive(includePath, entrypointRoot, nextStack, loadedPaths, reader)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -107,18 +105,15 @@ func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Pa
 	currentPolicy := maps.Clone(loaded)
 	delete(currentPolicy, "includes")
 	if len(activeStack) > 0 {
-		currentPolicy = rebasePolicyFragment(currentPolicy, resolved.Parent())
+		currentPolicy = rebasePolicyFragment(currentPolicy, policyPath.Parent())
 	}
-	if err := mergePolicyFragment(merged, currentPolicy, resolved); err != nil {
-		return nil, nil, err
-	}
-	sourceSHA, err := policySHA256(resolved.String())
-	if err != nil {
+	if err := mergePolicyFragment(merged, currentPolicy, policyPath); err != nil {
 		return nil, nil, err
 	}
 	sources = append(sources, PolicySource{
-		Path:   logicalPolicyPath(resolved, entrypointRoot),
-		Sha256: sourceSHA,
+		Path:     logicalPolicyPath(policyPath, entrypointRoot),
+		Sha256:   file.Sha256,
+		Fragment: loaded,
 	})
 	return merged, sources, nil
 }
@@ -325,15 +320,6 @@ func documentToInjectionMap(doc *tomlsubset.Document, policyPath string) (map[st
 	return root, nil
 }
 
-func policySHA256(policyPath string) (string, error) {
-	data, err := os.ReadFile(policyPath)
-	if err != nil {
-		return "", fmt.Errorf("read policy %s: %w", policyPath, err)
-	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
-}
-
 func logicalPolicyPath(policyPath, entrypointRoot Path) string {
 	relative, err := filepath.Rel(entrypointRoot.String(), policyPath.String())
 	if err != nil {
@@ -426,17 +412,35 @@ func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]an
 }
 
 func validatePolicyInclude(raw any, label string, base, entrypointRoot Path) (Path, error) {
-	source, err := validateSourcePath(raw, label, base)
+	rawPath, ok := raw.(string)
+	if !ok || rawPath == "" {
+		return Path(""), fmt.Errorf("%s must be a non-empty string path", label)
+	}
+	if err := validateManifestPathField(rawPath, label); err != nil {
+		return Path(""), err
+	}
+	source, err := expandHostPath(rawPath, base)
 	if err != nil {
 		return Path(""), err
 	}
-	if err := ensureIsFile(source, label); err != nil {
+	if err := validateManifestPathField(source.String(), label); err != nil {
 		return Path(""), err
 	}
-	if err := requirePathWithin(entrypointRoot, source, label); err != nil {
+	if err := requirePolicyIncludePathWithin(entrypointRoot, source, label); err != nil {
 		return Path(""), err
 	}
 	return source, nil
+}
+
+func requirePolicyIncludePathWithin(root, candidate Path, label string) error {
+	relative, err := filepath.Rel(root.String(), candidate.String())
+	if err != nil {
+		return err
+	}
+	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return fmt.Errorf("%s must stay within %s: %s", label, root, candidate)
+	}
+	return nil
 }
 
 func mergePolicyFragment(base, addition map[string]any, sourcePath Path) error {
