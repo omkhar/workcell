@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# This bounded Bash bootstrap runs before a Go binary is available, so it cannot use a Go helper.
 toolchain_version_is_newer() {
   local left="$1"
   local right="$2"
