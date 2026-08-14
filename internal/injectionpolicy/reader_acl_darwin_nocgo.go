@@ -7,4 +7,6 @@ package injectionpolicy
 
 import "errors"
 
-func rejectPolicyExtendedACL(int) error { return errors.New("cannot inspect extended ACL without cgo") }
+func rejectPolicyExtendedACL(int, bool) error {
+	return errors.New("cannot inspect extended ACL without cgo")
+}

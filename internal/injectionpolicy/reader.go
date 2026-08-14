@@ -190,7 +190,7 @@ func statTrustedPolicyFile(file *os.File, path string) (policyFileStat, error) {
 	if stat.Uid != policyCurrentEUID() || mode&0o022 != 0 {
 		return policyFileStat{}, fmt.Errorf("injection policy %s must be owned by the current user and not writable by group or other users", path)
 	}
-	if err := rejectPolicyACL(int(file.Fd())); err != nil {
+	if err := rejectPolicyACL(int(file.Fd()), false); err != nil {
 		return policyFileStat{}, fmt.Errorf("injection policy file has an extended ACL: %s: %w", path, err)
 	}
 	modTime, changeTime := policyFileTimes(stat)
@@ -308,11 +308,12 @@ func validatePolicyDirectory(fd int, path string, stat unix.Stat_t, anchored boo
 		return false, fmt.Errorf("injection policy path contains a non-directory component: %s", path)
 	}
 	ownedAndControlled := stat.Uid == policyCurrentEUID() && mode&0o022 == 0
+	systemAncestor := !anchored && stat.Uid == 0 && stat.Uid != policyCurrentEUID() && mode&0o022 == 0
 	if anchored {
 		if !ownedAndControlled {
 			return false, fmt.Errorf("injection policy directory below the current-user-controlled anchor is unsafe: %s", path)
 		}
-		if err := rejectPolicyACL(fd); err != nil {
+		if err := rejectPolicyACL(fd, false); err != nil {
 			return false, fmt.Errorf("injection policy directory has an extended ACL: %s: %w", path, err)
 		}
 		return true, nil
@@ -324,7 +325,7 @@ func validatePolicyDirectory(fd int, path string, stat unix.Stat_t, anchored boo
 	} else {
 		return false, fmt.Errorf("injection policy directory ancestor is not trusted: %s", path)
 	}
-	if err := rejectPolicyACL(fd); err != nil {
+	if err := rejectPolicyACL(fd, systemAncestor); err != nil {
 		return false, fmt.Errorf("injection policy directory has an extended ACL: %s: %w", path, err)
 	}
 	return anchored, nil

@@ -57,7 +57,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func rejectPolicyExtendedACL(fd int) error {
+func rejectPolicyExtendedACL(fd int, _ bool) error {
 	attributes := unix.Attrlist{Bitmapcount: unix.ATTR_BIT_MAP_COUNT, Commonattr: unix.ATTR_CMN_EXTENDED_SECURITY}
 	var buffer [12]byte
 	_, _, errno := unix.Syscall6(unix.SYS_FGETATTRLIST, uintptr(fd), uintptr(unsafe.Pointer(&attributes)), uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)), unix.FSOPT_REPORT_FULLSIZE, 0)

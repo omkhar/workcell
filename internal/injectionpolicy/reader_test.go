@@ -17,9 +17,9 @@ import (
 func TestBundleReaderRejectsFileACL(t *testing.T) {
 	path := writePolicyFile(t, t.TempDir(), "policy.toml", []byte("version = 1\n"))
 	old := rejectPolicyACL
-	rejectPolicyACL = func(fd int) error {
+	rejectPolicyACL = func(fd int, allowPOSIX bool) error {
 		var stat unix.Stat_t
-		if unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		if allowPOSIX || unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
 			return nil
 		}
 		return errors.New("extended ACLs are not permitted")

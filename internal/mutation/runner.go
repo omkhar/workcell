@@ -102,8 +102,8 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/injectionpolicy/reader.go",
-		original:     "if err := rejectPolicyACL(int(file.Fd())); err != nil {",
-		replacement:  "if err := rejectPolicyACL(int(file.Fd())); false && err != nil {",
+		original:     "if err := rejectPolicyACL(int(file.Fd()), false); err != nil {",
+		replacement:  "if err := rejectPolicyACL(int(file.Fd()), false); false && err != nil {",
 		label:        "injection policy ACL proof",
 		command:      goCmd("test", "./internal/injectionpolicy"),
 	},

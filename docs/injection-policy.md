@@ -379,15 +379,18 @@ Group and other users must not have write permission.
 
 The file must have exactly one hard link.
 Group and other users can read a policy file.
-The reader rejects grant-capable and unrecognized extended ACLs.
 On Darwin, it accepts only `group:everyone deny delete` with no ACL flags.
-On Linux, it rejects CIFS and SMB descriptor filesystems because it cannot prove that ACLs are absent.
+On Linux, it rejects unproved ACL types and NFS, CIFS, and SMB descriptor filesystems.
+On Linux, it accepts POSIX ACLs on root-owned system ancestors only on ext2, ext3, ext4, XFS, Btrfs, tmpfs, and OverlayFS filesystems.
+The directory mode proves that the access ACL gives no non-owner write permission.
+A default ACL cannot change access to that existing ancestor.
+The reader checks each descendant separately.
+The reader rejects POSIX ACLs on policy files, current-user directories, and sticky transit directories.
 
 The reader opens each path component by descriptor.
 The descriptor walk rejects symbolic links that reach the reader.
 Some entrypoint callers resolve a selected symbolic link before this walk.
-It accepts non-writable, root-owned system ancestors before the user anchor.
-It accepts root-owned sticky transit directories, such as `/tmp`, before the user anchor.
+It accepts non-writable root-owned ancestors and root-owned sticky transit directories before the user anchor.
 It requires current-user ownership below the user anchor.
 
 It rejects group or other write permission below that anchor.
