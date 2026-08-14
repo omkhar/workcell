@@ -4,6 +4,7 @@
 package hoststate
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/host/launcher"
+	"github.com/omkhar/workcell/internal/rootio"
+	"golang.org/x/sys/unix"
 )
 
 func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
@@ -27,6 +30,61 @@ func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
 	want := hex.EncodeToString(sum[:8])
 	if got != want {
 		t.Fatalf("DirectMountCacheKey() = %q, want %q", got, want)
+	}
+}
+
+func TestManifestMetadataLinesUsesBoundedNoFollowReads(t *testing.T) {
+	root := t.TempDir()
+	exactPath := filepath.Join(root, "manifest.json")
+	exact := append([]byte(`{"metadata":{}}`), bytes.Repeat([]byte{' '}, int(rootio.MaxManifestBytes)-len(`{"metadata":{}}`))...)
+	if err := os.WriteFile(exactPath, exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if lines, err := ManifestMetadataLines(exactPath); err != nil || len(lines) != 7 {
+		t.Fatalf("ManifestMetadataLines exact limit = %#v, %v", lines, err)
+	}
+
+	overLimitPath := filepath.Join(root, "over-limit.json")
+	if err := os.WriteFile(overLimitPath, append(exact, ' '), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ManifestMetadataLines(overLimitPath); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("ManifestMetadataLines oversized error = %v, want byte-limit rejection", err)
+	}
+
+	target := filepath.Join(root, "target.json")
+	if err := os.WriteFile(target, []byte(`{"metadata":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leafLink := filepath.Join(root, "manifest-link.json")
+	if err := os.Symlink(filepath.Base(target), leafLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if _, err := ManifestMetadataLines(leafLink); err == nil {
+		t.Fatal("ManifestMetadataLines accepted a leaf symlink")
+	}
+
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realParent, "manifest.json"), []byte(`{"metadata":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(filepath.Base(realParent), linkedParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if _, err := ManifestMetadataLines(filepath.Join(linkedParent, "manifest.json")); err == nil {
+		t.Fatal("ManifestMetadataLines accepted a symlinked parent")
+	}
+
+	fifo := filepath.Join(root, "manifest.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("unix.Mkfifo unavailable: %v", err)
+	}
+	if _, err := ManifestMetadataLines(fifo); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("ManifestMetadataLines FIFO error = %v, want regular-file rejection", err)
 	}
 }
 

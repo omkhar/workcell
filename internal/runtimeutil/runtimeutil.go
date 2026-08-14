@@ -18,6 +18,11 @@ import (
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
+const (
+	maxRuntimeManifestBytes  = rootio.MaxManifestBytes
+	maxRuntimeMountSpecBytes = rootio.MaxDirectMountSpecBytes
+)
+
 type DirectMount struct {
 	Source    string `json:"source"`
 	MountPath string `json:"mount_path"`
@@ -59,7 +64,7 @@ func ResolveIPs(host string) ([]string, error) {
 }
 
 func ListDirectMounts(mountSpecPath string) ([]DirectMount, error) {
-	data, err := os.ReadFile(mountSpecPath)
+	data, err := rootio.ReadFileNoFollow(mountSpecPath, "direct mount specification", maxRuntimeMountSpecBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -83,13 +88,14 @@ func ListDirectMounts(mountSpecPath string) ([]DirectMount, error) {
 }
 
 func RewriteBundleCredentialOverride(manifestPath, mountSpecPath, credentialKey, overrideSource string) error {
-	manifestRoot, err := os.OpenRoot(filepath.Dir(manifestPath))
+	manifestParent, cleanedManifestPath, err := rootio.OpenParentDirectoryNoFollow(manifestPath)
 	if err != nil {
 		return err
 	}
-	defer manifestRoot.Close()
-	manifestName := filepath.Base(manifestPath)
-	manifestData, err := manifestRoot.ReadFile(manifestName)
+	defer manifestParent.Close()
+
+	manifestName := filepath.Base(cleanedManifestPath)
+	manifestData, err := rootio.ReadFileAtNoFollow(manifestParent, manifestName, "bundle manifest", maxRuntimeManifestBytes)
 	if err != nil {
 		return err
 	}
@@ -137,10 +143,9 @@ func RewriteBundleCredentialOverride(manifestPath, mountSpecPath, credentialKey,
 	}
 	credential["source"] = overrideSource
 
-	data, err := json.MarshalIndent(manifest, "", "  ")
+	data, err := rootio.MarshalCompactJSON(manifest, "bundle manifest", maxRuntimeManifestBytes)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	return rootio.WriteFileAtomic(manifestRoot, manifestName, data, 0o600, ".workcell-manifest-")
+	return rootio.WriteFileAtomicAtNoFollow(manifestParent, manifestName, data, 0o600, ".workcell-manifest-")
 }

@@ -31,7 +31,8 @@ const hostInputMountPrefix = "/opt/workcell/host-inputs/"
 // (bash returned 0 in that case).  It returns a usage-style error when the
 // bundle root is empty.
 func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
-	if _, err := os.Stat(mountSpecPath); err != nil {
+	mounts, err := runtimeutil.ListDirectMounts(mountSpecPath)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
@@ -43,11 +44,6 @@ func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
 
 	stagedRoot := filepath.Join(bundleRoot, "direct-mounts")
 	if err := os.MkdirAll(stagedRoot, 0o755); err != nil {
-		return nil, err
-	}
-
-	mounts, err := runtimeutil.ListDirectMounts(mountSpecPath)
-	if err != nil {
 		return nil, err
 	}
 

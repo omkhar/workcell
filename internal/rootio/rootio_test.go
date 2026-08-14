@@ -5,10 +5,75 @@ package rootio
 
 import (
 	"bytes"
+	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestReadFileNoFollowMaxIntLimit(t *testing.T) {
+	rootDir := t.TempDir()
+	path := filepath.Join(rootDir, "manifest.json")
+	want := []byte(`{"version":1}`)
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadFileNoFollow(path, "manifest", math.MaxInt64)
+	if err != nil {
+		t.Fatalf("ReadFileNoFollow returned error: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("content mismatch: got %q, want %q", got, want)
+	}
+}
+
+func TestMarshalCompactJSONBoundsAndPreservesFormat(t *testing.T) {
+	value := map[string]any{"items": []any{"quote \"[]{}:,\\\\", map[string]any{"name": "two"}}}
+	want, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, '\n')
+	got, err := MarshalCompactJSON(value, "test JSON", int64(len(want)))
+	if err != nil {
+		t.Fatalf("MarshalCompactJSON exact limit: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("MarshalCompactJSON changed output:\n got %q\nwant %q", got, want)
+	}
+	if _, err := MarshalCompactJSON(value, "test JSON", int64(len(want)-1)); err == nil {
+		t.Fatal("MarshalCompactJSON accepted output over the byte limit")
+	}
+}
+
+func TestMarshalCompactJSONAvoidsPrettyPrintAmplification(t *testing.T) {
+	const depth = 3000
+	compact := []byte(strings.Repeat("[", depth) + "null" + strings.Repeat("]", depth))
+	var value any
+	if err := json.Unmarshal(compact, &value); err != nil {
+		t.Fatal(err)
+	}
+	compact, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(compact)) >= MaxManifestBytes {
+		t.Fatalf("compact fixture size = %d, want less than %d", len(compact), MaxManifestBytes)
+	}
+	indented, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(indented)+1) <= MaxManifestBytes {
+		t.Fatalf("indented fixture does not exceed %d bytes", MaxManifestBytes)
+	}
+	if got, err := MarshalCompactJSON(value, "injection manifest", MaxManifestBytes); err != nil || int64(len(got)) >= MaxManifestBytes {
+		t.Fatalf("MarshalCompactJSON amplification result = %d bytes, %v", len(got), err)
+	}
+}
 
 func TestWriteFileAtomicWritesContentAndMode(t *testing.T) {
 	rootDir := t.TempDir()

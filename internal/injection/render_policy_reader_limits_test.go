@@ -4,6 +4,7 @@
 package injection
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/omkhar/workcell/internal/injectionpolicy"
+	"github.com/omkhar/workcell/internal/rootio"
+	"golang.org/x/sys/unix"
 )
 
 func TestLoadPolicyBundleReaderLimits(t *testing.T) {
@@ -84,6 +87,60 @@ func TestLoadPolicyBundleRejectsInvalidUTF8(t *testing.T) {
 		if _, _, err := loadPolicyBundle(Path(path)); err == nil || !strings.Contains(err.Error(), "valid UTF-8") {
 			t.Fatalf("load error = %v", err)
 		}
+	}
+}
+
+func TestLoadPolicyMetadataOverrideUsesBoundedNoFollowRead(t *testing.T) {
+	root := t.TempDir()
+	valid := []byte(`{"policy_entrypoint":"policy.toml","policy_sources":[{"path":"policy.toml","sha256":"sha256:original"}]}`)
+	exact := append(valid, bytes.Repeat([]byte{' '}, int(rootio.MaxManifestBytes)-len(valid))...)
+	exactPath := filepath.Join(root, "exact.json")
+	if err := os.WriteFile(exactPath, exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if entrypoint, sources, err := loadPolicyMetadataOverride(exactPath); err != nil || entrypoint != "policy.toml" || len(sources) != 1 {
+		t.Fatalf("loadPolicyMetadataOverride exact limit = %q, %#v, %v", entrypoint, sources, err)
+	}
+	overLimitPath := filepath.Join(root, "over-limit.json")
+	if err := os.WriteFile(overLimitPath, append(exact, ' '), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadPolicyMetadataOverride(overLimitPath); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("loadPolicyMetadataOverride over-limit error = %v", err)
+	}
+	target := filepath.Join(root, "target.json")
+	if err := os.WriteFile(target, valid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leafLink := filepath.Join(root, "leaf-link.json")
+	if err := os.Symlink(filepath.Base(target), leafLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if _, _, err := loadPolicyMetadataOverride(leafLink); err == nil {
+		t.Fatal("loadPolicyMetadataOverride accepted a leaf symlink")
+	}
+
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realParent, "metadata.json"), valid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(filepath.Base(realParent), linkedParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if _, _, err := loadPolicyMetadataOverride(filepath.Join(linkedParent, "metadata.json")); err == nil {
+		t.Fatal("loadPolicyMetadataOverride accepted a symlinked parent")
+	}
+
+	fifo := filepath.Join(root, "metadata.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("unix.Mkfifo unavailable: %v", err)
+	}
+	if _, _, err := loadPolicyMetadataOverride(fifo); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("loadPolicyMetadataOverride FIFO error = %v", err)
 	}
 }
 

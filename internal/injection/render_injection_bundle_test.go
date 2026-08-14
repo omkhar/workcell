@@ -4,6 +4,7 @@
 package injection
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 func TestParseTOMLSubsetAndHelperErrors(t *testing.T) {
@@ -870,6 +873,96 @@ func TestRunRenderInjectionBundleWritesManifestAndTracksMaterialChanges(t *testi
 	}
 }
 
+func TestRunRenderInjectionBundleAtomicallyReplacesManifestLeaf(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	writeText(t, policyPath, "version = 1\n", 0o600)
+	for _, test := range []struct {
+		name    string
+		swapped bool
+	}{
+		{name: "pre-existing-leaf-link"},
+		{name: "swapped-leaf-link", swapped: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := filepath.Join(root, test.name)
+			manifestPath := filepath.Join(output, "manifest.json")
+			outside := filepath.Join(root, test.name+"-outside.json")
+			outsideBefore := []byte(`{"outside":true}` + "\n")
+			writeText(t, outside, string(outsideBefore), 0o600)
+			writeText(t, manifestPath, "{\"old\":true}\n", 0o600)
+			swap := func() error {
+				if err := os.Remove(manifestPath); err != nil {
+					return err
+				}
+				return os.Symlink(outside, manifestPath)
+			}
+			var err error
+			if test.swapped {
+				err = runRenderInjectionBundle(policyPath, "codex", "strict", output, "", swap)
+			} else {
+				if err := swap(); err != nil {
+					t.Skipf("os.Symlink unavailable: %v", err)
+				}
+				err = RunRenderInjectionBundle(policyPath, "codex", "strict", output, "")
+			}
+			if err != nil {
+				t.Fatalf("RunRenderInjectionBundle %s: %v", test.name, err)
+			}
+			if got := []byte(readText(t, outside)); !bytes.Equal(got, outsideBefore) {
+				t.Fatalf("outside target changed after %s: %q", test.name, got)
+			}
+			if info, err := os.Lstat(manifestPath); err != nil || info.Mode()&os.ModeSymlink != 0 {
+				t.Fatalf("manifest leaf was not atomically replaced after %s: %v, %v", test.name, info, err)
+			}
+			assertRenderFileMode(t, manifestPath, 0o600)
+		})
+	}
+}
+
+func TestRunRenderInjectionBundleBoundsManifestOutputBeforePublication(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.toml")
+	metadataPath := filepath.Join(root, "policy-metadata.json")
+	writeText(t, policyPath, "version = 1\n", 0o600)
+	probeOutput := filepath.Join(root, "probe")
+	writePolicyMetadataOverride(t, metadataPath, 1)
+	if err := RunRenderInjectionBundle(policyPath, "codex", "strict", probeOutput, metadataPath); err != nil {
+		t.Fatalf("prepare manifest size probe: %v", err)
+	}
+	probeInfo, err := os.Stat(filepath.Join(probeOutput, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathSize := rootio.MaxManifestBytes - (probeInfo.Size() - 1)
+	if pathSize < 1 {
+		t.Fatalf("manifest output limit %d is too small", rootio.MaxManifestBytes)
+	}
+	exactOutput := filepath.Join(root, "exact")
+	writePolicyMetadataOverride(t, metadataPath, pathSize)
+	if err := RunRenderInjectionBundle(policyPath, "codex", "strict", exactOutput, metadataPath); err != nil {
+		t.Fatalf("RunRenderInjectionBundle exact manifest output: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(exactOutput, "manifest.json")); err != nil || info.Size() != rootio.MaxManifestBytes {
+		t.Fatalf("exact manifest output size = %v, %v", info, err)
+	}
+
+	overOutput := filepath.Join(root, "over")
+	if err := os.Mkdir(overOutput, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	overManifest := filepath.Join(overOutput, "manifest.json")
+	manifestBefore := []byte(`{"unchanged":true}` + "\n")
+	writeText(t, overManifest, string(manifestBefore), 0o600)
+	writePolicyMetadataOverride(t, metadataPath, pathSize+1)
+	if err := RunRenderInjectionBundle(policyPath, "codex", "strict", overOutput, metadataPath); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("RunRenderInjectionBundle over-limit manifest output error = %v", err)
+	}
+	if got := []byte(readText(t, overManifest)); !bytes.Equal(got, manifestBefore) {
+		t.Fatal("RunRenderInjectionBundle published an over-limit manifest")
+	}
+}
+
 func writeText(t *testing.T, path, content string, mode os.FileMode) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -914,4 +1007,12 @@ func readManifest(t *testing.T, path string) map[string]any {
 		t.Fatal(err)
 	}
 	return manifest
+}
+
+func writePolicyMetadataOverride(t *testing.T, path string, sourcePathSize int64) {
+	t.Helper()
+	if sourcePathSize < 1 {
+		t.Fatalf("policy source path size = %d, want at least one byte", sourcePathSize)
+	}
+	writeText(t, path, `{"policy_entrypoint":"policy.toml","policy_sources":[{"path":"`+strings.Repeat("p", int(sourcePathSize))+`","sha256":"sha256:original"}]}`, 0o600)
 }

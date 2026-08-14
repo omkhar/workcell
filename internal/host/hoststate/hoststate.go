@@ -20,6 +20,7 @@ import (
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 func AuditRecordDigest(prevDigest, timestamp string, args []string) string {
@@ -517,7 +518,7 @@ func canonicalizePath(path string) (string, error) {
 }
 
 func readJSONFile(path string, target any) error {
-	content, err := os.ReadFile(path)
+	content, err := rootio.ReadFileNoFollow(path, "JSON metadata", rootio.MaxManifestBytes)
 	if err != nil {
 		return err
 	}

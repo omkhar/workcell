@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // DirectMount is the JSON shape this binary emits for each direct mount.
@@ -36,29 +37,63 @@ func RequireDirectMount(entry map[string]any, label string) (DirectMount, error)
 
 // RunExtractDirectMounts reproduces the legacy extract_direct_mounts helper.
 func RunExtractDirectMounts(manifestPath, mountSpecPath string) error {
-	resolvedManifestPath, err := resolveAbsPath(manifestPath)
+	return runExtractDirectMounts(manifestPath, mountSpecPath, nil)
+}
+
+// runExtractDirectMounts retains the descriptor for the manifest parent from
+// the read through the atomic replacement. beforeManifestWrite is a test seam
+// for deterministic leaf mutation checks; production callers pass nil.
+func runExtractDirectMounts(manifestPath, mountSpecPath string, beforeManifestWrite func() error) error {
+	manifestInputPath, err := pathutil.ExpandUserPathStrictRequireNonEmpty(manifestPath)
 	if err != nil {
 		return err
 	}
-	resolvedMountSpecPath, err := resolveAbsPath(mountSpecPath)
+	mountSpecOutputPath, err := pathutil.ExpandUserPathStrictRequireNonEmpty(mountSpecPath)
 	if err != nil {
 		return err
 	}
 
-	manifest, err := loadJSONObject(resolvedManifestPath)
+	manifestParent, manifestName, manifest, err := openJSONObjectForRewrite(manifestInputPath)
 	if err != nil {
 		return err
+	}
+	defer manifestParent.Close()
+	mountSpecParent, cleanedMountSpecPath, err := rootio.OpenParentDirectoryNoFollow(mountSpecOutputPath)
+	if err != nil {
+		return err
+	}
+	defer mountSpecParent.Close()
+	mountSpecName := filepath.Base(cleanedMountSpecPath)
+	sameFile, err := rootio.SameFileAtNoFollow(manifestParent, manifestName, mountSpecParent, mountSpecName)
+	if err != nil {
+		return err
+	}
+	if sameFile {
+		return fmt.Errorf("direct mount specification must not alias injection manifest")
 	}
 
 	directMounts, err := collectDirectMounts(manifest)
 	if err != nil {
 		return err
 	}
-
-	if err := writeIndentedJSON(resolvedManifestPath, manifest, 0o600); err != nil {
+	manifestData, err := marshalInjectionManifest(manifest)
+	if err != nil {
 		return err
 	}
-	if err := writeIndentedJSON(resolvedMountSpecPath, directMounts, 0o600); err != nil {
+	mountSpecData, err := marshalInjectionMountSpec(directMounts)
+	if err != nil {
+		return err
+	}
+
+	if err := writeJSONAtNoFollow(mountSpecParent, mountSpecName, mountSpecData, 0o600); err != nil {
+		return err
+	}
+	if beforeManifestWrite != nil {
+		if err := beforeManifestWrite(); err != nil {
+			return err
+		}
+	}
+	if err := writeJSONAtNoFollow(manifestParent, manifestName, manifestData, 0o600); err != nil {
 		return err
 	}
 	return nil
@@ -159,16 +194,27 @@ func sortDirectMounts(directMounts []DirectMount) []DirectMount {
 	return directMounts
 }
 
-func loadJSONObject(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
+func openJSONObjectForRewrite(path string) (*os.File, string, map[string]any, error) {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
 	if err != nil {
-		return nil, err
+		return nil, "", nil, err
+	}
+	name := filepath.Base(cleaned)
+	data, err := rootio.ReadFileAtNoFollow(parent, name, "injection manifest", maxInjectionManifestBytes)
+	if err != nil {
+		parent.Close()
+		return nil, "", nil, err
 	}
 	var manifest map[string]any
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, err
+		parent.Close()
+		return nil, "", nil, err
 	}
-	return manifest, nil
+	return parent, name, manifest, nil
+}
+
+func writeJSONAtNoFollow(parent *os.File, name string, data []byte, mode os.FileMode) error {
+	return rootio.WriteFileAtomicAtNoFollow(parent, name, data, mode, ".workcell-manifest-")
 }
 
 func asObjectMap(value any, label string) (map[string]any, error) {
