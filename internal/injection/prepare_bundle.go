@@ -251,7 +251,7 @@ func PrepareBundle(opts PrepareBundleOptions) (*PrepareBundleResult, error) {
 		return nil, err
 	}
 	manifestPath := filepath.Join(bundleRoot, "manifest.json")
-	if info, err := os.Stat(manifestPath); err != nil || !info.Mode().IsRegular() {
+	if info, err := os.Lstat(manifestPath); err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("Injection manifest was not rendered: %s", manifestPath)
 	}
 	requireWorkspaceDirectory := !(opts.AuthStatus || opts.Doctor || opts.Inspect)
@@ -325,9 +325,9 @@ func rejectWorkspaceCredentialSources(manifestPath, workspacePath string, requir
 	}
 	workspace = filepath.Clean(workspace)
 
-	data, err := os.ReadFile(manifestPath)
+	data, err := readInjectionManifest(manifestPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("read manifest for credential-source validation: %w", err)
 	}
 	var manifest struct {
 		Credentials map[string]struct {

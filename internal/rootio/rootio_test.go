@@ -5,10 +5,28 @@ package rootio
 
 import (
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestReadFileNoFollowMaxIntLimit(t *testing.T) {
+	rootDir := t.TempDir()
+	path := filepath.Join(rootDir, "manifest.json")
+	want := []byte(`{"version":1}`)
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadFileNoFollow(path, "manifest", math.MaxInt64)
+	if err != nil {
+		t.Fatalf("ReadFileNoFollow returned error: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("content mismatch: got %q, want %q", got, want)
+	}
+}
 
 func TestWriteFileAtomicWritesContentAndMode(t *testing.T) {
 	rootDir := t.TempDir()

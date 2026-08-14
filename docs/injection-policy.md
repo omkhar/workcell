@@ -373,6 +373,8 @@ credentials, and copies.
 - The safe path does not pass a complete host home.
 - `[[copies]]` cannot write Workcell control-plane paths.
 - Workcell does not forward `SSH_AUTH_SOCK`.
+- Workcell reads an injection manifest only from one regular file of 16 MiB or less.
+- Workcell reads a direct-mount specification only from one regular file of 1 MiB or less.
 - Processes in one session do not receive isolation from each other.
 - Copilot does not receive host provider homes, keychains, or ambient CLI auth.
 - Strict mode does not set provider telemetry or content-capture variables.

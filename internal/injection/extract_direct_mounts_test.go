@@ -4,10 +4,14 @@
 package injection
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestRequireDirectMountRemovesSourceAndReturnsEntry(t *testing.T) {
@@ -205,6 +209,110 @@ func TestRunExtractDirectMountsWritesMode0600(t *testing.T) {
 	assertFileMode(t, mountSpecPath, 0o600)
 }
 
+func TestRunExtractDirectMountsAtomicallyReplacesSwappedManifestLeaf(t *testing.T) {
+	fixture := map[string]any{"copies": []any{}}
+	expectedRoot := t.TempDir()
+	expectedManifest := filepath.Join(expectedRoot, "manifest.json")
+	expectedMounts := filepath.Join(expectedRoot, "mounts.json")
+	writeFixtureManifest(t, expectedManifest, fixture)
+	if err := RunExtractDirectMounts(expectedManifest, expectedMounts); err != nil {
+		t.Fatalf("prepare expected output: %v", err)
+	}
+	wantManifest := readFile(t, expectedManifest)
+	wantMounts := readFile(t, expectedMounts)
+
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "manifest.json")
+	mountSpecPath := filepath.Join(root, "mounts.json")
+	writeFixtureManifest(t, manifestPath, fixture)
+	outside := filepath.Join(root, "outside.json")
+	originalOutside := []byte(`{"outside":true}` + "\n")
+	if err := os.WriteFile(outside, originalOutside, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runExtractDirectMounts(manifestPath, mountSpecPath, func() error {
+		if err := os.Rename(manifestPath, manifestPath+".original"); err != nil {
+			return err
+		}
+		return os.Symlink(filepath.Base(outside), manifestPath)
+	})
+	if err != nil {
+		t.Fatalf("RunExtractDirectMounts after leaf swap: %v", err)
+	}
+	if got := readFile(t, manifestPath); !bytes.Equal(got, wantManifest) {
+		t.Fatalf("manifest output changed after leaf swap:\n got %q\nwant %q", got, wantManifest)
+	}
+	if got := readFile(t, mountSpecPath); !bytes.Equal(got, wantMounts) {
+		t.Fatalf("mount output changed after leaf swap:\n got %q\nwant %q", got, wantMounts)
+	}
+	if data := readFile(t, outside); !bytes.Equal(data, originalOutside) {
+		t.Fatalf("outside symlink target changed: %q", data)
+	}
+	if info, err := os.Lstat(manifestPath); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("swapped manifest leaf was not atomically replaced: %v, %v", info, err)
+	}
+	assertFileMode(t, manifestPath, 0o600)
+	assertFileMode(t, mountSpecPath, 0o600)
+}
+
+func TestRunExtractDirectMountsAtomicallyReplacesMountSpecSymlink(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "manifest.json")
+	writeFixtureManifest(t, manifestPath, map[string]any{"copies": []any{}})
+
+	outside := filepath.Join(root, "outside-mounts.json")
+	originalOutside := []byte(`{"outside":true}` + "\n")
+	if err := os.WriteFile(outside, originalOutside, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mountSpecPath := filepath.Join(root, "mounts.json")
+	if err := os.Symlink(filepath.Base(outside), mountSpecPath); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+
+	if err := RunExtractDirectMounts(manifestPath, mountSpecPath); err != nil {
+		t.Fatalf("RunExtractDirectMounts with symlinked mount output: %v", err)
+	}
+	if data := readFile(t, outside); !bytes.Equal(data, originalOutside) {
+		t.Fatalf("outside mount-spec target changed: %q", data)
+	}
+	if info, err := os.Lstat(mountSpecPath); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("mount-spec leaf was not atomically replaced: %v, %v", info, err)
+	}
+	if got := readFile(t, mountSpecPath); !bytes.Equal(bytes.TrimSpace(got), []byte("null")) {
+		t.Fatalf("mount specification = %q, want preserved JSON null", got)
+	}
+	assertFileMode(t, mountSpecPath, 0o600)
+}
+
+func TestRunExtractDirectMountsRejectsSymlinkedMountSpecParent(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "manifest.json")
+	writeFixtureManifest(t, manifestPath, map[string]any{"copies": []any{}})
+
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mountSpecTarget := filepath.Join(realParent, "mounts.json")
+	originalTarget := []byte(`{"outside":true}` + "\n")
+	if err := os.WriteFile(mountSpecTarget, originalTarget, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(filepath.Base(realParent), linkedParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+
+	if err := RunExtractDirectMounts(manifestPath, filepath.Join(linkedParent, "mounts.json")); err == nil {
+		t.Fatal("RunExtractDirectMounts accepted a symlinked mount-spec parent")
+	}
+	if data := readFile(t, mountSpecTarget); !bytes.Equal(data, originalTarget) {
+		t.Fatalf("symlinked mount-spec parent changed outside target: %q", data)
+	}
+}
+
 func TestRunExtractDirectMountsLeavesPlainCopySourcesInline(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, "manifest.json")
@@ -245,6 +353,85 @@ func TestRunExtractDirectMountsLeavesPlainCopySourcesInline(t *testing.T) {
 	}
 	if len(mounts) != 0 {
 		t.Fatalf("expected no direct mounts, got %#v", mounts)
+	}
+}
+
+func TestRunExtractDirectMountsRejectsUnsafeManifestPaths(t *testing.T) {
+	root := t.TempDir()
+	original := []byte(`{"copies":[]}` + "\n")
+	target := filepath.Join(root, "target.json")
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leafLink := filepath.Join(root, "leaf-link.json")
+	if err := os.Symlink(filepath.Base(target), leafLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if err := RunExtractDirectMounts(leafLink, filepath.Join(root, "mounts.json")); err == nil {
+		t.Fatal("RunExtractDirectMounts accepted a leaf symlink")
+	}
+	if data, err := os.ReadFile(target); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("leaf symlink changed target manifest: %q, %v", data, err)
+	}
+
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parentTarget := filepath.Join(realParent, "manifest.json")
+	if err := os.WriteFile(parentTarget, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(filepath.Base(realParent), linkedParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if err := RunExtractDirectMounts(filepath.Join(linkedParent, "manifest.json"), filepath.Join(root, "mounts-parent.json")); err == nil {
+		t.Fatal("RunExtractDirectMounts accepted a symlinked parent")
+	}
+	if data, err := os.ReadFile(parentTarget); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("parent symlink changed target manifest: %q, %v", data, err)
+	}
+
+	fifo := filepath.Join(root, "manifest.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("unix.Mkfifo unavailable: %v", err)
+	}
+	if err := RunExtractDirectMounts(fifo, filepath.Join(root, "mounts-fifo.json")); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("RunExtractDirectMounts FIFO error = %v, want non-regular rejection", err)
+	}
+}
+
+func TestRunExtractDirectMountsManifestByteLimit(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, "manifest.json")
+	mountSpecPath := filepath.Join(root, "mounts.json")
+	exact := append([]byte(`{"copies":[]}`), bytes.Repeat([]byte{' '}, int(maxInjectionManifestBytes-int64(len(`{"copies":[]}`))))...)
+	if err := os.WriteFile(manifestPath, exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunExtractDirectMounts(manifestPath, mountSpecPath); err != nil {
+		t.Fatalf("RunExtractDirectMounts exact limit: %v", err)
+	}
+	if got := readFile(t, mountSpecPath); string(got) != "null\n" {
+		t.Fatalf("exact-limit mount specification = %q, want null", got)
+	}
+
+	overLimit := append(exact, ' ')
+	if err := os.WriteFile(manifestPath, overLimit, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mountSpecPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunExtractDirectMounts(manifestPath, mountSpecPath); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("RunExtractDirectMounts over-limit error = %v, want byte-limit rejection", err)
+	}
+	if got := readFile(t, manifestPath); !bytes.Equal(got, overLimit) {
+		t.Fatal("RunExtractDirectMounts changed an over-limit manifest")
+	}
+	if _, err := os.Stat(mountSpecPath); !os.IsNotExist(err) {
+		t.Fatalf("RunExtractDirectMounts created mount specification after over-limit input: %v", err)
 	}
 }
 

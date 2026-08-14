@@ -37,6 +37,18 @@ func TestStageDirectMountsMissingSpecReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestStageDirectMountsRejectsDanglingSpecSymlink(t *testing.T) {
+	bundleRoot := t.TempDir()
+	specPath := filepath.Join(bundleRoot, "spec.json")
+	if err := os.Symlink(filepath.Join(bundleRoot, "does-not-exist"), specPath); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	if _, err := StageDirectMounts(bundleRoot, specPath); err == nil {
+		t.Fatal("expected dangling mount-spec symlink to be rejected")
+	}
+}
+
 func TestStageDirectMountsEmptyBundleRootRejected(t *testing.T) {
 	specPath := filepath.Join(t.TempDir(), "spec.json")
 	writeMountSpec(t, specPath, []map[string]any{})

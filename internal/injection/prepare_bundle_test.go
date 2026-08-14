@@ -4,6 +4,7 @@
 package injection
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,41 @@ func TestPrepareBundleRejectsCredentialSourceUnderWorkspace(t *testing.T) {
 	}
 }
 
+func TestRejectWorkspaceCredentialSourcesRejectsUnsafeManifest(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(root, "manifest.json")
+	if err := os.WriteFile(manifest, []byte(`{"credentials":{}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifestLink := filepath.Join(root, "manifest-link.json")
+	if err := os.Symlink(filepath.Base(manifest), manifestLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if err := rejectWorkspaceCredentialSources(manifestLink, workspace, true); err == nil {
+		t.Fatal("rejectWorkspaceCredentialSources accepted a manifest symlink")
+	}
+}
+
+func TestRejectWorkspaceCredentialSourcesRejectsOverLimitManifest(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(root, "manifest.json")
+	data := append([]byte(`{"credentials":{}}`), bytes.Repeat([]byte{' '}, int(maxInjectionManifestBytes-int64(len(`{"credentials":{}}`))+1))...)
+	if err := os.WriteFile(manifest, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rejectWorkspaceCredentialSources(manifest, workspace, true); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("rejectWorkspaceCredentialSources over-limit error = %v, want byte-limit rejection", err)
+	}
+}
+
 func TestPrepareBundleRejectsCredentialSourceUnderTildeWorkspace(t *testing.T) {
 	realHome := t.TempDir()
 	t.Setenv("HOME", realHome)
@@ -147,7 +183,7 @@ func TestPrepareBundleRejectsMissingLaunchWorkspaceForCredentialValidation(t *te
 	}
 }
 
-func TestPrepareBundleAuthStatusAllowsMissingWorkspace(t *testing.T) {
+func TestPrepareBundleAuthStatusAllowsMissingWorkspaceAndReadsMetadata(t *testing.T) {
 	realHome := t.TempDir()
 	policyPath := filepath.Join(realHome, "policy.toml")
 	credentialPath := filepath.Join(realHome, "copilot-token.txt")
@@ -158,7 +194,7 @@ func TestPrepareBundleAuthStatusAllowsMissingWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := PrepareBundle(PrepareBundleOptions{
+	result, err := PrepareBundle(PrepareBundleOptions{
 		Agent:                "copilot",
 		Mode:                 "strict",
 		WorkspacePath:        filepath.Join(realHome, "missing-workspace"),
@@ -170,6 +206,12 @@ func TestPrepareBundleAuthStatusAllowsMissingWorkspace(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected auth-status to allow missing workspace, got %v", err)
+	}
+	if result.InjectionPolicySHA256 == "" {
+		t.Fatal("PrepareBundle did not read the rendered manifest metadata")
+	}
+	if result.InjectionCredentialKeys != "copilot_github_token" {
+		t.Fatalf("InjectionCredentialKeys = %q, want copilot_github_token", result.InjectionCredentialKeys)
 	}
 }
 

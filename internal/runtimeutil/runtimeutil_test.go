@@ -4,11 +4,15 @@
 package runtimeutil
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestCanonicalizePath(t *testing.T) {
@@ -141,5 +145,128 @@ func TestRewriteBundleCredentialOverrideRejectsManifestSymlinkEscape(t *testing.
 	}
 	if string(data) != `{"credentials":{"a":{"mount_path":"m"}}}`+"\n" {
 		t.Fatalf("outside manifest changed unexpectedly: %s", data)
+	}
+}
+
+func TestListDirectMountsRejectsUnsafeInputsAndAcceptsExactLimit(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	valid := filepath.Join(root, "mounts.json")
+	exact := append([]byte("[]"), bytes.Repeat([]byte{' '}, int(maxRuntimeMountSpecBytes-2))...)
+	if err := os.WriteFile(valid, exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if mounts, err := ListDirectMounts(valid); err != nil || len(mounts) != 0 {
+		t.Fatalf("ListDirectMounts exact limit = %#v, %v", mounts, err)
+	}
+
+	oversized := filepath.Join(root, "oversized.json")
+	if err := os.WriteFile(oversized, append(exact, ' '), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ListDirectMounts(oversized); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("ListDirectMounts oversized error = %v, want byte-limit rejection", err)
+	}
+
+	target := filepath.Join(root, "target.json")
+	if err := os.WriteFile(target, []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leafLink := filepath.Join(root, "leaf-link.json")
+	if err := os.Symlink(filepath.Base(target), leafLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if _, err := ListDirectMounts(leafLink); err == nil {
+		t.Fatal("ListDirectMounts accepted a leaf symlink")
+	}
+
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realParent, "mounts.json"), []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(filepath.Base(realParent), linkedParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if _, err := ListDirectMounts(filepath.Join(linkedParent, "mounts.json")); err == nil {
+		t.Fatal("ListDirectMounts accepted a symlinked parent")
+	}
+
+	fifo := filepath.Join(root, "mounts.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("unix.Mkfifo unavailable: %v", err)
+	}
+	if _, err := ListDirectMounts(fifo); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("ListDirectMounts FIFO error = %v, want regular-file rejection", err)
+	}
+}
+
+func TestRewriteBundleCredentialOverrideRejectsUnsafeManifestAndAcceptsExactLimit(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := []byte(`{"credentials":{"a":{}}}`)
+	exact := append(manifest, bytes.Repeat([]byte{' '}, int(maxRuntimeManifestBytes)-len(manifest))...)
+	manifestPath := filepath.Join(root, "manifest.json")
+	if err := os.WriteFile(manifestPath, exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteBundleCredentialOverride(manifestPath, "", "a", "override.txt"); err != nil {
+		t.Fatalf("RewriteBundleCredentialOverride exact limit: %v", err)
+	}
+
+	oversized := filepath.Join(root, "oversized.json")
+	if err := os.WriteFile(oversized, append(exact, ' '), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteBundleCredentialOverride(oversized, "", "a", "override.txt"); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("RewriteBundleCredentialOverride oversized error = %v, want byte-limit rejection", err)
+	}
+
+	outside := filepath.Join(root, "outside.json")
+	original := []byte(`{"credentials":{"a":{}}}` + "\n")
+	if err := os.WriteFile(outside, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leafLink := filepath.Join(root, "leaf-link.json")
+	if err := os.Symlink(filepath.Base(outside), leafLink); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if err := RewriteBundleCredentialOverride(leafLink, "", "a", "override.txt"); err == nil {
+		t.Fatal("RewriteBundleCredentialOverride accepted a leaf symlink")
+	}
+	if data, err := os.ReadFile(outside); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("leaf symlink changed outside manifest: %q, %v", data, err)
+	}
+
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	parentTarget := filepath.Join(realParent, "manifest.json")
+	if err := os.WriteFile(parentTarget, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(root, "linked-parent")
+	if err := os.Symlink(filepath.Base(realParent), linkedParent); err != nil {
+		t.Skipf("os.Symlink unavailable: %v", err)
+	}
+	if err := RewriteBundleCredentialOverride(filepath.Join(linkedParent, "manifest.json"), "", "a", "override.txt"); err == nil {
+		t.Fatal("RewriteBundleCredentialOverride accepted a symlinked parent")
+	}
+	if data, err := os.ReadFile(parentTarget); err != nil || !bytes.Equal(data, original) {
+		t.Fatalf("parent symlink changed target manifest: %q, %v", data, err)
+	}
+
+	fifo := filepath.Join(root, "manifest.fifo")
+	if err := unix.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("unix.Mkfifo unavailable: %v", err)
+	}
+	if err := RewriteBundleCredentialOverride(fifo, "", "a", "override.txt"); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("RewriteBundleCredentialOverride FIFO error = %v, want regular-file rejection", err)
 	}
 }
