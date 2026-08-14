@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,6 +100,511 @@ exit 64
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("runner toolcache Go did not run the Darwin ACL test: %v", err)
 	}
+}
+
+func TestReleaseAssetACLValidationUsesDynamicToolchainFallback(t *testing.T) {
+	t.Parallel()
+
+	marker, toolchainLog, expectedToolchain, output, err := runReleaseAssetACLDynamicFixture(t, "")
+	if err != nil {
+		t.Fatalf("release ACL validation: %v: %s", err, output)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(content)); got != expectedToolchain {
+		t.Fatalf("dynamic toolchain = %q, want %q", got, expectedToolchain)
+	}
+	logContent, err := os.ReadFile(toolchainLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(logContent), "local\n"+expectedToolchain+"\n"+expectedToolchain+"\n"; got != want {
+		t.Fatalf("GOTOOLCHAIN probe order = %q, want %q", got, want)
+	}
+}
+
+func TestReleaseAssetACLValidationRejectsDynamicToolchainMismatch(t *testing.T) {
+	t.Parallel()
+
+	marker, _, expectedToolchain, output, err := runReleaseAssetACLDynamicFixture(t, "go0.0.0")
+	if err == nil {
+		t.Fatalf("release ACL validation unexpectedly succeeded: %s", output)
+	}
+	if !strings.Contains(string(output), "does not match "+expectedToolchain) {
+		t.Fatalf("mismatch output = %q", output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("Darwin ACL test ran after toolchain mismatch: %v", err)
+	}
+}
+
+type releaseAssetACLToolcacheCandidate struct {
+	version string
+	mode    string
+	probe   string
+}
+
+type releaseAssetACLToolcacheFixture struct {
+	ambient        bool
+	ambientMode    string
+	exactCacheMode string
+	candidates     []releaseAssetACLToolcacheCandidate
+	opposite       bool
+}
+
+func TestReleaseAssetACLValidationToolcacheSelectionCases(t *testing.T) {
+	newestFirstCandidates := make([]releaseAssetACLToolcacheCandidate, 0, 9)
+	capCandidates := make([]releaseAssetACLToolcacheCandidate, 0, 9)
+	newestFirstLog := make([]string, 0, 2)
+	capLog := make([]string, 0, 8)
+	for i := 2; i <= 10; i++ {
+		version := "1.0." + strconv.Itoa(i)
+		newestMode := "mismatch"
+		if i == 10 {
+			newestMode = "success"
+		}
+		newestFirstCandidates = append(newestFirstCandidates, releaseAssetACLToolcacheCandidate{version: version, mode: newestMode})
+	}
+	for i := 1; i <= 9; i++ {
+		version := "1.0." + strconv.Itoa(i)
+		capMode := "mismatch"
+		if i == 1 {
+			capMode = "success"
+		}
+		capCandidates = append(capCandidates, releaseAssetACLToolcacheCandidate{version: version, mode: capMode})
+	}
+	newestFirstLog = []string{"candidate:1.0.10:$EXPECTED", "candidate:1.0.10:$EXPECTED"}
+	for i := 9; i >= 2; i-- {
+		capLog = append(capLog, "candidate:1.0."+strconv.Itoa(i)+":$EXPECTED")
+	}
+
+	cases := []struct {
+		name        string
+		fixture     releaseAssetACLToolcacheFixture
+		wantLog     []string
+		wantMarker  string
+		wantSuccess bool
+	}{
+		{
+			name: "ambient bootstrap wins over stale candidates",
+			fixture: releaseAssetACLToolcacheFixture{
+				ambient: true,
+				candidates: []releaseAssetACLToolcacheCandidate{
+					{version: "1.0.9", mode: "nonzero"},
+				},
+			},
+			wantLog:     []string{"ambient:local", "ambient:$EXPECTED", "ambient:$EXPECTED"},
+			wantMarker:  "ambient",
+			wantSuccess: true,
+		},
+		{
+			name: "ambient nonzero expected output falls through to stale cache",
+			fixture: releaseAssetACLToolcacheFixture{
+				ambient:     true,
+				ambientMode: "expected_nonzero",
+				candidates: []releaseAssetACLToolcacheCandidate{
+					{version: "1.0.1", mode: "success"},
+				},
+			},
+			wantLog:     []string{"ambient:local", "ambient:$EXPECTED", "candidate:1.0.1:$EXPECTED", "candidate:1.0.1:$EXPECTED"},
+			wantMarker:  "candidate:1.0.1",
+			wantSuccess: true,
+		},
+		{
+			name: "stale ambient exact probe falls through to stale cache",
+			fixture: releaseAssetACLToolcacheFixture{
+				ambient:     true,
+				ambientMode: "stale_exact_fail",
+				candidates: []releaseAssetACLToolcacheCandidate{
+					{version: "1.0.1", mode: "success"},
+				},
+			},
+			wantLog:     []string{"ambient:local", "ambient:$EXPECTED", "candidate:1.0.1:$EXPECTED", "candidate:1.0.1:$EXPECTED"},
+			wantMarker:  "candidate:1.0.1",
+			wantSuccess: true,
+		},
+		{
+			name: "exact cache nonzero expected output falls through to stale cache",
+			fixture: releaseAssetACLToolcacheFixture{
+				exactCacheMode: "nonzero_expected",
+				candidates: []releaseAssetACLToolcacheCandidate{
+					{version: "1.0.1", mode: "success"},
+				},
+			},
+			wantLog:     []string{"candidate:$VERSION:local", "candidate:1.0.1:$EXPECTED", "candidate:1.0.1:$EXPECTED"},
+			wantMarker:  "candidate:1.0.1",
+			wantSuccess: true,
+		},
+		{
+			name: "nonzero expected output continues to second candidate",
+			fixture: releaseAssetACLToolcacheFixture{
+				candidates: []releaseAssetACLToolcacheCandidate{
+					{version: "1.0.2", mode: "nonzero_expected"},
+					{version: "1.0.1", mode: "success"},
+				},
+			},
+			wantLog:     []string{"candidate:1.0.2:$EXPECTED", "candidate:1.0.1:$EXPECTED", "candidate:1.0.1:$EXPECTED"},
+			wantMarker:  "candidate:1.0.1",
+			wantSuccess: true,
+		},
+		{
+			name: "newest candidate is tried first",
+			fixture: releaseAssetACLToolcacheFixture{
+				candidates: newestFirstCandidates,
+			},
+			wantLog:     newestFirstLog,
+			wantMarker:  "candidate:1.0.10",
+			wantSuccess: true,
+		},
+		{
+			name: "eight failures do not reach ninth candidate",
+			fixture: releaseAssetACLToolcacheFixture{
+				candidates: capCandidates,
+			},
+			wantLog:     capLog,
+			wantSuccess: false,
+		},
+		{
+			name:        "empty toolcache fails closed",
+			fixture:     releaseAssetACLToolcacheFixture{},
+			wantSuccess: false,
+		},
+		{
+			name: "invalid candidate version fails closed",
+			fixture: releaseAssetACLToolcacheFixture{
+				candidates: []releaseAssetACLToolcacheCandidate{
+					{version: "not-a-version", mode: "success"},
+				},
+			},
+			wantSuccess: false,
+		},
+		{
+			name: "opposite architecture is not executed",
+			fixture: releaseAssetACLToolcacheFixture{
+				opposite: true,
+			},
+			wantSuccess: false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			marker, toolchainLog, oppositeMarker, expectedToolchain, output, err := runReleaseAssetACLToolcacheFixture(t, tc.fixture)
+			if tc.wantSuccess {
+				if err != nil {
+					t.Fatalf("release ACL validation: %v: %s", err, output)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("release ACL validation unexpectedly succeeded: %s", output)
+				}
+				if !strings.Contains(string(output), "Go toolchain "+expectedToolchain+" is unavailable") {
+					t.Fatalf("unavailable output = %q", output)
+				}
+			}
+
+			logContent, err := os.ReadFile(toolchainLog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantLog := strings.Join(tc.wantLog, "\n")
+			wantLog = strings.ReplaceAll(wantLog, "$EXPECTED", expectedToolchain)
+			wantLog = strings.ReplaceAll(wantLog, "$VERSION", strings.TrimPrefix(expectedToolchain, "go"))
+			if len(tc.wantLog) > 0 {
+				wantLog += "\n"
+			}
+			if got := string(logContent); got != wantLog {
+				t.Fatalf("toolchain probe log = %q, want %q", got, wantLog)
+			}
+
+			if tc.wantMarker != "" {
+				content, err := os.ReadFile(marker)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := strings.TrimSpace(string(content)); got != tc.wantMarker {
+					t.Fatalf("test marker = %q, want %q", got, tc.wantMarker)
+				}
+			} else if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("Darwin ACL test ran unexpectedly: %v", err)
+			}
+			if _, err := os.Stat(oppositeMarker); !os.IsNotExist(err) {
+				t.Fatalf("opposite-architecture candidate ran: %v", err)
+			}
+		})
+	}
+}
+
+func runReleaseAssetACLToolcacheFixture(t *testing.T, fixture releaseAssetACLToolcacheFixture) (string, string, string, string, []byte, error) {
+	t.Helper()
+
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
+	if arch == "" {
+		t.Skipf("runner toolcache architecture is not covered: %s", runtime.GOARCH)
+	}
+	goMod, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedToolchain := ""
+	for _, line := range strings.Split(string(goMod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "toolchain" {
+			expectedToolchain = fields[1]
+			break
+		}
+	}
+	if expectedToolchain == "" {
+		t.Fatal("go.mod has no toolchain directive")
+	}
+
+	tempDir := t.TempDir()
+	toolcacheRoot := filepath.Join(tempDir, "toolcache")
+	marker := filepath.Join(tempDir, "go-test-ran")
+	toolchainLog := filepath.Join(tempDir, "go-toolchain-log")
+	oppositeMarker := filepath.Join(tempDir, "opposite-architecture-ran")
+	if err := os.MkdirAll(toolcacheRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(toolchainLog, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	writeToolcacheGo := func(path string, script string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeCandidate := func(candidate releaseAssetACLToolcacheCandidate) {
+		t.Helper()
+		candidateProbeToolchain := expectedToolchain
+		if candidate.probe != "" {
+			candidateProbeToolchain = candidate.probe
+		}
+		candidateScript := `#!/bin/sh
+candidate_version="` + candidate.version + `"
+candidate_mode="` + candidate.mode + `"
+candidate_probe_toolchain="` + candidateProbeToolchain + `"
+if [ "${GOENV:-}" != off ] || [ -n "${GOFLAGS:-}" ] || [ "${GOWORK:-}" != off ]; then
+  exit 66
+fi
+case "$*" in
+  "env GOVERSION")
+    printf 'candidate:%s:%s\n' "${candidate_version}" "${GOTOOLCHAIN:-}" >>"${WORKCELL_TEST_GO_TOOLCHAIN_LOG}"
+    [ "${GOTOOLCHAIN:-}" = "${candidate_probe_toolchain}" ] || exit 67
+    case "${candidate_mode}" in
+      success) printf '%s\n' "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}" ;;
+      nonzero_expected) printf '%s\n' "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}"; exit 17 ;;
+      nonzero) exit 17 ;;
+      mismatch) printf '%s\n' go999.0.0 ;;
+      *) exit 18 ;;
+    esac
+    ;;
+  "env GOOS") printf '%s\n' darwin ;;
+  "test ./internal/host/release -run ^TestReleaseAssetACLDarwin$")
+    [ "${GOTOOLCHAIN:-}" = "${candidate_probe_toolchain}" ] || exit 65
+    printf 'candidate:%s\n' "${candidate_version}" >"${WORKCELL_TEST_GO_MARKER}"
+    ;;
+  *) exit 64 ;;
+esac
+`
+		writeToolcacheGo(filepath.Join(toolcacheRoot, "go", candidate.version, arch, "bin", "go"), candidateScript)
+	}
+	for _, candidate := range fixture.candidates {
+		writeCandidate(candidate)
+	}
+	if fixture.exactCacheMode != "" {
+		writeCandidate(releaseAssetACLToolcacheCandidate{
+			version: strings.TrimPrefix(expectedToolchain, "go"),
+			mode:    fixture.exactCacheMode,
+			probe:   "local",
+		})
+	}
+	if fixture.opposite {
+		oppositeArch := "arm64"
+		if arch == "arm64" {
+			oppositeArch = "x64"
+		}
+		oppositeScript := `#!/bin/sh
+: >"${WORKCELL_TEST_OPPOSITE_MARKER}"
+exit 19
+`
+		writeToolcacheGo(filepath.Join(toolcacheRoot, "go", "9.9.9", oppositeArch, "bin", "go"), oppositeScript)
+	}
+
+	pathDir := filepath.Join(tempDir, "path")
+	if err := os.Mkdir(pathDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"awk", "dirname", "uname"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(pathDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fixture.ambient {
+		ambientMode := fixture.ambientMode
+		if ambientMode == "" {
+			ambientMode = "stale_local"
+		}
+		ambientScript := `#!/bin/sh
+if [ "${GOENV:-}" != off ] || [ -n "${GOFLAGS:-}" ] || [ "${GOWORK:-}" != off ]; then
+  exit 66
+fi
+case "$*" in
+  "env GOVERSION")
+    printf 'ambient:%s\n' "${GOTOOLCHAIN:-}" >>"${WORKCELL_TEST_GO_TOOLCHAIN_LOG}"
+    if [ "${GOTOOLCHAIN:-}" = local ]; then
+      if [ "` + ambientMode + `" = expected_nonzero ]; then
+        printf '%s\n' "` + expectedToolchain + `"
+        exit 17
+      fi
+      printf '%s\n' go0.0.0
+    elif [ "${GOTOOLCHAIN:-}" = "` + expectedToolchain + `" ]; then
+      if [ "` + ambientMode + `" = stale_exact_fail ]; then
+        printf '%s\n' go0.0.0
+      elif [ "` + ambientMode + `" = expected_nonzero ]; then
+        printf '%s\n' go0.0.0
+      else
+        printf '%s\n' "` + expectedToolchain + `"
+      fi
+    else
+      exit 67
+    fi
+    ;;
+  "env GOOS") printf '%s\n' darwin ;;
+  "test ./internal/host/release -run ^TestReleaseAssetACLDarwin$")
+    [ "${GOTOOLCHAIN:-}" = "` + expectedToolchain + `" ] || exit 65
+    printf '%s\n' ambient >"${WORKCELL_TEST_GO_MARKER}"
+    ;;
+  *) exit 64 ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(pathDir, "go"), []byte(ambientScript), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	script := filepath.Join(repoRoot(t), "scripts", "ci", "job-release-asset-acl.sh")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"AGENT_TOOLSDIRECTORY":             "",
+		"GOENV":                            "/tmp/workcell-hostile-goenv",
+		"GOFLAGS":                          "-overlay=/tmp/workcell-hostile-overlay.json",
+		"GOWORK":                           "/tmp/workcell-hostile.work",
+		"PATH":                             pathDir,
+		"RUNNER_TOOL_CACHE":                toolcacheRoot,
+		"WORKCELL_TEST_EXPECTED_TOOLCHAIN": expectedToolchain,
+		"WORKCELL_TEST_GO_MARKER":          marker,
+		"WORKCELL_TEST_GO_TOOLCHAIN_LOG":   toolchainLog,
+		"WORKCELL_TEST_OPPOSITE_MARKER":    oppositeMarker,
+	})
+	output, err := cmd.CombinedOutput()
+	return marker, toolchainLog, oppositeMarker, expectedToolchain, output, err
+}
+
+func runReleaseAssetACLDynamicFixture(t *testing.T, reportedToolchain string) (string, string, string, []byte, error) {
+	t.Helper()
+
+	goMod, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedToolchain := ""
+	for _, line := range strings.Split(string(goMod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "toolchain" {
+			expectedToolchain = fields[1]
+			break
+		}
+	}
+	if expectedToolchain == "" {
+		t.Fatal("go.mod has no toolchain directive")
+	}
+
+	tempDir := t.TempDir()
+	marker := filepath.Join(tempDir, "go-test-ran")
+	toolchainLog := filepath.Join(tempDir, "go-toolchain-log")
+	dynamicProbeMarker := filepath.Join(tempDir, "go-dynamic-probe")
+	pathDir := filepath.Join(tempDir, "path")
+	if err := os.Mkdir(pathDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"awk", "dirname", "uname"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(pathDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeGo := filepath.Join(pathDir, "go")
+	fakeGoScript := `#!/bin/sh
+if [ "${GOENV:-}" != off ] || [ -n "${GOFLAGS:-}" ] || [ "${GOWORK:-}" != off ]; then
+  exit 66
+fi
+case "$*" in
+  "env GOVERSION")
+    printf '%s\n' "${GOTOOLCHAIN:-}" >>"${WORKCELL_TEST_GO_TOOLCHAIN_LOG}"
+	if [ "${GOTOOLCHAIN:-}" = local ]; then
+      printf '%s\n' go0.0.0
+    elif [ "${GOTOOLCHAIN:-}" = "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}" ]; then
+      if [ -e "${WORKCELL_TEST_GO_DYNAMIC_PROBE_MARKER}" ]; then
+        printf '%s\n' "${WORKCELL_TEST_GO_VERSION}"
+      else
+        printf '%s\n' "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}"
+        : >"${WORKCELL_TEST_GO_DYNAMIC_PROBE_MARKER}"
+      fi
+    else
+      exit 67
+    fi
+    ;;
+  "env GOOS") printf '%s\n' darwin ;;
+  "test ./internal/host/release -run ^TestReleaseAssetACLDarwin$")
+    [ "${GOTOOLCHAIN:-}" = "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}" ] || exit 65
+    printf '%s\n' "${GOTOOLCHAIN}" >"${WORKCELL_TEST_GO_MARKER}"
+    ;;
+  *) exit 64 ;;
+esac
+`
+	if err := os.WriteFile(fakeGo, []byte(fakeGoScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	toolchainVersion := reportedToolchain
+	if toolchainVersion == "" {
+		toolchainVersion = expectedToolchain
+	}
+
+	script := filepath.Join(repoRoot(t), "scripts", "ci", "job-release-asset-acl.sh")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"AGENT_TOOLSDIRECTORY":                  "",
+		"GOENV":                                 "/tmp/workcell-hostile-goenv",
+		"GOFLAGS":                               "-overlay=/tmp/workcell-hostile-overlay.json",
+		"GOWORK":                                "/tmp/workcell-hostile.work",
+		"PATH":                                  pathDir,
+		"RUNNER_TOOL_CACHE":                     "",
+		"WORKCELL_TEST_EXPECTED_TOOLCHAIN":      expectedToolchain,
+		"WORKCELL_TEST_GO_MARKER":               marker,
+		"WORKCELL_TEST_GO_DYNAMIC_PROBE_MARKER": dynamicProbeMarker,
+		"WORKCELL_TEST_GO_TOOLCHAIN_LOG":        toolchainLog,
+		"WORKCELL_TEST_GO_VERSION":              toolchainVersion,
+	})
+	output, err := cmd.CombinedOutput()
+	return marker, toolchainLog, expectedToolchain, output, err
 }
 
 func TestC3CertificationEntrypointSanitizesBuildControl(t *testing.T) {
