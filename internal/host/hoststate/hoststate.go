@@ -487,14 +487,12 @@ func injectionBundleIsLive(bundlePath string, cutoff time.Time) (bool, error) {
 		return true, fmt.Errorf("parse owner.json at %s: %w", ownerMetaPath, err)
 	}
 	if owner.PID <= 0 || owner.Started == "" {
-		return false, nil
+		return true, fmt.Errorf("owner metadata is incomplete: %s", ownerMetaPath)
 	}
-	started, err := launcher.ProcessStartTime(owner.PID)
+	started, err := launcher.ObserveProcessGeneration(owner.PID, owner.Started)
 	if err != nil {
-		// launcher.ProcessStartTime distinguishes ESRCH ("process gone")
-		// from other errors via launcher.IsProcessGone. If the process
-		// is definitively gone, the bundle is dead. Anything else is a
-		// transient lookup failure - keep the bundle.
+		// launcher.ObserveProcessGeneration distinguishes an absent process
+		// from other errors. Keep the bundle on lookup errors.
 		if launcher.IsProcessGone(err) {
 			return false, nil
 		}
