@@ -4,16 +4,69 @@
 package authstate
 
 import (
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/pathutil"
 )
+
+func TestRejectCredentialSourceFailsClosedWhenHomeIsUnavailable(t *testing.T) {
+	t.Setenv("HOME", "")
+	err := RejectCredentialSource("/tmp/source", "credential")
+	if err == nil || !strings.Contains(err.Error(), "cannot check") {
+		t.Fatalf("RejectCredentialSource error = %v", err)
+	}
+	err = RejectCredentialDirectorySource("/tmp/source", "credential")
+	if err == nil || !strings.Contains(err.Error(), "cannot check") {
+		t.Fatalf("RejectCredentialDirectorySource error = %v", err)
+	}
+}
+
+func TestForbiddenCredentialSourceRootRejectsInvalidUTF8WithoutDisclosure(t *testing.T) {
+	home := t.TempDir()
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	_, _, err := forbiddenCredentialSourceRoot(invalid, home, true)
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("forbiddenCredentialSourceRoot error = %v", err)
+	}
+	_, _, err = forbiddenCredentialDirectorySourceRoot(invalid, home, true)
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("forbiddenCredentialDirectorySourceRoot error = %v", err)
+	}
+}
+
+func TestForbiddenCredentialRootsRejectUnicodeAliasesAndSiblings(t *testing.T) {
+	for _, pair := range [][2]string{{"café", "cafe\u0301"}, {"straße", "STRASSE"}, {"Σ", "ς"}, {"ﬀ", "ff"}, {"µ", "Μ"}, {"ś", "ſ\u0301"}} {
+		home := filepath.Join(t.TempDir(), pair[0])
+		sourceHome := filepath.Join(filepath.Dir(home), pair[1])
+		file := filepath.Join(sourceHome, ".codex", "auth.json")
+		if _, ok, err := forbiddenCredentialSourceRoot(file, home, true); err != nil || !ok {
+			t.Fatalf("file alias %q/%q = %v, %v", pair[0], pair[1], ok, err)
+		}
+		if _, ok, err := forbiddenCredentialDirectorySourceRoot(sourceHome, home, true); err != nil || !ok {
+			t.Fatalf("directory alias %q/%q = %v, %v", pair[0], pair[1], ok, err)
+		}
+		sibling := sourceHome + "-sibling"
+		if _, ok, err := forbiddenCredentialSourceRoot(filepath.Join(sibling, ".codex", "auth.json"), home, true); err != nil || ok {
+			t.Fatalf("file sibling %q = %v, %v", sibling, ok, err)
+		}
+		if _, ok, err := forbiddenCredentialDirectorySourceRoot(sibling, home, true); err != nil || ok {
+			t.Fatalf("directory sibling %q = %v, %v", sibling, ok, err)
+		}
+	}
+}
 
 func TestForbiddenCredentialSourceRootRejectsProviderState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	source := filepath.Join(home, ".config", "gh", "hosts.yml")
-	root, ok := ForbiddenCredentialSourceRoot(source)
+	root, ok, err := ForbiddenCredentialSourceRoot(source)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatalf("ForbiddenCredentialSourceRoot(%q) did not reject provider state", source)
 	}
@@ -87,7 +140,10 @@ func TestForbiddenCredentialSourceRootRejectsCaseVariedProviderState(t *testing.
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root, ok := forbiddenCredentialSourceRoot(tc.source, home, true)
+			root, ok, err := forbiddenCredentialSourceRoot(tc.source, home, true)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !ok {
 				t.Fatalf("forbiddenCredentialSourceRoot(%q) did not reject case-varied provider state", tc.source)
 			}
@@ -106,7 +162,9 @@ func TestForbiddenCredentialSourceRootAllowsSiblingAndManagedState(t *testing.T)
 		filepath.Join(home, ".config", "github-copilot-export", "token.txt"),
 		filepath.Join(home, ".local", "state", "workcell", "credentials", "copilot", "github-token.txt"),
 	} {
-		if root, ok := ForbiddenCredentialSourceRoot(source); ok {
+		if root, ok, err := ForbiddenCredentialSourceRoot(source); err != nil {
+			t.Fatal(err)
+		} else if ok {
 			t.Fatalf("ForbiddenCredentialSourceRoot(%q) rejected allowed source under %q", source, root)
 		}
 	}
@@ -137,7 +195,10 @@ func TestForbiddenCredentialDirectorySourceRootRejectsAncestorProviderState(t *t
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root, ok := forbiddenCredentialDirectorySourceRoot(tc.source, home, true)
+			root, ok, err := forbiddenCredentialDirectorySourceRoot(tc.source, home, true)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !ok {
 				t.Fatalf("forbiddenCredentialDirectorySourceRoot(%q) did not reject directory containing provider state", tc.source)
 			}
@@ -155,7 +216,9 @@ func TestForbiddenCredentialDirectorySourceRootAllowsSibling(t *testing.T) {
 		filepath.Join(home, ".config", "github-copilot-export"),
 		filepath.Join(home, ".local", "state", "workcell"),
 	} {
-		if root, ok := forbiddenCredentialDirectorySourceRoot(source, home, true); ok {
+		if root, ok, err := forbiddenCredentialDirectorySourceRoot(source, home, true); err != nil {
+			t.Fatal(err)
+		} else if ok {
 			t.Fatalf("forbiddenCredentialDirectorySourceRoot(%q) rejected allowed directory under %q", source, root)
 		}
 	}

@@ -8,7 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
+
+	"github.com/omkhar/workcell/internal/pathutil"
 )
 
 var forbiddenCredentialSourceRoots = []string{
@@ -36,77 +37,95 @@ var forbiddenCredentialSourceRoots = []string{
 }
 
 func RejectCredentialSource(source string, label string) error {
-	if root, ok := ForbiddenCredentialSourceRoot(source); ok {
+	if root, ok, err := ForbiddenCredentialSourceRoot(source); err != nil {
+		return fmt.Errorf("cannot check host provider/auth state: %w", err)
+	} else if ok {
 		return fmt.Errorf("%s must not point inside host provider/auth state: %s", label, root)
 	}
 	return nil
 }
 
 func RejectCredentialDirectorySource(source string, label string) error {
-	if root, ok := ForbiddenCredentialDirectorySourceRoot(source); ok {
+	if root, ok, err := ForbiddenCredentialDirectorySourceRoot(source); err != nil {
+		return fmt.Errorf("cannot check host provider/auth state: %w", err)
+	} else if ok {
 		return fmt.Errorf("%s must not include host provider/auth state: %s", label, root)
 	}
 	return nil
 }
 
-func ForbiddenCredentialSourceRoot(source string) (string, bool) {
+func ForbiddenCredentialSourceRoot(source string) (string, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return "", false
+		if err != nil {
+			return "", false, fmt.Errorf("get user home: %w", err)
+		}
+		return "", false, fmt.Errorf("get user home: empty path")
 	}
 	return forbiddenCredentialSourceRoot(source, home, hostPathComparisonCaseInsensitive())
 }
 
-func ForbiddenCredentialDirectorySourceRoot(source string) (string, bool) {
+func ForbiddenCredentialDirectorySourceRoot(source string) (string, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return "", false
+		if err != nil {
+			return "", false, fmt.Errorf("get user home: %w", err)
+		}
+		return "", false, fmt.Errorf("get user home: empty path")
 	}
 	return forbiddenCredentialDirectorySourceRoot(source, home, hostPathComparisonCaseInsensitive())
 }
 
-func forbiddenCredentialSourceRoot(source, home string, caseInsensitive bool) (string, bool) {
+func forbiddenCredentialSourceRoot(source, home string, caseInsensitive bool) (string, bool, error) {
 	var err error
 
 	home, err = filepath.Abs(home)
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("resolve user home: %w", err)
 	}
 	source, err = filepath.Abs(source)
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("resolve source path: %w", err)
 	}
 	source = filepath.Clean(source)
 
 	for _, rel := range forbiddenCredentialSourceRoots {
 		root := filepath.Clean(filepath.Join(home, filepath.FromSlash(rel)))
-		if pathWithinRoot(root, source, caseInsensitive) {
-			return root, true
+		inside, err := pathutil.WithinOrEqual(root, source, caseInsensitive)
+		if err != nil {
+			return "", false, err
+		}
+		if inside {
+			return root, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
-func forbiddenCredentialDirectorySourceRoot(source, home string, caseInsensitive bool) (string, bool) {
+func forbiddenCredentialDirectorySourceRoot(source, home string, caseInsensitive bool) (string, bool, error) {
 	var err error
 
 	home, err = filepath.Abs(home)
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("resolve user home: %w", err)
 	}
 	source, err = filepath.Abs(source)
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("resolve source path: %w", err)
 	}
 	source = filepath.Clean(source)
 
 	for _, rel := range forbiddenCredentialSourceRoots {
 		root := filepath.Clean(filepath.Join(home, filepath.FromSlash(rel)))
-		if pathWithinRoot(source, root, caseInsensitive) {
-			return root, true
+		inside, err := pathutil.WithinOrEqual(source, root, caseInsensitive)
+		if err != nil {
+			return "", false, err
+		}
+		if inside {
+			return root, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 func hostPathComparisonCaseInsensitive() bool {
@@ -116,21 +135,4 @@ func hostPathComparisonCaseInsensitive() bool {
 	default:
 		return false
 	}
-}
-
-func pathWithinRoot(root, candidate string, caseInsensitive bool) bool {
-	root = filepath.Clean(root)
-	candidate = filepath.Clean(candidate)
-	if caseInsensitive {
-		root = strings.ToLower(root)
-		candidate = strings.ToLower(candidate)
-	}
-	if candidate == root {
-		return true
-	}
-	rel, err := filepath.Rel(root, candidate)
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

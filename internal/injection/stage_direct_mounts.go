@@ -156,6 +156,9 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 
 	switch kind {
 	case directMountSourceDir:
+		if err := validateInjectionDirectoryDescendants(source); err != nil {
+			return err
+		}
 		if err := os.Mkdir(stagedSource, 0o700); err != nil {
 			return err
 		}
@@ -189,30 +192,99 @@ func copyDirContents(src *os.File, srcDisplay, dst string) error {
 	return copyDirContentsWithState(src, srcDisplay, dst, newInjectionDestinationState())
 }
 
-func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState) error {
-	entries, err := src.ReadDir(-1)
+// validateInjectionDirectoryDescendants checks each descendant through an
+// opened directory descriptor. It never builds a path from an unchecked name.
+func validateInjectionDirectoryDescendants(source *os.File) error {
+	fd, err := unix.Openat(int(source.Fd()), ".", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	copy := os.NewFile(uintptr(fd), "")
+	if copy == nil {
+		_ = unix.Close(fd)
+		return errors.New("cannot inspect injection source directory")
+	}
+	defer copy.Close()
+	return validateInjectionDirectoryEntries(copy)
+}
+
+func validateInjectionDirectoryEntries(source *os.File) error {
+	return validateInjectionDirectoryEntriesWith(source, classifyDirectMountChild, openDirectMountChild)
+}
+
+func validateInjectionDirectoryEntriesWith(
+	source *os.File,
+	classifyChild func(*os.File, string) (os.FileMode, directMountSourceKind, error),
+	openChild func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error),
+) error {
+	entries, err := source.ReadDir(-1)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		mode := entry.Type()
-		displayPath := filepath.Join(srcDisplay, entry.Name())
-		if mode&fs.ModeSymlink != 0 {
-			log.Printf("workcell injection: skipping symlink under host-input source: %s", displayPath)
+		name := entry.Name()
+		if err := validateInjectionDescendantName(name); err != nil {
+			return err
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
 			continue
 		}
-		childMode, kind, err := classifyDirectMountChild(src, entry.Name())
+		_, kind, err := classifyChild(source, name)
 		if err != nil {
 			return err
 		}
 		if kind == directMountSourceOther {
 			continue
 		}
-		target := filepath.Join(dst, entry.Name())
-		child, childMode, kind, err := openDirectMountChild(src, entry.Name(), displayPath)
+		child, _, kind, err := openChild(source, name, "")
+		if errors.Is(err, unix.ELOOP) || isSkippableDirectMountOpenError(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if kind == directMountSourceDir {
+			err = validateInjectionDirectoryEntriesWith(child, classifyChild, openChild)
+		}
+		closeErr := child.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState) error {
+	entries, err := src.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if err := validateInjectionDescendantName(name); err != nil {
+			return err
+		}
+		mode := entry.Type()
+		displayPath := filepath.Join(srcDisplay, name)
+		if mode&fs.ModeSymlink != 0 {
+			log.Printf("workcell injection: skipping symlink under host-input source: %q", displayPath)
+			continue
+		}
+		childMode, kind, err := classifyDirectMountChild(src, name)
+		if err != nil {
+			return err
+		}
+		if kind == directMountSourceOther {
+			continue
+		}
+		target := filepath.Join(dst, name)
+		child, childMode, kind, err := openDirectMountChild(src, name, displayPath)
 		if err != nil {
 			if errors.Is(err, unix.ELOOP) || isSkippableDirectMountOpenError(err) {
-				log.Printf("workcell injection: skipping non-regular entry under host-input source: %s", displayPath)
+				log.Printf("workcell injection: skipping non-regular entry under host-input source: %q", displayPath)
 				continue
 			}
 			return err
@@ -353,7 +425,7 @@ func openDirectMountChild(parent *os.File, name, displayPath string) (*os.File, 
 	file := os.NewFile(uintptr(fd), displayPath)
 	if file == nil {
 		_ = unix.Close(fd)
-		return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", displayPath)
+		return nil, 0, directMountSourceOther, fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %q", displayPath)
 	}
 	kind, mode, err := classifyDirectMountFD(fd)
 	if err != nil {

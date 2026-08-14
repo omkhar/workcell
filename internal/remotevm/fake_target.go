@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/pathutil"
 )
 
 type WorkspaceEntry struct {
@@ -366,7 +367,14 @@ func statePathSegment(label, value string) (string, error) {
 }
 
 func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {
+	return copyWorkspaceTreeWithReservation(sourceRoot, destRoot, excluded, newWorkspaceDestinationState())
+}
+
+func copyWorkspaceTreeWithReservation(sourceRoot, destRoot string, excluded []string, destinations workspaceDestinationReservation) ([]WorkspaceEntry, error) {
 	entries := make([]WorkspaceEntry, 0)
+	if destinations == nil {
+		return nil, fmt.Errorf("workspace destination reservation is required")
+	}
 	resolvedRoot, err := filepath.EvalSymlinks(sourceRoot)
 	if err != nil {
 		return nil, err
@@ -378,12 +386,19 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 		if path == sourceRoot {
 			return nil
 		}
+		if _, err := pathutil.CollisionKey(d.Name()); err != nil {
+			return fmt.Errorf("invalid workspace entry: %w", err)
+		}
 		rel, err := filepath.Rel(sourceRoot, path)
 		if err != nil {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if isExcludedPath(rel, excluded) {
+		excludedPath, err := isExcludedPath(rel, excluded)
+		if err != nil {
+			return err
+		}
+		if excludedPath {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -394,21 +409,24 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 			return err
 		}
 		destPath := filepath.Join(destRoot, filepath.FromSlash(rel))
+		if err := destinations.reserve(rel); err != nil {
+			return err
+		}
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
 			target, err := os.Readlink(path)
 			if err != nil {
-				return err
+				return fmt.Errorf("read workspace symlink %q: %q", rel, err.Error())
 			}
 			// The remote-vm contract promises host-auditable materialization:
 			// a symlink that resolves outside the materialized workspace would
 			// smuggle non-workspace content past that audit, so fail closed.
 			if filepath.IsAbs(target) {
-				return fmt.Errorf("workspace symlink %s targets an absolute path: %s", rel, target)
+				return fmt.Errorf("workspace symlink %q targets an absolute path: %q", rel, target)
 			}
 			resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
 			if resolved == ".." || strings.HasPrefix(resolved, "../") {
-				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
+				return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
 			}
 			// The lexical check above is evadable through symlink chains
 			// (an in-workspace link to a parent directory re-routes a later
@@ -417,10 +435,10 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 			// links fail closed.
 			physical, err := filepath.EvalSymlinks(path)
 			if err != nil {
-				return fmt.Errorf("workspace symlink %s does not resolve inside the workspace: %v", rel, err)
+				return fmt.Errorf("workspace symlink %q does not resolve inside the workspace: %q", rel, err.Error())
 			}
 			if physical != resolvedRoot && !strings.HasPrefix(physical, resolvedRoot+string(filepath.Separator)) {
-				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
+				return fmt.Errorf("workspace symlink %q escapes the workspace: %q", rel, target)
 			}
 			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 				return err
@@ -453,7 +471,7 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 				SHA256: hex.EncodeToString(sum[:]),
 			})
 		default:
-			return fmt.Errorf("unsupported workspace entry kind for %s", rel)
+			return fmt.Errorf("unsupported workspace entry kind for %q", rel)
 		}
 		return nil
 	})
@@ -466,13 +484,44 @@ func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]Worksp
 	return entries, nil
 }
 
-func isExcludedPath(rel string, excluded []string) bool {
+func isExcludedPath(rel string, excluded []string) (bool, error) {
+	if _, err := pathutil.CollisionKey(rel); err != nil {
+		return false, err
+	}
 	for _, item := range excluded {
-		if rel == item || strings.HasPrefix(rel, item+"/") {
-			return true
+		inside, err := pathutil.WithinOrEqual(item, rel, true)
+		if err != nil {
+			return false, err
+		}
+		if inside {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
+}
+
+type workspaceDestinationReservation interface {
+	reserve(string) error
+}
+
+type workspaceDestinationState struct {
+	paths map[string]string
+}
+
+func newWorkspaceDestinationState() *workspaceDestinationState {
+	return &workspaceDestinationState{paths: make(map[string]string)}
+}
+
+func (s *workspaceDestinationState) reserve(path string) error {
+	key, err := pathutil.CollisionKey(path)
+	if err != nil {
+		return fmt.Errorf("invalid workspace destination path: %w", err)
+	}
+	if previous, exists := s.paths[key]; exists {
+		return fmt.Errorf("workspace destination path collision between %s and %q", previous, path)
+	}
+	s.paths[key] = fmt.Sprintf("%q", path)
+	return nil
 }
 
 func writeJSON(path string, value any) error {

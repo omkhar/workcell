@@ -19,6 +19,14 @@ import (
 // domain-specific message.
 var ErrEmptyPath = errors.New("pathutil: path is empty")
 
+// ErrInvalidUTF8Path is returned when a path contains invalid UTF-8 bytes.
+// Callers can match it with errors.Is without exposing the rejected bytes.
+var ErrInvalidUTF8Path = errors.New("pathutil: path contains invalid UTF-8")
+
+// ErrUnsafePathControl is returned when a path contains a control or line
+// separator rune. Callers can match it without exposing the rejected bytes.
+var ErrUnsafePathControl = errors.New("pathutil: path contains an unsafe control character")
+
 // ExpandUserPathBestEffort expands `~`, `~/...`, and `~user`/`~user/...`
 // references via os.UserHomeDir or user.Lookup.  When a `~user` lookup
 // fails (unknown user or empty home), it returns the input verbatim

@@ -5,11 +5,25 @@ package remotevm
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/pathutil"
+	"golang.org/x/sys/unix"
 )
+
+type failingWorkspaceReservation struct {
+	calls []string
+	err   error
+}
+
+func (r *failingWorkspaceReservation) reserve(path string) error {
+	r.calls = append(r.calls, path)
+	return r.err
+}
 
 func TestFakeTargetMaterializeWorkspaceCopiesFixtureAndExcludesDotGit(t *testing.T) {
 	t.Parallel()
@@ -45,6 +59,178 @@ func TestFakeTargetMaterializeWorkspaceCopiesFixtureAndExcludesDotGit(t *testing
 	}
 	if got, want := len(result.Manifest.Entries), 3; got != want {
 		t.Fatalf("len(result.Manifest.Entries) = %d, want %d", got, want)
+	}
+}
+
+func TestCopyWorkspaceTreeRejectsUnicodeDestinationCollision(t *testing.T) {
+	for _, pair := range [][2]string{{"café", "cafe\u0301"}, {"straße", "STRASSE"}, {"Σ", "ς"}, {"ﬀ", "ff"}, {"µ", "Μ"}, {"ś", "ſ\u0301"}} {
+		state := newWorkspaceDestinationState()
+		if err := state.reserve(pair[0]); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.reserve(pair[1]); err == nil {
+			t.Fatalf("Unicode collision accepted: %q and %q", pair[0], pair[1])
+		}
+	}
+}
+
+func TestRemoteWorkspaceExclusionsUseUnicodePathIdentity(t *testing.T) {
+	for _, pair := range [][2]string{{".git", ".GIT"}, {"café", "cafe\u0301"}, {"straße", "STRASSE"}, {"Σ", "ς"}, {"ﬀ", "ff"}, {"µ", "Μ"}, {"ś", "ſ\u0301"}} {
+		excluded, err := isExcludedPath(filepath.Join(pair[1], "child"), []string{pair[0]})
+		if err != nil || !excluded {
+			t.Fatalf("excluded %q by %q = %v, %v", pair[1], pair[0], excluded, err)
+		}
+		excluded, err = isExcludedPath(pair[1]+"-sibling", []string{pair[0]})
+		if err != nil || excluded {
+			t.Fatalf("sibling %q excluded by %q = %v, %v", pair[1], pair[0], excluded, err)
+		}
+	}
+}
+
+func TestRemoteWorkspaceIdentityRejectsInvalidUTF8(t *testing.T) {
+	invalid := "secret-prefix-" + string([]byte{0xff})
+	if _, err := isExcludedPath(invalid, nil); !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("exclusion error = %v", err)
+	}
+	if err := newWorkspaceDestinationState().reserve(invalid); !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("reservation error = %v", err)
+	}
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, invalid), []byte("approved"), 0o600); err != nil {
+		return
+	}
+	destination := t.TempDir()
+	if _, err := copyWorkspaceTree(source, destination, nil); !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("copy error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, invalid)); !os.IsNotExist(err) {
+		t.Fatalf("destination was written: %v", err)
+	}
+	stateRoot := t.TempDir()
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = target.MaterializeWorkspace(context.Background(), MaterializeRequest{StateRoot: stateRoot, TargetID: "target", MaterializationID: "invalid", SourceWorkspace: source})
+	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
+		t.Fatalf("materialize error = %v", err)
+	}
+	manifest := filepath.Join(targetRoot(stateRoot, CanonicalProvider, "target"), "materializations", "invalid", MaterializationFile)
+	if _, err := os.Lstat(manifest); !os.IsNotExist(err) {
+		t.Fatalf("manifest exists after invalid input: %v", err)
+	}
+}
+
+func TestCopyWorkspaceTreeRejectsUnsafeDescendantBeforeReadOnlyDestination(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value string
+	}{
+		{name: "newline", value: "secret-prefix-\n"},
+		{name: "escape", value: "secret-prefix-\x1b"},
+		{name: "line separator", value: "secret-prefix-\u2028"},
+		{name: "paragraph separator", value: "secret-prefix-\u2029"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, testCase.value), []byte("approved"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			destination := t.TempDir()
+			if err := os.Chmod(destination, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(destination, 0o700) })
+			_, err := copyWorkspaceTree(source, destination, nil)
+			if !errors.Is(err, pathutil.ErrUnsafePathControl) || strings.Contains(err.Error(), "secret-prefix") {
+				t.Fatalf("unsafe descendant error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRemoteWorkspaceExclusionRejectsUnsafeControls(t *testing.T) {
+	for _, path := range []string{"secret-prefix-\n", "secret-prefix-\x1b", "secret-prefix-\u2028", "secret-prefix-\u2029"} {
+		if _, err := isExcludedPath(path, nil); !errors.Is(err, pathutil.ErrUnsafePathControl) || strings.Contains(err.Error(), "secret-prefix") {
+			t.Fatalf("unsafe exclusion error = %v", err)
+		}
+	}
+}
+
+func TestRemoteWorkspaceDiagnosticsQuoteControlCharacters(t *testing.T) {
+	source := t.TempDir()
+	target := "/tmp/target\n\x1b"
+	if err := os.Symlink(target, filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := copyWorkspaceTree(source, t.TempDir(), nil)
+	if err == nil {
+		t.Fatal("absolute control-character symlink was accepted")
+	}
+	assertQuotedWorkspaceDiagnostic(t, err.Error())
+}
+
+func assertQuotedWorkspaceDiagnostic(t *testing.T, message string) {
+	t.Helper()
+	if strings.Contains(message, "\n") || strings.Contains(message, "\x1b") {
+		t.Fatalf("diagnostic contains a raw control character: %q", message)
+	}
+	if !strings.Contains(message, `\n`) || !strings.Contains(message, `\x1b`) {
+		t.Fatalf("diagnostic does not quote control characters: %q", message)
+	}
+}
+
+func TestCopyWorkspaceTreeReservesBeforeWrite(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "first"), []byte("approved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "destination")
+	reservation := &failingWorkspaceReservation{err: errors.New("reserve failed")}
+	if _, err := copyWorkspaceTreeWithReservation(source, destination, nil, reservation); !errors.Is(err, reservation.err) {
+		t.Fatalf("copy error = %v", err)
+	}
+	if len(reservation.calls) != 1 || reservation.calls[0] != "first" {
+		t.Fatalf("reservation calls = %#v", reservation.calls)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "first")); !os.IsNotExist(err) {
+		t.Fatalf("destination was written before reservation: %v", err)
+	}
+}
+
+func TestCopyWorkspaceTreePreservesFirstContentAfterReservation(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "first"), []byte("approved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	entries, err := copyWorkspaceTree(source, destination, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(destination, "first"))
+	if err != nil || string(data) != "approved" || len(entries) != 1 || entries[0].SHA256 == "" {
+		t.Fatalf("copy result = %q, %#v, %v", data, entries, err)
+	}
+}
+
+func TestFakeTargetDoesNotWriteManifestAfterWorkspaceFailure(t *testing.T) {
+	source := t.TempDir()
+	if err := unix.Mkfifo(filepath.Join(source, "pipe"), 0o600); err != nil {
+		t.Skipf("cannot create FIFO: %v", err)
+	}
+	state := t.TempDir()
+	target, err := NewFakeTarget(DefaultContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = target.MaterializeWorkspace(context.Background(), MaterializeRequest{StateRoot: state, TargetID: "target", MaterializationID: "failure", SourceWorkspace: source})
+	if err == nil {
+		t.Fatal("unsafe workspace entry was accepted")
+	}
+	manifest := filepath.Join(targetRoot(state, CanonicalProvider, "target"), "materializations", "failure", MaterializationFile)
+	if _, err := os.Lstat(manifest); !os.IsNotExist(err) {
+		t.Fatalf("manifest exists after failure: %v", err)
 	}
 }
 
