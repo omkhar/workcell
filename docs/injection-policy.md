@@ -394,7 +394,7 @@ It rejects group or other write permission below that anchor.
 The reader rejects other foreign-owned ancestors and non-sticky writable ancestors.
 On Darwin, it canonicalizes `/var`, `/etc`, and `/tmp` below `/private` before the walk.
 
-The reader records metadata before and after each bounded read.
+The reader checks metadata before the first read and after the first and last bounded reads.
 It rejects identity, owner, group, mode, link-count, and size changes.
 It rejects byte-count and modification changes.
 It reads the descriptor again to reject same-length in-place changes.

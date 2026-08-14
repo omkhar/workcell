@@ -5,7 +5,6 @@ package injectionpolicy
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,8 +31,14 @@ func TestBundleReaderRejectsFileACL(t *testing.T) {
 }
 
 func TestBundleReaderRejectsMutation(t *testing.T) {
-	for _, final := range []bool{false, true} {
-		t.Run(fmt.Sprintf("after confirmation=%t", final), func(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		afterConfirmation bool
+	}{
+		{name: "after confirmation", afterConfirmation: true},
+		{name: "after accepted read"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			path := writePolicyFile(t, t.TempDir(), "policy.toml", []byte("version = 1\n"))
 			reader := NewBundleReader()
 			mutate := func() {
@@ -41,10 +46,14 @@ func TestBundleReaderRejectsMutation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if final {
-				reader.beforeConfirmStat = mutate
+			if test.afterConfirmation {
+				reader.afterConfirmRead = mutate
 			} else {
-				reader.beforeFinalStat = mutate
+				reader.beforeFinalStat = func() {
+					if err := os.Chmod(path, 0o400); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 			if _, err := reader.Read(path); err == nil || !strings.Contains(err.Error(), "changed while it was read") {
 				t.Fatalf("Read error = %v, want mutation rejection", err)

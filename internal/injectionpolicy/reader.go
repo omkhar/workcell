@@ -35,16 +35,14 @@ type PolicyFile struct {
 
 // BundleReader bounds one policy bundle.
 type BundleReader struct {
-	bytes             int64
-	files             int
-	fileLimit         int64
-	bundleLimit       int64
-	fileLimitCount    int
-	beforeOpenLeaf    func()
-	beforeFinalStat   func()
-	beforeConfirmRead func(*os.File)
-	beforeConfirmStat func()
-	snapshots         map[string]PolicyFile
+	bytes                             int64
+	files                             int
+	fileLimit, bundleLimit            int64
+	fileLimitCount                    int
+	beforeOpenLeaf                    func()
+	beforeFinalStat, afterConfirmRead func()
+	beforeConfirmRead                 func(*os.File)
+	snapshots                         map[string]PolicyFile
 }
 
 // NewBundleReader returns a reader with a fresh bundle budget.
@@ -96,9 +94,6 @@ func (r *BundleReader) Read(path string) (PolicyFile, error) {
 	if err != nil {
 		return PolicyFile{}, closePolicyFile(fmt.Errorf("read injection policy %s: %w", path, err), file, path)
 	}
-	if r.beforeFinalStat != nil {
-		r.beforeFinalStat()
-	}
 	after, err := statTrustedPolicyFile(file, path)
 	if err != nil {
 		return PolicyFile{}, closePolicyFile(err, file, path)
@@ -132,31 +127,42 @@ func (r *BundleReader) Read(path string) (PolicyFile, error) {
 	if len(confirmed) != len(data) || sha256.Sum256(confirmed) != sha256.Sum256(data) {
 		return PolicyFile{}, closePolicyFile(fmt.Errorf("injection policy changed while it was read: %s", path), file, path)
 	}
-	if r.beforeConfirmStat != nil {
-		r.beforeConfirmStat()
+	if r.afterConfirmRead != nil {
+		r.afterConfirmRead()
 	}
-	confirmedStat, err := statTrustedPolicyFile(file, path)
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return PolicyFile{}, closePolicyFile(fmt.Errorf("rewind accepted injection policy %s: %w", path, err), file, path)
+	}
+	accepted, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return PolicyFile{}, closePolicyFile(fmt.Errorf("read accepted injection policy %s: %w", path, err), file, path)
+	}
+	if len(accepted) != len(data) || sha256.Sum256(accepted) != sha256.Sum256(data) {
+		return PolicyFile{}, closePolicyFile(fmt.Errorf("injection policy changed while it was read: %s", path), file, path)
+	}
+	if r.beforeFinalStat != nil {
+		r.beforeFinalStat()
+	}
+	acceptedStat, err := statTrustedPolicyFile(file, path)
 	if err != nil {
 		return PolicyFile{}, closePolicyFile(err, file, path)
 	}
-	if !samePolicyFile(before, confirmedStat) {
+	if !samePolicyFile(before, acceptedStat) {
 		return PolicyFile{}, closePolicyFile(fmt.Errorf("injection policy changed while it was read: %s", path), file, path)
 	}
 	if err := file.Close(); err != nil {
 		return PolicyFile{}, fmt.Errorf("close injection policy %s: %w", path, err)
 	}
 
-	r.bytes += int64(len(data))
+	r.bytes += int64(len(accepted))
 	r.files++
-	sum := sha256.Sum256(data)
-	return PolicyFile{Bytes: data, Sha256: "sha256:" + hex.EncodeToString(sum[:])}, nil
+	sum := sha256.Sum256(accepted)
+	return PolicyFile{Bytes: accepted, Sha256: "sha256:" + hex.EncodeToString(sum[:])}, nil
 }
 
 type policyFileStat struct {
 	dev, ino, mode, uid, gid, nlink uint64
-	size                            int64
-	modTime                         int64
-	changeTime                      int64
+	size, modTime, changeTime       int64
 }
 
 // ReadAndPin pins a file snapshot for one following Read.
@@ -189,8 +195,8 @@ func statTrustedPolicyFile(file *os.File, path string) (policyFileStat, error) {
 	}
 	modTime, changeTime := policyFileTimes(stat)
 	return policyFileStat{
-		dev: uint64(stat.Dev), ino: uint64(stat.Ino), mode: mode, uid: uint64(stat.Uid), gid: uint64(stat.Gid), nlink: uint64(stat.Nlink), size: stat.Size,
-		modTime: modTime, changeTime: changeTime,
+		dev: uint64(stat.Dev), ino: uint64(stat.Ino), mode: mode, uid: uint64(stat.Uid), gid: uint64(stat.Gid),
+		nlink: uint64(stat.Nlink), size: stat.Size, modTime: modTime, changeTime: changeTime,
 	}, nil
 }
 
