@@ -9,13 +9,18 @@ if [[ ! "${expected_toolchain}" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+export GOENV=off
+export GOFLAGS=
+export GOWORK=off
 export GOTOOLCHAIN=local
 
-go_bin="$(command -v go 2>/dev/null || true)"
-if [[ -n "${go_bin}" ]] && [[ "$("${go_bin}" env GOVERSION)" != "${expected_toolchain}" ]]; then
-  go_bin=""
+ambient_go_bin="$(command -v go 2>/dev/null || true)"
+go_bin=""
+if [[ -n "${ambient_go_bin}" ]] && [[ "$("${ambient_go_bin}" env GOVERSION)" == "${expected_toolchain}" ]]; then
+  go_bin="${ambient_go_bin}"
 fi
 if [[ -z "${go_bin}" ]]; then
+  toolcache_bin=""
   case "$(uname -m)" in
     arm64 | aarch64)
       toolcache_arch="arm64"
@@ -29,11 +34,21 @@ if [[ -z "${go_bin}" ]]; then
       ;;
   esac
   toolcache_root="${RUNNER_TOOL_CACHE:-${AGENT_TOOLSDIRECTORY:-}}"
-  go_bin="${toolcache_root%/}/go/${expected_toolchain#go}/${toolcache_arch}/bin/go"
+  if [[ -n "${toolcache_root}" && -n "${toolcache_arch}" ]]; then
+    toolcache_bin="${toolcache_root%/}/go/${expected_toolchain#go}/${toolcache_arch}/bin/go"
+  fi
+  if [[ -x "${toolcache_bin}" ]]; then
+    go_bin="${toolcache_bin}"
+  fi
 fi
 if [[ ! -x "${go_bin}" ]]; then
-  echo "Go toolchain ${expected_toolchain} is unavailable" >&2
-  exit 1
+  if [[ -x "${ambient_go_bin}" ]]; then
+    go_bin="${ambient_go_bin}"
+    export GOTOOLCHAIN="${expected_toolchain}"
+  else
+    echo "Go toolchain ${expected_toolchain} is unavailable" >&2
+    exit 1
+  fi
 fi
 
 actual_toolchain="$("${go_bin}" env GOVERSION)"

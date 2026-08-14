@@ -101,6 +101,129 @@ exit 64
 	}
 }
 
+func TestReleaseAssetACLValidationUsesDynamicToolchainFallback(t *testing.T) {
+	t.Parallel()
+
+	marker, toolchainLog, expectedToolchain, output, err := runReleaseAssetACLDynamicFixture(t, "")
+	if err != nil {
+		t.Fatalf("release ACL validation: %v: %s", err, output)
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(content)); got != expectedToolchain {
+		t.Fatalf("dynamic toolchain = %q, want %q", got, expectedToolchain)
+	}
+	logContent, err := os.ReadFile(toolchainLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(logContent), "local\n"+expectedToolchain+"\n"; got != want {
+		t.Fatalf("GOTOOLCHAIN probe order = %q, want %q", got, want)
+	}
+}
+
+func TestReleaseAssetACLValidationRejectsDynamicToolchainMismatch(t *testing.T) {
+	t.Parallel()
+
+	marker, _, expectedToolchain, output, err := runReleaseAssetACLDynamicFixture(t, "go0.0.0")
+	if err == nil {
+		t.Fatalf("release ACL validation unexpectedly succeeded: %s", output)
+	}
+	if !strings.Contains(string(output), "does not match "+expectedToolchain) {
+		t.Fatalf("mismatch output = %q", output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("Darwin ACL test ran after toolchain mismatch: %v", err)
+	}
+}
+
+func runReleaseAssetACLDynamicFixture(t *testing.T, reportedToolchain string) (string, string, string, []byte, error) {
+	t.Helper()
+
+	goMod, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedToolchain := ""
+	for _, line := range strings.Split(string(goMod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "toolchain" {
+			expectedToolchain = fields[1]
+			break
+		}
+	}
+	if expectedToolchain == "" {
+		t.Fatal("go.mod has no toolchain directive")
+	}
+
+	tempDir := t.TempDir()
+	marker := filepath.Join(tempDir, "go-test-ran")
+	toolchainLog := filepath.Join(tempDir, "go-toolchain-log")
+	pathDir := filepath.Join(tempDir, "path")
+	if err := os.Mkdir(pathDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"awk", "dirname", "uname"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(path, filepath.Join(pathDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fakeGo := filepath.Join(pathDir, "go")
+	fakeGoScript := `#!/bin/sh
+if [ "${GOENV:-}" != off ] || [ -n "${GOFLAGS:-}" ] || [ "${GOWORK:-}" != off ]; then
+  exit 66
+fi
+case "$*" in
+  "env GOVERSION")
+    printf '%s\n' "${GOTOOLCHAIN:-}" >>"${WORKCELL_TEST_GO_TOOLCHAIN_LOG}"
+    if [ "${GOTOOLCHAIN:-}" = local ]; then
+      printf '%s\n' go0.0.0
+    elif [ "${GOTOOLCHAIN:-}" = "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}" ]; then
+      printf '%s\n' "${WORKCELL_TEST_GO_VERSION}"
+    else
+      exit 67
+    fi
+    ;;
+  "env GOOS") printf '%s\n' darwin ;;
+  "test ./internal/host/release -run ^TestReleaseAssetACLDarwin$")
+    [ "${GOTOOLCHAIN:-}" = "${WORKCELL_TEST_EXPECTED_TOOLCHAIN}" ] || exit 65
+    printf '%s\n' "${GOTOOLCHAIN}" >"${WORKCELL_TEST_GO_MARKER}"
+    ;;
+  *) exit 64 ;;
+esac
+`
+	if err := os.WriteFile(fakeGo, []byte(fakeGoScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	toolchainVersion := reportedToolchain
+	if toolchainVersion == "" {
+		toolchainVersion = expectedToolchain
+	}
+
+	script := filepath.Join(repoRoot(t), "scripts", "ci", "job-release-asset-acl.sh")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = canonicalBuildEnv(map[string]string{
+		"AGENT_TOOLSDIRECTORY":             "",
+		"GOENV":                            "/tmp/workcell-hostile-goenv",
+		"GOFLAGS":                          "-overlay=/tmp/workcell-hostile-overlay.json",
+		"GOWORK":                           "/tmp/workcell-hostile.work",
+		"PATH":                             pathDir,
+		"RUNNER_TOOL_CACHE":                "",
+		"WORKCELL_TEST_EXPECTED_TOOLCHAIN": expectedToolchain,
+		"WORKCELL_TEST_GO_MARKER":          marker,
+		"WORKCELL_TEST_GO_TOOLCHAIN_LOG":   toolchainLog,
+		"WORKCELL_TEST_GO_VERSION":         toolchainVersion,
+	})
+	output, err := cmd.CombinedOutput()
+	return marker, toolchainLog, expectedToolchain, output, err
+}
+
 func TestC3CertificationEntrypointSanitizesBuildControl(t *testing.T) {
 	t.Parallel()
 
