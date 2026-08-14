@@ -120,27 +120,85 @@ extern "C" fn forward_signal_to_managed_child(signal: libc::c_int) {
 }
 
 #[cfg(not(test))]
-fn install_signal_forwarding() {
+fn install_signal_forwarding() -> Result<(), std::io::Error> {
+    install_signal_forwarding_with(
+        forward_signal_to_managed_child as *const () as libc::sighandler_t,
+        |mask| unsafe {
+            // SAFETY: mask is a valid sigset_t from the local sigaction value.
+            libc::sigemptyset(mask)
+        },
+        |signal, action| {
+            // SAFETY: action is valid; null oldact is allowed.
+            unsafe { libc::sigaction(signal, action, std::ptr::null_mut()) }
+        },
+        std::io::Error::last_os_error,
+    )
+}
+
+fn install_signal_forwarding_with<ClearMask, InstallAction, LastOsError>(
+    handler: libc::sighandler_t,
+    mut clear_mask: ClearMask,
+    mut install_action: InstallAction,
+    mut last_os_error: LastOsError,
+) -> Result<(), std::io::Error>
+where
+    ClearMask: FnMut(&mut libc::sigset_t) -> libc::c_int,
+    InstallAction: FnMut(libc::c_int, &libc::sigaction) -> libc::c_int,
+    LastOsError: FnMut() -> std::io::Error,
+{
     for signal in [libc::SIGINT, libc::SIGTERM] {
         // SAFETY: libc::sigaction is a repr(C) POD; all-zeroes is a valid initial value.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
         // Linux libc exposes the sa_handler/sa_sigaction union as this field;
         // SA_SIGINFO stays clear so the kernel treats it as a one-arg handler.
-        action.sa_sigaction = forward_signal_to_managed_child as *const () as libc::sighandler_t;
+        action.sa_sigaction = handler;
         action.sa_flags = 0;
-        // SAFETY: &action/&mut sa_mask are valid; handler is a real extern "C" fn with SA_SIGINFO clear (one-arg ABI); null oldact is allowed.
-        unsafe {
-            libc::sigemptyset(&mut action.sa_mask);
-            libc::sigaction(signal, &action, std::ptr::null_mut());
-        }
+        signal_setup_result(clear_mask(&mut action.sa_mask), &mut last_os_error)?;
+        signal_setup_result(install_action(signal, &action), &mut last_os_error)?;
     }
+    Ok(())
+}
+
+fn signal_setup_result(
+    result: libc::c_int,
+    last_os_error: &mut impl FnMut() -> std::io::Error,
+) -> std::io::Result<()> {
+    if result != 0 {
+        Err(last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn signal_setup_exit_code(error: &std::io::Error) -> i32 {
+    exit_code_for_errno(error.raw_os_error().unwrap_or(libc::EIO))
+}
+
+fn format_signal_setup_error(script_path: &str, error: &std::io::Error) -> String {
+    format!("install signal forwarding for {script_path}: {error}")
+}
+
+fn setup_before_fork<Setup, Fork>(mut setup: Setup, mut fork: Fork) -> std::io::Result<libc::pid_t>
+where
+    Setup: FnMut() -> std::io::Result<()>,
+    Fork: FnMut() -> libc::pid_t,
+{
+    setup()?;
+    Ok(fork())
 }
 
 #[cfg(not(test))]
 pub fn spawn_and_wait_request(exec_args: &[CString], script_path: &str) -> i32 {
-    install_signal_forwarding();
-    // SAFETY: fork() takes no arguments; child/parent dispatched on the returned pid.
-    let pid = unsafe { libc::fork() };
+    let pid = match setup_before_fork(install_signal_forwarding, || {
+        // SAFETY: fork() takes no arguments; child/parent dispatched on the returned pid.
+        unsafe { libc::fork() }
+    }) {
+        Ok(pid) => pid,
+        Err(err) => {
+            eprintln!("{}", format_signal_setup_error(script_path, &err));
+            return signal_setup_exit_code(&err);
+        }
+    };
     if pid < 0 {
         let errno = std::io::Error::last_os_error()
             .raw_os_error()
@@ -200,5 +258,104 @@ pub fn spawn_and_wait_request(exec_args: &[CString], script_path: &str) -> i32 {
             MANAGED_CHILD_PID.store(0, Ordering::SeqCst);
             return 128 + libc::WTERMSIG(status);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    extern "C" fn test_signal_handler(_signal: libc::c_int) {}
+
+    fn test_handler() -> libc::sighandler_t {
+        test_signal_handler as *const () as libc::sighandler_t
+    }
+
+    #[test]
+    fn signal_forwarding_stops_when_clearing_the_mask_fails() {
+        let installed = RefCell::new(Vec::new());
+        let result = install_signal_forwarding_with(
+            test_handler(),
+            |_| -1,
+            |signal, _| {
+                installed.borrow_mut().push(signal);
+                0
+            },
+            || std::io::Error::from_raw_os_error(libc::EACCES),
+        );
+
+        let error = result.expect_err("sigemptyset failure must stop setup");
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+        assert_eq!(signal_setup_exit_code(&error), 126);
+        assert!(installed.borrow().is_empty());
+    }
+
+    #[test]
+    fn signal_forwarding_stops_when_installing_an_action_fails() {
+        let installed = RefCell::new(Vec::new());
+        let result = install_signal_forwarding_with(
+            test_handler(),
+            |_| 0,
+            |signal, _| {
+                installed.borrow_mut().push(signal);
+                -1
+            },
+            || std::io::Error::from_raw_os_error(libc::ENOENT),
+        );
+
+        let error = result.expect_err("sigaction failure must stop setup");
+        assert_eq!(error.raw_os_error(), Some(libc::ENOENT));
+        assert_eq!(signal_setup_exit_code(&error), 127);
+        assert_eq!(&*installed.borrow(), &[libc::SIGINT]);
+    }
+
+    #[test]
+    fn signal_forwarding_installs_both_supported_signals() {
+        let installed = RefCell::new(Vec::new());
+        let result = install_signal_forwarding_with(
+            test_handler(),
+            |_| 0,
+            |signal, action| {
+                assert_eq!(action.sa_flags, 0);
+                installed.borrow_mut().push(signal);
+                0
+            },
+            || panic!("successful setup must not read errno"),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(&*installed.borrow(), &[libc::SIGINT, libc::SIGTERM]);
+    }
+
+    #[test]
+    fn setup_error_stops_before_fork() {
+        let fork_count = std::cell::Cell::new(0);
+        let result = setup_before_fork(
+            || Err(std::io::Error::from_raw_os_error(libc::EACCES)),
+            || {
+                fork_count.set(fork_count.get() + 1);
+                1
+            },
+        );
+
+        assert_eq!(fork_count.get(), 0);
+        let error = result.expect_err("setup failure must stop before fork");
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    }
+
+    #[test]
+    fn signal_setup_errors_use_safe_text_and_mapped_statuses() {
+        let error = std::io::Error::from_raw_os_error(libc::ENOENT);
+        assert_eq!(signal_setup_exit_code(&error), 127);
+        assert_eq!(
+            signal_setup_exit_code(&std::io::Error::other("failure")),
+            126
+        );
+        assert_eq!(
+            format_signal_setup_error("/usr/local/libexec/workcell/provider-wrapper.sh", &error),
+            "install signal forwarding for /usr/local/libexec/workcell/provider-wrapper.sh: No such file or directory (os error 2)"
+        );
     }
 }
