@@ -405,15 +405,6 @@ func documentToPolicyMap(doc *tomlsubset.Document, policyPath string) (map[strin
 	return root, nil
 }
 
-func policySHA256(policyPath string) (string, error) {
-	data, err := os.ReadFile(policyPath)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
-}
-
 func compositePolicySHA256(policySources []PolicySource) string {
 	sortedSources := append([]PolicySource(nil), policySources...)
 	sort.Slice(sortedSources, func(i, j int) bool {
@@ -632,10 +623,14 @@ func loadPolicyBundle(policyPath string) (map[string]any, []PolicySource, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	return loadPolicyBundleWithState(resolvedPolicyPath, "", nil, map[string]struct{}{})
+	return loadPolicyBundleWithReader(resolvedPolicyPath, injectionpolicy.NewBundleReader())
 }
 
-func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeStack []string, loadedPaths map[string]struct{}) (map[string]any, []PolicySource, error) {
+func loadPolicyBundleWithReader(policyPath string, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
+	return loadPolicyBundleWithState(policyPath, "", nil, map[string]struct{}{}, reader)
+}
+
+func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeStack []string, loadedPaths map[string]struct{}, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
 	resolvedPolicyPath, err := filepath.Abs(policyPath)
 	if err != nil {
 		return nil, nil, err
@@ -658,11 +653,11 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 	}
 	loadedPaths[resolvedPolicyPath] = struct{}{}
 
-	content, err := os.ReadFile(resolvedPolicyPath)
+	file, err := reader.Read(resolvedPolicyPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	loaded, err := parseTOMLSubset(string(content), resolvedPolicyPath)
+	loaded, err := parseTOMLSubset(string(file.Bytes), resolvedPolicyPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -694,7 +689,7 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 		if err != nil {
 			return nil, nil, err
 		}
-		includedPolicy, includedSources, err := loadPolicyBundleWithState(includePath, entrypointRoot, nextStack, loadedPaths)
+		includedPolicy, includedSources, err := loadPolicyBundleWithState(includePath, entrypointRoot, nextStack, loadedPaths, reader)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -718,26 +713,23 @@ func loadPolicyBundleWithState(policyPath string, entrypointRoot string, activeS
 	if err := validatePolicyNetwork(merged); err != nil {
 		return nil, nil, err
 	}
-	sourceSHA, err := policySHA256(resolvedPolicyPath)
-	if err != nil {
-		return nil, nil, err
-	}
 	logicalPath, err := logicalPolicyPath(resolvedPolicyPath, entrypointRoot)
 	if err != nil {
 		return nil, nil, err
 	}
 	policySources = append(policySources, PolicySource{
-		Path:   logicalPath,
-		Sha256: sourceSHA,
+		Path:     logicalPath,
+		Sha256:   file.Sha256,
+		Fragment: loaded,
 	})
 	return merged, policySources, nil
 }
 
 func loadRawPolicy(policyPath string) (map[string]any, error) {
-	if _, err := os.Stat(policyPath); os.IsNotExist(err) {
+	content, err := injectionpolicy.ReadFile(policyPath)
+	if os.IsNotExist(err) {
 		return map[string]any{"version": 1}, nil
 	}
-	content, err := os.ReadFile(policyPath)
 	if err != nil {
 		return nil, err
 	}
