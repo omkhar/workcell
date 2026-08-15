@@ -20,14 +20,13 @@ func targetRootOf(started SessionResult) string {
 	return filepath.Dir(filepath.Dir(started.RecordPath))
 }
 
-// rewriteManifest re-persists v at path in writeJSON's on-disk format
-// (MarshalIndent + trailing newline, 0o600) so a self-consistent tamper — the
-// Result and the on-disk bytes edited to agree — still passes the byte-compare.
+// rewriteManifest re-persists v in writeJSON's format so a self-consistent
+// tamper still passes the exact byte comparison.
 func rewriteManifest(t *testing.T, path string, v any) {
 	t.Helper()
-	data, err := json.MarshalIndent(v, "", "  ")
+	data, err := marshalManifestBytes(v)
 	mustNil(t, err)
-	mustNil(t, os.WriteFile(path, append(data, '\n'), 0o600))
+	mustNil(t, os.WriteFile(path, data, 0o600))
 }
 
 // TestStartSessionRejectsAuditLogOutsideTargetRoot: an AuditLogPath outside the

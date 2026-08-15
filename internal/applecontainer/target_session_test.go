@@ -457,6 +457,7 @@ func TestAuditPathValuesRoundTrip(t *testing.T) {
 	mustNil(t, os.MkdirAll(filepath.Join(src, "src"), 0o755))
 	mustNil(t, os.WriteFile(filepath.Join(src, "src", "main.go"), []byte("package main\n"), 0o644))
 	state := filepath.Join(t.TempDir(), "My State Dir")
+	mustNil(t, os.Mkdir(state, 0o700))
 
 	mat, log := runToStart(t, src, state)
 
@@ -474,7 +475,7 @@ func TestAuditPathValuesRoundTrip(t *testing.T) {
 }
 
 // TestAuditPathNewlineRejectedBeforeAudit: a newline in a source path is rejected
-// at the record write (records forbid newlines) before any audit line is emitted.
+// before any audit line is emitted. Materialization can reject it first.
 func TestAuditPathNewlineRejectedBeforeAudit(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -486,7 +487,15 @@ func TestAuditPathNewlineRejectedBeforeAudit(t *testing.T) {
 	state := t.TempDir()
 
 	mat, err := target.MaterializeWorkspace(ctx, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: src})
-	mustNil(t, err)
+	if err != nil {
+		if workspaceMaterializationSupported && !strings.Contains(err.Error(), "unsafe control character") {
+			t.Fatalf("materialization returned the wrong rejection: %v", err)
+		}
+		if _, statErr := os.Lstat(filepath.Join(state, "targets")); !os.IsNotExist(statErr) {
+			t.Fatalf("rejected materialization wrote target state: %v", statErr)
+		}
+		return
+	}
 	boot, err := target.BootstrapTarget(ctx, BootstrapRequest{StateRoot: state, TargetID: "tid", BootstrapID: "bid", ImageRef: "img:1"})
 	mustNil(t, err)
 	if _, e := target.StartSession(ctx, StartSessionRequest{SessionID: "sid", Agent: "codex", Mode: "strict", StartedAt: "2026", Materialization: mat, Bootstrap: boot}); e == nil {

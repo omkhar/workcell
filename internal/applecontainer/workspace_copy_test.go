@@ -50,7 +50,7 @@ func TestWorkspaceCopyUsesPinnedParent(t *testing.T) {
 }
 
 func TestWorkspaceCopyRejectsSourceRaces(t *testing.T) {
-	for _, kind := range []string{"replacement", "symlink-follow", "special", "in-place-file", "ctime-only", "nlink-only", "in-place-directory"} {
+	for _, kind := range []string{"replacement", "symlink-follow", "special", "root-open", "in-place-file", "ctime-only", "nlink-only", "in-place-directory"} {
 		t.Run(kind, func(t *testing.T) {
 			source := t.TempDir()
 			victim := filepath.Join(source, "victim")
@@ -87,7 +87,11 @@ func TestWorkspaceCopyRejectsSourceRaces(t *testing.T) {
 					}
 					if stat.Ino == watchedStat.Ino && uint64(stat.Dev) == uint64(watchedStat.Dev) {
 						observations++
-						if observations == 2 {
+						if observations == map[bool]int{false: 2, true: 1}[kind == "root-open"] {
+							if kind == "root-open" {
+								mustNil(t, os.Mkdir(filepath.Join(source, "early"), 0o700))
+								return original(fd, stat)
+							}
 							if kind == "ctime-only" {
 								stat.Ctim.Nsec++
 							} else if kind == "nlink-only" {

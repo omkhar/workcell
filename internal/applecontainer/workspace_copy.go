@@ -52,17 +52,19 @@ type workspaceSnapshot struct {
 
 type workspaceObjectID struct{ dev, ino uint64 }
 type workspaceOps struct {
+	stat      func(string, *unix.Stat_t) error
 	openat    func(int, string, int, uint32) (int, error)
 	fstat     func(int, *unix.Stat_t) error
 	fstatat   func(int, string, *unix.Stat_t, int) error
 	mkdirat   func(int, string, uint32) error
 	fchmod    func(int, uint32) error
+	fsync     func(int) error
 	readlink  func(int, string, []byte) (int, error)
 	symlinkat func(string, int, string) error
 }
 
 func systemWorkspaceOps() workspaceOps {
-	return workspaceOps{unix.Openat, unix.Fstat, unix.Fstatat, unix.Mkdirat, unix.Fchmod, workspaceReadlink, unix.Symlinkat}
+	return workspaceOps{unix.Stat, unix.Openat, unix.Fstat, unix.Fstatat, unix.Mkdirat, unix.Fchmod, unix.Fsync, workspaceReadlink, unix.Symlinkat}
 }
 
 type workspaceWalk struct {
@@ -99,6 +101,17 @@ func copyWorkspaceTreeWithOps(sourceRoot string, parentFD int, name string, excl
 	if err != nil {
 		return nil, err
 	}
+	return copyWorkspaceTreeFromDescriptor(sourceFD, sourceSnapshot, parentFD, name, excluded, limits, ops)
+}
+
+// copyWorkspaceTreeFromDescriptor consumes sourceFD, including on failure.
+func copyWorkspaceTreeFromDescriptor(sourceFD int, sourceSnapshot workspaceSnapshot, parentFD int, name string, excluded []string, limits workspaceCopyLimits, ops workspaceOps) ([]WorkspaceEntry, error) {
+	if !workspaceCopySupported {
+		return abortWorkspaceCopy(sourceFD, errWorkspaceCopyUnsupported)
+	}
+	if err := validateWorkspaceLeaf("workspace destination", name); err != nil {
+		return abortWorkspaceCopy(sourceFD, err)
+	}
 	if err := requireWorkspaceNameAbsent(parentFD, name, ops); err != nil {
 		return abortWorkspaceCopy(sourceFD, err)
 	}
@@ -106,7 +119,7 @@ func copyWorkspaceTreeWithOps(sourceRoot string, parentFD int, name string, excl
 	if err != nil {
 		return abortWorkspaceCopy(sourceFD, err)
 	}
-	walk := &workspaceWalk{excluded: excluded, limits: limits, fileSizes: make(map[string]int64), reserved: make(map[string]WorkspaceEntry), directories: make(map[workspaceObjectID]string), ops: ops}
+	walk := &workspaceWalk{entries: make([]WorkspaceEntry, 0), excluded: excluded, limits: limits, fileSizes: make(map[string]int64), reserved: make(map[string]WorkspaceEntry), directories: make(map[workspaceObjectID]string), ops: ops}
 	err = walk.directory(sourceFD, destFD, "", 0, sourceSnapshot)
 	if err == nil {
 		err = validateWorkspaceLinks(walk.entries)
@@ -116,6 +129,11 @@ func copyWorkspaceTreeWithOps(sourceRoot string, parentFD int, name string, excl
 	}
 	if err == nil {
 		err = walk.validateDestination(destFD)
+	}
+	if err == nil {
+		if syncErr := ops.fsync(destFD); syncErr != nil {
+			err = fmt.Errorf("sync workspace root: %w", syncErr)
+		}
 	}
 	if err == nil {
 		_, err = verifyWorkspaceNameAt(parentFD, name, destFD, ops)
@@ -222,6 +240,9 @@ func (walk *workspaceWalk) copyDirectory(sourceParent, destParent int, name, rel
 	if err := walk.ops.fchmod(destChild, uint32(mode.Perm())); err != nil {
 		return err
 	}
+	if err := walk.ops.fsync(destChild); err != nil {
+		return fmt.Errorf("sync workspace directory %q: %w", rel, err)
+	}
 	if _, err := verifyWorkspaceNameAt(destParent, name, destChild, walk.ops); err != nil {
 		return err
 	}
@@ -278,6 +299,9 @@ func (walk *workspaceWalk) copyFile(sourceParent, destParent int, name, rel stri
 	if err := walk.ops.fchmod(destFD, uint32(mode.Perm())); err != nil {
 		return err
 	}
+	if err := walk.ops.fsync(destFD); err != nil {
+		return fmt.Errorf("sync workspace file %q: %w", rel, err)
+	}
 	copiedSnapshot, err := verifyWorkspaceNameAt(destParent, name, destFD, walk.ops)
 	if err != nil {
 		return err
@@ -291,6 +315,7 @@ func (walk *workspaceWalk) copyFile(sourceParent, destParent int, name, rel stri
 }
 
 func (walk *workspaceWalk) copySymlink(sourceParent, destParent int, name, rel string, before workspaceSnapshot) error {
+	// The postorder parent-directory sync persists the verified symlink metadata.
 	sourceLinkFD, err := walk.ops.openat(sourceParent, name, workspaceSymlinkOpenFlags, 0)
 	if err != nil {
 		return fmt.Errorf("pin workspace symlink %q: %w", rel, err)
@@ -648,10 +673,14 @@ func readWorkspaceLink(parentFD int, name string, ops workspaceOps) (string, err
 }
 
 func openWorkspaceSourceRoot(sourceRoot string, ops workspaceOps) (int, workspaceSnapshot, error) {
-	if _, err := pathutil.CollisionKey(sourceRoot); err != nil {
+	return openPinnedWorkspaceDirectory("source workspace", sourceRoot, true, ops)
+}
+
+func openPinnedWorkspaceDirectory(label, directory string, stable bool, ops workspaceOps) (int, workspaceSnapshot, error) {
+	if _, err := pathutil.CollisionKey(directory); err != nil {
 		return -1, workspaceSnapshot{}, err
 	}
-	resolved, err := filepath.EvalSymlinks(sourceRoot)
+	resolved, err := filepath.EvalSymlinks(directory)
 	if err != nil {
 		return -1, workspaceSnapshot{}, err
 	}
@@ -660,22 +689,22 @@ func openWorkspaceSourceRoot(sourceRoot string, ops workspaceOps) (int, workspac
 		return -1, workspaceSnapshot{}, err
 	}
 	var before unix.Stat_t
-	if err := unix.Stat(resolved, &before); err != nil {
+	if err := ops.stat(resolved, &before); err != nil {
 		return -1, workspaceSnapshot{}, err
 	}
 	beforeSnapshot := workspaceSnapshotFromUnix(before)
 	if beforeSnapshot.mode&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) {
-		return -1, workspaceSnapshot{}, fmt.Errorf("source workspace is not a directory: %s", sourceRoot)
+		return -1, workspaceSnapshot{}, fmt.Errorf("%s is not a directory: %s", label, directory)
 	}
 	fd, err := openAbsoluteWorkspaceDir(resolved, ops)
 	if err != nil {
-		return -1, workspaceSnapshot{}, fmt.Errorf("open source workspace %q: %w", sourceRoot, err)
+		return -1, workspaceSnapshot{}, fmt.Errorf("open %s %q: %w", label, directory, err)
 	}
 	var opened unix.Stat_t
-	if err := ops.fstat(fd, &opened); err != nil || workspaceSnapshotFromUnix(opened) != beforeSnapshot {
-		return -1, workspaceSnapshot{}, closeFDError(fd, "source workspace changed while opening")
+	if err := ops.fstat(fd, &opened); err != nil || opened.Dev != before.Dev || opened.Ino != before.Ino || stable && workspaceSnapshotFromUnix(opened) != beforeSnapshot {
+		return -1, workspaceSnapshot{}, closeFDError(fd, "%s changed while opening", label)
 	}
-	return fd, beforeSnapshot, nil
+	return fd, workspaceSnapshotFromUnix(opened), nil
 }
 
 func openAbsoluteWorkspaceDir(directory string, ops workspaceOps) (int, error) {
@@ -705,7 +734,7 @@ func requireWorkspaceNameAbsent(parentFD int, name string, ops workspaceOps) err
 	var stat unix.Stat_t
 	err := ops.fstatat(parentFD, name, &stat, unix.AT_SYMLINK_NOFOLLOW)
 	if err == nil {
-		return fmt.Errorf("workspace destination %q already exists", name)
+		return fmt.Errorf("workspace destination %q already exists: %w", name, unix.EEXIST)
 	}
 	if !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("inspect workspace destination %q: %w", name, err)
@@ -729,6 +758,10 @@ func createWorkspaceDirectory(parentFD int, name string, ops workspaceOps) (int,
 	if err := ops.mkdirat(parentFD, name, 0o700); err != nil {
 		return -1, err
 	}
+	return openCreatedWorkspaceDirectory(parentFD, name, ops)
+}
+
+func openCreatedWorkspaceDirectory(parentFD int, name string, ops workspaceOps) (int, error) {
 	var before unix.Stat_t
 	if err := ops.fstatat(parentFD, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return -1, err

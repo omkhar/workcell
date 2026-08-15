@@ -6,7 +6,6 @@ package applecontainer
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -516,8 +515,8 @@ func (t AppleContainerTarget) FinishSession(_ context.Context, req FinishSession
 }
 
 // verifyPersistedManifest requires the on-disk manifest at path to serialize
-// identically to the in-memory manifest (writeJSON emits MarshalIndent + "\n"),
-// so every field — not just the path — is certified against persisted state. The
+// identically to the in-memory manifest through the shared format helper, so
+// every field — not just the path — is certified against persisted state. The
 // manifest is read through the hardened path so a manifest FILE swapped for a
 // symlink/FIFO is refused, not followed, even though its parent chain was checked.
 func verifyPersistedManifest(stateRoot, path string, manifest any) error {
@@ -525,11 +524,11 @@ func verifyPersistedManifest(stateRoot, path string, manifest any) error {
 	if err != nil {
 		return err
 	}
-	want, err := json.MarshalIndent(manifest, "", "  ")
+	want, err := marshalManifestBytes(manifest)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(onDisk, append(want, '\n')) {
+	if !bytes.Equal(onDisk, want) {
 		return fmt.Errorf("persisted manifest %q does not match the in-memory manifest", path)
 	}
 	return nil
