@@ -517,13 +517,11 @@ func stageRecordTemp(parentFD int, base string, data []byte) (string, error) {
 // (Nlink==1) defense.
 //
 // This is atomic-PUBLISH, NOT atomically create-once: Renameat replaces an
-// existing final name. Primitive-level atomic create-once on Darwin would require
-// linkat, which transiently exposes a SECOND hard link (temp+final) that the
-// Nlink==1 read guard would reject — the two are mutually exclusive on Darwin
-// (no RENAME_NOREPLACE). So create-once is the CALLER's responsibility via
-// serialization: the applecontainer session lifecycle holds a per-session flock
-// and performs an under-lock record-exists check before creating. The per-session
-// lock is the correct layer for that guarantee.
+// existing final name. This helper does not use Darwin's RENAME_EXCL because
+// record replacement is required for rewrites. So create-once is the CALLER's
+// responsibility via serialization: the applecontainer session lifecycle holds
+// a per-session flock and performs an under-lock record-exists check before
+// creating. Workspace materialization uses a separate exclusive-rename helper.
 //
 // mustExist=true (rewrite) additionally requires an existing single-linked regular
 // file (refuse symlink/FIFO/hard-link). mustExist=false (create) keeps a cheap

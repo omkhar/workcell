@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -108,6 +107,10 @@ func NewAppleContainerTarget(contract Contract) (AppleContainerTarget, error) {
 }
 
 func (t AppleContainerTarget) MaterializeWorkspace(_ context.Context, req MaterializeRequest) (MaterializeResult, error) {
+	return t.materializeWorkspaceWithOps(req, systemWorkspaceMaterializeOps())
+}
+
+func (t AppleContainerTarget) materializeWorkspaceWithOps(req MaterializeRequest, ops workspaceMaterializeOps) (MaterializeResult, error) {
 	if strings.TrimSpace(req.StateRoot) == "" {
 		return MaterializeResult{}, fmt.Errorf("state root is required")
 	}
@@ -126,27 +129,10 @@ func (t AppleContainerTarget) MaterializeWorkspace(_ context.Context, req Materi
 	if strings.TrimSpace(req.SourceWorkspace) == "" {
 		return MaterializeResult{}, fmt.Errorf("source workspace is required")
 	}
-	// Writing generated state into (or as, or around) the tree being copied is a
-	// degenerate configuration; reject it before creating any state.
-	if overlap, err := stateRootOverlapsSource(req.StateRoot, req.SourceWorkspace); err != nil {
-		return MaterializeResult{}, err
-	} else if overlap {
-		return MaterializeResult{}, fmt.Errorf("state root %q must not overlap source workspace %q", req.StateRoot, req.SourceWorkspace)
-	}
 	root := targetRoot(req.StateRoot, t.Contract.TargetKind, targetProvider, targetID)
 	materializationRoot := filepath.Join(root, "materializations", materializationID)
 	workspaceRoot := filepath.Join(materializationRoot, t.Contract.WorkspaceMaterialization.WorkspaceDir)
 	manifestPath := filepath.Join(materializationRoot, t.Contract.WorkspaceMaterialization.ManifestName)
-	if err := os.RemoveAll(materializationRoot); err != nil {
-		return MaterializeResult{}, err
-	}
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		return MaterializeResult{}, err
-	}
-	entries, err := copyWorkspaceTree(req.SourceWorkspace, workspaceRoot, t.Contract.WorkspaceMaterialization.ExcludedPaths)
-	if err != nil {
-		return MaterializeResult{}, err
-	}
 	manifest := WorkspaceManifest{
 		Version:               1,
 		TargetKind:            t.Contract.TargetKind,
@@ -157,9 +143,20 @@ func (t AppleContainerTarget) MaterializeWorkspace(_ context.Context, req Materi
 		MaterializationID:     materializationID,
 		MaterializedWorkspace: workspaceRoot,
 		ExcludedPaths:         append([]string(nil), t.Contract.WorkspaceMaterialization.ExcludedPaths...),
-		Entries:               entries,
+		Entries:               nil,
 	}
-	if err := writeJSON(manifestPath, manifest); err != nil {
+	manifest, err = publishWorkspaceMaterialization(
+		req.StateRoot,
+		[]string{"targets", t.Contract.TargetKind, targetProvider, targetID},
+		materializationID,
+		t.Contract.WorkspaceMaterialization.WorkspaceDir,
+		t.Contract.WorkspaceMaterialization.ManifestName,
+		req.SourceWorkspace,
+		t.Contract.WorkspaceMaterialization.ExcludedPaths,
+		manifest,
+		ops,
+	)
+	if err != nil {
 		return MaterializeResult{}, err
 	}
 	return MaterializeResult{
@@ -258,20 +255,6 @@ func validateAuditToken(label, value string) error {
 	return nil
 }
 
-// stateRootOverlapsSource reports whether the state root equals, is inside, or is
-// a parent of the source workspace, comparing absolute symlink-resolved paths.
-func stateRootOverlapsSource(stateRoot, source string) (bool, error) {
-	s, err := resolveExistingPrefix(source)
-	if err != nil {
-		return false, err
-	}
-	r, err := resolveExistingPrefix(stateRoot)
-	if err != nil {
-		return false, err
-	}
-	return strings.EqualFold(s, r) || pathWithin(s, r) || pathWithin(r, s), nil
-}
-
 // pathWithin reports whether child is inside parent (component-aware via
 // filepath.Rel, so /foobar is not inside /foo). Comparison is case-insensitive
 // because on a case-insensitive volume (APFS default) /Foo and /foo are the same
@@ -282,26 +265,6 @@ func pathWithin(parent, child string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// resolveExistingPrefix makes path absolute and resolves symlinks on its longest
-// existing prefix, appending any not-yet-created tail lexically.
-func resolveExistingPrefix(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	current, tail := filepath.Clean(abs), ""
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			return filepath.Join(resolved, tail), nil
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return abs, nil
-		}
-		current, tail = parent, filepath.Join(filepath.Base(current), tail)
-	}
 }
 
 // copyWorkspaceTree copies sourceRoot into destRoot, excluding the configured
@@ -442,11 +405,10 @@ func isExcludedPath(rel string, excluded []string) bool {
 }
 
 func writeJSON(path string, value any) error {
-	content, err := json.MarshalIndent(value, "", "  ")
+	content, err := marshalManifestBytes(value)
 	if err != nil {
 		return err
 	}
-	content = append(content, '\n')
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

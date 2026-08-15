@@ -48,6 +48,15 @@ use this guard because it has no `apple-container` operator target.
 The deterministic target writes lifecycle audit records without a signed
 digest chain. Session verification fails closed for this target.
 
+## Workspace Materialization Safety
+
+The deterministic target pins a trusted, pre-existing `StateRoot` before it writes target state.
+It rejects a source workspace that overlaps `StateRoot`.
+Each materialization ID is create-once, and native exclusive publication does not replace an existing materialization.
+The target prepares a private `0700` stage under `.materialization-staging`.
+After stage creation, a preparation failure leaves the stage in place without pathname cleanup.
+An operator can inspect and remove the stage after they understand the failure.
+
 ## Decision
 
 The technical evaluation result was `GO`. Workcell deferred operator
