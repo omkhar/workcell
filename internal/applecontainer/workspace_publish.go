@@ -17,10 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	workspaceStageAttempts = 16
-	workspaceStagingName   = ".materialization-staging"
-)
+const workspaceStageAttempts, workspaceStagingName = 16, ".materialization-staging"
 
 var errWorkspaceMaterializationUnsupported = errors.New("secure workspace materialization is unsupported on this platform")
 
@@ -443,9 +440,11 @@ func verifyWorkspaceSource(sourceFD int, source workspaceSnapshot, stateFD int, 
 }
 
 func verifyWorkspacePublishAnchors(stateRoot string, state workspaceSnapshot, stateFD int, chain []string, targetID workspaceObjectID, targetFD int, finalParentID workspaceObjectID, finalParentFD int, stagingParentID workspaceObjectID, stagingParentFD int, ops workspaceOps) error {
-	var visible unix.Stat_t
-	if err := ops.stat(stateRoot, &visible); err != nil || snapshotObjectID(workspaceSnapshotFromUnix(visible)) != snapshotObjectID(state) {
-		return fmt.Errorf("state root identity changed")
+	var opened, visible unix.Stat_t
+	openedErr, visibleErr := ops.fstat(stateFD, &opened), ops.stat(stateRoot, &visible)
+	openedState, visibleState, stateID := workspaceSnapshotFromUnix(opened), workspaceSnapshotFromUnix(visible), snapshotObjectID(state)
+	if openedErr != nil || visibleErr != nil || snapshotObjectID(openedState) != stateID || snapshotObjectID(visibleState) != stateID || openedState.uid != uint32(os.Geteuid()) || visibleState.uid != uint32(os.Geteuid()) || openedState.mode&0o7022 != 0 || visibleState.mode&0o7022 != 0 {
+		return fmt.Errorf("state root identity or security policy changed")
 	}
 	openedTarget, openedTargetID, err := openManagedWorkspaceChain(stateFD, chain, false, ops)
 	if err != nil {

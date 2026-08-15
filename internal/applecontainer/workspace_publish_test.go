@@ -43,9 +43,7 @@ func newWorkspacePublishFixture(t *testing.T) workspacePublishFixture {
 func workspaceTestMaterializeOps() workspaceMaterializeOps {
 	ops := systemWorkspaceMaterializeOps()
 	ops.random = func(buffer []byte) (int, error) {
-		for i := range buffer {
-			buffer[i] = 0x11
-		}
+		copy(buffer, bytes.Repeat([]byte{0x11}, len(buffer)))
 		return len(buffer), nil
 	}
 	return ops
@@ -309,9 +307,7 @@ func TestWorkspacePublicationRetriesStageCollision(t *testing.T) {
 	ops, attempts := systemWorkspaceMaterializeOps(), 0
 	ops.random = func(buffer []byte) (int, error) {
 		attempts++
-		for i := range buffer {
-			buffer[i] = byte(attempts * 0x11)
-		}
+		copy(buffer, bytes.Repeat([]byte{byte(attempts * 0x11)}, len(buffer)))
 		return len(buffer), nil
 	}
 	if _, err := fixture.target.materializeWorkspaceWithOps(fixture.request, ops); err != nil || attempts != 2 {
@@ -323,7 +319,7 @@ func TestWorkspacePublicationRetriesStageCollision(t *testing.T) {
 }
 
 func TestWorkspacePublicationRejectsDescriptorRaces(t *testing.T) {
-	for _, kind := range []string{"state-root", "managed-parent", "stage-name", "final-name", "final-late"} {
+	for _, kind := range []string{"state-root", "state-policy", "managed-parent", "stage-name", "final-name", "final-late"} {
 		t.Run(kind, func(t *testing.T) {
 			fixture := newWorkspacePublishFixture(t)
 			ops, reached, publishCalled := workspaceTestMaterializeOps(), false, false
@@ -342,13 +338,17 @@ func TestWorkspacePublicationRejectsDescriptorRaces(t *testing.T) {
 					}
 					return original(fd, name, mode)
 				}
-			case "managed-parent":
+			case "state-policy", "managed-parent":
 				original := ops.fsync
 				ops.fsync = func(fd int) error {
 					err := original(fd)
 					stage := filepath.Join(fixture.stageParent, workspaceTestStage)
 					if err == nil && !reached && workspacePathMatchesFD(stage, fd) {
 						reached = true
+						if kind == "state-policy" {
+							mustNil(t, os.Chmod(fixture.request.StateRoot, 0o777))
+							return err
+						}
 						mustNil(t, errors.Join(os.Rename(fixture.finalParent, fixture.finalParent+".moved"), os.Mkdir(fixture.finalParent, 0o700)))
 					}
 					return err
@@ -395,10 +395,10 @@ func TestWorkspacePublicationRejectsDescriptorRaces(t *testing.T) {
 			if err == nil || !reached {
 				t.Fatalf("%s race: reached=%t error=%v", kind, reached, err)
 			}
+			if !strings.HasPrefix(kind, "final-") && publishCalled {
+				t.Fatalf("%s race reached publication", kind)
+			}
 			if kind == "stage-name" {
-				if publishCalled {
-					t.Fatal("stage-name race reached publication")
-				}
 				if info, statErr := os.Stat(filepath.Join(fixture.stageParent, workspaceTestStage+".moved")); statErr != nil || info.Mode().Perm() != 0o700 {
 					t.Fatalf("owned swapped stage mode: info=%v error=%v", info, statErr)
 				}
