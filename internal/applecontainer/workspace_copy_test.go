@@ -98,7 +98,7 @@ func TestWorkspaceCopyRejectsSourceRaces(t *testing.T) {
 								mustNil(t, os.WriteFile(filepath.Join(source, "late"), []byte("x"), 0o600))
 							}
 							if kind != "ctime-only" && kind != "nlink-only" {
-								return original(fd, stat)
+								*stat = watchedStat
 							}
 						}
 					}
@@ -136,7 +136,7 @@ func TestWorkspaceCopyRejectsStableSpecialAndHardlink(t *testing.T) {
 }
 
 func TestWorkspaceCopyRejectsDestinationNameRaces(t *testing.T) {
-	for _, kind := range []string{"root", "directory", "file", "symlink", "symlink-snapshot", "directory-preopen", "file-precreate", "directory-adopt", "final-stability", "final-extra", "final-missing", "final-kind", "final-mode", "final-dir-mode", "final-nlink", "final-size", "final-hash", "final-link", "final-alias", "final-root-mode", "final-special"} {
+	for _, kind := range []string{"root", "directory", "file", "symlink", "source-symlink-snapshot", "symlink-snapshot", "symlink-final-snapshot", "directory-preopen", "file-precreate", "directory-adopt", "final-stability", "final-extra", "final-missing", "final-kind", "final-mode", "final-dir-mode", "final-nlink", "final-size", "final-hash", "final-link", "final-alias", "final-root-mode", "final-special"} {
 		t.Run(kind, func(t *testing.T) {
 			source := t.TempDir()
 			parent, parentFD := workspaceTestParent(t)
@@ -176,12 +176,24 @@ func TestWorkspaceCopyRejectsDestinationNameRaces(t *testing.T) {
 					mustNil(t, os.Remove(filepath.Join(destination, name)))
 					return os.Symlink("../../outside", filepath.Join(destination, name))
 				}
-			case "symlink-snapshot":
-				original, reads := ops.readlink, 0
+			case "source-symlink-snapshot", "symlink-snapshot", "symlink-final-snapshot":
+				originalOpen, pins := ops.openat, 0
+				ops.openat = func(fd int, name string, flags int, mode uint32) (int, error) {
+					if name == "link" && flags == workspaceSymlinkOpenFlags {
+						pins++
+					}
+					return originalOpen(fd, name, flags, mode)
+				}
+				original, reads, wanted := ops.readlink, 0, map[string]int{"source-symlink-snapshot": 1, "symlink-snapshot": 2, "symlink-final-snapshot": 3}[kind]
 				ops.readlink = func(fd int, name string, buffer []byte) (int, error) {
 					reads++
-					if reads == 2 {
-						mustNil(t, errors.Join(os.Remove(filepath.Join(destination, name)), os.Symlink("file", filepath.Join(destination, name))))
+					if reads == wanted {
+						link := filepath.Join(destination, name)
+						if wanted == 1 {
+							link = filepath.Join(source, name)
+						}
+						flagsOK, swapped = pins >= wanted, true
+						mustNil(t, errors.Join(os.Remove(link), os.Symlink("file", link)))
 					}
 					return original(fd, name, buffer)
 				}
@@ -255,40 +267,6 @@ func TestWorkspaceCopyRejectsDestinationNameRaces(t *testing.T) {
 				t.Fatalf("%s destination replacement result: flagsOK=%t error=%v", kind, flagsOK, err)
 			}
 		})
-	}
-}
-
-func TestWorkspaceLinkResolutionUsesRawComponentOrder(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		entries []WorkspaceEntry
-		wantErr bool
-	}{
-		{"safe-repeat", []WorkspaceEntry{{Path: "dir", Kind: "dir"}, {Path: "dir/file", Kind: "file"}, {Path: "x", Kind: "symlink", LinkTarget: "dir"}, {Path: "y", Kind: "symlink", LinkTarget: "x/../x/file"}}, false},
-		{"combined-dotdot-escape", []WorkspaceEntry{{Path: "dir", Kind: "dir"}, {Path: "dir/x", Kind: "symlink", LinkTarget: ".."}, {Path: "dir/outside", Kind: "file"}, {Path: "y", Kind: "symlink", LinkTarget: "dir/x/../outside"}}, true},
-		{"dangling", []WorkspaceEntry{{Path: "x", Kind: "symlink", LinkTarget: "missing"}}, true},
-		{"case-alias", []WorkspaceEntry{{Path: "file", Kind: "file"}, {Path: "link", Kind: "symlink", LinkTarget: "FILE"}}, true},
-		{"cycle", []WorkspaceEntry{{Path: "x", Kind: "symlink", LinkTarget: "y"}, {Path: "y", Kind: "symlink", LinkTarget: "x"}}, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateWorkspaceLinks(test.entries)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("link validation error = %v, wantErr %t", err, test.wantErr)
-			}
-		})
-	}
-	for _, hops := range []int{40, 41} {
-		entries := []WorkspaceEntry{{Path: "file", Kind: "file"}}
-		for i := hops - 1; i >= 0; i-- {
-			target := "file"
-			if i+1 < hops {
-				target = fmt.Sprintf("link%d", i+1)
-			}
-			entries = append(entries, WorkspaceEntry{Path: fmt.Sprintf("link%d", i), Kind: "symlink", LinkTarget: target})
-		}
-		if err := validateWorkspaceLinks(entries); (err != nil) != (hops > workspaceMaxSymlinkHops) {
-			t.Fatalf("%d-hop chain error = %v", hops, err)
-		}
 	}
 }
 

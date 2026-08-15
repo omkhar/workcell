@@ -78,6 +78,8 @@ type workspaceWalk struct {
 
 // copyWorkspaceTreeDescriptor requires parentFD to stay open and caller-owned.
 // It must name a private CLOEXEC directory that is physically disjoint from sourceRoot.
+// Each entry uses its last descriptor-content or directory-name check as its source observation point.
+// The function does not provide a filesystem-wide source snapshot.
 // The function does not close parentFD.
 func copyWorkspaceTreeDescriptor(sourceRoot string, parentFD int, name string, excluded []string) ([]WorkspaceEntry, error) {
 	return copyWorkspaceTreeWithOps(sourceRoot, parentFD, name, excluded, defaultWorkspaceCopyLimits(), systemWorkspaceOps())
@@ -129,6 +131,7 @@ func copyWorkspaceTreeWithOps(sourceRoot string, parentFD int, name string, excl
 func (walk *workspaceWalk) directory(sourceFD, destFD int, parentRel string, depth int, expected workspaceSnapshot) (retErr error) {
 	source := os.NewFile(uintptr(sourceFD), parentRel)
 	defer func() { retErr = errors.Join(retErr, source.Close()) }()
+	initialNames := []string{}
 	id := workspaceObjectID{expected.dev, expected.ino}
 	if previous, found := walk.directories[id]; found {
 		return fmt.Errorf("workspace directory identity repeats at %q and %q", previous, parentRel)
@@ -139,6 +142,7 @@ func (walk *workspaceWalk) directory(sourceFD, destFD int, parentRel string, dep
 		if readErr != nil && readErr != io.EOF {
 			return readErr
 		}
+		initialNames = append(initialNames, names...)
 		for _, name := range names {
 			if err := validateWorkspaceLeaf("workspace entry", name); err != nil {
 				return err
@@ -187,6 +191,12 @@ func (walk *workspaceWalk) directory(sourceFD, destFD int, parentRel string, dep
 	var after unix.Stat_t
 	if err := walk.ops.fstat(sourceFD, &after); err != nil || workspaceSnapshotFromUnix(after) != expected {
 		return fmt.Errorf("workspace directory changed while copying")
+	}
+	stableNames, err := workspaceDirectoryNames(sourceFD, len(initialNames)+1)
+	sort.Strings(initialNames)
+	sort.Strings(stableNames)
+	if err != nil || strings.Join(stableNames, "\x00") != strings.Join(initialNames, "\x00") {
+		return fmt.Errorf("workspace directory entries changed while copying")
 	}
 	return nil
 }
@@ -255,6 +265,14 @@ func (walk *workspaceWalk) copyFile(sourceParent, destParent int, name, rel stri
 	if err := walk.ops.fstat(fd, &after); err != nil || workspaceSnapshotFromUnix(after) != before {
 		return fmt.Errorf("workspace file %q changed while copying", rel)
 	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	stableHash := sha256.New()
+	if read, err := io.Copy(stableHash, io.LimitReader(source, written+1)); err != nil || read != written || hex.EncodeToString(stableHash.Sum(nil)) != digest {
+		return fmt.Errorf("workspace file %q content changed while copying", rel)
+	}
 	walk.totalBytes += written
 	mode := entryMode(openedSnapshot, 0)
 	if err := walk.ops.fchmod(destFD, uint32(mode.Perm())); err != nil {
@@ -269,10 +287,18 @@ func (walk *workspaceWalk) copyFile(sourceParent, destParent int, name, rel stri
 	}
 	mode = entryMode(copiedSnapshot, 0)
 	walk.fileSizes[rel] = written
-	return walk.retain(WorkspaceEntry{Path: rel, Kind: "file", Mode: mode, SHA256: hex.EncodeToString(hash.Sum(nil))})
+	return walk.retain(WorkspaceEntry{Path: rel, Kind: "file", Mode: mode, SHA256: digest})
 }
 
 func (walk *workspaceWalk) copySymlink(sourceParent, destParent int, name, rel string, before workspaceSnapshot) error {
+	sourceLinkFD, err := walk.ops.openat(sourceParent, name, workspaceSymlinkOpenFlags, 0)
+	if err != nil {
+		return fmt.Errorf("pin workspace symlink %q: %w", rel, err)
+	}
+	defer unix.Close(sourceLinkFD)
+	if opened, err := verifyWorkspaceNameAt(sourceParent, name, sourceLinkFD, walk.ops); err != nil || opened != before {
+		return fmt.Errorf("workspace symlink %q changed before read", rel)
+	}
 	target, err := readWorkspaceLink(sourceParent, name, walk.ops)
 	if err != nil {
 		return fmt.Errorf("read workspace symlink %q: %w", rel, err)
@@ -293,11 +319,16 @@ func (walk *workspaceWalk) copySymlink(sourceParent, destParent int, name, rel s
 	if err := walk.ops.symlinkat(target, destParent, name); err != nil {
 		return fmt.Errorf("create workspace symlink %q: %w", rel, err)
 	}
-	var copied, stable unix.Stat_t
-	if err := walk.ops.fstatat(destParent, name, &copied, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	copiedFD, err := walk.ops.openat(destParent, name, workspaceSymlinkOpenFlags, 0)
+	if err != nil {
 		return err
 	}
-	copiedSnapshot := workspaceSnapshotFromUnix(copied)
+	defer unix.Close(copiedFD)
+	copiedSnapshot, err := verifyWorkspaceNameAt(destParent, name, copiedFD, walk.ops)
+	if err != nil {
+		return err
+	}
+	var stable unix.Stat_t
 	if copiedSnapshot.mode&uint32(unix.S_IFMT) != uint32(unix.S_IFLNK) {
 		return fmt.Errorf("workspace symlink %q changed after creation", rel)
 	}
@@ -476,6 +507,14 @@ func (walk *workspaceWalk) validateDestinationFile(parentFD int, name string, en
 func (walk *workspaceWalk) validateDestinationSymlink(parentFD int, name string, entry WorkspaceEntry, before workspaceSnapshot) error {
 	if before.mode&uint32(unix.S_IFMT) != uint32(unix.S_IFLNK) || before.nlink != 1 || before.mode&0o7777 != uint32(entry.Mode.Perm()) {
 		return fmt.Errorf("workspace destination symlink differs from its manifest")
+	}
+	fd, err := walk.ops.openat(parentFD, name, workspaceSymlinkOpenFlags, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	if opened, err := verifyWorkspaceNameAt(parentFD, name, fd, walk.ops); err != nil || opened != before {
+		return fmt.Errorf("workspace destination symlink changed before validation")
 	}
 	target, err := readWorkspaceLink(parentFD, name, walk.ops)
 	if err != nil {

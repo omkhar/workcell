@@ -8,6 +8,7 @@ package applecontainer
 import "golang.org/x/sys/unix"
 
 const workspaceCopySupported = true
+const workspaceSymlinkOpenFlags = unix.O_SYMLINK | unix.O_CLOEXEC
 
 func workspaceReadlink(fd int, n string, b []byte) (int, error) { return unix.Readlinkat(fd, n, b) }
 
