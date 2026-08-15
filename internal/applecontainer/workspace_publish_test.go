@@ -30,7 +30,7 @@ func newWorkspacePublishFixture(t *testing.T) workspacePublishFixture {
 	target, err := NewAppleContainerTarget(Contract{})
 	mustNil(t, err)
 	state, source := t.TempDir(), t.TempDir()
-	mustNil(t, os.WriteFile(filepath.Join(source, "file"), []byte("original"), 0o600))
+	mustNil(t, errors.Join(os.Chmod(source, 0o755), os.WriteFile(filepath.Join(source, "file"), []byte("original"), 0o644)))
 	root := targetRoot(state, target.Contract.TargetKind, target.Contract.TargetProvider, "tid")
 	return workspacePublishFixture{target, MaterializeRequest{StateRoot: state, TargetID: "tid", MaterializationID: "mid", SourceWorkspace: source}, filepath.Join(root, "materializations"), filepath.Join(root, "materializations", "mid"), filepath.Join(root, workspaceStagingName)}
 }
@@ -52,17 +52,22 @@ func workspaceRequire(t *testing.T, ok bool, format string, args ...any) {
 	}
 }
 func TestWorkspaceManagedDirectoryPolicyRequiresBothViews(t *testing.T) {
-	for _, kind := range []string{"secure", "opened-uid", "named-uid", "opened-write", "named-special"} {
-		base := unix.Stat_t{Dev: 1, Ino: 2, Mode: unix.S_IFDIR | 0o700, Uid: uint32(os.Geteuid())}
-		opened, named := base, base
-		changed := map[bool]*unix.Stat_t{true: &opened, false: &named}[strings.HasPrefix(kind, "opened")]
+	for _, kind := range []string{"private-secure", "public-0755", "private-opened-0755", "private-named-0755", "private-created-named-0755", "opened-uid", "named-uid", "opened-write", "named-special"} {
+		base := unix.Stat_t{Dev: 1, Ino: 2, Mode: unix.S_IFDIR | 0o700 | map[string]unix.Stat_t{"public-0755": {Mode: 0o055}}[kind].Mode, Uid: uint32(os.Geteuid())}
+		opened, named, created, ops := base, base, kind == "private-created-named-0755", systemWorkspaceOps()
+		changed := map[bool]*unix.Stat_t{true: &opened, false: &named}[strings.Contains(kind, "opened")]
 		changed.Uid += map[bool]uint32{true: 1}[strings.HasSuffix(kind, "uid")]
-		changed.Mode |= map[string]unix.Stat_t{"opened-write": {Mode: 0o022}, "named-special": {Mode: 0o7000}}[kind].Mode
-		ops := systemWorkspaceOps()
+		changed.Mode |= map[string]unix.Stat_t{"private-opened-0755": {Mode: 0o055}, "private-named-0755": {Mode: 0o055}, "opened-write": {Mode: 0o022}, "named-special": {Mode: 0o7000}}[kind].Mode
 		ops.fstat = func(_ int, stat *unix.Stat_t) error { *stat = opened; return nil }
 		ops.fstatat = func(_ int, _ string, stat *unix.Stat_t, _ int) error { *stat = named; return nil }
-		_, err := verifyWorkspaceDirectoryNameAt(1, "materializations", 2, workspaceObjectID{1, 2}, ops)
-		workspaceRequire(t, (err != nil) == (kind != "secure"), "%s rejected=%t error=%v", kind, err != nil, err)
+		ops.mkdirat, ops.openat, ops.fchmod, ops.fsync = func(int, string, uint32) error { return nil }, func(int, string, int, uint32) (int, error) { return -1, nil }, func(int, uint32) error {
+			named.Mode |= 0o055
+			return nil
+		}, func(int) error { return nil }
+		_, directErr := verifyWorkspaceDirectoryNameAt(1, "materializations", -1, workspaceObjectID{1, 2}, strings.HasPrefix(kind, "private-"), ops)
+		_, _, createdErr := openManagedWorkspaceDirectory(1, "materializations", 0o700, true, created, ops)
+		err := map[bool]error{false: directErr, true: createdErr}[created]
+		workspaceRequire(t, (err != nil) == (kind != "private-secure" && kind != "public-0755"), "%s rejected=%t error=%v", kind, err != nil, err)
 	}
 }
 func TestWorkspacePublicationSuccessAndManifestFormat(t *testing.T) {
@@ -78,10 +83,9 @@ func TestWorkspacePublicationSuccessAndManifestFormat(t *testing.T) {
 	}
 	result, err := fixture.target.materializeWorkspaceWithOps(fixture.request, ops)
 	mustNil(t, err)
-	content, err := os.ReadFile(result.ManifestPath)
-	mustNil(t, err)
-	want, err := marshalManifestBytes(result.Manifest)
-	mustNil(t, err)
+	content, readErr := os.ReadFile(result.ManifestPath)
+	want, marshalErr := marshalManifestBytes(result.Manifest)
+	mustNil(t, errors.Join(readErr, marshalErr))
 	workspaceRequire(t, manifestFlags && result.Manifest.Entries != nil && bytes.Contains(content, []byte(`"entries":[]`)) && bytes.Equal(content, want) && !bytes.Contains(content, []byte("\n  \"")), "workspace manifest or create flags are invalid: flags=%t content=%q", manifestFlags, content)
 	pointer, pointerErr := marshalManifestBytes(&result.Manifest)
 	bootstrap, bootstrapErr := marshalManifestBytes(BootstrapManifest{Version: 1, BootstrapID: "bid"})
@@ -170,23 +174,22 @@ func TestWorkspacePublicationExistingFinalUntouched(t *testing.T) {
 		workspaceRequire(t, errors.Is(err, unix.EEXIST) && statErr == nil && os.SameFile(before, after) && before.Mode() == after.Mode() && before.Size() == after.Size() && before.ModTime().Equal(after.ModTime()), "existing %s changed: before=%v after=%v materialize=%v stat=%v", kind, before, after, err, statErr)
 		workspaceMustNotExist(t, "existing-final staging parent", fixture.stageParent)
 	}
-	fixture := newWorkspacePublishFixture(t)
-	mustNil(t, errors.Join(os.Chmod(fixture.request.SourceWorkspace, 0o755), os.Chmod(filepath.Join(fixture.request.SourceWorkspace, "file"), 0o644), os.MkdirAll(fixture.finalParent, 0o700), os.Chmod(fixture.finalParent, 0o755)))
-	_, err := fixture.target.materializeWorkspaceWithOps(fixture.request, workspaceTestMaterializeOps())
-	workspaceRequire(t, err != nil && strings.Contains(err.Error(), "materializations") && strings.Contains(err.Error(), "mode 0700"), "public materializations accepted: %v", err)
-	workspaceMustNotExist(t, "public materializations stage", fixture.stageParent)
-	workspaceMustNotExist(t, "public materializations final", fixture.final)
+	for _, staging := range []bool{false, true} {
+		fixture := newWorkspacePublishFixture(t)
+		mustNil(t, errors.Join(os.Chmod(fixture.request.SourceWorkspace, 0o755), os.Chmod(filepath.Join(fixture.request.SourceWorkspace, "file"), 0o644), os.MkdirAll(map[bool]string{true: fixture.stageParent, false: fixture.finalParent}[staging], 0o700), os.Chmod(map[bool]string{true: fixture.stageParent, false: fixture.finalParent}[staging], 0o755)))
+		_, err := fixture.target.materializeWorkspaceWithOps(fixture.request, workspaceTestMaterializeOps())
+		workspaceRequire(t, err != nil && strings.Contains(err.Error(), map[bool]string{true: workspaceStagingName, false: "materializations"}[staging]) && strings.Contains(err.Error(), "mode 0700"), "public managed parent accepted: staging=%t error=%v", staging, err)
+		workspaceMustNotExist(t, "public parent stage", map[bool]string{true: filepath.Join(fixture.stageParent, workspaceTestStage), false: fixture.stageParent}[staging])
+		workspaceMustNotExist(t, "public parent final", fixture.final)
+	}
 }
 func TestWorkspaceNativePublishNeverReplaces(t *testing.T) {
 	if !workspaceMaterializationSupported {
 		t.Skip("native workspace publication is unsupported")
 	}
-	parent := t.TempDir()
-	fd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	mustNil(t, err)
-	defer unix.Close(fd)
+	parent, fd := workspaceTestParent(t)
 	mustNil(t, errors.Join(os.WriteFile(filepath.Join(parent, "stage"), []byte("stage"), 0o600), os.WriteFile(filepath.Join(parent, "final"), []byte("final"), 0o600)))
-	err = workspacePublish(fd, "stage", fd, "final")
+	err := workspacePublish(fd, "stage", fd, "final")
 	workspaceRequire(t, errors.Is(err, unix.EEXIST), "native no-replace returned %v, want EEXIST", err)
 	stage, stageErr := os.ReadFile(filepath.Join(parent, "stage"))
 	final, finalErr := os.ReadFile(filepath.Join(parent, "final"))
@@ -349,14 +352,12 @@ func TestWorkspacePublicationFailureRetainsPrivateStage(t *testing.T) {
 }
 func TestWorkspacePublicationRetriesStageCollision(t *testing.T) {
 	fixture := newWorkspacePublishFixture(t)
-	mustNil(t, os.MkdirAll(fixture.stageParent, 0o700))
-	mustNil(t, os.Mkdir(filepath.Join(fixture.stageParent, workspaceTestStage), 0o700))
+	mustNil(t, errors.Join(os.MkdirAll(fixture.stageParent, 0o700), os.Mkdir(filepath.Join(fixture.stageParent, workspaceTestStage), 0o700)))
 	ops := systemWorkspaceMaterializeOps()
 	ops.random = bytes.NewReader(append(bytes.Repeat([]byte{0x11}, 16), bytes.Repeat([]byte{0x22}, 16)...)).Read
-	_, err := fixture.target.materializeWorkspaceWithOps(fixture.request, ops)
-	workspaceRequire(t, err == nil, "stage collision retry: %v", err)
-	_, err = os.Stat(filepath.Join(fixture.stageParent, workspaceTestStage))
-	workspaceRequire(t, err == nil, "colliding private stage changed: %v", err)
+	_, materializeErr := fixture.target.materializeWorkspaceWithOps(fixture.request, ops)
+	_, statErr := os.Stat(filepath.Join(fixture.stageParent, workspaceTestStage))
+	workspaceRequire(t, materializeErr == nil && statErr == nil, "stage collision retry: materialize=%v stage=%v", materializeErr, statErr)
 }
 func TestWorkspacePublicationRejectsDescriptorRaces(t *testing.T) {
 	for _, kind := range []string{"state-root", "state-policy", "managed-parent", "parent-final-pre", "parent-stage-pre", "parent-final-post", "parent-stage-post", "stage-name", "final-name", "final-late"} {
@@ -386,7 +387,7 @@ func TestWorkspacePublicationRejectsDescriptorRaces(t *testing.T) {
 					reached = true
 					if kind != "managed-parent" {
 						parent := map[bool]string{true: map[bool]string{true: fixture.stageParent, false: fixture.finalParent}[strings.Contains(kind, "stage")], false: fixture.request.StateRoot}[strings.HasPrefix(kind, "parent-")]
-						mustNil(t, os.Chmod(parent, 0o777))
+						mustNil(t, os.Chmod(parent, map[bool]os.FileMode{true: 0o777, false: 0o755}[kind == "state-policy"]))
 						return err
 					}
 					mustNil(t, errors.Join(os.Rename(fixture.finalParent, fixture.finalParent+".moved"), os.Mkdir(fixture.finalParent, 0o700)))
@@ -414,7 +415,7 @@ func TestWorkspacePublicationRejectsDescriptorRaces(t *testing.T) {
 				if kind == "final-name" {
 					mustNil(t, errors.Join(os.Rename(fixture.final, fixture.final+".moved"), os.Mkdir(fixture.final, 0o700)))
 				} else {
-					mustNil(t, os.Chmod(map[bool]string{true: fixture.stageParent, false: fixture.finalParent}[strings.Contains(kind, "stage")], 0o777))
+					mustNil(t, os.Chmod(map[bool]string{true: fixture.stageParent, false: fixture.finalParent}[strings.Contains(kind, "stage")], 0o755))
 				}
 				return nil
 			}
@@ -467,10 +468,9 @@ func TestWorkspacePublicationCopiesFromPinnedSource(t *testing.T) {
 		}
 		return original(fd, name, mode)
 	}
-	result, err := fixture.target.materializeWorkspaceWithOps(fixture.request, ops)
-	mustNil(t, err)
-	data, err := os.ReadFile(filepath.Join(result.MaterializedWorkspace, "file"))
-	workspaceRequire(t, err == nil && string(data) == "original" && swapped, "pinned source result: data=%q swapped=%t error=%v", data, swapped, err)
+	result, materializeErr := fixture.target.materializeWorkspaceWithOps(fixture.request, ops)
+	data, readErr := os.ReadFile(filepath.Join(result.MaterializedWorkspace, "file"))
+	workspaceRequire(t, materializeErr == nil && readErr == nil && string(data) == "original" && swapped, "pinned source result: data=%q swapped=%t error=%v", data, swapped, errors.Join(materializeErr, readErr))
 }
 func TestWorkspacePublicationManagedOpenDoesNotFollowSwap(t *testing.T) {
 	fixture := newWorkspacePublishFixture(t)

@@ -269,21 +269,18 @@ func openManagedWorkspaceDirectory(parentFD int, name string, createMode uint32,
 	if err != nil {
 		return -1, workspaceObjectID{}, fmt.Errorf("open managed directory %q: %w", name, err)
 	}
-	opened, err := verifyWorkspaceDirectoryNameAt(parentFD, name, fd, snapshotObjectID(want), ops)
+	opened, err := verifyWorkspaceDirectoryNameAt(parentFD, name, fd, snapshotObjectID(want), requirePrivate && !created, ops)
 	if err != nil {
-		return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q changed while opening", name)
+		return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q changed while opening: %w", name, err)
 	}
 	if created {
 		if err := ops.fchmod(fd, createMode); err != nil {
 			return -1, workspaceObjectID{}, closeFDError(fd, "set managed directory %q mode: %w", name, err)
 		}
-		opened, err = verifyWorkspaceDirectoryNameAt(parentFD, name, fd, snapshotObjectID(want), ops)
+		opened, err = verifyWorkspaceDirectoryNameAt(parentFD, name, fd, snapshotObjectID(want), requirePrivate, ops)
 		if err != nil || opened.mode&0o7777 != createMode {
 			return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q changed after mode update", name)
 		}
-	}
-	if requirePrivate && opened.mode&0o7777 != 0o700 {
-		return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q must have mode 0700", name)
 	}
 	if create {
 		if err := ops.fsync(parentFD); err != nil {
@@ -406,7 +403,7 @@ func workspaceNameBindsFD(parentFD int, name string, fd int, ops workspaceOps) (
 	}
 	return workspaceSnapshotFromUnix(opened) == workspaceSnapshotFromUnix(named), nil
 }
-func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, expected workspaceObjectID, ops workspaceOps) (workspaceSnapshot, error) {
+func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, expected workspaceObjectID, requirePrivate bool, ops workspaceOps) (workspaceSnapshot, error) {
 	var opened, named unix.Stat_t
 	if err := ops.fstat(fd, &opened); err != nil {
 		return workspaceSnapshot{}, err
@@ -416,6 +413,9 @@ func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, expected 
 	namedSnapshot := workspaceSnapshotFromUnix(named)
 	if namedErr != nil || snapshotObjectID(snapshot) != expected || snapshotObjectID(namedSnapshot) != expected || snapshot.uid != uint32(os.Geteuid()) || namedSnapshot.uid != uint32(os.Geteuid()) || snapshot.mode&0o7022 != 0 || namedSnapshot.mode&0o7022 != 0 {
 		return workspaceSnapshot{}, fmt.Errorf("managed directory %q changed", name)
+	}
+	if requirePrivate && (snapshot.mode&0o7777 != 0o700 || namedSnapshot.mode&0o7777 != 0o700) {
+		return workspaceSnapshot{}, fmt.Errorf("managed directory %q must have mode 0700", name)
 	}
 	return snapshot, nil
 }
@@ -441,10 +441,10 @@ func verifyWorkspacePublishAnchors(stateRoot string, state workspaceSnapshot, st
 	if openedTargetID != targetID {
 		return fmt.Errorf("target directory identity changed")
 	}
-	if _, err := verifyWorkspaceDirectoryNameAt(targetFD, "materializations", finalParentFD, finalParentID, ops); err != nil {
+	if _, err := verifyWorkspaceDirectoryNameAt(targetFD, "materializations", finalParentFD, finalParentID, true, ops); err != nil {
 		return err
 	}
-	if _, err := verifyWorkspaceDirectoryNameAt(targetFD, workspaceStagingName, stagingParentFD, stagingParentID, ops); err != nil {
+	if _, err := verifyWorkspaceDirectoryNameAt(targetFD, workspaceStagingName, stagingParentFD, stagingParentID, true, ops); err != nil {
 		return err
 	}
 	return nil
