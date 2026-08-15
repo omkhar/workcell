@@ -72,7 +72,7 @@ func publishWorkspaceMaterialization(stateRoot string, targetChain []string, fin
 		return WorkspaceManifest{}, err
 	}
 	defer unix.Close(targetFD)
-	finalParentFD, finalParentID, err := openManagedWorkspaceDirectory(targetFD, "materializations", 0o700, false, true, ops.workspace)
+	finalParentFD, finalParentID, err := openManagedWorkspaceDirectory(targetFD, "materializations", 0o700, true, true, ops.workspace)
 	if err != nil {
 		return WorkspaceManifest{}, err
 	}
@@ -139,14 +139,10 @@ func publishWorkspaceMaterialization(stateRoot string, targetChain []string, fin
 	if err := ops.workspace.fchmod(stageFD, 0o755); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("set final materialization mode: %w", err)
 	}
-	if err := ops.workspace.fsync(stageFD); err != nil {
-		return WorkspaceManifest{}, fmt.Errorf("sync private workspace stage: %w", err)
-	}
-	if err := ops.workspace.fsync(stagingParentFD); err != nil {
-		return WorkspaceManifest{}, fmt.Errorf("sync staging parent: %w", err)
-	}
-	if err := ops.workspace.fsync(finalParentFD); err != nil {
-		return WorkspaceManifest{}, fmt.Errorf("sync materializations parent: %w", err)
+	for index, fd := range []int{stageFD, stagingParentFD, finalParentFD} {
+		if err := ops.workspace.fsync(fd); err != nil {
+			return WorkspaceManifest{}, fmt.Errorf("sync %s: %w", []string{"private workspace stage", "staging parent", "materializations parent"}[index], err)
+		}
 	}
 	if err := verifyWorkspaceSource(sourceFD, sourceSnapshot, stateFD, stateSnapshot, ops.workspace); err != nil {
 		return WorkspaceManifest{}, err
@@ -174,11 +170,10 @@ func publishWorkspaceMaterialization(stateRoot string, targetChain []string, fin
 	} else {
 		return WorkspaceManifest{}, fmt.Errorf("publish materialization %q without replacement: %w", finalName, errors.Join(publishErr, stageBindErr, finalBindErr))
 	}
-	if err := ops.workspace.fsync(stagingParentFD); err != nil {
-		return WorkspaceManifest{}, fmt.Errorf("materialization was published, but staging parent sync failed: %w", err)
-	}
-	if err := ops.workspace.fsync(finalParentFD); err != nil {
-		return WorkspaceManifest{}, fmt.Errorf("materialization was published, but materializations parent sync failed: %w", err)
+	for index, fd := range []int{stagingParentFD, finalParentFD} {
+		if err := ops.workspace.fsync(fd); err != nil {
+			return WorkspaceManifest{}, fmt.Errorf("materialization was published, but %s sync failed: %w", []string{"staging parent", "materializations parent"}[index], err)
+		}
 	}
 	if err := verifyWorkspacePublishAnchors(stateRoot, stateSnapshot, stateFD, targetChain, targetID, targetFD, finalParentID, finalParentFD, stagingParentID, stagingParentFD, ops.workspace); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("materialization was published, but its anchor changed: %w", err)
@@ -289,6 +284,11 @@ func openManagedWorkspaceDirectory(parentFD int, name string, createMode uint32,
 	}
 	if requirePrivate && opened.mode&0o7777 != 0o700 {
 		return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q must have mode 0700", name)
+	}
+	if create {
+		if err := ops.fsync(parentFD); err != nil {
+			return -1, workspaceObjectID{}, closeFDError(fd, "sync managed directory parent for %q: %w", name, err)
+		}
 	}
 	return fd, snapshotObjectID(opened), nil
 }
