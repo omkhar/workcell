@@ -296,8 +296,8 @@ func (walk *workspaceWalk) copySymlink(sourceParent, destParent int, name, rel s
 		return fmt.Errorf("pin workspace symlink %q: %w", rel, err)
 	}
 	defer unix.Close(sourceLinkFD)
-	if opened, err := verifyWorkspaceNameAt(sourceParent, name, sourceLinkFD, walk.ops); err != nil || opened != before {
-		return fmt.Errorf("workspace symlink %q changed before read", rel)
+	if opened, err := verifyWorkspaceNameAt(sourceParent, name, sourceLinkFD, walk.ops); err != nil || opened != before || opened.nlink != 1 {
+		return fmt.Errorf("workspace symlink %q changed before read or is multiply linked", rel)
 	}
 	target, err := readWorkspaceLink(sourceParent, name, walk.ops)
 	if err != nil {

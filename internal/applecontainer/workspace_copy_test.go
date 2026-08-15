@@ -118,20 +118,22 @@ func TestWorkspaceCopyRejectsStableSpecialAndHardlink(t *testing.T) {
 	ops, opened := systemWorkspaceOps(), false
 	original := ops.openat
 	ops.openat = func(fd int, name string, flags int, mode uint32) (int, error) {
-		if name == "pipe" && flags&unix.O_CREAT == 0 {
-			opened = true
-		}
+		opened = opened || name == "pipe" && flags&unix.O_CREAT == 0
 		return original(fd, name, flags, mode)
 	}
 	if _, err := copyWorkspaceForTest(t, source, nil, defaultWorkspaceCopyLimits(), ops); err == nil || opened {
 		t.Fatalf("stable FIFO result: opened=%t error=%v", opened, err)
 	}
-	source = t.TempDir()
-	mustNil(t, os.WriteFile(filepath.Join(source, "a"), []byte("x"), 0o600))
-	mustNil(t, os.Link(filepath.Join(source, "a"), filepath.Join(source, "b")))
-	_, parentFD := workspaceTestParent(t)
-	if _, err := copyWorkspaceTreeDescriptor(source, parentFD, "out", nil); err == nil || !strings.Contains(err.Error(), "multiply linked") {
-		t.Fatalf("source hard link accepted: %v", err)
+	for _, create := range []func(string) error{
+		func(name string) error { return os.WriteFile(name, []byte("x"), 0o600) },
+		func(name string) error { return os.Symlink(".", name) },
+	} {
+		source := t.TempDir()
+		mustNil(t, create(filepath.Join(source, "a")))
+		mustNil(t, unix.Linkat(unix.AT_FDCWD, filepath.Join(source, "a"), unix.AT_FDCWD, filepath.Join(source, "b"), 0))
+		if _, err := copyWorkspaceForTest(t, source, nil, defaultWorkspaceCopyLimits(), systemWorkspaceOps()); err == nil || !strings.Contains(err.Error(), "multiply linked") {
+			t.Fatalf("source hard link accepted: %v", err)
+		}
 	}
 }
 
