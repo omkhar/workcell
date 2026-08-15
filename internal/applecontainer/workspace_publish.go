@@ -280,15 +280,15 @@ func openManagedWorkspaceDirectory(parentFD int, name string, createMode uint32,
 	if err != nil {
 		return -1, workspaceObjectID{}, fmt.Errorf("open managed directory %q: %w", name, err)
 	}
-	opened, err := verifyWorkspaceDirectoryNameAt(parentFD, name, fd, ops)
-	if err != nil || snapshotObjectID(opened) != snapshotObjectID(want) {
+	opened, err := verifyWorkspaceDirectoryNameAt(parentFD, name, fd, snapshotObjectID(want), ops)
+	if err != nil {
 		return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q changed while opening", name)
 	}
 	if created {
 		if err := ops.fchmod(fd, createMode); err != nil {
 			return -1, workspaceObjectID{}, closeFDError(fd, "set managed directory %q mode: %w", name, err)
 		}
-		opened, err = verifyWorkspaceDirectoryNameAt(parentFD, name, fd, ops)
+		opened, err = verifyWorkspaceDirectoryNameAt(parentFD, name, fd, snapshotObjectID(want), ops)
 		if err != nil || opened.mode&0o7777 != createMode {
 			return -1, workspaceObjectID{}, closeFDError(fd, "managed directory %q changed after mode update", name)
 		}
@@ -419,13 +419,15 @@ func workspaceNameBindsFD(parentFD int, name string, fd int, ops workspaceOps) (
 	return workspaceSnapshotFromUnix(opened) == workspaceSnapshotFromUnix(named), nil
 }
 
-func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, ops workspaceOps) (workspaceSnapshot, error) {
+func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, expected workspaceObjectID, ops workspaceOps) (workspaceSnapshot, error) {
 	var opened, named unix.Stat_t
 	if err := ops.fstat(fd, &opened); err != nil {
 		return workspaceSnapshot{}, err
 	}
 	snapshot := workspaceSnapshotFromUnix(opened)
-	if err := ops.fstatat(parentFD, name, &named, unix.AT_SYMLINK_NOFOLLOW); err != nil || snapshotObjectID(workspaceSnapshotFromUnix(named)) != snapshotObjectID(snapshot) {
+	namedErr := ops.fstatat(parentFD, name, &named, unix.AT_SYMLINK_NOFOLLOW)
+	namedSnapshot := workspaceSnapshotFromUnix(named)
+	if namedErr != nil || snapshotObjectID(snapshot) != expected || snapshotObjectID(namedSnapshot) != expected || snapshot.uid != uint32(os.Geteuid()) || namedSnapshot.uid != uint32(os.Geteuid()) || snapshot.mode&0o7022 != 0 || namedSnapshot.mode&0o7022 != 0 {
 		return workspaceSnapshot{}, fmt.Errorf("managed directory %q changed", name)
 	}
 	return snapshot, nil
@@ -454,15 +456,11 @@ func verifyWorkspacePublishAnchors(stateRoot string, state workspaceSnapshot, st
 	if openedTargetID != targetID {
 		return fmt.Errorf("target directory identity changed")
 	}
-	for _, check := range []struct {
-		parent int
-		name   string
-		fd     int
-		id     workspaceObjectID
-	}{{targetFD, "materializations", finalParentFD, finalParentID}, {targetFD, workspaceStagingName, stagingParentFD, stagingParentID}} {
-		if opened, err := verifyWorkspaceDirectoryNameAt(check.parent, check.name, check.fd, ops); err != nil || snapshotObjectID(opened) != check.id {
-			return fmt.Errorf("managed directory %q changed", check.name)
-		}
+	if _, err := verifyWorkspaceDirectoryNameAt(targetFD, "materializations", finalParentFD, finalParentID, ops); err != nil {
+		return err
+	}
+	if _, err := verifyWorkspaceDirectoryNameAt(targetFD, workspaceStagingName, stagingParentFD, stagingParentID, ops); err != nil {
+		return err
 	}
 	return nil
 }
