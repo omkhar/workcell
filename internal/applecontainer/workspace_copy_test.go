@@ -272,6 +272,40 @@ func TestWorkspaceCopyRejectsDestinationNameRaces(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLinkResolutionUsesRawComponentOrder(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		entries []WorkspaceEntry
+		wantErr bool
+	}{
+		{"safe-repeat", []WorkspaceEntry{{Path: "dir", Kind: "dir"}, {Path: "dir/file", Kind: "file"}, {Path: "x", Kind: "symlink", LinkTarget: "dir"}, {Path: "y", Kind: "symlink", LinkTarget: "x/../x/file"}}, false},
+		{"combined-dotdot-escape", []WorkspaceEntry{{Path: "dir", Kind: "dir"}, {Path: "dir/x", Kind: "symlink", LinkTarget: ".."}, {Path: "dir/outside", Kind: "file"}, {Path: "y", Kind: "symlink", LinkTarget: "dir/x/../outside"}}, true},
+		{"dangling", []WorkspaceEntry{{Path: "x", Kind: "symlink", LinkTarget: "missing"}}, true},
+		{"case-alias", []WorkspaceEntry{{Path: "file", Kind: "file"}, {Path: "link", Kind: "symlink", LinkTarget: "FILE"}}, true},
+		{"cycle", []WorkspaceEntry{{Path: "x", Kind: "symlink", LinkTarget: "y"}, {Path: "y", Kind: "symlink", LinkTarget: "x"}}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateWorkspaceLinks(test.entries)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("link validation error = %v, wantErr %t", err, test.wantErr)
+			}
+		})
+	}
+	for _, hops := range []int{40, 41} {
+		entries := []WorkspaceEntry{{Path: "file", Kind: "file"}}
+		for i := hops - 1; i >= 0; i-- {
+			target := "file"
+			if i+1 < hops {
+				target = fmt.Sprintf("link%d", i+1)
+			}
+			entries = append(entries, WorkspaceEntry{Path: fmt.Sprintf("link%d", i), Kind: "symlink", LinkTarget: target})
+		}
+		if err := validateWorkspaceLinks(entries); (err != nil) != (hops > workspaceMaxSymlinkHops) {
+			t.Fatalf("%d-hop chain error = %v", hops, err)
+		}
+	}
+}
+
 func TestWorkspaceCopyLimits(t *testing.T) {
 	for _, test := range []struct {
 		name     string
