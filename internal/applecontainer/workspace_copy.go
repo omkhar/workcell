@@ -58,12 +58,13 @@ type workspaceOps struct {
 	fstatat   func(int, string, *unix.Stat_t, int) error
 	mkdirat   func(int, string, uint32) error
 	fchmod    func(int, uint32) error
+	fsync     func(int) error
 	readlink  func(int, string, []byte) (int, error)
 	symlinkat func(string, int, string) error
 }
 
 func systemWorkspaceOps() workspaceOps {
-	return workspaceOps{unix.Stat, unix.Openat, unix.Fstat, unix.Fstatat, unix.Mkdirat, unix.Fchmod, workspaceReadlink, unix.Symlinkat}
+	return workspaceOps{unix.Stat, unix.Openat, unix.Fstat, unix.Fstatat, unix.Mkdirat, unix.Fchmod, unix.Fsync, workspaceReadlink, unix.Symlinkat}
 }
 
 type workspaceWalk struct {
@@ -128,6 +129,11 @@ func copyWorkspaceTreeFromDescriptor(sourceFD int, sourceSnapshot workspaceSnaps
 	}
 	if err == nil {
 		err = walk.validateDestination(destFD)
+	}
+	if err == nil {
+		if syncErr := ops.fsync(destFD); syncErr != nil {
+			err = fmt.Errorf("sync workspace root: %w", syncErr)
+		}
 	}
 	if err == nil {
 		_, err = verifyWorkspaceNameAt(parentFD, name, destFD, ops)
@@ -234,6 +240,9 @@ func (walk *workspaceWalk) copyDirectory(sourceParent, destParent int, name, rel
 	if err := walk.ops.fchmod(destChild, uint32(mode.Perm())); err != nil {
 		return err
 	}
+	if err := walk.ops.fsync(destChild); err != nil {
+		return fmt.Errorf("sync workspace directory %q: %w", rel, err)
+	}
 	if _, err := verifyWorkspaceNameAt(destParent, name, destChild, walk.ops); err != nil {
 		return err
 	}
@@ -290,6 +299,9 @@ func (walk *workspaceWalk) copyFile(sourceParent, destParent int, name, rel stri
 	if err := walk.ops.fchmod(destFD, uint32(mode.Perm())); err != nil {
 		return err
 	}
+	if err := walk.ops.fsync(destFD); err != nil {
+		return fmt.Errorf("sync workspace file %q: %w", rel, err)
+	}
 	copiedSnapshot, err := verifyWorkspaceNameAt(destParent, name, destFD, walk.ops)
 	if err != nil {
 		return err
@@ -303,6 +315,7 @@ func (walk *workspaceWalk) copyFile(sourceParent, destParent int, name, rel stri
 }
 
 func (walk *workspaceWalk) copySymlink(sourceParent, destParent int, name, rel string, before workspaceSnapshot) error {
+	// The postorder parent-directory sync persists the verified symlink metadata.
 	sourceLinkFD, err := walk.ops.openat(sourceParent, name, workspaceSymlinkOpenFlags, 0)
 	if err != nil {
 		return fmt.Errorf("pin workspace symlink %q: %w", rel, err)

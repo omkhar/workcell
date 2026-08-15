@@ -25,17 +25,15 @@ type workspaceMaterializeOps struct {
 	workspace workspaceOps
 	random    func([]byte) (int, error)
 	write     func(int, []byte) (int, error)
-	fsync     func(int) error
 	publish   func(int, string, int, string) error
 	manifest  int64
 }
 
 func systemWorkspaceMaterializeOps() workspaceMaterializeOps {
-	return workspaceMaterializeOps{systemWorkspaceOps(), rand.Read, unix.Write, unix.Fsync, workspacePublish, workspaceManifestMaxBytes}
+	return workspaceMaterializeOps{systemWorkspaceOps(), rand.Read, unix.Write, workspacePublish, workspaceManifestMaxBytes}
 }
 
-// publishWorkspaceMaterialization creates one materialization without replacement.
-// StateRoot must be a pre-existing, trusted, caller-owned directory.
+// publishWorkspaceMaterialization creates one materialization without replacement; StateRoot must be a pre-existing, trusted, caller-owned directory.
 func publishWorkspaceMaterialization(stateRoot string, targetChain []string, finalName, workspaceName, manifestName, sourceRoot string, excluded []string, manifest WorkspaceManifest, ops workspaceMaterializeOps) (_ WorkspaceManifest, retErr error) {
 	if !workspaceMaterializationSupported || !workspaceCopySupported {
 		return WorkspaceManifest{}, errWorkspaceMaterializationUnsupported
@@ -141,13 +139,13 @@ func publishWorkspaceMaterialization(stateRoot string, targetChain []string, fin
 	if err := ops.workspace.fchmod(stageFD, 0o755); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("set final materialization mode: %w", err)
 	}
-	if err := ops.fsync(stageFD); err != nil {
+	if err := ops.workspace.fsync(stageFD); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("sync private workspace stage: %w", err)
 	}
-	if err := ops.fsync(stagingParentFD); err != nil {
+	if err := ops.workspace.fsync(stagingParentFD); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("sync staging parent: %w", err)
 	}
-	if err := ops.fsync(finalParentFD); err != nil {
+	if err := ops.workspace.fsync(finalParentFD); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("sync materializations parent: %w", err)
 	}
 	if err := verifyWorkspaceSource(sourceFD, sourceSnapshot, stateFD, stateSnapshot, ops.workspace); err != nil {
@@ -176,10 +174,10 @@ func publishWorkspaceMaterialization(stateRoot string, targetChain []string, fin
 	} else {
 		return WorkspaceManifest{}, fmt.Errorf("publish materialization %q without replacement: %w", finalName, errors.Join(publishErr, stageBindErr, finalBindErr))
 	}
-	if err := ops.fsync(stagingParentFD); err != nil {
+	if err := ops.workspace.fsync(stagingParentFD); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("materialization was published, but staging parent sync failed: %w", err)
 	}
-	if err := ops.fsync(finalParentFD); err != nil {
+	if err := ops.workspace.fsync(finalParentFD); err != nil {
 		return WorkspaceManifest{}, fmt.Errorf("materialization was published, but materializations parent sync failed: %w", err)
 	}
 	if err := verifyWorkspacePublishAnchors(stateRoot, stateSnapshot, stateFD, targetChain, targetID, targetFD, finalParentID, finalParentFD, stagingParentID, stagingParentFD, ops.workspace); err != nil {
@@ -190,7 +188,6 @@ func publishWorkspaceMaterialization(stateRoot string, targetChain []string, fin
 	}
 	return manifest, nil
 }
-
 func rejectWorkspaceDescriptorOverlap(stateFD int, state workspaceSnapshot, sourceFD int, source workspaceSnapshot, ops workspaceOps) error {
 	stateID, sourceID := workspaceObjectID{state.dev, state.ino}, workspaceObjectID{source.dev, source.ino}
 	stateWithinSource, err := workspaceDescriptorWithin(sourceID, stateFD, ops)
@@ -206,7 +203,6 @@ func rejectWorkspaceDescriptorOverlap(stateFD int, state workspaceSnapshot, sour
 	}
 	return nil
 }
-
 func workspaceDescriptorWithin(ancestor workspaceObjectID, childFD int, ops workspaceOps) (bool, error) {
 	current, err := ops.openat(childFD, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -241,7 +237,6 @@ func workspaceDescriptorWithin(ancestor workspaceObjectID, childFD int, ops work
 	}
 	return false, fmt.Errorf("filesystem ancestry exceeds %d components", workspaceMaxPathBytes)
 }
-
 func openManagedWorkspaceChain(stateFD int, names []string, create bool, ops workspaceOps) (int, workspaceObjectID, error) {
 	current, err := ops.openat(stateFD, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -258,7 +253,6 @@ func openManagedWorkspaceChain(stateFD int, names []string, create bool, ops wor
 	}
 	return current, id, nil
 }
-
 func openManagedWorkspaceDirectory(parentFD int, name string, createMode uint32, requirePrivate, create bool, ops workspaceOps) (int, workspaceObjectID, error) {
 	created := false
 	if create {
@@ -298,7 +292,6 @@ func openManagedWorkspaceDirectory(parentFD int, name string, createMode uint32,
 	}
 	return fd, snapshotObjectID(opened), nil
 }
-
 func createPrivateWorkspaceStage(parentFD int, ops workspaceMaterializeOps) (string, int, error) {
 	for attempt := 0; attempt < workspaceStageAttempts; attempt++ {
 		var token [16]byte
@@ -327,7 +320,6 @@ func createPrivateWorkspaceStage(parentFD int, ops workspaceMaterializeOps) (str
 	}
 	return "", -1, fmt.Errorf("could not allocate a private workspace stage")
 }
-
 func marshalManifestBytes(value any) ([]byte, error) {
 	switch value.(type) {
 	case WorkspaceManifest, *WorkspaceManifest:
@@ -339,7 +331,6 @@ func marshalManifestBytes(value any) ([]byte, error) {
 	}
 	return append(content, '\n'), nil
 }
-
 func writeWorkspaceManifestAt(stageFD int, name string, content []byte, ops workspaceMaterializeOps) error {
 	fd, err := ops.workspace.openat(stageFD, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
 	if err != nil {
@@ -354,7 +345,7 @@ func writeWorkspaceManifestAt(stageFD int, name string, content []byte, ops work
 	} else if n != len(content) {
 		return io.ErrShortWrite
 	}
-	if err := ops.fsync(fd); err != nil {
+	if err := ops.workspace.fsync(fd); err != nil {
 		return err
 	}
 	snapshot, err := verifyWorkspaceNameAt(stageFD, name, fd, ops.workspace)
@@ -363,7 +354,6 @@ func writeWorkspaceManifestAt(stageFD int, name string, content []byte, ops work
 	}
 	return nil
 }
-
 func validateWorkspaceManifestAt(stageFD int, name string, want []byte, ops workspaceMaterializeOps) error {
 	fd, err := ops.workspace.openat(stageFD, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -392,7 +382,6 @@ func validateWorkspaceManifestAt(stageFD int, name string, want []byte, ops work
 	}
 	return nil
 }
-
 func requireWorkspaceStageEntries(stageFD int, workspaceName, manifestName string) error {
 	names, err := workspaceDirectoryNames(stageFD, 3)
 	if err != nil {
@@ -403,7 +392,6 @@ func requireWorkspaceStageEntries(stageFD int, workspaceName, manifestName strin
 	}
 	return nil
 }
-
 func workspaceNameBindsFD(parentFD int, name string, fd int, ops workspaceOps) (bool, error) {
 	var opened, named unix.Stat_t
 	if err := ops.fstat(fd, &opened); err != nil {
@@ -418,7 +406,6 @@ func workspaceNameBindsFD(parentFD int, name string, fd int, ops workspaceOps) (
 	}
 	return workspaceSnapshotFromUnix(opened) == workspaceSnapshotFromUnix(named), nil
 }
-
 func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, expected workspaceObjectID, ops workspaceOps) (workspaceSnapshot, error) {
 	var opened, named unix.Stat_t
 	if err := ops.fstat(fd, &opened); err != nil {
@@ -432,7 +419,6 @@ func verifyWorkspaceDirectoryNameAt(parentFD int, name string, fd int, expected 
 	}
 	return snapshot, nil
 }
-
 func verifyWorkspaceSource(sourceFD int, source workspaceSnapshot, stateFD int, state workspaceSnapshot, ops workspaceOps) error {
 	var current unix.Stat_t
 	if err := ops.fstat(sourceFD, &current); err != nil || workspaceSnapshotFromUnix(current) != source {
@@ -440,7 +426,6 @@ func verifyWorkspaceSource(sourceFD int, source workspaceSnapshot, stateFD int, 
 	}
 	return rejectWorkspaceDescriptorOverlap(stateFD, state, sourceFD, source, ops)
 }
-
 func verifyWorkspacePublishAnchors(stateRoot string, state workspaceSnapshot, stateFD int, chain []string, targetID workspaceObjectID, targetFD int, finalParentID workspaceObjectID, finalParentFD int, stagingParentID workspaceObjectID, stagingParentFD int, ops workspaceOps) error {
 	var opened, visible unix.Stat_t
 	openedErr, visibleErr := ops.fstat(stateFD, &opened), ops.stat(stateRoot, &visible)
@@ -464,5 +449,4 @@ func verifyWorkspacePublishAnchors(stateRoot string, state workspaceSnapshot, st
 	}
 	return nil
 }
-
 func snapshotObjectID(s workspaceSnapshot) workspaceObjectID { return workspaceObjectID{s.dev, s.ino} }
