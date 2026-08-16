@@ -57,6 +57,11 @@ The target prepares a private `0700` stage under `.materialization-staging`.
 After stage creation, a preparation failure leaves the stage in place without pathname cleanup.
 An operator can inspect and remove the stage after they understand the failure.
 
+The conformance check reads workspace trees through stable descriptors.
+It does not create mirror copies.
+Persisted manifests use the same 64 MiB limit as workspace publication.
+The manifest reader rejects noncanonical JSON and trailing data.
+
 ## Decision
 
 The technical evaluation result was `GO`. Workcell deferred operator

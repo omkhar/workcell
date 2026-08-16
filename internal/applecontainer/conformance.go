@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,77 +19,6 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/providerid"
 )
-
-// rejectDuplicateJSONKeys walks the token stream and rejects any object with a duplicate key.
-// encoding/json is LAST-WINS on duplicates, so a persisted record/manifest could smuggle an extra
-// `"target_id":"evil"` past field validation; this closes that (like the audit-line dup-key check).
-func rejectDuplicateJSONKeys(raw []byte) error {
-	return scanJSONValue(json.NewDecoder(bytes.NewReader(raw)))
-}
-
-// scanJSONValue consumes exactly one JSON value from dec and checks nested objects for dup keys.
-func scanJSONValue(dec *json.Decoder) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return nil // scalar
-	}
-	if delim == '{' {
-		seen := map[string]struct{}{}
-		for dec.More() {
-			key, err := dec.Token()
-			if err != nil {
-				return err
-			}
-			name := key.(string)
-			if _, dup := seen[name]; dup {
-				return fmt.Errorf("duplicate JSON key %q", name)
-			}
-			seen[name] = struct{}{}
-			if err := scanJSONValue(dec); err != nil {
-				return err
-			}
-		}
-	} else { // '['
-		for dec.More() {
-			if err := scanJSONValue(dec); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = dec.Token() // consume the closing } or ]
-	return err
-}
-
-// readPersistedManifest decodes the manifest PERSISTED at the derived canonical path via the
-// production no-follow reader (readFileSafe: openat O_NOFOLLOW per component, Fstat S_IFREG +
-// Nlink==1), so a symlink/hardlink at the canonical path pointing at a decoy outside StateRoot —
-// or a missing/stale/divergent file — is rejected rather than followed. Duplicate JSON keys too.
-// The decode is STRICT (DisallowUnknownFields + no trailing content): a conformant target must
-// emit exactly the v1 schema, so an extra/unknown key in the persisted manifest is rejected.
-func readPersistedManifest(stateRoot, path string, into any) error {
-	data, err := readFileSafe(stateRoot, path, "manifest")
-	if err != nil {
-		return err
-	}
-	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return fmt.Errorf("manifest at %q: %w", path, err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(into); err != nil {
-		return fmt.Errorf("manifest at %q: %w", path, err)
-	}
-	// Require a strict io.EOF after the value: a trailing object, token, OR unmatched delimiter
-	// (a lone `}`/`]`, which dec.More() would miss) is rejected as trailing data.
-	if _, err := dec.Token(); err != io.EOF {
-		return fmt.Errorf("manifest at %q: trailing data after manifest", path)
-	}
-	return nil
-}
 
 // requireNoSymlink verifies path (under stateRoot) is reached without traversing any symlink and
 // is the expected kind (regular file, or directory when wantDir), via the production no-follow
@@ -481,56 +409,25 @@ func validateMaterialization(contract Contract, layout canonicalLayout, result M
 	if !slices.Equal(m.ExcludedPaths, contract.WorkspaceMaterialization.ExcludedPaths) {
 		return fmt.Errorf("materialization excluded_paths = %v, want %v", m.ExcludedPaths, contract.WorkspaceMaterialization.ExcludedPaths)
 	}
-	// Reject a SYMLINKED workspace root before any tree read: copyWorkspaceTree EvalSymlinks-es its
-	// root, so a symlinked canonical path would let a target certify a decoy tree outside StateRoot.
-	if err := requireNoSymlink(c.StateRoot, layout.materializedWorkspace, "materialized workspace", true); err != nil {
-		return err
-	}
-	if _, err := os.Stat(filepath.Join(layout.materializedWorkspace, ".git")); !os.IsNotExist(err) {
-		return fmt.Errorf("materialized workspace must not contain .git")
-	}
-	mirrorRoot, err := os.MkdirTemp("", "workcell-applecontainer-compare.")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(mirrorRoot)
-	// Certify the manifest against the actual destination on disk AND the source.
-	for i, tree := range []struct {
-		label    string
-		root     string
-		excluded []string
+	// Inspect both trees through stable descriptors. The conformance check does not
+	// create mirror trees or write to either workspace.
+	for _, tree := range []struct {
+		label   string
+		inspect func() ([]WorkspaceEntry, error)
 	}{
-		{"the destination workspace on disk", layout.materializedWorkspace, nil},
-		{"copied workspace", c.SourceWorkspace, contract.WorkspaceMaterialization.ExcludedPaths},
+		{"the destination workspace on disk", func() ([]WorkspaceEntry, error) {
+			return inspectMaterializedWorkspace(c.StateRoot, layout.materializedWorkspace)
+		}},
+		{"the source workspace", func() ([]WorkspaceEntry, error) {
+			return inspectSourceWorkspace(c.SourceWorkspace, contract.WorkspaceMaterialization.ExcludedPaths)
+		}},
 	} {
-		got, err := copyWorkspaceTree(tree.root, filepath.Join(mirrorRoot, fmt.Sprintf("cmp%d", i)), tree.excluded)
+		got, err := tree.inspect()
 		if err != nil {
 			return err
 		}
 		if !slices.Equal(got, m.Entries) {
 			return fmt.Errorf("materialization manifest entries do not match %s", tree.label)
-		}
-	}
-	// Every certified regular file must be single-linked (Nlink==1): a conformant materialization
-	// produces ISOLATED copies, not hardlinks sharing an inode with a path (possibly outside the
-	// workspace). Extends the hardlink defense already applied to manifests/record/audit.
-	return requireSingleLinkedWorkspace(c.StateRoot, layout.materializedWorkspace, m.Entries)
-}
-
-// requireSingleLinkedWorkspace asserts every regular file in the certified workspace tree has
-// Nlink==1, using the no-follow statPathSafe (consistent with the manifest/record/audit reads).
-func requireSingleLinkedWorkspace(stateRoot, workspaceRoot string, entries []WorkspaceEntry) error {
-	for _, e := range entries {
-		if e.Kind != "file" {
-			continue
-		}
-		p := filepath.Join(workspaceRoot, filepath.FromSlash(e.Path))
-		st, err := statPathSafe(stateRoot, p)
-		if err != nil {
-			return fmt.Errorf("workspace file %q: %w", p, err)
-		}
-		if st.Nlink != 1 {
-			return fmt.Errorf("workspace file %q is multiply linked (%d links) — a conformant materialization uses isolated copies", p, st.Nlink)
 		}
 	}
 	return nil
