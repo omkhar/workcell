@@ -577,8 +577,12 @@ func TestHostInputSourceContractRejectsMutants(t *testing.T) {
 			workcell:   strings.Replace(workcell, "    pipe_status=(\"${PIPESTATUS[@]}\")", "    pipe_status=(0 0)", 1),
 			invariants: invariants, hostutil: hostutil, colima: colima,
 		},
-		"unquarantined profile status": {
+		"unquarantined profile stdout": {
 			workcell:   strings.Replace(workcell, " helper colima-status \"${profile}\" >\"${status_output}\"", " helper colima-status \"${profile}\"", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"unquarantined profile stderr": {
+			workcell:   strings.Replace(workcell, " >\"${status_output}\" 2>\"${status_error}\"", " >\"${status_output}\"", 1),
 			invariants: invariants, hostutil: hostutil, colima: colima,
 		},
 		"early profile status publish": {
@@ -586,7 +590,7 @@ func TestHostInputSourceContractRejectsMutants(t *testing.T) {
 			invariants: invariants, hostutil: hostutil, colima: colima,
 		},
 		"late-bound cleanup": {
-			workcell:   strings.Replace(workcell, "    printf -v cleanup_command 'rm -f -- %q' \"${status_output}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT", "    trap 'rm -f -- \"${status_output}\"' EXIT", 1),
+			workcell:   strings.Replace(workcell, "    printf -v cleanup_command 'rm -rf -- %q' \"${status_dir}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT", "    trap 'rm -rf -- \"${status_dir}\"' EXIT", 1),
 			invariants: invariants, hostutil: hostutil, colima: colima,
 		},
 		"pre-captured Colima status": {
@@ -634,9 +638,9 @@ func TestHostInputSourceContractRejectsMutants(t *testing.T) {
 func validateHostInputSource(workcell, invariants, hostutil, colima string) error {
 	requiredWorkcell := []string{
 		"run_profile_docker_command \"${profile}\" ps -a --format '{{.Names}}' 2>&1 |\n    go_hostutil helper session-container-absent-for-delete",
-		"run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\" >\"${status_output}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
-		"printf -v cleanup_command 'rm -f -- %q' \"${status_output}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT",
-		"if ((pipe_status[0] != 0)); then\n      exit 1\n    fi\n    if ((pipe_status[1] != 0)); then\n      exit \"${pipe_status[1]}\"\n    fi\n    cat -- \"${status_output}\"",
+		"run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\" >\"${status_output}\" 2>\"${status_error}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
+		"printf -v cleanup_command 'rm -rf -- %q' \"${status_dir}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT",
+		"if ((pipe_status[0] != 0)); then\n      exit 1\n    fi\n    if ((pipe_status[1] == 3)); then\n      exit 3\n    fi\n    if ((pipe_status[1] != 0)); then\n      cat -- \"${status_error}\" >&2\n      exit \"${pipe_status[1]}\"\n    fi\n    cat -- \"${status_error}\" >&2\n    cat -- \"${status_output}\"",
 		"run_host_colima status --profile \"${profile}\" 2>&1 |\n      run_go_hostutil_preserve_exit helper validate-colima-status \"${profile}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
 	}
 	for _, required := range requiredWorkcell {

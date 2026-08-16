@@ -735,23 +735,32 @@ colima_profile_status() {
   (
     local -a pipe_status=()
     local cleanup_command=""
+    local status_dir=""
+    local status_error=""
     local status_output=""
-    status_output="$(mktemp "${TMPDIR:-/tmp}/workcell-colima-profile-status.XXXXXX")" || exit 1
-    printf -v cleanup_command 'rm -f -- %q' "${status_output}"
+    status_dir="$(mktemp -d "${TMPDIR:-/tmp}/workcell-colima-profile-status.XXXXXX")" || exit 1
+    status_error="${status_dir}/stderr"
+    status_output="${status_dir}/stdout"
+    printf -v cleanup_command 'rm -rf -- %q' "${status_dir}"
     # Expand the escaped path before Bash unwinds this local scope.
     # shellcheck disable=SC2064
     trap "${cleanup_command}" EXIT
     set +e
     run_host_colima list --json 2>/dev/null |
-      run_go_hostutil_preserve_exit helper colima-status "${profile}" >"${status_output}"
+      run_go_hostutil_preserve_exit helper colima-status "${profile}" >"${status_output}" 2>"${status_error}"
     pipe_status=("${PIPESTATUS[@]}")
     set -e
     if ((pipe_status[0] != 0)); then
       exit 1
     fi
+    if ((pipe_status[1] == 3)); then
+      exit 3
+    fi
     if ((pipe_status[1] != 0)); then
+      cat -- "${status_error}" >&2
       exit "${pipe_status[1]}"
     fi
+    cat -- "${status_error}" >&2
     cat -- "${status_output}"
   )
 }

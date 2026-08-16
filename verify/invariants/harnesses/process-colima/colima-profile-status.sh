@@ -31,9 +31,11 @@ go_hostutil() {
 assert_no_profile_status_temp_files() {
   local residue=""
 
-  residue="$(find "${PROFILE_STATUS_TMPDIR}" -type f -name 'workcell-colima-profile-status.*' -print -quit)"
+  residue="$(find "${PROFILE_STATUS_TMPDIR}" \
+    \( -name 'workcell-colima-profile-status.*' -o -name 'workcell-hostutil-stderr.*' \) \
+    -print -quit)"
   if [[ -n "${residue}" ]]; then
-    echo "Expected colima_profile_status to remove its temporary output: ${residue}" >&2
+    echo "Expected colima_profile_status to remove its temporary streams: ${residue}" >&2
     exit 1
   fi
 }
@@ -79,14 +81,18 @@ fi
 assert_no_profile_status_temp_files
 
 missing_status_rc=0
-if colima_profile_status does-not-exist >"${PROFILE_STATUS_TMPDIR}/missing.out" 2>&1; then
-  echo "Expected colima_profile_status to fail for a missing profile" >&2
-  exit 1
-else
-  missing_status_rc=$?
-fi
+set +e
+colima_profile_status does-not-exist \
+  >"${PROFILE_STATUS_TMPDIR}/missing.stdout" \
+  2>"${PROFILE_STATUS_TMPDIR}/missing.stderr"
+missing_status_rc=$?
+set -e
 if ((missing_status_rc != 3)); then
   echo "Expected colima_profile_status to return exit status 3 for a missing profile, got: ${missing_status_rc}" >&2
+  exit 1
+fi
+if [[ -s "${PROFILE_STATUS_TMPDIR}/missing.stdout" ]] || [[ -s "${PROFILE_STATUS_TMPDIR}/missing.stderr" ]]; then
+  echo "Expected a missing profile to keep stdout and stderr empty" >&2
   exit 1
 fi
 assert_no_profile_status_temp_files
@@ -135,7 +141,26 @@ run_host_colima() {
   printf '%s\n' '{not-json'
 }
 
-if [[ -n "$(maybe_reap_stale_profile_processes workcell-parse-failure)" ]]; then
+malformed_status_rc=0
+set +e
+colima_profile_status workcell-parse-failure \
+  >"${PROFILE_STATUS_TMPDIR}/malformed.stdout" \
+  2>"${PROFILE_STATUS_TMPDIR}/malformed.stderr"
+malformed_status_rc=$?
+set -e
+if ((malformed_status_rc != 1)); then
+  echo "Expected malformed profile inventory status 1, got: ${malformed_status_rc}" >&2
+  exit 1
+fi
+if [[ -s "${PROFILE_STATUS_TMPDIR}/malformed.stdout" ]]; then
+  echo "Expected malformed profile inventory stdout to stay empty" >&2
+  exit 1
+fi
+if ! grep -Fq "invalid character 'n'" "${PROFILE_STATUS_TMPDIR}/malformed.stderr"; then
+  echo "Expected malformed profile inventory diagnostic" >&2
+  exit 1
+fi
+if [[ -n "$(maybe_reap_stale_profile_processes workcell-parse-failure 2>/dev/null)" ]]; then
   echo "Expected maybe_reap_stale_profile_processes to ignore parse failures instead of reaping live profiles blindly" >&2
   exit 1
 fi
@@ -144,6 +169,10 @@ assert_no_profile_status_temp_files
 FAILED_INVENTORY_STATUS=""
 FAILED_INVENTORY_REAP_LOG="$(mktemp "${PROFILE_STATUS_TMPDIR}/reap-log.XXXXXX")"
 run_host_colima() {
+  if [[ "${FAILED_INVENTORY_STATUS}" == Malformed ]]; then
+    printf '%s\n' '{not-json'
+    return 17
+  fi
   printf '{"name":"workcell-fail-after-output","status":"%s"}\n' "${FAILED_INVENTORY_STATUS}"
   return 17
 }
@@ -151,21 +180,22 @@ reap_stale_profile_processes() {
   printf 'reaped:%s\n' "$1" >>"${FAILED_INVENTORY_REAP_LOG}"
 }
 
-for FAILED_INVENTORY_STATUS in Running Stopped; do
-  status=""
+for FAILED_INVENTORY_STATUS in Running Stopped Malformed; do
   status_rc=0
-  if status="$(colima_profile_status workcell-fail-after-output)"; then
-    echo "Expected failed ${FAILED_INVENTORY_STATUS} inventory to fail closed" >&2
-    exit 1
-  else
-    status_rc=$?
-  fi
+  : >"${PROFILE_STATUS_TMPDIR}/failed.stdout"
+  : >"${PROFILE_STATUS_TMPDIR}/failed.stderr"
+  set +e
+  colima_profile_status workcell-fail-after-output \
+    >"${PROFILE_STATUS_TMPDIR}/failed.stdout" \
+    2>"${PROFILE_STATUS_TMPDIR}/failed.stderr"
+  status_rc=$?
+  set -e
   if ((status_rc != 1)); then
     echo "Expected failed ${FAILED_INVENTORY_STATUS} inventory status 1, got: ${status_rc}" >&2
     exit 1
   fi
-  if [[ -n "${status}" ]]; then
-    echo "Expected failed ${FAILED_INVENTORY_STATUS} inventory stdout to be empty, got: ${status}" >&2
+  if [[ -s "${PROFILE_STATUS_TMPDIR}/failed.stdout" ]] || [[ -s "${PROFILE_STATUS_TMPDIR}/failed.stderr" ]]; then
+    echo "Expected failed ${FAILED_INVENTORY_STATUS} inventory streams to be empty" >&2
     exit 1
   fi
   : >"${FAILED_INVENTORY_REAP_LOG}"
