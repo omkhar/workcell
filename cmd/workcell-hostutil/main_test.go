@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -536,4 +537,145 @@ func TestHelperUsageListsDirectoryCandidateResolver(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "resolve-host-output-directory-candidate") {
 		t.Fatalf("helperUsage error = %q, want resolve-host-output-directory-candidate", err)
 	}
+}
+
+func TestHelperInputLimit(t *testing.T) {
+	exact := bytes.Repeat([]byte{'x'}, int(maxHelperStdinBytes))
+	got, err := readHelperInput("fixture", bytes.NewReader(exact))
+	if err != nil || len(got) != len(exact) {
+		t.Fatalf("readHelperInput(exact) = %d bytes, %v", len(got), err)
+	}
+	for _, subject := range []string{"container inventory", "Colima profile inventory", "Colima status output"} {
+		_, err := readHelperInput(subject, bytes.NewReader(append(exact, 'x')))
+		if err == nil || !strings.Contains(err.Error(), subject+" exceeds 4194304-byte limit") {
+			t.Fatalf("readHelperInput(%q) err = %v", subject, err)
+		}
+	}
+}
+
+func TestHostInputSourceContractRejectsMutants(t *testing.T) {
+	workcell := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "workcell"))
+	invariants := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "verify-invariants.sh"))
+	hostutil := mustReadTestFile(t, "main.go")
+	colima := mustReadTestFile(t, filepath.Join("..", "..", "internal", "host", "launcher", "colima.go"))
+	if err := validateHostInputSource(workcell, invariants, hostutil, colima); err != nil {
+		t.Fatal(err)
+	}
+
+	type sources struct {
+		workcell   string
+		invariants string
+		hostutil   string
+		colima     string
+	}
+	mutants := map[string]sources{
+		"pre-captured profile inventory": {
+			workcell:   strings.Replace(workcell, "run_host_colima list --json 2>/dev/null |", "list_output=\"$(run_host_colima list --json 2>/dev/null)\"", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"missing profile PIPESTATUS": {
+			workcell:   strings.Replace(workcell, "    pipe_status=(\"${PIPESTATUS[@]}\")", "    pipe_status=(0 0)", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"unquarantined profile status": {
+			workcell:   strings.Replace(workcell, " helper colima-status \"${profile}\" >\"${status_output}\"", " helper colima-status \"${profile}\"", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"early profile status publish": {
+			workcell:   strings.Replace(workcell, "    pipe_status=(\"${PIPESTATUS[@]}\")\n    set -e", "    cat -- \"${status_output}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")\n    set -e", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"late-bound cleanup": {
+			workcell:   strings.Replace(workcell, "    printf -v cleanup_command 'rm -f -- %q' \"${status_output}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT", "    trap 'rm -f -- \"${status_output}\"' EXIT", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"pre-captured Colima status": {
+			workcell:   strings.Replace(workcell, "run_host_colima status --profile \"${profile}\" 2>&1 |", "status=\"$(run_host_colima status --profile \"${profile}\" 2>&1)\"", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"pre-captured container inventory": {
+			workcell:   strings.Replace(workcell, "run_profile_docker_command \"${profile}\" ps -a --format '{{.Names}}' 2>&1 |", "inventory=\"$(run_profile_docker_command \"${profile}\" ps -a --format '{{.Names}}' 2>&1)\"", 1),
+			invariants: invariants, hostutil: hostutil, colima: colima,
+		},
+		"stale exit adapter": {
+			workcell:   workcell,
+			invariants: strings.Replace(invariants, "scripts/lib/launcher/go-hostutil.sh\" run_go_hostutil_preserve_exit", "scripts/workcell\" go_hostutil", 1),
+			hostutil:   hostutil, colima: colima,
+		},
+		"unbounded container handler": {
+			workcell: workcell, invariants: invariants,
+			hostutil: strings.Replace(hostutil, "readHelperInput(\"container inventory\", os.Stdin)", "io.ReadAll(os.Stdin)", 1), colima: colima,
+		},
+		"unbounded inventory handler": {
+			workcell: workcell, invariants: invariants,
+			hostutil: strings.Replace(hostutil, "readHelperInput(\"Colima profile inventory\", os.Stdin)", "io.ReadAll(os.Stdin)", 1), colima: colima,
+		},
+		"unbounded status handler": {
+			workcell: workcell, invariants: invariants,
+			hostutil: strings.Replace(hostutil, "readHelperInput(\"Colima status output\", os.Stdin)", "io.ReadAll(os.Stdin)", 1), colima: colima,
+		},
+		"missing absolute-path validation": {
+			workcell: workcell, invariants: invariants, hostutil: hostutil,
+			colima: strings.Replace(colima, "validateColimaBinary(inv.ColimaBin)", "error(nil)", 1),
+		},
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if mutant.workcell == workcell && mutant.invariants == invariants && mutant.hostutil == hostutil && mutant.colima == colima {
+				t.Fatal("mutant did not change its target source")
+			}
+			if err := validateHostInputSource(mutant.workcell, mutant.invariants, mutant.hostutil, mutant.colima); err == nil {
+				t.Fatal("mutant passed source contract")
+			}
+		})
+	}
+}
+
+func validateHostInputSource(workcell, invariants, hostutil, colima string) error {
+	requiredWorkcell := []string{
+		"run_profile_docker_command \"${profile}\" ps -a --format '{{.Names}}' 2>&1 |\n    go_hostutil helper session-container-absent-for-delete",
+		"run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\" >\"${status_output}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
+		"printf -v cleanup_command 'rm -f -- %q' \"${status_output}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT",
+		"if ((pipe_status[0] != 0)); then\n      exit 1\n    fi\n    if ((pipe_status[1] != 0)); then\n      exit \"${pipe_status[1]}\"\n    fi\n    cat -- \"${status_output}\"",
+		"run_host_colima status --profile \"${profile}\" 2>&1 |\n      run_go_hostutil_preserve_exit helper validate-colima-status \"${profile}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
+	}
+	for _, required := range requiredWorkcell {
+		if !strings.Contains(workcell, required) {
+			return fmt.Errorf("scripts/workcell lacks %q", required)
+		}
+	}
+	for _, obsolete := range []string{
+		"list_output=\"$(run_host_colima list --json",
+		"status=\"$(run_host_colima status --profile",
+		"inventory=\"$(run_profile_docker_command",
+	} {
+		if strings.Contains(workcell, obsolete) {
+			return fmt.Errorf("pre-captured host input remains: %s", obsolete)
+		}
+	}
+	if strings.Count(invariants, "scripts/lib/launcher/go-hostutil.sh\" run_go_hostutil_preserve_exit") != 2 {
+		return fmt.Errorf("verify-invariants must extract the exit-preserving stream adapter for both harnesses")
+	}
+	for _, call := range []string{
+		"readHelperInput(\"container inventory\", os.Stdin)",
+		"readHelperInput(\"Colima profile inventory\", os.Stdin)",
+		"readHelperInput(\"Colima status output\", os.Stdin)",
+	} {
+		if !strings.Contains(hostutil, call) {
+			return fmt.Errorf("hostutil lacks bounded read %q", call)
+		}
+	}
+	if strings.Count(colima, "validateColimaBinary(inv.ColimaBin)") != 2 {
+		return fmt.Errorf("Colima direct and timeout entries must validate the executable path")
+	}
+	return nil
+}
+
+func mustReadTestFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

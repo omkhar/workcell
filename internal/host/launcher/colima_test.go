@@ -93,6 +93,22 @@ func TestRunHostColimaRequiresColimaBin(t *testing.T) {
 	}
 }
 
+func TestRunHostColimaRequiresAbsoluteColimaBin(t *testing.T) {
+	dir := t.TempDir()
+	fake := writeFakeColima(t, dir, "#!/bin/sh\nexit 0\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	relative := filepath.Base(fake)
+
+	_, err := RunHostColima(HostColimaInvocation{ColimaBin: relative, Args: []string{"list"}})
+	if err == nil || !strings.Contains(err.Error(), "must be absolute") {
+		t.Fatalf("RunHostColima() err = %v, want absolute-path rejection", err)
+	}
+	_, err = RunHostColimaWithTimeout(1, HostColimaInvocation{ColimaBin: relative, Args: []string{"start"}})
+	if err == nil || !strings.Contains(err.Error(), "must be absolute") {
+		t.Fatalf("RunHostColimaWithTimeout() err = %v, want absolute-path rejection", err)
+	}
+}
+
 func TestRunHostColimaForwardsArgsAndPropagatesExitCode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("relies on POSIX /bin/sh helpers")
