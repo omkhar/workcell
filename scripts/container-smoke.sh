@@ -5107,14 +5107,20 @@ EOF
       exit 1
     }
   grep -q "BLOCKED:" /tmp/claude-hook-quote-split.out
-  touch ./claude
+  claude_glob_fixture="$(mktemp -d /tmp/workcell-claude-hook-glob.XXXXXX)"
+  trap 'rm -rf -- "${claude_glob_fixture}"' EXIT
+  test -O "${claude_glob_fixture}"
+  test -w "${claude_glob_fixture}"
+  touch "${claude_glob_fixture}/claude"
+  claude_glob_previous_dir="${PWD}"
+  cd "${claude_glob_fixture}"
   printf "%s" "{\"tool_input\":{\"command\":\"c* --dangerously-skip-permissions\"}}" \
     | /opt/workcell/adapters/claude/hooks/guard-bash.sh >/tmp/claude-hook-glob.out 2>&1 && {
       echo "expected Claude guard hook to reject glob-expanded command names" >&2
       exit 1
     }
   grep -q "BLOCKED:" /tmp/claude-hook-glob.out
-  rm -f ./claude
+  cd "${claude_glob_previous_dir}"
   cat >/tmp/claude-hook-positional.json <<'EOF'
 {"tool_input":{"command":"set -- cl aude; \"$1$2\" --dangerously-skip-permissions"}}
 EOF

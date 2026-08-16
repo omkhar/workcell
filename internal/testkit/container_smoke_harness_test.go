@@ -160,6 +160,21 @@ func validateContainerSmokeHarness(source string) error {
 		if count := strings.Count(body, "run_as_runtime_user "+provider.name); count != expectedCalls {
 			problems = append(problems, fmt.Sprintf("%s mapped provider policy call count = %d, want %d", provider.name, count, expectedCalls))
 		}
+		if provider.name == "claude" {
+			require("claude writable glob fixture", body,
+				`claude_glob_fixture="$(mktemp -d /tmp/workcell-claude-hook-glob.XXXXXX)"`,
+				`trap 'rm -rf -- "${claude_glob_fixture}"' EXIT`,
+				`test -O "${claude_glob_fixture}"`,
+				`test -w "${claude_glob_fixture}"`,
+				`touch "${claude_glob_fixture}/claude"`,
+				`claude_glob_previous_dir="${PWD}"`,
+				"\n  cd \"${claude_glob_fixture}\"\n",
+				"\n  cd \"${claude_glob_previous_dir}\"\n",
+			)
+			if strings.Contains(body, "touch ./claude") {
+				problems = append(problems, "claude glob fixture still depends on a writable workspace")
+			}
+		}
 	}
 
 	if len(problems) != 0 {
@@ -206,7 +221,6 @@ func TestContainerSmokeBashSyntaxRejectsStatusZeroParserWarnings(t *testing.T) {
 }
 
 func TestContainerSmokeFailureTrapHonorsErrexitState(t *testing.T) {
-	t.Parallel()
 	trap := containerSmokeFailureTrap("Probe")
 	script := strings.Join([]string{
 		"set -Eeuo pipefail",
@@ -231,6 +245,23 @@ func TestContainerSmokeFailureTrapHonorsErrexitState(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "Probe smoke block failed at input line ") {
 		t.Fatalf("unexpected failure did not report its input line: %s", output)
+	}
+}
+
+func TestContainerSmokeHarnessRejectsNonWritableClaudeWorkspaceDependency(t *testing.T) {
+	t.Parallel()
+	source := readContainerSmokeHarness(t)
+	mutated := mutateContainerSmokeHarness(t, source,
+		"  touch \"${claude_glob_fixture}/claude\"\n  claude_glob_previous_dir=\"${PWD}\"\n  cd \"${claude_glob_fixture}\"",
+		"  touch ./claude\n  claude_glob_previous_dir=\"${PWD}\"\n  :",
+	)
+	err := validateContainerSmokeHarness(mutated)
+	if err == nil {
+		t.Fatal("non-writable Claude workspace dependency passed validation")
+	}
+	if !strings.Contains(err.Error(), "claude writable glob fixture") ||
+		!strings.Contains(err.Error(), "writable workspace") {
+		t.Fatalf("non-writable workspace mutation error = %q, want fixture and workspace diagnostics", err)
 	}
 }
 
@@ -306,6 +337,16 @@ func TestContainerSmokeHarnessRejectsMutations(t *testing.T) {
 			name:        "provider-policy-command-runs-as-root",
 			anchor:      `if run_as_runtime_user claude update`,
 			replacement: `if claude update`,
+		},
+		{
+			name:        "claude-glob-fixture-cleanup-trap-removed",
+			anchor:      `  trap 'rm -rf -- "${claude_glob_fixture}"' EXIT` + "\n",
+			replacement: "",
+		},
+		{
+			name:        "claude-glob-fixture-cd-check-bypassed",
+			anchor:      `  cd "${claude_glob_fixture}"` + "\n",
+			replacement: `  cd "${claude_glob_fixture}" || true` + "\n",
 		},
 		{
 			name:        "execveat-flags-left-as-string",
