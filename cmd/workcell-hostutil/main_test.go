@@ -5,6 +5,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -536,4 +538,90 @@ func TestHelperUsageListsDirectoryCandidateResolver(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "resolve-host-output-directory-candidate") {
 		t.Fatalf("helperUsage error = %q, want resolve-host-output-directory-candidate", err)
 	}
+}
+
+func TestHelperInputLimit(t *testing.T) {
+	exact := bytes.Repeat([]byte{'x'}, int(maxHelperStdinBytes))
+	got, err := readHelperInput("fixture", bytes.NewReader(exact))
+	if err != nil || len(got) != len(exact) {
+		t.Fatalf("readHelperInput(exact) = %d bytes, %v", len(got), err)
+	}
+	for _, subject := range []string{"container inventory", "Colima profile inventory", "Colima status output"} {
+		_, err := readHelperInput(subject, bytes.NewReader(append(exact, 'x')))
+		if err == nil || !strings.Contains(err.Error(), subject+" exceeds 4194304-byte limit") {
+			t.Fatalf("readHelperInput(%q) err = %v", subject, err)
+		}
+	}
+}
+
+func TestParseColimaInvocationCapsTimeout(t *testing.T) {
+	seconds, _, _, err := parseColimaInvocationArgs([]string{"86400", "--", "start"})
+	if err != nil || seconds != 86400 {
+		t.Fatalf("parse exact timeout = %d, %v", seconds, err)
+	}
+	if _, _, _, err := parseColimaInvocationArgs([]string{"86401", "--", "start"}); err == nil {
+		t.Fatal("parseColimaInvocationArgs accepted more than 24 hours")
+	}
+}
+
+func TestManagedColimaSourceContractRejectsMutants(t *testing.T) {
+	workcell := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "workcell"))
+	invariants := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "verify-invariants.sh"))
+	hostutil := mustReadTestFile(t, "main.go")
+	if err := validateManagedColimaSource(workcell, invariants, hostutil); err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string][3]string{
+		"pre-captured list":   {strings.Replace(workcell, "run_host_colima list --json 2>/dev/null |", "list_output=\"$(run_host_colima list --json 2>/dev/null)\"", 1), invariants, hostutil},
+		"missing PIPESTATUS":  {strings.Replace(workcell, "run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")", "run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\"\n    pipe_status=(0 0)", 1), invariants, hostutil},
+		"shell-managed start": {strings.Replace(workcell, "run_host_colima_with_timeout \"${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}\" start", "run_host_colima start", 1), invariants, hostutil},
+		"stale extraction":    {workcell, invariants + "\nextract_top_level_bash_function \"${ROOT_DIR}/scripts/workcell\" terminate_process_tree_by_pid\n", hostutil},
+		"unbounded handler":   {workcell, invariants, strings.Replace(hostutil, "readHelperInput(\"Colima status output\", os.Stdin)", "io.ReadAll(os.Stdin)", 1)},
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if err := validateManagedColimaSource(mutant[0], mutant[1], mutant[2]); err == nil {
+				t.Fatal("mutant passed source contract")
+			}
+		})
+	}
+}
+
+func validateManagedColimaSource(workcell, invariants, hostutil string) error {
+	for _, required := range []string{
+		"run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
+		"run_host_colima status --profile \"${profile}\" 2>&1 |\n      run_go_hostutil_preserve_exit helper validate-colima-status \"${profile}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
+		"run_host_colima_with_timeout \"${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}\" start",
+	} {
+		if !strings.Contains(workcell, required) {
+			return fmt.Errorf("scripts/workcell lacks %q", required)
+		}
+	}
+	if !strings.Contains(invariants, "scripts/lib/launcher/go-hostutil.sh\" run_go_hostutil_preserve_exit") {
+		return errors.New("verify-invariants does not extract the exit-preserving stream helper")
+	}
+	for _, obsolete := range []string{"list_output=\"$(run_host_colima list --json", "status=\"$(run_host_colima status --profile", "kill_process_tree_by_pid", "terminate_process_tree_by_pid"} {
+		if strings.Contains(workcell, obsolete) || strings.Contains(invariants, "scripts/workcell\" "+obsolete) {
+			return fmt.Errorf("obsolete launcher path remains: %s", obsolete)
+		}
+	}
+	for _, call := range []string{
+		"readHelperInput(\"container inventory\", os.Stdin)",
+		"readHelperInput(\"Colima profile inventory\", os.Stdin)",
+		"readHelperInput(\"Colima status output\", os.Stdin)",
+	} {
+		if !strings.Contains(hostutil, call) {
+			return fmt.Errorf("hostutil lacks bounded read %q", call)
+		}
+	}
+	return nil
+}
+
+func mustReadTestFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

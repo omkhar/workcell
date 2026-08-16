@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -17,7 +18,13 @@ import (
 // ColimaTimeoutExitCode mirrors GNU coreutils `timeout`'s exit code for a
 // process that was killed because its deadline elapsed.  Bash callers
 // rely on this value to distinguish a timeout from a colima failure.
-const ColimaTimeoutExitCode = 124
+const (
+	ColimaTimeoutExitCode       = 124
+	MaxColimaTimeoutSeconds     = 24 * 60 * 60
+	colimaTerminationGrace      = 5 * time.Second
+	colimaTerminationProofLimit = 5 * time.Second
+	colimaTerminationPoll       = 25 * time.Millisecond
+)
 
 // HostColimaInvocation captures the environment used to invoke a
 // trusted host `colima` binary on behalf of scripts/workcell.  The
@@ -47,8 +54,8 @@ func RunHostColima(inv HostColimaInvocation) (int, error) {
 	if len(inv.Args) == 0 {
 		return 0, nil
 	}
-	if inv.ColimaBin == "" {
-		return 0, errors.New("RunHostColima: colima binary path is required")
+	if err := validateColimaBinary(inv.ColimaBin); err != nil {
+		return 0, fmt.Errorf("RunHostColima: %w", err)
 	}
 	cmd, err := newColimaCommand(context.Background(), inv)
 	if err != nil {
@@ -63,37 +70,46 @@ func RunHostColima(inv HostColimaInvocation) (int, error) {
 // returns ColimaTimeoutExitCode (124) after killing the colima process
 // group, matching the bash run_host_colima_with_timeout helper.
 func RunHostColimaWithTimeout(timeoutSeconds int, inv HostColimaInvocation) (int, error) {
+	if timeoutSeconds > MaxColimaTimeoutSeconds {
+		return 0, fmt.Errorf("RunHostColimaWithTimeout: timeout must not exceed %d seconds", MaxColimaTimeoutSeconds)
+	}
 	if len(inv.Args) == 0 {
 		return 0, nil
 	}
 	if timeoutSeconds <= 0 {
 		return RunHostColima(inv)
 	}
-	if inv.ColimaBin == "" {
-		return 0, errors.New("RunHostColimaWithTimeout: colima binary path is required")
+	if err := validateColimaBinary(inv.ColimaBin); err != nil {
+		return 0, fmt.Errorf("RunHostColimaWithTimeout: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
+	return runHostColimaWithContext(ctx, inv)
+}
 
+func runHostColimaWithContext(ctx context.Context, inv HostColimaInvocation) (int, error) {
 	cmd, err := newColimaCommand(ctx, inv)
 	if err != nil {
 		return 0, err
 	}
-	// Place the child in its own process group so we can deliver
-	// SIGKILL to the whole tree on timeout (mirroring the bash
-	// helper's kill_process_tree_by_pid behaviour).
+	// Place the child in its own process group so cancellation can
+	// terminate and prove the absence of every descendant.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cleanupResult := make(chan error, 1)
 	cmd.Cancel = func() error {
-		return killColimaProcessGroup(cmd)
+		err := terminateColimaProcessGroup(cmd)
+		cleanupResult <- err
+		return err
 	}
-	cmd.WaitDelay = 5 * time.Second
 
-	code, runErr := runColimaCommand(cmd)
-	if ctx.Err() == context.DeadlineExceeded {
-		return ColimaTimeoutExitCode, nil
+	runErr := cmd.Run()
+	select {
+	case cleanupErr := <-cleanupResult:
+		return colimaCancellationResult(runErr, cleanupErr)
+	default:
+		return colimaRunResult(runErr)
 	}
-	return code, runErr
 }
 
 // ValidateColimaStatusOutput checks that the textual output of
@@ -166,7 +182,10 @@ func colimaChildEnv(inv HostColimaInvocation) []string {
 }
 
 func runColimaCommand(cmd *exec.Cmd) (int, error) {
-	err := cmd.Run()
+	return colimaRunResult(cmd.Run())
+}
+
+func colimaRunResult(err error) (int, error) {
 	if err == nil {
 		return 0, nil
 	}
@@ -175,6 +194,32 @@ func runColimaCommand(cmd *exec.Cmd) (int, error) {
 		return colimaExitCode(exitErr), nil
 	}
 	return 0, fmt.Errorf("colima invocation failed: %w", err)
+}
+
+func colimaCancellationResult(runErr, cleanupErr error) (int, error) {
+	if cleanupErr != nil {
+		cleanupErr = fmt.Errorf("colima process-group cleanup failed: %w", cleanupErr)
+		if runErr != nil {
+			return 0, errors.Join(fmt.Errorf("colima invocation failed: %w", runErr), cleanupErr)
+		}
+		return 0, cleanupErr
+	}
+	if expectedColimaCancellationError(runErr) {
+		return ColimaTimeoutExitCode, nil
+	}
+	return colimaRunResult(runErr)
+}
+
+func expectedColimaCancellationError(err error) bool {
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	return ok && status.Signaled() && (status.Signal() == syscall.SIGTERM || status.Signal() == syscall.SIGKILL)
 }
 
 func colimaExitCode(exitErr *exec.ExitError) int {
@@ -187,16 +232,63 @@ func colimaExitCode(exitErr *exec.ExitError) int {
 	return exitErr.ExitCode()
 }
 
-func killColimaProcessGroup(cmd *exec.Cmd) error {
+func validateColimaBinary(path string) error {
+	if path == "" {
+		return errors.New("colima binary path is required")
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("colima binary path must be absolute")
+	}
+	return nil
+}
+
+func terminateColimaProcessGroup(cmd *exec.Cmd) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	pid := cmd.Process.Pid
-	// Negative pid targets the whole process group.  Ignore the
-	// "no such process" error that arises if the child already exited
-	// between the deadline firing and our kill call.
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	groupID := cmd.Process.Pid
+	if err := signalColimaProcessGroup(groupID, syscall.SIGTERM); err != nil {
+		return err
+	}
+	absent, err := waitForColimaProcessGroupExit(groupID, colimaTerminationGrace)
+	if err != nil || absent {
+		return err
+	}
+	if err := signalColimaProcessGroup(groupID, syscall.SIGKILL); err != nil {
+		return err
+	}
+	absent, err = waitForColimaProcessGroupExit(groupID, colimaTerminationProofLimit)
+	if err != nil {
+		return err
+	}
+	if !absent {
+		return fmt.Errorf("process group %d remains after SIGKILL", groupID)
+	}
+	return nil
+}
+
+func signalColimaProcessGroup(groupID int, signal syscall.Signal) error {
+	if err := syscall.Kill(-groupID, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
 	return nil
+}
+
+func waitForColimaProcessGroupExit(groupID int, limit time.Duration) (bool, error) {
+	deadline := time.Now().Add(limit)
+	for {
+		err := syscall.Kill(-groupID, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return true, nil
+		}
+		// EPERM proves presence, not absence. Keep polling for ESRCH;
+		// a later TERM or KILL still fails closed if it cannot signal.
+		if err != nil && !errors.Is(err, syscall.EPERM) {
+			return false, err
+		}
+		if !time.Now().Before(deadline) {
+			return false, nil
+		}
+		time.Sleep(colimaTerminationPoll)
+	}
 }

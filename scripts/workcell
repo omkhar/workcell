@@ -685,34 +685,6 @@ run_host_colima() {
   )
 }
 
-kill_process_tree_by_pid() {
-  local target_pid="$1"
-  local child_pid=""
-
-  [[ -n "${target_pid}" ]] || return 0
-  while IFS= read -r child_pid; do
-    [[ -n "${child_pid}" ]] || continue
-    kill_process_tree_by_pid "${child_pid}"
-  done < <(pgrep -P "${target_pid}" 2>/dev/null || true)
-  kill "${target_pid}" >/dev/null 2>&1 || true
-}
-
-terminate_process_tree_by_pid() {
-  local target_pid="$1"
-  local deadline=0
-
-  [[ -n "${target_pid}" ]] || return 0
-  kill_process_tree_by_pid "${target_pid}"
-  deadline=$((SECONDS + 5))
-  while kill -0 "${target_pid}" >/dev/null 2>&1; do
-    if ((SECONDS >= deadline)); then
-      kill -9 "${target_pid}" >/dev/null 2>&1 || true
-      break
-    fi
-    sleep 1
-  done
-}
-
 run_host_colima_with_timeout() {
   local timeout_seconds="$1"
   shift
@@ -731,36 +703,18 @@ run_host_colima_with_timeout() {
 
 colima_profile_status() {
   local profile="$1"
-  local list_output=""
 
-  if ! list_output="$(run_host_colima list --json 2>/dev/null)"; then
-    return 1
-  fi
-  [[ -n "${list_output}" ]] || return 3
-
-  # The colima-status subcommand exits 0 with the profile status on
-  # stdout, 3 when the profile is absent from the list, and 1 for any
-  # other parse error.  go run wraps the child binary's non-zero exit
-  # status as "exit status N\n" on its own stderr while itself exiting
-  # 1, so the bash side reconstructs the original exit code from that
-  # trailer to preserve the contract verify-invariants depends on.
-  local stderr_capture status_output rc trailer
-  stderr_capture="$(mktemp "${TMPDIR:-/tmp}/workcell-colima-status-stderr.XXXXXX")"
-  status_output="$(printf '%s' "${list_output}" | go_hostutil helper colima-status "${profile}" 2>"${stderr_capture}")"
-  rc=$?
-  if ((rc != 0)); then
-    trailer="$(tail -n1 "${stderr_capture}" 2>/dev/null || true)"
-    case "${trailer}" in
-      "exit status "[0-9]*)
-        rc="${trailer##* }"
-        ;;
-    esac
-  fi
-  rm -f "${stderr_capture}"
-  if ((rc == 0)) && [[ -n "${status_output}" ]]; then
-    printf '%s\n' "${status_output}"
-  fi
-  return "${rc}"
+  (
+    local -a pipe_status=()
+    set +e
+    run_host_colima list --json 2>/dev/null |
+      run_go_hostutil_preserve_exit helper colima-status "${profile}"
+    pipe_status=("${PIPESTATUS[@]}")
+    if ((pipe_status[0] != 0)); then
+      exit 1
+    fi
+    exit "${pipe_status[1]}"
+  )
 }
 
 profile_process_pids() {
@@ -6387,14 +6341,11 @@ run_command_with_debug_log() {
   local heartbeat_pid=""
   local spinner_pid=""
   local spinner_enabled=0
-  local tail_pid=""
   local start_seconds=0
   local pid=""
   local status=0
-  local timed_out=0
-  local timeout_seconds=0
+  local managed_timeout_status=124
   local heartbeat_interval_seconds=30
-  local next_heartbeat=0
   local failed_capture_path=""
 
   format_elapsed_compact() {
@@ -6522,58 +6473,8 @@ run_command_with_debug_log() {
       fi
     fi
   fi
-  case "${label}" in
-    colima-start)
-      timeout_seconds="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}"
-      ;;
-  esac
   maybe_print_progress_update start "0s"
-  if ((timeout_seconds > 0)); then
-    "$@" >"${log_path}" 2>&1 &
-    pid=$!
-    if [[ "${spinner_enabled}" -eq 1 ]]; then
-      start_progress_spinner "${pid}"
-    elif [[ "${LOG_LEVEL}" != "debug" ]]; then
-      next_heartbeat=$((SECONDS + heartbeat_interval_seconds))
-    fi
-    if [[ "${LOG_LEVEL}" == "debug" ]]; then
-      tail -n +1 -f "${log_path}" >&2 &
-      tail_pid=$!
-    fi
-    while kill -0 "${pid}" >/dev/null 2>&1; do
-      sleep 1
-      if ! kill -0 "${pid}" >/dev/null 2>&1; then
-        break
-      fi
-      if [[ "${spinner_enabled}" -eq 0 ]] && [[ "${LOG_LEVEL}" != "debug" ]] && ((SECONDS >= next_heartbeat)); then
-        maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
-        next_heartbeat=$((SECONDS + heartbeat_interval_seconds))
-      fi
-      if ((SECONDS - start_seconds >= timeout_seconds)); then
-        timed_out=1
-        terminate_process_tree_by_pid "${pid}"
-        break
-      fi
-    done
-    if wait "${pid}"; then
-      :
-    else
-      status=$?
-    fi
-    if ((timed_out == 1)); then
-      status=124
-    fi
-    stop_progress_spinner
-    if [[ -n "${tail_pid}" ]]; then
-      kill "${tail_pid}" >/dev/null 2>&1 || true
-      wait "${tail_pid}" 2>/dev/null || true
-    fi
-    if [[ -n "${DEBUG_LOG_PATH}" ]] && [[ -f "${log_path}" ]]; then
-      if debug_log_path="$(revalidate_recorded_host_output_path "${DEBUG_LOG_PATH}")"; then
-        cat "${log_path}" >>"${debug_log_path}"
-      fi
-    fi
-  elif [[ "${LOG_LEVEL}" == "debug" ]]; then
+  if [[ "${LOG_LEVEL}" == "debug" ]]; then
     set +e
     "$@" 2>&1 | tee "${log_path}" >&2
     debug_pipe_status=("${PIPESTATUS[@]}")
@@ -6619,7 +6520,7 @@ run_command_with_debug_log() {
   if [[ "${status}" -eq 0 ]]; then
     maybe_print_progress_update success "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
   else
-    if ((timed_out == 1)); then
+    if [[ "${label}" == "colima-start" ]] && [[ "${status}" -eq "${managed_timeout_status}" ]]; then
       echo "Workcell timed out waiting for managed Colima profile ${COLIMA_PROFILE} to start ($(format_elapsed_compact "$((SECONDS - start_seconds))"))." >&2
     fi
     echo "Workcell ${label} failed." >&2
@@ -6987,10 +6888,15 @@ validate_colima_profile_config() {
 validate_colima_profile() {
   local profile="$1"
   local workspace="$2"
-  local status=""
 
-  status="$(run_host_colima status --profile "${profile}" 2>&1)"
-  if ! printf '%s' "${status}" | go_hostutil helper validate-colima-status "${profile}"; then
+  if ! (
+    local -a pipe_status=()
+    set +e
+    run_host_colima status --profile "${profile}" 2>&1 |
+      run_go_hostutil_preserve_exit helper validate-colima-status "${profile}"
+    pipe_status=("${PIPESTATUS[@]}")
+    ((pipe_status[0] == 0 && pipe_status[1] == 0))
+  ); then
     return 1
   fi
 
@@ -7018,7 +6924,7 @@ start_managed_profile() {
   while :; do
     maybe_reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
     if run_command_with_debug_log colima-start \
-      run_host_colima start \
+      run_host_colima_with_timeout "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}" start \
       --profile "${COLIMA_PROFILE}" \
       --vm-type vz \
       --mount "${workspace_mount}:w" \

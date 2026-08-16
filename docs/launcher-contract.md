@@ -193,6 +193,22 @@ GPG, SSH, XDG, and GitHub variables.
 
 This function runs `cmd/workcell-colimautil` with the selected arguments.
 
+### Colima stream and timeout controls
+
+The launcher streams Colima inventory and status output directly to the host utility.
+The container inventory, Colima inventory, and Colima status inputs each have a 4 MiB limit.
+
+Managed Colima start uses the checked absolute Colima path. A positive timeout cannot exceed 24 hours.
+For a positive timeout, the Go helper starts Colima in a dedicated process group.
+
+On timeout, the helper sends `SIGTERM` and polls for group absence.
+It sends `SIGKILL` if the group remains. It polls again and fails if the group remains.
+
+After cancellation, the helper converts only expected termination outcomes to status `124` when cleanup succeeds.
+It preserves ordinary exit statuses and unrelated signal statuses. It reports start, input/output, and cleanup errors.
+
+Runtime DNS resolution uses a five-second deadline. The resolver cancels the lookup context when resolution finishes.
+
 The publication function is a deliberate host-side exception. It can receive
 the ambient operator publication and signing environment. The Tier 1 runtime
 does not receive this ambient state. Reviewed injection can stage selected
