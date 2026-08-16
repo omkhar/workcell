@@ -3470,13 +3470,16 @@ run_container gemini bash -lc '
   grep -q "Workcell control-plane manifest mismatch for /opt/workcell/adapters/gemini/.gemini/settings.json" /tmp/workcell-control-plane-gemini-tamper.out
 '
 
-run_container codex bash -lc "$(
-  cat <<'SCRIPT'
-	  set -euo pipefail
-	  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
-    set -euo pipefail
+run_container_stdin codex bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3' <<'SCRIPT'
+  set -Eeuo pipefail
+  trap 'failure_status=$?; if [[ $- == *e* ]]; then trap - ERR; echo "Codex smoke block failed at input line ${LINENO}." >&2; exit "${failure_status}"; fi' ERR
+  /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  codex_user_script=/run/workcell/container-smoke-codex-user.sh
+  cat >"${codex_user_script}" <<'CODEX_USER_SCRIPT'
+    set -Eeuo pipefail
+    trap 'failure_status=$?; if [[ $- == *e* ]]; then trap - ERR; echo "Codex user smoke block failed at input line ${LINENO}." >&2; exit "${failure_status}"; fi' ERR
     CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+    test "$(id -u)" = "$WORKCELL_HOST_UID"
     test "$(id -u)" != 0
     test "$WORKCELL_RUNTIME" = "1"
     test "$TMPDIR" = "/state/tmp"
@@ -3716,9 +3719,8 @@ test -f "$CODEX_HOME/config.toml"
     # `--strict-config`, `--analytics-default-enabled`, `-c …` — none of which the
     # managed launch passes. Asserting a representative control token AND the
     # network-listening/config flags proves the general rule, not a token denylist.
-    # NOTE: this whole block runs inside a single-quoted `bash -lc '…'` above, so
-    # it must contain NO single quotes. Each case is asserted explicitly (no loop,
-    # no printf/tr) to stay single-quote-free.
+    # Keep each managed app-server case explicit so failures identify the rejected
+    # control surface without parsing a generated command string.
     assert_gui_appserver_denied() {
       local out="$1"
       shift
@@ -3842,7 +3844,37 @@ test -f "$CODEX_HOME/config.toml"
       cat /tmp/codex-features-dd-list-permit.out >&2
       exit 1
     fi
-  '
+    case "$(uname -m)" in
+      x86_64)
+        raw_execveat_number=322
+        ;;
+      aarch64)
+        raw_execveat_number=281
+        ;;
+      *)
+        echo "unsupported architecture for raw execveat smoke" >&2
+        exit 1
+        ;;
+    esac
+    raw_execveat_empty_path_flag=4096
+    cat >"$EXEC_TMP/workcell-raw-execveat-script" <<'EOF'
+#!/bin/sh
+printf 'raw-execveat-fd-script-allowed\n'
+EOF
+    chmod 0700 "$EXEC_TMP/workcell-raw-execveat-script"
+    if ! perl -e '$n=0+shift; $path=shift; sysopen(my $fh, $path, 0) or die "$!\n"; fcntl($fh, 2, 0) or die "$!\n"; $fd=fileno($fh); $empty=pack("C", 0); $zero=0; $flags=0+shift; $guard="LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so"; $env=pack("p*", $guard, undef); syscall($n, $fd, $empty, $zero, $env, $flags); die "$!\n"' \
+      "$raw_execveat_number" "$EXEC_TMP/workcell-raw-execveat-script" "$raw_execveat_empty_path_flag" \
+      >/tmp/workcell-raw-execveat-fd.out 2>&1; then
+      echo "expected numeric AT_EMPTY_PATH execveat to allow a mapped-user mutable script" >&2
+      cat /tmp/workcell-raw-execveat-fd.out >&2
+      exit 1
+    fi
+    grep -qx "raw-execveat-fd-script-allowed" /tmp/workcell-raw-execveat-fd.out
+CODEX_USER_SCRIPT
+  chmod 0444 "${codex_user_script}"
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups \
+    bash -c 'source "$1"' workcell-codex-user-smoke "${codex_user_script}" </dev/null
+  rm -f "${codex_user_script}"
   if /usr/local/libexec/workcell/real/codex --version >/tmp/codex-real-path.out 2>&1; then
     echo "expected direct real Codex payload execution to fail" >&2
     exit 1
@@ -4964,10 +4996,10 @@ EOF
   fi
   grep -Eq "hook ran|pre-commit" /tmp/git-guard-xdg-config.out
 SCRIPT
-)"
 
-run_container claude bash -lc "$(
-  cat <<'SCRIPT'
+run_container_stdin claude bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3' <<'SCRIPT'
+  set -Eeuo pipefail
+  trap 'failure_status=$?; if [[ $- == *e* ]]; then trap - ERR; echo "Claude smoke block failed at input line ${LINENO}." >&2; exit "${failure_status}"; fi' ERR
   /usr/local/bin/workcell-entrypoint claude --version >/dev/null
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
@@ -4981,32 +5013,38 @@ run_container claude bash -lc "$(
     jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
     jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
   '
-  if claude --dangerously-skip-permissions >/tmp/claude-nested-danger.out 2>&1; then
+  run_as_runtime_user() {
+    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups "$@"
+  }
+  runtime_uid="$(run_as_runtime_user id -u)"
+  test "${runtime_uid}" = "$WORKCELL_HOST_UID"
+  test "${runtime_uid}" != 0
+  if run_as_runtime_user claude --dangerously-skip-permissions >/tmp/claude-nested-danger.out 2>&1; then
     echo "expected nested Claude invocation to reject unsafe overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Claude override" /tmp/claude-nested-danger.out
-  if claude --add-dir=/state --version >/tmp/claude-nested-add-dir.out 2>&1; then
+  if run_as_runtime_user claude --add-dir=/state --version >/tmp/claude-nested-add-dir.out 2>&1; then
     echo "expected nested Claude invocation to reject add-dir overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Claude override" /tmp/claude-nested-add-dir.out
-  if claude --permission-mode default --version >/tmp/claude-nested-permission-mode.out 2>&1; then
+  if run_as_runtime_user claude --permission-mode default --version >/tmp/claude-nested-permission-mode.out 2>&1; then
     echo "expected nested Claude invocation to reject autonomy overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked Claude autonomy override" /tmp/claude-nested-permission-mode.out
-  if claude update >/tmp/claude-nested-update.out 2>&1; then
+  if run_as_runtime_user claude update >/tmp/claude-nested-update.out 2>&1; then
     echo "expected nested Claude invocation to reject lifecycle updates" >&2
     exit 1
   fi
   grep -q "Workcell blocked Claude lifecycle command: update" /tmp/claude-nested-update.out
-  if claude install >/tmp/claude-nested-install.out 2>&1; then
+  if run_as_runtime_user claude install >/tmp/claude-nested-install.out 2>&1; then
     echo "expected nested Claude invocation to reject lifecycle installs" >&2
     exit 1
   fi
   grep -q "Workcell blocked Claude lifecycle command: install" /tmp/claude-nested-install.out
-  if WORKCELL_MODE=breakglass claude --dangerously-skip-permissions >/tmp/claude-nested-breakglass.out 2>&1; then
+  if WORKCELL_MODE=breakglass run_as_runtime_user claude --dangerously-skip-permissions >/tmp/claude-nested-breakglass.out 2>&1; then
     echo "expected nested Claude invocation to ignore caller-supplied breakglass env" >&2
     exit 1
   fi
@@ -5146,10 +5184,10 @@ EOF
     }
   grep -q "BLOCKED:" /tmp/claude-hook-home-control-plane.out
 SCRIPT
-)"
 
-run_container gemini bash -lc "$(
-  cat <<'SCRIPT'
+run_container_stdin gemini bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3' <<'SCRIPT'
+  set -Eeuo pipefail
+  trap 'failure_status=$?; if [[ $- == *e* ]]; then trap - ERR; echo "Gemini smoke block failed at input line ${LINENO}." >&2; exit "${failure_status}"; fi' ERR
   /usr/local/bin/workcell-entrypoint gemini --version >/dev/null
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
     set -euo pipefail
@@ -5168,49 +5206,55 @@ run_container gemini bash -lc "$(
     test -f "$HOME/.gemini/GEMINI.md"
     test -f "$HOME/.gemini/projects.json"
   '
-  if gemini --yolo >/tmp/gemini-nested-yolo.out 2>&1; then
+  run_as_runtime_user() {
+    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups "$@"
+  }
+  runtime_uid="$(run_as_runtime_user id -u)"
+  test "${runtime_uid}" = "$WORKCELL_HOST_UID"
+  test "${runtime_uid}" != 0
+  if run_as_runtime_user gemini --yolo >/tmp/gemini-nested-yolo.out 2>&1; then
     echo "expected nested Gemini invocation to reject unsafe overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo.out
-  if gemini -y >/tmp/gemini-nested-yolo-short.out 2>&1; then
+  if run_as_runtime_user gemini -y >/tmp/gemini-nested-yolo-short.out 2>&1; then
     echo "expected nested Gemini invocation to reject short yolo overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-yolo-short.out
-  if gemini --bypassPermissions --version >/tmp/gemini-nested-bypass-camel.out 2>&1; then
+  if run_as_runtime_user gemini --bypassPermissions --version >/tmp/gemini-nested-bypass-camel.out 2>&1; then
     echo "expected nested Gemini invocation to reject bypassPermissions-style overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-bypass-camel.out
-  if gemini --bypass-permissions --version >/tmp/gemini-nested-bypass-dashed.out 2>&1; then
+  if run_as_runtime_user gemini --bypass-permissions --version >/tmp/gemini-nested-bypass-dashed.out 2>&1; then
     echo "expected nested Gemini invocation to reject bypass-permissions-style overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-bypass-dashed.out
-  if gemini --add-dir=/state --version >/tmp/gemini-nested-add-dir.out 2>&1; then
+  if run_as_runtime_user gemini --add-dir=/state --version >/tmp/gemini-nested-add-dir.out 2>&1; then
     echo "expected nested Gemini invocation to reject add-dir overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-add-dir.out
-  if gemini --approval-mode default --version >/tmp/gemini-nested-approval-mode.out 2>&1; then
+  if run_as_runtime_user gemini --approval-mode default --version >/tmp/gemini-nested-approval-mode.out 2>&1; then
     echo "expected nested Gemini invocation to reject autonomy overrides" >&2
     exit 1
   fi
   grep -q "Workcell blocked Gemini autonomy override" /tmp/gemini-nested-approval-mode.out
-  if WORKCELL_MODE=breakglass gemini --yolo >/tmp/gemini-nested-breakglass.out 2>&1; then
+  if WORKCELL_MODE=breakglass run_as_runtime_user gemini --yolo >/tmp/gemini-nested-breakglass.out 2>&1; then
     echo "expected nested Gemini invocation to ignore caller-supplied breakglass env" >&2
     exit 1
   fi
   grep -q "Workcell blocked unsafe Gemini override" /tmp/gemini-nested-breakglass.out
-  NODE_EXTRA_CA_CERTS=/workspace/does-not-exist.pem gemini --version >/tmp/gemini-extra-ca.out 2>&1
+  NODE_EXTRA_CA_CERTS=/workspace/does-not-exist.pem run_as_runtime_user gemini --version >/tmp/gemini-extra-ca.out 2>&1
   if grep -qi "extra cert" /tmp/gemini-extra-ca.out; then
     echo "expected provider wrapper to scrub NODE_EXTRA_CA_CERTS" >&2
     cat /tmp/gemini-extra-ca.out >&2
     exit 1
   fi
   rm -rf /workspace/.gemini
-  HOME=/workspace gemini --version >/dev/null 2>&1
+  HOME=/workspace run_as_runtime_user gemini --version >/dev/null 2>&1
   test ! -e /workspace/.gemini/settings.json
   test ! -e /workspace/.gemini/projects.json
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
@@ -5222,6 +5266,5 @@ run_container gemini bash -lc "$(
     jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
   '
 SCRIPT
-)"
 
 echo "Workcell container smoke passed."
