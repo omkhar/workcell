@@ -520,18 +520,29 @@ func (t AppleContainerTarget) FinishSession(_ context.Context, req FinishSession
 // manifest is read through the hardened path so a manifest FILE swapped for a
 // symlink/FIFO is refused, not followed, even though its parent chain was checked.
 func verifyPersistedManifest(stateRoot, path string, manifest any) error {
-	onDisk, err := readFileSafe(stateRoot, path, "manifest")
-	if err != nil {
-		return err
+	return verifyPersistedManifestWithParent(stateRoot, path, manifest, openParentDirNoCreate)
+}
+
+func verifyPersistedManifestWithParent(stateRoot, path string, manifest any, openParent func(string, string) (int, error)) error {
+	var into any
+	switch manifest.(type) {
+	case WorkspaceManifest:
+		into = &WorkspaceManifest{}
+	case BootstrapManifest:
+		into = &BootstrapManifest{}
+	default:
+		return fmt.Errorf("unknown manifest type %T", manifest)
 	}
 	want, err := marshalManifestBytes(manifest)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(onDisk, want) {
-		return fmt.Errorf("persisted manifest %q does not match the in-memory manifest", path)
-	}
-	return nil
+	return readPersistedManifestWithParent(stateRoot, path, into, openParent, func(data []byte) error {
+		if !bytes.Equal(data, want) {
+			return fmt.Errorf("persisted manifest %q does not match the in-memory manifest", path)
+		}
+		return nil
+	})
 }
 
 // assertManifestContract pins a manifest's contract-sourced identity fields to

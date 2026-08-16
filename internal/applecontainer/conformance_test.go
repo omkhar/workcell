@@ -36,9 +36,9 @@ func rejectsEachPersistedManifestField[M any](t *testing.T, label, path string, 
 	for i, mut := range muts {
 		bad := base
 		mut(&bad)
-		data, err := json.MarshalIndent(bad, "", "  ")
+		data, err := marshalManifestBytes(bad)
 		mustNil(t, err)
-		mustNil(t, os.WriteFile(path, append(data, '\n'), 0o600))
+		mustNil(t, os.WriteFile(path, data, 0o600))
 		if validate() == nil {
 			t.Fatalf("%s persisted field %d: tampered on-disk value accepted (not pinned)", label, i)
 		}
@@ -58,9 +58,9 @@ func rejectsEachManifestFieldPin[R any, M any](t *testing.T, label, path string,
 		bad := base
 		m := manifest(&bad)
 		mut(m)
-		data, err := json.MarshalIndent(*m, "", "  ")
+		data, err := marshalManifestBytes(*m)
 		mustNil(t, err)
-		mustNil(t, os.WriteFile(path, append(data, '\n'), 0o600))
+		mustNil(t, os.WriteFile(path, data, 0o600))
 		if validate(bad) == nil {
 			t.Fatalf("%s field pin %d: consistently-tampered value accepted (pin not exercised)", label, i)
 		}
@@ -632,9 +632,8 @@ func TestConformanceRejectsSymlinkedManifest(t *testing.T) {
 }
 
 // TestConformanceRejectsSymlinkedWorkspaceRoot: a symlinked materialized-workspace root (→ VALID
-// decoy tree outside StateRoot) must be rejected, else copyWorkspaceTree EvalSymlinks-es it and
-// certifies the decoy. The manifest stays real, isolating the workspace-root guard. Neutralize →
-// decoy walked → FAIL.
+// decoy tree outside StateRoot) must be rejected by descriptor inspection. The manifest stays
+// real, which isolates the workspace-root guard. Neutralize the guard and the test fails.
 func TestConformanceRejectsSymlinkedWorkspaceRoot(t *testing.T) {
 	t.Parallel()
 	_, _, contract, c, layout, mat, _ := symlinkLifecycle(t)

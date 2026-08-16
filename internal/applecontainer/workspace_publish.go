@@ -326,6 +326,9 @@ func marshalManifestBytes(value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if int64(len(content)) >= workspaceManifestMaxBytes {
+		return nil, fmt.Errorf("manifest exceeds the byte limit of %d", workspaceManifestMaxBytes)
+	}
 	return append(content, '\n'), nil
 }
 func writeWorkspaceManifestAt(stageFD int, name string, content []byte, ops workspaceMaterializeOps) error {
