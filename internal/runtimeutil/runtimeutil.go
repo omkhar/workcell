@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/rootio"
@@ -21,7 +22,10 @@ import (
 const (
 	maxRuntimeManifestBytes  = rootio.MaxManifestBytes
 	maxRuntimeMountSpecBytes = rootio.MaxDirectMountSpecBytes
+	resolveIPTimeout         = 5 * time.Second
 )
+
+type lookupIPAddrFunc func(context.Context, string) ([]net.IPAddr, error)
 
 type DirectMount struct {
 	Source    string `json:"source"`
@@ -37,13 +41,19 @@ func CanonicalizePath(raw string) (string, error) {
 }
 
 func ResolveIPs(host string) ([]string, error) {
+	return resolveIPs(host, net.DefaultResolver.LookupIPAddr)
+}
+
+func resolveIPs(host string, lookup lookupIPAddrFunc) ([]string, error) {
 	host = strings.TrimSpace(host)
 	host = strings.TrimPrefix(host, "[")
 	host = strings.TrimSuffix(host, "]")
 	if host == "" {
 		return nil, errors.New("host is required")
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	ctx, cancel := context.WithTimeout(context.Background(), resolveIPTimeout)
+	defer cancel()
+	addrs, err := lookup(ctx, host)
 	if err != nil {
 		return nil, err
 	}

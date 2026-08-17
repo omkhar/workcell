@@ -31,6 +31,8 @@ import (
 	"github.com/omkhar/workcell/internal/transcript"
 )
 
+const maxHelperStdinBytes int64 = 4 << 20
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		// All Go CLI translations (authpolicy, publishpr, sessionctl,
@@ -438,7 +440,7 @@ func cmdHelperSessionSuffix(_ []string) error {
 }
 
 func cmdHelperSessionContainerAbsentForDelete(args []string) error {
-	inventory, err := io.ReadAll(os.Stdin)
+	inventory, err := readHelperInput("container inventory", os.Stdin)
 	if err != nil {
 		return err
 	}
@@ -446,7 +448,7 @@ func cmdHelperSessionContainerAbsentForDelete(args []string) error {
 }
 
 func cmdHelperColimaStatus(args []string) error {
-	input, err := io.ReadAll(os.Stdin)
+	input, err := readHelperInput("Colima profile inventory", os.Stdin)
 	if err != nil {
 		return err
 	}
@@ -466,11 +468,22 @@ func cmdHelperReapColimaProfileProcesses(args []string) error {
 }
 
 func cmdHelperValidateColimaStatus(args []string) error {
-	statusBytes, err := io.ReadAll(os.Stdin)
+	statusBytes, err := readHelperInput("Colima status output", os.Stdin)
 	if err != nil {
 		return err
 	}
 	return launcher.ValidateColimaStatusOutput(string(statusBytes), args[0])
+}
+
+func readHelperInput(subject string, inputReader io.Reader) ([]byte, error) {
+	input, err := io.ReadAll(io.LimitReader(inputReader, maxHelperStdinBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(input)) > maxHelperStdinBytes {
+		return nil, fmt.Errorf("%s exceeds %d-byte limit", subject, maxHelperStdinBytes)
+	}
+	return input, nil
 }
 
 func cmdHelperRunHostColimaWithTimeout(args []string) error {

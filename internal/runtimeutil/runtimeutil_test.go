@@ -5,12 +5,15 @@ package runtimeutil
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -53,6 +56,35 @@ func TestResolveIPs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ips, []string{"127.0.0.1"}) {
 		t.Fatalf("ResolveIPs = %#v", ips)
+	}
+}
+
+func TestResolveIPsUsesBoundedCancelledContext(t *testing.T) {
+	var observed context.Context
+	var observedDeadline time.Time
+	before := time.Now()
+	ips, err := resolveIPs(" example.test ", func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		observed = ctx
+		if host != "example.test" {
+			t.Fatalf("lookup host = %q", host)
+		}
+		observedDeadline, _ = ctx.Deadline()
+		if observedDeadline.IsZero() {
+			t.Fatal("lookup context has no deadline")
+		}
+		return []net.IPAddr{{IP: net.ParseIP("192.0.2.1")}}, nil
+	})
+	after := time.Now()
+	if err != nil || !reflect.DeepEqual(ips, []string{"192.0.2.1"}) {
+		t.Fatalf("resolveIPs = %#v, %v", ips, err)
+	}
+	if observedDeadline.Before(before.Add(5*time.Second)) || observedDeadline.After(after.Add(5*time.Second)) {
+		t.Fatalf("lookup deadline = %s, want five seconds", observedDeadline)
+	}
+	select {
+	case <-observed.Done():
+	default:
+		t.Fatal("resolveIPs did not cancel its lookup context")
 	}
 }
 

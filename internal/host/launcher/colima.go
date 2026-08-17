@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -47,8 +48,8 @@ func RunHostColima(inv HostColimaInvocation) (int, error) {
 	if len(inv.Args) == 0 {
 		return 0, nil
 	}
-	if inv.ColimaBin == "" {
-		return 0, errors.New("RunHostColima: colima binary path is required")
+	if err := validateColimaBinary(inv.ColimaBin); err != nil {
+		return 0, fmt.Errorf("RunHostColima: %w", err)
 	}
 	cmd, err := newColimaCommand(context.Background(), inv)
 	if err != nil {
@@ -69,8 +70,8 @@ func RunHostColimaWithTimeout(timeoutSeconds int, inv HostColimaInvocation) (int
 	if timeoutSeconds <= 0 {
 		return RunHostColima(inv)
 	}
-	if inv.ColimaBin == "" {
-		return 0, errors.New("RunHostColimaWithTimeout: colima binary path is required")
+	if err := validateColimaBinary(inv.ColimaBin); err != nil {
+		return 0, fmt.Errorf("RunHostColimaWithTimeout: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
@@ -185,6 +186,16 @@ func colimaExitCode(exitErr *exec.ExitError) int {
 		return 128 + int(status.Signal())
 	}
 	return exitErr.ExitCode()
+}
+
+func validateColimaBinary(path string) error {
+	if path == "" {
+		return errors.New("colima binary path is required")
+	}
+	if !filepath.IsAbs(path) {
+		return errors.New("colima binary path must be absolute")
+	}
+	return nil
 }
 
 func killColimaProcessGroup(cmd *exec.Cmd) error {

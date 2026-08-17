@@ -193,6 +193,14 @@ GPG, SSH, XDG, and GitHub variables.
 
 This function runs `cmd/workcell-colimautil` with the selected arguments.
 
+### Colima host input controls
+
+The launcher streams Colima inventory and status output directly to the host utility.
+The container inventory, Colima inventory, and Colima status inputs each have a 4 MiB limit.
+The launcher publishes a profile status only after the inventory producer and parser succeed.
+Workcell accepts only an absolute path for the selected Colima executable.
+Runtime DNS resolution uses a five-second deadline. The resolver cancels the lookup context when resolution finishes.
+
 The publication function is a deliberate host-side exception. It can receive
 the ambient operator publication and signing environment. The Tier 1 runtime
 does not receive this ambient state. Reviewed injection can stage selected

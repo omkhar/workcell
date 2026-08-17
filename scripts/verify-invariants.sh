@@ -5064,6 +5064,8 @@ VERIFY_PROFILE_DELETE_REAPER_HARNESS="$(mktemp)"
 rm -f "${VERIFY_PROFILE_DELETE_REAPER_HARNESS}"
 COLIMA_PROFILE_STATUS_HARNESS="$(mktemp)"
 {
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" run_go_hostutil_preserve_exit
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_profile_status
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" maybe_reap_stale_profile_processes
   cat "${ROOT_DIR}/verify/invariants/harnesses/process-colima/colima-profile-status.sh"
