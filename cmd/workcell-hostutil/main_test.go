@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -552,6 +553,151 @@ func TestHelperInputLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestParseColimaInvocationCapsTimeout(t *testing.T) {
+	seconds, _, _, err := parseColimaInvocationArgs([]string{"86400", "--", "start"})
+	if err != nil || seconds != 86400 {
+		t.Fatalf("parse exact timeout = %d, %v", seconds, err)
+	}
+	if _, _, _, err := parseColimaInvocationArgs([]string{"86401", "--", "start"}); err == nil {
+		t.Fatal("parseColimaInvocationArgs accepted more than 24 hours")
+	}
+}
+
+func TestManagedColimaSignalSourceRejectsMutants(t *testing.T) {
+	workcell := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "workcell"))
+	invariants := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "verify-invariants.sh"))
+	supervisor := mustReadTestFile(t, filepath.Join("..", "..", "internal", "host", "launcher", "process_group_supervisor.go"))
+	if err := validateManagedColimaSignalSource(workcell, invariants, supervisor); err != nil {
+		t.Fatal(err)
+	}
+	mutants := map[string]string{
+		"shell recursive kill": workcell + "\nterminate_process_tree_by_pid() { :; }\n",
+		"direct shell start":   strings.Replace(workcell, "run_host_colima_with_timeout \"${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}\" start", "run_host_colima start", 1),
+		"missing start gate":   strings.Replace(workcell, "    case \"${start_status}\" in\n      130 | 143)\n        return \"${start_status}\"\n        ;;\n    esac", "", 1),
+		"missing delete gate":  strings.Replace(workcell, "  case \"${delete_status}\" in\n    130 | 143)\n      return \"${delete_status}\"\n      ;;\n  esac", "", 1),
+		"missing retry gate":   strings.Replace(workcell, "        case \"${build_status}\" in\n          130 | 143)\n            return \"${build_status}\"\n            ;;\n        esac", "", 1),
+		"missing build gate":   strings.Replace(workcell, "    case \"${build_status}\" in\n      130 | 143)\n        return \"${build_status}\"\n        ;;\n    esac", "", 1),
+		"normalized refresh":   strings.Replace(workcell, "refresh_managed_profile \"Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima start timed out.\" || return $?", "refresh_managed_profile \"Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima start timed out.\" || return 2", 1),
+	}
+	for name, mutant := range mutants {
+		t.Run(name, func(t *testing.T) {
+			if mutant == workcell {
+				t.Fatal("mutant did not change source")
+			}
+			if err := validateManagedColimaSignalSource(mutant, invariants, supervisor); err == nil {
+				t.Fatal("mutant passed source validation")
+			}
+			if strings.HasPrefix(name, "missing ") || name == "normalized refresh" {
+				runManagedColimaSignalFixture(t, mutant, true)
+			}
+		})
+	}
+}
+
+func validateManagedColimaSignalSource(workcell, invariants, supervisor string) error {
+	for _, required := range []string{
+		"run_host_colima_with_timeout \"${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}\" start",
+		"case \"${start_status}\" in\n      130 | 143)\n        return \"${start_status}\"",
+		"case \"${delete_status}\" in\n    130 | 143)\n      return \"${delete_status}\"",
+		"case \"${build_status}\" in\n          130 | 143)\n            return \"${build_status}\"",
+		"case \"${build_status}\" in\n      130 | 143)\n        return \"${build_status}\"",
+		"run_runtime_image_build_with_retries \"${BUILD_SOURCE_DATE_EPOCH}\" || BUILD_STATUS=$?\n  if [[ \"${BUILD_STATUS}\" -ne 0 ]]; then\n    restore_runtime_egress\n    exit \"${BUILD_STATUS}\"",
+		"make(chan error, 1)", "Setpgid = true", "syscall.SIGTERM", "syscall.SIGKILL",
+	} {
+		if !strings.Contains(workcell+supervisor, required) {
+			return fmt.Errorf("managed Colima source lacks %q", required)
+		}
+	}
+	if strings.Contains(workcell+invariants, "kill_process_tree_by_pid") || strings.Contains(workcell+invariants, "terminate_process_tree_by_pid") {
+		return fmt.Errorf("recursive shell process killer remains")
+	}
+	returns, exits := 0, 0
+	for _, line := range strings.Split(workcell, "\n") {
+		if !strings.Contains(line, "refresh_managed_profile \"") {
+			continue
+		}
+		if strings.HasSuffix(line, " || return $?") {
+			returns++
+		} else if strings.HasSuffix(line, " || exit $?") {
+			exits++
+		} else {
+			return fmt.Errorf("refresh call does not preserve status: %s", line)
+		}
+	}
+	if returns != 5 || exits != 4 || strings.Count(workcell, "start_managed_profile || build_status=$?") != 2 {
+		return fmt.Errorf("managed status sinks = %d returns, %d exits", returns, exits)
+	}
+	return nil
+}
+
+func TestManagedColimaSignalCallerOutcomes(t *testing.T) {
+	runManagedColimaSignalFixture(t, mustReadTestFile(t, filepath.Join("..", "..", "scripts", "workcell")), false)
+}
+
+func runManagedColimaSignalFixture(t *testing.T, workcell string, wantFailure bool) {
+	t.Helper()
+	functions := "set -euo pipefail\n"
+	for _, name := range []string{"refresh_managed_profile", "start_managed_profile", "run_runtime_image_build_with_retries"} {
+		functions += extractBashFunction(t, workcell, name) + "\n"
+	}
+	script := functions + managedColimaSignalFixture
+	cmd := exec.Command("/bin/bash", "-c", script)
+	cmd.Env = append(os.Environ(),
+		"WORKCELL_REFRESH_FUNCTION="+extractBashFunction(t, workcell, "refresh_managed_profile"),
+		"WORKCELL_START_FUNCTION="+extractBashFunction(t, workcell, "start_managed_profile"),
+	)
+	output, err := cmd.CombinedOutput()
+	if wantFailure == (err == nil) {
+		t.Fatalf("signal fixture err = %v, output = %q", err, output)
+	}
+}
+
+func extractBashFunction(t *testing.T, source, name string) string {
+	t.Helper()
+	start := strings.Index(source, "\n"+name+"() {\n")
+	if start < 0 {
+		t.Fatalf("function %s not found", name)
+	}
+	block := source[start+1:]
+	end := strings.Index(block, "\n}\n")
+	if end < 0 {
+		t.Fatalf("function %s has no end", name)
+	}
+	return block[:end+2]
+}
+
+const managedColimaSignalFixture = `
+COLIMA_PROFILE=p; REAL_HOME=/tmp; WORKSPACE=/tmp/w; PROFILE_WORKSPACE_ROOT=/tmp/w
+COLIMA_CPU=1; COLIMA_MEMORY=1; COLIMA_DISK=1; TARGET_BACKEND=colima; NETWORK_POLICY=disabled; BOOTSTRAP_ENDPOINTS=""; SOURCE_DATE_EPOCH=1; IMAGE_TAG=i; ROOT_DIR=/tmp
+prepare_colima_staging_cache_roots(){ :; }; maybe_reap_stale_profile_processes(){ :; }; reap_stale_profile_processes(){ REAP=$((REAP+1)); [[ "${REAP_FAIL_AT:-0}" -ne "${REAP}" ]]; }
+colima_start_hit_recoverable_docker_boot_race(){ return 0; }; resolve_codex_release_url(){ :; }; resolve_copilot_release_url(){ :; }; validate_colima_profile(){ :; }
+validate_runtime_security_posture(){ :; }; record_validated_profile_state(){ :; }; begin_runtime_builder(){ BUILDX_BUILDER=b; }; create_runtime_builder(){ :; }
+cleanup_runtime_builder(){ CLEAN=$((CLEAN+1)); }; buildx_cmd(){ :; }; remember_profile_runtime_image_for_refresh(){ :; }; stash_profile_audit_log(){ :; }
+remove_profile_state_dirs(){ REMOVE=$((REMOVE+1)); }; profile_process_pids(){ [[ "${RESIDUE:-}" == pid ]] && echo 1; }; profile_state_dirs_exist(){ [[ "${RESIDUE:-}" == state ]]; }
+assert(){ [[ "$1" == "$2" ]] || { printf 'assert:%s != %s\n' "$1" "$2" >&2; exit 97; }; }
+for SIGNAL in 130 143; do
+  eval "${WORKCELL_START_FUNCTION}"
+  RUN=0; REFRESH=0; REAP=0; PROFILE_RUNNING=0
+  run_command_with_debug_log(){ RUN=$((RUN+1)); return "${SIGNAL}"; }; refresh_managed_profile(){ REFRESH=$((REFRESH+1)); :; }
+  status=0; start_managed_profile || status=$?; assert "${status},${RUN},${REFRESH}" "${SIGNAL},1,0"
+  RUN=0; REFRESH=0; run_command_with_debug_log(){ RUN=$((RUN+1)); return 124; }; refresh_managed_profile(){ REFRESH=$((REFRESH+1)); return "${SIGNAL}"; }
+  status=0; start_managed_profile || status=$?; assert "${status},${RUN},${REFRESH}" "${SIGNAL},1,1"
+  BUILD=0; CLEAN=0; SLEEP=0; REFRESH=0; run_command_with_debug_log(){ BUILD=$((BUILD+1)); return "${SIGNAL}"; }; sleep(){ SLEEP=$((SLEEP+1)); }
+  status=0; run_runtime_image_build_with_retries 1 || status=$?; assert "${status},${BUILD},${CLEAN},${SLEEP},${REFRESH}" "${SIGNAL},1,1,0,0"
+  BUILD=0; CLEAN=0; SLEEP=0; REFRESH=0; START=0; run_command_with_debug_log(){ BUILD=$((BUILD+1)); return 37; }
+  refresh_managed_profile(){ REFRESH=$((REFRESH+1)); :; }; start_managed_profile(){ START=$((START+1)); return "${SIGNAL}"; }
+  status=0; run_runtime_image_build_with_retries 1 || status=$?; assert "${status},${BUILD},${CLEAN},${SLEEP},${REFRESH},${START}" "${SIGNAL},1,1,1,1,1"
+  eval "${WORKCELL_REFRESH_FUNCTION}"
+  REAP=0; REMOVE=0; DELETE=0; RESIDUE=""; PROFILE_WAS_REFRESHED=0; run_host_colima_with_timeout(){ DELETE=$((DELETE+1)); return "${SIGNAL}"; }
+  status=0; refresh_managed_profile x || status=$?; assert "${status},${DELETE},${REAP},${REMOVE},${PROFILE_WAS_REFRESHED}" "${SIGNAL},1,1,0,0"
+done
+run_host_colima_with_timeout(){ :; }
+for MODE in first second pid state; do
+  REAP=0; REMOVE=0; RESIDUE=""; REAP_FAIL_AT=0; [[ "${MODE}" == first ]] && REAP_FAIL_AT=1; [[ "${MODE}" == second ]] && REAP_FAIL_AT=2; [[ "${MODE}" == pid ]] && RESIDUE=pid; [[ "${MODE}" == state ]] && RESIDUE=state
+  status=0; refresh_managed_profile x || status=$?; assert "${status}" 2
+done
+`
 
 func TestHostInputSourceContractRejectsMutants(t *testing.T) {
 	workcell := mustReadTestFile(t, filepath.Join("..", "..", "scripts", "workcell"))

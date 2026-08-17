@@ -2766,10 +2766,6 @@ go_verify_citools workcell-managed-profile-staging "${ROOT_DIR}" || exit 1
 WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-harness.sh"
 {
   printf 'set -euo pipefail\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" kill_process_tree_by_pid
-  printf '\n'
-  extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" terminate_process_tree_by_pid
-  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh" run_go_hostutil_preserve_exit
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" run_host_colima_with_timeout

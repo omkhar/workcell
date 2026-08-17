@@ -201,6 +201,24 @@ The launcher publishes a profile status only after the inventory producer and pa
 Workcell accepts only an absolute path for the selected Colima executable.
 Runtime DNS resolution uses a five-second deadline. The resolver cancels the lookup context when resolution finishes.
 
+### Colima timeout controls
+
+A positive managed Colima start or delete timeout cannot exceed 24 hours.
+For a positive timeout, the host utility starts Colima in a dedicated process group.
+The host utility handles `SIGINT` and `SIGTERM` that it receives directly.
+
+Cancellation sends `SIGTERM` when the process group exists. The host utility then polls for group absence.
+It sends `SIGKILL` if the group remains. It polls again and fails if the group remains.
+
+After successful deadline cleanup, the host utility returns status `124`.
+After successful signal cleanup, it returns status `130` for `SIGINT` and `143` for `SIGTERM`.
+Cancellation before process start returns the matching status without group cleanup.
+The host utility preserves ordinary exit statuses and unrelated signal statuses.
+It reports start, input/output, and cleanup errors.
+
+The launcher stops managed start and image-build retries after status `130` or `143`.
+A profile refresh preserves these statuses from its managed delete.
+
 The publication function is a deliberate host-side exception. It can receive
 the ambient operator publication and signing environment. The Tier 1 runtime
 does not receive this ambient state. Reviewed injection can stage selected

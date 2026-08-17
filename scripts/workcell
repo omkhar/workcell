@@ -685,34 +685,6 @@ run_host_colima() {
   )
 }
 
-kill_process_tree_by_pid() {
-  local target_pid="$1"
-  local child_pid=""
-
-  [[ -n "${target_pid}" ]] || return 0
-  while IFS= read -r child_pid; do
-    [[ -n "${child_pid}" ]] || continue
-    kill_process_tree_by_pid "${child_pid}"
-  done < <(pgrep -P "${target_pid}" 2>/dev/null || true)
-  kill "${target_pid}" >/dev/null 2>&1 || true
-}
-
-terminate_process_tree_by_pid() {
-  local target_pid="$1"
-  local deadline=0
-
-  [[ -n "${target_pid}" ]] || return 0
-  kill_process_tree_by_pid "${target_pid}"
-  deadline=$((SECONDS + 5))
-  while kill -0 "${target_pid}" >/dev/null 2>&1; do
-    if ((SECONDS >= deadline)); then
-      kill -9 "${target_pid}" >/dev/null 2>&1 || true
-      break
-    fi
-    sleep 1
-  done
-}
-
 run_host_colima_with_timeout() {
   local timeout_seconds="$1"
   shift
@@ -820,23 +792,29 @@ maybe_reap_stale_profile_processes() {
 
 refresh_managed_profile() {
   local message="$1"
+  local delete_status=0
 
   echo "${message}" >&2
   PROFILE_VALIDATED=0
   remember_profile_runtime_image_for_refresh "${COLIMA_PROFILE}"
   stash_profile_audit_log "${COLIMA_PROFILE}"
-  reap_stale_profile_processes "${COLIMA_PROFILE}" || return $?
+  reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
   run_host_colima_with_timeout "${WORKCELL_COLIMA_DELETE_TIMEOUT_SECONDS:-30}" \
-    delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || true
-  reap_stale_profile_processes "${COLIMA_PROFILE}" || return $?
+    delete --profile "${COLIMA_PROFILE}" --force >/dev/null 2>&1 || delete_status=$?
+  case "${delete_status}" in
+    130 | 143)
+      return "${delete_status}"
+      ;;
+  esac
+  reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
   remove_profile_state_dirs "${COLIMA_PROFILE}"
   if profile_process_pids "${COLIMA_PROFILE}" | grep -q .; then
     echo "Failed to fully tear down managed Colima profile ${COLIMA_PROFILE} during refresh." >&2
-    return 1
+    return 2
   fi
   if profile_state_dirs_exist "${COLIMA_PROFILE}"; then
     echo "Failed to remove managed Colima profile state for ${COLIMA_PROFILE} during refresh." >&2
-    return 1
+    return 2
   fi
   PROFILE_WAS_REFRESHED=1
   PROFILE_PREEXISTED=0
@@ -6389,14 +6367,11 @@ run_command_with_debug_log() {
   local heartbeat_pid=""
   local spinner_pid=""
   local spinner_enabled=0
-  local tail_pid=""
   local start_seconds=0
   local pid=""
   local status=0
-  local timed_out=0
-  local timeout_seconds=0
+  local managed_timeout_status=124
   local heartbeat_interval_seconds=30
-  local next_heartbeat=0
   local failed_capture_path=""
 
   format_elapsed_compact() {
@@ -6524,58 +6499,8 @@ run_command_with_debug_log() {
       fi
     fi
   fi
-  case "${label}" in
-    colima-start)
-      timeout_seconds="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}"
-      ;;
-  esac
   maybe_print_progress_update start "0s"
-  if ((timeout_seconds > 0)); then
-    "$@" >"${log_path}" 2>&1 &
-    pid=$!
-    if [[ "${spinner_enabled}" -eq 1 ]]; then
-      start_progress_spinner "${pid}"
-    elif [[ "${LOG_LEVEL}" != "debug" ]]; then
-      next_heartbeat=$((SECONDS + heartbeat_interval_seconds))
-    fi
-    if [[ "${LOG_LEVEL}" == "debug" ]]; then
-      tail -n +1 -f "${log_path}" >&2 &
-      tail_pid=$!
-    fi
-    while kill -0 "${pid}" >/dev/null 2>&1; do
-      sleep 1
-      if ! kill -0 "${pid}" >/dev/null 2>&1; then
-        break
-      fi
-      if [[ "${spinner_enabled}" -eq 0 ]] && [[ "${LOG_LEVEL}" != "debug" ]] && ((SECONDS >= next_heartbeat)); then
-        maybe_print_progress_update heartbeat "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
-        next_heartbeat=$((SECONDS + heartbeat_interval_seconds))
-      fi
-      if ((SECONDS - start_seconds >= timeout_seconds)); then
-        timed_out=1
-        terminate_process_tree_by_pid "${pid}"
-        break
-      fi
-    done
-    if wait "${pid}"; then
-      :
-    else
-      status=$?
-    fi
-    if ((timed_out == 1)); then
-      status=124
-    fi
-    stop_progress_spinner
-    if [[ -n "${tail_pid}" ]]; then
-      kill "${tail_pid}" >/dev/null 2>&1 || true
-      wait "${tail_pid}" 2>/dev/null || true
-    fi
-    if [[ -n "${DEBUG_LOG_PATH}" ]] && [[ -f "${log_path}" ]]; then
-      if debug_log_path="$(revalidate_recorded_host_output_path "${DEBUG_LOG_PATH}")"; then
-        cat "${log_path}" >>"${debug_log_path}"
-      fi
-    fi
-  elif [[ "${LOG_LEVEL}" == "debug" ]]; then
+  if [[ "${LOG_LEVEL}" == "debug" ]]; then
     set +e
     "$@" 2>&1 | tee "${log_path}" >&2
     debug_pipe_status=("${PIPESTATUS[@]}")
@@ -6621,7 +6546,7 @@ run_command_with_debug_log() {
   if [[ "${status}" -eq 0 ]]; then
     maybe_print_progress_update success "$(format_elapsed_compact "$((SECONDS - start_seconds))")"
   else
-    if ((timed_out == 1)); then
+    if [[ "${label}" == "colima-start" ]] && [[ "${status}" -eq "${managed_timeout_status}" ]]; then
       echo "Workcell timed out waiting for managed Colima profile ${COLIMA_PROFILE} to start ($(format_elapsed_compact "$((SECONDS - start_seconds))"))." >&2
     fi
     echo "Workcell ${label} failed." >&2
@@ -6776,11 +6701,11 @@ run_runtime_image_build_with_retries() {
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       case "${TARGET_BACKEND}" in
         colima)
-          refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return 2
+          refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return $?
           start_managed_profile || build_status=$?
           if [[ "${build_status}" -eq 0 ]] &&
             ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
-            refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return 2
+            refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after a failed runtime image build." || return $?
             start_managed_profile || build_status=$?
             if [[ "${build_status}" -eq 0 ]] &&
               ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT:-${WORKSPACE}}"; then
@@ -6796,6 +6721,11 @@ run_runtime_image_build_with_retries() {
           ;;
       esac
       if [[ "${build_status}" -ne 0 ]]; then
+        case "${build_status}" in
+          130 | 143)
+            return "${build_status}"
+            ;;
+        esac
         if [[ "${attempt}" -ge "${max_attempts}" ]]; then
           return "${build_status}"
         fi
@@ -6838,6 +6768,11 @@ run_runtime_image_build_with_retries() {
     if ! cleanup_runtime_builder; then
       return 2
     fi
+    case "${build_status}" in
+      130 | 143)
+        return "${build_status}"
+        ;;
+    esac
     if [[ "${build_status}" -eq 0 ]]; then
       return 0
     fi
@@ -7025,7 +6960,7 @@ start_managed_profile() {
   while :; do
     maybe_reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
     if run_command_with_debug_log colima-start \
-      run_host_colima start \
+      run_host_colima_with_timeout "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-180}" start \
       --profile "${COLIMA_PROFILE}" \
       --vm-type vz \
       --mount "${workspace_mount}:w" \
@@ -7045,14 +6980,19 @@ start_managed_profile() {
       PROFILE_RUNNING=1
       return 0
     fi
+    case "${start_status}" in
+      130 | 143)
+        return "${start_status}"
+        ;;
+    esac
     if [[ "${start_status}" -eq 124 ]] && [[ "${attempt}" -ge "${max_attempts}" ]]; then
-      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after repeated startup timeouts." || return 2
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after repeated startup timeouts." || return $?
       return 124
     fi
     if [[ "${start_status}" -ne 124 ]] && [[ "${attempt}" -lt "${max_attempts}" ]] &&
       colima_start_hit_recoverable_docker_boot_race; then
       reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
-      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima failed during Docker startup." || return 2
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima failed during Docker startup." || return $?
       echo "Retrying managed Colima profile ${COLIMA_PROFILE} after a Docker startup race (attempt $((attempt + 1))/${max_attempts})." >&2
       attempt=$((attempt + 1))
       continue
@@ -7061,7 +7001,7 @@ start_managed_profile() {
       return "${start_status}"
     fi
     reap_stale_profile_processes "${COLIMA_PROFILE}" || return 2
-    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima start timed out." || return 2
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} after Colima start timed out." || return $?
     echo "Retrying managed Colima profile ${COLIMA_PROFILE} after a startup timeout (attempt $((attempt + 1))/${max_attempts})." >&2
     attempt=$((attempt + 1))
   done
@@ -9190,15 +9130,15 @@ if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${PROFILE_PREEXISTED}" -eq 1 ]];
   profile_status=""
   if [[ ! -f "${profile_config_path}" ]] ||
     ! validate_colima_profile_config "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}" "${COLIMA_CPU}" "${COLIMA_MEMORY}" "${COLIMA_DISK}"; then
-    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." || exit 2
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to apply the requested reviewed VM resources." || exit $?
   elif [[ ! -f "${lima_config_path}" ]] ||
     ! validate_colima_runtime_mounts "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
-    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." || exit 2
+    refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} to discard stale runtime mounts." || exit $?
   else
     profile_status="$(colima_profile_status "${COLIMA_PROFILE}" || true)"
     if [[ "${profile_status}" == "Running" ]] &&
       ! validate_colima_runtime_workspace_view "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
-      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents." || exit 2
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the running VM is not exposing the expected workspace contents." || exit $?
     fi
   fi
 fi
@@ -9215,7 +9155,7 @@ if [[ "${TARGET_BACKEND}" == "colima" ]]; then
   start_managed_profile
   if ! validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}"; then
     if [[ "${PROFILE_PREEXISTED}" -eq 1 ]] && [[ "${PROFILE_WAS_REFRESHED}" -eq 0 ]]; then
-      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view." || exit 2
+      refresh_managed_profile "Refreshing managed Colima profile ${COLIMA_PROFILE} because the started VM did not expose the expected workspace view." || exit $?
       start_managed_profile
       validate_colima_profile "${COLIMA_PROFILE}" "${PROFILE_WORKSPACE_ROOT}" || exit 2
     else

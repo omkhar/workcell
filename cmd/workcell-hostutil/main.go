@@ -519,6 +519,9 @@ func parseColimaInvocationArgs(args []string) (int, launcher.HostColimaInvocatio
 	if err != nil {
 		return 0, launcher.HostColimaInvocation{}, nil, fmt.Errorf("parse timeout seconds: %w", err)
 	}
+	if timeoutSeconds > launcher.MaxColimaTimeoutSeconds {
+		return 0, launcher.HostColimaInvocation{}, nil, fmt.Errorf("timeout seconds must not exceed %d", launcher.MaxColimaTimeoutSeconds)
+	}
 	rest := args[1:]
 	inv := launcher.HostColimaInvocation{
 		ColimaBin:  os.Getenv("HOST_COLIMA_BIN"),
