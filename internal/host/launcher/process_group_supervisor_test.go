@@ -4,360 +4,350 @@
 package launcher
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
-func TestProcessGroupSupervisorRunRetainsCancellationResult(t *testing.T) {
-	cause := errors.New("cancel fixture")
-	cleanupErr := errors.New("cleanup fixture")
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(context.Canceled)
-	marker := filepath.Join(t.TempDir(), "ready")
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `printf ready >"$1"; while :; do :; done`, "fixture", marker)
-	s := defaultProcessGroupSupervisor()
-	s.signalGroup = func(_ int, _ syscall.Signal) error {
-		return errors.Join(cmd.Process.Kill(), cleanupErr)
+type supervisorTestWatcher struct {
+	result  chan error
+	closeFn func() error
+}
+
+func newSupervisorTestWatcher() *supervisorTestWatcher {
+	return &supervisorTestWatcher{result: make(chan error, 1)}
+}
+func (w *supervisorTestWatcher) done() <-chan error { return w.result }
+func (w *supervisorTestWatcher) signal(err error) {
+	select {
+	case w.result <- err:
+	default:
 	}
-	s.waitAbsent = func(_ int, _ time.Duration) (bool, error) { return true, nil }
-	go func() {
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			if _, err := os.Stat(marker); err == nil {
-				cancel(cause)
-				return
-			}
+}
+func (w *supervisorTestWatcher) close() error {
+	w.signal(nil)
+	if w.closeFn != nil {
+		return w.closeFn()
+	}
+	return nil
+}
+func fixturePID(t *testing.T, path string) int {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		data, err := os.ReadFile(path)
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err == nil && parseErr == nil && pid > 1 {
+			return pid
 		}
-		cancel(cause)
-	}()
-	result := s.run(ctx, cmd)
-	if !result.cleanupRan || result.preStartCanceled || !errors.Is(result.cleanupErr, cleanupErr) ||
-		!errors.Is(result.cause, cause) || result.runErr == nil || cmd.ProcessState == nil {
-		t.Fatalf("run result = %+v; process state = %v", result, cmd.ProcessState)
 	}
-
-	preCtx, preCancel := context.WithCancelCause(context.Background())
-	preCancel(cause)
-	preResult := defaultProcessGroupSupervisor().run(preCtx, exec.CommandContext(preCtx, "/usr/bin/true"))
-	if !preResult.preStartCanceled || preResult.cleanupRan || !errors.Is(preResult.cause, cause) {
-		t.Fatalf("pre-start run result = %+v", preResult)
+	t.Fatalf("fixture PID was not ready: %s", path)
+	return 0
+}
+func startSupervisorTestCommand(t *testing.T, cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestProcessGroupSupervisorRejectsPresetGroupBeforeStart(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		attr syscall.SysProcAttr
-	}{
-		{name: "selected group", attr: syscall.SysProcAttr{Pgid: 42}},
-		{name: "foreground group", attr: syscall.SysProcAttr{Foreground: true}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			marker := filepath.Join(t.TempDir(), "started")
-			cmd := exec.Command("/bin/sh", "-c", `: >"$1"`, "fixture", marker)
-			cmd.SysProcAttr = &tc.attr
-			result := defaultProcessGroupSupervisor().run(context.Background(), cmd)
-			if result.runErr == nil || !strings.Contains(result.runErr.Error(), "must not select") {
-				t.Fatalf("run result = %+v", result)
-			}
-			if cmd.Process != nil {
-				t.Fatalf("rejected command started process %d", cmd.Process.Pid)
-			}
-			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("start marker exists: %v", err)
-			}
-		})
-	}
-}
-
-func TestProcessGroupSupervisorContinuesCleanupAfterErrors(t *testing.T) {
-	cause := errors.New("cancel fixture")
-	signalErr := errors.New("TERM fixture")
-	pollErr := errors.New("poll fixture")
-	killErr := errors.New("KILL fixture")
-	fallbackErr := errors.New("leader fallback fixture")
+func TestProcessGroupSupervisorLeaderExitCancellation(t *testing.T) {
+	cause := errors.New("leader exit cancellation")
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(context.Canceled)
-	marker := filepath.Join(t.TempDir(), "process")
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `trap '' TERM; printf '%s %s\n' "$$" "$(ps -o pgid= -p $$ | tr -d ' ')" >"$1"; while :; do :; done`, "fixture", marker)
+	dir := t.TempDir()
+	childPIDPath := filepath.Join(dir, "child-pid")
+	releasePath := filepath.Join(dir, "release")
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", `
+/bin/sh -c 'trap "" TERM; printf "%s\n" "$$" >"$1"; sleep 5' fixture-child "$1" &
+while [ ! -f "$2" ]; do sleep .01; done
+exit 0
+`, "fixture", childPIDPath, releasePath)
+
+	watchInstalled := make(chan struct{})
+	childReady := make(chan int, 1)
+	var signals []syscall.Signal
+	var signaledAfterReap, termSurvived, watchClosedBeforeWait bool
 	s := defaultProcessGroupSupervisor()
-	s.termGrace = 100 * time.Millisecond
-	s.proofLimit = 100 * time.Millisecond
-	s.waitDelay = 100 * time.Millisecond
 	s.signalGroup = func(groupID int, signal syscall.Signal) error {
-		actual, err := syscall.Getpgid(groupID)
-		if err != nil || actual != groupID || validateSafeProcessGroupID(groupID) != nil {
-			return fmt.Errorf("unsafe fixture group %d (actual %d): %w", groupID, actual, err)
-		}
+		signaledAfterReap = signaledAfterReap || cmd.ProcessState != nil
+		signals = append(signals, signal)
+		err := signalProcessGroup(groupID, signal)
 		if signal == syscall.SIGTERM {
-			return signalErr
+			termSurvived = syscall.Kill(<-childReady, 0) == nil
 		}
-		return killErr
+		return err
 	}
-	waitCall := 0
-	s.waitAbsent = func(_ int, _ time.Duration) (bool, error) {
-		waitCall++
-		if waitCall == 1 {
-			return false, pollErr
-		}
-		return false, nil
+	s.afterFunc = func(_ context.Context, callback func()) func() bool {
+		return func() bool { cancel(cause); callback(); return false }
 	}
-	s.killProcess = func(*os.Process) error { return fallbackErr }
-	go func() {
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-			if fields := pollProcessMarker(marker, 25*time.Millisecond, 2); len(fields) == 2 {
-				cancel(cause)
-				return
-			}
+	s.watchExit = func(pid int) (processExitWatcher, error) {
+		inner, err := startProcessExitWatch(pid)
+		if err != nil {
+			return nil, err
 		}
-		cancel(cause)
-	}()
+		watch := newSupervisorTestWatcher()
+		watch.closeFn = func() error {
+			watchClosedBeforeWait = cmd.ProcessState == nil
+			return inner.close()
+		}
+		go func() {
+			watch.signal(<-inner.done())
+		}()
+		close(watchInstalled)
+		return watch, nil
+	}
+
 	results := make(chan processGroupRunResult, 1)
 	go func() { results <- s.run(ctx, cmd) }()
+	select {
+	case <-watchInstalled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("exit watcher was not installed")
+	}
+	childReady <- fixturePID(t, childPIDPath)
+	if err := os.WriteFile(releasePath, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var result processGroupRunResult
 	select {
 	case result = <-results:
-	case <-time.After(2 * time.Second):
-		_ = cmd.Process.Kill()
-		<-results
-		t.Fatal("cleanup did not return before its bounded fallback")
+	case <-time.After(10 * time.Second):
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		}
+		t.Fatal("leader-exit cleanup did not finish")
 	}
-	if !result.cleanupRan || !errors.Is(result.cleanupErr, signalErr) || !errors.Is(result.cleanupErr, pollErr) ||
-		!errors.Is(result.cleanupErr, killErr) || !errors.Is(result.cleanupErr, fallbackErr) ||
-		!errors.Is(result.cause, cause) || result.runErr == nil {
+	if result.runErr != nil || result.cleanupErr != nil || !result.cleanupRan || !errors.Is(result.cause, cause) {
 		t.Fatalf("run result = %+v", result)
 	}
-	absent, err := waitForProcessGroupExit(cmd.Process.Pid, time.Second)
-	if err != nil || !absent {
-		t.Fatalf("fixture group %d remains: absent=%v err=%v", cmd.Process.Pid, absent, err)
+	if len(signals) != 2 || signals[0] != syscall.SIGTERM || signals[1] != syscall.SIGKILL {
+		t.Fatalf("signals = %v, want TERM then KILL", signals)
+	}
+	if signaledAfterReap || !termSurvived || !watchClosedBeforeWait || cmd.ProcessState == nil {
+		t.Fatalf("ordering: after-reap=%v term-survived=%v close-before-wait=%v state=%v", signaledAfterReap, termSurvived, watchClosedBeforeWait, cmd.ProcessState)
+	}
+	if err := syscall.Kill(-cmd.Process.Pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("process group %d remains after cleanup: %v", cmd.Process.Pid, err)
 	}
 }
-
-func TestOwnedProcessGroupSurvivesLeaderExit(t *testing.T) {
-	dir := t.TempDir()
-	marker, release := filepath.Join(dir, "processes"), filepath.Join(dir, "release")
-	cmd := exec.Command("/bin/sh", "-c", `
-while [ ! -f "$WORKCELL_TEST_OUTER_GROUP_READY" ]; do sleep .01; done
-sh -c 'trap "" TERM; while :; do sleep 1; done' fixture-child "$1" & child=$!
-pgid=$(ps -o pgid= -p $$ | tr -d ' ')
-printf '%s %s %s\n' "$pgid" "$$" "$child" >"$1.tmp"; mv "$1.tmp" "$1"
-while [ ! -f "$2" ]; do sleep .01; done
-`, "fixture", marker, release)
-	fixture := startOwnedFixtureCommand(t, cmd)
-	if fields := pollProcessMarker(marker, 5*time.Second, 3); len(fields) != 3 {
-		t.Fatal("process marker was not ready")
-	}
-	original, err := os.ReadFile(marker)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(marker, []byte("malformed\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateOwnedFixtureProcessGroupMarker(fixture.group, marker); err == nil {
-		t.Fatal("malformed behavior marker passed validation")
-	}
-	if err := os.WriteFile(marker, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	group := fixture.group
-	if err := validateOwnedFixtureProcessGroupMarker(group, marker); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(release, []byte("release\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.wait(); err != nil {
-		t.Fatal(err)
-	}
-	groupID, absent, err := ownedProcessGroupForProcess(cmd.Process)
-	if err != nil || absent || int(groupID) != group.id {
-		t.Fatalf("ownedProcessGroupForProcess() = %d, %v, %v", groupID, absent, err)
-	}
-	if err := signalProcessGroup(group.id, syscall.SIGKILL); err != nil {
-		t.Fatal(err)
-	}
-	group.proveAbsent(t)
-	_, absent, err = ownedProcessGroupForProcess(cmd.Process)
-	if err != nil || !absent {
-		t.Fatalf("absent group probe = %v, %v", absent, err)
+func TestProcessGroupSupervisorOrdinaryExit(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "exit 7")
+	watch := newSupervisorTestWatcher()
+	watch.signal(nil)
+	closedBeforeWait := false
+	watch.closeFn = func() error { closedBeforeWait = cmd.ProcessState == nil; return nil }
+	s := defaultProcessGroupSupervisor()
+	s.watchExit = func(int) (processExitWatcher, error) { return watch, nil }
+	result := s.run(context.Background(), cmd)
+	var exitErr *exec.ExitError
+	if result.cleanupRan || !closedBeforeWait || cmd.ProcessState == nil ||
+		!errors.As(result.runErr, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("run result = %+v, want ordinary exit 7", result)
 	}
 }
-
-func TestFixtureOwnerHandshakeFailsClosed(t *testing.T) {
-	if os.Getenv("WORKCELL_OWNER_HANDSHAKE_HELPER") == "1" {
-		waitForOwnedFixtureCommandReady()
-		cmd := exec.Command(os.Getenv("WORKCELL_OWNER_HANDSHAKE_BIN"))
-		cmd.Stdout = os.Stdout
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := cmd.Start(); err != nil {
-			os.Exit(125)
-		}
-		_ = cmd.Wait()
-		os.Exit(0)
-	}
-	for _, tc := range []struct {
-		name   string
-		output string
+func TestProcessGroupSupervisorWatchFailures(t *testing.T) {
+	sentinel := errors.New("supervision failed")
+	tests := []struct {
+		name      string
+		configure func(*processGroupSupervisor, *supervisorTestWatcher)
+		wantErr   error
+		wantText  string
 	}{
-		{"missing", ""},
-		{"malformed", "printf 'bad owner record\\n'"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			fake := writeFakeColima(t, dir, "#!/bin/sh\n"+tc.output+`
-count=0
-while [ ! -f "$WORKCELL_OWNER_HANDSHAKE_ACK" ] && [ "$count" -lt 100 ]; do sleep .01; count=$((count + 1)); done
-exit 125
-`)
-			cmd := exec.Command(os.Args[0], "-test.run=^TestFixtureOwnerHandshakeFailsClosed$")
-			ownerPipe, err := cmd.StdoutPipe()
-			if err != nil {
-				t.Fatal(err)
+		{"capture generation", func(s *processGroupSupervisor, _ *supervisorTestWatcher) {
+			s.captureGeneration = func(int) (string, error) { return "", sentinel }
+		}, sentinel, ""},
+		{"unsupported generation", func(s *processGroupSupervisor, _ *supervisorTestWatcher) {
+			s.captureGeneration = func(int) (string, error) { return "legacy start time", nil }
+		}, nil, "unsupported generation"},
+		{"second generation observation", func(s *processGroupSupervisor, _ *supervisorTestWatcher) {
+			calls := 0
+			s.observeGeneration = func(_ int, recorded string) (string, error) {
+				calls++
+				return []string{recorded, "darwin:reused"}[calls-1], nil
 			}
-			cmd.Env = append(os.Environ(),
-				"WORKCELL_OWNER_HANDSHAKE_HELPER=1",
-				"WORKCELL_OWNER_HANDSHAKE_BIN="+fake,
-				"WORKCELL_OWNER_HANDSHAKE_ACK="+filepath.Join(dir, "not-created"),
-			)
-			fixture := startOwnedFixtureCommand(t, cmd)
-			if group, err := readOwnedFixtureProcessGroupPipe(ownerPipe, cmd.Process.Pid, fake); err == nil || group != nil {
-				t.Fatalf("invalid owner handshake = %v, %v", group, err)
-			}
-			if err := fixture.wait(); err != nil {
-				t.Fatal(err)
-			}
-			fixture.group.proveAbsent(t)
-			if !waitForFixtureCommandPathAbsent(fake, 5*time.Second) {
-				t.Fatalf("fixture command remains: %s", fake)
-			}
-		})
+		}, nil, "generation changed"},
+		{"watch setup", func(s *processGroupSupervisor, _ *supervisorTestWatcher) {
+			s.watchExit = func(int) (processExitWatcher, error) { return nil, sentinel }
+		}, sentinel, ""},
+		{"watch runtime", func(s *processGroupSupervisor, w *supervisorTestWatcher) {
+			s.watchExit = func(int) (processExitWatcher, error) { w.signal(sentinel); return w, nil }
+		}, sentinel, ""},
+		{"nil watcher", func(s *processGroupSupervisor, _ *supervisorTestWatcher) {
+			s.watchExit = func(int) (processExitWatcher, error) { return nil, nil }
+		}, nil, "exit watch"},
 	}
-}
-
-func waitForFixtureCommandPathAbsent(path string, limit time.Duration) bool {
-	for deadline := time.Now().Add(limit); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
-		output, err := exec.Command("/bin/ps", "-axo", "command=").Output()
-		if err == nil && !strings.Contains(string(output), path) {
-			return true
-		}
-	}
-	return false
-}
-
-func TestProcessGroupSupervisorTerminate(t *testing.T) {
-	sentinel := errors.New("fixture failure")
-	for _, tc := range []struct {
-		name         string
-		waits        []bool
-		signalFail   int
-		waitFail     int
-		wantSignal   []syscall.Signal
-		wantFallback int
-		wantErr      error
-		wantText     string
-	}{
-		{name: "TERM is sufficient", waits: []bool{true}, wantSignal: []syscall.Signal{syscall.SIGTERM}},
-		{name: "escalates to KILL", waits: []bool{false, true}, wantSignal: []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}},
-		{name: "TERM fails", waits: []bool{false, true}, signalFail: 1, wantSignal: []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, wantErr: sentinel},
-		{name: "TERM poll fails", waits: []bool{false, true}, waitFail: 1, wantSignal: []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, wantErr: sentinel},
-		{name: "KILL fails", waits: []bool{false, true}, signalFail: 2, wantSignal: []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, wantFallback: 1, wantErr: sentinel},
-		{name: "KILL poll fails", waits: []bool{false}, waitFail: 2, wantSignal: []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, wantFallback: 1, wantErr: sentinel},
-		{name: "group survives KILL", waits: []bool{false, false}, wantSignal: []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, wantFallback: 1, wantText: "remains after SIGKILL"},
-	} {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command("/bin/sleep", "2")
+			watch := newSupervisorTestWatcher()
 			var signals []syscall.Signal
-			waitCall := 0
-			fallbacks := 0
-			s := processGroupSupervisor{
-				signalGroup: func(_ int, signal syscall.Signal) error {
-					signals = append(signals, signal)
-					if len(signals) == tc.signalFail {
-						return sentinel
-					}
-					return nil
-				},
-				waitAbsent: func(_ int, _ time.Duration) (bool, error) {
-					waitCall++
-					if waitCall == tc.waitFail {
-						return false, sentinel
-					}
-					if waitCall <= len(tc.waits) {
-						return tc.waits[waitCall-1], nil
-					}
-					return false, nil
-				},
-				killProcess: func(*os.Process) error { fallbacks++; return nil },
-				termGrace:   time.Second,
-				proofLimit:  time.Second,
+			signaledAfterReap := false
+			s := defaultProcessGroupSupervisor()
+			tc.configure(&s, watch)
+			s.signalGroup = func(groupID int, signal syscall.Signal) error {
+				signaledAfterReap = signaledAfterReap || cmd.ProcessState != nil
+				signals = append(signals, signal)
+				return signalProcessGroup(groupID, signal)
 			}
-			err := s.terminate(ownedProcessGroupID(4242), &os.Process{Pid: 4242})
-			if !reflect.DeepEqual(signals, tc.wantSignal) {
-				t.Fatalf("signals = %v, want %v", signals, tc.wantSignal)
+			result := s.run(context.Background(), cmd)
+			if result.cleanupErr != nil || cmd.ProcessState == nil || signaledAfterReap ||
+				len(signals) != 1 || signals[0] != syscall.SIGKILL {
+				t.Fatalf("run result=%+v signals=%v after-reap=%v state=%v", result, signals, signaledAfterReap, cmd.ProcessState)
 			}
-			if fallbacks != tc.wantFallback {
-				t.Fatalf("leader fallbacks = %d, want %d", fallbacks, tc.wantFallback)
+			if tc.wantErr != nil && !errors.Is(result.runErr, tc.wantErr) ||
+				tc.wantText != "" && !strings.Contains(result.runErr.Error(), tc.wantText) {
+				t.Fatalf("run error = %v, want %v %q", result.runErr, tc.wantErr, tc.wantText)
 			}
-			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Fatalf("error = %v, want %v", err, tc.wantErr)
-			}
-			if tc.wantText != "" && (err == nil || !strings.Contains(err.Error(), tc.wantText)) {
-				t.Fatalf("error = %v, want %q", err, tc.wantText)
-			}
-			if tc.wantErr == nil && tc.wantText == "" && err != nil {
-				t.Fatal(err)
+			if code, err := colimaRunResult(result.runErr); code != 0 || err == nil {
+				t.Fatalf("colima result = %d, %v; want surfaced supervision error", code, err)
 			}
 		})
 	}
 }
-
-func TestProcessGroupHelpersRejectUnsafeIDs(t *testing.T) {
-	for _, groupID := range []int{-1, 0, 1, syscall.Getpgrp()} {
-		killCalled := false
-		recordKill := func(int, syscall.Signal) error { killCalled = true; return nil }
-		err := signalProcessGroupWithKill(groupID, syscall.SIGTERM, recordKill)
-		if err == nil || killCalled {
-			t.Fatalf("signalProcessGroupWithKill(%d) = %v; kill called=%v", groupID, err, killCalled)
+func TestProcessGroupSupervisorSkipsWaitAfterDirectKillFailure(t *testing.T) {
+	directErr := errors.New("direct kill failed")
+	for _, groupErr := range []error{errors.New("group signal failed"), nil} {
+		cmd := exec.Command("/bin/sh", "-c", "trap '' TERM; while :; do sleep 1; done")
+		startSupervisorTestCommand(t, cmd)
+		t.Cleanup(func() {
+			if cmd.ProcessState == nil {
+				_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+				_ = cmd.Wait()
+			}
+		})
+		s := defaultProcessGroupSupervisor()
+		owner, err := s.captureOwner(cmd.Process)
+		if err != nil {
+			t.Fatal(err)
 		}
-		probeCalled := false
-		recordProbe := func(int, syscall.Signal) error { probeCalled = true; return nil }
-		absent, err := waitForProcessGroupExitWithProbe(groupID, 0, recordProbe, time.Now, time.Sleep)
-		if err == nil || absent || probeCalled {
-			t.Fatalf("waitForProcessGroupExitWithProbe(%d) = %v, %v; probe called=%v", groupID, absent, err, probeCalled)
+		s.termGrace, s.proofLimit = 10*time.Millisecond, 10*time.Millisecond
+		s.signalGroup = func(int, syscall.Signal) error { return groupErr }
+		s.killProcess = func(*os.Process) error { return directErr }
+		started := time.Now()
+		waitErr, cleanupErr := s.stopStartedCommand(
+			cmd, owner, newSupervisorTestWatcher(), false, nil, true)
+		if time.Since(started) > time.Second || waitErr != nil || cmd.ProcessState != nil {
+			t.Fatalf("unconfirmed cleanup was not bounded: wait=%v state=%v", waitErr, cmd.ProcessState)
+		}
+		if !errors.Is(cleanupErr, directErr) || !strings.Contains(cleanupErr.Error(), "wait skipped") ||
+			groupErr != nil && !errors.Is(cleanupErr, groupErr) {
+			t.Fatalf("cleanup error = %v, group error = %v", cleanupErr, groupErr)
 		}
 	}
-	group := ownedFixtureProcessGroup{id: 42, members: map[int]string{42: "original"}}
-	if group.hasLiveMemberWith(func(int) (int, string, error) { return 42, "reused", nil }) {
-		t.Fatal("stale process generation was accepted")
+}
+func TestProcessGroupSupervisorSignalEPERMRequiresProof(t *testing.T) {
+	proofErr := errors.New("absence proof failed")
+	tests := []struct {
+		signal    syscall.Signal
+		absent    bool
+		proofErr  error
+		reuse     bool
+		wantError bool
+	}{
+		{syscall.SIGTERM, true, nil, false, false},
+		{syscall.SIGTERM, false, nil, false, true},
+		{syscall.SIGKILL, true, nil, false, false},
+		{syscall.SIGKILL, false, proofErr, false, true},
+		{syscall.SIGKILL, false, nil, true, true},
 	}
-	if !group.hasLiveMemberWith(func(int) (int, string, error) { return 42, "original", nil }) {
-		t.Fatal("matching process generation was rejected")
+	for _, tc := range tests {
+		cmd := exec.Command("/bin/sh", "-c", "while :; do sleep 1; done")
+		startSupervisorTestCommand(t, cmd)
+		owner := processGroupOwner{pid: cmd.Process.Pid, generation: "darwin:test"}
+		watch := newSupervisorTestWatcher()
+		watch.signal(nil)
+		signaledAfterReap := false
+		s := defaultProcessGroupSupervisor()
+		s.signalGroup = func(_ int, signal syscall.Signal) error {
+			signaledAfterReap = signaledAfterReap || cmd.ProcessState != nil
+			if signal == tc.signal {
+				return syscall.EPERM
+			}
+			return nil
+		}
+		s.killProcess = func(process *os.Process) error { return process.Kill() }
+		s.observeGeneration = func(pid int, _ string) (string, error) {
+			if tc.reuse {
+				return "darwin:reused", nil
+			}
+			return "", processGoneErr{pid: pid}
+		}
+		s.waitAbsent = func(int, time.Duration) (bool, error) {
+			return tc.absent, tc.proofErr
+		}
+		_, cleanupErr := s.stopStartedCommand(cmd, owner, watch, true, nil, true)
+		if cmd.ProcessState == nil || signaledAfterReap {
+			t.Fatalf("ordering: state=%v after-reap=%v", cmd.ProcessState, signaledAfterReap)
+		}
+		if (cleanupErr != nil) != tc.wantError || tc.wantError && !errors.Is(cleanupErr, syscall.EPERM) ||
+			tc.proofErr != nil && !errors.Is(cleanupErr, tc.proofErr) ||
+			tc.reuse && !strings.Contains(cleanupErr.Error(), "generation changed after wait") {
+			t.Fatalf("cleanup error = %v for signal=%s proof=%v reuse=%v", cleanupErr, tc.signal, tc.proofErr, tc.reuse)
+		}
+	}
+}
+func TestColimaCancellationResultsPreserveFailures(t *testing.T) {
+	runErr, cleanupErr, cause := errors.New("run failed"), errors.New("cleanup failed"), context.DeadlineExceeded
+	if code, err := colimaCancellationResult(runErr, cleanupErr, cause); code != 0 ||
+		!errors.Is(err, runErr) || !errors.Is(err, cleanupErr) || !errors.Is(err, cause) {
+		t.Fatalf("cleanup failure result = %d, %v", code, err)
+	}
+}
+func TestWaitStartedCommandWaitDelayIsSynchronous(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "sleep .2 & exit 0")
+	cmd.Stdout = &bytes.Buffer{}
+	startSupervisorTestCommand(t, cmd)
+	if err := waitStartedCommand(cmd, 20*time.Millisecond); !errors.Is(err, exec.ErrWaitDelay) {
+		t.Fatalf("wait error = %v, want ErrWaitDelay", err)
+	}
+	if cmd.ProcessState == nil {
+		t.Fatal("Wait returned before recording process state")
+	}
+	if absent, err := waitForProcessGroupExit(cmd.Process.Pid, 2*time.Second); err != nil || !absent {
+		t.Fatalf("held-pipe process group remains: absent=%v err=%v", absent, err)
+	}
+}
+func TestProcessGroupSupervisorRejectsPresetGroup(t *testing.T) {
+	for _, attr := range []syscall.SysProcAttr{{Pgid: 42}, {Foreground: true}} {
+		cmd := exec.Command("/usr/bin/true")
+		cmd.SysProcAttr = &attr
+		result := defaultProcessGroupSupervisor().run(context.Background(), cmd)
+		if result.runErr == nil || !strings.Contains(result.runErr.Error(), "must not select") || cmd.Process != nil {
+			t.Fatalf("preset group result=%+v process=%v", result, cmd.Process)
+		}
 	}
 }
 
-func TestWaitForProcessGroupExitTreatsEPERMAsPresent(t *testing.T) {
-	now := time.Unix(1, 0)
-	absent, err := waitForProcessGroupExitWithProbe(
-		42,
-		0,
+func TestProcessGroupHelpersRejectUnsafeIDsAndTreatEPERMAsPresent(t *testing.T) {
+	for _, groupID := range []int{-1, 0, 1, syscall.Getpgrp()} {
+		called := false
+		if err := signalProcessGroupWithKill(groupID, syscall.SIGTERM, func(int, syscall.Signal) error { called = true; return nil }); err == nil || called {
+			t.Fatalf("unsafe signal group %d: err=%v called=%v", groupID, err, called)
+		}
+		if absent, err := waitForProcessGroupExitWithProbe(groupID, 0,
+			func(int, syscall.Signal) error { called = true; return nil },
+			time.Now, time.Sleep); err == nil || absent || called {
+			t.Fatalf("unsafe probe group %d: absent=%v err=%v called=%v", groupID, absent, err, called)
+		}
+	}
+	absent, err := waitForProcessGroupExitWithProbe(42, 0,
 		func(pid int, signal syscall.Signal) error {
 			if pid != -42 || signal != 0 {
 				t.Fatalf("probe = (%d, %d)", pid, signal)
 			}
 			return syscall.EPERM
 		},
-		func() time.Time { return now },
-		func(time.Duration) { t.Fatal("unexpected sleep") },
-	)
+		func() time.Time { return time.Unix(1, 0) },
+		func(time.Duration) { t.Fatal("unexpected sleep") })
 	if err != nil || absent {
-		t.Fatalf("waitForProcessGroupExitWithProbe() = %v, %v, want present", absent, err)
+		t.Fatalf("EPERM probe = absent=%v err=%v, want present", absent, err)
 	}
 }
