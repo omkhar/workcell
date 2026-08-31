@@ -276,11 +276,11 @@ func (s processGroupSupervisor) stopStartedCommand(cmd *exec.Cmd, owner processG
 	}
 	cleanupErr := errors.Join(leaderKillErr, watchTimeoutErr,
 		closeAndDrainExitWatch(exitWatch, watchReady, watchErr, processGroupWatchDrainLimit))
-	if leaderKillErr != nil && !(watchReady && watchErr == nil) {
+	if !(watchReady && watchErr == nil) {
 		return nil, errors.Join(cleanupErr,
 			processGroupSignalError(owner.pid, "SIGTERM", sigtermErr, false),
 			processGroupSignalError(owner.pid, "SIGKILL", sigkillErr, false),
-			fmt.Errorf("process-group leader %d exit was not observed after direct kill failure; command wait skipped", owner.pid))
+			fmt.Errorf("process-group leader %d exit was not observed; command wait skipped", owner.pid))
 	}
 	waitErr := waitStartedCommand(cmd, s.proofLimit)
 	proofErr := s.proveOwnedGroupAbsent(cmd, owner)

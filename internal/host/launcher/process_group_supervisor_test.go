@@ -198,11 +198,15 @@ func TestProcessGroupSupervisorWatchFailures(t *testing.T) {
 				return signalProcessGroup(groupID, signal)
 			}
 			result := s.run(context.Background(), cmd)
-			if result.cleanupErr != nil || cmd.ProcessState == nil || signaledAfterReap ||
+			unreaped := cmd.ProcessState == nil
+			if unreaped {
+				_ = cmd.Wait()
+			}
+			if result.cleanupErr != nil || !unreaped || cmd.ProcessState == nil || signaledAfterReap ||
 				len(signals) != 1 || signals[0] != syscall.SIGKILL {
 				t.Fatalf("run result=%+v signals=%v after-reap=%v state=%v", result, signals, signaledAfterReap, cmd.ProcessState)
 			}
-			if tc.wantErr != nil && !errors.Is(result.runErr, tc.wantErr) ||
+			if !strings.Contains(result.runErr.Error(), "wait skipped") || tc.wantErr != nil && !errors.Is(result.runErr, tc.wantErr) ||
 				tc.wantText != "" && !strings.Contains(result.runErr.Error(), tc.wantText) {
 				t.Fatalf("run error = %v, want %v %q", result.runErr, tc.wantErr, tc.wantText)
 			}
@@ -212,34 +216,41 @@ func TestProcessGroupSupervisorWatchFailures(t *testing.T) {
 		})
 	}
 }
-func TestProcessGroupSupervisorSkipsWaitAfterDirectKillFailure(t *testing.T) {
-	directErr := errors.New("direct kill failed")
-	for _, groupErr := range []error{errors.New("group signal failed"), nil} {
-		cmd := exec.Command("/bin/sh", "-c", "trap '' TERM; while :; do sleep 1; done")
-		startSupervisorTestCommand(t, cmd)
-		t.Cleanup(func() {
-			if cmd.ProcessState == nil {
-				_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
-				_ = cmd.Wait()
+func TestProcessGroupSupervisorSkipsWaitWithoutObservedExit(t *testing.T) {
+	for _, directErr := range []error{errors.New("direct kill failed"), nil} {
+		for _, groupErr := range []error{errors.New("group signal failed"), nil} {
+			cmd := exec.Command("/bin/sleep", "30")
+			startSupervisorTestCommand(t, cmd)
+			t.Cleanup(func() {
+				if cmd.ProcessState == nil {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			})
+			s := defaultProcessGroupSupervisor()
+			owner, err := s.captureOwner(cmd.Process)
+			if err != nil {
+				t.Fatal(err)
 			}
-		})
-		s := defaultProcessGroupSupervisor()
-		owner, err := s.captureOwner(cmd.Process)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s.termGrace, s.proofLimit = 10*time.Millisecond, 10*time.Millisecond
-		s.signalGroup = func(int, syscall.Signal) error { return groupErr }
-		s.killProcess = func(*os.Process) error { return directErr }
-		started := time.Now()
-		waitErr, cleanupErr := s.stopStartedCommand(
-			cmd, owner, newSupervisorTestWatcher(), false, nil, true)
-		if time.Since(started) > time.Second || waitErr != nil || cmd.ProcessState != nil {
-			t.Fatalf("unconfirmed cleanup was not bounded: wait=%v state=%v", waitErr, cmd.ProcessState)
-		}
-		if !errors.Is(cleanupErr, directErr) || !strings.Contains(cleanupErr.Error(), "wait skipped") ||
-			groupErr != nil && !errors.Is(cleanupErr, groupErr) {
-			t.Fatalf("cleanup error = %v, group error = %v", cleanupErr, groupErr)
+			s.termGrace, s.proofLimit = 10*time.Millisecond, 10*time.Millisecond
+			s.signalGroup = func(int, syscall.Signal) error { return groupErr }
+			s.killProcess = func(*os.Process) error { return directErr }
+			fallbackDone := make(chan struct{})
+			killFallback := time.AfterFunc(2*time.Second, func() { _ = cmd.Process.Kill(); close(fallbackDone) })
+			waitErr, cleanupErr := s.stopStartedCommand(
+				cmd, owner, newSupervisorTestWatcher(), false, nil, true)
+			stopped := killFallback.Stop()
+			if !stopped {
+				<-fallbackDone
+			}
+			if !stopped || waitErr != nil || cmd.ProcessState != nil {
+				t.Fatalf("unconfirmed cleanup was not bounded: wait=%v state=%v", waitErr, cmd.ProcessState)
+			}
+			if directErr != nil && !errors.Is(cleanupErr, directErr) || !strings.Contains(cleanupErr.Error(), "wait skipped") ||
+				!strings.Contains(cleanupErr.Error(), "exit watch did not signal") ||
+				groupErr != nil && !errors.Is(cleanupErr, groupErr) {
+				t.Fatalf("cleanup error = %v, group error = %v", cleanupErr, groupErr)
+			}
 		}
 	}
 }
