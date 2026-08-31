@@ -183,10 +183,11 @@ func colimaCancellationResult(runErr, cleanupErr, cause error) (int, error) {
 		}
 		return 0, errors.Join(cleanupErr, causeErr)
 	}
-	if expectedColimaCancellationError(runErr) {
-		return colimaCancellationExitCode(cause)
+	var exitErr *exec.ExitError
+	if runErr != nil && !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, context.DeadlineExceeded) && !errors.As(runErr, &exitErr) {
+		return colimaRunResult(runErr)
 	}
-	return colimaRunResult(runErr)
+	return colimaCancellationExitCode(cause)
 }
 
 func colimaCancellationExitCode(cause error) (int, error) {
@@ -194,18 +195,6 @@ func colimaCancellationExitCode(cause error) (int, error) {
 		return ColimaTimeoutExitCode, nil
 	}
 	return 0, fmt.Errorf("colima cancellation has unexpected cause: %w", cause)
-}
-
-func expectedColimaCancellationError(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return false
-	}
-	status, ok := exitErr.Sys().(syscall.WaitStatus)
-	return ok && status.Signaled() && (status.Signal() == syscall.SIGTERM || status.Signal() == syscall.SIGKILL)
 }
 
 func colimaExitCode(exitErr *exec.ExitError) int {

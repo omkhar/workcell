@@ -218,6 +218,7 @@ func TestRunHostColimaWithTimeoutKillsRunawayChild(t *testing.T) {
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 # Let the leader exit on TERM while its descendant ignores TERM.
+trap 'exit 11' TERM
 sh -c 'trap "" TERM; sleep 5' &
 wait
 `)

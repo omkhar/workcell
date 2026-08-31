@@ -311,6 +311,16 @@ func TestColimaCancellationResultsPreserveFailures(t *testing.T) {
 		!errors.Is(err, runErr) || !errors.Is(err, cleanupErr) || !errors.Is(err, cause) {
 		t.Fatalf("cleanup failure result = %d, %v", code, err)
 	}
+	if code, err := colimaCancellationResult(runErr, nil, cause); code != 0 || !errors.Is(err, runErr) {
+		t.Fatalf("unexpected wait failure result = %d, %v", code, err)
+	}
+}
+func TestColimaCancellationResultPreservesTimeout(t *testing.T) {
+	runErr := exec.Command("/bin/sh", "-c", "exit 11").Run()
+	var exitErr *exec.ExitError
+	if code, err := colimaCancellationResult(runErr, nil, context.DeadlineExceeded); !errors.As(runErr, &exitErr) || code != ColimaTimeoutExitCode || err != nil {
+		t.Fatalf("graceful nonzero timeout result = %d, %v", code, err)
+	}
 }
 func TestWaitStartedCommandWaitDelayIsSynchronous(t *testing.T) {
 	cmd := exec.Command("/bin/sh", "-c", "sleep .2 & exit 0")
