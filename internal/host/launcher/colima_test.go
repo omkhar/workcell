@@ -217,9 +217,10 @@ func TestRunHostColimaWithTimeoutKillsRunawayChild(t *testing.T) {
 	// Serial — see ETXTBSY note on TestRunHostColimaForwardsArgsAndPropagatesExitCode.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
-# Sleep well past the test deadline to force the timeout path.
-sleep 30
-exit 0
+# Let the leader exit on TERM while its descendant ignores TERM.
+trap 'exit 11' TERM
+sh -c 'trap "" TERM; sleep 5' &
+wait
 `)
 	start := time.Now()
 	code, err := RunHostColimaWithTimeout(1, HostColimaInvocation{
@@ -233,7 +234,7 @@ exit 0
 	if code != ColimaTimeoutExitCode {
 		t.Fatalf("RunHostColimaWithTimeout() code = %d, want %d", code, ColimaTimeoutExitCode)
 	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
+	if elapsed := time.Since(start); elapsed < 750*time.Millisecond || elapsed > 4*time.Second {
 		t.Fatalf("RunHostColimaWithTimeout() took %s, expected to honour 1s deadline", elapsed)
 	}
 }
@@ -245,8 +246,9 @@ func TestRunHostColimaWithTimeoutReturnsExitCodeWhenFastEnough(t *testing.T) {
 	// Serial — see ETXTBSY note on TestRunHostColimaForwardsArgsAndPropagatesExitCode.
 	dir := t.TempDir()
 	fake := writeFakeColima(t, dir, `#!/bin/sh
-exit 0
+exit 7
 `)
+	start := time.Now()
 	code, err := RunHostColimaWithTimeout(30, HostColimaInvocation{
 		ColimaBin: fake,
 		RealHome:  dir,
@@ -255,8 +257,11 @@ exit 0
 	if err != nil {
 		t.Fatalf("RunHostColimaWithTimeout() err = %v", err)
 	}
-	if code != 0 {
-		t.Fatalf("RunHostColimaWithTimeout() code = %d, want 0", code)
+	if code != 7 {
+		t.Fatalf("RunHostColimaWithTimeout() code = %d, want 7", code)
+	}
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Fatalf("RunHostColimaWithTimeout() took %s, want under 2s", elapsed)
 	}
 }
 
