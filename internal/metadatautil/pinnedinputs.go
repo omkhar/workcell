@@ -4,14 +4,11 @@
 package metadatautil
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 var (
@@ -61,15 +58,44 @@ type markdownlintPackageLockEntry struct {
 // pull_request_target and YAML helpers — lives in pinnedinputs_workflows.go.
 
 func CheckPinnedInputs(cfg PinnedInputsConfig) error {
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
-	allowedActions, err := loadAllowedActions(filepath.Join(repoRoot, "policy", "allowed-actions.toml"))
-	if err != nil {
+	check := newPinnedInputsCheck(cfg)
+	if err := check.load(); err != nil {
 		return err
 	}
-	pins, err := loadToolPins(filepath.Join(repoRoot, "policy", "tool-pins.toml"))
-	if err != nil {
-		return err
-	}
+
+	repoRoot := check.repoRoot
+	allowedActions := check.allowedActions
+	pins := check.pins
+	cargoManifestPath := check.paths.cargoManifest
+	installDevToolsScriptPath := check.paths.installDevTools
+	validateRepoScriptPath := check.paths.validateRepo
+	markdownlintPackageJSONPath := check.paths.markdownlintJSON
+	markdownlintPackageLockPath := check.paths.markdownlintLock
+	rustToolchainPath := check.paths.rustToolchain
+	debianBootstrapManifestPath := check.paths.debianBootstrap
+	runtimeDockerfile := check.runtimeDockerfile
+	validatorDockerfile := check.validatorDockerfile
+	debianBootstrapManifest := check.debianBootstrapManifest
+	providersPackageJSON := check.providersPackageJSON
+	providersPackageLock := check.providersPackageLock
+	markdownlintPackageJSON := check.markdownlintPackageJSON
+	markdownlintPackageLock := check.markdownlintPackageLock
+	installDevToolsScript := check.installDevToolsScript
+	validateRepoScript := check.validateRepoScript
+	ciWorkflow := check.ciWorkflow
+	releaseWorkflow := check.releaseWorkflow
+	pinHygieneWorkflow := check.pinHygieneWorkflow
+	upstreamRefreshWorkflow := check.upstreamRefreshWorkflow
+	validatorImageScript := check.validatorImageScript
+	codeowners := check.codeowners
+	hostedControlsPolicy := check.hostedControlsPolicy
+	hostedControlsScript := check.hostedControlsScript
+	codexRequirementsText := check.codexRequirementsText
+	codexMCPConfigText := check.codexMCPConfigText
+	goModText := check.goModText
+	cargoManifestText := check.cargoManifestText
+	rustToolchainText := check.rustToolchainText
+
 	// requirePolicyPin binds a workflow's canonical tool pin to policy/tool-pins.toml
 	// so bumping a tool is a reviewed change to that one file. The existing
 	// cross-file asserts then keep every other workflow copy in lockstep.
@@ -79,125 +105,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		}
 		return nil
 	}
-	goModPath := filepath.Join(repoRoot, "go.mod")
-	cargoManifestPath := filepath.Join(repoRoot, "runtime", "container", "rust", "Cargo.toml")
-	installDevToolsScriptPath := filepath.Join(repoRoot, "scripts", "install-dev-tools.sh")
-	validateRepoScriptPath := filepath.Join(repoRoot, "scripts", "validate-repo.sh")
-	markdownlintPackageJSONPath := filepath.Join(repoRoot, "tools", "markdownlint", "package.json")
-	markdownlintPackageLockPath := filepath.Join(repoRoot, "tools", "markdownlint", "package-lock.json")
-	rustToolchainPath := filepath.Join(repoRoot, "runtime", "container", "rust", "rust-toolchain.toml")
-	debianBootstrapManifestPath := filepath.Join(repoRoot, filepath.FromSlash(DebianBootstrapManifestRelPath))
-
-	runtimeDockerfile, err := readText(cfg.RuntimeDockerfilePath)
-	if err != nil {
-		return err
-	}
-	validatorDockerfile, err := readText(cfg.ValidatorDockerfilePath)
-	if err != nil {
-		return err
-	}
-	debianBootstrapManifest, err := ReadDebianBootstrapManifest(debianBootstrapManifestPath)
-	if err != nil {
-		return err
-	}
-	providersPackageJSONText, err := readText(cfg.ProvidersPackageJSONPath)
-	if err != nil {
-		return err
-	}
-	providersPackageLockText, err := readText(cfg.ProvidersPackageLockPath)
-	if err != nil {
-		return err
-	}
-	markdownlintPackageJSONText, err := readText(markdownlintPackageJSONPath)
-	if err != nil {
-		return err
-	}
-	markdownlintPackageLockText, err := readText(markdownlintPackageLockPath)
-	if err != nil {
-		return err
-	}
-	installDevToolsScript, err := readText(installDevToolsScriptPath)
-	if err != nil {
-		return err
-	}
-	validateRepoScript, err := readText(validateRepoScriptPath)
-	if err != nil {
-		return err
-	}
-	ciWorkflow, err := readText(cfg.CIWorkflowPath)
-	if err != nil {
-		return err
-	}
-	releaseWorkflow, err := readText(cfg.ReleaseWorkflowPath)
-	if err != nil {
-		return err
-	}
-	pinHygieneWorkflow, err := readText(cfg.PinHygieneWorkflowPath)
-	if err != nil {
-		return err
-	}
-	upstreamRefreshWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml"))
-	if err != nil {
-		return err
-	}
-	validatorImageScript, err := readText(filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"))
-	if err != nil {
-		return err
-	}
-	codeowners, err := readText(cfg.CodeownersPath)
-	if err != nil {
-		return err
-	}
-	hostedControlsPolicyText, err := readText(cfg.HostedControlsPolicyPath)
-	if err != nil {
-		return err
-	}
-	hostedControlsScript, err := readText(cfg.HostedControlsScriptPath)
-	if err != nil {
-		return err
-	}
-	codexRequirementsText, err := readText(cfg.CodexRequirementsPath)
-	if err != nil {
-		return err
-	}
-	codexMCPConfigText, err := readText(cfg.CodexMCPConfigPath)
-	if err != nil {
-		return err
-	}
-	goModText, err := readText(goModPath)
-	if err != nil {
-		return err
-	}
-	cargoManifestText, err := readText(cargoManifestPath)
-	if err != nil {
-		return err
-	}
-	rustToolchainText, err := readText(rustToolchainPath)
-	if err != nil {
-		return err
-	}
-
-	var providersPackageJSON map[string]any
-	if err := json.Unmarshal([]byte(providersPackageJSONText), &providersPackageJSON); err != nil {
-		return err
-	}
-	var providersPackageLock map[string]any
-	if err := json.Unmarshal([]byte(providersPackageLockText), &providersPackageLock); err != nil {
-		return err
-	}
-	var markdownlintPackageJSON markdownlintPackageJSON
-	if err := json.Unmarshal([]byte(markdownlintPackageJSONText), &markdownlintPackageJSON); err != nil {
-		return err
-	}
-	var markdownlintPackageLock markdownlintPackageLock
-	if err := json.Unmarshal([]byte(markdownlintPackageLockText), &markdownlintPackageLock); err != nil {
-		return err
-	}
-	hostedControlsPolicy, err := tomlsubset.Parse(hostedControlsPolicyText, cfg.HostedControlsPolicyPath)
-	if err != nil {
-		return err
-	}
-
 	requireYAMLKey := func(text, name, path string) (string, error) {
 		match := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:\s*(.+)$`).FindStringSubmatch(text)
 		if match == nil {
