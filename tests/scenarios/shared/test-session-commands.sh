@@ -563,6 +563,50 @@ if [[ "${detached_launch_blocked}" -eq 0 ]]; then
 fi
 
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
+MONITOR_WAIT_FUNCTIONS_COPY="${TMP_DIR}/monitor-finalization-wait-functions"
+{
+  sed -n '/^detached_session_monitor_command_matches() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants.sh"
+  sed -n '/^wait_for_detached_session_monitor_exit() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants.sh"
+} >"${MONITOR_WAIT_FUNCTIONS_COPY}"
+monitor_finalization_wait_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    ROOT_DIR="$2"
+    state_file="$3/session-monitor.env"
+
+    /bin/bash -c "sleep 0.05; :" "${ROOT_DIR}/scripts/workcell" session monitor --state-file "${state_file}" &
+    transient_pid="$!"
+    wait_for_detached_session_monitor_exit "${transient_pid}" "${state_file}" 20 0.01
+    wait "${transient_pid}"
+    printf "transient=accepted\n"
+
+    /bin/bash -c "sleep 0.2; :" "${ROOT_DIR}/scripts/workcell" session monitor --state-file "${state_file}" &
+    persistent_pid="$!"
+    if wait_for_detached_session_monitor_exit "${persistent_pid}" "${state_file}" 2 0.01; then
+      wait "${persistent_pid}"
+      echo "Persistent detached monitor unexpectedly passed the bounded wait" >&2
+      exit 1
+    fi
+    wait "${persistent_pid}"
+    printf "persistent=rejected\n"
+
+    /bin/sleep 0.05 &
+    reused_pid="$!"
+    wait_for_detached_session_monitor_exit "${reused_pid}" "${state_file}" 1 0.01
+    wait "${reused_pid}"
+    printf "reused=accepted\n"
+  ' _ "${MONITOR_WAIT_FUNCTIONS_COPY}" "${ROOT_DIR}" "${TMP_DIR}"
+)"
+grep -q '^transient=accepted$' <<<"${monitor_finalization_wait_output}"
+grep -q '^persistent=rejected$' <<<"${monitor_finalization_wait_output}"
+grep -q '^reused=accepted$' <<<"${monitor_finalization_wait_output}"
+awk '
+  index($0, "if ! wait_for_detached_session_monitor_exit") { wait_line = NR }
+  index($0, "test ! -e \"${DETACHED_SESSION_AUDIT_DIR}\"") { audit_line = NR }
+  index($0, "test ! -e \"${DETACHED_SESSION_MONITOR_STATE_FILE}\"") { state_line = NR }
+  END { exit !(wait_line && wait_line < audit_line && audit_line < state_line) }
+' "${ROOT_DIR}/scripts/verify-invariants.sh"
 state_path_output="$(
   bash -lc '
     set -euo pipefail

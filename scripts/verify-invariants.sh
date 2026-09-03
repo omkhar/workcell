@@ -556,6 +556,29 @@ extract_top_level_bash_function() {
   ' "${source_file}"
 }
 
+detached_session_monitor_command_matches() {
+  local monitor_pid="$1"
+  local state_file="$2"
+  local monitor_command=""
+
+  monitor_command="$(ps -o command= -p "${monitor_pid}" 2>/dev/null | head -n1 || true)"
+  [[ "${monitor_command}" == *"${ROOT_DIR}/scripts/workcell"*' session monitor --state-file '*"${state_file}" ]]
+}
+
+wait_for_detached_session_monitor_exit() {
+  local monitor_pid="$1"
+  local state_file="$2"
+  local attempts="${3:-10}"
+  local interval="${4:-1}"
+  local attempt=0
+
+  for ((attempt = 0; attempt < attempts; attempt++)); do
+    detached_session_monitor_command_matches "${monitor_pid}" "${state_file}" || return 0
+    sleep "${interval}"
+  done
+  ! detached_session_monitor_command_matches "${monitor_pid}" "${state_file}"
+}
+
 make_tree_user_writable_safely() {
   local target_path="$1"
 
@@ -7568,14 +7591,11 @@ EOF
     grep -q '^SESSION_STOPPING$' "${DETACHED_SESSION_SENTINEL_PATH}"
     grep -q '"current_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
     grep -q '"final_assurance": "managed-mutable"' "${DETACHED_SESSION_SHOW_STOPPED_OUT}"
-    DETACHED_SESSION_MONITOR_COMMAND="$(ps -o command= -p "${DETACHED_SESSION_MONITOR_PID}" 2>/dev/null | head -n1 || true)"
-    case "${DETACHED_SESSION_MONITOR_COMMAND}" in
-      *"${ROOT_DIR}/scripts/workcell"*' session monitor --state-file '*"${DETACHED_SESSION_MONITOR_STATE_FILE}")
-        echo "Detached session monitor remained alive after session finalization: ${DETACHED_SESSION_MONITOR_PID}" >&2
-        cat "${DETACHED_SESSION_SHOW_STOPPED_OUT}" >&2
-        exit 1
-        ;;
-    esac
+    if ! wait_for_detached_session_monitor_exit "${DETACHED_SESSION_MONITOR_PID}" "${DETACHED_SESSION_MONITOR_STATE_FILE}"; then
+      echo "Detached session monitor remained alive after session finalization: ${DETACHED_SESSION_MONITOR_PID}" >&2
+      cat "${DETACHED_SESSION_SHOW_STOPPED_OUT}" >&2
+      exit 1
+    fi
     test ! -e "${DETACHED_SESSION_AUDIT_DIR}"
     test ! -e "${DETACHED_SESSION_MONITOR_STATE_FILE}"
     if ! run_workcell_verify session timeline --id "${DETACHED_SESSION_ID}" >"${DETACHED_SESSION_TIMELINE_OUT}" 2>&1; then
