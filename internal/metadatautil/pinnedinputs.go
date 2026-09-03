@@ -983,23 +983,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := ValidateCanonicalWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
 		return err
 	}
-	for _, needle := range []string{
-		"gh api --paginate \"repos/${REPO}/actions/variables?per_page=100\"",
-		"repos/${REPO}/actions/permissions/selected-actions",
-		"repos/${REPO}/actions/permissions/workflow",
-		"repos/${REPO}/immutable-releases",
-		"jq -s '{total_count: (map(.total_count // 0) | max // 0), variables: (map(.variables // []) | add)}'",
-		"gh api --paginate \"repos/${REPO}/environments?per_page=100\"",
-		`list-hosted-control-environments "${POLICY_PATH}"`,
-		"safe_environment_name=\"${encoded_environment_name}\"",
-		"environment-${safe_environment_name}.json",
-		"repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100",
-		"repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100",
-		`verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`,
-	} {
-		if !strings.Contains(hostedControlsScript, needle) {
-			return fmt.Errorf("scripts/verify-github-hosted-controls.sh must contain %q", needle)
-		}
+	if err := validateCanonicalHostedControlsScript(hostedControlsScript); err != nil {
+		return err
 	}
 	if err := requireNoRegistryBootstrapMCP(codexRequirementsText, cfg.CodexRequirementsPath); err != nil {
 		return err
