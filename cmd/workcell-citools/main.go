@@ -71,6 +71,8 @@ func subcommands() []subcommand {
 		{"generate-workflow-lane-manifest", "ROOT_DIR POLICY_PATH OUTPUT_PATH", 3, 3, cmdGenerateWorkflowLaneManifest},
 		{"verify-workflow-lane-manifest", "ROOT_DIR POLICY_PATH MANIFEST_PATH", 3, 3, cmdVerifyWorkflowLaneManifest},
 		{"plan-workflow-lanes", "MANIFEST_PATH CONFIG_JSON_PATH", 2, 2, cmdPlanWorkflowLanes},
+		{"merge-hosted-control-array-pages", "", 0, 0, cmdMergeHostedControlArrayPages},
+		{"merge-hosted-control-object-pages", "FIELD", 1, 1, cmdMergeHostedControlObjectPages},
 		{"fetch-rulesets", "TMP_DIR REPO", 2, 2, cmdFetchRulesets},
 		{"list-hosted-control-environments", "POLICY_PATH", 1, 1, cmdListHostedControlEnvironments},
 		{"verify-github-hosted-controls", "TMP_DIR REPO POLICY_PATH", 3, 3, cmdVerifyGitHubHostedControls},
@@ -286,6 +288,14 @@ func cmdPlanWorkflowLanes(args []string) error {
 
 func cmdFetchRulesets(args []string) error {
 	return metadatautil.FetchRulesets(args[0], args[1])
+}
+
+func cmdMergeHostedControlArrayPages(_ []string) error {
+	return metadatautil.MergeHostedControlArrayPages(os.Stdin, os.Stdout)
+}
+
+func cmdMergeHostedControlObjectPages(args []string) error {
+	return metadatautil.MergeHostedControlObjectPages(os.Stdin, os.Stdout, args[0])
 }
 
 func cmdListHostedControlEnvironments(args []string) error {

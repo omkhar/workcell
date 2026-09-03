@@ -168,6 +168,143 @@ func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInpu
 	}
 }
 
+func TestCheckPinnedInputsRejectsHostedControlAPIVersionDrift(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+		return strings.Replace(content, `readonly GITHUB_API_VERSION="2026-03-10"`, `readonly GITHUB_API_VERSION="2022-11-28"`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, `readonly GITHUB_API_VERSION=\"2026-03-10\"`)
+}
+
+func TestCheckPinnedInputsRejectsHostedControlShebangDrift(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+		return strings.Replace(content, "#!/bin/bash -p", "#!/bin/bash", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "must use the exact privileged Bash shebang")
+}
+
+func TestCheckPinnedInputsRejectsDirectHostedControlAPICall(t *testing.T) {
+	tests := []struct {
+		name string
+		call string
+	}{
+		{"literal", `gh api repos/example/direct`},
+		{"continuation", "gh \\\n+  api repos/example/direct"},
+		{"quoted", `g""h a""pi repos/example/direct`},
+		{"absolute path", `/usr/bin/gh api repos/example/direct`},
+		{"dynamic command", `${WORKCELL_TEST_GH} api repos/example/direct`},
+		{"command wrapper", `command ${WORKCELL_TEST_GH} api repos/example/direct`},
+		{"curl API", `curl -fsS https://api.github.com/repos/example/direct`},
+		{"timeout absolute path", `timeout 1 /usr/bin/gh api repos/example/direct`},
+		{"unreviewed helper", `./scripts/unreviewed-hosted-helper`},
+		{"host override", `GH_HOST=attacker.example`},
+		{"header override", `github_api -H "X-GitHub-Api-Version: 2022-11-28" repos/example/direct`},
+		{"unapproved source", `source "${WORKCELL_TEST_SOURCE}"`},
+		{"function unset", `unset -f github_api`},
+		{"debug trap", `trap 'gh api repos/example/direct' DEBUG`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+				return strings.Replace(content, "require_tool jq", "require_tool jq\n"+test.call, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "must use the exact reviewed command graph and versioned github_api wrapper")
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsHostedControlFunctionShadowing(t *testing.T) {
+	tests := []struct {
+		name       string
+		definition string
+	}{
+		{"API wrapper", `github_api() { printf '{}'; }`},
+		{"cleanup", `cleanup() { :; }`},
+		{"jq", `jq() { printf '{}'; }`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+				return content + "\n" + test.definition + "\n"
+			})
+			requirePinnedInputsErrorContains(t, cfg, "must use the exact reviewed command graph and versioned github_api wrapper")
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsHostedControlCallCountDrift(t *testing.T) {
+	tests := []struct {
+		name    string
+		rewrite func(string) string
+	}{
+		{"missing", func(content string) string { return strings.Replace(content, "require_tool jq\n", "", 1) }},
+		{"duplicate", func(content string) string {
+			return strings.Replace(content, "require_tool jq\n", "require_tool jq\nrequire_tool jq\n", 1)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", test.rewrite)
+			requirePinnedInputsErrorContains(t, cfg, "must use the exact reviewed command graph and versioned github_api wrapper")
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsHostedControlStructureDrift(t *testing.T) {
+	const verifyCall = `"${CITOOLS_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`
+	tests := []struct {
+		name    string
+		rewrite func(string) string
+	}{
+		{"conditional verifier", func(content string) string {
+			return strings.Replace(content, verifyCall, "if [[ -n \"\" ]]; then\n  "+verifyCall+"\nfi", 1)
+		}},
+		{"redirected repository", func(content string) string {
+			return strings.Replace(content, `>"${TMP_DIR}/repo.json"`, `>"${TMP_DIR}/ignored.json"`, 1)
+		}},
+		{"reordered repository", func(content string) string {
+			const repositoryCall = `github_api "repos/${REPO}" >"${TMP_DIR}/repo.json"`
+			content = strings.Replace(content, repositoryCall+"\n", "", 1)
+			const marker = `github_api "repos/${REPO}/immutable-releases" >"${TMP_DIR}/immutable-releases.json"`
+			return strings.Replace(content, marker, marker+"\n"+repositoryCall, 1)
+		}},
+		{"changed error condition", func(content string) string {
+			return strings.Replace(content, `[[ "${status}" != "409" ]]`, `[[ "${status}" != "404" ]]`, 1)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", test.rewrite)
+			requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
+		})
+	}
+}
+
+func TestCheckPinnedInputsRejectsUnpaginatedHostedRulesets(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+		return strings.Replace(content, `github_api --paginate "repos/${REPO}/rulesets?per_page=100"`, `github_api "repos/${REPO}/rulesets"`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, `github_api --paginate \"repos/${REPO}/rulesets?per_page=100\"`)
+}
+
+func TestCheckPinnedInputsRejectsFailOpenHostedRulesetAggregation(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+		return strings.Replace(content, `"${CITOOLS_BIN}" merge-hosted-control-array-pages`, `jq -s 'add'`, 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "merge-hosted-control-array-pages")
+}
+
+func TestCheckPinnedInputsRejectsFailOpenHostedEmptyCollectionAggregation(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+		return strings.Replace(
+			content,
+			`"${CITOOLS_BIN}" merge-hosted-control-object-pages secrets >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"`,
+			`jq -s '{total_count: 0, secrets: (map(.secrets // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"`,
+			1,
+		)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "merge-hosted-control-object-pages secrets")
+}
+
 func TestCheckPinnedInputsRejectsCommentedDebianBootstrapGuard(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "runtime/container/Dockerfile", func(content string) string {
 		return strings.Replace(content, `  && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, `  # && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, 1)

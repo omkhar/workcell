@@ -11,3 +11,5 @@ require golang.org/x/sys v0.47.0
 require golang.org/x/text v0.41.0
 
 require gopkg.in/yaml.v3 v3.0.1
+
+require mvdan.cc/sh/v3 v3.14.0
