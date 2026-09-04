@@ -432,54 +432,16 @@ func rejectReleaseAdminBypass(releaseEnv, adminBypassRule map[string]any, repo s
 }
 
 func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
-	var repoMeta map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "repo.json"), &repoMeta); err != nil {
-		return err
-	}
-	var actionsPermissions map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "actions-permissions.json"), &actionsPermissions); err != nil {
-		return err
-	}
-	var selectedActions map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "actions-selected-actions.json"), &selectedActions); err != nil {
-		return err
-	}
-	var workflowPermissions map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "actions-workflow-permissions.json"), &workflowPermissions); err != nil {
-		return err
-	}
-	var immutableReleases map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "immutable-releases.json"), &immutableReleases); err != nil {
-		return err
-	}
-	var actionsVariables map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "actions-variables.json"), &actionsVariables); err != nil {
-		return err
-	}
-	var environmentsIndex map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "environments.json"), &environmentsIndex); err != nil {
-		return err
-	}
-	var directCollaborators []any
-	if err := readJSONFile(filepath.Join(tmpDir, "collaborators-direct.json"), &directCollaborators); err != nil {
-		return err
-	}
-	var rulesets []any
-	if err := readJSONFile(filepath.Join(tmpDir, "rulesets.json"), &rulesets); err != nil {
-		return err
-	}
-	var releaseEnv map[string]any
-	if err := readJSONFile(filepath.Join(tmpDir, "environment-release.json"), &releaseEnv); err != nil {
-		return err
-	}
-	policyContent, err := os.ReadFile(policyPath)
+	inputs, err := loadHostedControlInputs(tmpDir, policyPath)
 	if err != nil {
 		return err
 	}
-	policy, err := tomlsubset.Parse(string(policyContent), policyPath)
-	if err != nil {
-		return err
-	}
+	repoMeta := inputs.repoMeta
+	actionsVariables := inputs.actionsVariables
+	environmentsIndex := inputs.environmentsIndex
+	directCollaborators := inputs.directCollaborators
+	releaseEnv := inputs.releaseEnvironment
+	policy := inputs.policy
 
 	owner, _ := repoMeta["owner"].(map[string]any)
 	ownerLogin, _ := owner["login"].(string)
@@ -548,223 +510,11 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		return err
 	}
 
-	if enabled, _ := actionsPermissions["enabled"].(bool); !enabled {
-		return fmt.Errorf("GitHub Actions must be enabled on %s", repo)
-	}
-	if required, _ := actionsPermissions["sha_pinning_required"].(bool); !required {
-		return fmt.Errorf("GitHub Actions SHA pinning must be required on %s", repo)
-	}
-	if actionsPolicy.AllowOnlyPinnedVerifiedOrExplicitlyTrustedActions {
-		if allowedActions, _ := actionsPermissions["allowed_actions"].(string); allowedActions != "selected" {
-			return fmt.Errorf("GitHub Actions on %s must restrict allowed_actions to selected", repo)
-		}
-		if githubOwnedAllowed, _ := selectedActions["github_owned_allowed"].(bool); !githubOwnedAllowed {
-			return fmt.Errorf("GitHub Actions selected policy on %s must allow GitHub-owned actions", repo)
-		}
-		if verifiedAllowed, _ := selectedActions["verified_allowed"].(bool); !verifiedAllowed {
-			return fmt.Errorf("GitHub Actions selected policy on %s must allow verified creator actions", repo)
-		}
-		patternsAllowed, _ := selectedActions["patterns_allowed"].([]any)
-		unexpectedPatterns := make([]string, 0)
-		for _, raw := range patternsAllowed {
-			if pattern, _ := raw.(string); pattern != "" {
-				unexpectedPatterns = append(unexpectedPatterns, pattern)
-			}
-		}
-		slices.Sort(unexpectedPatterns)
-		if len(unexpectedPatterns) > 0 {
-			return fmt.Errorf("GitHub Actions selected policy on %s must not allow unreviewed action patterns: %s", repo, strings.Join(unexpectedPatterns, ", "))
-		}
-	}
-	if actual, _ := workflowPermissions["default_workflow_permissions"].(string); actual != actionsPolicy.DefaultWorkflowTokenPermissions {
-		return fmt.Errorf("GitHub Actions default workflow token permissions on %s must be %q", repo, actionsPolicy.DefaultWorkflowTokenPermissions)
-	}
-	if canApprove, _ := workflowPermissions["can_approve_pull_request_reviews"].(bool); canApprove {
-		return fmt.Errorf("GitHub Actions workflow token on %s must not be allowed to approve pull requests", repo)
-	}
-	if releaseAssetsPolicy.ImmutableGitHubReleases {
-		if enabled, _ := immutableReleases["enabled"].(bool); !enabled {
-			return fmt.Errorf("immutable GitHub releases must be enabled on %s", repo)
-		}
-	}
-
-	activeRulesets := make([]map[string]any, 0)
-	for _, raw := range rulesets {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if enforcement, _ := entry["enforcement"].(string); enforcement == "active" {
-			activeRulesets = append(activeRulesets, entry)
-		}
-	}
-	if len(activeRulesets) == 0 {
-		return fmt.Errorf("no active rulesets found on %s", repo)
-	}
-
-	hasRefInclude := func(ruleset map[string]any, expected string) bool {
-		conditions, _ := ruleset["conditions"].(map[string]any)
-		refName, _ := conditions["ref_name"].(map[string]any)
-		include, _ := refName["include"].([]any)
-		for _, raw := range include {
-			if s, _ := raw.(string); s == expected {
-				return true
-			}
-		}
-		return false
-	}
-	hasRule := func(ruleset map[string]any, ruleType string) map[string]any {
-		rules, _ := ruleset["rules"].([]any)
-		for _, raw := range rules {
-			entry, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			if typ, _ := entry["type"].(string); typ == ruleType {
-				return entry
-			}
-		}
-		return nil
-	}
-	requireBypassShape := func(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool) error {
-		actors, _ := ruleset["bypass_actors"].([]any)
-		if requireNonEmpty && len(actors) == 0 {
-			return fmt.Errorf("ruleset %v on %s must declare an explicit bypass actor", ruleset["name"], repo)
-		}
-		for _, raw := range actors {
-			entry, ok := raw.(map[string]any)
-			if !ok {
-				return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
-			}
-			if at, _ := entry["actor_type"].(string); at != actorType {
-				return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
-			}
-			if bm, _ := entry["bypass_mode"].(string); bm != bypassMode {
-				return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
-			}
-		}
-		return nil
-	}
-
-	var branchIntegrity, branchReview, branchStatusChecks, tagRelease map[string]any
-	for _, ruleset := range activeRulesets {
-		target, _ := ruleset["target"].(string)
-		if target == "branch" && hasRefInclude(ruleset, "~DEFAULT_BRANCH") {
-			if hasRule(ruleset, "required_signatures") != nil && hasRule(ruleset, "non_fast_forward") != nil && hasRule(ruleset, "deletion") != nil {
-				branchIntegrity = ruleset
-			}
-			if hasRule(ruleset, "pull_request") != nil {
-				branchReview = ruleset
-			}
-			if hasRule(ruleset, "required_status_checks") != nil {
-				branchStatusChecks = ruleset
-			}
-		}
-		if target == "tag" && hasRefInclude(ruleset, "refs/tags/v*") {
-			if hasRule(ruleset, "creation") != nil && hasRule(ruleset, "update") != nil && hasRule(ruleset, "deletion") != nil {
-				tagRelease = ruleset
-			}
-		}
-	}
-	if branchIntegrity == nil {
-		return fmt.Errorf("missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
-	}
-	if branchReview == nil {
-		return fmt.Errorf("missing active default-branch review ruleset on %s with a pull_request rule", repo)
-	}
-	if branchStatusChecks == nil {
-		return fmt.Errorf("missing active default-branch status-check ruleset on %s with a required_status_checks rule", repo)
-	}
-	if actors, _ := branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
-		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
-	}
-	if err := requireBypassShape(branchReview, "RepositoryRole", "pull_request", false); err != nil {
+	if err := verifyGitHubActionsControls(inputs, actionsPolicy, releaseAssetsPolicy, repo); err != nil {
 		return err
 	}
-	if tagRelease == nil {
-		return fmt.Errorf("missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
-	}
-	if err := requireBypassShape(tagRelease, "RepositoryRole", "always", true); err != nil {
+	if err := verifyHostedRulesetControls(inputs, branchReviewMode, ownerType, expectedContexts, requireSingleOwnerCollaborator, repo); err != nil {
 		return err
-	}
-
-	pullRequestRule := hasRule(branchReview, "pull_request")
-	parameters, _ := pullRequestRule["parameters"].(map[string]any)
-	if branchReviewMode == "review-gated" {
-		if count, _ := parameters["required_approving_review_count"].(float64); count < 1 {
-			return fmt.Errorf("default-branch review ruleset on %s must require at least one approving review", repo)
-		}
-		if required, _ := parameters["require_code_owner_review"].(bool); !required {
-			return fmt.Errorf("default-branch review ruleset on %s must require code owner review", repo)
-		}
-		if resolved, _ := parameters["required_review_thread_resolution"].(bool); !resolved {
-			return fmt.Errorf("default-branch review ruleset on %s must require resolved review threads", repo)
-		}
-	} else {
-		if branchReviewMode == "single-owner-private-pr" {
-			if private, _ := repoMeta["private"].(bool); !private {
-				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for private repositories", repo)
-			}
-			if ownerType != "User" {
-				return fmt.Errorf("branch review mode 'single-owner-private-pr' on %s is only valid for user-owned repositories", repo)
-			}
-			if err := requireSingleOwnerCollaborator("branch review mode 'single-owner-private-pr'"); err != nil {
-				return err
-			}
-		} else {
-			if private, _ := repoMeta["private"].(bool); private {
-				return fmt.Errorf("branch review mode 'single-owner-public-pr' on %s is only valid for public repositories", repo)
-			}
-			if ownerType != "User" {
-				return fmt.Errorf("branch review mode 'single-owner-public-pr' on %s is only valid for user-owned repositories", repo)
-			}
-			if err := requireSingleOwnerCollaborator("branch review mode 'single-owner-public-pr'"); err != nil {
-				return err
-			}
-		}
-		if count, _ := parameters["required_approving_review_count"].(float64); count != 0 {
-			return fmt.Errorf("default-branch review ruleset on %s must require zero approving reviews in %s mode", repo, branchReviewMode)
-		}
-		if required, _ := parameters["require_code_owner_review"].(bool); required {
-			return fmt.Errorf("default-branch review ruleset on %s must not require code owner review in %s mode", repo, branchReviewMode)
-		}
-		if lastPushApproval, _ := parameters["require_last_push_approval"].(bool); lastPushApproval {
-			return fmt.Errorf("default-branch review ruleset on %s must not require last-push approval in %s mode", repo, branchReviewMode)
-		}
-		resolved, _ := parameters["required_review_thread_resolution"].(bool)
-		if branchReviewMode == "single-owner-public-pr" && !resolved {
-			return fmt.Errorf("default-branch review ruleset on %s must require resolved review threads in single-owner-public-pr mode", repo)
-		}
-		if branchReviewMode == "single-owner-private-pr" && resolved {
-			return fmt.Errorf("default-branch review ruleset on %s must not require resolved review threads in single-owner-private-pr mode", repo)
-		}
-	}
-
-	statusRule := hasRule(branchStatusChecks, "required_status_checks")
-	statusParameters, _ := statusRule["parameters"].(map[string]any)
-	if strict, _ := statusParameters["strict_required_status_checks_policy"].(bool); !strict {
-		return fmt.Errorf("default-branch status-check ruleset on %s must require strict status checks", repo)
-	}
-	requiredStatusChecks, _ := statusParameters["required_status_checks"].([]any)
-	actualStatus := map[string]struct{}{}
-	for _, raw := range requiredStatusChecks {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if context, _ := entry["context"].(string); context != "" {
-			actualStatus[context] = struct{}{}
-		}
-	}
-	missingStatus := make([]string, 0)
-	for _, expected := range expectedContexts {
-		if _, ok := actualStatus[expected]; !ok {
-			missingStatus = append(missingStatus, expected)
-		}
-	}
-	slices.Sort(missingStatus)
-	if len(missingStatus) > 0 {
-		return fmt.Errorf("default-branch status-check ruleset on %s is missing required contexts: %s", repo, strings.Join(missingStatus, ", "))
 	}
 
 	actualRepoVariables := map[string]any{}
