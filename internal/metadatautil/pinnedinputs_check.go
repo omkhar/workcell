@@ -42,12 +42,18 @@ type pinnedInputsCheck struct {
 	goModText                   string
 	cargoManifestText           string
 	rustToolchainText           string
-	debianBootstrapManifest     DebianBootstrapManifest
-	providersPackageJSON        map[string]any
-	providersPackageLock        map[string]any
-	markdownlintPackageJSON     markdownlintPackageJSON
-	markdownlintPackageLock     markdownlintPackageLock
-	hostedControlsPolicy        map[string]any
+	securityWorkflow            string
+
+	debianBootstrapManifest DebianBootstrapManifest
+	providersPackageJSON    map[string]any
+	providersPackageLock    map[string]any
+	markdownlintPackageJSON markdownlintPackageJSON
+	markdownlintPackageLock markdownlintPackageLock
+	hostedControlsPolicy    map[string]any
+
+	rustPins rustPinValues
+	toolPins validatedToolPins
+	ciRepro  ciReproValues
 }
 
 type pinnedInputPaths struct {
@@ -63,6 +69,19 @@ type pinnedInputPaths struct {
 	validatorImageScript string
 }
 
+type rustPinValues struct {
+	cargoVersion, toolchainVersion, runtimeVersion string
+	runtimeImage, validatorVersion                 string
+}
+
+type validatedToolPins struct {
+	buildx, qemu, buildkit, cosign, syft string
+	actionlintVersion, actionlintSHA     string
+	zizmorVersion, zizmorSHA             string
+}
+
+type ciReproValues struct{ job, strategy string }
+
 type pinnedTextInput struct {
 	path   string
 	target *string
@@ -70,11 +89,22 @@ type pinnedTextInput struct {
 
 type releaseDownload struct{ label, url string }
 
+type pinnedStringInput struct {
+	target           *string
+	text, name, path string
+}
+type workflowEnvInput struct {
+	target                          *string
+	text, key, pattern, label, path string
+}
+
 type textRequirement struct {
 	text, needle string
 	forbidden    bool
 	err          error
 }
+
+type pinnedStringExtractor func(string, string, string) (string, error)
 
 func newPinnedInputsCheck(cfg PinnedInputsConfig) *pinnedInputsCheck {
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
@@ -278,12 +308,26 @@ func requireTOMLString(text, key, path string) (string, error) {
 	return match[1], nil
 }
 
-func majorMinor(version, path string) (string, error) {
-	match := regexp.MustCompile(`^([0-9]+\.[0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
-	if match == nil {
-		return "", fmt.Errorf("expected a semantic version in %s, found %q", path, version)
+func loadPinnedStrings(extract pinnedStringExtractor, inputs []pinnedStringInput) error {
+	for _, input := range inputs {
+		value, err := extract(input.text, input.name, input.path)
+		if err != nil {
+			return err
+		}
+		*input.target = value
 	}
-	return match[1], nil
+	return nil
+}
+
+func loadWorkflowEnvs(inputs []workflowEnvInput) error {
+	for _, input := range inputs {
+		value, err := requireUniformWorkflowEnv(input.text, input.key, input.pattern, input.label, input.path)
+		if err != nil {
+			return err
+		}
+		*input.target = value
+	}
+	return nil
 }
 
 func requireTextRequirements(requirements ...textRequirement) error {

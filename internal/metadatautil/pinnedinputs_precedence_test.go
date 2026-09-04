@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -71,6 +72,19 @@ func TestCheckPinnedInputsPreservesCompoundValidationFailurePrecedence(t *testin
 			},
 			want: func(metadatautil.PinnedInputsConfig) string {
 				return "ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml"
+			},
+		},
+		{
+			name: "release cache before qemu and runner",
+			mutate: func(tb testing.TB, cfg metadatautil.PinnedInputsConfig) {
+				rewriteFile(tb, cfg.ReleaseWorkflowPath, func(content string) string {
+					content = strings.ReplaceAll(content, "cache-binary: false", "cache-binary: true")
+					content = strings.ReplaceAll(content, "runs-on: ubuntu-24.04-arm", "runs-on: ubuntu-latest")
+					return content + "\n# docker/setup-qemu-action@compound-fault\n"
+				})
+			},
+			want: func(metadatautil.PinnedInputsConfig) string {
+				return "the publishing release workflow must not cache the Buildx binary"
 			},
 		},
 	}
