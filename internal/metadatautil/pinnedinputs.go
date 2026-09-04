@@ -64,7 +64,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	}
 
 	repoRoot := check.repoRoot
-	allowedActions := check.allowedActions
 	pins := check.pins
 	cargoManifestPath := check.paths.cargoManifest
 	installDevToolsScriptPath := check.paths.installDevTools
@@ -87,9 +86,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	pinHygieneWorkflow := check.pinHygieneWorkflow
 	upstreamRefreshWorkflow := check.upstreamRefreshWorkflow
 	validatorImageScript := check.validatorImageScript
-	codeowners := check.codeowners
-	hostedControlsPolicy := check.hostedControlsPolicy
-	hostedControlsScript := check.hostedControlsScript
 	codexRequirementsText := check.codexRequirementsText
 	codexMCPConfigText := check.codexMCPConfigText
 	goModText := check.goModText
@@ -104,95 +100,6 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf("%s pin %q does not match policy/tool-pins.toml %q; the workflow and the policy must stay in lockstep (scripts/update-upstream-pins.sh rewrites both)", name, actual, policyValue)
 		}
 		return nil
-	}
-	requireYAMLKey := func(text, name, path string) (string, error) {
-		match := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:\s*(.+)$`).FindStringSubmatch(text)
-		if match == nil {
-			return "", fmt.Errorf("unable to extract %s from %s", name, path)
-		}
-		return strings.TrimSpace(match[1]), nil
-	}
-	requireUniformWorkflowEnv := func(text, key, valuePattern, label, path string) (string, error) {
-		lineRE := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(key) + `:\s*(\S+)\s*$`)
-		valueRE := regexp.MustCompile(`^` + valuePattern + `$`)
-		matches := lineRE.FindAllStringSubmatch(text, -1)
-		if len(matches) == 0 {
-			return "", fmt.Errorf("%s in %s must define %s", label, path, key)
-		}
-		value := matches[0][1]
-		for _, match := range matches {
-			if !valueRE.MatchString(match[1]) {
-				return "", fmt.Errorf("%s in %s must match %q", label, path, valuePattern)
-			}
-			if match[1] != value {
-				return "", fmt.Errorf("%s in %s must use one reviewed value for %s", label, path, key)
-			}
-		}
-		return value, nil
-	}
-	requireCappedReleaseDownloads := func(text, path string, downloads []struct {
-		label string
-		url   string
-	}) error {
-		for _, download := range downloads {
-			offset := 0
-			found := false
-			for {
-				relativeURLIndex := strings.Index(text[offset:], download.url)
-				if relativeURLIndex < 0 {
-					break
-				}
-				found = true
-				urlIndex := offset + relativeURLIndex
-				curlIndex := strings.LastIndex(text[:urlIndex], "curl -fsSL")
-				if curlIndex < 0 {
-					return fmt.Errorf("%s must download %s with curl -fsSL", path, download.label)
-				}
-				block := text[curlIndex : urlIndex+len(download.url)]
-				for _, needle := range []string{"--max-time 60", "--connect-timeout 15", "--max-filesize 209715200"} {
-					if !strings.Contains(block, needle) {
-						return fmt.Errorf("%s must bound %s downloads with %s", path, download.label, needle)
-					}
-				}
-				offset = urlIndex + len(download.url)
-			}
-			if !found {
-				return fmt.Errorf("%s must derive the %s archive URL from its pinned version", path, download.label)
-			}
-		}
-		return nil
-	}
-	requireActionRef := func(text, action, path string) (string, error) {
-		re := regexp.MustCompile(regexp.QuoteMeta(action) + `@([0-9a-f]{40})`)
-		matches := re.FindAllStringSubmatch(text, -1)
-		if len(matches) == 0 {
-			return "", fmt.Errorf("%s must pin %s to an immutable commit SHA", path, action)
-		}
-		refs := map[string]struct{}{}
-		for _, match := range matches {
-			refs[match[1]] = struct{}{}
-		}
-		if len(refs) != 1 {
-			return "", fmt.Errorf("%s must use a single reviewed ref for %s", path, action)
-		}
-		for ref := range refs {
-			return ref, nil
-		}
-		return "", nil
-	}
-	requireTOMLString := func(text, key, path string) (string, error) {
-		match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `\s*=\s*"([^"]+)"\s*$`).FindStringSubmatch(text)
-		if match == nil {
-			return "", fmt.Errorf("unable to extract %s from %s", key, path)
-		}
-		return match[1], nil
-	}
-	majorMinor := func(version, path string) (string, error) {
-		match := regexp.MustCompile(`^([0-9]+\.[0-9]+)\.[0-9]+$`).FindStringSubmatch(version)
-		if match == nil {
-			return "", fmt.Errorf("expected a semantic version in %s, found %q", path, version)
-		}
-		return match[1], nil
 	}
 	extractReproMatrixEntries := func(strategyBlock, path string) ([][3]string, error) {
 		re := regexp.MustCompile(`(?m)^\s{10}- platform:\s*(\S+)\n^\s{12}platform_name:\s*(\S+)\n^\s{12}runner:\s*(\S+)$`)
@@ -250,18 +157,25 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := requireEqual("RUST_VERSION", runtimeRustVersion, cfg.RuntimeDockerfilePath, validatorRustVersion, cfg.ValidatorDockerfilePath); err != nil {
-		return err
-	}
-	if err := requireEqual("Rust toolchain channel", rustToolchainVersion, rustToolchainPath, runtimeRustVersion, cfg.RuntimeDockerfilePath); err != nil {
-		return err
-	}
-	if err := requirePinnedBaseImage(runtimeRustToolchainImage, "RUST_TOOLCHAIN_IMAGE", cfg.RuntimeDockerfilePath); err != nil {
-		return err
-	}
 	expectedRustToolchainTrack := fmt.Sprintf("rust:%s-slim-trixie@", runtimeRustVersion)
-	if !strings.Contains(runtimeRustToolchainImage, expectedRustToolchainTrack) {
-		return fmt.Errorf("RUST_TOOLCHAIN_IMAGE in %s must pin the official rust:%s-slim-trixie image, found %q", cfg.RuntimeDockerfilePath, runtimeRustVersion, runtimeRustToolchainImage)
+	if err := firstPinnedInputError(
+		func() error {
+			return requireEqual("RUST_VERSION", runtimeRustVersion, cfg.RuntimeDockerfilePath, validatorRustVersion, cfg.ValidatorDockerfilePath)
+		},
+		func() error {
+			return requireEqual("Rust toolchain channel", rustToolchainVersion, rustToolchainPath, runtimeRustVersion, cfg.RuntimeDockerfilePath)
+		},
+		func() error {
+			return requirePinnedBaseImage(runtimeRustToolchainImage, "RUST_TOOLCHAIN_IMAGE", cfg.RuntimeDockerfilePath)
+		},
+		func() error {
+			return requireTextRequirements(textRequirement{
+				text: runtimeRustToolchainImage, needle: expectedRustToolchainTrack,
+				err: fmt.Errorf("RUST_TOOLCHAIN_IMAGE in %s must pin the official rust:%s-slim-trixie image, found %q", cfg.RuntimeDockerfilePath, runtimeRustVersion, runtimeRustToolchainImage),
+			})
+		},
+	); err != nil {
+		return err
 	}
 	expectedCargoRustVersion, err := majorMinor(rustToolchainVersion, rustToolchainPath)
 	if err != nil {
@@ -339,33 +253,8 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err := requirePinnedBaseImage(ciBuildkitImage, "WORKCELL_BUILDKIT_IMAGE", ".github/workflows/ci.yml"); err != nil {
 		return err
 	}
-	for _, workflowPath := range workflowYAMLFiles(cfg.WorkflowsDir) {
-		workflowText, err := readText(workflowPath)
-		if err != nil {
-			return err
-		}
-		workflowName := ".github/workflows/" + filepath.Base(workflowPath)
-		if regexp.MustCompile(`(?m)^\s*WORKCELL_BUILDX_VERSION:`).MatchString(workflowText) {
-			workflowBuildxVersion, err := requireYAMLKey(workflowText, "WORKCELL_BUILDX_VERSION", workflowName)
-			if err != nil {
-				return err
-			}
-			if err := requireEqual("WORKCELL_BUILDX_VERSION", ciBuildxVersion, ".github/workflows/ci.yml", workflowBuildxVersion, workflowName); err != nil {
-				return err
-			}
-		}
-		if regexp.MustCompile(`(?m)^\s*WORKCELL_BUILDKIT_IMAGE:`).MatchString(workflowText) {
-			workflowBuildkitImage, err := requireYAMLKey(workflowText, "WORKCELL_BUILDKIT_IMAGE", workflowName)
-			if err != nil {
-				return err
-			}
-			if err := requireEqual("WORKCELL_BUILDKIT_IMAGE", ciBuildkitImage, ".github/workflows/ci.yml", workflowBuildkitImage, workflowName); err != nil {
-				return err
-			}
-			if !strings.Contains(workflowText, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
-				return fmt.Errorf("%s must pin the BuildKit daemon image used by setup-buildx-action", workflowName)
-			}
-		}
+	if err := validateWorkflowBuilderPins(cfg.WorkflowsDir, ciBuildxVersion, ciBuildkitImage); err != nil {
+		return err
 	}
 	validatorImageFallback := regexp.MustCompile(`(?m)^BUILDKIT_IMAGE="\$\{WORKCELL_BUILDKIT_IMAGE:-([^}]+)\}"$`).FindStringSubmatch(validatorImageScript)
 	if validatorImageFallback == nil {
@@ -433,14 +322,12 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if len(map[string]struct{}{ciCosignInstallerRef: {}, releaseCosignInstallerRef: {}, pinHygieneCosignInstallerRef: {}, upstreamRefreshCosignInstallerRef: {}}) != 1 {
 		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
-	if !strings.Contains(ciWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
-		return errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")
-	}
-	if !strings.Contains(releaseWorkflow, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}") {
-		return errors.New(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action")
-	}
-	if !strings.Contains(ciWorkflow, "cache-binary: true") {
-		return errors.New("pinned buildx binary caching must stay enabled in .github/workflows/ci.yml")
+	if err := requireTextRequirements(
+		textRequirement{text: ciWorkflow, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}", err: errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action")},
+		textRequirement{text: releaseWorkflow, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}", err: errors.New(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action")},
+		textRequirement{text: ciWorkflow, needle: "cache-binary: true", err: errors.New("pinned buildx binary caching must stay enabled in .github/workflows/ci.yml")},
+	); err != nil {
+		return err
 	}
 	extractBetween := func(text, startMarker, endMarker, label string) (string, error) {
 		start := strings.Index(text, startMarker)
@@ -534,16 +421,9 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 	if err != nil {
 		return err
 	}
-	securityActionlintVersion, err := requireUniformWorkflowEnv(securityWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security actionlint version", ".github/workflows/security.yml")
+	securityActionlintVersion, err := validateActionlintVersions(securityWorkflow, releaseWorkflow)
 	if err != nil {
 		return err
-	}
-	releaseActionlintVersion, err := requireUniformWorkflowEnv(releaseWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release actionlint version", ".github/workflows/release.yml")
-	if err != nil {
-		return err
-	}
-	if securityActionlintVersion != releaseActionlintVersion {
-		return errors.New("ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
 	securityActionlintSHA, err := requireUniformWorkflowEnv(securityWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "security actionlint sha", ".github/workflows/security.yml")
 	if err != nil {
@@ -608,10 +488,7 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 		{text: securityWorkflow, path: ".github/workflows/security.yml"},
 		{text: releaseWorkflow, path: ".github/workflows/release.yml"},
 	} {
-		if err := requireCappedReleaseDownloads(workflow.text, workflow.path, []struct {
-			label string
-			url   string
-		}{
+		if err := requireCappedReleaseDownloads(workflow.text, workflow.path, []releaseDownload{
 			{
 				label: "actionlint",
 				url:   "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz",
@@ -640,266 +517,19 @@ func CheckPinnedInputs(cfg PinnedInputsConfig) error {
 			return fmt.Errorf(".github/workflows/security.yml must contain %q", needle)
 		}
 	}
-	if !strings.Contains(releaseWorkflow, "docker buildx imagetools create") {
-		return errors.New(".github/workflows/release.yml must assemble the published multi-arch manifest with docker buildx imagetools create")
-	}
-	if regexp.MustCompile(`docker/build-push-action@.*?platforms:\s*linux/amd64,linux/arm64`).MatchString(releaseWorkflow) {
-		return errors.New(".github/workflows/release.yml must not publish the final multi-arch image through one opaque multi-platform build-push step")
-	}
-	if !strings.Contains(runtimeDockerfile, "COPY runtime/container/rust /workcell-rust") {
-		return errors.New("runtime/container/Dockerfile must vendor the reviewed Rust runtime sources into the builder stage")
-	}
-	for _, needle := range []string{
-		"COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo",
-		"COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup",
-	} {
-		if !strings.Contains(runtimeDockerfile, needle) {
-			return fmt.Errorf("runtime/container/Dockerfile must copy the pinned Rust toolchain through %q", needle)
-		}
-	}
-	if !strings.Contains(runtimeDockerfile, "COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json") {
-		return errors.New("runtime/container/Dockerfile must copy the reviewed control-plane manifest into the runtime image")
-	}
-	hasOfflineCargoBuild := strings.Contains(runtimeDockerfile, "cargo build \\") ||
-		strings.Contains(runtimeDockerfile, "\"${toolchain_bin}/cargo\" build \\")
-	if !hasOfflineCargoBuild || !strings.Contains(runtimeDockerfile, "--locked \\") || !strings.Contains(runtimeDockerfile, "--offline \\") {
-		return errors.New("runtime/container/Dockerfile must build the shipped Rust launcher artifacts with cargo --locked --offline")
-	}
-	if !strings.Contains(runtimeDockerfile, "CARGO_HOME=/workcell-rust/cargo-home") {
-		return errors.New("runtime/container/Dockerfile must isolate Cargo home inside the vendored runtime source tree")
-	}
-	for _, needle := range []string{
-		"name: workcell-release-preflight",
-		"name: workcell-release-install-candidate",
-		"name: Release install verification (${{ matrix.runner_label }})",
-		"brew tap-new",
-		"brew --repo",
-		"brew install \"${tap_name}/workcell\"",
-		"macos-26",
-		"macos-15",
-		"actions/download-artifact@",
-		"context: dist/release-source",
-		"name: Re-verify pinned upstreams from archived source tree",
-		"name: Verify GitHub macOS release test runners",
-		"working-directory: dist/release-source",
-		"WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source",
-		"WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source",
-		"Verify published platform digests match preflight",
-		"docker buildx imagetools inspect --raw",
-		"{{json .Manifest}}",
-		"vnd.docker.reference.type",
-		"RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}",
-		"actions/attest@",
-		"Verify release bundle matches preflight",
-		"Verify control-plane manifest matches preflight",
-		"github/codeql-action/init@",
-		"github/codeql-action/analyze@",
-		"./scripts/publish-github-release.sh",
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	if strings.Contains(releaseWorkflow, "{{json .manifest}}") {
-		return errors.New(".github/workflows/release.yml must not use the unsupported lowercase Buildx .manifest template field")
-	}
-	if !strings.Contains(releaseWorkflow, "dist/${{ env.BUNDLE_NAME }}.sigstore.json") ||
-		!strings.Contains(releaseWorkflow, "dist/workcell-control-plane.sigstore.json") ||
-		!strings.Contains(releaseWorkflow, "dist/workcell-image.digest.sigstore.json") ||
-		!strings.Contains(releaseWorkflow, "dist/workcell-source.spdx.sigstore.json") ||
-		!strings.Contains(releaseWorkflow, "dist/workcell-image.spdx.sigstore.json") {
-		return errors.New(".github/workflows/release.yml must publish direct signature bundles for release artifacts")
-	}
-	if err := ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow); err != nil {
-		return err
-	}
-	if err := ValidateMacOSInstallVerificationFlow(releaseWorkflow, ".github/workflows/release.yml", "workcell-release-install-candidate", "name: Release install verification (${{ matrix.runner_label }})"); err != nil {
-		return err
-	}
-	if err := ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
-		return err
-	}
-	if err := ValidateReleaseWorkflowPublicationGate(releaseWorkflow); err != nil {
-		return err
-	}
-	if strings.Contains(releaseWorkflow, "steps.build.outputs.digest") {
-		return errors.New(".github/workflows/release.yml must not keep referencing the old single-step multi-platform digest output")
-	}
-	if strings.Contains(releaseWorkflow, "gh release ") {
-		return errors.New(".github/workflows/release.yml must not depend on an ambient gh CLI; use a pinned release-publish action")
-	}
-	if !strings.Contains(releaseWorkflow, "./scripts/publish-github-release.sh") {
-		return errors.New(".github/workflows/release.yml must publish assets through the reviewed repo-local GitHub Release API script")
-	}
-	if count := strings.Count(releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 2 {
-		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures in preflight and publish jobs, found %d checks", count)
-	}
-	for _, needle := range []string{
-		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
-		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
-		`--immutable-releases-preverified-by-hosted-controls`,
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	if !strings.Contains(releaseWorkflow, "environment:\n      name: hosted-controls-audit") {
-		return errors.New(".github/workflows/release.yml release preflight must bind to the hosted-controls-audit environment")
-	}
-	if err := ValidateUpstreamRefreshWorkflow(upstreamRefreshWorkflow); err != nil {
-		return err
-	}
-	hostedControlsWorkflow, err := readText(filepath.Join(cfg.WorkflowsDir, "hosted-controls.yml"))
-	if err != nil {
-		return err
-	}
-	for _, needle := range []string{
-		`name: hosted-controls-audit`,
-		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
-		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
-	} {
-		if !strings.Contains(hostedControlsWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
-		}
-	}
-	for _, needle := range []string{
-		"./scripts/verify-github-macos-release-test-runners.sh",
-		"./scripts/verify-upstream-codex-release.sh",
-		"./scripts/verify-upstream-claude-release.sh",
-		"./scripts/verify-upstream-copilot-release.sh",
-		"./scripts/verify-upstream-gemini-release.sh",
-		"./scripts/update-upstream-pins.sh --check",
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	for _, needle := range []string{
-		"./scripts/ci/job-pin-hygiene.sh",
-	} {
-		if !strings.Contains(pinHygieneWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/pin-hygiene.yml must contain %q", needle)
-		}
-	}
-	pinHygieneJob, err := readText(filepath.Join(repoRoot, "scripts", "ci", "job-pin-hygiene.sh"))
-	if err != nil {
-		return err
-	}
-	validateJob, err := readText(filepath.Join(repoRoot, "scripts", "ci", "job-validate.sh"))
-	if err != nil {
-		return err
-	}
-	for _, needle := range []string{
-		"${ROOT_DIR}/scripts/verify-upstream-codex-release.sh",
-		"${ROOT_DIR}/scripts/verify-upstream-claude-release.sh",
-		"${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh",
-		"${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh",
-	} {
-		if !strings.Contains(pinHygieneJob, needle) {
-			return fmt.Errorf("scripts/ci/job-pin-hygiene.sh must contain %q", needle)
-		}
-	}
-	for _, needle := range []string{
-		`WORKCELL_COPILOT_RELEASE_HELP_MODE=checksum "${ROOT_DIR}/scripts/verify-upstream-copilot-release.sh"`,
-		"unset WORKCELL_GITHUB_API_TOKEN GITHUB_TOKEN GH_TOKEN",
-	} {
-		if !strings.Contains(validateJob, needle) {
-			return fmt.Errorf("scripts/ci/job-validate.sh must contain %q", needle)
-		}
-	}
-	for _, needle := range []string{
-		"./scripts/update-upstream-pins.sh --check",
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	for _, needle := range []string{
-		"environment:\n      name: release",
-		`sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign`,
-		`sudo install -m 0755 "$(command -v syft)" /usr/local/bin/syft`,
-		`actionlint_archive="${RUNNER_TEMP}/actionlint.tar.gz"`,
-		`tar -xzf "${actionlint_archive}" -C "${RUNNER_TEMP}" actionlint`,
-		"git -c safe.directory=/workspace archive \\",
-	} {
-		if !strings.Contains(releaseWorkflow, needle) {
-			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
-		}
-	}
-	for _, workflowPath := range workflowYAMLFiles(cfg.WorkflowsDir) {
-		workflowText, err := readText(workflowPath)
-		if err != nil {
-			return err
-		}
-		if !workflowPermissionsRE.MatchString(workflowText) {
-			return fmt.Errorf("workflow-level empty permissions declaration missing in %s", workflowPath)
-		}
-		if strings.Contains(workflowText, "pull_request_target") {
-			if err := IsSafePullRequestTargetWorkflow(workflowText, workflowPath); err != nil {
-				return err
-			}
-		}
-		if regexp.MustCompile(`secrets\.[A-Z0-9_]*(?:PAT|PERSONAL_ACCESS_TOKEN)\b|GH_PAT\b|PERSONAL_ACCESS_TOKEN\b`).MatchString(workflowText) {
-			return fmt.Errorf("%s must not contain long-lived personal access tokens", workflowPath)
-		}
-		usesRefs, err := extractWorkflowUses(workflowText)
-		if err != nil {
-			return fmt.Errorf("%s: %w", workflowPath, err)
-		}
-		for _, ref := range usesRefs {
-			action := actionRefPattern.FindStringSubmatch(ref)
-			if action == nil {
-				return fmt.Errorf("%s has an unsupported uses: reference %q; only pinned owner/repo actions are permitted (no docker:// or local ./ actions)", workflowPath, ref)
-			}
-			if !commitShaPattern.MatchString(action[2]) {
-				return fmt.Errorf("%s must pin GitHub Actions by full commit SHA; found %s@%s", workflowPath, action[1], action[2])
-			}
-			segments := strings.SplitN(action[1], "/", 3)
-			ownerRepo := segments[0] + "/" + segments[1]
-			if !allowedActions[ownerRepo] {
-				return fmt.Errorf("%s uses action %q which is not in the reviewed allowlist policy/allowed-actions.toml", workflowPath, ownerRepo)
-			}
-		}
-	}
-	for _, required := range []string{
-		"/.github/workflows/ @omkhar",
-		"/scripts/ @omkhar",
-		"/runtime/container/ @omkhar",
-		"/docs/provenance.md @omkhar",
-	} {
-		if !strings.Contains(codeowners, required) {
-			return fmt.Errorf(".github/CODEOWNERS must declare high-risk ownership for %q", required)
-		}
-	}
-	releaseEnvironment, _ := hostedControlsPolicy["release_environment"].(map[string]any)
-	releaseMode, _ := releaseEnvironment["mode"].(string)
-	if releaseMode != "review-gated" && releaseMode != "single-owner-public" && releaseMode != "single-owner-private" && releaseMode != "plan-limited-private" {
-		return errors.New("policy/github-hosted-controls.toml must set release_environment.mode to 'review-gated', 'single-owner-public', 'single-owner-private', or 'plan-limited-private'")
-	}
-	if _, err := GitHubActionsPolicy(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
-		return err
-	}
-	if _, err := ReleaseAssets(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
-		return err
-	}
-	if err := ValidateCanonicalRepositoryVariables(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
-		return err
-	}
-	if err := ValidateCanonicalWorkflowEnvironments(hostedControlsPolicy, "policy/github-hosted-controls.toml"); err != nil {
-		return err
-	}
-	if err := validateCanonicalHostedControlsScript(hostedControlsScript); err != nil {
-		return err
-	}
-	if err := requireNoRegistryBootstrapMCP(codexRequirementsText, cfg.CodexRequirementsPath); err != nil {
-		return err
-	}
-	if err := requireNoRegistryBootstrapMCP(codexMCPConfigText, cfg.CodexMCPConfigPath); err != nil {
-		return err
-	}
-	return nil
+	return firstPinnedInputError(
+		check.validateReleaseManifestAndRuntimeSources,
+		check.validateRuntimeCargoBuild,
+		check.validateReleaseRequiredSteps,
+		check.validateReleaseArtifactFlows,
+		check.validateReleaseLegacyReferences,
+		check.validateReleaseHostedControls,
+		check.validateHostedControlsWorkflow,
+		check.validateReleaseVerificationJobs,
+		check.validateReleasePublishingInputs,
+		check.validateWorkflowPolicies,
+		check.validateCodeownersAndHostedPolicy,
+	)
 }
 
 func requireArg(text, name, path string) (string, error) {
