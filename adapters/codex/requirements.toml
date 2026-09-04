@@ -4,13 +4,16 @@
 # by design and are intended to be copied into an admin-enforced deployment.
 
 allowed_approval_policies = ["on-request", "never"]
-# Managed sessions should stay on the built-in workspace-write boundary and
-# reserve danger-full-access for explicit breakglass operation only.
+# Standalone profiles use workspace-write. The managed wrapper disables the
+# native sandbox only after Workcell establishes the outer runtime boundary.
 allowed_sandbox_modes = ["workspace-write", "danger-full-access"]
 allowed_web_search_modes = ["disabled"]
 
 [features]
-unified_exec = false
+# Managed sessions use unified execution after the wrapper disables the inner sandbox.
+unified_exec = true
+# Managed sessions require the signed host for Code Mode shell calls.
+code_mode_host = true
 # Kept in lockstep with .codex/config.toml and managed_config.toml: pin the
 # 0.143+ plugin/marketplace feature flags off so the managed baseline cannot
 # fetch/install remote plugins or share them (defense in depth for the plugin

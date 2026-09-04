@@ -79,6 +79,7 @@ func subcommands() []subcommand {
 		{"extract-dockerfile-arg", "DOCKERFILE_PATH ARG_NAME", 2, 2, cmdExtractDockerfileArg},
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
+		{"extract-codex-code-mode-host-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexCodeModeHostSHA},
 		{"extract-copilot-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCopilotSHA},
 		{"github-api-get", "URL", 1, 1, cmdGitHubAPIGet},
 		{"github-release-asset", "REPOSITORY ASSET_NAME CLASS", 3, 3, cmdGitHubReleaseAsset},
@@ -333,6 +334,15 @@ func cmdExtractClaudeSHA(args []string) error {
 
 func cmdExtractCodexSHA(args []string) error {
 	value, err := metadatautil.ExtractCodexSHA(args[0], args[1])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
+func cmdExtractCodexCodeModeHostSHA(args []string) error {
+	value, err := metadatautil.ExtractCodexCodeModeHostSHA(args[0], args[1])
 	if err != nil {
 		return err
 	}

@@ -145,49 +145,67 @@ func fetchUpstream(ctx context.Context, client upstreamHTTPDoer, request upstrea
 	return readBoundedHTTPBody(resp, request.maxBytes, request.responseDescription)
 }
 
+var fixedUpstreamFetchProfiles = map[string]upstreamFetchRequest{
+	"go-releases": fixedUpstreamFetchRequest(
+		"https://go.dev/dl/?mode=json", "go.dev", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "Go release metadata",
+	),
+	"rust-channel": fixedUpstreamFetchRequest(
+		"https://static.rust-lang.org/dist/channel-rust-stable.toml", "static.rust-lang.org", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "Rust channel metadata",
+	),
+	"rustup-release": fixedUpstreamFetchRequest(
+		"https://static.rust-lang.org/rustup/release-stable.toml", "static.rust-lang.org", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "rustup release metadata",
+	),
+	"dockerhub-binfmt-tags": fixedUpstreamFetchRequest(
+		"https://hub.docker.com/v2/repositories/tonistiigi/binfmt/tags?page_size=100", "hub.docker.com", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "Docker Hub binfmt tags",
+	),
+	"x-tools-latest": fixedUpstreamFetchRequest(
+		"https://proxy.golang.org/golang.org/x/tools/@latest", "proxy.golang.org", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "x/tools release metadata",
+	),
+}
+
+var upstreamRustTargets = map[string]bool{
+	"aarch64-unknown-linux-gnu": true,
+	"x86_64-unknown-linux-gnu":  true,
+}
+
 func upstreamFetchRequestFor(args []string) (upstreamFetchRequest, error) {
 	if len(args) == 0 {
 		return upstreamFetchRequest{}, errors.New("missing upstream fetch profile")
 	}
-	switch args[0] {
-	case "go-releases":
-		if len(args) != 1 {
-			return upstreamFetchRequest{}, errors.New("go-releases does not accept arguments")
-		}
-		return fixedUpstreamFetchRequest("https://go.dev/dl/?mode=json", "go.dev", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "Go release metadata"), nil
-	case "rust-channel":
-		if len(args) != 1 {
-			return upstreamFetchRequest{}, errors.New("rust-channel does not accept arguments")
-		}
-		return fixedUpstreamFetchRequest("https://static.rust-lang.org/dist/channel-rust-stable.toml", "static.rust-lang.org", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "Rust channel metadata"), nil
-	case "rustup-release":
-		if len(args) != 1 {
-			return upstreamFetchRequest{}, errors.New("rustup-release does not accept arguments")
-		}
-		return fixedUpstreamFetchRequest("https://static.rust-lang.org/rustup/release-stable.toml", "static.rust-lang.org", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "rustup release metadata"), nil
-	case "rustup-checksum":
-		if len(args) != 3 {
-			return upstreamFetchRequest{}, errors.New("rustup-checksum requires VERSION and TARGET")
-		}
-		version := args[1]
-		if !upstreamRustVersionPattern.MatchString(version) {
-			return upstreamFetchRequest{}, fmt.Errorf("invalid rustup version %q", version)
-		}
-		target := args[2]
-		switch target {
-		case "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu":
-		default:
-			return upstreamFetchRequest{}, fmt.Errorf("unsupported rustup target %q", target)
-		}
-		return fixedUpstreamFetchRequest(fmt.Sprintf("https://static.rust-lang.org/rustup/archive/%s/%s/rustup-init.sha256", version, target), "static.rust-lang.org", upstreamChecksumMaxBytes, upstreamChecksumTimeout, "rustup checksum"), nil
-	case "dockerhub-binfmt-tags":
-		if len(args) != 1 {
-			return upstreamFetchRequest{}, errors.New("dockerhub-binfmt-tags does not accept arguments")
-		}
-		return fixedUpstreamFetchRequest("https://hub.docker.com/v2/repositories/tonistiigi/binfmt/tags?page_size=100", "hub.docker.com", upstreamMetadataMaxBytes, upstreamHTTPTimeout, "Docker Hub binfmt tags"), nil
-	default:
-		return upstreamFetchRequest{}, fmt.Errorf("unknown upstream fetch profile %q", args[0])
+	request, err, fixed := fixedUpstreamFetchRequestFor(args)
+	if fixed {
+		return request, err
 	}
+	if args[0] == "rustup-checksum" {
+		return rustupChecksumRequest(args)
+	}
+	return upstreamFetchRequest{}, fmt.Errorf("unknown upstream fetch profile %q", args[0])
+}
+
+func fixedUpstreamFetchRequestFor(args []string) (upstreamFetchRequest, error, bool) {
+	request, ok := fixedUpstreamFetchProfiles[args[0]]
+	if !ok {
+		return upstreamFetchRequest{}, nil, false
+	}
+	if len(args) != 1 {
+		return upstreamFetchRequest{}, fmt.Errorf("%s does not accept arguments", args[0]), true
+	}
+	return request, nil, true
+}
+
+func rustupChecksumRequest(args []string) (upstreamFetchRequest, error) {
+	if len(args) != 3 {
+		return upstreamFetchRequest{}, errors.New("rustup-checksum requires VERSION and TARGET")
+	}
+	version := args[1]
+	if !upstreamRustVersionPattern.MatchString(version) {
+		return upstreamFetchRequest{}, fmt.Errorf("invalid rustup version %q", version)
+	}
+	target := args[2]
+	if !upstreamRustTargets[target] {
+		return upstreamFetchRequest{}, fmt.Errorf("unsupported rustup target %q", target)
+	}
+	return fixedUpstreamFetchRequest(fmt.Sprintf("https://static.rust-lang.org/rustup/archive/%s/%s/rustup-init.sha256", version, target), "static.rust-lang.org", upstreamChecksumMaxBytes, upstreamChecksumTimeout, "rustup checksum"), nil
 }
 
 func fixedUpstreamFetchRequest(rawURL, redirectHost string, maxBytes int64, timeout time.Duration, responseDescription string) upstreamFetchRequest {

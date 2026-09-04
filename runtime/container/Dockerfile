@@ -1,7 +1,7 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:b622a0bf896a85c5b13b7973eaf3f06e909cf539576551a67724323a21da2b17
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:50c3b2f6988dfc307b86e5301d69611af31f4789bdf232863b07d3b02fe55ae0
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
@@ -222,21 +222,21 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.221
+ARG CLAUDE_VERSION=2.1.260
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
-# consumes the statically linked musl Linux tarballs (which carry sigstore
-# bundles); to update manually, resolve the eligible stable version, verify
-# the GitHub release asset digests for both musl Linux tarballs, and refresh
-# the CODEX_SHA256 values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.146.0
+# consumes the signed, statically linked musl Linux CLI and code-mode host.
+# To update manually, verify all four GitHub release asset digests. Then
+# refresh both checksum values for arm64 and amd64 below.
+ARG CODEX_VERSION=0.153.2
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.78
+ARG COPILOT_VERSION=1.0.82
 ARG CODEX_RELEASE_URL=
+ARG CODEX_CODE_MODE_HOST_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
 ARG RUST_VERSION=1.97.1
 ARG TARGETARCH
@@ -311,11 +311,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="d3c59d6bcc4adcf4cd85abca3bc13fa1131a34cb32f982bdf030d83a3b11e700"; \
+      CLAUDE_SHA256="9811afb5f97224c2c5d3d0ee1e8c316117d298d5ec3e095d5ff0c1dd0e889ca5"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="60db8e88d42c24b5199c92cfd56ec88370c510c3789c6f364af748354f087ada"; \
+      CLAUDE_SHA256="7a2fdc74b6836ea3d183f665b869f0ee3baebc9713cbebffe5838da4ea7bd82e"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -347,11 +347,13 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="975bac91562abeedeb8f79636d51a86649b31f34a9de6a3bcb059565b6cf1f87"; \
+      CODEX_SHA256="878693f9b370320ea21793f99ea1f5687b7d9aa1f2c733de693d9ec0baa4e62a"; \
+      CODEX_CODE_MODE_HOST_SHA256="70fe485e6919a038b75f70be71aa5782a19a5f36ee85597301e90bd1c9bcbf07"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="5ba3b9405543953081f661d0854d266f76e2abbe51d41349355a36de7673776a"; \
+      CODEX_SHA256="e8cd1160071f725d2a10cab81073dd6818fc8b096372125d27ef6e66fdf0979e"; \
+      CODEX_CODE_MODE_HOST_SHA256="177a4507b9cc7f97f113ac034697b39f6a71a876a8bd508ff6d7f52f342ebe4a"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -376,9 +378,29 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
   && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
+  && if [[ -n "${CODEX_CODE_MODE_HOST_RELEASE_URL}" ]]; then \
+       curl --ipv4 -fsSL "${CODEX_CODE_MODE_HOST_RELEASE_URL}" \
+         --retry 8 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 30 \
+         -o /tmp/codex-code-mode-host.tar.gz; \
+     else \
+       curl --ipv4 -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-code-mode-host-${CODEX_ARCH}.tar.gz" \
+         --retry 8 \
+         --retry-all-errors \
+         --retry-delay 5 \
+         --connect-timeout 30 \
+         -o /tmp/codex-code-mode-host.tar.gz; \
+     fi \
+  && echo "${CODEX_CODE_MODE_HOST_SHA256}  /tmp/codex-code-mode-host.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/codex-code-mode-host.tar.gz -C /tmp \
+  && mv "/tmp/codex-code-mode-host-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex-code-mode-host \
   && chmod 0755 /usr/local/libexec/workcell/real/codex \
+    /usr/local/libexec/workcell/real/codex-code-mode-host \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
-  && rm -f /tmp/codex.tar.gz
+    /usr/local/libexec/workcell/real/codex-code-mode-host \
+  && rm -f /tmp/codex.tar.gz /tmp/codex-code-mode-host.tar.gz
 
 RUN TARGET_ARCH="${TARGETARCH:-}" \
   && if [[ -z "${TARGET_ARCH}" ]]; then \
@@ -394,11 +416,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="e7d8dd1829d8096ade9876977c49a574b1851c730c71b4f2f5039b4d6ed39ba4"; \
+      COPILOT_SHA256="86c4c77a91b1ff5dd7313cbea9f861699a2cdceb4696f3864f3f0584e9684e0f"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="8935cbe2916b0b1cb724aaa81fdda29e2ec20b2ea76f1d2708fb788e47acfad9"; \
+      COPILOT_SHA256="37fa67686a9e4ed8d46dcd6a9c80ab524dea840ecaa0a3f7edf8d09f961b97a9"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \

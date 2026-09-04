@@ -164,6 +164,9 @@ func (validator *dockerPinnedInputValidator) validateProviderInstallCommands() e
 		{`curl --ipv4 -fsSL "https://github\.com/github/copilot-cli/releases/download/v\$\{COPILOT_VERSION\}/copilot-\$\{COPILOT_PLATFORM\}\.tar\.gz"`, "Copilot native release download URL"},
 		{`echo "\$\{COPILOT_SHA256\}  /tmp/copilot\.tar\.gz" \| sha256sum -c -`, "Copilot native archive checksum verification"},
 		{`install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot`, "executable Copilot runtime artifact install"},
+		{`codex-code-mode-host-\$\{CODEX_ARCH\}\.tar\.gz`, "Codex code-mode host release download URL"},
+		{`echo "\$\{CODEX_CODE_MODE_HOST_SHA256\}  /tmp/codex-code-mode-host\.tar\.gz" \| sha256sum -c -`, "Codex code-mode host archive checksum verification"},
+		{`/usr/local/libexec/workcell/real/codex-code-mode-host`, "Codex code-mode host runtime artifact install"},
 	}
 	for _, requirement := range requirements {
 		if _, _, err := requireRegex(validator.runtimeDockerfile, requirement.pattern, requirement.label, validator.cfg.RuntimeDockerfilePath); err != nil {
@@ -221,8 +224,8 @@ func (validator *dockerPinnedInputValidator) validateProviderVersions() error {
 
 func (validator *dockerPinnedInputValidator) validateCodexArchitectureMappings() error {
 	return validateDockerArchitectureMappings(validator.runtimeDockerfile, validator.cfg.RuntimeDockerfilePath, []dockerArchitectureMapping{
-		{`(?m)^\s*arm64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "arm64 Codex mapping", "aarch64-unknown-linux-musl"},
-		{`(?m)^\s*amd64\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`, "amd64 Codex mapping", "x86_64-unknown-linux-musl"},
+		{`(?m)^\s*arm64\)\s+\\\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="[0-9a-f]{64}";\s+\\\s*CODEX_CODE_MODE_HOST_SHA256="[0-9a-f]{64}";`, "arm64 Codex mapping", "aarch64-unknown-linux-musl"},
+		{`(?m)^\s*amd64\)\s+\\\s*CODEX_ARCH="([^"]+)";\s+\\\s*CODEX_SHA256="[0-9a-f]{64}";\s+\\\s*CODEX_CODE_MODE_HOST_SHA256="[0-9a-f]{64}";`, "amd64 Codex mapping", "x86_64-unknown-linux-musl"},
 	})
 }
 

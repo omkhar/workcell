@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "3ad0354f6b3506c15851e75edcb0885512e8440b7eee311c5dfbd69d744ef170"
+      "sha256": "0be4e87ae344ebdeade6d02e3c33139f75feb6e2b2167d743bdbb7cb4dbab1bc"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -122,7 +122,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "294e979a29a7023c3e0be229feebaf24a394f6d33ab9f25bacbc3a4b169e9ed3"
+      "sha256": "739e867c08f527b6c61c227bb5b9144bdd6055c629dd8d8b8873b61caf4e48d8"
     },
     {
       "kind": "adapter-baseline",
@@ -146,7 +146,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "3c26a72b7f15ebd8eae2263721e52ddf94d8ae2a4036aa824b77ae57934fa996"
+      "sha256": "ab1361917aaece7e7adad24e822522f9c8133d30f286ff8320111ee87b028f2d"
     },
     {
       "kind": "adapter-baseline",
@@ -158,7 +158,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "16eaf696e8c920575c09d5616c4f77cc1110853abfa8b1f0a3075cd03c568ffd"
+      "sha256": "52ada96708b32c92f660c723f38061950248d05052df174319481b5e36917963"
     },
     {
       "kind": "adapter-baseline",
@@ -248,13 +248,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-policy.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-policy.sh",
-      "sha256": "1e8c5e98828890f7c51c58e8f1d486cd8412b5b5b06d5cb55ddd1a910c05e8d1"
+      "sha256": "62d4e7a8f017cb57468bcfda1aecbee8b0e018d4e6a03fc25dcd6a2307114c7e"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "bdccf6057d7b72e0da90dff5c2629ce5e1a4b501051d5976363140a392ea83c4"
+      "sha256": "fdf553db0f799ec09d9e4e02a359f5f97bada6e3b0d18a94e9d191ecc6a3392b"
     },
     {
       "kind": "runtime-control-plane",

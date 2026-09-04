@@ -44,9 +44,11 @@ exclude_tmpdir_env_var = false
 network_access = false
 
 [features]
-# Codex's unified exec path currently fails inside Workcell managed mode with
-# "Failed to create unified exec process: Operation not permitted".
-unified_exec = false
+# Codex 0.153.2 keeps unified execution on without an administrator requirement.
+# Workcell disables the incompatible inner sandbox in the managed wrapper.
+unified_exec = true
+# The runtime installs the matching signed host beside the Codex executable.
+code_mode_host = true
 # Defense in depth for the 0.143+ plugin/marketplace surface: even though the
 # provider policy rejects the `plugin` subcommand outright, pin the plugin
 # feature flags off in the runtime baseline so no config layer can silently

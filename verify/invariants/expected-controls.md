@@ -14,6 +14,8 @@
 
 - Strict, development, and build profile files set `workspace-write`.
 - `breakglass` uses `danger-full-access`.
+- The managed wrapper disables the native sandbox inside the Workcell boundary.
+- The runtime uses the signed, checksum-pinned code-mode host.
 - All shipped profiles disable web search.
 - The launcher reports the Codex native sandbox as disabled. The VM, container,
   and syscall shim supply the effective boundary.

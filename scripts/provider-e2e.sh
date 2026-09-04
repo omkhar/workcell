@@ -298,8 +298,8 @@ probe_output_matches_expected_token() {
 
   case "${AGENT}" in
     codex)
-      grep -Eq "\"text\"[[:space:]]*:[[:space:]]*\"${PROBE_RESPONSE_TOKEN}\"" <<<"${output}" ||
-        grep -qxF "${PROBE_RESPONSE_TOKEN}" <<<"${output}"
+      grep -Eq "\"type\":\"command_execution\".*\"aggregated_output\":\"${PROBE_RESPONSE_TOKEN}\\\\n\".*\"exit_code\":0" <<<"${output}" &&
+        grep -Eq "\"text\"[[:space:]]*:[[:space:]]*\"${PROBE_RESPONSE_TOKEN}\"" <<<"${output}"
       ;;
     claude)
       grep -Eq "\"(result|response|text)\"[[:space:]]*:[[:space:]]*\"${PROBE_RESPONSE_TOKEN}\"" <<<"${output}" ||
@@ -433,7 +433,7 @@ case "${AGENT}" in
     probe_cmd+=(
       "--agent-arg" "exec"
       "--agent-arg" "--json"
-      "--agent-arg" "$(build_probe_prompt)"
+      "--agent-arg" "Use the shell tool to run printf '${PROBE_RESPONSE_TOKEN}\\n'. Then reply with exactly ${PROBE_RESPONSE_TOKEN} and nothing else."
     )
     ;;
   claude)

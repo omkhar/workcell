@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -94,6 +95,14 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
     {
       "name": "codex-x86_64-unknown-linux-musl.tar.gz",
       "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
     }
   ]
 }`))
@@ -179,8 +188,14 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 	if got := plan.Providers["gemini"].TargetVersion; got != "0.36.0" {
 		t.Fatalf("Gemini target = %q, want 0.36.0", got)
 	}
-	if got := plan.Providers["codex"].Checksums["arm64"]; got != "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7" {
-		t.Fatalf("Codex arm64 checksum = %q", got)
+	wantCodexChecksums := map[string]string{
+		"arm64":                "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7",
+		"amd64":                "526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b",
+		"code_mode_host_arm64": "1111111111111111111111111111111111111111111111111111111111111111",
+		"code_mode_host_amd64": "2222222222222222222222222222222222222222222222222222222222222222",
+	}
+	if got := plan.Providers["codex"].Checksums; !reflect.DeepEqual(got, wantCodexChecksums) {
+		t.Fatalf("Codex checksums = %#v, want %#v", got, wantCodexChecksums)
 	}
 }
 
@@ -248,7 +263,7 @@ func TestSelectCodexStableSkipsMissingMuslReleaseAssetsAndSelectsNextCompatible(
   "prerelease": false,
   "assets": [
     {
-      "name": "codex-aarch64-unknown-linux-gnu.tar.gz",
+      "name": "codex-aarch64-unknown-linux-musl.tar.gz",
       "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   ]
@@ -266,6 +281,14 @@ func TestSelectCodexStableSkipsMissingMuslReleaseAssetsAndSelectsNextCompatible(
     {
       "name": "codex-x86_64-unknown-linux-musl.tar.gz",
       "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
     }
   ]
 }`))
@@ -358,6 +381,14 @@ func TestSelectCodexStableRejectsMalformedReleaseDigest(t *testing.T) {
     {
       "name": "codex-x86_64-unknown-linux-musl.tar.gz",
       "digest": "sha256:526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"
+    },
+    {
+      "name": "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
     }
   ]
 }`))
@@ -2046,10 +2077,12 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 		"  arm64) \\",
 		"    CODEX_ARCH=\"aarch64-unknown-linux-musl\"; \\",
 		"    CODEX_SHA256=\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"; \\",
+		"    CODEX_CODE_MODE_HOST_SHA256=\"3333333333333333333333333333333333333333333333333333333333333333\"; \\",
 		"    ;;",
 		"  amd64) \\",
 		"    CODEX_ARCH=\"x86_64-unknown-linux-musl\"; \\",
 		"    CODEX_SHA256=\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"; \\",
+		"    CODEX_CODE_MODE_HOST_SHA256=\"4444444444444444444444444444444444444444444444444444444444444444\"; \\",
 		"    ;;",
 		"esac",
 		"RUN case \"${TARGET_ARCH}\" in \\",
@@ -2093,8 +2126,10 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 			"codex": {
 				TargetVersion: "0.118.0",
 				Checksums: map[string]string{
-					"arm64": "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7",
-					"amd64": "526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b",
+					"arm64":                "9f9c1241d39783384313975723475020dfbe1bd7b023c22b04816168159f8fd7",
+					"amd64":                "526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b",
+					"code_mode_host_arm64": "3333333333333333333333333333333333333333333333333333333333333333",
+					"code_mode_host_amd64": "4444444444444444444444444444444444444444444444444444444444444444",
 				},
 			},
 			"copilot": {
@@ -2137,8 +2172,11 @@ func TestApplyProviderBumpPlanRewritesPinnedVersions(t *testing.T) {
 	if !strings.Contains(string(updatedDockerfile), `CLAUDE_SHA256="08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"`) {
 		t.Fatalf("Dockerfile was not updated with Claude arm64 checksum:\n%s", updatedDockerfile)
 	}
-	if !strings.Contains(string(updatedDockerfile), `CODEX_SHA256="526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"`) {
-		t.Fatalf("Dockerfile was not updated with Codex amd64 checksum:\n%s", updatedDockerfile)
+	wantCodexChecksums := "" +
+		`CODEX_SHA256="526b0d64ecf3d11c89d1d476deff3002ff2c2f728ef6f8f874f8d1a9d92e6e6b"; \` + "\n" +
+		`    CODEX_CODE_MODE_HOST_SHA256="4444444444444444444444444444444444444444444444444444444444444444"; \`
+	if !strings.Contains(string(updatedDockerfile), wantCodexChecksums) {
+		t.Fatalf("Dockerfile was not updated with Codex amd64 checksums:\n%s", updatedDockerfile)
 	}
 	if !strings.Contains(string(updatedDockerfile), `COPILOT_SHA256="2222222222222222222222222222222222222222222222222222222222222222"`) {
 		t.Fatalf("Dockerfile was not updated with Copilot amd64 checksum:\n%s", updatedDockerfile)
