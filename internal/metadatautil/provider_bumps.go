@@ -51,18 +51,20 @@ const (
 )
 
 var (
-	errReleaseAssetNotFound       = errors.New("release asset not found")
-	stableVersionPattern          = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
-	geminiDependencyPattern       = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
-	claudeVersionLinePattern      = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
-	codexVersionLinePattern       = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
-	copilotVersionLinePattern     = regexp.MustCompile(`(?m)^ARG COPILOT_VERSION=.*$`)
-	claudeArmChecksumLinePattern  = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	claudeAmdChecksumLinePattern  = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
-	codexArmChecksumLinePattern   = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
-	codexAmdChecksumLinePattern   = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
-	copilotArmChecksumLinePattern = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*COPILOT_PLATFORM="linux-arm64";\s+\\\s*COPILOT_SHA256=")[0-9a-f]{64}(";)`)
-	copilotAmdChecksumLinePattern = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*COPILOT_PLATFORM="linux-x64";\s+\\\s*COPILOT_SHA256=")[0-9a-f]{64}(";)`)
+	errReleaseAssetNotFound                 = errors.New("release asset not found")
+	stableVersionPattern                    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	geminiDependencyPattern                 = regexp.MustCompile(`(?m)("(@google/gemini-cli)"\s*:\s*")[^"]+(")`)
+	claudeVersionLinePattern                = regexp.MustCompile(`(?m)^ARG CLAUDE_VERSION=.*$`)
+	codexVersionLinePattern                 = regexp.MustCompile(`(?m)^ARG CODEX_VERSION=.*$`)
+	copilotVersionLinePattern               = regexp.MustCompile(`(?m)^ARG COPILOT_VERSION=.*$`)
+	claudeArmChecksumLinePattern            = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CLAUDE_PLATFORM="linux-arm64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
+	claudeAmdChecksumLinePattern            = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CLAUDE_PLATFORM="linux-x64";\s+\\\s*CLAUDE_SHA256=")[0-9a-f]{64}(";)`)
+	codexArmChecksumLinePattern             = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	codexAmdChecksumLinePattern             = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-musl";\s+\\\s*CODEX_SHA256=")[0-9a-f]{64}(";)`)
+	codexCodeModeHostArmChecksumLinePattern = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*CODEX_ARCH="aarch64-unknown-linux-musl";\s+\\\s*CODEX_SHA256="[0-9a-f]{64}";\s+\\\s*CODEX_CODE_MODE_HOST_SHA256=")[0-9a-f]{64}(";)`)
+	codexCodeModeHostAmdChecksumLinePattern = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*CODEX_ARCH="x86_64-unknown-linux-musl";\s+\\\s*CODEX_SHA256="[0-9a-f]{64}";\s+\\\s*CODEX_CODE_MODE_HOST_SHA256=")[0-9a-f]{64}(";)`)
+	copilotArmChecksumLinePattern           = regexp.MustCompile(`(?ms)(arm64\)\s+\\\s*COPILOT_PLATFORM="linux-arm64";\s+\\\s*COPILOT_SHA256=")[0-9a-f]{64}(";)`)
+	copilotAmdChecksumLinePattern           = regexp.MustCompile(`(?ms)(amd64\)\s+\\\s*COPILOT_PLATFORM="linux-x64";\s+\\\s*COPILOT_SHA256=")[0-9a-f]{64}(";)`)
 )
 
 type ProviderBumpPolicy struct {
@@ -93,6 +95,11 @@ type ProviderBumpSelection struct {
 	Changed         bool                         `json:"changed"`
 	Checksums       map[string]string            `json:"checksums,omitempty"`
 	SkippedReleases []ProviderBumpSkippedRelease `json:"skipped_releases,omitempty"`
+}
+
+type providerChecksumRequirement struct {
+	key      string
+	variable string
 }
 
 type ProviderBumpSkippedRelease struct {
@@ -368,16 +375,16 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	if !stableVersionPattern.MatchString(geminiPlan.TargetVersion) {
 		return fmt.Errorf("%s contains a non-stable Gemini target version %q", planPath, geminiPlan.TargetVersion)
 	}
+	currentCodexVersion, err := ExtractDockerfileArg(dockerfilePath, "CODEX_VERSION")
+	if err != nil {
+		return err
+	}
 	currentCopilotVersion, err := ExtractDockerfileArg(dockerfilePath, "COPILOT_VERSION")
 	if err != nil {
 		return err
 	}
+	codexVersionChanged := codexPlan.TargetVersion != currentCodexVersion
 	copilotVersionChanged := copilotPlan.TargetVersion != currentCopilotVersion
-	if copilotVersionChanged {
-		if err := requireProviderChecksums(planPath, providerid.Copilot, copilotPlan); err != nil {
-			return err
-		}
-	}
 	if policyPath != "" {
 		policy, err := LoadProviderBumpPolicy(policyPath)
 		if err != nil {
@@ -398,33 +405,41 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	updatedDockerfile = claudeVersionLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf("ARG CLAUDE_VERSION=%s", claudePlan.TargetVersion))
 	updatedDockerfile = codexVersionLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf("ARG CODEX_VERSION=%s", codexPlan.TargetVersion))
 	updatedDockerfile = copilotVersionLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf("ARG COPILOT_VERSION=%s", copilotPlan.TargetVersion))
-	if checksum := claudePlan.Checksums["arm64"]; checksum != "" {
-		updatedDockerfile = claudeArmChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
+	for _, update := range []struct {
+		pattern  *regexp.Regexp
+		checksum string
+	}{
+		{claudeArmChecksumLinePattern, claudePlan.Checksums["arm64"]},
+		{claudeAmdChecksumLinePattern, claudePlan.Checksums["amd64"]},
+		{codexArmChecksumLinePattern, codexPlan.Checksums["arm64"]},
+		{codexAmdChecksumLinePattern, codexPlan.Checksums["amd64"]},
+		{codexCodeModeHostArmChecksumLinePattern, codexPlan.Checksums["code_mode_host_arm64"]},
+		{codexCodeModeHostAmdChecksumLinePattern, codexPlan.Checksums["code_mode_host_amd64"]},
+		{copilotArmChecksumLinePattern, copilotPlan.Checksums["arm64"]},
+		{copilotAmdChecksumLinePattern, copilotPlan.Checksums["amd64"]},
+	} {
+		if update.checksum != "" {
+			updatedDockerfile = update.pattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, update.checksum))
+		}
 	}
-	if checksum := claudePlan.Checksums["amd64"]; checksum != "" {
-		updatedDockerfile = claudeAmdChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
-	}
-	if checksum := codexPlan.Checksums["arm64"]; checksum != "" {
-		updatedDockerfile = codexArmChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
-	}
-	if checksum := codexPlan.Checksums["amd64"]; checksum != "" {
-		updatedDockerfile = codexAmdChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
-	}
-	if checksum := copilotPlan.Checksums["arm64"]; checksum != "" {
-		updatedDockerfile = copilotArmChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
-	}
-	if checksum := copilotPlan.Checksums["amd64"]; checksum != "" {
-		updatedDockerfile = copilotAmdChecksumLinePattern.ReplaceAllString(updatedDockerfile, fmt.Sprintf(`${1}%s${2}`, checksum))
+	if codexVersionChanged {
+		requirements := []providerChecksumRequirement{
+			{"arm64", "CODEX_SHA256"},
+			{"amd64", "CODEX_SHA256"},
+			{"code_mode_host_arm64", "CODEX_CODE_MODE_HOST_SHA256"},
+			{"code_mode_host_amd64", "CODEX_CODE_MODE_HOST_SHA256"},
+		}
+		if err := validateProviderChecksumUpdate(planPath, dockerfilePath, providerid.Codex, updatedDockerfile, codexPlan, requirements); err != nil {
+			return err
+		}
 	}
 	if copilotVersionChanged {
-		if !strings.Contains(updatedDockerfile, fmt.Sprintf("ARG COPILOT_VERSION=%s", copilotPlan.TargetVersion)) {
-			return fmt.Errorf("failed to update COPILOT_VERSION to %s in %s", copilotPlan.TargetVersion, dockerfilePath)
+		requirements := []providerChecksumRequirement{
+			{"arm64", "COPILOT_SHA256"},
+			{"amd64", "COPILOT_SHA256"},
 		}
-		for _, arch := range []string{"arm64", "amd64"} {
-			checksum := copilotPlan.Checksums[arch]
-			if !strings.Contains(updatedDockerfile, fmt.Sprintf(`COPILOT_SHA256="%s"`, checksum)) {
-				return fmt.Errorf("failed to update Copilot %s checksum in %s", arch, dockerfilePath)
-			}
+		if err := validateProviderChecksumUpdate(planPath, dockerfilePath, providerid.Copilot, updatedDockerfile, copilotPlan, requirements); err != nil {
+			return err
 		}
 	}
 	if updatedDockerfile != dockerfileText {
@@ -446,11 +461,14 @@ func ApplyProviderBumpPlan(planPath, policyPath, dockerfilePath, providersPackag
 	return nil
 }
 
-func requireProviderChecksums(planPath, provider string, selection ProviderBumpSelection) error {
-	for _, arch := range []string{"arm64", "amd64"} {
-		checksum := selection.Checksums[arch]
+func validateProviderChecksumUpdate(planPath, dockerfilePath, provider, dockerfile string, selection ProviderBumpSelection, requirements []providerChecksumRequirement) error {
+	for _, requirement := range requirements {
+		checksum := selection.Checksums[requirement.key]
 		if !isHexDigest(checksum) {
-			return fmt.Errorf("%s provider %s target version %s requires a valid %s sha256 checksum", planPath, provider, selection.TargetVersion, arch)
+			return fmt.Errorf("%s provider %s target version %s requires a valid %s sha256 checksum", planPath, provider, selection.TargetVersion, requirement.key)
+		}
+		if !strings.Contains(dockerfile, fmt.Sprintf(`%s="%s"`, requirement.variable, checksum)) {
+			return fmt.Errorf("failed to update %s %s checksum in %s", provider, requirement.key, dockerfilePath)
 		}
 	}
 	return nil
@@ -512,21 +530,14 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			skipped = appendSkippedProviderRelease(skipped, candidate, "GitHub release is marked prerelease")
 			continue
 		}
-		armDigest, armErr := releaseAssetDigest(release, "codex-aarch64-unknown-linux-musl.tar.gz")
-		amdDigest, amdErr := releaseAssetDigest(release, "codex-x86_64-unknown-linux-musl.tar.gz")
-		if armErr != nil || amdErr != nil {
-			reasons := make([]string, 0, 2)
-			if armErr != nil {
-				reasons = append(reasons, armErr.Error())
+		checksums, reasons, invalidMetadata := codexReleaseChecksums(release)
+		if len(reasons) != 0 {
+			details := strings.Join(reasons, "; ")
+			if invalidMetadata {
+				return ProviderBumpSelection{}, fmt.Errorf("codex release %s has invalid musl Linux asset metadata: %s", candidate.Raw, details)
 			}
-			if amdErr != nil {
-				reasons = append(reasons, amdErr.Error())
-			}
-			if (armErr == nil || errors.Is(armErr, errReleaseAssetNotFound)) && (amdErr == nil || errors.Is(amdErr, errReleaseAssetNotFound)) {
-				skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported musl Linux release assets: "+strings.Join(reasons, "; "))
-				continue
-			}
-			return ProviderBumpSelection{}, fmt.Errorf("codex release %s has invalid musl Linux asset metadata: %s", candidate.Raw, strings.Join(reasons, "; "))
+			skipped = appendSkippedProviderRelease(skipped, candidate, "missing supported musl Linux release assets: "+details)
+			continue
 		}
 		return ProviderBumpSelection{
 			Channel:         "stable",
@@ -535,13 +546,37 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 			PublishedAt:     candidate.Source.Format(time.RFC3339),
 			Changed:         candidate.Raw != currentVersion,
 			SkippedReleases: skipped,
-			Checksums: map[string]string{
-				"arm64": armDigest,
-				"amd64": amdDigest,
-			},
+			Checksums:       checksums,
 		}, nil
 	}
 	return currentSelection(time.Time{}), nil
+}
+
+func codexReleaseChecksums(release codexReleaseMetadata) (map[string]string, []string, bool) {
+	assets := []struct {
+		key  string
+		name string
+	}{
+		{"arm64", "codex-aarch64-unknown-linux-musl.tar.gz"},
+		{"amd64", "codex-x86_64-unknown-linux-musl.tar.gz"},
+		{"code_mode_host_arm64", "codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz"},
+		{"code_mode_host_amd64", "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz"},
+	}
+	checksums := make(map[string]string, len(assets))
+	reasons := make([]string, 0, len(assets))
+	invalidMetadata := false
+	for _, asset := range assets {
+		digest, err := releaseAssetDigest(release, asset.name)
+		if err == nil {
+			checksums[asset.key] = digest
+			continue
+		}
+		reasons = append(reasons, err.Error())
+		if !errors.Is(err, errReleaseAssetNotFound) {
+			invalidMetadata = true
+		}
+	}
+	return checksums, reasons, invalidMetadata
 }
 
 func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion string, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {

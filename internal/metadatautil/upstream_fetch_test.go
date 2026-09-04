@@ -131,6 +131,7 @@ func TestUpstreamFetchRequestFor(t *testing.T) {
 		wantErr   string
 	}{
 		{"go", []string{"go-releases"}, "https://go.dev/dl/?mode=json", "go.dev", upstreamMetadataMaxBytes, int64(upstreamHTTPTimeout), ""},
+		{"x tools", []string{"x-tools-latest"}, "https://proxy.golang.org/golang.org/x/tools/@latest", "proxy.golang.org", upstreamMetadataMaxBytes, int64(upstreamHTTPTimeout), ""},
 		{"rust channel", []string{"rust-channel"}, "https://static.rust-lang.org/dist/channel-rust-stable.toml", "static.rust-lang.org", upstreamMetadataMaxBytes, int64(upstreamHTTPTimeout), ""},
 		{"rustup release", []string{"rustup-release"}, "https://static.rust-lang.org/rustup/release-stable.toml", "static.rust-lang.org", upstreamMetadataMaxBytes, int64(upstreamHTTPTimeout), ""},
 		{"rustup checksum", []string{"rustup-checksum", "1.2.3", "x86_64-unknown-linux-gnu"}, "https://static.rust-lang.org/rustup/archive/1.2.3/x86_64-unknown-linux-gnu/rustup-init.sha256", "static.rust-lang.org", upstreamChecksumMaxBytes, int64(upstreamChecksumTimeout), ""},

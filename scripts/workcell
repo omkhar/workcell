@@ -6701,15 +6701,10 @@ runtime_build_copilot_platform() {
   esac
 }
 
-resolve_codex_release_url() {
-  local codex_arch=""
-  local codex_version=""
-  local release_url=""
+resolve_github_release_url() {
+  local release_url="$1"
   local resolved_url=""
 
-  codex_arch="$(runtime_build_codex_arch)" || return 0
-  codex_version="$(extract_codex_version_from_dockerfile)" || return 0
-  release_url="https://github.com/openai/codex/releases/download/rust-v${codex_version}/codex-${codex_arch}.tar.gz"
   resolved_url="$(
     run_clean_host_command curl -fsSLI \
       --retry 5 \
@@ -6730,33 +6725,27 @@ resolve_codex_release_url() {
   esac
 }
 
+resolve_codex_release_url() {
+  local asset_prefix="${1:-codex}"
+  local codex_arch=""
+  local codex_version=""
+  local release_url=""
+
+  codex_arch="$(runtime_build_codex_arch)" || return 0
+  codex_version="$(extract_codex_version_from_dockerfile)" || return 0
+  release_url="https://github.com/openai/codex/releases/download/rust-v${codex_version}/${asset_prefix}-${codex_arch}.tar.gz"
+  resolve_github_release_url "${release_url}"
+}
+
 resolve_copilot_release_url() {
   local copilot_platform=""
   local copilot_version=""
   local release_url=""
-  local resolved_url=""
 
   copilot_platform="$(runtime_build_copilot_platform)" || return 0
   copilot_version="$(extract_copilot_version_from_dockerfile)" || return 0
   release_url="https://github.com/github/copilot-cli/releases/download/v${copilot_version}/copilot-${copilot_platform}.tar.gz"
-  resolved_url="$(
-    run_clean_host_command curl -fsSLI \
-      --retry 5 \
-      --retry-all-errors \
-      --retry-delay 5 \
-      --connect-timeout 20 \
-      --max-time 20 \
-      -o /dev/null \
-      -w '%{url_effective}' \
-      "${release_url}" 2>/dev/null || true
-  )"
-  resolved_url="${resolved_url//$'\r'/}"
-  resolved_url="${resolved_url//$'\n'/}"
-  case "${resolved_url}" in
-    https://release-assets.githubusercontent.com/*)
-      printf '%s\n' "${resolved_url}"
-      ;;
-  esac
+  resolve_github_release_url "${release_url}"
 }
 
 run_runtime_image_build_with_retries() {
@@ -6765,13 +6754,15 @@ run_runtime_image_build_with_retries() {
   local attempt=1
   local max_attempts=5
   local codex_release_url=""
+  local codex_code_mode_host_release_url=""
   local copilot_release_url=""
   local -a build_cmd=()
 
   while :; do
     build_status=0
-    codex_release_url="$(resolve_codex_release_url || true)"
-    copilot_release_url="$(resolve_copilot_release_url || true)"
+    codex_release_url="$(resolve_codex_release_url codex)"
+    codex_code_mode_host_release_url="$(resolve_codex_release_url codex-code-mode-host)"
+    copilot_release_url="$(resolve_copilot_release_url)"
     if [[ "${attempt}" -gt 1 ]]; then
       echo "Retrying the runtime image build for profile ${COLIMA_PROFILE} (attempt ${attempt}/${max_attempts})." >&2
       case "${TARGET_BACKEND}" in
@@ -6829,6 +6820,7 @@ run_runtime_image_build_with_retries() {
       if [[ -n "${codex_release_url}" ]]; then
         build_cmd+=(--build-arg "CODEX_RELEASE_URL=${codex_release_url}")
       fi
+      build_cmd+=(--build-arg "CODEX_CODE_MODE_HOST_RELEASE_URL=${codex_code_mode_host_release_url}")
       if [[ -n "${copilot_release_url}" ]]; then
         build_cmd+=(--build-arg "COPILOT_RELEASE_URL=${copilot_release_url}")
       fi

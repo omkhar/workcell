@@ -7,12 +7,12 @@
 # appear in the workflow env (actionlint/zizmor versions have no leading `v`).
 
 [tool_pins]
-cosign = "v3.1.2"
-buildx = "v0.36.0"
-buildkit = "moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
+cosign = "v3.1.3"
+buildx = "v0.37.0"
+buildkit = "moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 qemu = "tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
-syft = "v1.50.0"
+syft = "v1.51.1"
 actionlint_version = "1.7.12"
 actionlint_sha256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
-zizmor_version = "1.29.0"
-zizmor_sha256 = "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"
+zizmor_version = "1.30.0"
+zizmor_sha256 = "ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee4092e5ed"

@@ -29,6 +29,11 @@ extract_codex_sha() {
   (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools extract-codex-sha "${DOCKERFILE_PATH}" "${target_arch}")
 }
 
+extract_codex_code_mode_host_sha() {
+  local target_arch="$1"
+  (cd "${ROOT_DIR}" && go run ./cmd/workcell-citools extract-codex-code-mode-host-sha "${DOCKERFILE_PATH}" "${target_arch}")
+}
+
 download_large_asset() {
   local url="$1"
   local output="$2"
@@ -47,8 +52,9 @@ verify_asset() {
   local target_arch="$1"
   local codex_arch="$2"
   local codex_sha="$3"
-  local bundle_name="codex-${codex_arch}.sigstore"
-  local tarball_name="codex-${codex_arch}.tar.gz"
+  local asset_prefix="$4"
+  local bundle_name="${asset_prefix}-${codex_arch}.sigstore"
+  local tarball_name="${asset_prefix}-${codex_arch}.tar.gz"
   local asset_root="https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}"
   local work_dir="${TMP_ROOT}/${target_arch}"
 
@@ -59,7 +65,7 @@ verify_asset() {
   echo "${codex_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}"
 
-  cosign verify-blob "${work_dir}/codex-${codex_arch}" \
+  cosign verify-blob "${work_dir}/${asset_prefix}-${codex_arch}" \
     --bundle "${work_dir}/${bundle_name}" \
     --certificate-identity "${WORKFLOW_IDENTITY}" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
@@ -74,7 +80,9 @@ require_tool tar
 CODEX_VERSION="$(extract_codex_version)"
 WORKFLOW_IDENTITY="https://github.com/openai/codex/.github/workflows/rust-release.yml@refs/tags/rust-v${CODEX_VERSION}"
 
-verify_asset arm64 aarch64-unknown-linux-musl "$(extract_codex_sha arm64)"
-verify_asset amd64 x86_64-unknown-linux-musl "$(extract_codex_sha amd64)"
+verify_asset arm64 aarch64-unknown-linux-musl "$(extract_codex_sha arm64)" codex
+verify_asset amd64 x86_64-unknown-linux-musl "$(extract_codex_sha amd64)" codex
+verify_asset code-mode-host-arm64 aarch64-unknown-linux-musl "$(extract_codex_code_mode_host_sha arm64)" codex-code-mode-host
+verify_asset code-mode-host-amd64 x86_64-unknown-linux-musl "$(extract_codex_code_mode_host_sha amd64)" codex-code-mode-host
 
 echo "Workcell upstream Codex release verification passed."

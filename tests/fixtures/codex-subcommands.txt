@@ -1,6 +1,6 @@
 # Complete Codex subcommand namespace for the PINNED runtime Codex.
 #
-# codex-version: 0.146.0
+# codex-version: 0.153.2
 #
 # The `# codex-version:` stamp above is MACHINE-READABLE and load-bearing:
 # scripts/verify-invariants.sh asserts it EQUALS `ARG CODEX_VERSION` in
@@ -11,7 +11,7 @@
 #
 # The tokens below are the EXACT first-token subcommand names Codex dispatches on,
 # derived from the AUTHORITATIVE clap `enum Subcommand` in the pinned source
-# (openai/codex tag rust-v0.146.0, codex-rs/cli/src/main.rs), NOT `codex --help`: clap
+# (openai/codex tag rust-v0.153.2, codex-rs/cli/src/main.rs), NOT `codex --help`: clap
 # also dispatches on aliases and `#[command(hide = true)]` HIDDEN variants `--help`
 # omits (e/a aliases, mcp-server, app, execpolicy, cloud-tasks, responses-api-proxy,
 # stdio-to-uds, exec-server), which then leaked through as prompt text. A first bare
@@ -26,6 +26,7 @@
 # authoritative token set is unchanged; any addition or removal fails before pin
 # mutation and requires an explicit classification change.
 # One name per line; blank/`#` lines are ignored.
+agents
 exec
 e
 review
@@ -46,8 +47,10 @@ execpolicy
 apply
 a
 resume
+queue
 archive
 delete
+migrate-rollouts
 unarchive
 fork
 cloud

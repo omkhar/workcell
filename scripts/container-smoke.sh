@@ -2588,7 +2588,7 @@ fi
 # DENY-SET REGRESSION LOCK. Every KNOWN-dangerous Codex subcommand is denied by exact
 # token on the CLI path. These are real pinned-Codex subcommands (not prompt text), so
 # the gate must reject them.
-for codex_denied_sub in cloud cloud-tasks responses-api-proxy stdio-to-uds sandbox mcp plugin remote-control exec-server mcp-server update; do
+for codex_denied_sub in agents queue migrate-rollouts cloud cloud-tasks responses-api-proxy stdio-to-uds sandbox mcp plugin remote-control exec-server mcp-server update; do
   codex_deny_out="/tmp/workcell-entrypoint-codex-denydefault-${codex_denied_sub}.out"
   if run_entrypoint codex codex "${codex_denied_sub}" >"${codex_deny_out}" 2>&1; then
     echo "expected the deny-set gate to reject the dangerous subcommand: ${codex_denied_sub}" >&2
@@ -2659,7 +2659,8 @@ assert_codex_entrypoint_denied "expected Workcell entrypoint to reject operator-
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex working-directory overrides" "Workcell blocked unsafe Codex override" --cd /state --version
 
 # Space-separated sandbox danger-full-access deny (regression lock for the reused check).
-assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex sandbox danger-full-access overrides" "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass." -s danger-full-access --version
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex sandbox danger-full-access overrides" "Workcell blocked unsafe Codex override: -s" -s danger-full-access --version
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex workspace-write overrides" "Workcell blocked unsafe Codex override: -s" -s workspace-write --version
 
 # ATTACHED/GLUED SHORT VALUE-FLAGS (Codex P1 review). Codex (clap) accepts short flags
 # glued to their value (`-pval`/`-sval`/`-Cval`/`-aval`); before the fix only glued `-c`
@@ -2667,7 +2668,7 @@ assert_codex_entrypoint_denied "expected Workcell entrypoint to reject Codex san
 # FORWARDED. Each now applies the SAME check (and message) as its space-separated form.
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -pbreakglass profile override" "Workcell blocked unsafe Codex override: --profile" -pbreakglass --version
 
-assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -sdanger-full-access sandbox override" "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass." -sdanger-full-access --version
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -sdanger-full-access sandbox override" "Workcell blocked unsafe Codex override: --sandbox" -sdanger-full-access --version
 
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued -anever approval override" "Workcell blocked unsafe Codex override: -anever" -anever --version
 
@@ -2677,12 +2678,13 @@ assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the glued
 # guarded value-flags strip a leading `=` before checking (Codex P1 review).
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the short-equals -p=breakglass profile override" "Workcell blocked unsafe Codex override: --profile" -p=breakglass --version
 
-assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the short-equals -s=danger-full-access sandbox override" "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass." -s=danger-full-access --version
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the short-equals -s=danger-full-access sandbox override" "Workcell blocked unsafe Codex override: --sandbox" -s=danger-full-access --version
 
 # Long `--flag=value` glued forms of the same guarded flags are denied too.
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --profile=breakglass override" "Workcell blocked unsafe Codex override: --profile" --profile=breakglass --version
 
-assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --sandbox=danger-full-access override" "Workcell blocked unsafe Codex override: --sandbox=danger-full-access" --sandbox=danger-full-access --version
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --sandbox=danger-full-access override" "Workcell blocked unsafe Codex override: --sandbox" --sandbox=danger-full-access --version
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --sandbox=workspace-write override" "Workcell blocked unsafe Codex override: --sandbox" --sandbox=workspace-write --version
 
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject the --cd=/x working-directory override" "Workcell blocked unsafe Codex override: --cd" --cd=/x --version
 
@@ -3552,7 +3554,9 @@ test -f "$CODEX_HOME/config.toml"
     done
     codex features list >/tmp/codex-features.out 2>/tmp/codex-features.err
     assert_codex_stderr_clean /tmp/codex-features.err
-    grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+false$" /tmp/codex-features.out
+    grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
+    grep -Eq "^code_mode_host[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
+    test -x /usr/local/libexec/workcell/real/codex-code-mode-host
     if command -v python3 >/tmp/python-which.out 2>&1; then
       echo "expected runtime image to omit python3 from the operator PATH" >&2
       exit 1
@@ -3791,14 +3795,14 @@ test -f "$CODEX_HOME/config.toml"
     # `codex features enable/disable` persistently writes features.<name> into the
     # writable config.toml (equivalent to the blocked `-c features.<name>=…`), so
     # both mutating actions are rejected on the managed path; the block must also
-    # prevent the config mutation (unified_exec stays at its declared false).
+    # prevent the config mutation (unified_exec stays at its declared true).
     if codex features enable unified_exec >/tmp/codex-features-enable.out 2>&1; then
       echo "expected nested Codex invocation to reject persistent feature enable" >&2
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable.out
     test -w "$CODEX_HOME/config.toml"
-    assert_codex_feature_value false
+    assert_codex_feature_value true
     if codex features enable plugins >/tmp/codex-features-enable-plugins.out 2>&1; then
       echo "expected nested Codex invocation to reject the plugin feature re-enable" >&2
       exit 1
@@ -3818,13 +3822,13 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-dd-enable.out
-    assert_codex_feature_value false
+    assert_codex_feature_value true
     if codex features -- disable unified_exec >/tmp/codex-features-dd-disable.out 2>&1; then
       echo "expected nested Codex invocation to reject features -- disable unified_exec across the --" >&2
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-dd-disable.out
-    assert_codex_feature_value false
+    assert_codex_feature_value true
     # The action can also precede the `--` (features enable -- plugins): the arm
     # catches enable before the -- is ever reached, so it is denied too.
     if codex features enable -- plugins >/tmp/codex-features-enable-dd.out 2>&1; then
@@ -3832,7 +3836,7 @@ test -f "$CODEX_HOME/config.toml"
       exit 1
     fi
     grep -q "Workcell blocked unsupported Codex CLI subcommand" /tmp/codex-features-enable-dd.out
-    assert_codex_feature_value false
+    assert_codex_feature_value true
     # features list is a read-only inspect and stays permitted, with or without a
     # `--` before the action (the normal prompt `--` break is unchanged: a bare
     # prompt still stops parsing — see the codex -- plugin cases above).

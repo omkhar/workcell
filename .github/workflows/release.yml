@@ -29,11 +29,11 @@ env:
   RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
-  WORKCELL_BUILDX_VERSION: v0.36.0
-  WORKCELL_COSIGN_VERSION: v3.1.2
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+  WORKCELL_BUILDX_VERSION: v0.37.0
+  WORKCELL_COSIGN_VERSION: v3.1.3
   WORKCELL_QEMU_IMAGE: tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-  WORKCELL_SYFT_VERSION: v1.50.0
+  WORKCELL_SYFT_VERSION: v1.51.1
 
 jobs:
   tag-policy:
@@ -575,8 +575,8 @@ jobs:
 
       - name: Install zizmor
         env:
-          ZIZMOR_SHA256: dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839
-          ZIZMOR_VERSION: 1.29.0
+          ZIZMOR_SHA256: ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee4092e5ed
+          ZIZMOR_VERSION: 1.30.0
         run: |
           curl -fsSL \
             --retry 3 \

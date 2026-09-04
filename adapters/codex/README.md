@@ -48,6 +48,7 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
 - Workcell turns off the Codex Linux `workspace-write` sandbox on the managed
   path. That sandbox needs unprivileged user namespaces. The Tier 1 container
   does not provide them.
+- Workcell installs the matching signed code-mode host for shell tool calls.
 - `~/.codex/rules/` is read-only by default; it becomes a session-local writable
   copy only in explicit lower-assurance cases (see
   [../../docs/adapter-control-planes.md](../../docs/adapter-control-planes.md#codex-rules-mutability)).
@@ -56,8 +57,9 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
 - The allowed set contains the reviewed read-only and session commands. The
   fixture `tests/fixtures/codex-subcommands.txt` binds this set to the Codex
   version.
-- The wrapper blocks plugin, cloud, remote-control, `exec-server`, update,
-  sandbox, debug, and unclassified subcommands.
+- The wrapper blocks `agents`, `queue`, `migrate-rollouts`, plugins, cloud,
+  remote-control, `exec-server`, update, sandbox, debug, and unclassified
+  subcommands.
 - It also blocks MCP servers, `responses-api-proxy`, and `stdio-to-uds`.
 - The wrapper permits `app-server` only as a bare start without arguments.
 - The wrapper also blocks unsafe autonomy, network, profile, and configuration

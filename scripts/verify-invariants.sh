@@ -1336,6 +1336,14 @@ require_toml_section_absent() {
 
 verify_codex_managed_config_invariants() {
   local file="$1"
+  local feature_requirement=""
+  local -a feature_requirements=(
+    "unified_exec:true"
+    "code_mode_host:true"
+    "plugins:false"
+    "plugin_sharing:false"
+    "remote_plugin:false"
+  )
 
   # Codex 0.134+ profile-v2: the base config must not select or inline a
   # profile. Profile selection is supplied by the runtime wrapper via
@@ -1357,13 +1365,17 @@ verify_codex_managed_config_invariants() {
 
   require_toml_exact_keys "${file}" "features" \
     "unified_exec" \
+    "code_mode_host" \
     "plugins" \
     "plugin_sharing" \
     "remote_plugin" || return 1
-  require_toml_assignment "${file}" "features" "unified_exec" "false" || return 1
-  require_toml_assignment "${file}" "features" "plugins" "false" || return 1
-  require_toml_assignment "${file}" "features" "plugin_sharing" "false" || return 1
-  require_toml_assignment "${file}" "features" "remote_plugin" "false" || return 1
+  for feature_requirement in "${feature_requirements[@]}"; do
+    require_toml_assignment \
+      "${file}" \
+      "features" \
+      "${feature_requirement%%:*}" \
+      "${feature_requirement#*:}" || return 1
+  done
 
   # The base config must carry no inline `[profiles...]` tables (dotted-path
   # form). Quoted single-segment section names with literal dots normalize to a
@@ -1424,20 +1436,30 @@ require_toml_assignment \
   "" \
   "allowed_sandbox_modes" \
   '["workspace-write", "danger-full-access"]' || {
-  echo 'Expected adapters/codex/requirements.toml to allow workspace-write for managed sessions and danger-full-access only for breakglass' >&2
+  echo 'Expected adapters/codex/requirements.toml to allow the two reviewed Codex sandbox values' >&2
   exit 1
 }
 
+if ! grep -Fq 'MANAGED_CODEX_SANDBOX_ARGS=(--sandbox danger-full-access)' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo 'Expected the managed Codex CLI wrapper to disable the incompatible native sandbox' >&2
+  exit 1
+fi
+if ! grep -Fq "MANAGED_CODEX_APP_SERVER_ARGS=(-c 'sandbox_mode=\"danger-full-access\"')" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
+  echo 'Expected the managed Codex GUI wrapper to disable the incompatible native sandbox' >&2
+  exit 1
+fi
+
 # The adapter AGENTS.md requires config.toml, managed_config.toml, and
 # requirements.toml to stay aligned on security-boundary config. Lock the
-# requirements [features] bans in lockstep with the managed baseline so the
-# plugin/marketplace surface cannot be re-enabled from the requirements contract.
+# requirements [features] values in lockstep with the managed baseline.
 require_toml_exact_keys "${ROOT_DIR}/adapters/codex/requirements.toml" "features" \
   "unified_exec" \
+  "code_mode_host" \
   "plugins" \
   "plugin_sharing" \
   "remote_plugin" || exit 1
-require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "unified_exec" "false" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "unified_exec" "true" || exit 1
+require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "code_mode_host" "true" || exit 1
 require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugins" "false" || exit 1
 require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugin_sharing" "false" || exit 1
 require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "remote_plugin" "false" || exit 1
@@ -8158,6 +8180,7 @@ case " $* " in
     ;;
 esac
 
+printf '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"WORKCELL_PROVIDER_E2E_OK\\n","exit_code":0,"status":"completed"}}\n'
 printf '{"type":"item.completed","item":{"type":"agent_message","text":"WORKCELL_PROVIDER_E2E_OK"}}\n'
 EOF_FAKE_PROVIDER_E2E_OK
 chmod +x "${FAKE_PROVIDER_E2E_WORKCELL_OK}"

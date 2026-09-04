@@ -403,16 +403,53 @@ func ExtractClaudeSHA(dockerfilePath, targetArch string) (string, error) {
 }
 
 func ExtractCodexSHA(dockerfilePath, targetArch string) (string, error) {
+	return extractCodexChecksum(dockerfilePath, targetArch, "CODEX_SHA256")
+}
+
+func ExtractCodexCodeModeHostSHA(dockerfilePath, targetArch string) (string, error) {
+	return extractCodexChecksum(dockerfilePath, targetArch, "CODEX_CODE_MODE_HOST_SHA256")
+}
+
+func extractCodexChecksum(dockerfilePath, targetArch, variable string) (string, error) {
 	text, err := readText(dockerfilePath)
 	if err != nil {
 		return "", err
 	}
-	pattern := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(targetArch) + `\)\s+\\(?:\s*CLAUDE_[A-Z0-9_]+="[^"]+";\s+\\)*\s*CODEX_ARCH="[^"]+";\s+\\\s*CODEX_SHA256="([0-9a-f]{64})";`)
+	pattern := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(targetArch) + `\)\s+\\(?:\s*CODEX_[A-Z0-9_]+="[^"]+";\s+\\)*\s*` + regexp.QuoteMeta(variable) + `="([0-9a-f]{64})";`)
 	match := pattern.FindStringSubmatch(text)
 	if match == nil {
-		return "", fmt.Errorf("unable to extract CODEX_SHA256 for %s", targetArch)
+		return "", fmt.Errorf("unable to extract %s for %s", variable, targetArch)
 	}
 	return match[1], nil
+}
+
+func codexBuildInputAssets(dockerfilePath, codexVersion string) (map[string]any, error) {
+	assets := map[string]any{}
+	for _, target := range []struct {
+		arch string
+		name string
+	}{
+		{arch: "arm64", name: "aarch64-unknown-linux-musl"},
+		{arch: "amd64", name: "x86_64-unknown-linux-musl"},
+	} {
+		sha, err := ExtractCodexSHA(dockerfilePath, target.arch)
+		if err != nil {
+			return nil, err
+		}
+		codeModeHostSHA, err := ExtractCodexCodeModeHostSHA(dockerfilePath, target.arch)
+		if err != nil {
+			return nil, err
+		}
+		assetRoot := "https://github.com/openai/codex/releases/download/rust-v" + codexVersion
+		assets[target.arch] = map[string]any{
+			"arch":                  target.name,
+			"sha256":                sha,
+			"url":                   assetRoot + "/codex-" + target.name + ".tar.gz",
+			"code_mode_host_sha256": codeModeHostSHA,
+			"code_mode_host_url":    assetRoot + "/codex-code-mode-host-" + target.name + ".tar.gz",
+		}
+	}
+	return assets, nil
 }
 
 func ExtractCopilotSHA(dockerfilePath, targetArch string) (string, error) {
@@ -813,23 +850,9 @@ func GenerateBuildInputManifest(
 		}
 	}
 
-	codexAssets := map[string]any{}
-	for _, target := range []struct {
-		arch string
-		name string
-	}{
-		{arch: "arm64", name: "aarch64-unknown-linux-musl"},
-		{arch: "amd64", name: "x86_64-unknown-linux-musl"},
-	} {
-		sha, err := ExtractCodexSHA(dockerfilePath, target.arch)
-		if err != nil {
-			return err
-		}
-		codexAssets[target.arch] = map[string]any{
-			"arch":   target.name,
-			"sha256": sha,
-			"url":    "https://github.com/openai/codex/releases/download/rust-v" + codexVersion + "/codex-" + target.name + ".tar.gz",
-		}
+	codexAssets, err := codexBuildInputAssets(dockerfilePath, codexVersion)
+	if err != nil {
+		return err
 	}
 
 	copilotAssets := map[string]any{}

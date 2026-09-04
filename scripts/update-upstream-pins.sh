@@ -58,6 +58,7 @@ DOCS_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/docs.yml"
 FUZZ_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/fuzz.yml"
 MUTATION_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/mutation.yml"
 VALIDATOR_IMAGE_SCRIPT_PATH="${ROOT_DIR}/scripts/ci/build-validator-image.sh"
+CHECK_DEAD_CODE_SCRIPT_PATH="${ROOT_DIR}/scripts/check-dead-code.sh"
 PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
 RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
 SECURITY_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/security.yml"
@@ -477,6 +478,12 @@ target_go_toolchain="$(jq -r '.version | sub("^go"; "")' <<<"${latest_go_json}")
 target_go_language="$(semver_patch_zero "${target_go_toolchain}")"
 target_go_sha_amd64="$(jq -r '.files[] | select(.os == "linux" and .arch == "amd64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
 target_go_sha_arm64="$(jq -r '.files[] | select(.os == "linux" and .arch == "arm64" and .kind == "archive") | .sha256' <<<"${latest_go_json}")"
+x_tools_latest_json="$(upstream_get x-tools-latest)"
+target_deadcode_version="$(jq -er '.Version' <<<"${x_tools_latest_json}")"
+if [[ ! "${target_deadcode_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "The x/tools release metadata has an invalid version: ${target_deadcode_version}" >&2
+  exit 1
+fi
 
 rust_stable_toml="$(upstream_get rust-channel)"
 target_rust_version="$(
@@ -555,6 +562,8 @@ current_go_language="$(awk '/^go / { print $2; exit }' "${GO_MOD_PATH}")"
 current_validator_go_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_VERSION)"
 current_go_sha_amd64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_LINUX_X86_64_SHA256)"
 current_go_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_LINUX_ARM64_SHA256)"
+current_deadcode_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" DEADCODE_VERSION)"
+current_deadcode_script_version="$(awk -F'"' '/^readonly DEADCODE_VERSION="v[0-9]+\.[0-9]+\.[0-9]+"$/ { print $2; exit }' "${CHECK_DEAD_CODE_SCRIPT_PATH}")"
 current_rust_version="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" RUST_VERSION)"
 current_runtime_rust_toolchain_image="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" RUST_TOOLCHAIN_IMAGE)"
 current_rust_toolchain_channel="$(awk -F'"' '/^channel = / { print $2; exit }' "${RUST_TOOLCHAIN_PATH}")"
@@ -671,6 +680,8 @@ for current_target_pair in \
   "${current_validator_go_version}|${target_go_toolchain}" \
   "${current_go_sha_amd64}|${target_go_sha_amd64}" \
   "${current_go_sha_arm64}|${target_go_sha_arm64}" \
+  "${current_deadcode_version}|${target_deadcode_version}" \
+  "${current_deadcode_script_version}|${target_deadcode_version}" \
   "${current_rust_version}|${target_rust_version}" \
   "${current_runtime_rust_toolchain_image}|${target_runtime_rust_toolchain_image}" \
   "${current_rust_toolchain_channel}|${target_rust_version}" \
@@ -735,6 +746,8 @@ print_summary() {
   print_summary_line "debian-ca-certificates-sha256" "${current_debian_ca_sha256}" "${target_debian_ca_sha256}"
   print_summary_line "go-toolchain" "${current_go_toolchain}" "${target_go_toolchain}"
   print_summary_line "go-language" "${current_go_language}" "${target_go_language}"
+  print_summary_line "deadcode-validator" "${current_deadcode_version}" "${target_deadcode_version}"
+  print_summary_line "deadcode-script" "${current_deadcode_script_version}" "${target_deadcode_version}"
   print_summary_line "rust-toolchain" "${current_rust_version}" "${target_rust_version}"
   print_summary_line "runtime-rust-image" "${current_runtime_rust_toolchain_image}" "${target_runtime_rust_toolchain_image}"
   if [[ -n "${unavailable_rust_toolchain_image}" ]]; then
@@ -790,6 +803,7 @@ replace_line_with_prefix "${dockerfile_path}" 'ARG VALIDATOR_BASE_IMAGE=' "ARG V
 replace_line_with_prefix "${dockerfile_path}" 'ARG GO_VERSION=' "ARG GO_VERSION=${target_go_toolchain}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG GO_LINUX_X86_64_SHA256=' "ARG GO_LINUX_X86_64_SHA256=${target_go_sha_amd64}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG GO_LINUX_ARM64_SHA256=' "ARG GO_LINUX_ARM64_SHA256=${target_go_sha_arm64}"
+replace_line_with_prefix "${dockerfile_path}" 'ARG DEADCODE_VERSION=' "ARG DEADCODE_VERSION=${target_deadcode_version}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG HADOLINT_VERSION=' "ARG HADOLINT_VERSION=${target_hadolint_version}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG HADOLINT_LINUX_X86_64_SHA256=' "ARG HADOLINT_LINUX_X86_64_SHA256=${target_hadolint_sha_amd64}"
 replace_line_with_prefix "${dockerfile_path}" 'ARG HADOLINT_LINUX_ARM64_SHA256=' "ARG HADOLINT_LINUX_ARM64_SHA256=${target_hadolint_sha_arm64}"
@@ -800,6 +814,7 @@ replace_line_with_prefix "${dockerfile_path}" 'ARG RUSTUP_INIT_LINUX_ARM64_SHA25
 
 replace_line_with_prefix "${GO_MOD_PATH}" 'go ' "go ${target_go_language}"
 replace_line_with_prefix "${GO_MOD_PATH}" 'toolchain go' "toolchain go${target_go_toolchain}"
+replace_line_with_prefix "${CHECK_DEAD_CODE_SCRIPT_PATH}" 'readonly DEADCODE_VERSION=' "readonly DEADCODE_VERSION=\"${target_deadcode_version}\""
 replace_line_with_prefix "${RUST_TOOLCHAIN_PATH}" 'channel = ' "channel = \"${target_rust_version}\""
 replace_line_with_prefix "${CARGO_MANIFEST_PATH}" 'rust-version = ' "rust-version = \"${target_cargo_rust_version}\""
 

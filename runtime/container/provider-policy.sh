@@ -135,13 +135,6 @@ codex_reject_unsafe_profile_value() {
   [[ "${value}" != "$2" ]] && workcell_die "Workcell blocked unsafe Codex override: --profile"
 }
 
-codex_reject_unsafe_sandbox_value() {
-  # Strip a leading `=` for the short-with-equals form (`-s=danger-full-access`);
-  # space-separated and `--sandbox=` callers pass a bare value (no-op here).
-  local value="${1#=}"
-  [[ "${value}" == "danger-full-access" ]] && workcell_die "Workcell blocked unsafe Codex override: remove danger-full-access outside breakglass."
-}
-
 # Value-taking global Codex flags must be consumed before first-subcommand detection,
 # or their VALUE would be mistaken for the command token (`--model gpt-5 plugin` would
 # treat gpt-5 as the command). Keep in lockstep with codex_first_subcommand in
@@ -168,9 +161,6 @@ reject_unsafe_codex_args() {
           ;;
         cd)
           workcell_die "Workcell blocked unsafe Codex override: --cd"
-          ;;
-        sandbox)
-          codex_reject_unsafe_sandbox_value "${arg}"
           ;;
         config)
           codex_config_override_is_blocked "${arg}" && workcell_die "Workcell blocked unsafe Codex config override: ${arg%%=*}"
@@ -244,7 +234,7 @@ reject_unsafe_codex_args() {
       # invocation (Codex P2 review) while denying every dangerous subcommand by exact
       # token.
       #
-      # ALLOW (read-only/session surface, verified against 0.142.4 `--help`); `execpolicy`
+      # ALLOW (read-only/session surface, verified against 0.153.2 `--help`); `execpolicy`
       # is hidden but real — a read-only command classifier the managed autonomy path and
       # verify-invariants invoke, so it MUST stay permitted. Exact-token discipline (NOT
       # globs) keeps the fence tight: `exec` != `exec-server`, `mcp` != `mcp-server`. Keep
@@ -266,10 +256,9 @@ reject_unsafe_codex_args() {
           ;;
         app | app-server)
           # app-server is the managed GUI backend, permitted ONLY under AGENT_UI=gui;
-          # on the CLI path it is denied. (`app` is not a 0.142.4 subcommand but is GUI-
-          # gated for the same class if a later pin reintroduces it.) The gate is scoped
-          # to these two tokens; every DENY subcommand below is denied on every UI, so an
-          # AGENT_UI=gui override cannot smuggle in plugin/mcp/remote-control.
+          # on the CLI path it is denied. `app` and `app-server` share this managed GUI
+          # class. The gate covers only these two tokens. Every DENY subcommand below is
+          # denied on every UI, so AGENT_UI=gui cannot smuggle in another surface.
           [[ "${AGENT_UI:-cli}" != "gui" ]] &&
             workcell_die "Workcell blocked unsupported Codex CLI subcommand outside the managed GUI path: ${arg}"
           # Arm the app-server surface scan (block near the top of the loop).
@@ -277,19 +266,20 @@ reject_unsafe_codex_args() {
           continue
           ;;
         # DENY set — every known-dangerous/unsupported subcommand, denied by EXACT token
-        # on every UI. Enumerated against 0.142.4 so ALLOW ∪ GUI-gated ∪ DENY equals the
+        # on every UI. Enumerated against 0.153.2 so ALLOW ∪ GUI-gated ∪ DENY equals the
         # complete subcommand list (the fixture completeness check enforces this).
         # Control-plane, daemon, marketplace, sandbox-escape, and self-update surfaces
         # the managed session must never reach. `debug` is denied too: its
         # second-level subcommands are not read-only (`debug app-server` reaches the
         # app-server test client, `debug clear-memories` mutates local memory), and the
         # managed path never uses it.
-        plugin | remote-control | exec-server | mcp | mcp-server | cloud | \
-          cloud-tasks | responses-api-proxy | stdio-to-uds | sandbox | update | debug)
+        agents | queue | migrate-rollouts | plugin | remote-control | exec-server | \
+          mcp | mcp-server | cloud | cloud-tasks | responses-api-proxy | \
+          stdio-to-uds | sandbox | update | debug)
           # cloud-tasks is the 0.142.4 alias of `cloud`; responses-api-proxy and stdio-to-
           # uds are HIDDEN daemon/bridge subcommands the clap enum still dispatches.
-          # `update` is not a 0.142.4 variant (lands in 0.143); kept forward-compat and
-          # absent from the fixture (the completeness check asserts fixture ⊆ classified).
+          # Codex 0.153.0 adds `agents`, `queue`, and `migrate-rollouts`. They reach the
+          # shared app-server, change an existing session, or rewrite session history.
           workcell_die "Workcell blocked unsupported Codex CLI subcommand: ${arg}"
           ;;
       esac
@@ -309,7 +299,7 @@ reject_unsafe_codex_args() {
       # execpolicy check`. --yolo is Codex's hidden alias for --dangerously-bypass-
       # approvals-and-sandbox (the glob does not reach a hidden alias, so block it and its
       # =value form explicitly).
-      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | --enable | --disable)
+      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | -s | --sandbox | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       # ATTACHED/GLUED short value-flags (Codex P1 review). Codex (clap) also accepts a
@@ -327,8 +317,8 @@ reject_unsafe_codex_args() {
       -p?*)
         codex_reject_unsafe_profile_value "${arg#-p}" "${allowed_profile}"
         ;;
-      -s?*)
-        codex_reject_unsafe_sandbox_value "${arg#-s}"
+      -s?* | --sandbox=*)
+        workcell_die "Workcell blocked unsafe Codex override: --sandbox"
         ;;
       -p | --profile)
         expect_value="profile"
@@ -354,12 +344,6 @@ reject_unsafe_codex_args() {
         ;;
       --profile=*)
         codex_reject_unsafe_profile_value "${arg#--profile=}" "${allowed_profile}"
-        ;;
-      -s | --sandbox)
-        expect_value="sandbox"
-        ;;
-      --sandbox=danger-full-access)
-        workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       -c | --config)
         expect_value="config"

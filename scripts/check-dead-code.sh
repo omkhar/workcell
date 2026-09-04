@@ -1,7 +1,7 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 
-readonly DEADCODE_VERSION="v0.38.0"
+readonly DEADCODE_VERSION="v0.49.0"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"

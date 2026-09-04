@@ -29,6 +29,7 @@ type updaterFixturePins struct {
 	GoLanguage                   string
 	GoAMD64SHA                   string
 	GoARM64SHA                   string
+	DeadcodeVersion              string
 	RustVersion                  string
 	RuntimeRustImage             string
 	RustupVersion                string
@@ -135,7 +136,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     0,
 		"check-pinned-inputs":        0,
-		"upstream-get":               6,
+		"upstream-get":               7,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(checkRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", checkRun.ProviderLog, want)
@@ -163,7 +164,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     1,
 		"check-pinned-inputs":        1,
-		"upstream-get":               6,
+		"upstream-get":               7,
 	})
 	if want := []string{"summary", "check", "apply"}; !reflect.DeepEqual(applyRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", applyRun.ProviderLog, want)
@@ -201,7 +202,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     0,
 		"check-pinned-inputs":        0,
-		"upstream-get":               6,
+		"upstream-get":               7,
 	})
 	assertUpdaterScratchHasOnlyLogs(t, cleanScratch)
 	afterCleanCheck := snapshotUpdaterFixtureTree(t, fixtureRoot)
@@ -231,7 +232,7 @@ func TestUpdateUpstreamPinsCredentialedRequestsKeepTokensOffArgv(t *testing.T) {
 	assertUpdaterCommandCounts(t, run.CIToolsLog, map[string]int{
 		"github-api-get":       7,
 		"github-release-asset": 3,
-		"upstream-get":         6,
+		"upstream-get":         7,
 	})
 }
 
@@ -286,7 +287,7 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 		"inspect-debian-bootstrap":   1,
 		"apply-debian-bootstrap":     1,
 		"check-pinned-inputs":        0,
-		"upstream-get":               6,
+		"upstream-get":               7,
 	})
 	if want := []string{"summary", "check"}; !reflect.DeepEqual(run.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", run.ProviderLog, want)
@@ -476,6 +477,7 @@ func writeUpdaterFixture(t *testing.T, manifest updaterFixtureManifest, manifest
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/check-pinned-inputs.sh",
+		"scripts/check-dead-code.sh",
 		"scripts/ci/build-validator-image.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
@@ -639,6 +641,7 @@ func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citool
 		"WORKCELL_FIXTURE_GO_AMD64_SHA=" + pins.GoAMD64SHA,
 		"WORKCELL_FIXTURE_GO_ARM64_SHA=" + pins.GoARM64SHA,
 		"WORKCELL_FIXTURE_GO_VERSION=" + pins.GoToolchain,
+		"WORKCELL_FIXTURE_DEADCODE_VERSION=" + pins.DeadcodeVersion,
 		"WORKCELL_FIXTURE_HADOLINT_AMD64_SHA=" + pins.HadolintAMD64SHA,
 		"WORKCELL_FIXTURE_HADOLINT_ARM64_SHA=" + pins.HadolintARM64SHA,
 		"WORKCELL_FIXTURE_HADOLINT_CHECKSUMS=" + pins.HadolintChecksums,
@@ -924,6 +927,8 @@ func updaterFixtureSummary(pins updaterFixturePins, current, target updaterFixtu
 	writeUpdaterFixtureSummaryLine(&output, "debian-ca-certificates-sha256", current.CACertificatesSHA256, target.CACertificatesSHA256)
 	writeUpdaterFixtureSummaryLine(&output, "go-toolchain", pins.GoToolchain, pins.GoToolchain)
 	writeUpdaterFixtureSummaryLine(&output, "go-language", pins.GoLanguage, pins.GoLanguage)
+	writeUpdaterFixtureSummaryLine(&output, "deadcode-validator", pins.DeadcodeVersion, pins.DeadcodeVersion)
+	writeUpdaterFixtureSummaryLine(&output, "deadcode-script", pins.DeadcodeVersion, pins.DeadcodeVersion)
 	writeUpdaterFixtureSummaryLine(&output, "rust-toolchain", pins.RustVersion, pins.RustVersion)
 	writeUpdaterFixtureSummaryLine(&output, "runtime-rust-image", pins.RuntimeRustImage, pins.RuntimeRustImage)
 	writeUpdaterFixtureSummaryLine(&output, "rustup", pins.RustupVersion, pins.RustupVersion)
@@ -971,6 +976,7 @@ func readUpdaterFixturePins(t *testing.T) updaterFixturePins {
 		GoLanguage:       updaterFixtureUniqueValue(t, goMod, "go "),
 		GoAMD64SHA:       updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_X86_64_SHA256="),
 		GoARM64SHA:       updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_ARM64_SHA256="),
+		DeadcodeVersion:  updaterFixtureUniqueValue(t, validatorDockerfile, "ARG DEADCODE_VERSION="),
 		RustVersion:      updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_VERSION="),
 		RuntimeRustImage: updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_TOOLCHAIN_IMAGE="),
 		RustupVersion:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_VERSION="),
@@ -1248,6 +1254,13 @@ go() {
         }
         printf '[{"stable":true,"version":"go%s","files":[{"os":"linux","arch":"amd64","kind":"archive","sha256":"%s"},{"os":"linux","arch":"arm64","kind":"archive","sha256":"%s"}]}]\n' \
           "${WORKCELL_FIXTURE_GO_VERSION}" "${WORKCELL_FIXTURE_GO_AMD64_SHA}" "${WORKCELL_FIXTURE_GO_ARM64_SHA}"
+        ;;
+      x-tools-latest)
+        [[ "$#" -eq 4 ]] || {
+          unexpected_fixture go "$*"
+          return
+        }
+        printf '{"Version":"%s"}\n' "${WORKCELL_FIXTURE_DEADCODE_VERSION}"
         ;;
       rust-channel)
         [[ "$#" -eq 4 ]] || {
