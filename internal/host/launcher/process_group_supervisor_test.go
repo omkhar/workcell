@@ -58,10 +58,26 @@ func startSupervisorTestCommand(t *testing.T, cmd *exec.Cmd) {
 	}
 }
 
-func TestProcessGroupSupervisorLeaderExitCancellation(t *testing.T) {
+type leaderExitSupervisorFixture struct {
+	t                     *testing.T
+	cause                 error
+	cancel                context.CancelCauseFunc
+	cmd                   *exec.Cmd
+	childPIDPath          string
+	releasePath           string
+	watchInstalled        chan struct{}
+	childReady            chan int
+	signals               []syscall.Signal
+	signaledAfterReap     bool
+	termSurvived          bool
+	watchClosedBeforeWait bool
+}
+
+func newLeaderExitSupervisorFixture(t *testing.T) (*leaderExitSupervisorFixture, context.Context) {
+	t.Helper()
 	cause := errors.New("leader exit cancellation")
 	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(context.Canceled)
+	t.Cleanup(func() { cancel(context.Canceled) })
 	dir := t.TempDir()
 	childPIDPath := filepath.Join(dir, "child-pid")
 	releasePath := filepath.Join(dir, "release")
@@ -70,97 +86,273 @@ func TestProcessGroupSupervisorLeaderExitCancellation(t *testing.T) {
 while [ ! -f "$2" ]; do sleep .01; done
 exit 0
 `, "fixture", childPIDPath, releasePath)
+	return &leaderExitSupervisorFixture{
+		t:              t,
+		cause:          cause,
+		cancel:         cancel,
+		cmd:            cmd,
+		childPIDPath:   childPIDPath,
+		releasePath:    releasePath,
+		watchInstalled: make(chan struct{}),
+		childReady:     make(chan int, 1),
+	}, ctx
+}
 
-	watchInstalled := make(chan struct{})
-	childReady := make(chan int, 1)
-	var signals []syscall.Signal
-	var signaledAfterReap, termSurvived, watchClosedBeforeWait bool
-	s := defaultProcessGroupSupervisor()
-	s.signalGroup = func(groupID int, signal syscall.Signal) error {
-		signaledAfterReap = signaledAfterReap || cmd.ProcessState != nil
-		signals = append(signals, signal)
-		err := signalProcessGroup(groupID, signal)
-		if signal == syscall.SIGTERM {
-			termSurvived = syscall.Kill(<-childReady, 0) == nil
-		}
-		return err
+func (f *leaderExitSupervisorFixture) signalGroup(groupID int, signal syscall.Signal) error {
+	f.signaledAfterReap = f.signaledAfterReap || f.cmd.ProcessState != nil
+	f.signals = append(f.signals, signal)
+	err := signalProcessGroup(groupID, signal)
+	if signal == syscall.SIGTERM {
+		f.termSurvived = syscall.Kill(<-f.childReady, 0) == nil
 	}
-	s.afterFunc = func(_ context.Context, callback func()) func() bool {
-		return func() bool { cancel(cause); callback(); return false }
-	}
-	s.watchExit = func(pid int) (processExitWatcher, error) {
-		inner, err := startProcessExitWatch(pid)
-		if err != nil {
-			return nil, err
-		}
-		watch := newSupervisorTestWatcher()
-		watch.closeFn = func() error {
-			watchClosedBeforeWait = cmd.ProcessState == nil
-			return inner.close()
-		}
-		go func() {
-			watch.signal(<-inner.done())
-		}()
-		close(watchInstalled)
-		return watch, nil
-	}
+	return err
+}
 
-	results := make(chan processGroupRunResult, 1)
-	go func() { results <- s.run(ctx, cmd) }()
+func (f *leaderExitSupervisorFixture) afterFunc(_ context.Context, callback func()) func() bool {
+	return func() bool {
+		f.cancel(f.cause)
+		callback()
+		return false
+	}
+}
+
+func (f *leaderExitSupervisorFixture) watchExit(pid int) (processExitWatcher, error) {
+	inner, err := startProcessExitWatch(pid)
+	if err != nil {
+		return nil, err
+	}
+	watch := newSupervisorTestWatcher()
+	watch.closeFn = func() error {
+		f.watchClosedBeforeWait = f.cmd.ProcessState == nil
+		return inner.close()
+	}
+	go func() { watch.signal(<-inner.done()) }()
+	close(f.watchInstalled)
+	return watch, nil
+}
+
+func (f *leaderExitSupervisorFixture) admitLeaderExit() {
+	f.t.Helper()
 	select {
-	case <-watchInstalled:
+	case <-f.watchInstalled:
 	case <-time.After(5 * time.Second):
-		t.Fatal("exit watcher was not installed")
+		f.t.Fatal("exit watcher was not installed")
 	}
-	childReady <- fixturePID(t, childPIDPath)
-	if err := os.WriteFile(releasePath, []byte("release\n"), 0o600); err != nil {
+	f.childReady <- fixturePID(f.t, f.childPIDPath)
+	if err := os.WriteFile(f.releasePath, []byte("release\n"), 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *leaderExitSupervisorFixture) awaitResult(results <-chan processGroupRunResult) processGroupRunResult {
+	f.t.Helper()
+	select {
+	case result := <-results:
+		return result
+	case <-time.After(10 * time.Second):
+		killRunningSupervisorTestCommand(f.cmd)
+		f.t.Fatal("leader-exit cleanup did not finish")
+		return processGroupRunResult{}
+	}
+}
+
+func killRunningSupervisorTestCommand(cmd *exec.Cmd) {
+	if cmd.Process != nil && cmd.ProcessState == nil {
+		_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+	}
+}
+
+func (f *leaderExitSupervisorFixture) assertResult(result processGroupRunResult) {
+	f.t.Helper()
+	if result.runErr != nil || result.cleanupErr != nil || !result.cleanupRan {
+		f.t.Fatalf("run result = %+v", result)
+	}
+	if !errors.Is(result.cause, f.cause) {
+		f.t.Fatalf("run result = %+v, want cause %v", result, f.cause)
+	}
+}
+
+func (f *leaderExitSupervisorFixture) assertSignalOrder() {
+	f.t.Helper()
+	if len(f.signals) != 2 {
+		f.t.Fatalf("signals = %v, want TERM then KILL", f.signals)
+	}
+	if f.signals[0] != syscall.SIGTERM || f.signals[1] != syscall.SIGKILL {
+		f.t.Fatalf("signals = %v, want TERM then KILL", f.signals)
+	}
+}
+
+func (f *leaderExitSupervisorFixture) assertCleanupOrder() {
+	f.t.Helper()
+	if f.signaledAfterReap || !f.termSurvived || !f.watchClosedBeforeWait {
+		f.t.Fatalf("ordering: after-reap=%v term-survived=%v close-before-wait=%v state=%v", f.signaledAfterReap, f.termSurvived, f.watchClosedBeforeWait, f.cmd.ProcessState)
+	}
+	if f.cmd.ProcessState == nil {
+		f.t.Fatal("leader was not reaped after cleanup")
+	}
+}
+
+func (f *leaderExitSupervisorFixture) assertGroupAbsent() {
+	f.t.Helper()
+	if err := syscall.Kill(-f.cmd.Process.Pid, 0); !errors.Is(err, syscall.ESRCH) {
+		f.t.Fatalf("process group %d remains after cleanup: %v", f.cmd.Process.Pid, err)
+	}
+}
+
+func TestSignalOwnedGroupRejectsReapedLeader(t *testing.T) {
+	cmd := exec.Command("/usr/bin/true")
+	if err := cmd.Run(); err != nil {
 		t.Fatal(err)
 	}
-	var result processGroupRunResult
-	select {
-	case result = <-results:
-	case <-time.After(10 * time.Second):
-		if cmd.Process != nil && cmd.ProcessState == nil {
-			_ = signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
-		}
-		t.Fatal("leader-exit cleanup did not finish")
+	signaled := false
+	s := defaultProcessGroupSupervisor()
+	s.signalGroup = func(int, syscall.Signal) error {
+		signaled = true
+		return nil
 	}
-	if result.runErr != nil || result.cleanupErr != nil || !result.cleanupRan || !errors.Is(result.cause, cause) {
-		t.Fatalf("run result = %+v", result)
+	err := s.signalOwnedGroup(cmd, processGroupOwner{pid: cmd.Process.Pid}, syscall.SIGKILL)
+	if err == nil || !strings.Contains(err.Error(), "reaped before signaling") || signaled {
+		t.Fatalf("reaped leader signal = %v, signaled=%t", err, signaled)
 	}
-	if len(signals) != 2 || signals[0] != syscall.SIGTERM || signals[1] != syscall.SIGKILL {
-		t.Fatalf("signals = %v, want TERM then KILL", signals)
-	}
-	if signaledAfterReap || !termSurvived || !watchClosedBeforeWait || cmd.ProcessState == nil {
-		t.Fatalf("ordering: after-reap=%v term-survived=%v close-before-wait=%v state=%v", signaledAfterReap, termSurvived, watchClosedBeforeWait, cmd.ProcessState)
-	}
-	if err := syscall.Kill(-cmd.Process.Pid, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("process group %d remains after cleanup: %v", cmd.Process.Pid, err)
-	}
+}
+
+func TestProcessGroupSupervisorLeaderExitCancellation(t *testing.T) {
+	fixture, ctx := newLeaderExitSupervisorFixture(t)
+	s := defaultProcessGroupSupervisor()
+	s.signalGroup = fixture.signalGroup
+	s.afterFunc = fixture.afterFunc
+	s.watchExit = fixture.watchExit
+
+	results := make(chan processGroupRunResult, 1)
+	go func() { results <- s.run(ctx, fixture.cmd) }()
+	fixture.admitLeaderExit()
+	result := fixture.awaitResult(results)
+	fixture.assertResult(result)
+	fixture.assertSignalOrder()
+	fixture.assertCleanupOrder()
+	fixture.assertGroupAbsent()
 }
 func TestProcessGroupSupervisorOrdinaryExit(t *testing.T) {
 	cmd := exec.Command("/bin/sh", "-c", "exit 7")
-	watch := newSupervisorTestWatcher()
-	watch.signal(nil)
-	closedBeforeWait := false
-	watch.closeFn = func() error { closedBeforeWait = cmd.ProcessState == nil; return nil }
-	s := defaultProcessGroupSupervisor()
-	s.watchExit = func(int) (processExitWatcher, error) { return watch, nil }
-	result := s.run(context.Background(), cmd)
-	var exitErr *exec.ExitError
-	if result.cleanupRan || !closedBeforeWait || cmd.ProcessState == nil ||
-		!errors.As(result.runErr, &exitErr) || exitErr.ExitCode() != 7 {
-		t.Fatalf("run result = %+v, want ordinary exit 7", result)
+	result := defaultProcessGroupSupervisor().run(context.Background(), cmd)
+	assertNoProcessGroupCleanup(t, cmd, result, 7)
+	assertProcessGroupExitCode(t, result, 7)
+}
+
+func TestProcessGroupSupervisorAfterStartLinearizesOwnership(t *testing.T) {
+	cmd := exec.Command("/bin/sleep", "1")
+	calls := 0
+	result := defaultProcessGroupSupervisor().runAfterStart(context.Background(), cmd, func() {
+		calls++
+		assertStartedProcess(t, cmd)
+	})
+	if calls != 1 {
+		t.Fatalf("after-start calls = %d, want 1", calls)
+	}
+	if result.runErr != nil || result.cleanupErr != nil {
+		t.Fatalf("after-start result = %+v", result)
 	}
 }
+
+func assertStartedProcess(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	if cmd.Process == nil || cmd.ProcessState != nil {
+		t.Fatalf("after-start process state = %v, %v", cmd.Process, cmd.ProcessState)
+	}
+}
+
+func TestProcessGroupSupervisorStartFailureSkipsAfterStart(t *testing.T) {
+	calls := 0
+	cmd := exec.Command(filepath.Join(t.TempDir(), "missing"))
+	result := defaultProcessGroupSupervisor().runAfterStart(context.Background(), cmd, func() { calls++ })
+	if result.runErr == nil || calls != 0 {
+		t.Fatalf("start failure result = %+v, calls = %d", result, calls)
+	}
+}
+
+func TestProcessGroupSupervisorOrdinaryExitSurfacesCleanupFailure(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "exit 7")
+	proofErr := errors.New("absence proof failed")
+	s := defaultProcessGroupSupervisor()
+	s.waitAbsent = func(int, time.Duration) (bool, error) { return false, proofErr }
+	result := s.run(context.Background(), cmd)
+	if !errors.Is(result.cleanupErr, proofErr) || !errors.Is(result.runErr, proofErr) {
+		t.Fatalf("ordinary exit result = %+v, want surfaced cleanup failure", result)
+	}
+	assertColimaOrdinaryFailure(t, result, proofErr)
+	if !strings.Contains(result.runErr.Error(), "exit status 7") {
+		t.Fatalf("ordinary exit error = %v, want exit status", result.runErr)
+	}
+}
+
+func assertNoProcessGroupCleanup(t *testing.T, cmd *exec.Cmd, result processGroupRunResult, wantCode int) {
+	t.Helper()
+	if result.cleanupRan || result.cleanupErr != nil || cmd.ProcessState == nil {
+		t.Fatalf("run result = %+v, want ordinary exit %d", result, wantCode)
+	}
+}
+
+func assertProcessGroupExitCode(t *testing.T, result processGroupRunResult, wantCode int) {
+	t.Helper()
+	var exitErr *exec.ExitError
+	if !errors.As(result.runErr, &exitErr) || exitErr.ExitCode() != wantCode {
+		t.Fatalf("run result = %+v, want ordinary exit %d", result, wantCode)
+	}
+}
+
+func TestProcessGroupSupervisorOrdinaryExitDrainsPersistentDescendant(t *testing.T) {
+	dir := t.TempDir()
+	childPIDPath := filepath.Join(dir, "child-pid")
+	script := `
+/bin/sh -c 'trap "" TERM; printf "%s\n" "$$" >"$1"; while :; do sleep 1; done' fixture-child "$1" &
+while [ ! -s "$1" ]; do sleep .01; done
+exit 0
+`
+	cmd := exec.Command("/bin/sh", "-c", script, "fixture", childPIDPath)
+	results := make(chan processGroupRunResult, 1)
+	go func() { results <- defaultProcessGroupSupervisor().run(context.Background(), cmd) }()
+	_ = fixturePID(t, childPIDPath)
+	result := awaitOrdinaryExitDrainResult(t, cmd, results)
+	assertOrdinaryExitDrainResult(t, cmd, result)
+	assertProcessGroupAbsentAfterDrain(t, cmd.Process.Pid)
+}
+
+func awaitOrdinaryExitDrainResult(t *testing.T, cmd *exec.Cmd, results <-chan processGroupRunResult) processGroupRunResult {
+	t.Helper()
+	select {
+	case result := <-results:
+		return result
+	case <-time.After(10 * time.Second):
+		killRunningSupervisorTestCommand(cmd)
+		t.Fatal("ordinary-exit process-group cleanup did not finish")
+		return processGroupRunResult{}
+	}
+}
+
+func assertOrdinaryExitDrainResult(t *testing.T, cmd *exec.Cmd, result processGroupRunResult) {
+	t.Helper()
+	if result.runErr != nil || result.cleanupErr != nil || result.cleanupRan || cmd.ProcessState == nil {
+		t.Fatalf("ordinary exit result = %+v state=%v", result, cmd.ProcessState)
+	}
+}
+
+func assertProcessGroupAbsentAfterDrain(t *testing.T, groupID int) {
+	t.Helper()
+	if absent, err := waitForProcessGroupExit(groupID, 2*time.Second); err != nil || !absent {
+		t.Fatalf("ordinary-exit process group remained: absent=%t err=%v", absent, err)
+	}
+}
+
+type supervisorWatchFailureCase struct {
+	name      string
+	configure func(*processGroupSupervisor, *supervisorTestWatcher)
+	wantErr   error
+	wantText  string
+}
+
 func TestProcessGroupSupervisorWatchFailures(t *testing.T) {
 	sentinel := errors.New("supervision failed")
-	tests := []struct {
-		name      string
-		configure func(*processGroupSupervisor, *supervisorTestWatcher)
-		wantErr   error
-		wantText  string
-	}{
+	tests := []supervisorWatchFailureCase{
 		{"capture generation", func(s *processGroupSupervisor, _ *supervisorTestWatcher) {
 			s.captureGeneration = func(int) (string, error) { return "", sentinel }
 		}, sentinel, ""},
@@ -185,124 +377,304 @@ func TestProcessGroupSupervisorWatchFailures(t *testing.T) {
 		}, nil, "exit watch"},
 	}
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command("/bin/sleep", "2")
-			watch := newSupervisorTestWatcher()
-			var signals []syscall.Signal
-			signaledAfterReap := false
-			s := defaultProcessGroupSupervisor()
-			tc.configure(&s, watch)
-			s.signalGroup = func(groupID int, signal syscall.Signal) error {
-				signaledAfterReap = signaledAfterReap || cmd.ProcessState != nil
-				signals = append(signals, signal)
-				return signalProcessGroup(groupID, signal)
-			}
-			result := s.run(context.Background(), cmd)
-			unreaped := cmd.ProcessState == nil
-			if unreaped {
-				_ = cmd.Wait()
-			}
-			if result.cleanupErr != nil || !unreaped || cmd.ProcessState == nil || signaledAfterReap ||
-				len(signals) != 1 || signals[0] != syscall.SIGKILL {
-				t.Fatalf("run result=%+v signals=%v after-reap=%v state=%v", result, signals, signaledAfterReap, cmd.ProcessState)
-			}
-			if !strings.Contains(result.runErr.Error(), "wait skipped") || tc.wantErr != nil && !errors.Is(result.runErr, tc.wantErr) ||
-				tc.wantText != "" && !strings.Contains(result.runErr.Error(), tc.wantText) {
-				t.Fatalf("run error = %v, want %v %q", result.runErr, tc.wantErr, tc.wantText)
-			}
-			if code, err := colimaRunResult(result.runErr); code != 0 || err == nil {
-				t.Fatalf("colima result = %d, %v; want surfaced supervision error", code, err)
-			}
-		})
+		t.Run(tc.name, func(t *testing.T) { runSupervisorWatchFailureCase(t, tc) })
 	}
 }
-func TestProcessGroupSupervisorSkipsWaitWithoutObservedExit(t *testing.T) {
-	for _, directErr := range []error{errors.New("direct kill failed"), nil} {
-		for _, groupErr := range []error{errors.New("group signal failed"), nil} {
-			cmd := exec.Command("/bin/sleep", "30")
-			startSupervisorTestCommand(t, cmd)
-			t.Cleanup(func() {
-				if cmd.ProcessState == nil {
-					_ = cmd.Process.Kill()
-					_ = cmd.Wait()
-				}
-			})
-			s := defaultProcessGroupSupervisor()
-			owner, err := s.captureOwner(cmd.Process)
-			if err != nil {
-				t.Fatal(err)
-			}
-			s.termGrace, s.proofLimit = 10*time.Millisecond, 10*time.Millisecond
-			s.signalGroup = func(int, syscall.Signal) error { return groupErr }
-			s.killProcess = func(*os.Process) error { return directErr }
-			fallbackDone := make(chan struct{})
-			killFallback := time.AfterFunc(2*time.Second, func() { _ = cmd.Process.Kill(); close(fallbackDone) })
-			waitErr, cleanupErr := s.stopStartedCommand(
-				cmd, owner, newSupervisorTestWatcher(), false, nil, true)
-			stopped := killFallback.Stop()
-			if !stopped {
-				<-fallbackDone
-			}
-			if !stopped || waitErr != nil || cmd.ProcessState != nil {
-				t.Fatalf("unconfirmed cleanup was not bounded: wait=%v state=%v", waitErr, cmd.ProcessState)
-			}
-			if directErr != nil && !errors.Is(cleanupErr, directErr) || !strings.Contains(cleanupErr.Error(), "wait skipped") ||
-				!strings.Contains(cleanupErr.Error(), "exit watch did not signal") ||
-				groupErr != nil && !errors.Is(cleanupErr, groupErr) {
-				t.Fatalf("cleanup error = %v, group error = %v", cleanupErr, groupErr)
-			}
+
+func TestIsExactProcessGenerationCurrentFormats(t *testing.T) {
+	tests := map[string]bool{
+		"darwin:1.000001": true,
+		"linux:1":         true,
+		"1":               false,
+		"darwin:1":        false,
+		"linux:0":         false,
+	}
+	for generation, want := range tests {
+		if got := IsExactProcessGeneration(generation); got != want {
+			t.Errorf("IsExactProcessGeneration(%q) = %t, want %t", generation, got, want)
 		}
 	}
 }
+
+type supervisorSignalRecorder struct {
+	cmd               *exec.Cmd
+	signals           []syscall.Signal
+	signaledAfterReap bool
+}
+
+func (r *supervisorSignalRecorder) signalGroup(groupID int, signal syscall.Signal) error {
+	r.signaledAfterReap = r.signaledAfterReap || r.cmd.ProcessState != nil
+	r.signals = append(r.signals, signal)
+	return signalProcessGroup(groupID, signal)
+}
+
+func runSupervisorWatchFailureCase(t *testing.T, tc supervisorWatchFailureCase) {
+	t.Helper()
+	cmd := exec.Command("/bin/sleep", "2")
+	watch := newSupervisorTestWatcher()
+	s := defaultProcessGroupSupervisor()
+	tc.configure(&s, watch)
+	recorder := supervisorSignalRecorder{cmd: cmd}
+	s.signalGroup = recorder.signalGroup
+	result := s.run(context.Background(), cmd)
+	unreaped := cmd.ProcessState == nil
+	if unreaped {
+		_ = cmd.Wait()
+	}
+	assertWatchFailureCleanupState(t, cmd, result, unreaped)
+	assertWatchFailureSignals(t, result, recorder)
+	combinedErr := errors.Join(result.runErr, result.cleanupErr)
+	assertCleanupSkippedWait(t, result.cleanupErr)
+	assertOptionalError(t, combinedErr, tc.wantErr)
+	assertOptionalErrorText(t, combinedErr, tc.wantText)
+	assertColimaCleanupFailure(t, result)
+}
+
+func assertWatchFailureCleanupState(t *testing.T, cmd *exec.Cmd, result processGroupRunResult, unreaped bool) {
+	t.Helper()
+	if result.cleanupErr == nil || !unreaped || cmd.ProcessState == nil {
+		t.Fatalf("run result=%+v state=%v unreaped=%v", result, cmd.ProcessState, unreaped)
+	}
+}
+
+func assertWatchFailureSignals(t *testing.T, result processGroupRunResult, recorder supervisorSignalRecorder) {
+	t.Helper()
+	if recorder.signaledAfterReap || len(recorder.signals) != 1 {
+		t.Fatalf("run result=%+v signals=%v after-reap=%v", result, recorder.signals, recorder.signaledAfterReap)
+	}
+	if recorder.signals[0] != syscall.SIGKILL {
+		t.Fatalf("run result=%+v signals=%v, want KILL", result, recorder.signals)
+	}
+}
+
+func assertCleanupSkippedWait(t *testing.T, cleanupErr error) {
+	t.Helper()
+	if !strings.Contains(cleanupErr.Error(), "wait skipped") {
+		t.Fatalf("cleanup error = %v, want wait skipped", cleanupErr)
+	}
+}
+
+func assertOptionalError(t *testing.T, err, want error) {
+	t.Helper()
+	if want != nil && !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+}
+
+func assertOptionalErrorText(t *testing.T, err error, want string) {
+	t.Helper()
+	if want != "" && !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}
+
+func TestProcessGroupAbortClassificationRequiresUnprovedCleanup(t *testing.T) {
+	supervisionErr := errors.New("supervision failed")
+	cleanupErr := errors.New("absence proof failed")
+	assertColimaOrdinaryFailure(t, processGroupAbortResultWithCause(nil, supervisionErr, nil, nil), supervisionErr)
+	cleanupResult := processGroupAbortResultWithCause(nil, supervisionErr, nil, cleanupErr)
+	assertColimaOrdinaryFailure(t, cleanupResult, supervisionErr)
+	assertColimaOrdinaryFailure(t, cleanupResult, cleanupErr)
+	assertColimaCleanupFailure(t, cleanupResult, supervisionErr, cleanupErr)
+}
+
+func assertColimaOrdinaryFailure(t *testing.T, result processGroupRunResult, want error) {
+	t.Helper()
+	code, err := colimaRunResult(result.runErr)
+	if code != 0 || !errors.Is(err, want) {
+		t.Fatalf("ordinary Colima result = %d, %v", code, err)
+	}
+}
+
+func assertColimaCleanupFailure(t *testing.T, result processGroupRunResult, wants ...error) {
+	t.Helper()
+	code, err := colimaCancellationResult(result.runErr, result.cleanupErr, result.cause)
+	if code != 0 || err == nil {
+		t.Fatalf("cleanup-failed Colima result = %d, %v", code, err)
+	}
+	for _, want := range wants {
+		if !errors.Is(err, want) {
+			t.Fatalf("cleanup-failed Colima result = %v, want %v", err, want)
+		}
+	}
+}
+
+type skippedWaitSupervisorCase struct {
+	name      string
+	directErr error
+	groupErr  error
+}
+
+func TestProcessGroupSupervisorSkipsWaitWithoutObservedExit(t *testing.T) {
+	directErr := errors.New("direct kill failed")
+	groupErr := errors.New("group signal failed")
+	tests := []skippedWaitSupervisorCase{
+		{name: "both signals fail", directErr: directErr, groupErr: groupErr},
+		{name: "direct signal fails", directErr: directErr},
+		{name: "group signal fails", groupErr: groupErr},
+		{name: "signals succeed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) { runSkippedWaitSupervisorCase(t, test) })
+	}
+}
+
+func runSkippedWaitSupervisorCase(t *testing.T, test skippedWaitSupervisorCase) {
+	t.Helper()
+	cmd := exec.Command("/bin/sleep", "30")
+	startSupervisorTestCommand(t, cmd)
+	cleanupSupervisorTestCommand(t, cmd)
+	s := defaultProcessGroupSupervisor()
+	owner := mustCaptureSupervisorOwner(t, &s, cmd.Process)
+	s.termGrace, s.proofLimit = 10*time.Millisecond, 10*time.Millisecond
+	s.signalGroup = func(int, syscall.Signal) error { return test.groupErr }
+	s.killProcess = func(*os.Process) error { return test.directErr }
+	fallbackDone := make(chan struct{})
+	killFallback := time.AfterFunc(2*time.Second, func() {
+		_ = cmd.Process.Kill()
+		close(fallbackDone)
+	})
+	waitErr, cleanupErr := s.stopStartedCommand(cmd, owner, newSupervisorTestWatcher(), false, nil, true)
+	stopped := killFallback.Stop()
+	waitForStoppedFallback(stopped, fallbackDone)
+	assertUnconfirmedCleanupBounded(t, cmd, stopped, waitErr)
+	assertOptionalError(t, cleanupErr, test.directErr)
+	assertCleanupErrorText(t, cleanupErr, "wait skipped")
+	assertCleanupErrorText(t, cleanupErr, "exit watch did not signal")
+	assertOptionalError(t, cleanupErr, test.groupErr)
+}
+
+func cleanupSupervisorTestCommand(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+}
+
+func mustCaptureSupervisorOwner(t *testing.T, s *processGroupSupervisor, process *os.Process) processGroupOwner {
+	t.Helper()
+	owner, err := s.captureOwner(process)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return owner
+}
+
+func waitForStoppedFallback(stopped bool, fallbackDone <-chan struct{}) {
+	if !stopped {
+		<-fallbackDone
+	}
+}
+
+func assertUnconfirmedCleanupBounded(t *testing.T, cmd *exec.Cmd, stopped bool, waitErr error) {
+	t.Helper()
+	if !stopped || waitErr != nil || cmd.ProcessState != nil {
+		t.Fatalf("unconfirmed cleanup was not bounded: wait=%v state=%v", waitErr, cmd.ProcessState)
+	}
+}
+
+func assertCleanupErrorText(t *testing.T, cleanupErr error, want string) {
+	t.Helper()
+	if cleanupErr == nil || !strings.Contains(cleanupErr.Error(), want) {
+		t.Fatalf("cleanup error = %v, want %q", cleanupErr, want)
+	}
+}
+
+type supervisorEPERMCase struct {
+	name      string
+	signal    syscall.Signal
+	absent    bool
+	proofErr  error
+	reuse     bool
+	wantError bool
+}
+
+type supervisorEPERMFixture struct {
+	cmd               *exec.Cmd
+	test              supervisorEPERMCase
+	signaledAfterReap bool
+}
+
+func (f *supervisorEPERMFixture) signalGroup(_ int, signal syscall.Signal) error {
+	f.signaledAfterReap = f.signaledAfterReap || f.cmd.ProcessState != nil
+	if signal == f.test.signal {
+		return syscall.EPERM
+	}
+	return nil
+}
+
+func (f *supervisorEPERMFixture) observeGeneration(pid int, _ string) (string, error) {
+	if f.test.reuse {
+		return "darwin:reused", nil
+	}
+	return "", processGoneErr{pid: pid}
+}
+
+func (f *supervisorEPERMFixture) waitAbsent(int, time.Duration) (bool, error) {
+	return f.test.absent, f.test.proofErr
+}
+
 func TestProcessGroupSupervisorSignalEPERMRequiresProof(t *testing.T) {
 	proofErr := errors.New("absence proof failed")
-	tests := []struct {
-		signal    syscall.Signal
-		absent    bool
-		proofErr  error
-		reuse     bool
-		wantError bool
-	}{
-		{syscall.SIGTERM, true, nil, false, false},
-		{syscall.SIGTERM, false, nil, false, true},
-		{syscall.SIGKILL, true, nil, false, false},
-		{syscall.SIGKILL, false, proofErr, false, true},
-		{syscall.SIGKILL, false, nil, true, true},
+	tests := []supervisorEPERMCase{
+		{name: "TERM with absence proof", signal: syscall.SIGTERM, absent: true},
+		{name: "TERM without absence proof", signal: syscall.SIGTERM, wantError: true},
+		{name: "KILL with absence proof", signal: syscall.SIGKILL, absent: true},
+		{name: "KILL with proof error", signal: syscall.SIGKILL, proofErr: proofErr, wantError: true},
+		{name: "KILL with reused generation", signal: syscall.SIGKILL, reuse: true, wantError: true},
 	}
-	for _, tc := range tests {
-		cmd := exec.Command("/bin/sh", "-c", "while :; do sleep 1; done")
-		startSupervisorTestCommand(t, cmd)
-		owner := processGroupOwner{pid: cmd.Process.Pid, generation: "darwin:test"}
-		watch := newSupervisorTestWatcher()
-		watch.signal(nil)
-		signaledAfterReap := false
-		s := defaultProcessGroupSupervisor()
-		s.signalGroup = func(_ int, signal syscall.Signal) error {
-			signaledAfterReap = signaledAfterReap || cmd.ProcessState != nil
-			if signal == tc.signal {
-				return syscall.EPERM
-			}
-			return nil
-		}
-		s.killProcess = func(process *os.Process) error { return process.Kill() }
-		s.observeGeneration = func(pid int, _ string) (string, error) {
-			if tc.reuse {
-				return "darwin:reused", nil
-			}
-			return "", processGoneErr{pid: pid}
-		}
-		s.waitAbsent = func(int, time.Duration) (bool, error) {
-			return tc.absent, tc.proofErr
-		}
-		_, cleanupErr := s.stopStartedCommand(cmd, owner, watch, true, nil, true)
-		if cmd.ProcessState == nil || signaledAfterReap {
-			t.Fatalf("ordering: state=%v after-reap=%v", cmd.ProcessState, signaledAfterReap)
-		}
-		if (cleanupErr != nil) != tc.wantError || tc.wantError && !errors.Is(cleanupErr, syscall.EPERM) ||
-			tc.proofErr != nil && !errors.Is(cleanupErr, tc.proofErr) ||
-			tc.reuse && !strings.Contains(cleanupErr.Error(), "generation changed after wait") {
-			t.Fatalf("cleanup error = %v for signal=%s proof=%v reuse=%v", cleanupErr, tc.signal, tc.proofErr, tc.reuse)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) { runSupervisorEPERMCase(t, test) })
+	}
+}
+
+func runSupervisorEPERMCase(t *testing.T, test supervisorEPERMCase) {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "while :; do sleep 1; done")
+	startSupervisorTestCommand(t, cmd)
+	owner := processGroupOwner{pid: cmd.Process.Pid, generation: "darwin:test"}
+	watch := newSupervisorTestWatcher()
+	watch.signal(nil)
+	fixture := supervisorEPERMFixture{cmd: cmd, test: test}
+	s := defaultProcessGroupSupervisor()
+	s.signalGroup = fixture.signalGroup
+	s.killProcess = func(process *os.Process) error { return process.Kill() }
+	s.observeGeneration = fixture.observeGeneration
+	s.waitAbsent = fixture.waitAbsent
+	_, cleanupErr := s.stopStartedCommand(cmd, owner, watch, true, nil, true)
+	assertSupervisorStopOrdering(t, cmd, fixture.signaledAfterReap)
+	assertExpectedCleanupError(t, cleanupErr, test.wantError, syscall.EPERM)
+	assertOptionalError(t, cleanupErr, test.proofErr)
+	assertReuseErrorText(t, cleanupErr, test.reuse)
+}
+
+func assertSupervisorStopOrdering(t *testing.T, cmd *exec.Cmd, signaledAfterReap bool) {
+	t.Helper()
+	if cmd.ProcessState == nil || signaledAfterReap {
+		t.Fatalf("ordering: state=%v after-reap=%v", cmd.ProcessState, signaledAfterReap)
+	}
+}
+
+func assertExpectedCleanupError(t *testing.T, err error, wantError bool, want error) {
+	t.Helper()
+	if (err != nil) != wantError {
+		t.Fatalf("cleanup error = %v, want error=%v", err, wantError)
+	}
+	if !wantError {
+		return
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("cleanup error = %v, want %v", err, want)
+	}
+}
+
+func assertReuseErrorText(t *testing.T, err error, reuse bool) {
+	t.Helper()
+	if reuse && !strings.Contains(err.Error(), "generation changed after wait") {
+		t.Fatalf("cleanup error = %v, want generation change", err)
 	}
 }
 func TestColimaCancellationResultsPreserveFailures(t *testing.T) {
@@ -347,18 +719,52 @@ func TestProcessGroupSupervisorRejectsPresetGroup(t *testing.T) {
 	}
 }
 
-func TestProcessGroupHelpersRejectUnsafeIDsAndTreatEPERMAsPresent(t *testing.T) {
-	for _, groupID := range []int{-1, 0, 1, syscall.Getpgrp()} {
-		called := false
-		if err := signalProcessGroupWithKill(groupID, syscall.SIGTERM, func(int, syscall.Signal) error { called = true; return nil }); err == nil || called {
-			t.Fatalf("unsafe signal group %d: err=%v called=%v", groupID, err, called)
-		}
-		if absent, err := waitForProcessGroupExitWithProbe(groupID, 0,
-			func(int, syscall.Signal) error { called = true; return nil },
-			time.Now, time.Sleep); err == nil || absent || called {
-			t.Fatalf("unsafe probe group %d: absent=%v err=%v called=%v", groupID, absent, err, called)
-		}
+func TestProcessGroupSupervisorClassifiesPreStartCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd := exec.CommandContext(ctx, "/usr/bin/true")
+	result := defaultProcessGroupSupervisor().runAfterStart(ctx, cmd, func() {
+		t.Fatal("after-start hook ran after pre-start cancellation")
+	})
+	if !result.preStartCanceled || !errors.Is(result.runErr, context.Canceled) || !errors.Is(result.cause, context.Canceled) {
+		t.Fatalf("pre-start cancellation result = %+v", result)
 	}
+}
+
+func TestProcessGroupHelpersRejectUnsafeIDs(t *testing.T) {
+	for _, groupID := range []int{-1, 0, 1, syscall.Getpgrp()} {
+		assertUnsafeSignalGroupRejected(t, groupID)
+		assertUnsafeProbeGroupRejected(t, groupID)
+	}
+}
+
+func assertUnsafeSignalGroupRejected(t *testing.T, groupID int) {
+	t.Helper()
+	called := false
+	err := signalProcessGroupWithKill(groupID, syscall.SIGTERM, func(int, syscall.Signal) error {
+		called = true
+		return nil
+	})
+	if err == nil || called {
+		t.Fatalf("unsafe signal group %d: err=%v called=%v", groupID, err, called)
+	}
+}
+
+func assertUnsafeProbeGroupRejected(t *testing.T, groupID int) {
+	t.Helper()
+	called := false
+	absent, err := waitForProcessGroupExitWithProbe(groupID, 0,
+		func(int, syscall.Signal) error {
+			called = true
+			return nil
+		},
+		time.Now, time.Sleep)
+	if err == nil || absent || called {
+		t.Fatalf("unsafe probe group %d: absent=%v err=%v called=%v", groupID, absent, err, called)
+	}
+}
+
+func TestProcessGroupProbeTreatsEPERMAsPresent(t *testing.T) {
 	absent, err := waitForProcessGroupExitWithProbe(42, 0,
 		func(pid int, signal syscall.Signal) error {
 			if pid != -42 || signal != 0 {

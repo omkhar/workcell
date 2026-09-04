@@ -326,6 +326,19 @@ func ObserveProcessGeneration(pid int, recorded string) (string, error) {
 	}
 }
 
+// IsExactProcessGeneration reports whether a generation record uses a valid
+// kernel-backed format supported by the host process identity probes.
+func IsExactProcessGeneration(recorded string) bool {
+	switch {
+	case strings.HasPrefix(recorded, "darwin:"):
+		return validDarwinProcessGeneration(recorded)
+	case strings.HasPrefix(recorded, "linux:"):
+		return validLinuxProcessGeneration(recorded)
+	default:
+		return false
+	}
+}
+
 func validDarwinProcessGeneration(recorded string) bool {
 	seconds, microseconds, ok := strings.Cut(strings.TrimPrefix(recorded, "darwin:"), ".")
 	if !ok || !isPositiveCanonicalInt64(seconds) || len(microseconds) != 6 || !isDecimal(microseconds) {
