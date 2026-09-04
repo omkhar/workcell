@@ -11,61 +11,293 @@ import (
 	"strings"
 )
 
-func validateActionlintVersions(securityWorkflow, releaseWorkflow string) (string, error) {
-	securityVersion, err := requireUniformWorkflowEnv(securityWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security actionlint version", ".github/workflows/security.yml")
-	if err != nil {
-		return "", err
+type workflowText struct{ text, path string }
+type toolPinCheck struct{ name, actual, expected string }
+
+func (check *pinnedInputsCheck) validateCosignVersions() error {
+	var ciValue, releaseValue, hygieneValue, upstreamValue string
+	if err := loadPinnedStrings(requireYAMLKey, []pinnedStringInput{
+		{&ciValue, check.ciWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/ci.yml"},
+		{&releaseValue, check.releaseWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/release.yml"},
+		{&hygieneValue, check.pinHygieneWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/pin-hygiene.yml"},
+		{&upstreamValue, check.upstreamRefreshWorkflow, "WORKCELL_COSIGN_VERSION", ".github/workflows/upstream-refresh.yml"},
+	}); err != nil {
+		return err
 	}
-	releaseVersion, err := requireUniformWorkflowEnv(releaseWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release actionlint version", ".github/workflows/release.yml")
-	if err != nil {
-		return "", err
+	if len(map[string]struct{}{ciValue: {}, releaseValue: {}, hygieneValue: {}, upstreamValue: {}}) != 1 {
+		return errors.New("WORKCELL_COSIGN_VERSION must match between .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
 	}
-	if securityVersion != releaseVersion {
-		return "", errors.New("ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	if !pinnedReleaseTagPattern.MatchString(ciValue) {
+		return fmt.Errorf("WORKCELL_COSIGN_VERSION must be an exact pinned release, found %q", ciValue)
 	}
-	return securityVersion, nil
+	check.toolPins.cosign = ciValue
+	return nil
 }
 
-func validateWorkflowBuilderPins(workflowsDir, buildx, buildkit string) error {
-	specs := [][3]string{
-		{"WORKCELL_BUILDX_VERSION", buildx, ""},
-		{"WORKCELL_BUILDKIT_IMAGE", buildkit, "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}"},
-	}
-	for _, workflowPath := range workflowYAMLFiles(workflowsDir) {
-		text, err := readText(workflowPath)
-		if err != nil {
-			return err
-		}
-		path := ".github/workflows/" + filepath.Base(workflowPath)
-		for _, spec := range specs {
-			if err := validateOptionalWorkflowPin(text, path, spec); err != nil {
-				return err
-			}
+func (check *pinnedInputsCheck) validateCosignReleaseBindings() error {
+	for _, workflow := range []workflowText{
+		{check.ciWorkflow, ".github/workflows/ci.yml"},
+		{check.releaseWorkflow, ".github/workflows/release.yml"},
+		{check.pinHygieneWorkflow, ".github/workflows/pin-hygiene.yml"},
+		{check.upstreamRefreshWorkflow, ".github/workflows/upstream-refresh.yml"},
+	} {
+		if !strings.Contains(workflow.text, "cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}") {
+			return fmt.Errorf("%s must pin the installed cosign binary release", workflow.path)
 		}
 	}
 	return nil
 }
 
-func validateOptionalWorkflowPin(text, path string, spec [3]string) error {
-	name, expected, needle := spec[0], spec[1], spec[2]
-	present := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(name) + `:`).MatchString(text)
-	if !present {
-		return nil
+func (check *pinnedInputsCheck) validateCosignRefsAndBuildxSetup() error {
+	var ciRef, releaseRef, hygieneRef, upstreamRef string
+	if err := loadPinnedStrings(requireActionRef, []pinnedStringInput{
+		{&ciRef, check.ciWorkflow, "sigstore/cosign-installer", ".github/workflows/ci.yml"},
+		{&releaseRef, check.releaseWorkflow, "sigstore/cosign-installer", ".github/workflows/release.yml"},
+		{&hygieneRef, check.pinHygieneWorkflow, "sigstore/cosign-installer", ".github/workflows/pin-hygiene.yml"},
+		{&upstreamRef, check.upstreamRefreshWorkflow, "sigstore/cosign-installer", ".github/workflows/upstream-refresh.yml"},
+	}); err != nil {
+		return err
 	}
-	value, err := requireYAMLKey(text, name, path)
+	if len(map[string]struct{}{ciRef: {}, releaseRef: {}, hygieneRef: {}, upstreamRef: {}}) != 1 {
+		return errors.New("sigstore/cosign-installer must use the same reviewed commit SHA in .github/workflows/ci.yml, .github/workflows/release.yml, .github/workflows/pin-hygiene.yml, and .github/workflows/upstream-refresh.yml")
+	}
+	return requireTextRequirements(
+		textRequirement{
+			text: check.ciWorkflow, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}",
+			err: errors.New(".github/workflows/ci.yml must pin the BuildKit daemon image used by setup-buildx-action"),
+		},
+		textRequirement{
+			text: check.releaseWorkflow, needle: "driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}",
+			err: errors.New(".github/workflows/release.yml must pin the BuildKit daemon image used by setup-buildx-action"),
+		},
+		textRequirement{
+			text: check.ciWorkflow, needle: "cache-binary: true",
+			err: errors.New("pinned buildx binary caching must stay enabled in .github/workflows/ci.yml"),
+		},
+	)
+}
+
+func (check *pinnedInputsCheck) loadCIReproBuildJob() error {
+	start := strings.Index(check.ciWorkflow, "  reproducible-build-platform:\n")
+	if start < 0 {
+		return errors.New("unable to extract reproducible-build-platform job from .github/workflows/ci.yml")
+	}
+	job := check.ciWorkflow[start:]
+	if end := strings.Index(job, "\n  reproducible-build:\n"); end >= 0 {
+		job = job[:end+1]
+	}
+	check.ciRepro.job = job
+	return nil
+}
+
+func (check *pinnedInputsCheck) validateCIReproStrategy() error {
+	job := check.ciRepro.job
+	if !regexp.MustCompile(`(?m)^\s{4}runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}$`).MatchString(job) {
+		return errors.New(".github/workflows/ci.yml must route reproducible-build-platform through runs-on: ${{ matrix.runner }}")
+	}
+	start := strings.Index(job, "    strategy:\n")
+	if start < 0 {
+		return errors.New("unable to extract reproducible-build-platform strategy block from .github/workflows/ci.yml")
+	}
+	strategy := job[start:]
+	end := strings.Index(strategy, "\n    steps:\n")
+	if end < 0 {
+		return errors.New("unable to extract reproducible-build-platform strategy block from .github/workflows/ci.yml")
+	}
+	strategy = strategy[:end+1]
+	expected := "    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - platform: linux/amd64\n            platform_name: amd64\n            runner: ubuntu-latest\n          - platform: linux/arm64\n            platform_name: arm64\n            runner: ubuntu-24.04-arm\n"
+	if strategy != expected {
+		return errors.New(".github/workflows/ci.yml must keep the reviewed reproducible-build matrix structure, including a single native ubuntu-24.04-arm lane for linux/arm64")
+	}
+	check.ciRepro.strategy = strategy
+	return nil
+}
+
+func (check *pinnedInputsCheck) validateCIReproEntriesAndTail() error {
+	re := regexp.MustCompile(`(?m)^\s{10}- platform:\s*(\S+)\n^\s{12}platform_name:\s*(\S+)\n^\s{12}runner:\s*(\S+)$`)
+	matches := re.FindAllStringSubmatch(check.ciRepro.strategy, -1)
+	if len(matches) == 0 {
+		return errors.New("unable to extract reproducible-build matrix entries from .github/workflows/ci.yml")
+	}
+	if !validArm64ReproEntries(matches) {
+		return errors.New(".github/workflows/ci.yml must define exactly one linux/arm64 reproducible-build matrix entry and it must use runner ubuntu-24.04-arm")
+	}
+	return firstPinnedInputError(
+		func() error {
+			return requireTextRequirements(textRequirement{
+				text: check.ciWorkflow, needle: "docker/setup-qemu-action@", forbidden: true,
+				err: errors.New(".github/workflows/ci.yml must not configure QEMU in CI now that arm64 reproducible builds use a native runner"),
+			})
+		},
+		func() error { return ValidateCIWorkflowPRShapeFlow(check.ciWorkflow) },
+		func() error {
+			return ValidateMacOSInstallVerificationFlow(check.ciWorkflow, ".github/workflows/ci.yml", "workcell-ci-install-candidate", "name: Install verification (${{ matrix.runner_label }})")
+		},
+	)
+}
+
+func validArm64ReproEntries(matches [][]string) bool {
+	count := 0
+	for _, match := range matches {
+		if match[1] == "linux/arm64" {
+			count++
+			if [3]string{match[1], match[2], match[3]} != [3]string{"linux/arm64", "arm64", "ubuntu-24.04-arm"} {
+				return false
+			}
+		}
+	}
+	return count == 1
+}
+
+func (check *pinnedInputsCheck) validateReleaseBuildAndSyft() error {
+	if err := requireTextRequirements(
+		textRequirement{
+			text: check.releaseWorkflow, needle: "cache-binary: false",
+			err: errors.New("the publishing release workflow must not cache the Buildx binary"),
+		},
+		textRequirement{
+			text: check.releaseWorkflow, needle: "docker/setup-qemu-action@", forbidden: true,
+			err: errors.New(".github/workflows/release.yml must not configure QEMU now that arm64 release builds use a native runner"),
+		},
+		textRequirement{
+			text: check.releaseWorkflow, needle: "runs-on: ubuntu-24.04-arm",
+			err: errors.New(".github/workflows/release.yml must build the arm64 release image on a native ubuntu-24.04-arm runner"),
+		},
+	); err != nil {
+		return err
+	}
+	value, err := requireYAMLKey(check.releaseWorkflow, "WORKCELL_SYFT_VERSION", ".github/workflows/release.yml")
 	if err != nil {
 		return err
 	}
-	if err := requireEqual(name, expected, ".github/workflows/ci.yml", value, path); err != nil {
+	if !pinnedReleaseTagPattern.MatchString(value) {
+		return fmt.Errorf("WORKCELL_SYFT_VERSION must be an exact pinned release, found %q", value)
+	}
+	check.toolPins.syft = value
+	return requireTextRequirements(
+		textRequirement{
+			text: check.releaseWorkflow, needle: "syft-version: ${{ env.WORKCELL_SYFT_VERSION }}",
+			err: errors.New(".github/workflows/release.yml must pin the Syft version used for release SBOM generation"),
+		},
+		textRequirement{
+			text: check.releaseWorkflow, needle: "anchore/sbom-action/download-syft@",
+			err: errors.New(".github/workflows/release.yml must install the pinned Syft CLI before generating the builder environment manifest"),
+		},
+	)
+}
+
+func (check *pinnedInputsCheck) loadSecurityWorkflow() error {
+	return loadPinnedTextInputs([]pinnedTextInput{
+		{filepath.Join(check.cfg.WorkflowsDir, "security.yml"), &check.securityWorkflow},
+	})
+}
+
+func (check *pinnedInputsCheck) validateActionlintPins() error {
+	var securityVersion, releaseVersion, securitySHA, releaseSHA string
+	if err := loadWorkflowEnvs([]workflowEnvInput{
+		{&securityVersion, check.securityWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security actionlint version", ".github/workflows/security.yml"},
+		{&releaseVersion, check.releaseWorkflow, "ACTIONLINT_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release actionlint version", ".github/workflows/release.yml"},
+	}); err != nil {
 		return err
 	}
-	if needle == "" {
-		return nil
+	if securityVersion != releaseVersion {
+		return errors.New("ACTIONLINT_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
 	}
-	return requireTextRequirements(textRequirement{
-		text: text, needle: needle,
-		err: fmt.Errorf("%s must pin the BuildKit daemon image used by setup-buildx-action", path),
-	})
+	if err := loadWorkflowEnvs([]workflowEnvInput{
+		{&securitySHA, check.securityWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "security actionlint sha", ".github/workflows/security.yml"},
+		{&releaseSHA, check.releaseWorkflow, "ACTIONLINT_SHA256", `[0-9a-f]{64}`, "release actionlint sha", ".github/workflows/release.yml"},
+	}); err != nil {
+		return err
+	}
+	if securitySHA != releaseSHA {
+		return errors.New("ACTIONLINT_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	check.toolPins.actionlintVersion = securityVersion
+	check.toolPins.actionlintSHA = securitySHA
+	return nil
+}
+
+func (check *pinnedInputsCheck) validateZizmorPins() error {
+	var securityVersion, securitySHA, releaseVersion, releaseSHA string
+	if err := loadWorkflowEnvs([]workflowEnvInput{
+		{&securityVersion, check.securityWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "security zizmor version", ".github/workflows/security.yml"},
+		{&securitySHA, check.securityWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "security zizmor sha", ".github/workflows/security.yml"},
+		{&releaseVersion, check.releaseWorkflow, "ZIZMOR_VERSION", `[0-9]+\.[0-9]+\.[0-9]+`, "release zizmor version", ".github/workflows/release.yml"},
+		{&releaseSHA, check.releaseWorkflow, "ZIZMOR_SHA256", `[0-9a-f]{64}`, "release zizmor sha", ".github/workflows/release.yml"},
+	}); err != nil {
+		return err
+	}
+	if securityVersion != releaseVersion {
+		return errors.New("ZIZMOR_VERSION must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	if securitySHA != releaseSHA {
+		return errors.New("ZIZMOR_SHA256 must match between .github/workflows/security.yml and .github/workflows/release.yml")
+	}
+	check.toolPins.zizmorVersion = securityVersion
+	check.toolPins.zizmorSHA = securitySHA
+	return nil
+}
+
+func (check *pinnedInputsCheck) validateToolPinPolicy() error {
+	values := check.toolPins
+	for _, pin := range []toolPinCheck{
+		{"WORKCELL_COSIGN_VERSION", values.cosign, check.pins.Cosign},
+		{"WORKCELL_BUILDX_VERSION", values.buildx, check.pins.Buildx},
+		{"WORKCELL_BUILDKIT_IMAGE", values.buildkit, check.pins.Buildkit},
+		{"WORKCELL_QEMU_IMAGE", values.qemu, check.pins.QEMU},
+		{"WORKCELL_SYFT_VERSION", values.syft, check.pins.Syft},
+		{"ACTIONLINT_VERSION", values.actionlintVersion, check.pins.ActionlintVersion},
+		{"ACTIONLINT_SHA256", values.actionlintSHA, check.pins.ActionlintSHA256},
+		{"ZIZMOR_VERSION", values.zizmorVersion, check.pins.ZizmorVersion},
+		{"ZIZMOR_SHA256", values.zizmorSHA, check.pins.ZizmorSHA256},
+	} {
+		if pin.actual != pin.expected {
+			return fmt.Errorf("%s pin %q does not match policy/tool-pins.toml %q; the workflow and the policy must stay in lockstep (scripts/update-upstream-pins.sh rewrites both)", pin.name, pin.actual, pin.expected)
+		}
+	}
+	return nil
+}
+
+func (check *pinnedInputsCheck) validateSecurityToolDownloads() error {
+	downloads := []releaseDownload{
+		{"actionlint", "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"},
+		{"zizmor", "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"},
+	}
+	for _, workflow := range []workflowText{
+		{check.securityWorkflow, ".github/workflows/security.yml"},
+		{check.releaseWorkflow, ".github/workflows/release.yml"},
+	} {
+		if err := requireCappedReleaseDownloads(workflow.text, workflow.path, downloads); err != nil {
+			return err
+		}
+		if err := requireTextRequirements(
+			textRequirement{
+				text: workflow.text, needle: `echo "${ZIZMOR_SHA256}  zizmor.tar.gz" | sha256sum -c -`,
+				err: fmt.Errorf("%s must verify the pinned zizmor archive digest", workflow.path),
+			},
+			textRequirement{
+				text: workflow.text, needle: `tar -xzf zizmor.tar.gz -C "${RUNNER_TEMP}/bin" zizmor`,
+				err: fmt.Errorf("%s must install the pinned zizmor binary archive", workflow.path),
+			},
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (check *pinnedInputsCheck) validateSecurityWorkflowDispatch() error {
+	for _, needle := range []string{
+		"github.event_name == 'workflow_dispatch' && github.ref_name != 'main'",
+		"base-ref: ${{ github.event_name == 'workflow_dispatch' && 'refs/heads/main' || '' }}",
+		"head-ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || '' }}",
+		"./scripts/check-workflows.sh",
+	} {
+		if !strings.Contains(check.securityWorkflow, needle) {
+			return fmt.Errorf(".github/workflows/security.yml must contain %q", needle)
+		}
+	}
+	return nil
 }
 
 func (check *pinnedInputsCheck) validateReleaseManifestAndRuntimeSources() error {
