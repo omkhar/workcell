@@ -2218,7 +2218,7 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
-  if [[ "${CODEX_YOLO_ARGS}" != "--profile strict --ask-for-approval never --version" ]]; then
+  if [[ "${CODEX_YOLO_ARGS}" != "--profile strict --sandbox danger-full-access --ask-for-approval never --version" ]]; then
     echo "unexpected Codex yolo argv: ${CODEX_YOLO_ARGS}" >&2
     exit 1
   fi
@@ -2237,7 +2237,7 @@ if [[ "$(uname -s)" == "Linux" ]] && [[ -x /bin/echo ]]; then
       /usr/local/libexec/workcell/real/codex \
       codex -- --profile breakglass
   )"
-  if [[ "${CODEX_POSTDASH_PROFILE_ARGS}" != "--profile strict --ask-for-approval never -- --profile breakglass" ]]; then
+  if [[ "${CODEX_POSTDASH_PROFILE_ARGS}" != "--profile strict --sandbox danger-full-access --ask-for-approval never -- --profile breakglass" ]]; then
     echo "expected managed --profile strict to stay injected when --profile follows a bare --: ${CODEX_POSTDASH_PROFILE_ARGS}" >&2
     exit 1
   fi
@@ -2276,7 +2276,7 @@ EOF
       /usr/local/libexec/workcell/real/codex \
       codex --version
   )"
-  if [[ "${CODEX_PROMPT_ARGS}" != "--profile strict --ask-for-approval on-request --version" ]]; then
+  if [[ "${CODEX_PROMPT_ARGS}" != "--profile strict --sandbox danger-full-access --ask-for-approval on-request --version" ]]; then
     echo "unexpected Codex prompt argv: ${CODEX_PROMPT_ARGS}" >&2
     exit 1
   fi
