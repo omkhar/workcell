@@ -15,6 +15,7 @@ var requiredCodexRoutingBindings = []string{
 	"gpt-5.6-terra with medium reasoning",
 	"gpt-5.6-sol with high reasoning",
 	"gpt-6-astra with high reasoning",
+	"gpt-6-astra with xhigh reasoning",
 }
 
 // ValidateCodexRoutingConfigs verifies that both Codex baselines retain the

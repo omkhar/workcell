@@ -14,7 +14,8 @@ const validCodexRoutingFixture = `developer_instructions = """
 Use gpt-5.6-luna with low reasoning for mechanical work,
 gpt-5.6-terra with medium reasoning for ordinary work,
 gpt-5.6-sol with high reasoning for complex work, and
-gpt-6-astra with high reasoning for unresolved work.
+gpt-6-astra with high reasoning for unresolved work, and
+gpt-6-astra with xhigh reasoning for a direct exceptional task when evidence warrants it.
 """
 `
 
@@ -22,6 +23,7 @@ const commentOnlyCodexRoutingFixture = `# gpt-5.6-luna with low reasoning
 # gpt-5.6-terra with medium reasoning
 # gpt-5.6-sol with high reasoning
 # gpt-6-astra with high reasoning
+# gpt-6-astra with xhigh reasoning
 analytics.enabled = false
 `
 
@@ -58,7 +60,8 @@ func TestValidateCodexRoutingConfigsRejectsInvalidRouting(t *testing.T) {
 		{"wrong value type", "developer_instructions = true\n", validCodexRoutingFixture, "developer_instructions must be a top-level string"},
 		{"blank instructions", "developer_instructions = \"   \"\n", validCodexRoutingFixture, "developer_instructions must be nonblank"},
 		{"required binding missing in both", missingBinding, missingBinding, "must bind gpt-5.6-sol with high reasoning"},
-		{"divergent instructions", validCodexRoutingFixture, strings.Replace(validCodexRoutingFixture, "unresolved work.", "unresolved work. Keep evidence concise.", 1), "differ after whitespace normalization"},
+		{"exceptional xhigh binding missing in both", strings.Replace(validCodexRoutingFixture, "gpt-6-astra with xhigh reasoning", "gpt-6-astra", 1), strings.Replace(validCodexRoutingFixture, "gpt-6-astra with xhigh reasoning", "gpt-6-astra", 1), "must bind gpt-6-astra with xhigh reasoning"},
+		{"divergent instructions", validCodexRoutingFixture, strings.Replace(validCodexRoutingFixture, "evidence warrants it.", "evidence warrants it. Keep evidence concise.", 1), "differ after whitespace normalization"},
 	}
 
 	for _, test := range tests {
