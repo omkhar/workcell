@@ -82,6 +82,20 @@ func TestHostedControlDispatchPreservesRepositoryVariablesBeforeEnvironments(t *
 	}
 }
 
+func TestHostedControlDispatchPreservesWorkflowEnvironmentsBeforeReleaseMode(t *testing.T) {
+	t.Parallel()
+	root, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", singleOwnerCollaborator())
+	rewriteFile(t, filepath.Join(root, "environment-release.json"), func(content string) string {
+		return strings.Replace(content, `"can_admins_bypass": false`, `"can_admins_bypass": true`, 1)
+	})
+
+	err := metadatautil.VerifyGitHubHostedControls(root, "omkhar/workcell", policyPath)
+	want := "workflow environment omkhar/workcell/release must set can_admins_bypass=false"
+	if err == nil || err.Error() != want {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want %q", err, want)
+	}
+}
+
 func singleOwnerCollaborator() []map[string]any {
 	return []map[string]any{{
 		"login": "omkhar",
