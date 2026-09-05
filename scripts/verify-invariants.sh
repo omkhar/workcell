@@ -125,6 +125,10 @@ require_tool jq
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
+# Every migrated-check delegation below is written `go_verify_citools ... || exit 1`:
+# the `|| exit 1` matches the former inline blocks' `exit 1` on a violated
+# invariant — it handles the failure so the top-level ERR trap does not fire and
+# append trap diagnostics, preserving the exact failure stderr surface.
 go_verify_citools() {
   # `go run` appends its own `exit status N` trailer to stderr when the compiled
   # binary exits non-zero (see `go help run`). Strip just that trailer line so a
@@ -2794,38 +2798,11 @@ if ! grep -q 'reserved SSH file' /tmp/workcell-injection-bad-ssh.out; then
   exit 1
 fi
 
-# scripts/workcell runtime/gc invariants: the trusted Docker client seed
-# precedes host Docker use, DOCKER_CONFIG is not pinned to the real host
-# home, buildx runs through the trusted absolute plugin path, the Codex
-# release probe resolves musl (not gnu) assets, the hidden self-docker /
-# self-staging probes exist, --gc covers the bounded runtime-image cache
-# and Workcell-owned temp cleanup, explicit strict-mode image rebuilds are
-# rejected, and managed Colima config / Lima mounts validate through the
-# dedicated Go helpers.  Migrated to Go (D3): internal/workcellhardening
-# behind the workcell-citools workcell-runtime-invariants subcommand
-# preserves the exact exit codes and stderr messages of the former inline
-# rg / function_block_contains_fixed block, including the fixed-string
-# matching semantics (every pattern is metacharacter-free after
-# unescaping) and the negated runtime_build_codex_arch gnu sub-condition.
-# `|| exit 1` matches the former inline block's `exit 1` on a violated
-# invariant: it handles the failure so the top-level ERR trap does not fire and
-# append trap diagnostics, preserving the exact failure stderr surface.
-go_verify_citools workcell-runtime-invariants "${ROOT_DIR}" || exit 1
-# Assert the managed-profile staging/cleanup invariants: managed Colima
-# launch mounts all three staging cache roots (host-inputs, shadow,
-# token-handoff) with the reviewed access modes, the staging cache roots
-# reject symlinked host components before staging or mounting, and stale
-# injection cleanup fails closed when the default bundle parent is
-# rejected.  Migrated to Go (D3): internal/workcellhardening behind the
-# workcell-citools workcell-managed-profile-staging subcommand preserves
-# the exact exit codes and stderr messages of the former inline
-# function_block_contains_fixed / rg block, including the fixed-string
-# matching semantics (every pattern is metacharacter-free after
-# unescaping) and the negated bare-parent cleanup sub-condition.
-# `|| exit 1` matches the former inline block's `exit 1` on a violated
-# invariant: it handles the failure so the top-level ERR trap does not fire and
-# append trap diagnostics, preserving the exact failure stderr surface.
-go_verify_citools workcell-managed-profile-staging "${ROOT_DIR}" || exit 1
+# D3: internal/workcellhardening.CheckRuntimeInvariants — parity notes live in that package.
+# D3: internal/workcellhardening.CheckManagedProfileStaging — parity notes live in that package.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-runtime-invariants \
+  workcell-managed-profile-staging || exit 1
 
 WORKCELL_COLIMA_TIMEOUT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-colima-timeout-harness.sh"
 {
@@ -2911,21 +2888,11 @@ WORKCELL_RUNTIME_BUILD_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-runtime-bu
 } >"${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 bash "${WORKCELL_RUNTIME_BUILD_RETRY_HARNESS}"
 
-go_verify_citools workcell-hostutil-egress-rg "${ROOT_DIR}" || exit 1
-
-# Assert every host-gate script carries an absolute privileged Bash shebang and
-# self-sanitizes its host entrypoint before running release or boundary checks.
-# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
-# workcell-hostgate-entrypoint-sanitize subcommand preserves the exact exit codes
-# and stderr messages of the former inline `for script in "${HOST_GATE_SCRIPTS[@]}"`
-# loop, including its per-iteration order (the first-line shebang check, a
-# kindFirstLineRegex `^#!/bin/bash -p$` probe, then the entrypoint self-sanitize
-# check, a kindRegexPresent `WORKCELL_SANITIZED_ENTRYPOINT|trusted-entrypoint\.sh`
-# alternation matched per line for rg parity) and the ${script}-interpolated
-# messages (rendered as the absolute "${ROOT_DIR}/..." path exactly as the shell
-# loop variable held each HOST_GATE_SCRIPTS element).  `|| exit 1` matches the
-# former loop's `exit 1` on a violated invariant.
-go_verify_citools workcell-hostgate-entrypoint-sanitize "${ROOT_DIR}" || exit 1
+# D3: internal/workcellhardening.CheckHostutilEgressRg — parity notes live in that package.
+# D3: internal/workcellhardening.CheckHostGateEntrypointSanitize — parity notes live in that package.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-hostutil-egress-rg \
+  workcell-hostgate-entrypoint-sanitize || exit 1
 
 publish_temp_probe="$("${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh" --self-temp-root-probe)"
 publish_git_dir="$(git -C "${ROOT_DIR}" rev-parse --absolute-git-dir)"
@@ -2943,26 +2910,12 @@ case "${publish_temp_probe}" in
 esac
 rm -rf "${publish_temp_probe}"
 
-# Assert the repo pre-commit hook is executable.  Migrated to Go (D3):
-# internal/workcellhardening behind the workcell-citools
-# workcell-precommit-hook-exec subcommand preserves the exact exit code and
-# stderr message of the former inline `[[ ! -x "${REPO_PRECOMMIT_HOOK}" ]]` guard
-# (a kindExecutable filesystem check that stats ${ROOT_DIR}/.githooks/pre-commit
-# and emits the same "Expected executable repo pre-commit hook: <path>" message
-# with the absolute hook path interpolated).  `|| exit 1` matches the former
-# guard's `exit 1` on a non-executable hook.  The following pre-commit hook rg /
-# fixture checks stay inline.
-go_verify_citools workcell-precommit-hook-exec "${ROOT_DIR}" || exit 1
-# Assert the repo pre-commit hook gates commits on pending pinned upstream
-# updates.  Migrated to Go (D3): internal/workcellhardening behind the
-# workcell-citools workcell-precommit-upstream-pin-gate subcommand preserves the
-# exact exit code and stderr message of the former inline
-# `if ! rg -q 'scripts/update-upstream-pins\.sh" --check' "${REPO_PRECOMMIT_HOOK}"`
-# guard (a kindRegexPresent probe whose only metacharacter, `\.`, is an escaped
-# literal dot, read per line for rg parity from ${ROOT_DIR}/.githooks/pre-commit).
-# `|| exit 1` matches the former guard's `exit 1`.  The following pre-commit hook
-# fixture checks stay inline.
-go_verify_citools workcell-precommit-upstream-pin-gate "${ROOT_DIR}" || exit 1
+# D3: internal/workcellhardening.CheckPrecommitHookExec — parity notes live in that package.
+# D3: internal/workcellhardening.CheckPrecommitUpstreamPinGate — parity notes live in that package.
+# The following pre-commit hook rg / fixture checks stay inline.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-precommit-hook-exec \
+  workcell-precommit-upstream-pin-gate || exit 1
 
 PRECOMMIT_FIXTURE_ROOT="$(mktemp -d)"
 mkdir -p "${PRECOMMIT_FIXTURE_ROOT}/.githooks" "${PRECOMMIT_FIXTURE_ROOT}/scripts"
@@ -3005,94 +2958,32 @@ chmod 0755 "${PRECOMMIT_FIXTURE_ROOT}/scripts/update-upstream-pins.sh"
 HOME="${PRECOMMIT_FIXTURE_ROOT}" "${PRECOMMIT_FIXTURE_ROOT}/.githooks/pre-commit" >/tmp/workcell-precommit-ok.out 2>&1
 rm -rf "${PRECOMMIT_FIXTURE_ROOT}"
 
-# Assert the trusted-Docker-client invariants across container-smoke.sh,
-# generate-builder-environment-manifest.sh, verify-release-bundle.sh and
-# verify-reproducible-build.sh: each sources the trusted Docker client helper,
-# seeds a trusted client state before using Docker, drops the caller HOME across
-# its sanitized entrypoint re-exec, and invokes buildx through the trusted
-# absolute plugin path.  Migrated to Go (D3): internal/workcellhardening behind
-# the workcell-citools workcell-trusted-docker-client-rg subcommand preserves the
-# exact exit codes and stderr messages of the former inline `for script` rg loops,
-# in their original order (the first loop's three ordered probes — source helper,
-# seed client state, drop caller HOME — per script, then the second loop's single
-# buildx probe per script), including the per-line (rg-parity) regex matching of
-# each pattern (the source-helper probe escapes `\$ \{ \} \.` to match literals;
-# the setup / HOME / buildx probes are metacharacter-free) and the
-# ${script}-interpolated messages (rendered as the absolute "${ROOT_DIR}/..." path
-# exactly as the shell loop variable held it).  `|| exit 1` matches the former
-# loops' `exit 1` on a violated invariant.
-go_verify_citools workcell-trusted-docker-client-rg "${ROOT_DIR}" || exit 1
-
-# Assert the buildx-builder-trust invariants: verify-release-bundle.sh picks a
-# deterministic context-scoped Buildx builder, the local validator lanes remove
-# disposable validator images unless retained, reproducible-build validation tears
-# down its default Workcell-owned builder, trusted-docker-client.sh computes and
-# resolves accepted Buildx endpoints from the Docker context, and
-# colima-egress-allowlist.sh pins COLIMA_HOME while operating on Lima state.
-# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
-# workcell-buildx-builder-trust subcommand preserves the exact exit codes and
-# stderr messages of the former inline rg block (eight fixed-string presence
-# probes, including the three-probe validator-image-cleanup `||` guard that shares
-# one message across build-and-test.sh, job-validate.sh and job-docs.sh).
-# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
-go_verify_citools workcell-buildx-builder-trust "${ROOT_DIR}" || exit 1
-
-# Assert the bootstrap egress-endpoint invariants: scripts/workcell allows
-# the two Debian snapshot mirrors and the two Docker blob-storage CDNs
-# (Cloudflare R2 and CloudFront) on :443, avoids the unused
-# static.rust-lang.org:443 and snapshot.debian.org:80 egress entries, and
-# wires the host-resolved Copilot release URL override (the runtime
-# Dockerfile ARG, the resolve_copilot_release_url helper, and the
-# --build-arg pass-through).  Migrated to Go (D3): internal/workcellhardening
-# behind the workcell-citools workcell-bootstrap-egress subcommand preserves
-# the exact exit codes and stderr messages of the former inline rg block,
-# including the fixed-string matching semantics (seven metacharacter-free
-# probes), the genuine R2 subdomain-wildcard regex, and the line-anchored
-# Dockerfile ARG regex read from runtime/container/Dockerfile.  `|| exit 1`
-# matches the former inline block's `exit 1` on a violated invariant: it
-# handles the failure so the top-level ERR trap does not fire and append trap
-# diagnostics, preserving the exact failure stderr surface.
-go_verify_citools workcell-bootstrap-egress "${ROOT_DIR}" || exit 1
-
-# Assert the dockerfile-pin invariants across runtime/container/Dockerfile and
-# tools/validator/Dockerfile: each pins the snapshot CA bundle / amd64+arm64
-# OpenSSL bootstrap packages, the apt retry/timeout settings, the retry-and-
-# discard TLS bootstrap download loop, the fail-closed download/checksum/dpkg
-# chain, and the fixed unprivileged `USER 65532:65532` default. Migrated to Go (D3):
-# internal/workcellhardening behind the workcell-citools workcell-dockerfile-pins
-# subcommand preserves the exact exit codes and stderr messages of the former
-# inline `for dockerfile` rg loops, including the per-line (`rg`-parity) regex
-# matching of every escaped-literal pattern and the ${dockerfile}-interpolated
-# messages (rendered as the absolute "${ROOT_DIR}/..." path exactly as the shell
-# loop variable held it).  `|| exit 1` matches the former inline block's `exit 1`
-# on a violated invariant: it handles the failure so the top-level ERR trap does
-# not fire and append trap diagnostics, preserving the exact failure stderr
-# surface.
-go_verify_citools workcell-dockerfile-pins "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-validator-dispatch-loops "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-caller-required-contracts "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-validator-writable-state "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-bootstrap-audit "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-fnblock-goblock-gitenv "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-git-index-shadow "${ROOT_DIR}" || exit 1
-
-# Assert the doc-scan / Go-VCS-stamping invariants: validate-repo.sh prunes
-# repo-local virtualenv content from documentation scans, and build_go_tool_in_repo
-# (scripts/lib/go-run-env.sh) disables Go VCS stamping in untrusted repos.
-# Migrated to Go (D3): internal/workcellhardening behind the workcell-citools
-# workcell-doc-scan-go-vcs subcommand preserves the exact exit codes and stderr
-# messages of the former inline grep -Fq pair (two fixed-string presence probes).
-# Only this contiguous pair is migrated; the following go_cache_root
+# D3: internal/workcellhardening.CheckTrustedDockerClientRg — parity notes live in that package.
+# D3: internal/workcellhardening.CheckBuildxBuilderTrust — parity notes live in that package.
+# D3: internal/workcellhardening.CheckBootstrapEgress — parity notes live in that package.
+# D3: internal/workcellhardening.CheckDockerfilePins — parity notes live in that package.
+# D3: internal/workcellhardening.CheckValidatorDispatchLoops — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCallerRequiredContracts — parity notes live in that package.
+# D3: internal/workcellhardening.CheckValidatorWritableState — parity notes live in that package.
+# D3: internal/workcellhardening.CheckBootstrapAuditMetadata — parity notes live in that package.
+# D3: internal/workcellhardening.CheckFnBlockGoBlockGitEnv — parity notes live in that package.
+# D3: internal/workcellhardening.CheckGitIndexShadow — parity notes live in that package.
+# D3: internal/workcellhardening.CheckDocScanGoVcs — parity notes live in that package.
+# Only this contiguous run is migrated; the following go_cache_root
 # ensure_go_run_env exec block and the publishpr.ValidateBaseName
-# go_function_block probe stay inline to preserve first-failure order.  `|| exit 1`
-# matches the former inline block's `exit 1` on a violated invariant.
-go_verify_citools workcell-doc-scan-go-vcs "${ROOT_DIR}" || exit 1
+# go_function_block probe stay inline to preserve first-failure order.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-trusted-docker-client-rg \
+  workcell-buildx-builder-trust \
+  workcell-bootstrap-egress \
+  workcell-dockerfile-pins \
+  workcell-validator-dispatch-loops \
+  workcell-caller-required-contracts \
+  workcell-validator-writable-state \
+  workcell-bootstrap-audit \
+  workcell-fnblock-goblock-gitenv \
+  workcell-git-index-shadow \
+  workcell-doc-scan-go-vcs || exit 1
 
 go_cache_root_expected=""
 case "$(uname -s)" in
@@ -3120,18 +3011,13 @@ if [[ "${go_cache_root_actual}" != "${go_cache_root_expected}" ]]; then
   exit 1
 fi
 
-# validate_publish_base_name migrated to Go (publishpr.ValidateBaseName);
-# assert the Go owner still rejects base names that fail the trusted git
-# check-ref-format hook (the call itself, not just the signature).  Migrated to
-# Go (D3): internal/workcellhardening behind the workcell-citools
-# workcell-publish-base-refcheck subcommand preserves the exact exit code and
-# stderr message of the former inline go_function_block_contains_fixed probe.
-# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
-go_verify_citools workcell-publish-base-refcheck "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-publish-pr-shadow "${ROOT_DIR}" || exit 1
-
-go_verify_citools workcell-shadow-enum-egress "${ROOT_DIR}" || exit 1
+# D3: internal/workcellhardening.CheckPublishBaseRefcheck — parity notes live in that package.
+# D3: internal/workcellhardening.CheckPublishPrShadowMounts — parity notes live in that package.
+# D3: internal/workcellhardening.CheckShadowEnumEgress — parity notes live in that package.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-publish-base-refcheck \
+  workcell-publish-pr-shadow \
+  workcell-shadow-enum-egress || exit 1
 
 HOST_BASH_ENV_PAYLOAD="${BARRIER_VERIFY_ROOT}/bashenv.sh"
 HOST_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/bashenv-ran"
@@ -5592,15 +5478,7 @@ if go_verify_hostutil helper validate-container-security-options '["no-new-privi
   echo "Expected helper validate-container-security-options to reject seccomp=unconfined" >&2
   exit 1
 fi
-# Assert validate_runtime_security_posture validates daemon SecurityOptions and
-# Docker Desktop compat SecurityOptions through the go_hostutil helper
-# subcommands.  Migrated to Go (D3): internal/workcellhardening behind the
-# workcell-citools workcell-runtime-security-posture subcommand preserves the
-# exact exit codes and stderr messages of the former inline
-# function_block_contains_fixed pair (two fixed-string function-body probes).
-# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
-go_verify_citools workcell-runtime-security-posture "${ROOT_DIR}" || exit 1
-
+# D3: internal/workcellhardening.CheckRuntimeSecurityPosture — parity notes live in that package.
 # Assert the runtime's reviewed hardening posture and outbound-endpoint
 # inventory (policy/hardening-profile.toml, roadmap A6) still match what
 # scripts/workcell and scripts/lib/launcher/egress-endpoints.sh apply: the
@@ -5608,7 +5486,9 @@ go_verify_citools workcell-runtime-security-posture "${ROOT_DIR}" || exit 1
 # --cap-drop / no-new-privileges / read-only / tmpfs / --pids-limit / mapped
 # user) is removed, a forbidden literal (--privileged, seccomp=unconfined) is
 # introduced, or a declared egress endpoint is dropped.
-go_verify_citools hardening-profile-conformance "${ROOT_DIR}" || exit 1
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-runtime-security-posture \
+  hardening-profile-conformance || exit 1
 
 if ! run_workcell_verify \
   --agent codex \
@@ -7750,15 +7630,18 @@ if command -v codex >/dev/null 2>&1; then
 else
   echo "Skipping host Codex CLI policy checks because codex is not installed; container smoke covers provider policy behavior." >&2
 fi
-for settings_path in \
-  "${ROOT_DIR}/adapters/claude/.claude/settings.json" \
-  "${ROOT_DIR}/adapters/claude/managed-settings.json"; do
-  go_verify_citools workcell-claude-mcp-project-servers "${settings_path}" || exit 1
-  go_verify_citools workcell-claude-guard-bash-hook "${settings_path}" || exit 1
-done
-go_verify_citools workcell-claude-managed-bypass "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-gemini-settings-baseline "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-gemini-settings-guards "${ROOT_DIR}" || exit 1
+# D3: internal/workcellhardening.CheckClaudeMcpProjectServers /
+# CheckClaudeGuardBashHook (once per claude settings file, in the former loop
+# order), CheckClaudeManagedBypass, CheckGeminiSettingsBaseline, and
+# CheckGeminiSettingsGuards — parity notes live in that package.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  "workcell-claude-mcp-project-servers=${ROOT_DIR}/adapters/claude/.claude/settings.json" \
+  "workcell-claude-guard-bash-hook=${ROOT_DIR}/adapters/claude/.claude/settings.json" \
+  "workcell-claude-mcp-project-servers=${ROOT_DIR}/adapters/claude/managed-settings.json" \
+  "workcell-claude-guard-bash-hook=${ROOT_DIR}/adapters/claude/managed-settings.json" \
+  workcell-claude-managed-bypass \
+  workcell-gemini-settings-baseline \
+  workcell-gemini-settings-guards || exit 1
 
 GEMINI_AUTH_SELECTION_HARNESS="$(mktemp)"
 GEMINI_AUTH_SELECTION_STDOUT="$(mktemp)"
@@ -7821,27 +7704,27 @@ GEMINI_AUTH_SELECTION_STDERR="$(mktemp)"
 rm -f "${GEMINI_AUTH_SELECTION_HARNESS}"
 rm -f "${GEMINI_AUTH_SELECTION_STDOUT}" "${GEMINI_AUTH_SELECTION_STDERR}"
 
-go_verify_citools workcell-home-seed-provider-wrapper "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-copilot-token-handoff "${ROOT_DIR}" || exit 1
-# Assert stale Copilot token handoff directories are covered by host cleanup in
-# internal/host/hoststate/hoststate.go.  Migrated to Go (D3):
-# internal/workcellhardening behind the workcell-citools
-# workcell-copilot-token-handoff-cleanup subcommand preserves the exact exit
-# code and stderr message of the former inline three-probe `grep -Fq` guard.
-# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
-go_verify_citools workcell-copilot-token-handoff-cleanup "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-copilot-docker-run "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-provider-launcher-authority "${ROOT_DIR}" || exit 1
-# Assert the provider wrapper unlinks the runtime Copilot token handoff file
-# before managed exec.  Migrated to Go (D3): internal/workcellhardening behind
-# the workcell-citools workcell-provider-token-unlink subcommand preserves the
-# exact exit code and stderr message of the former inline `grep -Fq` probe.
-# `|| exit 1` matches the former inline block's `exit 1` on a violated invariant.
-go_verify_citools workcell-provider-token-unlink "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-copilot-policy-wrapper "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-copilot-unsafe-flags "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-copilot-release-verify "${ROOT_DIR}" || exit 1
-go_verify_citools workcell-adapter-rule-guard-bash "${ROOT_DIR}" || exit 1
+# D3: internal/workcellhardening.CheckHomeSeedProviderWrapper — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCopilotTokenHandoff — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCopilotTokenHandoffCleanup — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCopilotDockerRun — parity notes live in that package.
+# D3: internal/workcellhardening.CheckProviderLauncherAuthority — parity notes live in that package.
+# D3: internal/workcellhardening.CheckProviderTokenUnlink — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCopilotPolicyWrapper — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCopilotUnsafeFlags — parity notes live in that package.
+# D3: internal/workcellhardening.CheckCopilotReleaseVerify — parity notes live in that package.
+# D3: internal/workcellhardening.CheckAdapterRuleGuardBash — parity notes live in that package.
+go_verify_citools workcell-check-batch "${ROOT_DIR}" \
+  workcell-home-seed-provider-wrapper \
+  workcell-copilot-token-handoff \
+  workcell-copilot-token-handoff-cleanup \
+  workcell-copilot-docker-run \
+  workcell-provider-launcher-authority \
+  workcell-provider-token-unlink \
+  workcell-copilot-policy-wrapper \
+  workcell-copilot-unsafe-flags \
+  workcell-copilot-release-verify \
+  workcell-adapter-rule-guard-bash || exit 1
 
 if ! awk '
   /^[[:space:]]*acquire_profile_lock "\$\{COLIMA_PROFILE\}"$/ { seen_lock = 1; next }

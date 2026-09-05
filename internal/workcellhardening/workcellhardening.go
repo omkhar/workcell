@@ -24,10 +24,15 @@
 // rather than a repo root.
 //
 // cmd/workcell-citools exposes each CheckXxx as a subcommand, and
-// scripts/verify-invariants.sh delegates to it in place with
-// `go_verify_citools <subcommand> "${ROOT_DIR}" || exit 1`. Because the script
-// still exits on the first failure, a migrated block must be a CONTIGUOUS run
-// of checks: a block that straddles an in-place shell check (or a deferred
+// scripts/verify-invariants.sh delegates to it in place — a lone check with
+// `go_verify_citools <subcommand> "${ROOT_DIR}" || exit 1`, and a contiguous
+// run of checks through the workcell-check-batch subcommand
+// (`go_verify_citools workcell-check-batch "${ROOT_DIR}" <check>... || exit 1`),
+// which runs them in argv order inside one process and stops at the first
+// failure so that failure's exit code and stderr are identical to the
+// individual subcommand's. Because the script still exits on the first
+// failure, a delegated block (batched or not) must be a CONTIGUOUS run of
+// checks: a block that straddles an in-place shell check (or a deferred
 // check) is split so ordering is never changed (see the ordering discipline in
 // the D3 commit history / PR #422).
 //
