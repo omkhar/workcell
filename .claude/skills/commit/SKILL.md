@@ -86,13 +86,13 @@ does not prove the intended change.
 
 ## Review Loop
 
-Treat each request as a peer-review request unless the user removes that scope.
+Apply the peer-review rules in `AGENTS.md`.
 
 After each finding:
 
 1. Fix or explicitly disposition it.
 2. Run validation that proves the correction.
-3. Request another review of the new state.
+3. Review the new state as required by `AGENTS.md`.
 4. Continue until no actionable finding remains or a concrete blocker exists.
 
 For a pull request, complete the exact-head Codex bot loop after every push.

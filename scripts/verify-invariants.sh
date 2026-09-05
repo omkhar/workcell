@@ -1336,32 +1336,47 @@ require_toml_section_absent() {
 
 verify_codex_managed_config_invariants() {
   local file="$1"
-  local feature_requirement=""
-  local -a feature_requirements=(
-    "unified_exec:true"
-    "code_mode_host:true"
-    "plugins:false"
-    "plugin_sharing:false"
-    "remote_plugin:false"
+  local absent_key=""
+  local managed_requirement=""
+  local requirement_section=""
+  local requirement_key=""
+  local requirement_expected=""
+  local -a absent_keys=(
+    "profile"
+    "sandbox"
+    "sandbox_mode"
+    "sandbox_permissions"
+    "approval_policy"
+    "model"
+    "model_reasoning_effort"
+  )
+  local -a managed_requirements=(
+    "sandbox_workspace_write:exclude_slash_tmp:true"
+    "sandbox_workspace_write:exclude_tmpdir_env_var:false"
+    "sandbox_workspace_write:network_access:false"
+    "features:unified_exec:true"
+    "features:code_mode_host:true"
+    "features:plugins:false"
+    "features:plugin_sharing:false"
+    "features:remote_plugin:false"
+    "agents:enabled:true"
+    "agents:max_concurrent_threads_per_session:3"
+    'agents:default_subagent_model:"gpt-5.6-terra"'
+    'agents:default_subagent_reasoning_effort:"medium"'
   )
 
   # Codex 0.134+ profile-v2: the base config must not select or inline a
   # profile. Profile selection is supplied by the runtime wrapper via
   # `--profile`, and the per-profile layers live in separate
   # `<name>.config.toml` files validated by verify_codex_profile_layer_invariants.
-  require_toml_key_absent "${file}" "" "profile" || return 1
-  require_toml_key_absent "${file}" "" "sandbox" || return 1
-  require_toml_key_absent "${file}" "" "sandbox_mode" || return 1
-  require_toml_key_absent "${file}" "" "sandbox_permissions" || return 1
-  require_toml_key_absent "${file}" "" "approval_policy" || return 1
+  for absent_key in "${absent_keys[@]}"; do
+    require_toml_key_absent "${file}" "" "${absent_key}" || return 1
+  done
 
   require_toml_exact_keys "${file}" "sandbox_workspace_write" \
     "exclude_slash_tmp" \
     "exclude_tmpdir_env_var" \
     "network_access" || return 1
-  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_slash_tmp" "true" || return 1
-  require_toml_assignment "${file}" "sandbox_workspace_write" "exclude_tmpdir_env_var" "false" || return 1
-  require_toml_assignment "${file}" "sandbox_workspace_write" "network_access" "false" || return 1
 
   require_toml_exact_keys "${file}" "features" \
     "unified_exec" \
@@ -1369,12 +1384,13 @@ verify_codex_managed_config_invariants() {
     "plugins" \
     "plugin_sharing" \
     "remote_plugin" || return 1
-  for feature_requirement in "${feature_requirements[@]}"; do
+  for managed_requirement in "${managed_requirements[@]}"; do
+    IFS=: read -r requirement_section requirement_key requirement_expected <<<"${managed_requirement}"
     require_toml_assignment \
       "${file}" \
-      "features" \
-      "${feature_requirement%%:*}" \
-      "${feature_requirement#*:}" || return 1
+      "${requirement_section}" \
+      "${requirement_key}" \
+      "${requirement_expected}" || return 1
   done
 
   # The base config must carry no inline `[profiles...]` tables (dotted-path
@@ -1465,6 +1481,42 @@ require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features
 require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "remote_plugin" "false" || exit 1
 
 codex_managed_config_tmpdir="$(mktemp -d)"
+
+codex_agent_mutation=""
+codex_agent_mutant_name=""
+codex_agent_assignment=""
+codex_agent_replacement=""
+codex_agent_reason=""
+codex_agent_mutant=""
+codex_agent_mutations=(
+  'missing-enabled|enabled = true|__DELETE__|missing agents.enabled'
+  'changed-thread-limit|max_concurrent_threads_per_session = 3|max_concurrent_threads_per_session = 4|changed agents.max_concurrent_threads_per_session'
+  'changed-child-model|default_subagent_model = "gpt-5.6-terra"|default_subagent_model = "gpt-5.6-luna"|changed agents.default_subagent_model'
+  'changed-child-effort|default_subagent_reasoning_effort = "medium"|default_subagent_reasoning_effort = "high"|changed agents.default_subagent_reasoning_effort'
+)
+for codex_agent_mutation in "${codex_agent_mutations[@]}"; do
+  IFS='|' read -r codex_agent_mutant_name codex_agent_assignment codex_agent_replacement codex_agent_reason <<<"${codex_agent_mutation}"
+  codex_agent_mutant="${codex_managed_config_tmpdir}/${codex_agent_mutant_name}.toml"
+  awk -v expected="${codex_agent_assignment}" -v replacement="${codex_agent_replacement}" '
+    $0 == expected {
+      if (replacement != "__DELETE__") {
+        print replacement
+      }
+      replaced = 1
+      next
+    }
+    { print }
+    END {
+      if (!replaced) {
+        exit 1
+      }
+    }
+  ' "${CODEX_MANAGED_CONFIG}" >"${codex_agent_mutant}" || {
+    echo "Expected managed Codex config fixture to contain ${codex_agent_assignment}" >&2
+    exit 1
+  }
+  assert_codex_managed_config_rejected "${codex_agent_mutant}" "${codex_agent_reason}" || exit 1
+done
 
 quoted_key_config="${codex_managed_config_tmpdir}/quoted-key.toml"
 awk '

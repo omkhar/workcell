@@ -19,7 +19,7 @@ Read:
 - `.agents/skills/commit/SKILL.md`
 - `policy/reviewer-identities.toml`
 
-For a public workflow or document change, also use
+For a public workflow or contract change, also use
 `workcell-contract-parity`. For release work, read `docs/releasing.md`.
 
 ## Publication Rules
@@ -134,7 +134,7 @@ When a reviewed commit identifier is available, resolve it in GitHub. Require
 the resolved commit to equal the current head. Report a blocker when required
 review evidence is unavailable or mismatched.
 
-## Efficient Multi-Agent Work
+## Parallel Work
 
 When one operator manages a PR queue, finish the current PR before you publish
 the next PR. This reduces stale-base and review churn.
@@ -144,16 +144,6 @@ publication, pushes, review triggers, state transitions, and merge.
 
 Other agents can review, validate, and poll in parallel. They must not mutate
 the same PR concurrently.
-
-When the active environment authorizes these models, use Luna for deterministic
-inventory and bounded polling. Use Terra for implementation and substantive
-peer review. Use Sol for security decisions, signing, publication, final
-integration, and merge.
-
-Otherwise, use an available model that meets the task risk.
-
-This routing does not authorize model selection, external spend, GitHub access,
-or signing.
 
 Use this compact JSON envelope for agent handoffs:
 
@@ -168,27 +158,28 @@ thread states with stable identifiers.
 ## Check and Merge Workflow
 
 1. Confirm that the worktree contains only intended changes.
-2. Run required live certification.
+2. Run live certification when the publication rules require it.
 3. Create signed commits with the `commit` skill.
 4. Run focused local validation.
-5. For repo-wide instructions or multiple documents or skills, run
-   `/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh`.
-6. Run Workcell-owned cleanup when validation creates residue.
-7. Run `./scripts/pre-merge.sh --profile pr-parity`.
-8. Publish a draft pull request with `./scripts/repo-publish-pr.sh`.
-9. Follow all repository-owned checks.
-10. Complete the Codex review loop.
-11. Fix each check or review failure.
-12. Repeat each gate that the failure affects.
-13. Mark the pull request ready only when required checks succeed and the
-    review surfaces have no actionable finding.
-14. Wait for the ready-state base-policy run.
-15. Recheck the required review surfaces after ready.
-16. Immediately before merge, recheck the required review surfaces.
-17. Merge the pull request.
-18. Follow all workflows for the merged `main` commit.
-19. For release, cleanup, or a task that merges all pull requests, run the
-    repository readiness check.
+5. Run `/usr/bin/env -u GIT_PAGER ./scripts/validate-repo.sh` when the change
+   affects repository-wide behavior, contracts, policies, or validation.
+6. Use focused validators for narrow documentation or configuration changes.
+7. Run Workcell-owned cleanup when validation creates residue.
+8. Run `./scripts/pre-merge.sh --profile pr-parity`.
+9. Publish a draft pull request with `./scripts/repo-publish-pr.sh`.
+10. Follow all repository-owned checks.
+11. Complete the Codex review loop.
+12. Fix each check or review failure.
+13. Repeat each gate that the failure affects.
+14. Mark the pull request ready only when required checks succeed and the
+   review surfaces have no actionable finding.
+15. Wait for the ready-state base-policy run.
+16. Recheck the required review surfaces after ready.
+17. Immediately before merge, recheck the required review surfaces.
+18. Merge the pull request.
+19. Follow all workflows for the merged `main` commit.
+20. For release, cleanup, or a task that merges all pull requests, run the
+   repository readiness check.
 
 Use required-check polling for the merge gate:
 
