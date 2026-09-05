@@ -565,8 +565,8 @@ fi
 sed '/^if \[\[ \$# -gt 0 \]\]; then$/,$d' "${ROOT_DIR}/scripts/workcell" >"${WORKCELL_FUNCTIONS_COPY}"
 MONITOR_WAIT_FUNCTIONS_COPY="${TMP_DIR}/monitor-finalization-wait-functions"
 {
-  sed -n '/^detached_session_monitor_command_matches() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants.sh"
-  sed -n '/^wait_for_detached_session_monitor_exit() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants.sh"
+  sed -n '/^detached_session_monitor_command_matches() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+  sed -n '/^wait_for_detached_session_monitor_exit() {$/,/^}$/p' "${ROOT_DIR}/scripts/verify-invariants-live.sh"
 } >"${MONITOR_WAIT_FUNCTIONS_COPY}"
 monitor_finalization_wait_output="$(
   bash -lc '
@@ -606,7 +606,7 @@ awk '
   index($0, "test ! -e \"${DETACHED_SESSION_AUDIT_DIR}\"") { audit_line = NR }
   index($0, "test ! -e \"${DETACHED_SESSION_MONITOR_STATE_FILE}\"") { state_line = NR }
   END { exit !(wait_line && wait_line < audit_line && audit_line < state_line) }
-' "${ROOT_DIR}/scripts/verify-invariants.sh"
+' "${ROOT_DIR}/scripts/verify-invariants-live.sh"
 state_path_output="$(
   bash -lc '
     set -euo pipefail

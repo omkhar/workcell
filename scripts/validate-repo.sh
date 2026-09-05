@@ -227,6 +227,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-release-artifact.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
+  "${ROOT_DIR}/scripts/verify-invariants-live.sh"
   "${ROOT_DIR}/scripts/verify-operator-contract.sh"
   "${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
   "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
@@ -261,7 +262,7 @@ should_skip_shellcheck_file() {
 
   [[ "${SKIP_HEAVY_HOST_SHELLCHECK}" == "1" ]] || return 1
   case "${file}" in
-    "${ROOT_DIR}/scripts/workcell" | "${ROOT_DIR}/scripts/verify-invariants.sh")
+    "${ROOT_DIR}/scripts/workcell" | "${ROOT_DIR}/scripts/verify-invariants.sh" | "${ROOT_DIR}/scripts/verify-invariants-live.sh")
       return 0
       ;;
   esac
