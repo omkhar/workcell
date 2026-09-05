@@ -438,25 +438,13 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 	}
 	repoMeta := inputs.repoMeta
 	directCollaborators := inputs.directCollaborators
-	releaseEnv := inputs.releaseEnvironment
 	policy := inputs.policy
 
 	owner, _ := repoMeta["owner"].(map[string]any)
 	ownerLogin, _ := owner["login"].(string)
 	ownerType, _ := owner["type"].(string)
 	requireSingleOwnerCollaborator := func(mode string) error {
-		if len(directCollaborators) != 1 {
-			return fmt.Errorf("%s on %s requires exactly one direct collaborator", mode, repo)
-		}
-		collaborator, _ := directCollaborators[0].(map[string]any)
-		if login, _ := collaborator["login"].(string); login != ownerLogin {
-			return fmt.Errorf("%s on %s requires the owner to be the only direct collaborator", mode, repo)
-		}
-		permissions, _ := collaborator["permissions"].(map[string]any)
-		if admin, _ := permissions["admin"].(bool); !admin {
-			return fmt.Errorf("%s on %s requires the owner to retain admin permission", mode, repo)
-		}
-		return nil
+		return verifySingleOwnerCollaborator(directCollaborators, ownerLogin, mode, repo)
 	}
 
 	branchIntegrityPolicy, ok := policy["branch_integrity"].(map[string]any)
@@ -522,87 +510,7 @@ func VerifyGitHubHostedControls(tmpDir, repo, policyPath string) error {
 		return err
 	}
 
-	protectionRules, _ := releaseEnv["protection_rules"].([]any)
-	reviewerRules := make([]map[string]any, 0)
-	var adminBypassRule map[string]any
-	for _, raw := range protectionRules {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if typ, _ := entry["type"].(string); typ == "required_reviewers" {
-			reviewerRules = append(reviewerRules, entry)
-		}
-		if typ, _ := entry["type"].(string); typ == "admin_bypass" {
-			adminBypassRule = entry
-		}
-	}
-	switch releaseMode {
-	case "review-gated":
-		if len(reviewerRules) == 0 {
-			return fmt.Errorf("release environment on %s must require a human reviewer", repo)
-		}
-		hasReviewer := false
-		for _, rule := range reviewerRules {
-			if reviewers, _ := rule["reviewers"].([]any); len(reviewers) > 0 {
-				hasReviewer = true
-				break
-			}
-		}
-		if !hasReviewer {
-			return fmt.Errorf("release environment on %s must define at least one reviewer", repo)
-		}
-		if err := rejectReleaseAdminBypass(releaseEnv, adminBypassRule, repo); err != nil {
-			return err
-		}
-	case "plan-limited-private":
-		if private, _ := repoMeta["private"].(bool); !private {
-			return fmt.Errorf("release environment mode 'plan-limited-private' on %s is only valid for private repositories", repo)
-		}
-		if len(reviewerRules) > 0 {
-			return fmt.Errorf("release environment on %s must not define reviewer gates in plan-limited-private mode", repo)
-		}
-	case "single-owner-public":
-		if private, _ := repoMeta["private"].(bool); private {
-			return fmt.Errorf("release environment mode 'single-owner-public' on %s is only valid for public repositories", repo)
-		}
-		if ownerType != "User" {
-			return fmt.Errorf("release environment mode 'single-owner-public' on %s is only valid for user-owned repositories", repo)
-		}
-		if err := requireSingleOwnerCollaborator("release environment mode 'single-owner-public'"); err != nil {
-			return err
-		}
-		if len(reviewerRules) == 0 {
-			return fmt.Errorf("release environment on %s must define a reviewer gate in single-owner-public mode", repo)
-		}
-		hasReviewer := false
-		for _, rule := range reviewerRules {
-			if reviewers, _ := rule["reviewers"].([]any); len(reviewers) > 0 {
-				hasReviewer = true
-			}
-			if preventSelfReview, _ := rule["prevent_self_review"].(bool); preventSelfReview {
-				return fmt.Errorf("release environment on %s must allow self-review in single-owner-public mode", repo)
-			}
-		}
-		if !hasReviewer {
-			return fmt.Errorf("release environment on %s must define at least one reviewer in single-owner-public mode", repo)
-		}
-		if err := rejectReleaseAdminBypass(releaseEnv, adminBypassRule, repo); err != nil {
-			return err
-		}
-	default:
-		if private, _ := repoMeta["private"].(bool); !private {
-			return fmt.Errorf("release environment mode 'single-owner-private' on %s is only valid for private repositories", repo)
-		}
-		if ownerType != "User" {
-			return fmt.Errorf("release environment mode 'single-owner-private' on %s is only valid for user-owned repositories", repo)
-		}
-		if err := requireSingleOwnerCollaborator("release environment mode 'single-owner-private'"); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return verifyReleaseEnvironmentControls(releaseMode, inputs, ownerLogin, ownerType, repo)
 }
 
 func verifyWorkflowEnvironmentDeploymentPolicy(repo, environmentName string, environmentPolicy WorkflowEnvironmentPolicy, environmentMeta, environmentBranchPolicies map[string]any) error {

@@ -34,6 +34,11 @@ type hostedRulesetControls struct {
 	tagRelease         map[string]any
 }
 
+type releaseProtectionSummary struct {
+	reviewerRules   []map[string]any
+	adminBypassRule map[string]any
+}
+
 func loadHostedControlInputs(tmpDir, policyPath string) (hostedControlInputs, error) {
 	var inputs hostedControlInputs
 	artifacts := []struct {
@@ -340,6 +345,136 @@ func verifyHostedEnvironmentDeployment(tmpDir, name string, policy WorkflowEnvir
 		return fmt.Errorf("read %s deployment branch policies: %w", name, err)
 	}
 	return verifyWorkflowEnvironmentDeploymentPolicy(repo, name, policy, meta, branchPolicies)
+}
+
+func verifySingleOwnerCollaborator(collaborators []any, ownerLogin, mode, repo string) error {
+	if len(collaborators) != 1 {
+		return fmt.Errorf("%s on %s requires exactly one direct collaborator", mode, repo)
+	}
+	collaborator, _ := collaborators[0].(map[string]any)
+	if login, _ := collaborator["login"].(string); login != ownerLogin {
+		return fmt.Errorf("%s on %s requires the owner to be the only direct collaborator", mode, repo)
+	}
+	permissions, _ := collaborator["permissions"].(map[string]any)
+	if admin, _ := permissions["admin"].(bool); !admin {
+		return fmt.Errorf("%s on %s requires the owner to retain admin permission", mode, repo)
+	}
+	return nil
+}
+
+func summarizeReleaseProtection(environment map[string]any) releaseProtectionSummary {
+	rawRules, _ := environment["protection_rules"].([]any)
+	var summary releaseProtectionSummary
+	for _, raw := range rawRules {
+		entry, ok := raw.(map[string]any)
+		if ok {
+			addReleaseProtectionRule(&summary, entry)
+		}
+	}
+	return summary
+}
+
+func addReleaseProtectionRule(summary *releaseProtectionSummary, rule map[string]any) {
+	if typ, _ := rule["type"].(string); typ == "required_reviewers" {
+		summary.reviewerRules = append(summary.reviewerRules, rule)
+	}
+	if typ, _ := rule["type"].(string); typ == "admin_bypass" {
+		summary.adminBypassRule = rule
+	}
+}
+
+func verifyReleaseEnvironmentControls(mode string, inputs hostedControlInputs, ownerLogin, ownerType, repo string) error {
+	summary := summarizeReleaseProtection(inputs.releaseEnvironment)
+	switch mode {
+	case "review-gated":
+		return verifyReviewGatedReleaseEnvironment(inputs.releaseEnvironment, summary, repo)
+	case "plan-limited-private":
+		return verifyPlanLimitedReleaseEnvironment(inputs.repoMeta, summary, repo)
+	case "single-owner-public":
+		return verifySingleOwnerPublicReleaseEnvironment(inputs, summary, ownerLogin, ownerType, repo)
+	default:
+		return verifySingleOwnerReleaseIdentity(inputs.repoMeta, inputs.directCollaborators, ownerLogin, ownerType, "single-owner-private", true, repo)
+	}
+}
+
+func verifyReviewGatedReleaseEnvironment(environment map[string]any, summary releaseProtectionSummary, repo string) error {
+	if err := requireReviewGatedReleaseReviewer(summary.reviewerRules, repo); err != nil {
+		return err
+	}
+	return rejectReleaseAdminBypass(environment, summary.adminBypassRule, repo)
+}
+
+func requireReviewGatedReleaseReviewer(rules []map[string]any, repo string) error {
+	if len(rules) == 0 {
+		return fmt.Errorf("release environment on %s must require a human reviewer", repo)
+	}
+	for _, rule := range rules {
+		if reviewers, _ := rule["reviewers"].([]any); len(reviewers) > 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("release environment on %s must define at least one reviewer", repo)
+}
+
+func verifyPlanLimitedReleaseEnvironment(repoMeta map[string]any, summary releaseProtectionSummary, repo string) error {
+	if private, _ := repoMeta["private"].(bool); !private {
+		return fmt.Errorf("release environment mode 'plan-limited-private' on %s is only valid for private repositories", repo)
+	}
+	if len(summary.reviewerRules) > 0 {
+		return fmt.Errorf("release environment on %s must not define reviewer gates in plan-limited-private mode", repo)
+	}
+	return nil
+}
+
+func verifySingleOwnerPublicReleaseEnvironment(inputs hostedControlInputs, summary releaseProtectionSummary, ownerLogin, ownerType, repo string) error {
+	if err := verifySingleOwnerReleaseIdentity(inputs.repoMeta, inputs.directCollaborators, ownerLogin, ownerType, "single-owner-public", false, repo); err != nil {
+		return err
+	}
+	if err := verifySingleOwnerPublicReviewers(summary.reviewerRules, repo); err != nil {
+		return err
+	}
+	return rejectReleaseAdminBypass(inputs.releaseEnvironment, summary.adminBypassRule, repo)
+}
+
+func verifySingleOwnerReleaseIdentity(repoMeta map[string]any, collaborators []any, ownerLogin, ownerType, mode string, expectedPrivate bool, repo string) error {
+	private, _ := repoMeta["private"].(bool)
+	if private != expectedPrivate {
+		visibility := "public"
+		if expectedPrivate {
+			visibility = "private"
+		}
+		return fmt.Errorf("release environment mode '%s' on %s is only valid for %s repositories", mode, repo, visibility)
+	}
+	if ownerType != "User" {
+		return fmt.Errorf("release environment mode '%s' on %s is only valid for user-owned repositories", mode, repo)
+	}
+	return verifySingleOwnerCollaborator(collaborators, ownerLogin, "release environment mode '"+mode+"'", repo)
+}
+
+func verifySingleOwnerPublicReviewers(rules []map[string]any, repo string) error {
+	if len(rules) == 0 {
+		return fmt.Errorf("release environment on %s must define a reviewer gate in single-owner-public mode", repo)
+	}
+	reviewerCount := 0
+	for _, rule := range rules {
+		ruleReviewerCount, err := inspectSingleOwnerPublicReviewer(rule, repo)
+		if err != nil {
+			return err
+		}
+		reviewerCount += ruleReviewerCount
+	}
+	if reviewerCount == 0 {
+		return fmt.Errorf("release environment on %s must define at least one reviewer in single-owner-public mode", repo)
+	}
+	return nil
+}
+
+func inspectSingleOwnerPublicReviewer(rule map[string]any, repo string) (int, error) {
+	reviewers, _ := rule["reviewers"].([]any)
+	if preventSelfReview, _ := rule["prevent_self_review"].(bool); preventSelfReview {
+		return 0, fmt.Errorf("release environment on %s must allow self-review in single-owner-public mode", repo)
+	}
+	return len(reviewers), nil
 }
 
 func verifyHostedRulesetControls(inputs hostedControlInputs, reviewMode, ownerType string, expectedContexts []string, requireOwner func(string) error, repo string) error {
