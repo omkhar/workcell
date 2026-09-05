@@ -17,9 +17,11 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 
 ## Peer review
 
-- Use independent peer review for material code, security, policy, publication,
-  merge, and release changes.
-- Use focused self-review for reversible documentation or configuration changes.
+- Use independent peer review for material code changes.
+- Use independent peer review for security, policy, publication, merge, and
+  release changes.
+- Use focused self-review only for non-material documentation or configuration
+  changes that do not affect security or policy.
 - Use independent peer review when the user or an applicable workflow requires it.
 - When peer review applies, continue until no actionable finding remains or a
   concrete blocker exists.
