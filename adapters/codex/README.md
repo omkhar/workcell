@@ -22,10 +22,11 @@ Repo baselines under `adapters/codex/` (paths relative to this directory):
 
 - `.codex/config.toml`: managed base configuration seeded into the session-local
   Codex home as `~/.codex/config.toml`.
-  It selects `gpt-5.6-terra` with `medium` effort for new coordinators and
-  default children. Explicit user model and effort choices still take precedence.
-  It also limits each session to three concurrent child threads.
-  Its Codex-only instructions route explicit model and effort overrides by task risk.
+  It keeps the coordinator model and effort selected by the operator or Codex.
+  Delegated work defaults to `gpt-5.6-terra` with `medium` effort.
+  Explicit user model and effort choices still take precedence.
+  It limits each session to three concurrent child threads.
+  Its Codex-only instructions select available child models and effort by task risk.
   The base sets no `sandbox_mode`, so every sandbox decision is profile-scoped.
 - `.codex/{strict,development,build,breakglass}.config.toml`: Codex 0.134+
   profile-v2 layer files. The launcher selects one with `--profile <name>`;

@@ -9,8 +9,7 @@
 # does NOT set sandbox_mode or approval_policy: every sandbox/approval decision
 # is profile-scoped, so the floor cannot be widened from the base config.
 
-model = "gpt-5.6-terra"
-model_reasoning_effort = "medium"
+# Keep the coordinator model and effort selected by the operator or Codex.
 analytics.enabled = false
 history.persistence = "none"
 web_search = "disabled"
@@ -19,7 +18,7 @@ project_root_markers = [".git"]
 developer_instructions = """
 Complete the authorized task using the repository's instructions and acceptance checks.
 Use independent, bounded subagents when they save time or improve quality; handle atomic work directly when delegation adds overhead. Keep workers as leaves and respect the configured or runtime concurrency limit.
-Select models by ambiguity, coupling, consequences, and verification difficulty, not task keywords. Use gpt-5.6-luna with low reasoning for narrow inventory, extraction, mechanical edits, and bounded checks; gpt-5.6-terra with medium reasoning for ordinary bounded work; gpt-5.6-sol with high reasoning for complex coupled work; and gpt-6-astra with high reasoning for the hardest ambiguous, architectural, or unresolved work. Use gpt-6-astra with xhigh reasoning only for a direct exceptional task when evidence warrants it.
+For delegated work, select available models by ambiguity, coupling, consequences, and verification difficulty, not task keywords. Use gpt-5.6-luna with low reasoning for narrow inventory, extraction, mechanical edits, and bounded checks; gpt-5.6-terra with medium reasoning for ordinary bounded work; gpt-5.6-sol with high reasoning for complex coupled work; and gpt-6-astra with high reasoning for the hardest ambiguous, architectural, or unresolved work. Use gpt-6-astra with xhigh reasoning only for a direct exceptional task when evidence warrants it.
 Use actual model and reasoning controls advertised by the runtime, or a configured role that sets both. Task names do not select models. A fixed role can override explicit spawn settings: select another role or a direct spawn to escalate. Give each worker the relevant context, permitted scope, deliverable, and acceptance checks; request concise evidence.
 If the runtime exposes fork_turns, use none or a supported recent-turn count when selecting explicit model overrides; full-history forks inherit the parent model and reasoning effort. Otherwise use the controls that the runtime advertises.
 If a worker cannot meet its checks, reassess the scope and model with its evidence rather than repeating identical attempts. If selection is unavailable, report that limitation and use another available model only if it can satisfy the same checks. Verify selection through runtime metadata where available; do not rely on a worker's self-description.
