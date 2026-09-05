@@ -115,6 +115,7 @@ func subcommands() []subcommand {
 		{"validate-json", "FILE [FILE...]", 1, -1, cmdValidateJSON},
 		{"validate-toml", "FILE [FILE...]", 1, -1, cmdValidateTOML},
 		{"validate-codex-routing-configs", "REPO_CONFIG MANAGED_CONFIG", 2, 2, cmdValidateCodexRoutingConfigs},
+		{"workcell-codex-toml-invariants", "ROOT_DIR", 1, 1, cmdWorkcellCodexTomlInvariants},
 		{"validate-requirements", "ROOT_DIR REQUIREMENTS_PATH", 2, 2, cmdValidateRequirements},
 		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
 		{"validate-public-contract", "ROOT_DIR CONTRACT_PATH", 2, 2, cmdValidatePublicContract},
@@ -620,6 +621,43 @@ func cmdValidateTOML(args []string) error {
 
 func cmdValidateCodexRoutingConfigs(args []string) error {
 	return metadatautil.ValidateCodexRoutingConfigs(args[0], args[1])
+}
+
+// cmdWorkcellCodexTomlInvariants runs the Codex TOML invariants migrated out
+// of scripts/verify-invariants.sh in the original script order: both managed
+// baselines, the routing-config parity check, the four profile-v2 layers, and
+// the requirements/wrapper lockstep. The first failure returns (exit 1 via
+// die()), matching the former region's `|| exit 1` semantics.
+func cmdWorkcellCodexTomlInvariants(args []string) error {
+	rootDir := args[0]
+	codexConfig := filepath.Join(rootDir, "adapters", "codex", ".codex", "config.toml")
+	managedConfig := filepath.Join(rootDir, "adapters", "codex", "managed_config.toml")
+	if err := metadatautil.ValidateCodexManagedConfig(codexConfig); err != nil {
+		return err
+	}
+	if err := metadatautil.ValidateCodexManagedConfig(managedConfig); err != nil {
+		return err
+	}
+	if err := metadatautil.ValidateCodexRoutingConfigs(codexConfig, managedConfig); err != nil {
+		return err
+	}
+	profileDir := filepath.Join(rootDir, "adapters", "codex", ".codex")
+	layers := []struct {
+		name           string
+		sandboxMode    string
+		approvalPolicy string
+	}{
+		{"strict", "workspace-write", "on-request"},
+		{"development", "workspace-write", "on-request"},
+		{"build", "workspace-write", "never"},
+		{"breakglass", "danger-full-access", "never"},
+	}
+	for _, layer := range layers {
+		if err := metadatautil.ValidateCodexProfileLayer(filepath.Join(profileDir, layer.name+".config.toml"), layer.sandboxMode, layer.approvalPolicy); err != nil {
+			return err
+		}
+	}
+	return metadatautil.ValidateCodexAdapterLockstep(rootDir)
 }
 
 func cmdValidateRequirements(args []string) error {
