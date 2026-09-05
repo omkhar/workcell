@@ -206,7 +206,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/sudo-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
-      "sha256": "122c569901830a61820e57cd4da810ef5ba473a4de709d7abbfb68d61238e86a"
+      "sha256": "081b450611b9a2c0702a2541c7dd04062725365661c5f358eac209c8ac37af40"
     },
     {
       "kind": "runtime-control-plane",
@@ -236,7 +236,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "33214b64eab7e7e641608aa3aea4aebf002e2c46df55152cc0cf369dfef25059"
+      "sha256": "f699292966cf737b9700008c090750319b23ab7dac617a4e236e82f2952e2b35"
     },
     {
       "kind": "runtime-control-plane",

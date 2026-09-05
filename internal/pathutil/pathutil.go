@@ -36,16 +36,10 @@ func ExpandUserPathBestEffort(raw string) (string, error) {
 	return expandUserPath(raw, false)
 }
 
-// ExpandUserPathStrict behaves like ExpandUserPathBestEffort but
-// surfaces user.Lookup failures (or empty home directories) as errors
-// instead of returning the input verbatim.  Use this when an
-// unexpanded path would be a correctness bug.
-func ExpandUserPathStrict(raw string) (string, error) {
-	return expandUserPath(raw, true)
-}
-
 // ExpandUserPathStrictRequireNonEmpty rejects an empty raw input with
-// ErrEmptyPath, then delegates to ExpandUserPathStrict.  The two
+// ErrEmptyPath, then expands strictly: user.Lookup failures (or empty
+// home directories) surface as errors instead of returning the input
+// verbatim.  The two
 // near-identical private wrappers in internal/authpolicy and
 // internal/injection used to inline this check; consolidating here
 // keeps the empty-input contract in a single place.
@@ -60,7 +54,7 @@ func ExpandUserPathStrictRequireNonEmpty(raw string) (string, error) {
 	if raw == "" {
 		return "", ErrEmptyPath
 	}
-	return ExpandUserPathStrict(raw)
+	return expandUserPath(raw, true)
 }
 
 // ExpandUserPathHomeOnly expands `~` and `~/...` to the current user's

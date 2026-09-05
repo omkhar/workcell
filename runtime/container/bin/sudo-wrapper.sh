@@ -7,7 +7,6 @@ broker_requests_dir="${broker_root}/requests"
 broker_results_dir="${broker_root}/results"
 broker_pid_file="${broker_root}/pid"
 broker_wait_interval_seconds="${WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS:-0.1}"
-broker_wait_timeout_seconds="${WORKCELL_APT_BROKER_WAIT_TIMEOUT_SECONDS:-}"
 preserve_env_csv=""
 sudo_wrapper_active_request_dir=""
 
@@ -86,7 +85,6 @@ sudo_wrapper_run_via_broker() {
   local status_path=""
   local env_name=""
   local status=""
-  local deadline=0
 
   request_dir="$(mktemp -d "${broker_requests_dir}/request.XXXXXX")"
   request_id="$(basename "${request_dir}")"
@@ -118,28 +116,11 @@ sudo_wrapper_run_via_broker() {
   : >"${request_dir}/ready"
   chmod 0644 "${request_dir}/ready"
 
-  if [[ -n "${broker_wait_timeout_seconds}" ]]; then
-    if [[ ! "${broker_wait_timeout_seconds}" =~ ^[0-9]+$ ]]; then
-      sudo_wrapper_request_cleanup "${request_dir}" "${stdout_path}" "${stderr_path}"
-      trap - INT TERM
-      echo "Workcell apt broker timeout must be an integer number of seconds." >&2
-      return 2
-    fi
-    if ((broker_wait_timeout_seconds > 0)); then
-      deadline=$((SECONDS + broker_wait_timeout_seconds))
-    fi
-  fi
   while [[ ! -f "${status_path}" ]]; do
     if ! sudo_wrapper_broker_available; then
       sudo_wrapper_request_cleanup "${request_dir}" "${stdout_path}" "${stderr_path}"
       trap - INT TERM
       echo "Workcell apt broker is unavailable." >&2
-      return 1
-    fi
-    if ((deadline > 0)) && ((SECONDS >= deadline)); then
-      sudo_wrapper_request_cancel TIMEOUT
-      trap - INT TERM
-      echo "Workcell apt broker timed out." >&2
       return 1
     fi
     sleep "${broker_wait_interval_seconds}"

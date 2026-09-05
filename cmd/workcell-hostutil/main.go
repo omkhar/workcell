@@ -75,16 +75,10 @@ func run(args []string) error {
 	// helper table used to call; no behavioural change.
 	case "auth-cli":
 		return cmdHelperAuthCli(args[1:])
-	case "auth-usage":
-		return cmdHelperAuthUsage(args[1:])
 	case "policy-cli":
 		return cmdHelperPolicyCli(args[1:])
-	case "policy-usage":
-		return cmdHelperPolicyUsage(args[1:])
 	case "publish-pr-cli":
 		return cmdHelperPublishPRCli(args[1:])
-	case "publish-pr-usage":
-		return cmdHelperPublishPRUsage(args[1:])
 	case "session-usage":
 		return cmdHelperSessionUsage(args[1:])
 	case "session-attach-cli":
@@ -111,8 +105,6 @@ func run(args []string) error {
 		return runtimebuilder.Main(args[1:], os.Stdout)
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
-	case "support-bundle-usage":
-		return cmdHelperSupportBundleUsage(args[1:])
 	default:
 		return usage()
 	}
@@ -120,11 +112,6 @@ func run(args []string) error {
 
 func cmdHelperSupportBundleCli(args []string) error {
 	return supportbundle.Run(args, os.Stdout, os.Stderr)
-}
-
-func cmdHelperSupportBundleUsage(_ []string) error {
-	fmt.Print(supportbundle.UsageText())
-	return nil
 }
 
 // runHostutilPolicy dispatches the absorbed workcell-manage-injection-policy
@@ -348,23 +335,8 @@ func cmdHelperSessionUsage(_ []string) error {
 	return nil
 }
 
-func cmdHelperAuthUsage(_ []string) error {
-	fmt.Print(authpolicy.AuthUsageText())
-	return nil
-}
-
 func cmdHelperAuthCli(args []string) error {
 	return authpolicy.AuthMain(args)
-}
-
-func cmdHelperPolicyUsage(_ []string) error {
-	fmt.Print(authpolicy.PolicyUsageText())
-	return nil
-}
-
-func cmdHelperPublishPRUsage(_ []string) error {
-	fmt.Print(publishpr.UsageText())
-	return nil
 }
 
 // cmdHelperPolicyCli is the top-level `workcell-hostutil policy-cli`

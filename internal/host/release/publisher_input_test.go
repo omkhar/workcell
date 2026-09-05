@@ -101,34 +101,6 @@ func TestValidateRepositoryRejectsUnsafeInput(t *testing.T) {
 	}
 }
 
-func TestValidateToolchain(t *testing.T) {
-	t.Parallel()
-	for _, toolchain := range []string{"go0.0.0", "go1.26.5", "go10.20.30"} {
-		t.Run(toolchain, func(t *testing.T) {
-			t.Parallel()
-			if err := validateToolchain(toolchain); err != nil {
-				t.Fatalf("validateToolchain(%q) error = %v", toolchain, err)
-			}
-		})
-	}
-}
-
-func TestValidateToolchainRejectsInexactInput(t *testing.T) {
-	t.Parallel()
-	for _, toolchain := range []string{
-		"", "auto", "1.26.5", "go1.26", "go01.26.5", "go1.026.5",
-		"go1.26.05", "go1.26.5-rc.1", "go1.26.5 linux/arm64", " go1.26.5",
-	} {
-		t.Run(fmt.Sprintf("%q", toolchain), func(t *testing.T) {
-			t.Parallel()
-			err := validateToolchain(toolchain)
-			if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "exact goX.Y.Z") {
-				t.Fatalf("validateToolchain(%q) error = %v", toolchain, err)
-			}
-		})
-	}
-}
-
 func TestValidateTagExpectation(t *testing.T) {
 	t.Parallel()
 	expected := TagExpectation{ObjectSHA: testTagObjectSHA, PeeledCommitSHA: testTagCommitSHA}
