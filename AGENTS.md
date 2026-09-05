@@ -15,20 +15,16 @@ runtime boundary with provider-specific adapters.
 These priorities apply only within the defined invariant set. Do not trade away
 the runtime boundary or explicit security guarantees in the name of convenience.
 
-## Peer review default
+## Peer review
 
-- Treat every user request as implicitly asking for peer review unless the user
-  explicitly narrows or waives that expectation.
-- Peer review means continuing through review, fixes, revalidation, and another
-  review pass until no actionable findings remain or a concrete blocker is
-  reported.
-- Treat peer review as an open-ended loop, not a single extra pass. If a peer
-  or review surface returns new findings after a fix, keep iterating with that
-  peer or surface until every finding is addressed, explicitly dispositioned,
-  or blocked by a concrete external constraint.
-- Apply that default across repo-local skills, documentation work, CI follow-up,
-  publication, merge, and release actions. Do not stop at "implemented" if
-  review, checks, or hosted workflows still expose actionable problems.
+- Use independent peer review for material code, security, policy, publication,
+  merge, and release changes.
+- Use focused self-review for reversible documentation or configuration changes.
+- Use independent peer review when the user or an applicable workflow requires it.
+- When peer review applies, continue until no actionable finding remains or a
+  concrete blocker exists.
+- After each fix, rerun the validation that covers the finding.
+- Do not stop while required checks or hosted workflows expose actionable problems.
 
 ## Continuous improvement default
 
@@ -55,6 +51,9 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - After implementation, re-review changed code, docs, policies, tests, and
   validators for simplicity, security, maintainability, and contract parity
   before moving to the next work unit.
+- Run validation that is proportional to the changed behavior and its risk.
+- Broaden or repeat validation only after failures, new risks, or applicable
+  workflow requirements justify it.
 - If validation or review exposes a recurring quality gap, fix the repo-local
   instruction, runbook, or validator in a reviewable change rather than relying
   on conversational memory.
