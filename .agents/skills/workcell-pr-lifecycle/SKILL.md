@@ -130,6 +130,12 @@ Before ready and merge, inspect the required review surfaces again. Confirm
 that the clean result applies to the current head. Do not treat a `COMMENTED`
 review state as a clean result.
 
+When ready transitions trigger automatic Codex review, record the transition
+time and treat it as the review trigger. Wait for that review's current-head
+result before merge. Apply the existing finding-resolution and clean-result
+rules. Use the selected loop's existing wait and retry limits. Do not add a
+manual trigger unless its retry rule permits one.
+
 When a reviewed commit identifier is available, resolve it in GitHub. Require
 the resolved commit to equal the current head. Report a blocker when required
 review evidence is unavailable or mismatched.
@@ -174,7 +180,8 @@ thread states with stable identifiers.
 14. Mark the pull request ready only when required checks succeed and the
    review surfaces have no actionable finding.
 15. Wait for the ready-state base-policy run.
-16. Recheck the required review surfaces after ready.
+16. Complete any automatic ready-triggered Codex review, then recheck the
+    required review surfaces.
 17. Immediately before merge, recheck the required review surfaces.
 18. Merge the pull request.
 19. Follow all workflows for the merged `main` commit.

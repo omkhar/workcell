@@ -107,6 +107,7 @@ func subcommands() []subcommand {
 		{"coverage-executables", "MESSAGE_PATH", 1, 1, cmdCoverageExecutables},
 		{"validate-json", "FILE [FILE...]", 1, -1, cmdValidateJSON},
 		{"validate-toml", "FILE [FILE...]", 1, -1, cmdValidateTOML},
+		{"validate-codex-routing-configs", "REPO_CONFIG MANAGED_CONFIG", 2, 2, cmdValidateCodexRoutingConfigs},
 		{"validate-requirements", "ROOT_DIR REQUIREMENTS_PATH", 2, 2, cmdValidateRequirements},
 		{"validate-operator-contract", "ROOT_DIR CONTRACT_PATH REQUIREMENTS_PATH", 3, 3, cmdValidateOperatorContract},
 		{"validate-public-contract", "ROOT_DIR CONTRACT_PATH", 2, 2, cmdValidatePublicContract},
@@ -618,6 +619,10 @@ func cmdValidateJSON(args []string) error {
 
 func cmdValidateTOML(args []string) error {
 	return metadatautil.ValidateTOMLFiles(args)
+}
+
+func cmdValidateCodexRoutingConfigs(args []string) error {
+	return metadatautil.ValidateCodexRoutingConfigs(args[0], args[1])
 }
 
 func cmdValidateRequirements(args []string) error {

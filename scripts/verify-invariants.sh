@@ -1443,6 +1443,9 @@ CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
 CODEX_PROFILE_DIR="${ROOT_DIR}/adapters/codex/.codex"
 verify_codex_managed_config_invariants "${CODEX_CONFIG}" || exit 1
 verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
+go_verify_citools validate-codex-routing-configs \
+  "${CODEX_CONFIG}" \
+  "${CODEX_MANAGED_CONFIG}" || exit 1
 verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/strict.config.toml" '"workspace-write"' '"on-request"' || exit 1
 verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/development.config.toml" '"workspace-write"' '"on-request"' || exit 1
 verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/build.config.toml" '"workspace-write"' '"never"' || exit 1
