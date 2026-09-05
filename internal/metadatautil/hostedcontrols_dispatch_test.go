@@ -65,6 +65,23 @@ func TestHostedControlDispatchPreservesRulesetsBeforeVariables(t *testing.T) {
 	}
 }
 
+func TestHostedControlDispatchPreservesRepositoryVariablesBeforeEnvironments(t *testing.T) {
+	t.Parallel()
+	root, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", singleOwnerCollaborator())
+	rewriteFile(t, filepath.Join(root, "actions-variables.json"), func(content string) string {
+		return strings.Replace(content, `"value": "false"`, `"value": "wrong"`, 1)
+	})
+	if err := writeJSONFile(filepath.Join(root, "environments.json"), map[string]any{"environments": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := metadatautil.VerifyGitHubHostedControls(root, "omkhar/workcell", policyPath)
+	want := `repository variables on omkhar/workcell do not match policy: WORKCELL_RELEASE_NO_ATTEST="wrong" (expected "false")`
+	if err == nil || err.Error() != want {
+		t.Fatalf("VerifyGitHubHostedControls() error = %v, want %q", err, want)
+	}
+}
+
 func singleOwnerCollaborator() []map[string]any {
 	return []map[string]any{{
 		"login": "omkhar",

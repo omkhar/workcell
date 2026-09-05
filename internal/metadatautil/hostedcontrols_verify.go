@@ -137,6 +137,211 @@ func verifyImmutableReleases(actual map[string]any, policy ReleaseAssetsPolicy, 
 	return nil
 }
 
+func verifyHostedRepositoryVariables(payload, expected map[string]any, repo string) error {
+	actual := hostedNamedValues(payload)
+	if missing := missingHostedRepositoryVariableNames(actual, expected); len(missing) > 0 {
+		return fmt.Errorf("repository variables missing on %s: %s", repo, strings.Join(missing, ", "))
+	}
+	if wrong := mismatchedHostedRepositoryVariableValues(actual, expected); len(wrong) > 0 {
+		return fmt.Errorf("repository variables on %s do not match policy: %s", repo, strings.Join(wrong, ", "))
+	}
+	return nil
+}
+
+func hostedNamedValues(payload map[string]any) map[string]any {
+	actual := map[string]any{}
+	values, _ := payload["variables"].([]any)
+	for _, raw := range values {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := entry["name"].(string); name != "" {
+			actual[name] = entry["value"]
+		}
+	}
+	return actual
+}
+
+func missingHostedRepositoryVariableNames(actual, expected map[string]any) []string {
+	missing := make([]string, 0)
+	for name := range expected {
+		if _, ok := actual[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func mismatchedHostedRepositoryVariableValues(actual, expected map[string]any) []string {
+	wrong := make([]string, 0)
+	for name, expectedValue := range expected {
+		if actual[name] != expectedValue {
+			wrong = append(wrong, fmt.Sprintf("%s=%#v (expected %#v)", name, actual[name], expectedValue))
+		}
+	}
+	slices.Sort(wrong)
+	return wrong
+}
+
+func missingHostedVariableNames(actual map[string]any, expected map[string]string) []string {
+	missing := make([]string, 0)
+	for name := range expected {
+		if _, ok := actual[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func mismatchedHostedVariableValues(actual map[string]any, expected map[string]string) []string {
+	wrong := make([]string, 0)
+	for name, expectedValue := range expected {
+		if actual[name] != expectedValue {
+			wrong = append(wrong, fmt.Sprintf("%s=%#v (expected %#v)", name, actual[name], expectedValue))
+		}
+	}
+	slices.Sort(wrong)
+	return wrong
+}
+
+func verifyHostedWorkflowEnvironments(tmpDir string, index map[string]any, expected map[string]WorkflowEnvironmentPolicy, repo string) error {
+	missing := missingHostedEnvironmentNames(hostedEnvironmentNames(index), expected)
+	if len(missing) > 0 {
+		return fmt.Errorf("workflow environments missing on %s: %s", repo, strings.Join(missing, ", "))
+	}
+	for name, policy := range expected {
+		if err := verifyHostedWorkflowEnvironment(tmpDir, name, policy, repo); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hostedEnvironmentNames(index map[string]any) map[string]struct{} {
+	actual := map[string]struct{}{}
+	environments, _ := index["environments"].([]any)
+	for _, raw := range environments {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := entry["name"].(string); name != "" {
+			actual[name] = struct{}{}
+		}
+	}
+	return actual
+}
+
+func missingHostedEnvironmentNames(actual map[string]struct{}, expected map[string]WorkflowEnvironmentPolicy) []string {
+	missing := make([]string, 0)
+	for name := range expected {
+		if _, ok := actual[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func verifyHostedWorkflowEnvironment(tmpDir, name string, policy WorkflowEnvironmentPolicy, repo string) error {
+	meta, err := readAndVerifyHostedEnvironmentMetadata(tmpDir, name, repo)
+	if err != nil {
+		return err
+	}
+	if err := verifyHostedEnvironmentVariables(tmpDir, name, policy.Variables, repo); err != nil {
+		return err
+	}
+	if err := verifyHostedEnvironmentSecrets(tmpDir, name, policy.RequiredSecrets, repo); err != nil {
+		return err
+	}
+	return verifyHostedEnvironmentDeployment(tmpDir, name, policy, meta, repo)
+}
+
+func readAndVerifyHostedEnvironmentMetadata(tmpDir, name, repo string) (map[string]any, error) {
+	var meta map[string]any
+	artifact := EnvironmentArtifactName(name)
+	if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s.json", artifact)), &meta); err != nil {
+		return nil, fmt.Errorf("read %s environment metadata: %w", name, err)
+	}
+	if actualName, ok := meta["name"].(string); ok && actualName != "" && actualName != name {
+		return nil, fmt.Errorf("workflow environment metadata for %s on %s resolved to %s", name, repo, actualName)
+	}
+	return meta, nil
+}
+
+func verifyHostedEnvironmentVariables(tmpDir, name string, expected map[string]string, repo string) error {
+	var payload map[string]any
+	artifact := EnvironmentArtifactName(name)
+	if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-variables.json", artifact)), &payload); err != nil {
+		return fmt.Errorf("read %s environment variables: %w", name, err)
+	}
+	actual := hostedNamedValues(payload)
+	if missing := missingHostedVariableNames(actual, expected); len(missing) > 0 {
+		return fmt.Errorf("workflow environment variables missing on %s/%s: %s", repo, name, strings.Join(missing, ", "))
+	}
+	if wrong := mismatchedHostedVariableValues(actual, expected); len(wrong) > 0 {
+		return fmt.Errorf("workflow environment variables on %s/%s do not match policy: %s", repo, name, strings.Join(wrong, ", "))
+	}
+	if unexpected := UnexpectedEnvironmentVariableNames(actual, expected); len(unexpected) > 0 {
+		return fmt.Errorf("workflow environment variables on %s/%s include unexpected entries: %s", repo, name, strings.Join(unexpected, ", "))
+	}
+	return nil
+}
+
+func verifyHostedEnvironmentSecrets(tmpDir, name string, expected []string, repo string) error {
+	var payload map[string]any
+	artifact := EnvironmentArtifactName(name)
+	if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", artifact)), &payload); err != nil {
+		return fmt.Errorf("read %s environment secrets: %w", name, err)
+	}
+	actual := hostedSecretNames(payload)
+	if missing := missingHostedSecretNames(actual, expected); len(missing) > 0 {
+		return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, name, strings.Join(missing, ", "))
+	}
+	if unexpected := UnexpectedEnvironmentSecretNames(actual, expected); len(unexpected) > 0 {
+		return fmt.Errorf("workflow environment secrets on %s/%s include unexpected entries: %s", repo, name, strings.Join(unexpected, ", "))
+	}
+	return nil
+}
+
+func hostedSecretNames(payload map[string]any) map[string]struct{} {
+	actual := map[string]struct{}{}
+	secrets, _ := payload["secrets"].([]any)
+	for _, raw := range secrets {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := entry["name"].(string); name != "" {
+			actual[name] = struct{}{}
+		}
+	}
+	return actual
+}
+
+func missingHostedSecretNames(actual map[string]struct{}, expected []string) []string {
+	missing := make([]string, 0)
+	for _, name := range expected {
+		if _, ok := actual[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+func verifyHostedEnvironmentDeployment(tmpDir, name string, policy WorkflowEnvironmentPolicy, meta map[string]any, repo string) error {
+	var branchPolicies map[string]any
+	artifact := EnvironmentArtifactName(name)
+	if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-deployment-branch-policies.json", artifact)), &branchPolicies); err != nil {
+		return fmt.Errorf("read %s deployment branch policies: %w", name, err)
+	}
+	return verifyWorkflowEnvironmentDeploymentPolicy(repo, name, policy, meta, branchPolicies)
+}
+
 func verifyHostedRulesetControls(inputs hostedControlInputs, reviewMode, ownerType string, expectedContexts []string, requireOwner func(string) error, repo string) error {
 	active := activeHostedRulesets(inputs.rulesets)
 	if len(active) == 0 {
