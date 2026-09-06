@@ -76,12 +76,14 @@ Each action uses a full commit SHA.
 The action owner and repository must be in `policy/allowed-actions.toml`.
 
 The release workflow has the main publication authority.
-Its release job can write packages, artifact metadata, and attestations.
-It can also request an OIDC token.
+Its architecture build and assembly jobs have only `contents: read` permission.
+They cannot write packages, metadata, or attestations, and they cannot request an OIDC token.
+A release-approved job validates the artifact handoff before publication and signing.
+That job does not check out or execute repository code.
+A separate read-only job binds every non-image signing subject before approval.
 Its final publisher has `contents: write` for the repository.
 The current publisher script uses this scope to create a release and upload assets.
 
-The native arm64 release job can push an image by digest to GHCR.
 Release scan jobs can upload SARIF data.
 
 Other workflows also have write authority:
@@ -96,7 +98,7 @@ It can also reopen or edit that issue.
 It can also upload a review-only candidate artifact.
 The job has no content-write or release-publication scope.
 
-The release environment protects artifact construction and image publication.
+The release environment protects registry publication, signing, and attestation.
 The environment requires maintainer approval and does not permit administrator bypass.
 
 The final publisher uses the `hosted-controls-audit` environment.
@@ -252,8 +254,8 @@ It does not claim Build L2 for the two SBOM files or nine Sigstore bundles.
 It does not claim Build L3.
 
 GitHub-hosted jobs create authentic platform provenance.
-Build and attestation steps still share one job and its OIDC authority.
-A compromised build step can give a false digest to the attestation step.
+Build and assembly jobs do not share package-write or OIDC authority with the signing job.
+The signing job validates repository, run, tag, commit, platform, configuration, and artifact digests.
 
 The build is reproducible, pinned, and network-dependent.
 It is not hermetic.
@@ -269,7 +271,7 @@ Residual risk describes the risk after the current controls.
 | 3 | Fork code steals a secret. | GitHub makes fork tokens read-only. Fork code cannot use environment secrets. | Low. |
 | 4 | A runner steals authority or changes output. | GitHub-hosted ephemeral jobs, narrow tokens, and disabled checkout credentials reduce exposure. | Medium. Jobs do not restrict network egress. |
 | 5 | An attacker compromises a signing identity. | Cosign is keyless. The maintainer key stays outside CI. Releases are immutable. | Medium. Keyless signing removes stored Cosign keys, but it does not stop workflow-identity or maintainer-key misuse. |
-| 6 | A false artifact gets authentic provenance. | GitHub OIDC binds provenance to the release workflow. Consumers pin that identity. | Medium. Build and provenance authority share a job. |
+| 6 | A false artifact gets authentic provenance. | The privileged job validates immutable artifact handoffs before signing. Builders have no publication authority. | Medium. The workflow still trusts pinned actions and GitHub artifact transport. |
 | 7 | Fork code poisons a trusted cache. | PR runs write only to PR-specific cache scopes. They can read `validator-main`. | Low. Non-PR runs can write `validator-main`. |
 | 8 | A consumer installs an unverified artifact. | The documented release installer verifies Cosign data and the bundle digest before extraction. | Medium. Other installation paths remain available. |
 | 9 | A malicious change reaches a release. | Signed commits, signed tags, required checks, environment approval, and immutable releases protect publication. | Medium. One maintainer signs and approves releases. |

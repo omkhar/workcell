@@ -4,6 +4,8 @@
 package metadatautil
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -21,21 +23,37 @@ type workflowDocument struct {
 	Jobs map[string]workflowJob `yaml:"jobs"`
 }
 
+type workflowNodeDocument struct {
+	Jobs map[string]yaml.Node `yaml:"jobs"`
+}
+
 type workflowJob struct {
-	Name        string    `yaml:"name"`
-	Needs       yaml.Node `yaml:"needs"`
-	Environment struct {
+	Name           string    `yaml:"name"`
+	RunsOn         yaml.Node `yaml:"runs-on"`
+	TimeoutMinutes int       `yaml:"timeout-minutes"`
+	Needs          yaml.Node `yaml:"needs"`
+	Environment    struct {
 		Name string `yaml:"name"`
 	} `yaml:"environment"`
 	Permissions map[string]string `yaml:"permissions"`
+	Env         map[string]string `yaml:"env"`
+	Outputs     map[string]string `yaml:"outputs"`
 	Steps       []workflowStep    `yaml:"steps"`
 }
 
 type workflowStep struct {
+	ID   string            `yaml:"id"`
 	Name string            `yaml:"name"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
+	Uses string            `yaml:"uses"`
+	If   string            `yaml:"if"`
+	With yaml.Node         `yaml:"with"`
 }
+
+// This digest covers the complete parsed sign-release job. It rejects unknown
+// fields, reordered steps, changed commands, and changed action inputs.
+const releaseSignerContractSHA256 = "67e319138562ca059e2b39f89b306fa32d8cf7400d1eba119e106bef5b5bc0c9"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -74,8 +92,8 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		return errors.New("release workflow must define the final publish-github-release job")
 	}
 	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
-		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" {
-		return errors.New("final GitHub release publication job must depend directly on tag-policy and the release artifact job")
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "sign-release" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy and the signing job")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
@@ -102,6 +120,116 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		return nil
 	}
 	return errors.New("release workflow must combine the fresh hosted-controls check and GitHub release publication in one reviewed step")
+}
+
+func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("parse release authority split: %w", err)
+	}
+	if err := validateUnprivilegedReleaseJobs(document); err != nil {
+		return err
+	}
+	if err := validateReleaseSigner(document); err != nil {
+		return err
+	}
+	if err := validateReleaseSignerContract(workflowText); err != nil {
+		return err
+	}
+	return requireReleaseAuthorityText(workflowText)
+}
+
+func requireReleaseAuthorityText(workflowText string) error {
+	for _, required := range []string{"artifact-ids: ${{ needs.release.outputs.artifact_id }}", "artifact-ids: ${{ needs.bind-release-subjects.outputs.artifact_id }}", "Validate privileged handoff", "oras cp --recursive --from-oci-layout"} {
+		if !strings.Contains(workflowText, required) {
+			return fmt.Errorf("release authority split must contain %q", required)
+		}
+	}
+	return nil
+}
+
+func validateUnprivilegedReleaseJobs(document workflowDocument) error {
+	for _, name := range []string{"build-amd64-image", "build-arm64-image", "bind-release-subjects", "release"} {
+		job, ok := document.Jobs[name]
+		if !ok || len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+			return fmt.Errorf("release job %s must grant only contents: read", name)
+		}
+	}
+	return nil
+}
+
+func validateReleaseSigner(document workflowDocument) error {
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	if err := validateReleaseSignerIdentity(signer); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateReleaseSignerContract(workflowText string) error {
+	var document workflowNodeDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return err
+	}
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	digest, err := releaseSignerDigest(signer)
+	if err != nil {
+		return err
+	}
+	if digest != releaseSignerContractSHA256 {
+		return fmt.Errorf("sign-release must match the exact privileged step contract: got %s", digest)
+	}
+	return nil
+}
+
+func validateReleaseSignerIdentity(signer workflowJob) error {
+	expected := map[string]string{"artifact-metadata": "write", "attestations": "write", "contents": "read", "id-token": "write", "packages": "write"}
+	if signer.Environment.Name != "release" || !samePermissions(signer.Permissions, expected) {
+		return errors.New("sign-release must use the release environment and exact publication permissions")
+	}
+	if !needsExactly(signer.Needs, []string{"tag-policy", "preflight", "bind-release-subjects", "preflight-amd64-repro", "preflight-arm64-repro", "release"}) {
+		return errors.New("sign-release must depend directly on policy, both platform preflights, and assembly")
+	}
+	return nil
+}
+
+func releaseSignerDigest(signer yaml.Node) (string, error) {
+	content, err := yaml.Marshal(signer)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func needsExactly(node yaml.Node, expected []string) bool {
+	if node.Kind != yaml.SequenceNode || len(node.Content) != len(expected) {
+		return false
+	}
+	for index, name := range expected {
+		if node.Content[index].Value != name {
+			return false
+		}
+	}
+	return true
+}
+
+func samePermissions(actual, expected map[string]string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for name, value := range expected {
+		if actual[name] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func CheckWorkflows(rootDir, policyPath string) error {
