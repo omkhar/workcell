@@ -115,10 +115,6 @@ github_repo_view() {
   "${GH_BIN}" repo view --json nameWithOwner --jq .nameWithOwner
 }
 
-run_citools() {
-  "${CITOOLS_BIN}" "$@"
-}
-
 GO_BIN="$(resolve_trusted_go_bin)" || {
   echo "The exact Go toolchain from go.mod is unavailable at a trusted path." >&2
   exit 1
@@ -167,19 +163,19 @@ fi
 github_api "repos/${REPO}/actions/permissions/workflow" >"${TMP_DIR}/actions-workflow-permissions.json"
 github_api "repos/${REPO}/immutable-releases" >"${TMP_DIR}/immutable-releases.json"
 github_api --paginate "repos/${REPO}/actions/variables?per_page=100" |
-  run_citools merge-hosted-control-object-pages variables >"${TMP_DIR}/actions-variables.json"
+  "${CITOOLS_BIN}" merge-hosted-control-object-pages variables >"${TMP_DIR}/actions-variables.json"
 github_api "repos/${REPO}/collaborators?affiliation=direct&per_page=100" >"${TMP_DIR}/collaborators-direct.json"
 github_api --paginate "repos/${REPO}/rulesets?per_page=100" |
-  run_citools merge-hosted-control-array-pages >"${TMP_DIR}/rulesets-summary.json"
-run_citools list-hosted-control-ruleset-ids "${TMP_DIR}/rulesets-summary.json" >"${TMP_DIR}/ruleset-ids"
+  "${CITOOLS_BIN}" merge-hosted-control-array-pages >"${TMP_DIR}/rulesets-summary.json"
+"${CITOOLS_BIN}" list-hosted-control-ruleset-ids "${TMP_DIR}/rulesets-summary.json" >"${TMP_DIR}/ruleset-ids"
 : >"${TMP_DIR}/rulesets-details.jsons"
 while IFS= read -r ruleset_id; do
   github_api "repos/${REPO}/rulesets/${ruleset_id}" |
-    run_citools normalize-hosted-control-ruleset "${ruleset_id}" >>"${TMP_DIR}/rulesets-details.jsons"
+    "${CITOOLS_BIN}" normalize-hosted-control-ruleset "${ruleset_id}" >>"${TMP_DIR}/rulesets-details.jsons"
 done <"${TMP_DIR}/ruleset-ids"
-run_citools assemble-hosted-control-rulesets "${TMP_DIR}/rulesets-summary.json" "${TMP_DIR}/rulesets-details.jsons" "${TMP_DIR}/rulesets.json"
+"${CITOOLS_BIN}" assemble-hosted-control-rulesets "${TMP_DIR}/rulesets-summary.json" "${TMP_DIR}/rulesets-details.jsons" "${TMP_DIR}/rulesets.json"
 github_api --paginate "repos/${REPO}/environments?per_page=100" |
-  run_citools merge-hosted-control-object-pages environments >"${TMP_DIR}/environments.json"
+  "${CITOOLS_BIN}" merge-hosted-control-object-pages environments >"${TMP_DIR}/environments.json"
 if github_api "repos/${REPO}/environments/release" >"${TMP_DIR}/environment-release.json" 2>/dev/null; then
   :
 else
@@ -197,10 +193,10 @@ while IFS= read -r environment_name; do
     exit 1
   fi
   github_api --paginate "repos/${REPO}/environments/${encoded_environment_name}/deployment-branch-policies?per_page=100" |
-    run_citools merge-hosted-control-object-pages branch_policies >"${TMP_DIR}/environment-${safe_environment_name}-deployment-branch-policies.json"
+    "${CITOOLS_BIN}" merge-hosted-control-object-pages branch_policies >"${TMP_DIR}/environment-${safe_environment_name}-deployment-branch-policies.json"
   github_api --paginate "repos/${REPO}/environments/${encoded_environment_name}/variables?per_page=100" |
-    run_citools merge-hosted-control-object-pages variables >"${TMP_DIR}/environment-${safe_environment_name}-variables.json"
+    "${CITOOLS_BIN}" merge-hosted-control-object-pages variables >"${TMP_DIR}/environment-${safe_environment_name}-variables.json"
   github_api --paginate "repos/${REPO}/environments/${encoded_environment_name}/secrets?per_page=100" |
-    run_citools merge-hosted-control-object-pages secrets >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"
-done < <(run_citools list-hosted-control-environments "${POLICY_PATH}")
-run_citools verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"
+    "${CITOOLS_BIN}" merge-hosted-control-object-pages secrets >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"
+done < <("${CITOOLS_BIN}" list-hosted-control-environments "${POLICY_PATH}")
+"${CITOOLS_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"

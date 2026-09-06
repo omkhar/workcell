@@ -216,7 +216,7 @@ func TestCheckPinnedInputsRejectsHostedControlFunctionShadowing(t *testing.T) {
 }
 
 func TestCheckPinnedInputsRejectsHostedControlCallCountDrift(t *testing.T) {
-	const normalizeCall = `run_citools normalize-hosted-control-ruleset "${ruleset_id}"`
+	const normalizeCall = `"${CITOOLS_BIN}" normalize-hosted-control-ruleset "${ruleset_id}"`
 	tests := []struct {
 		name    string
 		rewrite func(string) string
@@ -235,7 +235,7 @@ func TestCheckPinnedInputsRejectsHostedControlCallCountDrift(t *testing.T) {
 }
 
 func TestCheckPinnedInputsRejectsHostedControlStructureDrift(t *testing.T) {
-	const verifyCall = `run_citools verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`
+	const verifyCall = `"${CITOOLS_BIN}" verify-github-hosted-controls "${TMP_DIR}" "${REPO}" "${POLICY_PATH}"`
 	tests := []struct {
 		name    string
 		rewrite func(string) string
@@ -273,8 +273,8 @@ func TestCheckPinnedInputsRejectsHostedControlCredentialRoutingDrift(t *testing.
 		{"token alias survives", "unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN", ":"},
 		{"API token unscoped", `GH_TOKEN="${AUDIT_TOKEN}" "${GH_BIN}" api`, `"${GH_BIN}" api`},
 		{"repository token unscoped", `GH_TOKEN="${AUDIT_TOKEN}" "${GH_BIN}" repo view`, `"${GH_BIN}" repo view`},
-		{"detail bypasses normalizer", `run_citools normalize-hosted-control-ruleset "${ruleset_id}"`, `"${JQ_BIN}" -c .`},
-		{"IDs use process substitution", `done <"${TMP_DIR}/ruleset-ids"`, `done < <(run_citools list-hosted-control-ruleset-ids "${TMP_DIR}/rulesets-summary.json")`},
+		{"detail bypasses normalizer", `"${CITOOLS_BIN}" normalize-hosted-control-ruleset "${ruleset_id}"`, `"${JQ_BIN}" -c .`},
+		{"IDs use process substitution", `done <"${TMP_DIR}/ruleset-ids"`, `done < <("${CITOOLS_BIN}" list-hosted-control-ruleset-ids "${TMP_DIR}/rulesets-summary.json")`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -295,7 +295,7 @@ func TestCheckPinnedInputsRejectsUnpaginatedHostedRulesets(t *testing.T) {
 
 func TestCheckPinnedInputsRejectsFailOpenHostedRulesetAggregation(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
-		return strings.Replace(content, `run_citools merge-hosted-control-array-pages`, `"${JQ_BIN}" -s 'add'`, 1)
+		return strings.Replace(content, `"${CITOOLS_BIN}" merge-hosted-control-array-pages`, `"${JQ_BIN}" -s 'add'`, 1)
 	})
 	requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
 }
@@ -304,7 +304,7 @@ func TestCheckPinnedInputsRejectsFailOpenHostedEmptyCollectionAggregation(t *tes
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(
 			content,
-			`run_citools merge-hosted-control-object-pages secrets >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"`,
+			`"${CITOOLS_BIN}" merge-hosted-control-object-pages secrets >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"`,
 			`jq -s '{total_count: 0, secrets: (map(.secrets // []) | add)}' >"${TMP_DIR}/environment-${safe_environment_name}-secrets.json"`,
 			1,
 		)

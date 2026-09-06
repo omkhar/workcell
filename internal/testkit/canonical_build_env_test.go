@@ -11,12 +11,6 @@ import (
 	"testing"
 )
 
-const canonicalGuardBlock = `# shellcheck source=scripts/lib/canonical-build-env.sh
-source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
-workcell_require_modern_privileged_bash "$@"
-workcell_require_canonical_build_environment
-`
-
 var canonicalEntrypoints = []struct {
 	relative       string
 	firstOperation string
