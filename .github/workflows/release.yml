@@ -155,9 +155,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: tag-policy
-    env:
-      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
-      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       actions: read # Read workflow metadata required by CodeQL helper actions.
       contents: read
@@ -202,7 +199,6 @@ jobs:
     timeout-minutes: 45
     needs: tag-policy
     env:
-      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
       RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
@@ -264,7 +260,6 @@ jobs:
     timeout-minutes: 45
     needs: tag-policy
     env:
-      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
       RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
@@ -313,9 +308,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: tag-policy
-    env:
-      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
-      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     steps:
@@ -350,7 +342,6 @@ jobs:
     timeout-minutes: 30
     needs: tag-policy
     env:
-      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
       RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
@@ -717,7 +708,6 @@ jobs:
       - preflight
     env:
       RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
-      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     strategy:
@@ -1471,8 +1461,8 @@ jobs:
             --image-repository "${IMAGE_NAME}"
             --source-digest "${RELEASE_COMMIT}"
             --workflow-digest "${GITHUB_WORKFLOW_SHA}"
+            --attestations
           )
-          verify_args+=(--attestations)
           ./scripts/verify-release-outputs.sh "${verify_args[@]}"
 
   publish-github-release:
@@ -1533,8 +1523,8 @@ jobs:
             --image-repository "${IMAGE_NAME}"
             --source-digest "${RELEASE_COMMIT}"
             --workflow-digest "${GITHUB_WORKFLOW_SHA}"
+            --attestations
           )
-          verify_args+=(--attestations)
           ./scripts/verify-release-outputs.sh "${verify_args[@]}"
 
       - name: Verify release tag signature

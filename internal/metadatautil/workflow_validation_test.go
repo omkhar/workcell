@@ -1369,7 +1369,7 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingVerifierAttes
 		t.Fatal(err)
 	}
 	workflow := string(content)
-	const requiredLine = "          verify_args+=(--attestations)\n"
+	const requiredLine = "            --attestations\n"
 	first := strings.Index(workflow, requiredLine)
 	last := strings.LastIndex(workflow, requiredLine)
 	if first < 0 || last <= first {

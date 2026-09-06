@@ -434,8 +434,8 @@ verify_args=(
   --image-repository "${IMAGE_NAME}"
   --source-digest "${RELEASE_COMMIT}"
   --workflow-digest "${GITHUB_WORKFLOW_SHA}"
+  --attestations
 )
-verify_args+=(--attestations)
 ./scripts/verify-release-outputs.sh "${verify_args[@]}"`
 
 func validateReleaseAttestationVerifier(job workflowJob, jobName string) error {
@@ -456,27 +456,6 @@ func validateReleaseAttestationVerifier(job workflowJob, jobName string) error {
 		return fmt.Errorf("%s job must contain exactly one release-output attestation verification step", jobName)
 	}
 	return nil
-}
-
-func namedWorkflowStep(workflow, name string) string {
-	lines := strings.Split(workflow, "\n")
-	stepPrefix := regexp.MustCompile(`^(\s*)-\s+name:\s+` + regexp.QuoteMeta(name) + `\s*$`)
-	for i, line := range lines {
-		match := stepPrefix.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		stepIndent := match[1]
-		end := len(lines)
-		for j := i + 1; j < len(lines); j++ {
-			if strings.HasPrefix(lines[j], stepIndent+"- ") {
-				end = j
-				break
-			}
-		}
-		return strings.Join(lines[i:end], "\n")
-	}
-	return ""
 }
 
 func ValidateMacOSInstallVerificationFlow(workflowText, workflowPath, artifactName, jobName string) error {

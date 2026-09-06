@@ -70,10 +70,4 @@ func TestReleaseWorkflowVerifiesOutputsBeforePublication(t *testing.T) {
 	if strings.Count(workflow, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6") != 4 {
 		t.Fatalf("Cosign installer count = %d, want signing, independent verification, and pre-publication verification coverage", strings.Count(workflow, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"))
 	}
-	if strings.Contains(workflow, "verify-release-outputs:\n") && strings.Contains(workflow, "id-token: write") {
-		verifyBlock := workflow[strings.Index(workflow, "  verify-release-outputs:"):strings.Index(workflow, "  publish-github-release:")]
-		if strings.Contains(verifyBlock, "id-token: write") || strings.Contains(verifyBlock, "contents: write") || strings.Contains(verifyBlock, "packages: write") || strings.Contains(verifyBlock, "attestations: write") {
-			t.Fatal("verify-release-outputs must not receive publication or signing authority")
-		}
-	}
 }

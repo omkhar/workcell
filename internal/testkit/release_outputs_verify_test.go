@@ -384,14 +384,14 @@ func TestVerifyReleaseOutputsRejectsSymlinkBundle(t *testing.T) {
 	}
 }
 
-func TestVerifyReleaseOutputsRejectsMalformedImageDigest(t *testing.T) {
-	t.Parallel()
-	assets := releaseOutputFixture(t)
-	malformed := []byte("ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\nextra\n")
-	if err := os.WriteFile(filepath.Join(assets, "workcell-image.digest"), malformed, 0o644); err != nil {
+// rewriteImageDigestAsset replaces the image digest file and its SHA256SUMS
+// entry so the checksum inventory still matches the mutated content.
+func rewriteImageDigestAsset(t *testing.T, assets string, content []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(assets, "workcell-image.digest"), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	digest := sha256.Sum256(malformed)
+	digest := sha256.Sum256(content)
 	sumsPath := filepath.Join(assets, "SHA256SUMS")
 	sums, err := os.ReadFile(sumsPath)
 	if err != nil {
@@ -405,39 +405,36 @@ func TestVerifyReleaseOutputsRejectsMalformedImageDigest(t *testing.T) {
 	}
 	if err := os.WriteFile(sumsPath, []byte(strings.Join(sumLines, "\n")), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	bin, _, _ := releaseOutputStubBin(t, 0, 0)
-	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
-	if code == 0 || !strings.Contains(out, "exactly one line") {
-		t.Fatalf("expected malformed image digest rejection, got %d\n%s", code, out)
 	}
 }
 
-func TestVerifyReleaseOutputsRejectsUppercaseImageDigest(t *testing.T) {
+func TestVerifyReleaseOutputsRejectsMalformedImageDigestFile(t *testing.T) {
 	t.Parallel()
-	assets := releaseOutputFixture(t)
-	malformed := []byte("ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\n")
-	if err := os.WriteFile(filepath.Join(assets, "workcell-image.digest"), malformed, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(malformed)
-	sumsPath := filepath.Join(assets, "SHA256SUMS")
-	sums, err := os.ReadFile(sumsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sumLines := strings.Split(string(sums), "\n")
-	for i, line := range sumLines {
-		if strings.HasSuffix(line, "  workcell-image.digest") {
-			sumLines[i] = hex.EncodeToString(digest[:]) + "  workcell-image.digest"
-		}
-	}
-	if err := os.WriteFile(sumsPath, []byte(strings.Join(sumLines, "\n")), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin, _, _ := releaseOutputStubBin(t, 0, 0)
-	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
-	if code == 0 || !strings.Contains(out, "lowercase SHA-256 digest") {
-		t.Fatalf("expected uppercase image digest rejection, got %d\n%s", code, out)
+	for _, tc := range []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "multiple lines",
+			content: "ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\nextra\n",
+			want:    "exactly one line",
+		},
+		{
+			name:    "uppercase digest",
+			content: "ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\n",
+			want:    "lowercase SHA-256 digest",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assets := releaseOutputFixture(t)
+			rewriteImageDigestAsset(t, assets, []byte(tc.content))
+			bin, _, _ := releaseOutputStubBin(t, 0, 0)
+			code, out := runVerifyReleaseOutputs(t, bin, assets, false)
+			if code == 0 || !strings.Contains(out, tc.want) {
+				t.Fatalf("expected image digest rejection %q, got %d\n%s", tc.want, code, out)
+			}
+		})
 	}
 }
