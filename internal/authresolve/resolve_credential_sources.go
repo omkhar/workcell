@@ -44,16 +44,7 @@ var (
 	sharedCredentialKeys      = adapters.SharedCredentialKeys()
 	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeysForProviders(providerid.AllProviders)
 	allCredentialKeys         = credentialKeyUnion(agentScopedCredentialKeys, sharedCredentialKeys)
-	rootPolicyKeys            = map[string]struct{}{
-		"version":     {},
-		"includes":    {},
-		"documents":   {},
-		"ssh":         {},
-		"copies":      {},
-		"credentials": {},
-		"network":     {},
-	}
-	documentKeys = providerid.DocumentKeySet()
+	documentKeys              = providerid.DocumentKeySet()
 	// CredentialEntryKeys is the set of keys accepted in a
 	// `[credentials.<name>]` table before credential resolution — the
 	// resolver form.  It is the exact set validateAllowedKeys enforces in
