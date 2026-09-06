@@ -29,9 +29,9 @@ func TestCreateReleaseImageHandoffBindsArchiveIdentity(t *testing.T) {
 }
 
 func TestCreateReleaseImageHandoffUnwrapsMultiPlatformIndex(t *testing.T) {
-	archive, imageDigest, manifestDigest, configDigest := writeWrappedReleaseImageArchive(t)
+	archive, digests := writeWrappedReleaseImageArchive(t)
 	output := filepath.Join(t.TempDir(), "handoff.json")
-	err := metadatautil.CreateReleaseImageHandoff(archive, output, "owner/repo", "12", "v1", "commit", "linux/amd64", imageDigest, manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, output, "owner/repo", "12", "v1", "commit", "linux/amd64", digests.image, digests.manifest, digests.config)
 	if err != nil {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -39,9 +39,9 @@ func TestCreateReleaseImageHandoffUnwrapsMultiPlatformIndex(t *testing.T) {
 }
 
 func TestCreateReleaseImageHandoffRejectsForeignWrappedImageDigest(t *testing.T) {
-	archive, _, manifestDigest, configDigest := writeWrappedReleaseImageArchive(t)
+	archive, digests := writeWrappedReleaseImageArchive(t)
 	foreign := "sha256:" + strings.Repeat("4", 64)
-	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", foreign, manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", foreign, digests.manifest, digests.config)
 	if err == nil || !strings.Contains(err.Error(), "does not match image digest") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -72,16 +72,21 @@ func TestCreateReleaseImageHandoffRejectsMissingLayerBlob(t *testing.T) {
 }
 
 func TestCreateReleaseImageHandoffRejectsMissingNestedDescriptorBlob(t *testing.T) {
-	archive, imageDigest, manifestDigest, configDigest := writeWrappedReleaseImageArchive(t)
-	members := readReleaseArchiveMembers(t, archive)
-	kept := members[:0]
-	for _, member := range members {
-		if member.name != releaseArchiveBlobName(contentDigest([]byte("attestation"))) {
-			kept = append(kept, member)
-		}
-	}
-	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, kept), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", imageDigest, manifestDigest, configDigest)
+	archive, digests := writeWrappedReleaseImageArchive(t)
+	stripped := writeWrappedArchiveWithout(t, archive, digests.attestation)
+	err := metadatautil.CreateReleaseImageHandoff(stripped, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", digests.image, digests.manifest, digests.config)
 	if err == nil || !strings.Contains(err.Error(), "lacks descriptor blob") {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
+}
+
+// The attestation manifest is present but the statement layer it references is
+// not, so only a walk into the descriptor rejects this archive.
+func TestCreateReleaseImageHandoffRejectsIncompleteAttestationManifest(t *testing.T) {
+	archive, digests := writeWrappedReleaseImageArchive(t)
+	stripped := writeWrappedArchiveWithout(t, archive, digests.attestationStatement)
+	err := metadatautil.CreateReleaseImageHandoff(stripped, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", digests.image, digests.manifest, digests.config)
+	if err == nil || !strings.Contains(err.Error(), "lacks layer blob") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
 }
@@ -224,10 +229,13 @@ func releaseImageBlobs(t *testing.T, manifestConfigDigest string) (string, strin
 // writeWrappedReleaseImageArchive mirrors a BUILDKIT_MULTI_PLATFORM=1 export:
 // index.json holds one platform-free wrapper descriptor for a nested index that
 // carries the platform descriptors.
-func writeWrappedReleaseImageArchive(t *testing.T) (string, string, string, string) {
+func writeWrappedReleaseImageArchive(t *testing.T) (string, wrappedReleaseDigests) {
 	t.Helper()
 	manifestDigest, configDigest, blobs := releaseImageBlobs(t, "")
-	attestation := []byte("attestation")
+	statement := []byte(`{"_type":"https://in-toto.io/Statement/v0.1"}`)
+	attestationConfig := []byte(`{"architecture":"unknown","os":"unknown"}`)
+	attestation := []byte(fmt.Sprintf(`{"config":{"digest":%q},"layers":[{"digest":%q}]}`,
+		contentDigest(attestationConfig), contentDigest(statement)))
 	attestationDigest := contentDigest(attestation)
 	nested := []byte(fmt.Sprintf(`{"manifests":[{"digest":%q,"platform":{"os":"linux","architecture":"amd64"}},`+
 		`{"digest":%q,"platform":{"os":"unknown","architecture":"unknown"}}]}`, manifestDigest, attestationDigest))
@@ -237,8 +245,35 @@ func writeWrappedReleaseImageArchive(t *testing.T) (string, string, string, stri
 		{name: "index.json", content: []byte(fmt.Sprintf(`{"manifests":[{"digest":%q}]}`, imageDigest))},
 		{name: releaseArchiveBlobName(imageDigest), content: nested},
 		{name: releaseArchiveBlobName(attestationDigest), content: attestation},
+		{name: releaseArchiveBlobName(contentDigest(attestationConfig)), content: attestationConfig},
+		{name: releaseArchiveBlobName(contentDigest(statement)), content: statement},
 	}, blobs...)
-	return writeReleaseArchiveMembers(t, members), imageDigest, manifestDigest, configDigest
+	digests := wrappedReleaseDigests{
+		image: imageDigest, manifest: manifestDigest, config: configDigest,
+		attestation: attestationDigest, attestationStatement: contentDigest(statement),
+	}
+	return writeReleaseArchiveMembers(t, members), digests
+}
+
+type wrappedReleaseDigests struct {
+	image                string
+	manifest             string
+	config               string
+	attestation          string
+	attestationStatement string
+}
+
+// writeWrappedArchiveWithout rebuilds the wrapped archive with one blob removed.
+func writeWrappedArchiveWithout(t *testing.T, archive, digest string) string {
+	t.Helper()
+	members := readReleaseArchiveMembers(t, archive)
+	kept := members[:0]
+	for _, member := range members {
+		if member.name != releaseArchiveBlobName(digest) {
+			kept = append(kept, member)
+		}
+	}
+	return writeReleaseArchiveMembers(t, kept)
 }
 
 func releaseArchiveBlobName(digest string) string {

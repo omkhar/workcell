@@ -61,15 +61,12 @@ func CreateReleaseImageHandoff(archivePath, outputPath, repository, runID, tag, 
 			return fmt.Errorf("malformed release %s digest %q", role, digest)
 		}
 	}
-	index, manifest, archiveDigest, err := inspectReleaseImageArchive(archivePath, imageDigest, manifestDigest, configDigest)
+	index, archiveDigest, err := inspectReleaseImageArchive(archivePath, imageDigest, manifestDigest, configDigest)
 	if err != nil {
 		return err
 	}
 	if err := validateReleaseImageDescriptor(index, platform, manifestDigest); err != nil {
 		return err
-	}
-	if manifest.Config.Digest != configDigest {
-		return fmt.Errorf("release image config digest %q does not match %q", manifest.Config.Digest, configDigest)
 	}
 	handoff := releaseImageHandoff{
 		Repository: repository, RunID: runID, Tag: tag, Commit: commit,
@@ -84,17 +81,17 @@ func CreateReleaseImageHandoff(archivePath, outputPath, repository, runID, tag, 
 	return os.WriteFile(outputPath, content, 0o600)
 }
 
-func inspectReleaseImageArchive(path, imageDigest, manifestDigest, configDigest string) (releaseImageIndex, releaseImageManifest, string, error) {
+func inspectReleaseImageArchive(path, imageDigest, manifestDigest, configDigest string) (releaseImageIndex, string, error) {
 	var index releaseImageIndex
 	var manifest releaseImageManifest
 	file, err := os.Open(path)
 	if err != nil {
-		return index, manifest, "", err
+		return index, "", err
 	}
 	defer file.Close()
 	archiveDigest, err := hashAndRewindReleaseImage(file)
 	if err != nil {
-		return index, manifest, "", err
+		return index, "", err
 	}
 	members := releaseImageMembers{
 		manifestName: releaseImageBlobName(manifestDigest),
@@ -102,23 +99,98 @@ func inspectReleaseImageArchive(path, imageDigest, manifestDigest, configDigest 
 		seen:         map[string]struct{}{},
 	}
 	if err := members.collect(tar.NewReader(file)); err != nil {
-		return index, manifest, "", err
+		return index, "", err
 	}
 	index, manifest, err = members.decode()
 	if err != nil {
-		return index, manifest, "", err
+		return index, "", err
+	}
+	if manifest.Config.Digest != configDigest {
+		return index, "", fmt.Errorf("release image config digest %q does not match %q", manifest.Config.Digest, configDigest)
 	}
 	if err := members.requireLayers(manifest); err != nil {
-		return index, manifest, "", err
+		return index, "", err
 	}
 	if err := members.requireDescriptorBlobs(index); err != nil {
-		return index, manifest, "", err
+		return index, "", err
 	}
 	index, err = resolveReleaseImageSubject(file, index, imageDigest, manifestDigest)
 	if err != nil {
-		return index, manifest, "", err
+		return index, "", err
 	}
-	return index, manifest, archiveDigest, members.requireDescriptorBlobs(index)
+	return index, archiveDigest, members.requireDescriptorGraph(file, index)
+}
+
+// requireDescriptorGraph walks every manifest the resolved index reaches and
+// requires each config, layer and child descriptor blob the archive must carry.
+// A provenance or SBOM manifest is traversed the same way as the bound image
+// manifest, so a descriptor whose own content is missing is rejected. Config and
+// layer blobs are required but not traversed: they are not manifests.
+func (members *releaseImageMembers) requireDescriptorGraph(file *os.File, index releaseImageIndex) error {
+	if err := members.requireDescriptorBlobs(index); err != nil {
+		return err
+	}
+	pending := map[string]struct{}{}
+	for _, descriptor := range index.Manifests {
+		pending[descriptor.Digest] = struct{}{}
+	}
+	visited := map[string]struct{}{}
+	for len(pending) > 0 {
+		documents, err := readReleaseImageBlobs(file, pending)
+		if err != nil {
+			return err
+		}
+		next := map[string]struct{}{}
+		for digest, content := range documents {
+			visited[digest] = struct{}{}
+			children, err := members.requireDescriptorChildren(digest, content)
+			if err != nil {
+				return err
+			}
+			for _, child := range children {
+				if _, done := visited[child]; !done {
+					next[child] = struct{}{}
+				}
+			}
+		}
+		pending = next
+	}
+	return nil
+}
+
+// requireDescriptorChildren requires every blob one manifest references and
+// returns the child manifests still to walk.
+func (members *releaseImageMembers) requireDescriptorChildren(digest string, content []byte) ([]string, error) {
+	var node struct {
+		Manifests []releaseImageDescriptor `json:"manifests"`
+		Config    struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+		Layers []struct {
+			Digest string `json:"digest"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(content, &node); err != nil {
+		return nil, fmt.Errorf("parse OCI manifest %s: %w", digest, err)
+	}
+	if node.Config.Digest != "" {
+		if err := members.requireBlob(node.Config.Digest, "config"); err != nil {
+			return nil, err
+		}
+	}
+	for _, layer := range node.Layers {
+		if err := members.requireBlob(layer.Digest, "layer"); err != nil {
+			return nil, err
+		}
+	}
+	children := make([]string, 0, len(node.Manifests))
+	for _, child := range node.Manifests {
+		if err := members.requireBlob(child.Digest, "descriptor"); err != nil {
+			return nil, err
+		}
+		children = append(children, child.Digest)
+	}
+	return children, nil
 }
 
 // resolveReleaseImageSubject binds the caller's image digest to the archive and
@@ -141,37 +213,51 @@ func resolveReleaseImageSubject(file *os.File, index releaseImageIndex, imageDig
 
 func readReleaseImageNestedIndex(file *os.File, digest string) (releaseImageIndex, error) {
 	var nested releaseImageIndex
-	name := releaseImageBlobName(digest)
-	content, err := readReleaseImageMember(file, name)
+	documents, err := readReleaseImageBlobs(file, map[string]struct{}{digest: {}})
 	if err != nil {
 		return nested, err
 	}
-	if err := validateReleaseImageBlob(content, path.Base(name)); err != nil {
-		return nested, err
-	}
-	if err := json.Unmarshal(content, &nested); err != nil {
+	if err := json.Unmarshal(documents[digest], &nested); err != nil {
 		return nested, fmt.Errorf("parse nested OCI index: %w", err)
 	}
 	return nested, nil
 }
 
-func readReleaseImageMember(file *os.File, name string) ([]byte, error) {
+// readReleaseImageBlobs reads the named blobs in one pass over the archive and
+// re-verifies each against the digest in its own name.
+func readReleaseImageBlobs(file *os.File, digests map[string]struct{}) (map[string][]byte, error) {
+	wanted := make(map[string]string, len(digests))
+	for digest := range digests {
+		wanted[releaseImageBlobName(digest)] = digest
+	}
+	documents := make(map[string][]byte, len(digests))
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 	reader := tar.NewReader(file)
-	for {
+	for len(documents) < len(wanted) {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("release image archive lacks member %q", name)
+			return nil, errors.New("release image archive lacks a referenced manifest blob")
 		}
 		if err != nil {
 			return nil, err
 		}
-		if strings.TrimPrefix(header.Name, "./") == name {
-			return readReleaseImageDocument(reader, name)
+		name := strings.TrimPrefix(header.Name, "./")
+		digest, ok := wanted[name]
+		if !ok {
+			continue
 		}
+		content, err := readReleaseImageDocument(reader, name)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateReleaseImageBlob(content, path.Base(name)); err != nil {
+			return nil, err
+		}
+		documents[digest] = content
 	}
+	return documents, nil
 }
 
 func releaseImageBlobName(digest string) string {
