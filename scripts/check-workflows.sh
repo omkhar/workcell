@@ -16,12 +16,9 @@ require_tool() {
 require_tool actionlint
 require_tool zizmor
 
-(
-  cd "${ROOT_DIR}"
-  actionlint
-)
-zizmor --persona auditor --config "${ROOT_DIR}/.github/zizmor.yml" "${ROOT_DIR}/.github/workflows/"*.yml
-
+# workcell-citools check-workflows runs actionlint and the zizmor scan
+# (persona auditor, .github/zizmor.yml, all workflow files) itself, so no
+# direct actionlint or zizmor call runs here.
 run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools check-workflows "${ROOT_DIR}" "${POLICY_PATH}"
 "${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
 run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools check-retention-policy "${ROOT_DIR}" "${ROOT_DIR}/policy/retention-policy.json"
