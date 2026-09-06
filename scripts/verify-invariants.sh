@@ -1321,19 +1321,6 @@ require_toml_exact_keys() {
   rm -rf "${tmpdir}"
 }
 
-require_toml_section_absent() {
-  local file="$1"
-  local section="$2"
-  local sections=""
-
-  sections="$(toml_section_names "${file}")" || return 1
-
-  if printf '%s\n' "${sections}" | grep -Fxq -- "${section}"; then
-    echo "Expected ${file} not to define [${section}]" >&2
-    return 1
-  fi
-}
-
 verify_codex_managed_config_invariants() {
   local file="$1"
   local absent_key=""
@@ -1702,7 +1689,7 @@ EOF
   chmod 0755 "${INSTALL_DEPS_VERIFY_BIN}/${required_tool}"
 done
 
-for mock_tool in uname dirname basename sysctl brew; do
+for mock_tool in uname sysctl brew; do
   install -m 0755 \
     "${ROOT_DIR}/verify/invariants/harnesses/install-deps/${mock_tool}.sh" \
     "${INSTALL_DEPS_VERIFY_BIN}/${mock_tool}"

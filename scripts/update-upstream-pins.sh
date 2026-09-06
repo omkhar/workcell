@@ -149,29 +149,6 @@ github_release_asset() {
   )
 }
 
-github_tag_commit_sha() {
-  local repo="$1"
-  local tag="$2"
-  local ref_json object_sha object_type tag_json
-
-  ref_json="$(github_api_get "https://api.github.com/repos/${repo}/git/ref/tags/${tag}")"
-  object_sha="$(jq -r '.object.sha' <<<"${ref_json}")"
-  object_type="$(jq -r '.object.type' <<<"${ref_json}")"
-  case "${object_type}" in
-    commit)
-      printf '%s\n' "${object_sha}"
-      ;;
-    tag)
-      tag_json="$(github_api_get "https://api.github.com/repos/${repo}/git/tags/${object_sha}")"
-      jq -r '.object.sha' <<<"${tag_json}"
-      ;;
-    *)
-      echo "Unable to resolve commit SHA for ${repo} tag ${tag}" >&2
-      exit 1
-      ;;
-  esac
-}
-
 docker_image_digest() {
   local image_ref="$1"
   local digest
@@ -315,40 +292,6 @@ replace_all_lines_with_prefix() {
   ' "${file}" >"${tmp}"; then
     rm -f "${tmp}"
     echo "Failed to update ${prefix} in ${file}" >&2
-    exit 1
-  fi
-  replace_tmp_over_file "${tmp}" "${file}"
-}
-
-replace_line_after_marker_with_prefix() {
-  local file="$1"
-  local marker="$2"
-  local prefix="$3"
-  local newline="$4"
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh.XXXXXX")"
-  if ! awk -v marker="${marker}" -v prefix="${prefix}" -v newline="${newline}" '
-    BEGIN { matched = 0; replaced = 0 }
-    index($0, marker) > 0 && replaced == 0 {
-      matched = 1
-      print
-      next
-    }
-    matched == 1 && index($0, prefix) == 1 && replaced == 0 {
-      print newline
-      replaced = 1
-      matched = 0
-      next
-    }
-    { print }
-    END {
-      if (replaced == 0) {
-        exit 3
-      }
-    }
-  ' "${file}" >"${tmp}"; then
-    rm -f "${tmp}"
-    echo "Unable to replace ${prefix} after ${marker} in ${file}" >&2
     exit 1
   fi
   replace_tmp_over_file "${tmp}" "${file}"

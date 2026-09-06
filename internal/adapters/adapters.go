@@ -47,12 +47,6 @@ func SharedCredentialsApplyToAgent(agent string) bool {
 	return false
 }
 
-// CredentialContainerPaths returns the merged container-side mount paths
-// for every adapter-scoped and shared credential key.
-func CredentialContainerPaths() map[string]string {
-	return credentialContainerPathsForProviders(nil)
-}
-
 // CredentialContainerPathsForProviders returns container-side mount paths for
 // shared credential keys and the adapter-scoped credential keys of the
 // requested supported provider ids.

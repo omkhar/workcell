@@ -17,7 +17,7 @@ import (
 // non-existent leaf components are tolerated.
 //
 // Strict=true mirrors the runtimeutil path canonicalizer used by
-// container injection: ExpandUserPathStrict is used (unknown ~user
+// container injection: strict user-path expansion is used (unknown ~user
 // fails), the empty input is rejected, and the result still flows
 // through ResolveBestEffort so callers can canonicalize paths whose
 // leaf has not been created yet (e.g. injection bundle outputs).

@@ -55,7 +55,7 @@ Without a mode flag, the script prints a human-readable summary.
 EOF
 }
 
-NPM_BIN="${WORKCELL_NPM_BIN:-}"
+NPM_BIN=""
 
 resolve_npm_bin() {
   if [[ -n "${NPM_BIN}" && -x "${NPM_BIN}" ]]; then

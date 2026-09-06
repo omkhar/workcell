@@ -423,26 +423,6 @@ workcell_codex_rules_mutability() {
   esac
 }
 
-workcell_codex_rules_promoted_for_session_assurance() {
-  local configured_mutability=""
-  local assurance=""
-
-  configured_mutability="$(workcell_codex_rules_mutability)"
-  assurance="$(workcell_session_assurance)"
-  [[ "${configured_mutability}" == "readonly" ]] &&
-    [[ "${assurance}" == "lower-assurance-package-mutation" ]]
-}
-
-workcell_codex_rules_promoted_for_prompt_autonomy() {
-  local configured_mutability=""
-  local autonomy=""
-
-  configured_mutability="$(workcell_codex_rules_mutability)"
-  autonomy="$(workcell_current_agent_autonomy)"
-  [[ "${configured_mutability}" == "readonly" ]] &&
-    [[ "${autonomy}" == "prompt" ]]
-}
-
 workcell_codex_rules_effective_reason() {
   local configured_mutability=""
   local autonomy=""

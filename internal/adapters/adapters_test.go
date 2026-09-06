@@ -13,7 +13,7 @@ import (
 
 // Parity assertions for the credential / reserved-target tables: every
 // non-empty credential key has a container mount path, every scoped key
-// is also present in CredentialContainerPaths, no key is both shared
+// is also present in the merged container paths, no key is both shared
 // and adapter-scoped.
 
 func TestProviderRegistryMatchesProviderIDOrder(t *testing.T) {
@@ -67,7 +67,7 @@ func TestCredentialContainerPathsForProvidersCoversSupportedProviders(t *testing
 }
 
 func TestScopedCredentialKeysHaveContainerPaths(t *testing.T) {
-	paths := CredentialContainerPaths()
+	paths := credentialContainerPathsForProviders(nil)
 	for provider, keys := range AgentScopedCredentialKeys() {
 		for key := range keys {
 			if _, ok := paths[key]; !ok {
@@ -78,7 +78,7 @@ func TestScopedCredentialKeysHaveContainerPaths(t *testing.T) {
 }
 
 func TestSharedCredentialKeysHaveContainerPaths(t *testing.T) {
-	paths := CredentialContainerPaths()
+	paths := credentialContainerPathsForProviders(nil)
 	for key := range SharedCredentialKeys() {
 		if _, ok := paths[key]; !ok {
 			t.Errorf("shared credential key %q has no container path", key)
@@ -128,7 +128,7 @@ func TestReservedTargetsAreCleanAndUnique(t *testing.T) {
 
 func TestCredentialContainerPathsRootedAtHostInputs(t *testing.T) {
 	const wantPrefix = "/opt/workcell/host-inputs/credentials/"
-	paths := CredentialContainerPaths()
+	paths := credentialContainerPathsForProviders(nil)
 	keys := make([]string, 0, len(paths))
 	for k := range paths {
 		keys = append(keys, k)

@@ -75,16 +75,10 @@ func run(args []string) error {
 	// helper table used to call; no behavioural change.
 	case "auth-cli":
 		return cmdHelperAuthCli(args[1:])
-	case "auth-usage":
-		return cmdHelperAuthUsage(args[1:])
 	case "policy-cli":
 		return cmdHelperPolicyCli(args[1:])
-	case "policy-usage":
-		return cmdHelperPolicyUsage(args[1:])
 	case "publish-pr-cli":
 		return cmdHelperPublishPRCli(args[1:])
-	case "publish-pr-usage":
-		return cmdHelperPublishPRUsage(args[1:])
 	case "session-usage":
 		return cmdHelperSessionUsage(args[1:])
 	case "session-attach-cli":
@@ -111,8 +105,6 @@ func run(args []string) error {
 		return runtimebuilder.Main(args[1:], os.Stdout)
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
-	case "support-bundle-usage":
-		return cmdHelperSupportBundleUsage(args[1:])
 	default:
 		return usage()
 	}
@@ -120,11 +112,6 @@ func run(args []string) error {
 
 func cmdHelperSupportBundleCli(args []string) error {
 	return supportbundle.Run(args, os.Stdout, os.Stderr)
-}
-
-func cmdHelperSupportBundleUsage(_ []string) error {
-	fmt.Print(supportbundle.UsageText())
-	return nil
 }
 
 // runHostutilPolicy dispatches the absorbed workcell-manage-injection-policy
@@ -348,23 +335,8 @@ func cmdHelperSessionUsage(_ []string) error {
 	return nil
 }
 
-func cmdHelperAuthUsage(_ []string) error {
-	fmt.Print(authpolicy.AuthUsageText())
-	return nil
-}
-
 func cmdHelperAuthCli(args []string) error {
 	return authpolicy.AuthMain(args)
-}
-
-func cmdHelperPolicyUsage(_ []string) error {
-	fmt.Print(authpolicy.PolicyUsageText())
-	return nil
-}
-
-func cmdHelperPublishPRUsage(_ []string) error {
-	fmt.Print(publishpr.UsageText())
-	return nil
 }
 
 // cmdHelperPolicyCli is the top-level `workcell-hostutil policy-cli`
@@ -1065,7 +1037,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|launcher|policy|resolve-credentials|pty-transcript|auth-cli|auth-usage|policy-cli|policy-usage|publish-pr-cli|publish-pr-usage|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli|support-bundle-usage> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-sign-head|support-bundle-cli> [args...]"}
 }
 
 func pathUsage() error {

@@ -1,9 +1,8 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 # Bounded-retry wrapper for transient network / package-fetch steps in CI.
 #
-# Runs the given command and, if it fails, retries it up to
-# WORKCELL_RETRY_ATTEMPTS times (default 3) with a WORKCELL_RETRY_DELAY-second
-# sleep between attempts (default 5), doubling the delay after each failure so a
+# Runs the given command and, if it fails, retries it up to 3 times with a
+# 5-second sleep between attempts, doubling the delay after each failure so a
 # brief registry/network hiccup does not fail an otherwise-green lane.
 #
 # Only wrap network-flaky, idempotent commands (toolchain and package fetches,
@@ -19,17 +18,8 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
-attempts="${WORKCELL_RETRY_ATTEMPTS:-3}"
-delay="${WORKCELL_RETRY_DELAY:-5}"
-
-if ! [[ "${attempts}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "scripts/retry.sh: WORKCELL_RETRY_ATTEMPTS must be a positive integer, got '${attempts}'" >&2
-  exit 2
-fi
-if ! [[ "${delay}" =~ ^[0-9]+$ ]]; then
-  echo "scripts/retry.sh: WORKCELL_RETRY_DELAY must be a non-negative integer, got '${delay}'" >&2
-  exit 2
-fi
+attempts=3
+delay=5
 
 attempt=1
 while true; do

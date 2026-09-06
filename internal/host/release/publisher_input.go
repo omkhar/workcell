@@ -18,7 +18,6 @@ var (
 	repositoryPattern = regexp.MustCompile(
 		`^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,37}[A-Za-z0-9])/[A-Za-z0-9._-]{1,100}$`,
 	)
-	toolchainPattern = regexp.MustCompile(`^go(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 	gitObjectPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
@@ -66,13 +65,6 @@ func validateRepository(repository string) error {
 	_, name, _ := strings.Cut(repository, "/")
 	if name == "." || name == ".." {
 		return inputErrorf("GitHub repository must be one safe OWNER/REPO identifier, got %q", repository)
-	}
-	return nil
-}
-
-func validateToolchain(toolchain string) error {
-	if !toolchainPattern.MatchString(toolchain) {
-		return inputErrorf("toolchain must be exact goX.Y.Z, got %q", toolchain)
 	}
 	return nil
 }

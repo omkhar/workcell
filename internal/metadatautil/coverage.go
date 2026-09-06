@@ -19,7 +19,7 @@ func CoveragePercent(reportPath string) (float64, error) {
 		return 0, err
 	}
 	if totals, ok := report["totals"].(map[string]any); ok {
-		if percent, ok := jsonNumberToFloat64(totals["percent_covered"]); ok {
+		if percent, ok := totals["percent_covered"].(float64); ok {
 			return percent, nil
 		}
 	}
@@ -27,7 +27,7 @@ func CoveragePercent(reportPath string) (float64, error) {
 		if entry, ok := data[0].(map[string]any); ok {
 			if totals, ok := entry["totals"].(map[string]any); ok {
 				if lines, ok := totals["lines"].(map[string]any); ok {
-					if percent, ok := jsonNumberToFloat64(lines["percent"]); ok {
+					if percent, ok := lines["percent"].(float64); ok {
 						return percent, nil
 					}
 				}
@@ -102,17 +102,4 @@ func CoverageExecutables(messagePath string) ([]string, error) {
 		}
 	}
 	return unique, nil
-}
-
-func jsonNumberToFloat64(value any) (float64, bool) {
-	switch typed := value.(type) {
-	case float64:
-		return typed, true
-	case json.Number:
-		parsed, err := typed.Float64()
-		if err == nil {
-			return parsed, true
-		}
-	}
-	return 0, false
 }
