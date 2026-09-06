@@ -100,9 +100,9 @@ func runExtractDirectMounts(manifestPath, mountSpecPath string, beforeManifestWr
 }
 
 func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
-	var directMounts []DirectMount
+	directMounts := make([]DirectMount, 0)
 
-	if rawCredentials, ok := manifest["credentials"]; ok && rawCredentials != nil {
+	if rawCredentials := manifest["credentials"]; rawCredentials != nil {
 		credentials, err := asObjectMap(rawCredentials, "credentials")
 		if err != nil {
 			return nil, err
@@ -120,7 +120,7 @@ func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
 		}
 	}
 
-	if rawCopies, ok := manifest["copies"]; ok && rawCopies != nil {
+	if rawCopies := manifest["copies"]; rawCopies != nil {
 		copies, err := asArray(rawCopies, "copies")
 		if err != nil {
 			return nil, err
@@ -140,8 +140,8 @@ func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
 		}
 	}
 
-	rawSSH, ok := manifest["ssh"]
-	if !ok || rawSSH == nil {
+	rawSSH := manifest["ssh"]
+	if rawSSH == nil {
 		return sortDirectMounts(directMounts), nil
 	}
 
@@ -151,7 +151,7 @@ func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
 	}
 
 	for _, key := range []string{"config", "known_hosts"} {
-		if rawEntry, ok := ssh[key]; ok && rawEntry != nil {
+		if rawEntry := ssh[key]; rawEntry != nil {
 			entry, err := asObjectMap(rawEntry, "ssh."+key)
 			if err != nil {
 				return nil, err
@@ -164,7 +164,7 @@ func collectDirectMounts(manifest map[string]any) ([]DirectMount, error) {
 		}
 	}
 
-	if rawIdentities, ok := ssh["identities"]; ok && rawIdentities != nil {
+	if rawIdentities := ssh["identities"]; rawIdentities != nil {
 		identities, err := asArray(rawIdentities, "ssh.identities")
 		if err != nil {
 			return nil, err
