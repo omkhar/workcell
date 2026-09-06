@@ -826,8 +826,8 @@ func TestCopyDirContentsUsesOpenedDirectoryAfterPathSwap(t *testing.T) {
 	if err := os.MkdirAll(staged, 0o755); err != nil {
 		t.Fatalf("MkdirAll staged: %v", err)
 	}
-	if err := copyDirContents(source, sourceParent, staged); err != nil {
-		t.Fatalf("copyDirContents: %v", err)
+	if err := copyDirContentsWithState(source, sourceParent, staged, newInjectionDestinationState(), newInjectionTreeBudget()); err != nil {
+		t.Fatalf("copyDirContentsWithState: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(staged, "secret.txt"))
 	if err != nil {

@@ -67,9 +67,6 @@ func accountInjectionFileSize(size int64, source string, budget *injectionTreeBu
 // bind-mounted rather than copied. Direct mounts skip the read paths, so this is
 // where their material enters the shared budget.
 func accountInjectionSourceSize(source Path, budget *injectionTreeBudget) error {
-	if budget == nil {
-		return nil
-	}
 	info, err := os.Stat(source.String())
 	if err != nil {
 		return err

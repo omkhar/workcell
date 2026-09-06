@@ -187,25 +187,6 @@ func stageDirectMountEntry(hostSource, stagedSource string, budget *injectionTre
 	}
 }
 
-// copyDirContents mirrors "cp -R src/. dst" with one cautious-staging
-// divergence: symlinks under src are skipped with a log warning rather
-// than being dereferenced.  The legacy bash helper relied on `cp -R`
-// which would have followed the link target, but a symlink inside a
-// host-input source can escape the staging root entirely
-// (e.g. `~/.aws/credentials -> /etc/passwd`) and surface arbitrary
-// host files inside the container.  Skipping matches the cautious-
-// staging discipline applied elsewhere in injection: validate strictly
-// and refuse anything that cannot be vouched for.  The warning gives
-// the operator enough signal to notice that an expected file did not
-// land in the container.
-//
-// Source traversal is anchored to opened directory descriptors. Each child is
-// opened with openat(O_NOFOLLOW), so a parent path swapped after validation
-// cannot redirect staging to a different host tree.
-func copyDirContents(src *os.File, srcDisplay, dst string) error {
-	return copyDirContentsWithState(src, srcDisplay, dst, newInjectionDestinationState(), newInjectionTreeBudget())
-}
-
 // validateInjectionDirectoryDescendants checks each descendant through an
 // opened directory descriptor. It never builds a path from an unchecked name.
 func validateInjectionDirectoryDescendants(source *os.File) error {
@@ -271,6 +252,22 @@ func validateInjectionDirectoryEntriesWith(
 	return nil
 }
 
+// copyDirContentsWithState mirrors "cp -R src/. dst" with one cautious-staging
+// divergence: symlinks under src are skipped with a log warning rather
+// than being dereferenced.  The legacy bash helper relied on `cp -R`
+// which would have followed the link target, but a symlink inside a
+// host-input source can escape the staging root entirely
+// (e.g. `~/.aws/credentials -> /etc/passwd`) and surface arbitrary
+// host files inside the container.  Skipping matches the cautious-
+// staging discipline applied elsewhere in injection: validate strictly
+// and refuse anything that cannot be vouched for.  The warning gives
+// the operator enough signal to notice that an expected file did not
+// land in the container.
+//
+// Source traversal is anchored to opened directory descriptors. Each child is
+// opened with openat(O_NOFOLLOW), so a parent path swapped after validation
+// cannot redirect staging to a different host tree. The destination
+// reservations and the input budget are shared with every recursive level.
 func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState, budget *injectionTreeBudget) error {
 	// Read one entry past the remaining allowance so an oversized directory is
 	// refused without materialising its whole listing.
