@@ -92,23 +92,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		copyFixtureFile(tb, srcRoot, dstRoot, relativePath)
 	}
 
-	return metadatautil.PinnedInputsConfig{
-		RuntimeDockerfilePath:    filepath.Join(dstRoot, "runtime", "container", "Dockerfile"),
-		ValidatorDockerfilePath:  filepath.Join(dstRoot, "tools", "validator", "Dockerfile"),
-		ProvidersPackageJSONPath: filepath.Join(dstRoot, "runtime", "container", "providers", "package.json"),
-		ProvidersPackageLockPath: filepath.Join(dstRoot, "runtime", "container", "providers", "package-lock.json"),
-		WorkflowsDir:             filepath.Join(dstRoot, ".github", "workflows"),
-		CIWorkflowPath:           filepath.Join(dstRoot, ".github", "workflows", "ci.yml"),
-		ReleaseWorkflowPath:      filepath.Join(dstRoot, ".github", "workflows", "release.yml"),
-		PinHygieneWorkflowPath:   filepath.Join(dstRoot, ".github", "workflows", "pin-hygiene.yml"),
-		CodeownersPath:           filepath.Join(dstRoot, ".github", "CODEOWNERS"),
-		CodexRequirementsPath:    filepath.Join(dstRoot, "adapters", "codex", "requirements.toml"),
-		CodexMCPConfigPath:       filepath.Join(dstRoot, "adapters", "codex", "mcp", "config.toml"),
-		HostedControlsPolicyPath: filepath.Join(dstRoot, "policy", "github-hosted-controls.toml"),
-		HostedControlsScriptPath: filepath.Join(dstRoot, "scripts", "verify-github-hosted-controls.sh"),
-		ProviderBumpPolicyPath:   filepath.Join(dstRoot, "policy", "provider-bumps.toml"),
-		MaxDebianSnapshotAgeDays: 60,
-	}
+	return metadatautil.NewPinnedInputsConfig(dstRoot, 60)
 }
 
 func rewriteFile(tb testing.TB, path string, rewrite func(string) string) {

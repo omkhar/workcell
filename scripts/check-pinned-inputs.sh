@@ -9,20 +9,6 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOCKERFILE_PATH="${ROOT_DIR}/runtime/container/Dockerfile"
-VALIDATOR_DOCKERFILE_PATH="${ROOT_DIR}/tools/validator/Dockerfile"
-PROVIDERS_PACKAGE_JSON_PATH="${ROOT_DIR}/runtime/container/providers/package.json"
-PROVIDERS_PACKAGE_LOCK_PATH="${ROOT_DIR}/runtime/container/providers/package-lock.json"
-WORKFLOWS_DIR="${ROOT_DIR}/.github/workflows"
-CI_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/ci.yml"
-RELEASE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/release.yml"
-PIN_HYGIENE_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/pin-hygiene.yml"
-CODEOWNERS_PATH="${ROOT_DIR}/.github/CODEOWNERS"
-CODEX_REQUIREMENTS_PATH="${ROOT_DIR}/adapters/codex/requirements.toml"
-CODEX_MCP_CONFIG_PATH="${ROOT_DIR}/adapters/codex/mcp/config.toml"
-HOSTED_CONTROLS_POLICY_PATH="${ROOT_DIR}/policy/github-hosted-controls.toml"
-HOSTED_CONTROLS_SCRIPT_PATH="${ROOT_DIR}/scripts/verify-github-hosted-controls.sh"
-PROVIDER_BUMP_POLICY_PATH="${ROOT_DIR}/policy/provider-bumps.toml"
 MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
 
 GO_BIN="${WORKCELL_GO_BIN:-}"
@@ -50,4 +36,4 @@ resolve_go_bin() {
 
 resolve_go_bin
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-pinned-inputs "${DOCKERFILE_PATH}" "${VALIDATOR_DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${PROVIDERS_PACKAGE_LOCK_PATH}" "${WORKFLOWS_DIR}" "${CI_WORKFLOW_PATH}" "${RELEASE_WORKFLOW_PATH}" "${PIN_HYGIENE_WORKFLOW_PATH}" "${CODEOWNERS_PATH}" "${CODEX_REQUIREMENTS_PATH}" "${CODEX_MCP_CONFIG_PATH}" "${HOSTED_CONTROLS_POLICY_PATH}" "${HOSTED_CONTROLS_SCRIPT_PATH}" "${PROVIDER_BUMP_POLICY_PATH}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-pinned-inputs "${ROOT_DIR}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}")

@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -32,6 +33,30 @@ type PinnedInputsConfig struct {
 	HostedControlsScriptPath string
 	ProviderBumpPolicyPath   string
 	MaxDebianSnapshotAgeDays int
+}
+
+// NewPinnedInputsConfig derives the repo-standard pinned-input paths
+// from repoRoot. The path layout is fixed by the repository; only the
+// root and the snapshot-age budget vary between the live tree and test
+// fixtures.
+func NewPinnedInputsConfig(repoRoot string, maxDebianSnapshotAgeDays int) PinnedInputsConfig {
+	return PinnedInputsConfig{
+		RuntimeDockerfilePath:    filepath.Join(repoRoot, "runtime", "container", "Dockerfile"),
+		ValidatorDockerfilePath:  filepath.Join(repoRoot, "tools", "validator", "Dockerfile"),
+		ProvidersPackageJSONPath: filepath.Join(repoRoot, "runtime", "container", "providers", "package.json"),
+		ProvidersPackageLockPath: filepath.Join(repoRoot, "runtime", "container", "providers", "package-lock.json"),
+		WorkflowsDir:             filepath.Join(repoRoot, ".github", "workflows"),
+		CIWorkflowPath:           filepath.Join(repoRoot, ".github", "workflows", "ci.yml"),
+		ReleaseWorkflowPath:      filepath.Join(repoRoot, ".github", "workflows", "release.yml"),
+		PinHygieneWorkflowPath:   filepath.Join(repoRoot, ".github", "workflows", "pin-hygiene.yml"),
+		CodeownersPath:           filepath.Join(repoRoot, ".github", "CODEOWNERS"),
+		CodexRequirementsPath:    filepath.Join(repoRoot, "adapters", "codex", "requirements.toml"),
+		CodexMCPConfigPath:       filepath.Join(repoRoot, "adapters", "codex", "mcp", "config.toml"),
+		HostedControlsPolicyPath: filepath.Join(repoRoot, "policy", "github-hosted-controls.toml"),
+		HostedControlsScriptPath: filepath.Join(repoRoot, "scripts", "verify-github-hosted-controls.sh"),
+		ProviderBumpPolicyPath:   filepath.Join(repoRoot, "policy", "provider-bumps.toml"),
+		MaxDebianSnapshotAgeDays: maxDebianSnapshotAgeDays,
+	}
 }
 
 type markdownlintPackageJSON struct {
