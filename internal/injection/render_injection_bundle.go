@@ -389,14 +389,12 @@ func pathMaterialSHA256(path Path) (string, error) {
 	if info.IsDir() {
 		hasher := sha256.New()
 		hasher.Write([]byte("dir\n"))
+		// The tree passed the input limits during validation, but it is host
+		// material that can change before this walk, so the fingerprint charges
+		// its own budget instead of trusting the earlier accounting.
+		budget := newInjectionTreeBudget()
 		children := []string{}
-		if err := filepath.WalkDir(path.String(), func(current string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if current == path.String() {
-				return nil
-			}
+		if err := walkInjectionTree(path.String(), budget, func(current string, _ fs.DirEntry) error {
 			children = append(children, current)
 			return nil
 		}); err != nil {
@@ -426,7 +424,14 @@ func pathMaterialSHA256(path Path) (string, error) {
 				hasher.Write([]byte("dir:" + relative + "\n"))
 			case info.Mode().IsRegular():
 				hasher.Write([]byte("file:" + relative + "\n"))
-				data, err := os.ReadFile(child)
+				file, err := os.Open(child)
+				if err != nil {
+					return "", fmt.Errorf("read %s: %w", child, err)
+				}
+				data, err := readInjectionFile(file, child, budget)
+				if closeErr := file.Close(); err == nil {
+					err = closeErr
+				}
 				if err != nil {
 					return "", fmt.Errorf("read %s: %w", child, err)
 				}

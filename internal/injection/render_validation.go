@@ -93,21 +93,6 @@ func anySlice(values any, label string) ([]any, error) {
 	}
 }
 
-func ensureNoSymlinksWithin(root Path) error {
-	return filepath.WalkDir(root.String(), func(current string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if current == root.String() {
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("directory injections must not contain symlinks: %s", current)
-		}
-		return nil
-	})
-}
-
 func directMountEntry(source Path, mountPath string) map[string]string {
 	return map[string]string{
 		"source":     source.String(),
@@ -260,24 +245,18 @@ func validateSecretTreeWithBudget(source Path, label string, budget *injectionTr
 	if err := requireSecretOwnerOnly(source, label); err != nil {
 		return err
 	}
-	if err := ensureNoSymlinksWithin(source); err != nil {
-		return err
-	}
-	return filepath.WalkDir(source.String(), func(current string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if current == source.String() {
-			return nil
+	// One bounded walk does the link, ownership, and budget checks together.
+	// A separate symlink pass ran unbounded ahead of the accounting, so a very
+	// large directory level was materialised before any limit applied.
+	return walkInjectionTree(source.String(), budget, func(current string, entry fs.DirEntry) error {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("directory injections must not contain symlinks: %s", current)
 		}
 		child := Path(current)
 		if err := requireNoSymlink(child, label); err != nil {
 			return err
 		}
 		if err := requireSecretOwnerOnly(child, label); err != nil {
-			return err
-		}
-		if err := budget.addEntries(source.String(), 1); err != nil {
 			return err
 		}
 		if !entry.Type().IsRegular() {

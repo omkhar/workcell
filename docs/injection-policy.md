@@ -384,6 +384,10 @@ The byte and entry counts are the total of all selected inputs in that pass.
 A selected directory counts each descendant against the entry allowance.
 Workcell rejects the render when a selected input passes an allowance.
 
+Workcell fingerprints a selected directory for the manifest.
+That fingerprint reads the tree again with the same file, byte, and entry
+allowance, because the host material can change after the first check.
+
 Workcell accepts at most 4,096 bytes for a direct-mount source path.
 Workcell accepts at most 4,096 bytes for a direct-mount mount path.
 Workcell accepts at most 4,096 entries in one direct-mount specification.

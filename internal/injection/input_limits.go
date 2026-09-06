@@ -4,9 +4,12 @@
 package injection
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 )
 
 // Injection inputs are operator-selected host material. These limits bound
@@ -99,6 +102,42 @@ func readInjectionFile(reader io.Reader, source string, budget *injectionTreeBud
 		budget.bytes += int64(len(data))
 	}
 	return data, nil
+}
+
+// walkInjectionTree visits every descendant of root and charges it against the
+// budget as it goes. It is the bounded replacement for filepath.WalkDir on an
+// injection input: each level is read one entry past the remaining allowance,
+// so an oversized directory level is refused before it is materialised. It does
+// not follow symbolic links.
+func walkInjectionTree(root string, budget *injectionTreeBudget, visit func(string, fs.DirEntry) error) error {
+	directory, err := os.Open(root)
+	if err != nil {
+		return err
+	}
+	entries, err := directory.ReadDir(budget.remainingEntries() + 1)
+	// Close before recursing so a deep tree does not hold one descriptor per level.
+	closeErr := directory.Close()
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := budget.addEntries(root, len(entries)); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		current := filepath.Join(root, entry.Name())
+		if err := visit(current, entry); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if err := walkInjectionTree(current, budget, visit); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // readInjectionPath opens one regular file through the no-follow direct-mount

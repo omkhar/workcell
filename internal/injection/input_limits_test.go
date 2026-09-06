@@ -451,6 +451,64 @@ func TestCopyOpenFileWithModeBoundsUndersizedReportedSize(t *testing.T) {
 	})
 }
 
+// The secret-tree symlink scan used to run as a separate unbounded walk ahead
+// of the accounting, so it reached a symlink past the entry allowance. One
+// bounded walk now stops at the allowance first.
+func TestValidateSecretTreeBoundsTheWalkBeforeTheSymlinkScan(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "secret")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index <= maxInjectionTreeEntries; index++ {
+		writeSparseInjectionFile(t, filepath.Join(source, "file-"+strconv.Itoa(index)), 0)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	err := validateSecretTree(Path(source), "copies.source")
+	if err == nil || !strings.Contains(err.Error(), "aggregate entry limit") {
+		t.Fatalf("validateSecretTree error = %v, want aggregate entry limit", err)
+	}
+}
+
+// The directory fingerprint reads host material that can change after
+// validation, so it enforces the limits itself.
+func TestPathMaterialSHA256BoundsDirectoryMaterial(t *testing.T) {
+	t.Run("per-file limit", func(t *testing.T) {
+		source := t.TempDir()
+		writeSparseInjectionFile(t, filepath.Join(source, "oversize"), maxInjectionFileBytes+1)
+		if _, err := pathMaterialSHA256(Path(source)); err == nil || !strings.Contains(err.Error(), "per-file limit") {
+			t.Fatalf("pathMaterialSHA256 error = %v, want per-file limit", err)
+		}
+	})
+
+	t.Run("aggregate entry limit", func(t *testing.T) {
+		source := t.TempDir()
+		for index := 0; index <= maxInjectionTreeEntries; index++ {
+			writeSparseInjectionFile(t, filepath.Join(source, "file-"+strconv.Itoa(index)), 0)
+		}
+		if _, err := pathMaterialSHA256(Path(source)); err == nil || !strings.Contains(err.Error(), "aggregate entry limit") {
+			t.Fatalf("pathMaterialSHA256 error = %v, want aggregate entry limit", err)
+		}
+	})
+
+	t.Run("accepts a tree inside the limits", func(t *testing.T) {
+		source := t.TempDir()
+		if err := os.Mkdir(filepath.Join(source, "nested"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(source, "nested", "file"), []byte("material"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sum, err := pathMaterialSHA256(Path(source))
+		if err != nil || sum == "" {
+			t.Fatalf("pathMaterialSHA256 = %q, %v", sum, err)
+		}
+	})
+}
+
 func writeSparseInjectionFile(t *testing.T, path string, size int64) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
