@@ -75,45 +75,31 @@ func CreateReleaseImageHandoff(archivePath, outputPath, repository, runID, tag, 
 }
 
 func inspectReleaseImageArchive(path, manifestDigest, configDigest string) (releaseImageIndex, releaseImageManifest, string, error) {
+	var index releaseImageIndex
+	var manifest releaseImageManifest
 	file, err := os.Open(path)
 	if err != nil {
-		return releaseImageIndex{}, releaseImageManifest{}, "", err
+		return index, manifest, "", err
 	}
 	defer file.Close()
 	archiveDigest, err := hashAndRewindReleaseImage(file)
 	if err != nil {
-		return releaseImageIndex{}, releaseImageManifest{}, "", err
+		return index, manifest, "", err
 	}
-	reader := tar.NewReader(file)
-	layoutBytes, indexBytes, manifestBytes, configBytes, err := readReleaseImageMembers(reader, manifestDigest, configDigest)
-	if err != nil {
-		return releaseImageIndex{}, releaseImageManifest{}, "", err
+	members := releaseImageMembers{
+		manifestName: releaseImageBlobName(manifestDigest),
+		configName:   releaseImageBlobName(configDigest),
+		seen:         map[string]struct{}{},
 	}
-	index, manifest, err := decodeAndValidateReleaseImage(layoutBytes, indexBytes, manifestBytes, configBytes, manifestDigest, configDigest)
+	if err := members.collect(tar.NewReader(file)); err != nil {
+		return index, manifest, "", err
+	}
+	index, manifest, err = members.decode()
 	return index, manifest, archiveDigest, err
 }
 
-func decodeAndValidateReleaseImage(layoutBytes, indexBytes, manifestBytes, configBytes []byte, manifestDigest, configDigest string) (releaseImageIndex, releaseImageManifest, error) {
-	index, manifest, err := decodeReleaseImageDocuments(indexBytes, manifestBytes)
-	if err != nil {
-		return index, manifest, err
-	}
-	if err := validateReleaseImageLayout(layoutBytes); err != nil {
-		return index, manifest, err
-	}
-	err = validateReleaseImageBlobs(manifestBytes, manifestDigest, configBytes, configDigest)
-	return index, manifest, err
-}
-
-func validateReleaseImageLayout(content []byte) error {
-	var layout releaseImageLayout
-	if err := json.Unmarshal(content, &layout); err != nil {
-		return fmt.Errorf("parse OCI layout: %w", err)
-	}
-	if layout.Version != "1.0.0" {
-		return fmt.Errorf("unsupported OCI image layout version %q", layout.Version)
-	}
-	return nil
+func releaseImageBlobName(digest string) string {
+	return "blobs/sha256/" + strings.TrimPrefix(digest, "sha256:")
 }
 
 func hashAndRewindReleaseImage(file *os.File) (string, error) {
@@ -123,48 +109,6 @@ func hashAndRewindReleaseImage(file *os.File) (string, error) {
 	}
 	_, err := file.Seek(0, io.SeekStart)
 	return hex.EncodeToString(hash.Sum(nil)), err
-}
-
-func validateReleaseImageBlobs(manifest []byte, manifestDigest string, config []byte, configDigest string) error {
-	if err := validateReleaseImageBlob(manifest, manifestDigest); err != nil {
-		return err
-	}
-	return validateReleaseImageBlob(config, configDigest)
-}
-
-func validateReleaseImageBlob(content []byte, digest string) error {
-	actual := sha256.Sum256(content)
-	if hex.EncodeToString(actual[:]) != strings.TrimPrefix(digest, "sha256:") {
-		return fmt.Errorf("OCI blob content does not match %s", digest)
-	}
-	return nil
-}
-
-func decodeReleaseImageDocuments(indexBytes, manifestBytes []byte) (releaseImageIndex, releaseImageManifest, error) {
-	var index releaseImageIndex
-	var manifest releaseImageManifest
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		return index, manifest, fmt.Errorf("parse OCI index: %w", err)
-	}
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return index, manifest, fmt.Errorf("parse OCI manifest: %w", err)
-	}
-	return index, manifest, nil
-}
-
-func readReleaseImageMembers(reader *tar.Reader, manifestDigest, configDigest string) ([]byte, []byte, []byte, []byte, error) {
-	members := releaseImageMembers{
-		manifestName: "blobs/sha256/" + strings.TrimPrefix(manifestDigest, "sha256:"),
-		configName:   "blobs/sha256/" + strings.TrimPrefix(configDigest, "sha256:"),
-		seen:         map[string]struct{}{},
-	}
-	if err := collectReleaseImageMembers(reader, &members); err != nil {
-		return nil, nil, nil, nil, err
-	}
-	if err := requireReleaseImageMembers(members.layout, members.index, members.manifest, members.config); err != nil {
-		return nil, nil, nil, nil, err
-	}
-	return members.layout, members.index, members.manifest, members.config, nil
 }
 
 type releaseImageMembers struct {
@@ -177,31 +121,82 @@ type releaseImageMembers struct {
 	config       []byte
 }
 
-func collectReleaseImageMembers(reader *tar.Reader, members *releaseImageMembers) error {
+func (members *releaseImageMembers) collect(reader *tar.Reader) error {
 	for {
-		done, err := readReleaseImageMember(reader, members)
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		if done {
-			return nil
+		name, err := validateReleaseImageMember(header)
+		if err != nil {
+			return err
+		}
+		if err := members.read(reader, name); err != nil {
+			return err
 		}
 	}
 }
 
-func readReleaseImageMember(reader *tar.Reader, members *releaseImageMembers) (bool, error) {
-	header, err := reader.Next()
-	if errors.Is(err, io.EOF) {
-		return true, nil
+func (members *releaseImageMembers) read(reader io.Reader, name string) error {
+	if _, ok := members.seen[name]; ok {
+		return fmt.Errorf("release image archive contains duplicate member %q", name)
 	}
+	members.seen[name] = struct{}{}
+	var err error
+	switch {
+	case name == "oci-layout":
+		members.layout, err = readReleaseImageDocument(reader, name)
+	case name == "index.json":
+		members.index, err = readReleaseImageDocument(reader, name)
+	case validReleaseImageBlobName(name):
+		err = members.readBlob(reader, name)
+	}
+	return err
+}
+
+func (members *releaseImageMembers) readBlob(reader io.Reader, name string) error {
+	if name != members.manifestName && name != members.configName {
+		return validateReleaseImageBlobStream(reader, name)
+	}
+	content, err := readReleaseImageDocument(reader, name)
 	if err != nil {
-		return false, err
+		return err
 	}
-	name, err := validateReleaseImageMember(header)
-	if err != nil {
-		return false, err
+	if err := validateReleaseImageBlob(content, path.Base(name)); err != nil {
+		return err
 	}
-	return false, members.read(reader, name)
+	if name == members.manifestName {
+		members.manifest = content
+	}
+	if name == members.configName {
+		members.config = content
+	}
+	return nil
+}
+
+func (members *releaseImageMembers) decode() (releaseImageIndex, releaseImageManifest, error) {
+	var index releaseImageIndex
+	var manifest releaseImageManifest
+	if len(members.layout) == 0 || len(members.index) == 0 || len(members.manifest) == 0 || len(members.config) == 0 {
+		return index, manifest, errors.New("release image archive lacks the OCI layout, index, bound manifest, or config")
+	}
+	if err := json.Unmarshal(members.index, &index); err != nil {
+		return index, manifest, fmt.Errorf("parse OCI index: %w", err)
+	}
+	if err := json.Unmarshal(members.manifest, &manifest); err != nil {
+		return index, manifest, fmt.Errorf("parse OCI manifest: %w", err)
+	}
+	var layout releaseImageLayout
+	if err := json.Unmarshal(members.layout, &layout); err != nil {
+		return index, manifest, fmt.Errorf("parse OCI layout: %w", err)
+	}
+	if layout.Version != "1.0.0" {
+		return index, manifest, fmt.Errorf("unsupported OCI image layout version %q", layout.Version)
+	}
+	return index, manifest, nil
 }
 
 func validateReleaseImageMember(header *tar.Header) (string, error) {
@@ -212,17 +207,13 @@ func validateReleaseImageMember(header *tar.Header) (string, error) {
 	if path.Clean(name) != name {
 		return "", fmt.Errorf("release image archive contains non-canonical member %q", header.Name)
 	}
-	if !validReleaseImageMemberType(header.Typeflag) {
+	if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir {
 		return "", fmt.Errorf("release image archive contains special member %q", header.Name)
 	}
 	if !validReleaseImageMemberName(name, header.Typeflag == tar.TypeDir) {
 		return "", fmt.Errorf("release image archive contains unexpected member %q", header.Name)
 	}
 	return name, nil
-}
-
-func validReleaseImageMemberType(typeflag byte) bool {
-	return typeflag == tar.TypeReg || typeflag == tar.TypeRegA || typeflag == tar.TypeDir
 }
 
 func validReleaseImageMemberName(name string, directory bool) bool {
@@ -233,73 +224,12 @@ func validReleaseImageMemberName(name string, directory bool) bool {
 }
 
 func validReleaseImageBlobName(name string) bool {
-	const prefix = "blobs/sha256/"
-	encoded := strings.TrimPrefix(name, prefix)
+	encoded := strings.TrimPrefix(name, "blobs/sha256/")
 	if encoded == name || len(encoded) != 64 {
 		return false
 	}
 	_, err := hex.DecodeString(encoded)
 	return err == nil
-}
-
-func recordReleaseImageMember(seen map[string]struct{}, name string) error {
-	if _, ok := seen[name]; ok {
-		return fmt.Errorf("release image archive contains duplicate member %q", name)
-	}
-	seen[name] = struct{}{}
-	return nil
-}
-
-func requireReleaseImageMembers(layoutBytes, indexBytes, manifestBytes, configBytes []byte) error {
-	if len(layoutBytes) == 0 || len(indexBytes) == 0 || len(manifestBytes) == 0 || len(configBytes) == 0 {
-		return errors.New("release image archive lacks the OCI layout, index, bound manifest, or config")
-	}
-	return nil
-}
-
-func (members *releaseImageMembers) read(reader io.Reader, name string) error {
-	if err := recordReleaseImageMember(members.seen, name); err != nil {
-		return err
-	}
-	if validReleaseImageBlobName(name) {
-		return members.readBlob(reader, name)
-	}
-	var err error
-	if name == "index.json" {
-		members.index, err = readReleaseImageDocument(reader, name)
-	}
-	if name == "oci-layout" {
-		members.layout, err = readReleaseImageDocument(reader, name)
-	}
-	return err
-}
-
-func (members *releaseImageMembers) readBlob(reader io.Reader, name string) error {
-	if !members.isBoundBlob(name) {
-		return validateReleaseImageBlobStream(reader, name)
-	}
-	content, err := readReleaseImageDocument(reader, name)
-	if err != nil {
-		return err
-	}
-	if err := validateReleaseImageBlob(content, "sha256:"+path.Base(name)); err != nil {
-		return err
-	}
-	members.storeBoundBlob(name, content)
-	return nil
-}
-
-func (members *releaseImageMembers) isBoundBlob(name string) bool {
-	return name == members.manifestName || name == members.configName
-}
-
-func (members *releaseImageMembers) storeBoundBlob(name string, content []byte) {
-	if name == members.manifestName {
-		members.manifest = content
-	}
-	if name == members.configName {
-		members.config = content
-	}
 }
 
 func readReleaseImageDocument(reader io.Reader, name string) ([]byte, error) {
@@ -311,6 +241,14 @@ func readReleaseImageDocument(reader io.Reader, name string) ([]byte, error) {
 		return nil, fmt.Errorf("release image document %q exceeds %d bytes", name, maxReleaseImageDocumentSize)
 	}
 	return content, nil
+}
+
+func validateReleaseImageBlob(content []byte, encoded string) error {
+	actual := sha256.Sum256(content)
+	if hex.EncodeToString(actual[:]) != encoded {
+		return fmt.Errorf("OCI blob content does not match sha256:%s", encoded)
+	}
+	return nil
 }
 
 func validateReleaseImageBlobStream(reader io.Reader, name string) error {
@@ -325,35 +263,18 @@ func validateReleaseImageBlobStream(reader io.Reader, name string) error {
 }
 
 func validateReleaseImageDescriptor(index releaseImageIndex, platform, digest string) error {
-	osName, architecture, err := splitReleaseImagePlatform(platform)
-	if err != nil {
-		return err
+	osName, architecture, ok := strings.Cut(platform, "/")
+	if !ok || osName == "" || architecture == "" {
+		return fmt.Errorf("invalid release image platform %q", platform)
 	}
-	matches := countReleaseImageDescriptors(index, digest, osName, architecture)
+	matches := 0
+	for _, descriptor := range index.Manifests {
+		if descriptor.Digest == digest && descriptor.Platform.OS == osName && descriptor.Platform.Architecture == architecture {
+			matches++
+		}
+	}
 	if matches != 1 {
 		return fmt.Errorf("release image must contain one %s descriptor for %s, found %d", platform, digest, matches)
 	}
 	return nil
-}
-
-func splitReleaseImagePlatform(platform string) (string, string, error) {
-	osName, architecture, ok := strings.Cut(platform, "/")
-	if !ok || osName == "" || architecture == "" {
-		return "", "", fmt.Errorf("invalid release image platform %q", platform)
-	}
-	return osName, architecture, nil
-}
-
-func countReleaseImageDescriptors(index releaseImageIndex, digest, osName, architecture string) int {
-	matches := 0
-	for _, descriptor := range index.Manifests {
-		if releaseImageDescriptorMatches(descriptor.Digest, descriptor.Platform.OS, descriptor.Platform.Architecture, digest, osName, architecture) {
-			matches++
-		}
-	}
-	return matches
-}
-
-func releaseImageDescriptorMatches(actualDigest, actualOS, actualArchitecture, digest, osName, architecture string) bool {
-	return actualDigest == digest && actualOS == osName && actualArchitecture == architecture
 }

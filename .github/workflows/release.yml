@@ -915,6 +915,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs:
+      - tag-policy
       - preflight
       - install-verification
       - build-amd64-image
@@ -1260,8 +1261,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          [[ "${AMD64_ARTIFACT_DIGEST}" =~ ^[0-9a-f]{64}$ ]]
-          [[ "${ARM64_ARTIFACT_DIGEST}" =~ ^[0-9a-f]{64}$ ]]
+          grep -Eq '^[0-9a-f]{64}$' <<<"${AMD64_ARTIFACT_DIGEST}"
+          grep -Eq '^[0-9a-f]{64}$' <<<"${ARM64_ARTIFACT_DIGEST}"
 
           for arch in amd64 arm64; do
             artifact="dist/image-${arch}/workcell-${arch}.oci.tar"
@@ -1501,8 +1502,8 @@ jobs:
           EXPECTED_ARM64_MANIFEST: ${{ needs.preflight-arm64-repro.outputs.image_manifest_digest }}
           EXPECTED_ARM64_CONFIG: ${{ needs.preflight-arm64-repro.outputs.config_digest }}
         run: |
-          [[ "${EXPECTED_ARTIFACT_DIGEST}" =~ ^[0-9a-f]{64}$ ]]
-          [[ "${EXPECTED_SUBJECT_ARTIFACT_DIGEST}" =~ ^[0-9a-f]{64}$ ]]
+          grep -Eq '^[0-9a-f]{64}$' <<<"${EXPECTED_ARTIFACT_DIGEST}"
+          grep -Eq '^[0-9a-f]{64}$' <<<"${EXPECTED_SUBJECT_ARTIFACT_DIGEST}"
           test "$(find dist -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 11
           test -z "$(find dist -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
           test "$(jq -c 'keys | sort' dist/workcell-release-handoff.json)" = '["commit","image_archive_sha256","image_digest","platforms","repository","run_id","tag"]'
@@ -1715,8 +1716,8 @@ jobs:
         with:
           subject-path: dist/SHA256SUMS
 
-      - id: upload_signed
-        name: Upload workflow artifacts
+      - name: Upload workflow artifacts
+        id: upload_signed
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: workcell-release-artifacts
