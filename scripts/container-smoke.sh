@@ -4735,7 +4735,7 @@ run_container_stdin claude bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3
     test -f "$HOME/.mcp.json"
     test -L "$HOME/.mcp.json"
     test -f /etc/claude-code/managed-settings.json
-    jq -r ".disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^allow$"
+    jq -r ".permissions.disableBypassPermissionsMode" /etc/claude-code/managed-settings.json | grep -q "^disable$"
     jq -r ".hooks.PreToolUse[0].hooks[0].command" "$HOME/.claude/settings.json" | grep -q "guard-bash.sh"
   '
   run_as_runtime_user() {

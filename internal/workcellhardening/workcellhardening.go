@@ -277,13 +277,13 @@ const jobValidateRelPath = "scripts/ci/job-validate.sh"
 // ${ROOT_DIR}/.github/workflows/release.yml.
 const releaseWorkflowRelPath = ".github/workflows/release.yml"
 
-// codexManagedConfigRelPath and codexRequirementsRelPath are the repo-relative
-// paths to the two Codex adapter rule files.  The adapter-rule/guard-bash block
-// reads both (via the per-check targetFile field) for its provider-mediation
-// bypass-path invariants, mirroring the shell `grep -Fq` probes that ran against
-// ${ROOT_DIR}/adapters/codex/managed_config.toml and
-// ${ROOT_DIR}/adapters/codex/requirements.toml in the codex_rule_file loop.
-const codexManagedConfigRelPath = "adapters/codex/managed_config.toml"
+// codexDefaultRulesRelPath and codexRequirementsRelPath are the repo-relative
+// paths to the two Codex adapter rule files that actually carry prefix rules —
+// the execpolicy rules file and the admin requirements layer.  The
+// adapter-rule/guard-bash block reads both (via the per-check targetFile field)
+// for its provider-mediation bypass-path invariants.  managed_config.toml is not
+// one of them: the config-layer schema has no rules table.
+const codexDefaultRulesRelPath = "adapters/codex/.codex/rules/default.rules"
 const codexRequirementsRelPath = "adapters/codex/requirements.toml"
 
 // claudeGuardBashRelPath is the repo-relative path to the Claude adapter Bash
@@ -2823,7 +2823,7 @@ func adapterRuleGuardBashChecks() []check {
 	// mediation-bypass guard) was a two-needle `||` and is two ordered
 	// kindPresent checks sharing one message.
 	for _, f := range []struct{ path, base string }{
-		{codexManagedConfigRelPath, "managed_config.toml"},
+		{codexDefaultRulesRelPath, "default.rules"},
 		{codexRequirementsRelPath, "requirements.toml"},
 	} {
 		cs = append(cs,
@@ -4380,24 +4380,23 @@ func CheckClaudeGuardBashHook(settingsPath string) error {
 }
 
 // claudeManagedBypassChecks holds the single Claude managed-settings
-// bypass-permissions invariant migrated out of scripts/verify-invariants.sh (the
-// `if ! jq -e '.disableBypassPermissionsMode == "allow"'` guard).  It is a
-// kindJSONExprEval check whose RHS literal is the JSON string "allow".
+// bypass-permissions invariant.  The documented key lives under `permissions`
+// and the managed baseline pins it to "disable", so this is a kindJSONExprEval
+// check whose RHS literal is the JSON string "disable".
 var claudeManagedBypassChecks = []check{
 	{
 		kind:            kindJSONExprEval,
 		targetFile:      claudeManagedSettingsRelPath,
-		jsonPath:        ".disableBypassPermissionsMode",
-		jsonExpectedRaw: `"allow"`,
-		message:         "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary",
+		jsonPath:        ".permissions.disableBypassPermissionsMode",
+		jsonExpectedRaw: `"disable"`,
+		message:         "Claude managed settings must disable bypass-permissions mode under the external Workcell boundary",
 	},
 }
 
 // CheckClaudeManagedBypass runs the single Claude managed-settings
 // bypass-permissions invariant against the repo rooted at rootDir.  It returns
-// nil when .disableBypassPermissionsMode is the JSON string "allow" (the shell's
-// exit 0), or an error whose message equals the shell's stderr (the shell's exit
-// 1).
+// nil when .permissions.disableBypassPermissionsMode is the JSON string
+// "disable", or an error carrying the invariant's message.
 func CheckClaudeManagedBypass(rootDir string) error {
 	return evaluate(rootDir, claudeManagedBypassChecks)
 }
