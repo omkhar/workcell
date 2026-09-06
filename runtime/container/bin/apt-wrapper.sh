@@ -1,5 +1,8 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
 set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
+readonly PATH
+unset BASH_ENV ENV
 
 command_name="${0##*/}"
 real_command="/usr/bin/${command_name}"
@@ -36,4 +39,4 @@ if [[ ! -x "${helper_command}" ]]; then
   exit 127
 fi
 
-exec sudo -n --preserve-env=DEBIAN_FRONTEND,DEBCONF_NONINTERACTIVE_SEEN,APT_LISTCHANGES_FRONTEND "${helper_command}" "${command_name}" "$@"
+exec /usr/local/libexec/workcell/sudo-wrapper.sh -n --preserve-env=DEBIAN_FRONTEND,DEBCONF_NONINTERACTIVE_SEEN,APT_LISTCHANGES_FRONTEND "${helper_command}" "${command_name}" "$@"

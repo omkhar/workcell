@@ -1,4 +1,14 @@
 *
+!go.mod
+!go.sum
+!internal/
+!internal/aptbroker/
+!internal/aptbroker/**
+!cmd/
+!cmd/workcell-apt-broker-client/
+!cmd/workcell-apt-broker-client/**
+!cmd/workcell-apt-broker-server/
+!cmd/workcell-apt-broker-server/**
 !adapters/
 !adapters/**
 !runtime/

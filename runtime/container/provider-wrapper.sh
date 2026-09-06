@@ -1,8 +1,9 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
 set -euo pipefail
 
 AGENT_NAME="${WORKCELL_LAUNCH_TARGET:-${0##*/}}"
-TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
 WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR:-/opt/workcell/copilot-token-handoff}"
 copilot_token_handoff_consumed_file="${WORKCELL_COPILOT_TOKEN_HANDOFF_CONTAINER_DIR}/copilot-token-consumed"
 WORKCELL_COPILOT_AUTH_REQUIRED=""
@@ -93,7 +94,6 @@ sanitize_provider_env() {
   workcell_sanitize_git_runtime_env
   export NODE_NO_WARNINGS=1
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
-  export PATH="${TRUSTED_PATH}"
 }
 
 workcell_provider_parent_is_launcher() {

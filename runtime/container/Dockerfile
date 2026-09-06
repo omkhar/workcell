@@ -188,6 +188,45 @@ RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstra
       \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
+FROM --platform=$BUILDPLATFORM ${NODE_BASE_IMAGE} AS apt-broker-builder
+
+ARG GO_VERSION=1.27.1
+ARG GO_LINUX_X86_64_SHA256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
+ARG GO_LINUX_ARM64_SHA256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
+ARG BUILDARCH
+ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Node supplies TLS before the pinned Go toolchain is available.
+RUN case "${BUILDARCH}" in \
+      amd64) GO_SHA256="${GO_LINUX_X86_64_SHA256}" ;; \
+      arm64) GO_SHA256="${GO_LINUX_ARM64_SHA256}" ;; \
+      *) echo "Unsupported Go build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
+    esac \
+  && case "${TARGETARCH}" in amd64|arm64) ;; *) echo "Unsupported Go target architecture: ${TARGETARCH}" >&2; exit 1 ;; esac \
+  && node --dns-result-order=ipv4first -e 'const { createWriteStream } = require("node:fs"); const { Readable } = require("node:stream"); const { pipeline } = require("node:stream/promises"); (async () => { const response = await fetch(process.argv[1]); if (!response.ok) throw new Error("Go download HTTP status " + response.status); await pipeline(Readable.fromWeb(response.body), createWriteStream("/tmp/go.tar.gz")); })().catch((error) => { console.error(error.message); process.exit(1); });' "https://dl.google.com/go/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
+  && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/go.tar.gz -C /usr/local \
+  && rm -f /tmp/go.tar.gz
+
+COPY --from=runtime-base --chmod=0444 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+ENV GOTOOLCHAIN=local
+ENV GOPROXY=https://proxy.golang.org
+ENV GOSUMDB=sum.golang.org
+ENV CGO_ENABLED=0
+
+WORKDIR /workcell-go
+COPY --chmod=0444 go.mod go.sum ./
+COPY --chmod=0555 internal/aptbroker ./internal/aptbroker
+COPY --chmod=0555 cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-client
+COPY --chmod=0555 cmd/workcell-apt-broker-server ./cmd/workcell-apt-broker-server
+
+RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server
+
 FROM runtime-base AS provider-builder
 
 ARG SOURCE_DATE_EPOCH
@@ -222,19 +261,19 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.260
+ARG CLAUDE_VERSION=2.1.261
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
 # consumes the signed, statically linked musl Linux CLI and code-mode host.
 # To update manually, verify all four GitHub release asset digests. Then
 # refresh both checksum values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.153.2
+ARG CODEX_VERSION=0.153.3
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.82
+ARG COPILOT_VERSION=1.0.83
 ARG CODEX_RELEASE_URL=
 ARG CODEX_CODE_MODE_HOST_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
@@ -311,11 +350,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="9811afb5f97224c2c5d3d0ee1e8c316117d298d5ec3e095d5ff0c1dd0e889ca5"; \
+      CLAUDE_SHA256="7bbed5a9b0fc2e4ec67bad3490d06ca91b86d6b037d47520b7898951757d1b8a"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="7a2fdc74b6836ea3d183f665b869f0ee3baebc9713cbebffe5838da4ea7bd82e"; \
+      CLAUDE_SHA256="4ae40dd1784e85753e742e09f267d29ecbb82890361ad3817d27560866d364a6"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -347,13 +386,13 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="878693f9b370320ea21793f99ea1f5687b7d9aa1f2c733de693d9ec0baa4e62a"; \
-      CODEX_CODE_MODE_HOST_SHA256="70fe485e6919a038b75f70be71aa5782a19a5f36ee85597301e90bd1c9bcbf07"; \
+      CODEX_SHA256="68ff7eb22937de4f6b44a30d66ba893daf280d21347408ffbf2501a28136bf19"; \
+      CODEX_CODE_MODE_HOST_SHA256="1f44b98042fe2fb09aebef487c627b4b6db0d4db3aa516420dcdd51ec7a34ace"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="e8cd1160071f725d2a10cab81073dd6818fc8b096372125d27ef6e66fdf0979e"; \
-      CODEX_CODE_MODE_HOST_SHA256="177a4507b9cc7f97f113ac034697b39f6a71a876a8bd508ff6d7f52f342ebe4a"; \
+      CODEX_SHA256="6ff9674bb00e14734c2748bc8788eab3cb6e5ac53ebde7e1e780b4ed7af48cba"; \
+      CODEX_CODE_MODE_HOST_SHA256="10ae633045d28d9d5dcd6aa75d849868e3ce9fea6ef4e669eb51d124c69aef53"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -377,7 +416,7 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
-  && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
+  && install -o 0 -g 0 -m 0755 "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
   && if [[ -n "${CODEX_CODE_MODE_HOST_RELEASE_URL}" ]]; then \
        curl --ipv4 -fsSL "${CODEX_CODE_MODE_HOST_RELEASE_URL}" \
          --retry 8 \
@@ -395,12 +434,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && echo "${CODEX_CODE_MODE_HOST_SHA256}  /tmp/codex-code-mode-host.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex-code-mode-host.tar.gz -C /tmp \
-  && mv "/tmp/codex-code-mode-host-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex-code-mode-host \
-  && chmod 0755 /usr/local/libexec/workcell/real/codex \
-    /usr/local/libexec/workcell/real/codex-code-mode-host \
+  && install -o 0 -g 0 -m 0755 "/tmp/codex-code-mode-host-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex-code-mode-host \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
     /usr/local/libexec/workcell/real/codex-code-mode-host \
-  && rm -f /tmp/codex.tar.gz /tmp/codex-code-mode-host.tar.gz
+  && rm -f /tmp/codex.tar.gz /tmp/codex-code-mode-host.tar.gz \
+    "/tmp/codex-${CODEX_ARCH}" "/tmp/codex-code-mode-host-${CODEX_ARCH}"
 
 RUN TARGET_ARCH="${TARGETARCH:-}" \
   && if [[ -z "${TARGET_ARCH}" ]]; then \
@@ -416,11 +454,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="86c4c77a91b1ff5dd7313cbea9f861699a2cdceb4696f3864f3f0584e9684e0f"; \
+      COPILOT_SHA256="213b3a267042dbac3cd8ae22c82f5ea04ff3cabc008108c0f895055d46be4473"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="37fa67686a9e4ed8d46dcd6a9c80ab524dea840ecaa0a3f7edf8d09f961b97a9"; \
+      COPILOT_SHA256="ffbe1c429664b8a05efed67ecdb467123e40fcaa3c6c14ef9a98ba74da4687b7"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
@@ -484,7 +522,10 @@ RUN export \
   # and survives the layer compression that a symlink would not.
   && ln /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/git \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
+  && export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so \
   && rm -rf /tmp/workcell-rust-target /workcell-rust
+
+ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 
 # Copy adapters and control-plane scripts AFTER cargo build so that changes to
 # these frequently-modified files do not invalidate the Rust compilation cache.
@@ -495,7 +536,6 @@ COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.
 COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
 COPY runtime/container/bin/sudo-wrapper.sh /usr/local/libexec/workcell/sudo-wrapper.sh
 COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
-COPY runtime/container/apt-broker.sh /usr/local/libexec/workcell/apt-broker.sh
 COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
 COPY runtime/container/detached-stdin-wrapper.sh /usr/local/libexec/workcell/detached-stdin-wrapper.sh
 COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
@@ -511,7 +551,6 @@ RUN mkdir -p /etc/claude-code \
     /etc/claude-code/managed-settings.json \
   && chmod 0444 \
     /usr/local/libexec/workcell/assurance.sh \
-    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
@@ -525,7 +564,6 @@ RUN mkdir -p /etc/claude-code \
   && chmod +x \
     /usr/local/libexec/workcell/core/launcher \
     /usr/local/libexec/workcell/assurance.sh \
-    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
@@ -557,6 +595,8 @@ COPY --from=runtime-builder /opt/workcell/adapters /opt/workcell/adapters
 COPY --from=runtime-builder /usr/local/lib/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so
 COPY --from=runtime-builder /usr/local/libexec/workcell /usr/local/libexec/workcell
 COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json
+
+ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 
 RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod 0644 /usr/local/libexec/workcell/real/git \
@@ -590,7 +630,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod +x \
     /usr/local/libexec/workcell/core/git \
     /usr/local/libexec/workcell/core/launcher \
-    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \
@@ -611,11 +650,12 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
       /usr/bin/sudo \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
+COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /usr/local/libexec/workcell/
+
 WORKDIR /workspace
 
 ENV HOME=/state/agent-home
 ENV CODEX_HOME=/state/agent-home/.codex
-ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
 # Defense-in-depth: default to the fixed unprivileged workcell UID/GID so that

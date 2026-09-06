@@ -4091,8 +4091,8 @@ func CheckRuntimeSecurityPosture(rootDir string) error {
 // via the per-check targetFile field.
 var smokeAptBrokerProbeChecks = func() []check {
 	needles := []string{
-		"slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh",
-		"/bin/bash /usr/local/libexec/workcell/apt-broker.sh",
+		"slow_apt_helper=/tmp/workcell-slow-apt-helper.sh",
+		"/usr/local/libexec/workcell/workcell-apt-broker-server --start --peer-uid 12345",
 		"sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update",
 		"slow-apt-helper-ok",
 		"expected sudo-wrapper to wait for a slow apt broker request by default",

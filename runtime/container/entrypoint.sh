@@ -1,4 +1,6 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
 set -euo pipefail
 
 AGENT_NAME="${AGENT_NAME:-}"
@@ -200,8 +202,6 @@ workcell_verify_control_plane_path "/usr/local/libexec/workcell/sudo-wrapper.sh"
 stage_copilot_token_handoff_file "$@"
 
 if workcell_should_reexec_as_runtime_user; then
-  workcell_verify_control_plane_path "/usr/local/libexec/workcell/apt-broker.sh"
-  workcell_start_apt_broker
   workcell_reexec_as_runtime_user /usr/local/libexec/workcell/entrypoint.sh "$@"
 fi
 

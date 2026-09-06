@@ -1,8 +1,9 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
 set -euo pipefail
 
 AGENT_NAME="${AGENT_NAME:-${WORKCELL_LAUNCH_TARGET:-}}"
-TRUSTED_PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
 export WORKCELL_WRAPPER_CONTEXT=1
 export ADAPTER_ROOT="/opt/workcell/adapters"
 
@@ -89,7 +90,6 @@ sanitize_development_env() {
   unset OTEL_LOGS_EXPORTER
   workcell_sanitize_git_runtime_env
   export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
-  export PATH="${TRUSTED_PATH}"
 }
 
 # shellcheck source=runtime/container/assurance.sh

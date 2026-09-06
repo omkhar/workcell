@@ -113,6 +113,7 @@ The image build path uses a larger fixed set.
 | Docker content | `production.cloudflare.docker.com:443`, `production.cloudfront.docker.com:443`, `docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443` |
 | GitHub content | `github.com:443`, `objects.githubusercontent.com:443`, `release-assets.githubusercontent.com:443` |
 | npm registry | `registry.npmjs.org:443` |
+| Go toolchain and modules | `dl.google.com:443`, `proxy.golang.org:443`, `sum.golang.org:443` |
 | Google storage | `storage.googleapis.com:443` |
 | Debian snapshot | `snapshot-cloudflare.debian.org:443`, `snapshot.debian.org:443` |
 

@@ -5784,8 +5784,8 @@ func TestCheckRuntimeSecurityPostureRealRepo(t *testing.T) {
 func smokeAptBrokerProbeHappyFiles() map[string]string {
 	return map[string]string{
 		containerSmokeRelPath: "#!/usr/bin/env bash\n" +
-			"slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh\n" +
-			"/bin/bash /usr/local/libexec/workcell/apt-broker.sh\n" +
+			"slow_apt_helper=/tmp/workcell-slow-apt-helper.sh\n" +
+			"/usr/local/libexec/workcell/workcell-apt-broker-server --start --peer-uid 12345\n" +
 			"sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update\n" +
 			"echo slow-apt-helper-ok\n" +
 			"# expected sudo-wrapper to wait for a slow apt broker request by default\n" +
@@ -5802,13 +5802,13 @@ func TestCheckSmokeAptBrokerProbe(t *testing.T) {
 		{name: "happy path all invariants hold"},
 		{
 			name:    "slow-apt-helper path probe missing",
-			needle:  "slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh)",
+			needle:  "slow_apt_helper=/tmp/workcell-slow-apt-helper.sh",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (slow_apt_helper=/tmp/workcell-slow-apt-helper.sh)",
 		},
 		{
 			name:    "apt-broker invocation probe missing",
-			needle:  "/bin/bash /usr/local/libexec/workcell/apt-broker.sh",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (/bin/bash /usr/local/libexec/workcell/apt-broker.sh)",
+			needle:  "/usr/local/libexec/workcell/workcell-apt-broker-server --start --peer-uid 12345",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (/usr/local/libexec/workcell/workcell-apt-broker-server --start --peer-uid 12345)",
 		},
 		{
 			name:    "apt-helper update probe missing",

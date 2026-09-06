@@ -111,6 +111,28 @@ The runtime container uses these controls:
 `hardening-profile-conformance` invariant checks the launcher. It also rejects
 `--privileged` and `seccomp=unconfined`.
 
+## 4b. Privileged package requests use one container-local broker
+
+Mutable sessions use a root-owned Go broker for the fixed package helper.
+The sudo compatibility wrapper does not permit arbitrary privileged commands.
+The broker checks the client's kernel-provided user identity against the mapped
+runtime user.
+
+The broker uses `/run/workcell/apt-broker/socket` inside the container.
+Root owns the socket directory with mode `0755` and the socket with mode `0666`.
+Socket permissions permit connections, but peer identity checks control request
+admission. The broker limits request size, response size, concurrent requests,
+and helper duration.
+
+Startup requires a fresh socket path. It never removes an existing path to
+start another broker. The parent checks readiness before it transfers control
+to the runtime user. The child accepts requests only after the parent confirms
+the socket state.
+
+Each fresh mutable container has one root broker startup. Nested nonroot launches use
+that broker. Replace the container if its broker state becomes unavailable or
+ambiguous. Do not remove its socket to force another startup.
+
 ## 5. Destructive or trust-widening actions need defense in depth
 
 The runtime boundary is the primary control. Provider controls add defense in

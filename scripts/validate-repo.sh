@@ -239,6 +239,7 @@ shell_files=(
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
   "${ROOT_DIR}/runtime/container/assurance.sh"
   "${ROOT_DIR}/runtime/container/development-wrapper.sh"
   "${ROOT_DIR}/runtime/container/bin/git"

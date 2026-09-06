@@ -568,7 +568,6 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/.gemini/settings.json", RuntimePath: "/opt/workcell/adapters/gemini/.gemini/settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/GEMINI.md", RuntimePath: "/opt/workcell/adapters/gemini/GEMINI.md"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
-		{Kind: "runtime-control-plane", RepoPath: "runtime/container/apt-broker.sh", RuntimePath: "/usr/local/libexec/workcell/apt-broker.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-helper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-helper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/sudo-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/sudo-wrapper.sh"},
@@ -741,7 +740,6 @@ func ControlPlaneParityRows(manifestPath string) ([]string, error) {
 		label       string
 		runtimePath string
 	}{
-		{label: "apt-broker", runtimePath: "/usr/local/libexec/workcell/apt-broker.sh"},
 		{label: "claude-managed-settings", runtimePath: "/etc/claude-code/managed-settings.json"},
 		{label: "development-wrapper", runtimePath: "/usr/local/libexec/workcell/development-wrapper.sh"},
 		{label: "detached-stdin-wrapper", runtimePath: "/usr/local/libexec/workcell/detached-stdin-wrapper.sh"},
@@ -903,15 +901,7 @@ func GenerateBuildInputManifest(
 		}
 	}
 
-	adapterContextPaths, err := walkFiles(rootDir, "adapters", "node_modules", "target")
-	if err != nil {
-		return err
-	}
-	runtimeContainerContextPaths, err := walkFiles(rootDir, filepath.Join("runtime", "container"), "node_modules", "target")
-	if err != nil {
-		return err
-	}
-	runtimeContextPaths, err := gitTrackedSubset(rootDir, append(append([]string{".dockerignore"}, adapterContextPaths...), runtimeContainerContextPaths...), requireTracked)
+	runtimeContextPaths, err := runtimeBuildContextPaths(rootDir, requireTracked)
 	if err != nil {
 		return err
 	}
@@ -993,6 +983,21 @@ func GenerateBuildInputManifest(
 		},
 	}
 	return writeJSONFile(outputPath, manifest)
+}
+
+func runtimeBuildContextPaths(rootDir string, requireTracked bool) ([]string, error) {
+	paths := []string{".dockerignore", "go.mod", "go.sum"}
+	for _, directory := range []string{
+		"adapters", "runtime/container", "internal/aptbroker",
+		"cmd/workcell-apt-broker-client", "cmd/workcell-apt-broker-server",
+	} {
+		files, err := walkFiles(rootDir, filepath.FromSlash(directory), "node_modules", "target")
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, files...)
+	}
+	return gitTrackedSubset(rootDir, paths, requireTracked)
 }
 
 func sha256HexString(text string) string {

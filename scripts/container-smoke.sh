@@ -782,6 +782,52 @@ run_container_with_injection_bundle_stdin() {
   smoke_run_container "$1" "${@:3}"
 }
 
+run_slow_apt_broker_smoke() {
+  populate_runtime_security_args ephemeral
+  docker_cmd run --rm -i --network none \
+    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
+    --user 0:0 \
+    --tmpfs "/tmp:nosuid,nodev,noexec,size=64m,mode=1777" \
+    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
+    --entrypoint /bin/bash "${IMAGE_TAG}" -s <<'SCRIPT'
+set -euo pipefail
+umask 022
+slow_apt_helper=/tmp/workcell-slow-apt-helper.sh
+cat >"${slow_apt_helper}" <<'SLOW_APT_HELPER'
+#!/bin/bash -p
+set -euo pipefail
+[[ "$1" == apt-get && "$2" == update ]]
+/usr/bin/sleep 11
+printf 'slow-apt-helper-ok\n'
+SLOW_APT_HELPER
+install -o 0 -g 0 -m 0555 "${slow_apt_helper}" /usr/local/libexec/workcell/apt-helper.sh
+install -d -o 0 -g 0 -m 0755 /run/workcell
+/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C \
+  LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so \
+  /usr/local/libexec/workcell/workcell-apt-broker-server --start --peer-uid 12345
+test "$(stat -c '%u:%g:%a' /run/workcell/apt-broker)" = 0:0:755
+test -S /run/workcell/apt-broker/socket
+test "$(stat -c '%u:%g:%a' /run/workcell/apt-broker/socket)" = 0:0:666
+SECONDS=0
+if ! /usr/bin/timeout 25s /usr/bin/setpriv --reuid 12345 --regid 12345 --clear-groups \
+  /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp \
+  LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so \
+  sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
+  >/tmp/codex-sudo-slow-apt.out 2>/tmp/codex-sudo-slow-apt.err; then
+  echo "expected sudo-wrapper to wait for a slow apt broker request by default" >&2
+  cat /tmp/codex-sudo-slow-apt.out /tmp/codex-sudo-slow-apt.err >&2
+  exit 1
+fi
+test "${SECONDS}" -ge 10
+grep -Fxq "slow-apt-helper-ok" /tmp/codex-sudo-slow-apt.out
+if [[ -s /tmp/codex-sudo-slow-apt.err ]]; then
+  echo "expected default apt broker waits to avoid timing out slow requests" >&2
+  cat /tmp/codex-sudo-slow-apt.err >&2
+  exit 1
+fi
+SCRIPT
+}
+
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
   require_tool script
@@ -1232,49 +1278,7 @@ if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get
   echo "expected sudo preserve-env to stay constrained on the apt broker path" >&2
   exit 1
 fi
-grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
-slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh
-slow_apt_broker_root=/tmp/workcell-apt-broker
-cat >"${slow_apt_helper}" <<'SLOW_APT_HELPER'
-#!/usr/bin/env bash
-set -euo pipefail
-sleep 11
-printf 'slow-apt-helper-ok\n'
-SLOW_APT_HELPER
-chmod +x "${slow_apt_helper}"
-rm -rf "${slow_apt_broker_root}"
-WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
-  WORKCELL_APT_HELPER="${slow_apt_helper}" \
-  WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
-  /bin/bash /usr/local/libexec/workcell/apt-broker.sh >/dev/null 2>&1 &
-slow_apt_broker_pid=$!
-trap 'kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true; wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true' EXIT
-for _ in $(seq 1 100); do
-  [[ -f "${slow_apt_broker_root}/pid" ]] && break
-  sleep 0.1
-done
-if [[ ! -f "${slow_apt_broker_root}/pid" ]]; then
-  echo "expected slow apt broker fixture to publish its pid file" >&2
-  exit 1
-fi
-if ! WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
-  WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
-  sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
-  >/tmp/codex-sudo-slow-apt.out 2>/tmp/codex-sudo-slow-apt.err; then
-  echo "expected sudo-wrapper to wait for a slow apt broker request by default" >&2
-  cat /tmp/codex-sudo-slow-apt.out >&2 || true
-  cat /tmp/codex-sudo-slow-apt.err >&2 || true
-  exit 1
-fi
-grep -q "slow-apt-helper-ok" /tmp/codex-sudo-slow-apt.out
-if grep -q "Workcell apt broker timed out." /tmp/codex-sudo-slow-apt.err; then
-  echo "expected default apt broker waits to avoid timing out slow requests" >&2
-  cat /tmp/codex-sudo-slow-apt.err >&2
-  exit 1
-fi
-trap - EXIT
-kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
-wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
+grep -Fxq "Workcell blocked malformed privileged package request." /tmp/codex-sudo-preserve-path.err
 apt-get --help >/dev/null
 codex --version >/dev/null
 mkdir -p /workspace/exfil
@@ -1289,10 +1293,26 @@ test ! -e /workspace/exfil/token.txt
 INNER
 SCRIPT
 
-run_container_with_injection_bundle_stdin copilot "${INJECTION_BUNDLE_ROOT}/copilot" bash -s <<'SCRIPT'
+run_slow_apt_broker_smoke
+
+run_copilot_entrypoint_smoke() {
+  local scenario="$1"
+
+  run_container_with_injection_bundle_stdin copilot "${INJECTION_BUNDLE_ROOT}/copilot" \
+    bash -s -- "${scenario}" <<'SCRIPT'
 set -euo pipefail
+scenario="$1"
+case "${scenario}" in
+  authenticated | noauth | empty) ;;
+  *) echo "unsupported Copilot entrypoint smoke scenario: ${scenario}" >&2; exit 2 ;;
+esac
 real_copilot="/usr/local/libexec/workcell/real/copilot"
 mv "${real_copilot}" "${real_copilot}.real"
+mkdir -p "${TMPDIR:-/state/tmp}"
+chmod 1777 "${TMPDIR:-/state/tmp}"
+mkdir -p /run/workcell
+chmod 0755 /run/workcell
+if [[ "${scenario}" == "authenticated" ]]; then
 cat >"${real_copilot}" <<'COPILOT_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1359,16 +1379,12 @@ done
 printf 'copilot-stub-ok\n'
 COPILOT_STUB
 chmod 0555 "${real_copilot}"
-mkdir -p "${TMPDIR:-/state/tmp}"
-chmod 1777 "${TMPDIR:-/state/tmp}"
 copilot_runtime_token_file="$(
   tr -d '\r\n' </opt/workcell/copilot-token-handoff/copilot-github-token.txt |
     USER="${WORKCELL_HOST_USER}" LOGNAME="${WORKCELL_HOST_USER}" \
       setpriv --reuid "${WORKCELL_HOST_UID}" --regid "${WORKCELL_HOST_GID}" --clear-groups /bin/bash -c $'set -euo pipefail\ntoken_file="$(mktemp "${TMPDIR:-/state/tmp}/workcell-copilot-token.XXXXXX")"\ncat >"${token_file}"\nchmod 0600 "${token_file}"\nprintf "%s\\n" "${token_file}"\n'
 )"
 rm -f /opt/workcell/copilot-token-handoff/copilot-github-token.txt
-mkdir -p /run/workcell
-chmod 0755 /run/workcell
 printf '%s\n' "${copilot_runtime_token_file}" >/run/workcell/copilot-token-file
 chmod 0444 /run/workcell/copilot-token-file
 set +e
@@ -1401,7 +1417,10 @@ if ! setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-gr
   cat /tmp/copilot-file-trace.log >&2
   exit 40
 fi
-chmod u+w "${real_copilot}"
+fi
+if [[ "${scenario}" != "authenticated" ]]; then
+rm -f /opt/workcell/copilot-token-handoff/copilot-github-token.txt
+rm -f /opt/workcell/copilot-token-handoff/copilot-token-consumed
 cat >"${real_copilot}" <<'COPILOT_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1416,7 +1435,8 @@ test -e /opt/workcell/copilot-token-handoff/copilot-token-consumed
 printf 'copilot-noauth-stub-ok\n'
 COPILOT_STUB
 chmod 0555 "${real_copilot}"
-rm -f /opt/workcell/copilot-token-handoff/copilot-token-consumed
+fi
+if [[ "${scenario}" == "noauth" ]]; then
 copilot_runtime_token_file="$(
   printf '%s\n' "copilot-smoke-token" |
     USER="${WORKCELL_HOST_USER}" LOGNAME="${WORKCELL_HOST_USER}" \
@@ -1433,6 +1453,8 @@ if ! grep -q '^copilot-noauth-stub-ok$' /tmp/copilot-noauth-stub.out; then
   echo "Copilot no-auth stub did not report success" >&2
   exit 46
 fi
+fi
+if [[ "${scenario}" == "empty" ]]; then
 rm -f /opt/workcell/copilot-token-handoff/copilot-token-consumed
 empty_copilot_runtime_token_file="$(
   USER="${WORKCELL_HOST_USER}" LOGNAME="${WORKCELL_HOST_USER}" \
@@ -1455,8 +1477,11 @@ if [[ -e /opt/workcell/copilot-token-handoff/copilot-token-consumed ]]; then
   echo "Copilot empty-token failure wrote a consumed marker before validating the token" >&2
   exit 48
 fi
+fi
+if [[ "${scenario}" == "authenticated" ]]; then
 unset WORKCELL_COPILOT_GITHUB_TOKEN COPILOT_GITHUB_TOKEN
 if WORKCELL_COPILOT_GITHUB_TOKEN=forged-copilot-token \
+  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups \
   /usr/local/bin/copilot -p smoke >/tmp/copilot-forged-env.out 2>&1; then
   echo "expected direct Copilot launcher to reject caller-supplied Workcell token env" >&2
   exit 32
@@ -1481,7 +1506,13 @@ fi
 test -d "$COPILOT_CACHE_HOME"
 test ! -e "$HOME/.config/gh/hosts.yml"
 INNER
+fi
 SCRIPT
+}
+
+for copilot_entrypoint_scenario in authenticated noauth empty; do
+  run_copilot_entrypoint_smoke "${copilot_entrypoint_scenario}"
+done
 
 COPILOT_PID1_STUB="${SMOKE_WORKSPACE}/tmp/copilot-pid1-stub"
 COPILOT_PID1_TOKEN_HANDOFF_DIR="$(copilot_token_handoff_dir_for_bundle "${INJECTION_BUNDLE_ROOT}/copilot")"
@@ -2909,6 +2940,18 @@ if run_entrypoint claude claude --append-subagent-system-prompt evil --version >
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt.out
 
+if run_entrypoint claude claude --append-subagent-system-prompt-file /workspace/prompt.txt --version >/tmp/workcell-entrypoint-claude-subagent-prompt-file.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude subagent prompt files outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt-file.out
+
+if run_entrypoint claude claude --append-subagent-system-prompt-file=/workspace/prompt.txt --version >/tmp/workcell-entrypoint-claude-subagent-prompt-file-equals.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude subagent prompt file equals syntax outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt-file-equals.out
+
 if run_entrypoint claude claude --system-prompt-file /workspace/evil.md --version >/tmp/workcell-entrypoint-claude-system-prompt-file.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude file-based system prompt overrides outside breakglass" >&2
   exit 1
@@ -3278,6 +3321,8 @@ test -f "$CODEX_HOME/config.toml"
     grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
     grep -Eq "^code_mode_host[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
     test -x /usr/local/libexec/workcell/real/codex-code-mode-host
+    test "$(stat -c '%u:%g:%a' /usr/local/libexec/workcell/real/codex)" = 0:0:755
+    test "$(stat -c '%u:%g:%a' /usr/local/libexec/workcell/real/codex-code-mode-host)" = 0:0:755
     if command -v python3 >/tmp/python-which.out 2>&1; then
       echo "expected runtime image to omit python3 from the operator PATH" >&2
       exit 1

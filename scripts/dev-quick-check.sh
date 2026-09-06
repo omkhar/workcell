@@ -75,6 +75,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-requirements-coverage.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
   "${ROOT_DIR}/runtime/container/development-wrapper.sh"
   "${ROOT_DIR}/runtime/container/home-control-plane.sh"
   "${ROOT_DIR}/runtime/container/provider-wrapper.sh"

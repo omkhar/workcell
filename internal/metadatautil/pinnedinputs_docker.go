@@ -38,7 +38,13 @@ func validateDockerPinnedInputs(cfg PinnedInputsConfig, repoRoot, runtimeDockerf
 	if err := validator.validateDockerPackageSets(); err != nil {
 		return err
 	}
-	return validator.validateValidatorToolInputs()
+	if err := validator.validateValidatorToolInputs(); err != nil {
+		return err
+	}
+	if err := validator.validateAptBrokerBuildInputs(); err != nil {
+		return err
+	}
+	return validateRuntimeBuildPreload(runtimeDockerfile, cfg.RuntimeDockerfilePath)
 }
 
 type dockerPinnedInputValidator struct {
@@ -166,7 +172,8 @@ func (validator *dockerPinnedInputValidator) validateProviderInstallCommands() e
 		{`install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot`, "executable Copilot runtime artifact install"},
 		{`codex-code-mode-host-\$\{CODEX_ARCH\}\.tar\.gz`, "Codex code-mode host release download URL"},
 		{`echo "\$\{CODEX_CODE_MODE_HOST_SHA256\}  /tmp/codex-code-mode-host\.tar\.gz" \| sha256sum -c -`, "Codex code-mode host archive checksum verification"},
-		{`/usr/local/libexec/workcell/real/codex-code-mode-host`, "Codex code-mode host runtime artifact install"},
+		{`(?m)^[\t ]*&& install -o 0 -g 0 -m 0755 "/tmp/codex-\$\{CODEX_ARCH\}" /usr/local/libexec/workcell/real/codex[\t ]+\\[\t ]*$`, "root-owned Codex runtime artifact install"},
+		{`(?m)^[\t ]*&& install -o 0 -g 0 -m 0755 "/tmp/codex-code-mode-host-\$\{CODEX_ARCH\}" /usr/local/libexec/workcell/real/codex-code-mode-host[\t ]+\\[\t ]*$`, "root-owned Codex code-mode host runtime artifact install"},
 	}
 	for _, requirement := range requirements {
 		if _, _, err := requireRegex(validator.runtimeDockerfile, requirement.pattern, requirement.label, validator.cfg.RuntimeDockerfilePath); err != nil {
@@ -359,6 +366,204 @@ func (validator *dockerPinnedInputValidator) validateValidatorDeadcode() error {
 	}
 	if !pinnedReleaseTagPattern.MatchString(version) {
 		return fmt.Errorf("DEADCODE_VERSION must be an exact pinned release, found %q", version)
+	}
+	return nil
+}
+
+func (validator *dockerPinnedInputValidator) validateAptBrokerBuildInputs() error {
+	stage, err := validator.aptBrokerBuilderStage()
+	if err != nil {
+		return err
+	}
+	pins, err := validator.validateAptBrokerGoPins(stage)
+	if err != nil {
+		return err
+	}
+	expected := fmt.Sprintf(aptBrokerBuilderStageTemplate, pins.version, pins.amd64Digest, pins.arm64Digest)
+	if stage != expected {
+		return errors.New("runtime/container/Dockerfile apt broker builder stage must match the reviewed canonical stage")
+	}
+	return firstPinnedInputError(validator.validateAptBrokerRuntimeInstall, validator.validateAptBrokerContext)
+}
+
+// Keep the complete context canonical: later ignore rules can undo inclusions.
+func (validator *dockerPinnedInputValidator) validateAptBrokerContext() error {
+	const expected = `*
+!go.mod
+!go.sum
+!internal/
+!internal/aptbroker/
+!internal/aptbroker/**
+!cmd/
+!cmd/workcell-apt-broker-client/
+!cmd/workcell-apt-broker-client/**
+!cmd/workcell-apt-broker-server/
+!cmd/workcell-apt-broker-server/**
+!adapters/
+!adapters/**
+!runtime/
+!runtime/container/
+!runtime/container/**
+!tools/markdownlint/
+!tools/markdownlint/**
+tools/markdownlint/node_modules/
+runtime/container/providers/node_modules/
+runtime/container/rust/target/
+runtime/container/rust/fuzz/target/
+runtime/container/rust/fuzz/artifacts/
+runtime/container/rust/fuzz/coverage/
+`
+	content, err := readText(filepath.Join(filepath.Dir(validator.goModPath), ".dockerignore"))
+	if err != nil {
+		return err
+	}
+	if content != expected {
+		return errors.New(".dockerignore must match the reviewed runtime build context")
+	}
+	return nil
+}
+
+func (validator *dockerPinnedInputValidator) aptBrokerBuilderStage() (string, error) {
+	const (
+		stageStart = "FROM --platform=$BUILDPLATFORM ${NODE_BASE_IMAGE} AS apt-broker-builder\n"
+		stageEnd   = "FROM runtime-base AS provider-builder\n"
+	)
+	if err := requireDockerStageAliasCount(validator.runtimeDockerfile, "apt-broker-builder", 1, validator.cfg.RuntimeDockerfilePath); err != nil {
+		return "", err
+	}
+	if strings.Count(validator.runtimeDockerfile, stageStart) != 1 {
+		return "", errors.New("runtime/container/Dockerfile must contain exactly one apt broker builder stage")
+	}
+	stage, err := requireDelimitedText(validator.runtimeDockerfile, stageStart, stageEnd, "apt broker builder stage", validator.cfg.RuntimeDockerfilePath)
+	return stage, err
+}
+
+type aptBrokerGoPins struct {
+	version     string
+	amd64Digest string
+	arm64Digest string
+}
+
+func (validator *dockerPinnedInputValidator) validateAptBrokerGoPins(stage string) (aptBrokerGoPins, error) {
+	var pins aptBrokerGoPins
+	var err error
+	pins.version, err = validator.validateAptBrokerGoPin(stage, "GO_VERSION", "apt broker Go version")
+	if err != nil {
+		return aptBrokerGoPins{}, err
+	}
+	pins.amd64Digest, err = validator.validateAptBrokerGoPin(stage, "GO_LINUX_X86_64_SHA256", "apt broker amd64 Go digest")
+	if err != nil {
+		return aptBrokerGoPins{}, err
+	}
+	pins.arm64Digest, err = validator.validateAptBrokerGoPin(stage, "GO_LINUX_ARM64_SHA256", "apt broker arm64 Go digest")
+	return pins, err
+}
+
+func (validator *dockerPinnedInputValidator) validateAptBrokerGoPin(stage, name, label string) (string, error) {
+	runtimeValue, err := requireArg(stage, name, validator.cfg.RuntimeDockerfilePath)
+	if err != nil {
+		return "", err
+	}
+	validatorValue, err := requireArg(validator.validatorDockerfile, name, validator.cfg.ValidatorDockerfilePath)
+	if err != nil {
+		return "", err
+	}
+	if err := requireEqual(label, runtimeValue, validator.cfg.RuntimeDockerfilePath, validatorValue, validator.cfg.ValidatorDockerfilePath); err != nil {
+		return "", err
+	}
+	return runtimeValue, nil
+}
+
+const aptBrokerBuilderStageTemplate = `
+ARG GO_VERSION=%s
+ARG GO_LINUX_X86_64_SHA256=%s
+ARG GO_LINUX_ARM64_SHA256=%s
+ARG BUILDARCH
+ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Node supplies TLS before the pinned Go toolchain is available.
+RUN case "${BUILDARCH}" in \
+      amd64) GO_SHA256="${GO_LINUX_X86_64_SHA256}" ;; \
+      arm64) GO_SHA256="${GO_LINUX_ARM64_SHA256}" ;; \
+      *) echo "Unsupported Go build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
+    esac \
+  && case "${TARGETARCH}" in amd64|arm64) ;; *) echo "Unsupported Go target architecture: ${TARGETARCH}" >&2; exit 1 ;; esac \
+  && node --dns-result-order=ipv4first -e 'const { createWriteStream } = require("node:fs"); const { Readable } = require("node:stream"); const { pipeline } = require("node:stream/promises"); (async () => { const response = await fetch(process.argv[1]); if (!response.ok) throw new Error("Go download HTTP status " + response.status); await pipeline(Readable.fromWeb(response.body), createWriteStream("/tmp/go.tar.gz")); })().catch((error) => { console.error(error.message); process.exit(1); });' "https://dl.google.com/go/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
+  && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/go.tar.gz -C /usr/local \
+  && rm -f /tmp/go.tar.gz
+
+COPY --from=runtime-base --chmod=0444 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+ENV GOTOOLCHAIN=local
+ENV GOPROXY=https://proxy.golang.org
+ENV GOSUMDB=sum.golang.org
+ENV CGO_ENABLED=0
+
+WORKDIR /workcell-go
+COPY --chmod=0444 go.mod go.sum ./
+COPY --chmod=0555 internal/aptbroker ./internal/aptbroker
+COPY --chmod=0555 cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-client
+COPY --chmod=0555 cmd/workcell-apt-broker-server ./cmd/workcell-apt-broker-server
+
+RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server
+
+`
+
+func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeInstall() error {
+	runtimeStage, err := validator.aptBrokerRuntimeStage()
+	if err != nil {
+		return err
+	}
+	const install = "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /usr/local/libexec/workcell/"
+	const installBoundary = install + "\n\nWORKDIR /workspace\n"
+	if err := requireTextCount(runtimeStage, installBoundary, 1, "apt broker runtime install boundary", validator.cfg.RuntimeDockerfilePath); err != nil {
+		return err
+	}
+	parts := strings.SplitN(runtimeStage, installBoundary, 2)
+	if regexp.MustCompile(`(?mi)^[\t ]*(?:RUN|COPY|ADD|WORKDIR)[\t ]`).MatchString(parts[1]) {
+		return errors.New("runtime/container/Dockerfile must not mutate the filesystem after the apt broker runtime install")
+	}
+	return validator.validateAptBrokerRuntimeBinaries(runtimeStage)
+}
+
+func (validator *dockerPinnedInputValidator) aptBrokerRuntimeStage() (string, error) {
+	const stageStart = "FROM runtime-base AS runtime\n"
+	if strings.Count(validator.runtimeDockerfile, stageStart) != 1 {
+		return "", errors.New("runtime/container/Dockerfile must contain exactly one final runtime stage")
+	}
+	stage := strings.SplitN(validator.runtimeDockerfile, stageStart, 2)[1]
+	if regexp.MustCompile(`(?mi)^[\t ]*FROM[\t ]`).MatchString(stage) {
+		return "", errors.New("runtime/container/Dockerfile final runtime stage must be the last Docker stage")
+	}
+	return stage, nil
+}
+
+func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(runtimeStage string) error {
+	for _, binary := range []string{"workcell-apt-broker-client", "workcell-apt-broker-server"} {
+		if err := requireTextCount(runtimeStage, binary, 1, "apt broker runtime binary", validator.cfg.RuntimeDockerfilePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireTextCount(text, needle string, want int, label, path string) error {
+	if count := strings.Count(text, needle); count != want {
+		return fmt.Errorf("%s in %s must occur exactly %d time(s), found %d", label, path, want, count)
+	}
+	return nil
+}
+
+func requireDockerStageAliasCount(text, alias string, want int, path string) error {
+	pattern := `(?mi)^[\t ]*FROM[^\r\n]*[\t ]+AS[\t ]+` + regexp.QuoteMeta(alias) + `[\t ]*$`
+	count := len(regexp.MustCompile(pattern).FindAllStringIndex(text, -1))
+	if count != want {
+		return fmt.Errorf("Docker stage alias %s in %s must occur exactly %d time(s), found %d", alias, path, want, count)
 	}
 	return nil
 }
