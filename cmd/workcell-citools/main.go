@@ -35,6 +35,7 @@ import (
 	"github.com/omkhar/workcell/internal/metadatautil"
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/scenarios"
 	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
@@ -584,7 +585,12 @@ func cmdDockerWorkspaceBindMount(args []string) error {
 }
 
 func cmdCanonicalizePath(args []string) error {
-	value, err := metadatautil.CanonicalizePath(args[0])
+	// Best-effort semantics with an explicit empty-input rejection,
+	// preserved from the former metadatautil.CanonicalizePath wrapper.
+	if args[0] == "" {
+		return pathutil.ErrEmptyPath
+	}
+	value, err := pathutil.CanonicalizePath(args[0], pathutil.Options{})
 	if err != nil {
 		return err
 	}

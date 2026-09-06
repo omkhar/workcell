@@ -38,13 +38,7 @@ type localAsset struct {
 	name    string
 	size    int64
 	sha256  string
-	content assetReadCloser
-}
-
-type assetReadCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
+	content io.ReadSeekCloser
 }
 
 type assetSourceStat struct {

@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/omkhar/workcell/internal/injection"
+	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/runtimeutil"
 )
 
@@ -42,7 +43,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		var value string
-		value, err = runtimeutil.CanonicalizePath(args[1])
+		value, err = pathutil.CanonicalizePath(args[1], pathutil.Options{Strict: true})
 		if err == nil {
 			fmt.Fprintln(stdout, value)
 			return 0

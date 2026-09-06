@@ -7,6 +7,7 @@ import (
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -254,7 +255,7 @@ func TestRunRenderInjectionBundleMergesNetworkEndpoints(t *testing.T) {
 	// Union must keep BOTH the credential-derived Google auth endpoints and
 	// the operator [network].allow_endpoints entry.
 	for _, want := range []string{"accounts.google.com:443", "oauth2.googleapis.com:443", "sts.googleapis.com:443", "registry.internal.example:443"} {
-		if !containsString(extra, want) {
+		if !slices.Contains(extra, want) {
 			t.Fatalf("extra_endpoints %#v missing %q (allow must union, not clobber, credential endpoints)", extra, want)
 		}
 	}
@@ -274,13 +275,4 @@ func stringsFromAny(value any) []string {
 		}
 	}
 	return out
-}
-
-func containsString(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
