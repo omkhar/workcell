@@ -5,6 +5,7 @@ package injection
 
 import (
 	"fmt"
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,7 +40,7 @@ var docSchemaKeyCell = regexp.MustCompile("^\\|\\s*`([A-Za-z0-9_]+)`\\s*\\|")
 // not accepted, or accepted but not documented.
 func schemaScopeSets() map[string]map[string]struct{} {
 	return map[string]map[string]struct{}{
-		"root":              allowedRootPolicyKeys,
+		"root":              injectionpolicy.RootPolicyKeys,
 		"documents":         providerid.DocumentKeySet(),
 		"credentials":       mapKeysSet(sortedKeys(credentialContainerPaths)),
 		"credentials-entry": allowedCredentialEntryKeys,
