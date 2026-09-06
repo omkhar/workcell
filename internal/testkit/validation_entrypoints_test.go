@@ -1611,9 +1611,44 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 	}
 
 	const commitTemplateStart = `cat >"${commit_file}" <<'EOF'
-^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)`
+^F Refresh pinned upstreams (pr-parity passed; upstream maintenance)`
 	if !strings.Contains(script, commitTemplateStart) {
 		t.Fatalf("%s must generate the reviewed Risk-Aware upstream-refresh commit subject", scriptPath)
+	}
+}
+
+func TestPublishUpstreamRefreshPRMetadataSupportsTimestampOnlyCandidate(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataStart := strings.Index(string(content), `title="Refresh pinned upstreams"`)
+	if metadataStart < 0 {
+		t.Fatalf("%s does not contain refresh metadata", scriptPath)
+	}
+	metadata := string(content[metadataStart:])
+	checks := []struct {
+		text    string
+		present bool
+	}{
+		{"apply the exact upstream refresh candidate from the reviewed workflow", true},
+		{"apply the exact reviewed upstream refresh candidate", true},
+		{"preserve the candidate patch, tree, and changed-file bindings", true},
+		{"provider pins", false},
+		{"toolchain inputs", false},
+		{"helper versions", false},
+		{"image digests", false},
+		{"install tools", false},
+		{"provider maintenance", false},
+	}
+	for _, check := range checks {
+		actual := strings.Contains(metadata, check.text)
+		if actual != check.present {
+			t.Fatalf("%s refresh metadata presence for %q = %t, want %t", scriptPath, check.text, actual, check.present)
+		}
 	}
 }
 
