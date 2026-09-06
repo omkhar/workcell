@@ -216,6 +216,13 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 func TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus(t *testing.T) {
 	t.Parallel()
 
+	pins := readUpdaterFixturePins(t)
+	plan := updaterTargetDebianPlan()
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	fixtureRoot := writeUpdaterFixture(t, updaterManifestFromPlan(plan), 0o640)
+
 	testCases := []struct {
 		name       string
 		plan       string
@@ -234,14 +241,10 @@ func TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			pins := readUpdaterFixturePins(t)
-			plan := updaterTargetDebianPlan()
-			fixtureRoot := writeUpdaterFixture(t, updaterManifestFromPlan(plan), 0o640)
-			toolsRoot := t.TempDir()
 			options := defaultUpdaterFixtureOptions()
 			options.ProviderPlan = testCase.plan
 			options.ProviderPlanCode = testCase.planCode
-			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), buildUpdaterFixtureCITools(t, toolsRoot), writeUpdaterFixtureGoWrapper(t, toolsRoot), pins, plan, "--check", options)
+			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, "--check", options)
 			if run.Code != testCase.wantCode {
 				t.Fatalf("update-upstream-pins exit code = %d, want %d\n%s", run.Code, testCase.wantCode, run.Output)
 			}
