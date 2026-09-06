@@ -4757,7 +4757,8 @@ func (c check) holds(text, rootDir string) bool {
 		block := extractGoFunctionBlock(text, c.functionName)
 		return strings.Contains(block, c.pattern)
 	case kindFirstLineRegex:
-		return regexp.MustCompile(c.regex).MatchString(firstLine(text))
+		first, _, _ := strings.Cut(text, "\n")
+		return regexp.MustCompile(c.regex).MatchString(first)
 	case kindPresent:
 		return strings.Contains(text, c.pattern)
 	case kindPresentInAnyFile:
@@ -4975,15 +4976,6 @@ func regexMatchesAnyLine(pattern, text string) bool {
 		}
 	}
 	return false
-}
-
-// firstLine returns text up to (but excluding) the first newline,
-// mirroring the single line that `head -n1` feeds to grep.
-func firstLine(text string) string {
-	if i := strings.IndexByte(text, '\n'); i >= 0 {
-		return text[:i]
-	}
-	return text
 }
 
 // extractNamedFunctionBlock replicates the shell's

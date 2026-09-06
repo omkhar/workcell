@@ -61,6 +61,12 @@ type subcommand struct {
 	handler func(args []string) error
 }
 
+// hardeningCheck adapts a workcellhardening check taking one path
+// argument to the subcommand handler signature.
+func hardeningCheck(check func(string) error) func(args []string) error {
+	return func(args []string) error { return check(args[0]) }
+}
+
 func subcommands() []subcommand {
 	return []subcommand{
 		{"generate-control-plane-manifest", "ROOT_DIR OUTPUT_PATH", 2, 2, cmdGenerateControlPlaneManifest},
@@ -118,52 +124,52 @@ func subcommands() []subcommand {
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
 		{"upstream-get", "PROFILE [VERSION TARGET]", 1, 3, cmdUpstreamGet},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
-		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, cmdWorkcellHardeningInvariants},
-		{"workcell-config-safety", "ROOT_DIR", 1, 1, cmdWorkcellConfigSafety},
-		{"workcell-runtime-invariants", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeInvariants},
-		{"workcell-managed-profile-staging", "ROOT_DIR", 1, 1, cmdWorkcellManagedProfileStaging},
-		{"workcell-bootstrap-egress", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapEgress},
-		{"workcell-bootstrap-audit", "ROOT_DIR", 1, 1, cmdWorkcellBootstrapAudit},
-		{"workcell-git-index-shadow", "ROOT_DIR", 1, 1, cmdWorkcellGitIndexShadow},
-		{"workcell-publish-pr-shadow", "ROOT_DIR", 1, 1, cmdWorkcellPublishPrShadow},
-		{"workcell-shadow-enum-egress", "ROOT_DIR", 1, 1, cmdWorkcellShadowEnumEgress},
-		{"workcell-home-seed-provider-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellHomeSeedProviderWrapper},
-		{"workcell-copilot-token-handoff", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoff},
-		{"workcell-copilot-docker-run", "ROOT_DIR", 1, 1, cmdWorkcellCopilotDockerRun},
-		{"workcell-provider-launcher-authority", "ROOT_DIR", 1, 1, cmdWorkcellProviderLauncherAuthority},
-		{"workcell-copilot-policy-wrapper", "ROOT_DIR", 1, 1, cmdWorkcellCopilotPolicyWrapper},
-		{"workcell-copilot-unsafe-flags", "ROOT_DIR", 1, 1, cmdWorkcellCopilotUnsafeFlags},
-		{"workcell-copilot-release-verify", "ROOT_DIR", 1, 1, cmdWorkcellCopilotReleaseVerify},
-		{"workcell-adapter-rule-guard-bash", "ROOT_DIR", 1, 1, cmdWorkcellAdapterRuleGuardBash},
-		{"workcell-inspect-assurance-loops", "ROOT_DIR", 1, 1, cmdWorkcellInspectAssuranceLoops},
-		{"workcell-validator-writable-state", "ROOT_DIR", 1, 1, cmdWorkcellValidatorWritableState},
-		{"workcell-hostutil-egress-rg", "ROOT_DIR", 1, 1, cmdWorkcellHostutilEgressRg},
-		{"workcell-dockerfile-pins", "ROOT_DIR", 1, 1, cmdWorkcellDockerfilePins},
-		{"workcell-validator-dispatch-loops", "ROOT_DIR", 1, 1, cmdWorkcellValidatorDispatchLoops},
-		{"workcell-caller-required-contracts", "ROOT_DIR", 1, 1, cmdWorkcellCallerRequiredContracts},
-		{"workcell-fnblock-goblock-gitenv", "ROOT_DIR", 1, 1, cmdWorkcellFnBlockGoBlockGitEnv},
-		{"workcell-buildx-builder-trust", "ROOT_DIR", 1, 1, cmdWorkcellBuildxBuilderTrust},
-		{"workcell-doc-scan-go-vcs", "ROOT_DIR", 1, 1, cmdWorkcellDocScanGoVcs},
-		{"workcell-smoke-chown-tar", "ROOT_DIR", 1, 1, cmdWorkcellSmokeChownTar},
-		{"workcell-dualstack-apply-plan", "ROOT_DIR", 1, 1, cmdWorkcellDualStackApplyPlan},
-		{"workcell-publish-base-refcheck", "ROOT_DIR", 1, 1, cmdWorkcellPublishBaseRefcheck},
-		{"workcell-runtime-security-posture", "ROOT_DIR", 1, 1, cmdWorkcellRuntimeSecurityPosture},
+		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.Check)},
+		{"workcell-config-safety", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckConfigSafety)},
+		{"workcell-runtime-invariants", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckRuntimeInvariants)},
+		{"workcell-managed-profile-staging", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckManagedProfileStaging)},
+		{"workcell-bootstrap-egress", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckBootstrapEgress)},
+		{"workcell-bootstrap-audit", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckBootstrapAuditMetadata)},
+		{"workcell-git-index-shadow", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckGitIndexShadow)},
+		{"workcell-publish-pr-shadow", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckPublishPrShadowMounts)},
+		{"workcell-shadow-enum-egress", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckShadowEnumEgress)},
+		{"workcell-home-seed-provider-wrapper", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckHomeSeedProviderWrapper)},
+		{"workcell-copilot-token-handoff", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCopilotTokenHandoff)},
+		{"workcell-copilot-docker-run", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCopilotDockerRun)},
+		{"workcell-provider-launcher-authority", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckProviderLauncherAuthority)},
+		{"workcell-copilot-policy-wrapper", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCopilotPolicyWrapper)},
+		{"workcell-copilot-unsafe-flags", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCopilotUnsafeFlags)},
+		{"workcell-copilot-release-verify", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCopilotReleaseVerify)},
+		{"workcell-adapter-rule-guard-bash", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckAdapterRuleGuardBash)},
+		{"workcell-inspect-assurance-loops", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckInspectAssuranceLoops)},
+		{"workcell-validator-writable-state", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckValidatorWritableState)},
+		{"workcell-hostutil-egress-rg", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckHostutilEgressRg)},
+		{"workcell-dockerfile-pins", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckDockerfilePins)},
+		{"workcell-validator-dispatch-loops", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckValidatorDispatchLoops)},
+		{"workcell-caller-required-contracts", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCallerRequiredContracts)},
+		{"workcell-fnblock-goblock-gitenv", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckFnBlockGoBlockGitEnv)},
+		{"workcell-buildx-builder-trust", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckBuildxBuilderTrust)},
+		{"workcell-doc-scan-go-vcs", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckDocScanGoVcs)},
+		{"workcell-smoke-chown-tar", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckSmokeChownTar)},
+		{"workcell-dualstack-apply-plan", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckDualStackApplyPlan)},
+		{"workcell-publish-base-refcheck", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckPublishBaseRefcheck)},
+		{"workcell-runtime-security-posture", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckRuntimeSecurityPosture)},
 		{"hardening-profile-conformance", "ROOT_DIR", 1, 1, cmdHardeningProfileConformance},
-		{"workcell-smoke-apt-broker-probe", "ROOT_DIR", 1, 1, cmdWorkcellSmokeAptBrokerProbe},
-		{"workcell-copilot-token-handoff-cleanup", "ROOT_DIR", 1, 1, cmdWorkcellCopilotTokenHandoffCleanup},
-		{"workcell-provider-token-unlink", "ROOT_DIR", 1, 1, cmdWorkcellProviderTokenUnlink},
-		{"workcell-validate-repo-scenario-refs", "ROOT_DIR", 1, 1, cmdWorkcellValidateRepoScenarioRefs},
-		{"workcell-precommit-hook-exec", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitHookExec},
-		{"workcell-docs-examples-dir", "ROOT_DIR", 1, 1, cmdWorkcellDocsExamplesDir},
-		{"workcell-scenario-scripts-present", "ROOT_DIR", 1, 1, cmdWorkcellScenarioScriptsPresent},
-		{"workcell-claude-mcp-project-servers", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeMcpProjectServers},
-		{"workcell-claude-guard-bash-hook", "SETTINGS_PATH", 1, 1, cmdWorkcellClaudeGuardBashHook},
-		{"workcell-claude-managed-bypass", "ROOT_DIR", 1, 1, cmdWorkcellClaudeManagedBypass},
-		{"workcell-gemini-settings-baseline", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsBaseline},
-		{"workcell-gemini-settings-guards", "ROOT_DIR", 1, 1, cmdWorkcellGeminiSettingsGuards},
-		{"workcell-hostgate-entrypoint-sanitize", "ROOT_DIR", 1, 1, cmdWorkcellHostGateEntrypointSanitize},
-		{"workcell-precommit-upstream-pin-gate", "ROOT_DIR", 1, 1, cmdWorkcellPrecommitUpstreamPinGate},
-		{"workcell-trusted-docker-client-rg", "ROOT_DIR", 1, 1, cmdWorkcellTrustedDockerClientRg},
+		{"workcell-smoke-apt-broker-probe", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckSmokeAptBrokerProbe)},
+		{"workcell-copilot-token-handoff-cleanup", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckCopilotTokenHandoffCleanup)},
+		{"workcell-provider-token-unlink", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckProviderTokenUnlink)},
+		{"workcell-validate-repo-scenario-refs", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckValidateRepoScenarioRefs)},
+		{"workcell-precommit-hook-exec", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckPrecommitHookExec)},
+		{"workcell-docs-examples-dir", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckDocsExamplesDir)},
+		{"workcell-scenario-scripts-present", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckScenarioScriptsPresent)},
+		{"workcell-claude-mcp-project-servers", "SETTINGS_PATH", 1, 1, hardeningCheck(workcellhardening.CheckClaudeMcpProjectServers)},
+		{"workcell-claude-guard-bash-hook", "SETTINGS_PATH", 1, 1, hardeningCheck(workcellhardening.CheckClaudeGuardBashHook)},
+		{"workcell-claude-managed-bypass", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckClaudeManagedBypass)},
+		{"workcell-gemini-settings-baseline", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckGeminiSettingsBaseline)},
+		{"workcell-gemini-settings-guards", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckGeminiSettingsGuards)},
+		{"workcell-hostgate-entrypoint-sanitize", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckHostGateEntrypointSanitize)},
+		{"workcell-precommit-upstream-pin-gate", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckPrecommitUpstreamPinGate)},
+		{"workcell-trusted-docker-client-rg", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckTrustedDockerClientRg)},
 	}
 }
 
@@ -713,281 +719,6 @@ func cmdGitConfigBlocklistParity(args []string) error {
 	return gitconfigblocklist.Check(args[0])
 }
 
-// cmdWorkcellHardeningInvariants runs the eleven scripts/workcell
-// hardening-invariant checks migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
-// shell's original stderr message for the first violated invariant.
-func cmdWorkcellHardeningInvariants(args []string) error {
-	return workcellhardening.Check(args[0])
-}
-
-// cmdWorkcellConfigSafety runs the four scripts/workcell config-safety
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellConfigSafety(args []string) error {
-	return workcellhardening.CheckConfigSafety(args[0])
-}
-
-// cmdWorkcellRuntimeInvariants runs the ten scripts/workcell runtime/gc
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellRuntimeInvariants(args []string) error {
-	return workcellhardening.CheckRuntimeInvariants(args[0])
-}
-
-// cmdWorkcellManagedProfileStaging runs the three scripts/workcell
-// managed-profile staging/cleanup checks migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
-// shell's original stderr message for the first violated invariant.
-func cmdWorkcellManagedProfileStaging(args []string) error {
-	return workcellhardening.CheckManagedProfileStaging(args[0])
-}
-
-// cmdWorkcellBootstrapEgress runs the nine bootstrap egress-endpoint
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellBootstrapEgress(args []string) error {
-	return workcellhardening.CheckBootstrapEgress(args[0])
-}
-
-// cmdWorkcellBootstrapAudit runs the two scripts/workcell
-// bootstrap-audit-metadata checks migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
-// shell's original stderr message for the first violated invariant.
-func cmdWorkcellBootstrapAudit(args []string) error {
-	return workcellhardening.CheckBootstrapAuditMetadata(args[0])
-}
-
-// cmdWorkcellGitIndexShadow runs the five scripts/workcell git-index shadow
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
-// die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellGitIndexShadow(args []string) error {
-	return workcellhardening.CheckGitIndexShadow(args[0])
-}
-
-// cmdWorkcellPublishPrShadow runs the four scripts/workcell publish-PR /
-// shadow-mount checks migrated out of scripts/verify-invariants.sh; it fails
-// (exit 1 via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellPublishPrShadow(args []string) error {
-	return workcellhardening.CheckPublishPrShadowMounts(args[0])
-}
-
-// cmdWorkcellShadowEnumEgress runs the seven scripts/workcell shadow-enumeration
-// / IPv6-egress checks migrated out of scripts/verify-invariants.sh; it fails
-// (exit 1 via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellShadowEnumEgress(args []string) error {
-	return workcellhardening.CheckShadowEnumEgress(args[0])
-}
-
-// cmdWorkcellHomeSeedProviderWrapper runs the fifty-seven home-seeding /
-// provider-wrapper env-scrub checks migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellHomeSeedProviderWrapper(args []string) error {
-	return workcellhardening.CheckHomeSeedProviderWrapper(args[0])
-}
-
-// cmdWorkcellCopilotTokenHandoff runs the twenty-nine Copilot prefix-scrub /
-// token-handoff checks migrated out of scripts/verify-invariants.sh; it fails
-// (exit 1 via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellCopilotTokenHandoff(args []string) error {
-	return workcellhardening.CheckCopilotTokenHandoff(args[0])
-}
-
-// cmdWorkcellCopilotDockerRun runs the twenty-five Copilot / docker-run
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
-// die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellCopilotDockerRun(args []string) error {
-	return workcellhardening.CheckCopilotDockerRun(args[0])
-}
-
-// cmdWorkcellProviderLauncherAuthority runs the thirty provider-launcher-authority
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
-// die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellProviderLauncherAuthority(args []string) error {
-	return workcellhardening.CheckProviderLauncherAuthority(args[0])
-}
-
-// cmdWorkcellCopilotPolicyWrapper runs the twenty-two Copilot-policy-wrapper
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
-// die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellCopilotPolicyWrapper(args []string) error {
-	return workcellhardening.CheckCopilotPolicyWrapper(args[0])
-}
-
-// cmdWorkcellCopilotUnsafeFlags runs the thirty-one Copilot-unsafe-flag checks
-// migrated out of scripts/verify-invariants.sh; it fails (exit 1 via die())
-// with the shell's original stderr message for the first violated invariant.
-func cmdWorkcellCopilotUnsafeFlags(args []string) error {
-	return workcellhardening.CheckCopilotUnsafeFlags(args[0])
-}
-
-// cmdWorkcellCopilotReleaseVerify runs the twenty-four Copilot upstream-release
-// verifier checks migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellCopilotReleaseVerify(args []string) error {
-	return workcellhardening.CheckCopilotReleaseVerify(args[0])
-}
-
-// cmdWorkcellAdapterRuleGuardBash runs the eighteen adapter-rule / Bash-guard
-// checks migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
-// die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellAdapterRuleGuardBash(args []string) error {
-	return workcellhardening.CheckAdapterRuleGuardBash(args[0])
-}
-
-// cmdWorkcellInspectAssuranceLoops runs the twenty-five --inspect /
-// session-assurance checks migrated out of scripts/verify-invariants.sh; it
-// fails (exit 1 via die()) with the shell's original stderr message for the
-// first violated invariant.
-func cmdWorkcellInspectAssuranceLoops(args []string) error {
-	return workcellhardening.CheckInspectAssuranceLoops(args[0])
-}
-
-// cmdWorkcellValidatorWritableState runs the twenty-three validator
-// writable-state isolation checks migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellValidatorWritableState(args []string) error {
-	return workcellhardening.CheckValidatorWritableState(args[0])
-}
-
-// cmdWorkcellHostutilEgressRg runs the twenty-one hostutil / entrypoint /
-// colima-egress `rg` checks migrated out of scripts/verify-invariants.sh; it
-// fails (exit 1 via die()) with the shell's original stderr message for the
-// first violated invariant.
-func cmdWorkcellHostutilEgressRg(args []string) error {
-	return workcellhardening.CheckHostutilEgressRg(args[0])
-}
-
-// cmdWorkcellHostGateEntrypointSanitize runs the forty-four host-gate entrypoint
-// checks (an absolute privileged Bash shebang and an entrypoint self-sanitize
-// probe for each of the twenty-two HOST_GATE_SCRIPTS) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellHostGateEntrypointSanitize(args []string) error {
-	return workcellhardening.CheckHostGateEntrypointSanitize(args[0])
-}
-
-// cmdWorkcellPrecommitUpstreamPinGate runs the single repo pre-commit hook
-// upstream-pin-gate check migrated out of scripts/verify-invariants.sh; it fails
-// (exit 1 via die()) with the shell's original stderr message when the hook does
-// not gate commits on pending pinned upstream updates.
-func cmdWorkcellPrecommitUpstreamPinGate(args []string) error {
-	return workcellhardening.CheckPrecommitUpstreamPinGate(args[0])
-}
-
-// cmdWorkcellTrustedDockerClientRg runs the sixteen trusted-Docker-client checks
-// (source-helper, seed-client-state, drop-caller-HOME, and buildx-trusted-path
-// probes across four release/build scripts) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellTrustedDockerClientRg(args []string) error {
-	return workcellhardening.CheckTrustedDockerClientRg(args[0])
-}
-
-// cmdWorkcellDockerfilePins runs the thirty dockerfile-pin checks
-// (snapshot-TLS-bootstrap package/apt pins and unprivileged-USER defaults across
-// runtime/container/Dockerfile and tools/validator/Dockerfile) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellDockerfilePins(args []string) error {
-	return workcellhardening.CheckDockerfilePins(args[0])
-}
-
-// cmdWorkcellValidatorDispatchLoops runs the thirteen validator-dispatch checks
-// (validator Dockerfile ENV pins, validate-repo Cargo-target externalization,
-// and CI-dispatch entrypoint wiring) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellValidatorDispatchLoops(args []string) error {
-	return workcellhardening.CheckValidatorDispatchLoops(args[0])
-}
-
-// cmdWorkcellCallerRequiredContracts runs the fifty caller-required checks (five
-// CI caller files × ten UID/GID-and-isolated-writable-state needles) migrated
-// out of scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
-// shell's original stderr message for the first violated (caller, required)
-// pair.
-func cmdWorkcellCallerRequiredContracts(args []string) error {
-	return workcellhardening.CheckCallerRequiredContracts(args[0])
-}
-
-// cmdWorkcellFnBlockGoBlockGitEnv runs the six fnblock/goblock/gitenv checks
-// (two bash function-block regex probes, one Go function-block fixed-string
-// probe, and three git-env object-store-redirection pins) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellFnBlockGoBlockGitEnv(args []string) error {
-	return workcellhardening.CheckFnBlockGoBlockGitEnv(args[0])
-}
-
-// cmdWorkcellBuildxBuilderTrust runs the eight buildx-builder-trust checks
-// (deterministic release builder, disposable validator-image cleanup across the
-// local lanes, reproducible-build builder teardown, trusted Buildx endpoint /
-// Docker-context resolution, and the colima-egress COLIMA_HOME pin) migrated out
-// of scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellBuildxBuilderTrust(args []string) error {
-	return workcellhardening.CheckBuildxBuilderTrust(args[0])
-}
-
-// cmdWorkcellDocScanGoVcs runs the two doc-scan / Go-VCS-stamping checks
-// (validate-repo venv-prune and go-run-env buildvcs disablement) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellDocScanGoVcs(args []string) error {
-	return workcellhardening.CheckDocScanGoVcs(args[0])
-}
-
-// cmdWorkcellSmokeChownTar runs the three container-smoke chown/tar checks (no
-// raw recursive chown, no tar-based staging or extraction) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellSmokeChownTar(args []string) error {
-	return workcellhardening.CheckSmokeChownTar(args[0])
-}
-
-// cmdWorkcellDualStackApplyPlan runs the seven dual-stack allowlist-apply-plan
-// checks (guarded apply path, ip6tables preflight, clear-plan render helper, and
-// the render_allowlist_apply_plan clear-plan/VM-resolution/no-host-resolution
-// function-block invariants) migrated out of scripts/verify-invariants.sh; it
-// fails (exit 1 via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellDualStackApplyPlan(args []string) error {
-	return workcellhardening.CheckDualStackApplyPlan(args[0])
-}
-
-// cmdWorkcellPublishBaseRefcheck runs the single publish-pr base-name check
-// (publishpr.ValidateBaseName validates the --base branch name through
-// checkRefFormat) migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message when the invariant is
-// violated.
-func cmdWorkcellPublishBaseRefcheck(args []string) error {
-	return workcellhardening.CheckPublishBaseRefcheck(args[0])
-}
-
-// cmdWorkcellRuntimeSecurityPosture runs the two validate_runtime_security_posture
-// checks (daemon SecurityOptions and Docker Desktop compat SecurityOptions are
-// validated through the go_hostutil helper subcommands) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellRuntimeSecurityPosture(args []string) error {
-	return workcellhardening.CheckRuntimeSecurityPosture(args[0])
-}
-
 // cmdHardeningProfileConformance runs the roadmap A6 hardening-profile
 // conformance check: it asserts that scripts/workcell (and its egress helper)
 // still apply every container-hardening and outbound-endpoint literal declared
@@ -995,115 +726,4 @@ func cmdWorkcellRuntimeSecurityPosture(args []string) error {
 // die()) with a message identifying the first drifted section/literal.
 func cmdHardeningProfileConformance(args []string) error {
 	return hardeningprofile.Check(args[0])
-}
-
-// cmdWorkcellSmokeAptBrokerProbe runs the six container-smoke apt-broker
-// slow-wait checks (scripts/container-smoke.sh keeps the Linux runtime
-// apt-broker slow-wait probe strings) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellSmokeAptBrokerProbe(args []string) error {
-	return workcellhardening.CheckSmokeAptBrokerProbe(args[0])
-}
-
-// cmdWorkcellCopilotTokenHandoffCleanup runs the three Copilot token-handoff
-// cleanup checks (hoststate.go covers stale Copilot token handoff directories in
-// host cleanup) migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellCopilotTokenHandoffCleanup(args []string) error {
-	return workcellhardening.CheckCopilotTokenHandoffCleanup(args[0])
-}
-
-// cmdWorkcellProviderTokenUnlink runs the single provider-wrapper token-unlink
-// check (the provider wrapper unlinks the runtime Copilot token handoff file
-// before managed exec) migrated out of scripts/verify-invariants.sh; it fails
-// (exit 1 via die()) with the shell's original stderr message when the invariant
-// is violated.
-func cmdWorkcellProviderTokenUnlink(args []string) error {
-	return workcellhardening.CheckProviderTokenUnlink(args[0])
-}
-
-// cmdWorkcellValidateRepoScenarioRefs runs the three scenario-script reference
-// checks (scripts/validate-repo.sh references the scenario-test / coverage /
-// control-plane-parity scripts) migrated out of scripts/verify-invariants.sh; it
-// fails (exit 1 via die()) with the shell's original stderr message for the first
-// violated invariant.
-func cmdWorkcellValidateRepoScenarioRefs(args []string) error {
-	return workcellhardening.CheckValidateRepoScenarioRefs(args[0])
-}
-
-// cmdWorkcellPrecommitHookExec runs the single repo pre-commit hook executable
-// check (${ROOT_DIR}/.githooks/pre-commit must exist and be executable) migrated
-// out of scripts/verify-invariants.sh; it fails (exit 1 via die()) with the
-// shell's original stderr message (the fixed prefix plus the absolute hook path)
-// when the invariant is violated.
-func cmdWorkcellPrecommitHookExec(args []string) error {
-	return workcellhardening.CheckPrecommitHookExec(args[0])
-}
-
-// cmdWorkcellDocsExamplesDir runs the single docs/examples directory check
-// (${ROOT_DIR}/docs/examples must exist as a directory) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message when the invariant is violated.
-func cmdWorkcellDocsExamplesDir(args []string) error {
-	return workcellhardening.CheckDocsExamplesDir(args[0])
-}
-
-// cmdWorkcellScenarioScriptsPresent runs the four scenario-harness filesystem
-// checks (${ROOT_DIR}/tests/scenarios/manifest.json must exist as a regular
-// file, and the three scenario scripts under ${ROOT_DIR}/scripts must exist and
-// be executable) migrated out of scripts/verify-invariants.sh; it fails (exit 1
-// via die()) with the shell's original stderr message for the first violated
-// invariant (the manifest's static message, or the scenario-script prefix plus
-// the absolute script path).
-func cmdWorkcellScenarioScriptsPresent(args []string) error {
-	return workcellhardening.CheckScenarioScriptsPresent(args[0])
-}
-
-// cmdWorkcellClaudeMcpProjectServers runs the single `jq -e`
-// project-MCP-servers check migrated out of the scripts/verify-invariants.sh
-// settings_path loop; unlike the other workcell-* subcommands it takes the
-// settings FILE path (the loop calls it once per claude settings file, in
-// place), and it fails (exit 1 via die()) with the shell's original per-file
-// stderr message (the file's basename plus the fixed suffix) when the invariant
-// is violated.
-func cmdWorkcellClaudeMcpProjectServers(args []string) error {
-	return workcellhardening.CheckClaudeMcpProjectServers(args[0])
-}
-
-// cmdWorkcellClaudeGuardBashHook runs the array-index `jq -e` guard-bash-hook
-// check migrated out of the scripts/verify-invariants.sh settings_path loop;
-// like cmdWorkcellClaudeMcpProjectServers it takes the settings FILE path (the
-// loop calls it once per Claude settings file, in place), and it fails (exit 1
-// via die()) with the shell's original per-file stderr message (the file's
-// basename plus the fixed suffix) when the invariant is violated.
-func cmdWorkcellClaudeGuardBashHook(args []string) error {
-	return workcellhardening.CheckClaudeGuardBashHook(args[0])
-}
-
-// cmdWorkcellClaudeManagedBypass runs the single Claude managed-settings
-// bypass-permissions `jq -e` check migrated out of scripts/verify-invariants.sh;
-// it fails (exit 1 via die()) with the shell's original stderr message when the
-// invariant is violated.
-func cmdWorkcellClaudeManagedBypass(args []string) error {
-	return workcellhardening.CheckClaudeManagedBypass(args[0])
-}
-
-// cmdWorkcellGeminiSettingsBaseline runs the three Gemini adapter-settings
-// baseline `jq -e` checks (no seeded allowed tools, no seeded allowed MCP
-// servers, no hardcoded selected auth type) migrated out of
-// scripts/verify-invariants.sh; it fails (exit 1 via die()) with the shell's
-// original stderr message for the first violated invariant.
-func cmdWorkcellGeminiSettingsBaseline(args []string) error {
-	return workcellhardening.CheckGeminiSettingsBaseline(args[0])
-}
-
-// cmdWorkcellGeminiSettingsGuards runs the three Gemini adapter-settings `jq -e`
-// checks (folder-trust disabled, interactive-shell disabled, excludedEnvVars is
-// an array) migrated out of scripts/verify-invariants.sh; it fails (exit 1 via
-// die()) with the shell's original stderr message for the first violated
-// invariant.
-func cmdWorkcellGeminiSettingsGuards(args []string) error {
-	return workcellhardening.CheckGeminiSettingsGuards(args[0])
 }
