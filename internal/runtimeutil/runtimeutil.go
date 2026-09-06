@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
@@ -30,14 +29,6 @@ type lookupIPAddrFunc func(context.Context, string) ([]net.IPAddr, error)
 type DirectMount struct {
 	Source    string `json:"source"`
 	MountPath string `json:"mount_path"`
-}
-
-// CanonicalizePath is a thin wrapper around pathutil.CanonicalizePath
-// with the Strict option set, preserving the runtimeutil contract
-// (empty path rejected; unknown ~user errors).  New code should call
-// pathutil.CanonicalizePath directly.
-func CanonicalizePath(raw string) (string, error) {
-	return pathutil.CanonicalizePath(raw, pathutil.Options{Strict: true})
 }
 
 func ResolveIPs(host string) ([]string, error) {

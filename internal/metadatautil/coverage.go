@@ -93,13 +93,5 @@ func CoverageExecutables(messagePath string) ([]string, error) {
 		return nil, errors.New("unable to locate instrumented Rust test executables for coverage")
 	}
 	slices.Sort(executables)
-	unique := executables[:0]
-	var last string
-	for i, executable := range executables {
-		if i == 0 || executable != last {
-			unique = append(unique, executable)
-			last = executable
-		}
-	}
-	return unique, nil
+	return slices.Compact(executables), nil
 }

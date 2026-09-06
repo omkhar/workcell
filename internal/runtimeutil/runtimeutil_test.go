@@ -18,35 +18,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestCanonicalizePath(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	dir := filepath.Join(root, "dir")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	target := filepath.Join(dir, "target.txt")
-	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(root, "link.txt")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-	got, err := CanonicalizePath(link)
-	if err != nil {
-		t.Fatalf("CanonicalizePath error: %v", err)
-	}
-	want, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("CanonicalizePath = %q want %q", got, want)
-	}
-}
-
 func TestResolveIPs(t *testing.T) {
 	t.Parallel()
 

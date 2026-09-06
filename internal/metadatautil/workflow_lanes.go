@@ -564,19 +564,14 @@ func uniqueSortedStrings(values []string) []string {
 	if len(values) == 0 {
 		return nil
 	}
-	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		if strings.TrimSpace(value) == "" {
-			continue
+		if strings.TrimSpace(value) != "" {
+			result = append(result, value)
 		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
 	}
 	slices.Sort(result)
+	result = slices.Compact(result)
 	if len(result) == 0 {
 		return nil
 	}
