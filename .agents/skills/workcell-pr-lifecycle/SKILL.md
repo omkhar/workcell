@@ -161,6 +161,17 @@ Do not include credentials, tokens, or raw comment bodies. Reconstruct remote
 state before a mutation. Record reviewed heads, checks, reactions, replies, and
 thread states with stable identifiers.
 
+### Observation Identity and Polling
+
+Record the observation owner, tool, session handle, and OS PID as separate fields.
+Treat a tool session ID as distinct from an OS PID.
+Let the originating agent poll its agent-scoped session handle.
+Let peers inspect an OS process only after they resolve its PID and provenance.
+
+Treat an unknown cross-agent handle or quiet output as non-terminal evidence.
+Do not restart a workload only because observation timed out.
+Inspect the target filesystem capacity when disk state affects the observation.
+
 ## Check and Merge Workflow
 
 1. Confirm that the worktree contains only intended changes.
