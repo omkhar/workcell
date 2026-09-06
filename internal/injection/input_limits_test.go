@@ -367,7 +367,7 @@ func TestBoundedValidationReadersRejectOversize(t *testing.T) {
 			return validateSSHConfigSafety(path, false)
 		}},
 		{name: "material hash", call: func(path Path) error {
-			_, err := pathMaterialSHA256(path)
+			_, err := pathMaterialSHA256(path, newInjectionTreeBudget())
 			return err
 		}},
 	}
@@ -479,7 +479,7 @@ func TestPathMaterialSHA256BoundsDirectoryMaterial(t *testing.T) {
 	t.Run("per-file limit", func(t *testing.T) {
 		source := t.TempDir()
 		writeSparseInjectionFile(t, filepath.Join(source, "oversize"), maxInjectionFileBytes+1)
-		if _, err := pathMaterialSHA256(Path(source)); err == nil || !strings.Contains(err.Error(), "per-file limit") {
+		if _, err := pathMaterialSHA256(Path(source), newInjectionTreeBudget()); err == nil || !strings.Contains(err.Error(), "per-file limit") {
 			t.Fatalf("pathMaterialSHA256 error = %v, want per-file limit", err)
 		}
 	})
@@ -489,8 +489,25 @@ func TestPathMaterialSHA256BoundsDirectoryMaterial(t *testing.T) {
 		for index := 0; index <= maxInjectionTreeEntries; index++ {
 			writeSparseInjectionFile(t, filepath.Join(source, "file-"+strconv.Itoa(index)), 0)
 		}
-		if _, err := pathMaterialSHA256(Path(source)); err == nil || !strings.Contains(err.Error(), "aggregate entry limit") {
+		if _, err := pathMaterialSHA256(Path(source), newInjectionTreeBudget()); err == nil || !strings.Contains(err.Error(), "aggregate entry limit") {
 			t.Fatalf("pathMaterialSHA256 error = %v, want aggregate entry limit", err)
+		}
+	})
+
+	t.Run("shares one budget across hashed paths", func(t *testing.T) {
+		root := t.TempDir()
+		first := filepath.Join(root, "first")
+		writeSparseInjectionFile(t, first, maxInjectionFileBytes)
+		second := filepath.Join(root, "second")
+		writeSparseInjectionFile(t, second, 1)
+
+		budget := newInjectionTreeBudget()
+		budget.bytes = maxInjectionTreeBytes - maxInjectionFileBytes
+		if _, err := pathMaterialSHA256(Path(first), budget); err != nil {
+			t.Fatalf("first hash: %v", err)
+		}
+		if _, err := pathMaterialSHA256(Path(second), budget); err == nil || !strings.Contains(err.Error(), "aggregate tree limit") {
+			t.Fatalf("second hash error = %v, want aggregate tree limit", err)
 		}
 	})
 
@@ -502,7 +519,7 @@ func TestPathMaterialSHA256BoundsDirectoryMaterial(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(source, "nested", "file"), []byte("material"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		sum, err := pathMaterialSHA256(Path(source))
+		sum, err := pathMaterialSHA256(Path(source), newInjectionTreeBudget())
 		if err != nil || sum == "" {
 			t.Fatalf("pathMaterialSHA256 = %q, %v", sum, err)
 		}

@@ -227,9 +227,13 @@ func effectivePolicySHA256(
 	renderedCredentials map[string]map[string]string,
 	renderedSSH map[string]any,
 ) (string, error) {
+	// One budget spans the whole fingerprint pass. Every hashed path is host
+	// material that can grow after the render checks, so a per-path allowance
+	// would let one manifest read past the documented aggregate limit.
+	budget := newInjectionTreeBudget()
 	documents := map[string]string{}
 	for _, key := range sortedKeys(renderedDocuments) {
-		hash, err := pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]))
+		hash, err := pathMaterialSHA256(outputRoot.Join(renderedDocuments[key]), budget)
 		if err != nil {
 			return "", fmt.Errorf("hash document %q: %w", key, err)
 		}
@@ -255,7 +259,7 @@ func effectivePolicySHA256(
 				sourcePath = Path(hostSource)
 			}
 		}
-		hash, err := pathMaterialSHA256(sourcePath)
+		hash, err := pathMaterialSHA256(sourcePath, budget)
 		if err != nil {
 			return "", fmt.Errorf("hash copy %v: %w", entry["target"], err)
 		}
@@ -271,7 +275,7 @@ func effectivePolicySHA256(
 	credentials := map[string]map[string]any{}
 	for _, key := range sortedKeys(renderedCredentials) {
 		value := renderedCredentials[key]
-		hash, err := pathMaterialSHA256(Path(value["source"]))
+		hash, err := pathMaterialSHA256(Path(value["source"]), budget)
 		if err != nil {
 			return "", fmt.Errorf("hash credential %q: %w", key, err)
 		}
@@ -291,7 +295,7 @@ func effectivePolicySHA256(
 		// returns map[string]string — historically these missed both
 		// type assertions below and so were never hashed at all.
 		if source, mountPath, ok := sshMountSource(renderedSSH, "config"); ok {
-			hash, err := pathMaterialSHA256(Path(source))
+			hash, err := pathMaterialSHA256(Path(source), budget)
 			if err != nil {
 				return "", fmt.Errorf("hash ssh config: %w", err)
 			}
@@ -301,7 +305,7 @@ func effectivePolicySHA256(
 			}
 		}
 		if source, mountPath, ok := sshMountSource(renderedSSH, "known_hosts"); ok {
-			hash, err := pathMaterialSHA256(Path(source))
+			hash, err := pathMaterialSHA256(Path(source), budget)
 			if err != nil {
 				return "", fmt.Errorf("hash ssh known_hosts: %w", err)
 			}
@@ -326,7 +330,7 @@ func effectivePolicySHA256(
 		if identitiesFound {
 			renderedIdentities := make([]map[string]any, 0, len(identityEntries))
 			for _, entry := range identityEntries {
-				hash, err := pathMaterialSHA256(Path(entry["source"].(string)))
+				hash, err := pathMaterialSHA256(Path(entry["source"].(string)), budget)
 				if err != nil {
 					return "", fmt.Errorf("hash ssh identity %v: %w", entry["target_name"], err)
 				}
@@ -358,7 +362,10 @@ func effectivePolicySHA256(
 // to emit a manifest entry when the fingerprint cannot be computed — a
 // silent empty string here previously rounded-tripped as a valid hash and
 // defeated the integrity check the function exists to provide.
-func pathMaterialSHA256(path Path) (string, error) {
+//
+// The material is read again here, after the render checks accepted it, so the
+// caller's budget carries across every hashed path in one manifest.
+func pathMaterialSHA256(path Path, budget *injectionTreeBudget) (string, error) {
 	info, err := os.Lstat(path.String())
 	if err != nil {
 		return "", fmt.Errorf("lstat %s: %w", path, err)
@@ -376,7 +383,7 @@ func pathMaterialSHA256(path Path) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", path, err)
 		}
-		data, err := readInjectionFile(file, path.String(), nil)
+		data, err := readInjectionFile(file, path.String(), budget)
 		if closeErr := file.Close(); err == nil {
 			err = closeErr
 		}
@@ -389,10 +396,6 @@ func pathMaterialSHA256(path Path) (string, error) {
 	if info.IsDir() {
 		hasher := sha256.New()
 		hasher.Write([]byte("dir\n"))
-		// The tree passed the input limits during validation, but it is host
-		// material that can change before this walk, so the fingerprint charges
-		// its own budget instead of trusting the earlier accounting.
-		budget := newInjectionTreeBudget()
 		children := []string{}
 		if err := walkInjectionTree(path.String(), budget, func(current string, _ fs.DirEntry) error {
 			children = append(children, current)
