@@ -163,8 +163,7 @@ thread states with stable identifiers.
 
 ### Observation Identity and Polling
 
-Record the observation owner, tool, session handle, and OS PID as separate
-fields.
+Record observation owner, tool, session handle, and OS PID as separate fields.
 Let the originating agent poll its agent-scoped session handle.
 Let peers inspect an OS process only after they resolve its PID and provenance.
 
