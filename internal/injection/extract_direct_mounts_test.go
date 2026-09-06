@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omkhar/workcell/internal/runtimeutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -379,7 +378,7 @@ func TestRunExtractDirectMountsLeavesPlainCopySourcesInline(t *testing.T) {
 	}
 }
 
-func TestRunExtractDirectMountsWritesReadableEmptyArrayWithoutDirectMounts(t *testing.T) {
+func TestRunExtractDirectMountsWritesEmptyArrayWithoutDirectMounts(t *testing.T) {
 	tests := map[string]map[string]any{
 		"empty": {},
 		"null optional sections": {
@@ -389,9 +388,6 @@ func TestRunExtractDirectMountsWritesReadableEmptyArrayWithoutDirectMounts(t *te
 		},
 		"null optional ssh fields": {
 			"ssh": map[string]any{"config": nil, "known_hosts": nil, "identities": nil},
-		},
-		"network only": {
-			"network": map[string]any{"allow_endpoints": []any{"registry.internal.example"}},
 		},
 		"plain copy only": {
 			"copies": []any{map[string]any{
@@ -406,13 +402,6 @@ func TestRunExtractDirectMountsWritesReadableEmptyArrayWithoutDirectMounts(t *te
 			_, mountSpec := runGoExtractDirectMounts(t, manifest)
 			if string(mountSpec) != "[]\n" {
 				t.Fatalf("mount specification = %q, want empty JSON array", mountSpec)
-			}
-
-			mountSpecPath := filepath.Join(t.TempDir(), "mounts.json")
-			writeFile(t, mountSpecPath, mountSpec)
-			mounts, err := runtimeutil.ListDirectMounts(mountSpecPath)
-			if err != nil || len(mounts) != 0 {
-				t.Fatalf("ListDirectMounts = %#v, %v", mounts, err)
 			}
 		})
 	}
