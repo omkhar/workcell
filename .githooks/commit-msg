@@ -22,12 +22,7 @@ if [[ -z "${message_file}" || ! -f "${message_file}" ]]; then
   exit 2
 fi
 
-subject=""
-while IFS= read -r line || [[ -n "${line}" ]]; do
-  [[ "${line}" == \#* ]] && continue
-  subject="${line}"
-  break
-done <"${message_file}"
+subject="$(grep -m1 -v '^#' "${message_file}" || true)"
 
 case "${subject}" in
   "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,9 +109,6 @@ func (f *gitHooksFixture) commitFile(name string, content string, message string
 
 func (f *gitHooksFixture) configureSSHSigning() {
 	f.t.Helper()
-	if _, err := user.Current(); err != nil {
-		f.t.Skipf("ssh-keygen needs a resolvable user: %v", err)
-	}
 	keyPath := filepath.Join(f.homeDir, "signing_key")
 	keygen, err := exec.LookPath("ssh-keygen")
 	if err != nil {
@@ -136,15 +132,6 @@ func (f *gitHooksFixture) configureSSHSigning() {
 	if err := os.WriteFile(signers, []byte(signerLine), 0o644); err != nil {
 		f.t.Fatalf("write allowed signers failed: %v", err)
 	}
-	globalConfig := strings.Join([]string{
-		"[gpg]",
-		"\tformat = ssh",
-		"[gpg \"ssh\"]",
-		"\tallowedSignersFile = " + signers,
-	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(f.homeDir, ".gitconfig"), []byte(globalConfig), 0o644); err != nil {
-		f.t.Fatalf("write global config failed: %v", err)
-	}
 	f.run("config", "gpg.format", "ssh")
 	f.run("config", "gpg.ssh.allowedSignersFile", signers)
 	f.run("config", "user.signingkey", keyPath)
@@ -164,7 +151,7 @@ func runGitHooksCommand(t *testing.T, gitBin string, dir string, env []string, a
 
 func TestCommitMsgHookAcceptsNotationSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
-	for index, subject := range []string{
+	for _, subject := range []string{
 		"^F Add branch filter flag (tests pass; user-visible CLI flag)",
 		".r Rename parser helper (rename proof and focused tests pass; internal refactor)",
 		"!B Patch cache collision (validation covers only this change; user-visible defect)",
@@ -174,8 +161,22 @@ func TestCommitMsgHookAcceptsNotationSubjects(t *testing.T) {
 		"fixup! ^F Add branch filter flag",
 	} {
 		fixture.commitFile("file.txt", subject+"\n", subject)
-		_ = index
 	}
+}
+
+func TestCommitMsgHookSkipsLeadingComments(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	message := "# Please enter the commit message for your changes.\n" +
+		"^F Add branch filter flag (tests pass; user-visible CLI flag)\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	fixture.run("commit", "--quiet", "--cleanup=strip", "-F", messageFile)
 }
 
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
