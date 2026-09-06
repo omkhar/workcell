@@ -39,15 +39,29 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
   release:
     permissions:
       contents: read
+  verify-release-outputs:
+    needs:
+      - tag-policy
+      - release
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - run: ./scripts/verify-release-outputs.sh
   publish-github-release:
     needs:
       - tag-policy
       - release
+      - verify-release-outputs
     environment:
       name: hosted-controls-audit
     permissions:
       actions: read
+      attestations: read
       contents: write
+      packages: read
     steps:
       - name: Recheck hosted controls and publish GitHub release assets
         env:
@@ -68,9 +82,11 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		name, old, replacement, want string
 	}{
 		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
-		{name: "depends on sealed artifacts", old: "      - release", replacement: "      - preflight", want: "depend directly"},
+		{name: "depends on verified artifacts", old: "      - verify-release-outputs\n    environment:", replacement: "      - preflight\n    environment:", want: "depend directly"},
+		{name: "verifies sealed outputs", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: true", want: "must run verify-release-outputs.sh"},
 		{name: "uses audit environment", old: "name: hosted-controls-audit", replacement: "name: release", want: "hosted-controls-audit"},
-		{name: "minimal permissions", old: "contents: write\n    steps:", replacement: "contents: write\n      packages: write\n    steps:", want: "grant only"},
+		{name: "minimal publisher permissions", old: "contents: write\n      packages: read", replacement: "contents: write\n      packages: write", want: "grant only read verification permissions"},
+		{name: "minimal verifier permissions", old: "contents: read\n      packages: read", replacement: "contents: read\n      packages: write", want: "grant only read permissions"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
 	} {
