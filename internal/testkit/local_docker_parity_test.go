@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -250,12 +251,7 @@ exit 0
 func TestValidatorImageOwnershipPreservesFailureStatus(t *testing.T) {
 	t.Parallel()
 
-	t.Run("build failure", func(t *testing.T) { testValidatorOwnershipFailure(t, 41) })
-	t.Run("workload failure", func(t *testing.T) { testValidatorOwnershipFailure(t, 42) })
-}
-
-func testValidatorOwnershipFailure(t *testing.T, status int) {
-	t.Helper()
+	const status = 41
 	root := repoRoot(t)
 	temp := t.TempDir()
 	logPath := filepath.Join(temp, "docker.log")
@@ -301,81 +297,62 @@ func TestValidatorJobsClaimOnlyImplicitImages(t *testing.T) {
 	}
 }
 
-func TestValidatorDocsJobOwnershipLifecycle(t *testing.T) {
+type validatorJobOwnershipCase struct {
+	name           string
+	explicitImage  string
+	buildStatus    int
+	workloadStatus int
+	wrongReference bool
+	wantStatus     int
+	wantCleanup    bool
+}
+
+func TestValidatorJobOwnershipLifecycle(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct {
-		name           string
-		explicitImage  string
-		buildStatus    int
-		workloadStatus int
-		wrongReference bool
-		wantStatus     int
-		wantCleanup    bool
-	}{
-		{name: "success", wantCleanup: true},
-		{name: "build failure", buildStatus: 41, wantStatus: 41, wantCleanup: true},
-		{name: "workload failure", workloadStatus: 42, wantStatus: 42, wantCleanup: true},
-		{name: "unexpected builder reference", wrongReference: true, wantStatus: 1, wantCleanup: true},
-		{name: "explicit caller image", explicitImage: "caller/image:keep"},
-	} {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			runValidatorDocsOwnershipFixture(t, test.explicitImage, test.buildStatus, test.workloadStatus, test.wrongReference, test.wantStatus, test.wantCleanup)
-		})
+	for _, job := range []string{"scripts/ci/job-docs.sh", "scripts/ci/job-validate.sh"} {
+		for _, test := range []validatorJobOwnershipCase{
+			{name: "success", wantCleanup: true},
+			{name: "build failure", buildStatus: 41, wantStatus: 41, wantCleanup: true},
+			{name: "workload failure", workloadStatus: 42, wantStatus: 42, wantCleanup: true},
+			{name: "unexpected builder reference", wrongReference: true, wantStatus: 1, wantCleanup: true},
+			{name: "explicit caller image", explicitImage: "caller/image:keep"},
+		} {
+			job, test := job, test
+			t.Run(path.Base(job)+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+				runValidatorJobOwnershipFixture(t, job, test)
+			})
+		}
 	}
 }
 
-func TestValidatorValidateJobOwnershipLifecycle(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name           string
-		explicitImage  string
-		buildStatus    int
-		workloadStatus int
-		wrongReference bool
-		wantStatus     int
-		wantCleanup    bool
-	}{
-		{name: "success", wantCleanup: true},
-		{name: "build failure", buildStatus: 41, wantStatus: 41, wantCleanup: true},
-		{name: "workload failure", workloadStatus: 42, wantStatus: 42, wantCleanup: true},
-		{name: "unexpected builder reference", wrongReference: true, wantStatus: 1, wantCleanup: true},
-		{name: "explicit caller image", explicitImage: "caller/image:keep"},
-	} {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			runValidatorValidateOwnershipFixture(t, test.explicitImage, test.buildStatus, test.workloadStatus, test.wrongReference, test.wantStatus, test.wantCleanup)
-		})
-	}
-}
-
-func runValidatorValidateOwnershipFixture(t *testing.T, explicitImage string, buildStatus, workloadStatus int, wrongReference bool, wantStatus int, wantCleanup bool) {
+func runValidatorJobOwnershipFixture(t *testing.T, job string, test validatorJobOwnershipCase) {
 	t.Helper()
 	sourceRoot := repoRoot(t)
 	root := t.TempDir()
-	prepareValidatorDocsOwnershipFixture(t, sourceRoot, root)
-	copyValidatorFixtureFile(t, sourceRoot, root, "scripts/ci/job-validate.sh", 0o755)
-	writeValidatorValidateFixtureFiles(t, root)
+	prepareValidatorOwnershipFixture(t, sourceRoot, root, job)
+	arguments := []string{filepath.Join(root, filepath.FromSlash(job))}
+	if path.Base(job) == "job-validate.sh" {
+		writeValidatorValidateFixtureFiles(t, root)
+		arguments = append(arguments, "--profile", "pr-parity")
+	}
 	logPath := filepath.Join(root, "docker.log")
 	builderInputPath := filepath.Join(root, "builder-input.log")
-	command := exec.Command("/bin/bash", filepath.Join(root, "scripts", "ci", "job-validate.sh"), "--profile", "pr-parity")
+	command := exec.Command("/bin/bash", arguments...)
 	command.Env = append(os.Environ(),
 		"TMPDIR="+root,
 		"PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"),
 		"WORKCELL_TEST_DOCKER_LOG="+logPath,
 		"WORKCELL_TEST_BUILDER_INPUT_LOG="+builderInputPath,
-		"WORKCELL_TEST_BUILD_STATUS="+fmt.Sprint(buildStatus),
-		"WORKCELL_TEST_WORKLOAD_STATUS="+fmt.Sprint(workloadStatus),
-		"WORKCELL_TEST_WRONG_REFERENCE="+fmt.Sprint(wrongReference),
-		"WORKCELL_VALIDATOR_IMAGE="+explicitImage,
+		"WORKCELL_TEST_BUILD_STATUS="+fmt.Sprint(test.buildStatus),
+		"WORKCELL_TEST_WORKLOAD_STATUS="+fmt.Sprint(test.workloadStatus),
+		"WORKCELL_TEST_WRONG_REFERENCE="+fmt.Sprint(test.wrongReference),
+		"WORKCELL_VALIDATOR_IMAGE="+test.explicitImage,
 	)
 	output, err := command.CombinedOutput()
-	assertCommandExitStatus(t, err, wantStatus, output)
-	assertValidatorJobOwnershipResult(t, root, logPath, builderInputPath, wantCleanup)
+	assertCommandExitStatus(t, err, test.wantStatus, output)
+	assertValidatorJobOwnershipResult(t, root, logPath, builderInputPath, test.wantCleanup)
 }
 
 func writeValidatorValidateFixtureFiles(t *testing.T, root string) {
@@ -387,37 +364,14 @@ func writeValidatorValidateFixtureFiles(t *testing.T, root string) {
 	writeExecutable(t, filepath.Join(root, "scripts"), "generate-homebrew-formula.sh", "#!/bin/bash\nprintf 'fixture\\n' >\"$3\"\n")
 }
 
-func runValidatorDocsOwnershipFixture(t *testing.T, explicitImage string, buildStatus, workloadStatus int, wrongReference bool, wantStatus int, wantCleanup bool) {
-	t.Helper()
-	sourceRoot := repoRoot(t)
-	root := t.TempDir()
-	prepareValidatorDocsOwnershipFixture(t, sourceRoot, root)
-	logPath := filepath.Join(root, "docker.log")
-	builderInputPath := filepath.Join(root, "builder-input.log")
-	command := exec.Command("/bin/bash", filepath.Join(root, "scripts", "ci", "job-docs.sh"))
-	command.Env = append(os.Environ(),
-		"TMPDIR="+root,
-		"PATH="+filepath.Join(root, "bin")+":"+os.Getenv("PATH"),
-		"WORKCELL_TEST_DOCKER_LOG="+logPath,
-		"WORKCELL_TEST_BUILDER_INPUT_LOG="+builderInputPath,
-		"WORKCELL_TEST_BUILD_STATUS="+fmt.Sprint(buildStatus),
-		"WORKCELL_TEST_WORKLOAD_STATUS="+fmt.Sprint(workloadStatus),
-		"WORKCELL_TEST_WRONG_REFERENCE="+fmt.Sprint(wrongReference),
-		"WORKCELL_VALIDATOR_IMAGE="+explicitImage,
-	)
-	output, err := command.CombinedOutput()
-	assertCommandExitStatus(t, err, wantStatus, output)
-	assertValidatorJobOwnershipResult(t, root, logPath, builderInputPath, wantCleanup)
-}
-
-func prepareValidatorDocsOwnershipFixture(t *testing.T, sourceRoot, root string) {
+func prepareValidatorOwnershipFixture(t *testing.T, sourceRoot, root, job string) {
 	t.Helper()
 	for _, directory := range []string{"scripts/ci/lib", "scripts/lib", "tools/validator", "runtime/container", "bin"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	copyValidatorFixtureFile(t, sourceRoot, root, "scripts/ci/job-docs.sh", 0o755)
+	copyValidatorFixtureFile(t, sourceRoot, root, job, 0o755)
 	copyValidatorFixtureFile(t, sourceRoot, root, "scripts/ci/lib/local-docker-parity.sh", 0o644)
 	writeValidatorFixtureFiles(t, root)
 }
@@ -470,21 +424,13 @@ func assertValidatorJobOwnershipResult(t *testing.T, root, logPath, builderInput
 		t.Fatal(err)
 	}
 	cleanupLines := validatorCleanupLines(t, logPath)
-	want := "image rm -f " + strings.TrimSpace(string(builderInput))
-	if !validValidatorJobCleanup(owned, cleanupLines, want) {
+	want := []string{"image rm -f " + strings.TrimSpace(string(builderInput))}
+	if !owned {
+		want = nil
+	}
+	if !slices.Equal(cleanupLines, want) {
 		t.Fatalf("cleanup lines = %q, want exact %q", cleanupLines, want)
 	}
-}
-
-func validValidatorJobCleanup(owned bool, cleanupLines []string, want string) bool {
-	if !owned {
-		return len(cleanupLines) == 0
-	}
-	return validExactValidatorJobCleanup(cleanupLines, want)
-}
-
-func validExactValidatorJobCleanup(cleanupLines []string, want string) bool {
-	return len(cleanupLines) == 1 && cleanupLines[0] == want && !strings.Contains(cleanupLines[0], "sha256:")
 }
 
 func validatorCleanupLines(t *testing.T, logPath string) []string {
@@ -522,16 +468,13 @@ func assertValidatorJobImageOwnership(t *testing.T, root, relative string) {
 	}
 	text := string(content)
 	claim := `claim_workcell_validator_image "${ROOT_DIR}" VALIDATOR_IMAGE VALIDATOR_IMAGE_RESERVATION`
-	if !validValidatorJobClaim(text, claim) {
+	if strings.Count(text, claim) != 1 || strings.Count(text, `trap cleanup EXIT`) != 1 ||
+		!strings.Contains(text, `if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then`) {
 		t.Fatalf("%s does not make implicit image ownership explicit", relative)
 	}
 	if strings.Index(text, `trap cleanup EXIT`) > strings.Index(text, claim) {
 		t.Fatalf("%s claims its image before cleanup is armed", relative)
 	}
-}
-
-func validValidatorJobClaim(text, claim string) bool {
-	return strings.Count(text, claim) == 1 && strings.Count(text, `trap cleanup EXIT`) == 1 && strings.Contains(text, `if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then`)
 }
 
 func assertValidatorOwnershipProbe(t *testing.T, root, logPath, output string) {
@@ -551,13 +494,9 @@ func assertValidatorOwnershipProbe(t *testing.T, root, logPath, output string) {
 		t.Fatal(err)
 	}
 	want := "image rm -f " + images[0] + "\nimage rm -f " + images[1] + "\n"
-	if !validExactValidatorCleanupLog(string(content), want) {
+	if string(content) != want {
 		t.Fatalf("Docker cleanup log = %q, want %q with no image ID", content, want)
 	}
-}
-
-func validExactValidatorCleanupLog(content, want string) bool {
-	return content == want && !strings.Contains(content, "sha256:")
 }
 
 func assertValidatorImagePrefixes(t *testing.T, images []string, prefix string) {
