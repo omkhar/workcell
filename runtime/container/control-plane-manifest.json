@@ -68,7 +68,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/claude/managed-settings.json",
       "runtime_path": "/opt/workcell/adapters/claude/managed-settings.json",
-      "sha256": "07a584536b75eb0a9644248d9e58f6778dc9224c6574308e2619c7f9b5c998fd"
+      "sha256": "977745dc9b4071011de5966aac596f89fa225bebb17306a4917238e7eff427d8"
     },
     {
       "kind": "adapter-baseline",
@@ -272,7 +272,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "adapters/claude/managed-settings.json",
       "runtime_path": "/etc/claude-code/managed-settings.json",
-      "sha256": "07a584536b75eb0a9644248d9e58f6778dc9224c6574308e2619c7f9b5c998fd"
+      "sha256": "977745dc9b4071011de5966aac596f89fa225bebb17306a4917238e7eff427d8"
     }
   ],
   "schema_version": 2

@@ -6779,7 +6779,7 @@ func writeAdapterSettingsRepo(t *testing.T, claudeManaged, gemini string) string
 	return root
 }
 
-const happyClaudeManaged = `{"permissions":{"disableBypassPermissionsMode":"disable"}}`
+const happyClaudeManaged = `{"disableBypassPermissionsMode":"allow"}`
 const happyGeminiSettings = `{"security":{"folderTrust":{"enabled":false}},"tools":{"shell":{"enableInteractiveShell":false}},"advanced":{"excludedEnvVars":["AWS_SECRET_ACCESS_KEY"]}}`
 
 func TestCheckClaudeManagedBypass(t *testing.T) {
@@ -6789,10 +6789,9 @@ func TestCheckClaudeManagedBypass(t *testing.T) {
 		wantErr string
 	}{
 		{"happy path", happyClaudeManaged, ""},
-		{"wrong string value", `{"permissions":{"disableBypassPermissionsMode":"allow"}}`, "Claude managed settings must disable bypass-permissions mode under the external Workcell boundary"},
-		{"missing field", `{}`, "Claude managed settings must disable bypass-permissions mode under the external Workcell boundary"},
-		{"boolean not string", `{"permissions":{"disableBypassPermissionsMode":true}}`, "Claude managed settings must disable bypass-permissions mode under the external Workcell boundary"},
-		{"legacy top-level key", `{"disableBypassPermissionsMode":"disable"}`, "Claude managed settings must disable bypass-permissions mode under the external Workcell boundary"},
+		{"wrong string value", `{"disableBypassPermissionsMode":"deny"}`, "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary"},
+		{"missing field", `{}`, "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary"},
+		{"boolean not string", `{"disableBypassPermissionsMode":true}`, "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

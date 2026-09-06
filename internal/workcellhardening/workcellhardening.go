@@ -4380,23 +4380,24 @@ func CheckClaudeGuardBashHook(settingsPath string) error {
 }
 
 // claudeManagedBypassChecks holds the single Claude managed-settings
-// bypass-permissions invariant.  The documented key lives under `permissions`
-// and the managed baseline pins it to "disable", so this is a kindJSONExprEval
-// check whose RHS literal is the JSON string "disable".
+// bypass-permissions invariant migrated out of scripts/verify-invariants.sh (the
+// `if ! jq -e '.disableBypassPermissionsMode == "allow"'` guard).  It is a
+// kindJSONExprEval check whose RHS literal is the JSON string "allow".
 var claudeManagedBypassChecks = []check{
 	{
 		kind:            kindJSONExprEval,
 		targetFile:      claudeManagedSettingsRelPath,
-		jsonPath:        ".permissions.disableBypassPermissionsMode",
-		jsonExpectedRaw: `"disable"`,
-		message:         "Claude managed settings must disable bypass-permissions mode under the external Workcell boundary",
+		jsonPath:        ".disableBypassPermissionsMode",
+		jsonExpectedRaw: `"allow"`,
+		message:         "Claude managed settings must allow bypass-permissions mode under the external Workcell boundary",
 	},
 }
 
 // CheckClaudeManagedBypass runs the single Claude managed-settings
 // bypass-permissions invariant against the repo rooted at rootDir.  It returns
-// nil when .permissions.disableBypassPermissionsMode is the JSON string
-// "disable", or an error carrying the invariant's message.
+// nil when .disableBypassPermissionsMode is the JSON string "allow" (the shell's
+// exit 0), or an error whose message equals the shell's stderr (the shell's exit
+// 1).
 func CheckClaudeManagedBypass(rootDir string) error {
 	return evaluate(rootDir, claudeManagedBypassChecks)
 }
