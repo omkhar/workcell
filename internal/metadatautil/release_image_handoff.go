@@ -16,20 +16,25 @@ import (
 	"strings"
 )
 
+type releaseImageDescriptor struct {
+	Digest   string `json:"digest"`
+	Platform *struct {
+		OS           string `json:"os"`
+		Architecture string `json:"architecture"`
+	} `json:"platform"`
+}
+
 type releaseImageIndex struct {
-	Manifests []struct {
-		Digest   string `json:"digest"`
-		Platform struct {
-			OS           string `json:"os"`
-			Architecture string `json:"architecture"`
-		} `json:"platform"`
-	} `json:"manifests"`
+	Manifests []releaseImageDescriptor `json:"manifests"`
 }
 
 type releaseImageManifest struct {
 	Config struct {
 		Digest string `json:"digest"`
 	} `json:"config"`
+	Layers []struct {
+		Digest string `json:"digest"`
+	} `json:"layers"`
 }
 
 type releaseImageLayout struct {
@@ -51,7 +56,7 @@ type releaseImageHandoff struct {
 }
 
 func CreateReleaseImageHandoff(archivePath, outputPath, repository, runID, tag, commit, platform, imageDigest, manifestDigest, configDigest string) error {
-	index, manifest, archiveDigest, err := inspectReleaseImageArchive(archivePath, manifestDigest, configDigest)
+	index, manifest, archiveDigest, err := inspectReleaseImageArchive(archivePath, imageDigest, manifestDigest, configDigest)
 	if err != nil {
 		return err
 	}
@@ -74,7 +79,7 @@ func CreateReleaseImageHandoff(archivePath, outputPath, repository, runID, tag, 
 	return os.WriteFile(outputPath, content, 0o600)
 }
 
-func inspectReleaseImageArchive(path, manifestDigest, configDigest string) (releaseImageIndex, releaseImageManifest, string, error) {
+func inspectReleaseImageArchive(path, imageDigest, manifestDigest, configDigest string) (releaseImageIndex, releaseImageManifest, string, error) {
 	var index releaseImageIndex
 	var manifest releaseImageManifest
 	file, err := os.Open(path)
@@ -95,7 +100,67 @@ func inspectReleaseImageArchive(path, manifestDigest, configDigest string) (rele
 		return index, manifest, "", err
 	}
 	index, manifest, err = members.decode()
+	if err != nil {
+		return index, manifest, "", err
+	}
+	if err := members.requireLayers(manifest); err != nil {
+		return index, manifest, "", err
+	}
+	index, err = resolveReleaseImageSubject(file, index, imageDigest, manifestDigest)
 	return index, manifest, archiveDigest, err
+}
+
+// resolveReleaseImageSubject binds the caller's image digest to the archive and
+// returns the index that carries the platform descriptors. A BuildKit export
+// built with BUILDKIT_MULTI_PLATFORM=1 wraps those descriptors in a nested
+// index, and the wrapper descriptor digest is the image digest BuildKit
+// reports. A flat export names the bound manifest itself.
+func resolveReleaseImageSubject(file *os.File, index releaseImageIndex, imageDigest, manifestDigest string) (releaseImageIndex, error) {
+	if len(index.Manifests) == 1 && index.Manifests[0].Platform == nil {
+		if index.Manifests[0].Digest != imageDigest {
+			return index, fmt.Errorf("release image index subject %q does not match image digest %q", index.Manifests[0].Digest, imageDigest)
+		}
+		return readReleaseImageNestedIndex(file, imageDigest)
+	}
+	if imageDigest != manifestDigest {
+		return index, fmt.Errorf("release image digest %q does not match the bound manifest digest %q", imageDigest, manifestDigest)
+	}
+	return index, nil
+}
+
+func readReleaseImageNestedIndex(file *os.File, digest string) (releaseImageIndex, error) {
+	var nested releaseImageIndex
+	name := releaseImageBlobName(digest)
+	content, err := readReleaseImageMember(file, name)
+	if err != nil {
+		return nested, err
+	}
+	if err := validateReleaseImageBlob(content, path.Base(name)); err != nil {
+		return nested, err
+	}
+	if err := json.Unmarshal(content, &nested); err != nil {
+		return nested, fmt.Errorf("parse nested OCI index: %w", err)
+	}
+	return nested, nil
+}
+
+func readReleaseImageMember(file *os.File, name string) ([]byte, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	reader := tar.NewReader(file)
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("release image archive lacks member %q", name)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimPrefix(header.Name, "./") == name {
+			return readReleaseImageDocument(reader, name)
+		}
+	}
 }
 
 func releaseImageBlobName(digest string) string {
@@ -173,6 +238,22 @@ func (members *releaseImageMembers) readBlob(reader io.Reader, name string) erro
 	}
 	if name == members.configName {
 		members.config = content
+	}
+	return nil
+}
+
+// requireLayers rejects a manifest whose layer blobs the archive does not
+// carry. Every collected blob already matched the digest in its own name, so
+// presence is enough here.
+func (members *releaseImageMembers) requireLayers(manifest releaseImageManifest) error {
+	if len(manifest.Layers) == 0 {
+		return errors.New("release image manifest does not reference any layer")
+	}
+	for _, layer := range manifest.Layers {
+		name := releaseImageBlobName(layer.Digest)
+		if _, ok := members.seen[name]; !ok {
+			return fmt.Errorf("release image archive lacks layer blob %q", layer.Digest)
+		}
 	}
 	return nil
 }
@@ -269,6 +350,9 @@ func validateReleaseImageDescriptor(index releaseImageIndex, platform, digest st
 	}
 	matches := 0
 	for _, descriptor := range index.Manifests {
+		if descriptor.Platform == nil {
+			continue
+		}
 		if descriptor.Digest == digest && descriptor.Platform.OS == osName && descriptor.Platform.Architecture == architecture {
 			matches++
 		}

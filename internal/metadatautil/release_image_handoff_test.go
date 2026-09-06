@@ -21,11 +21,54 @@ import (
 func TestCreateReleaseImageHandoffBindsArchiveIdentity(t *testing.T) {
 	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", false)
 	output := filepath.Join(t.TempDir(), "handoff.json")
-	err := metadatautil.CreateReleaseImageHandoff(archive, output, "owner/repo", "12", "v1", "commit", "linux/amd64", "sha256:index", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, output, "owner/repo", "12", "v1", "commit", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err != nil {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
 	assertReleaseImageHandoff(t, output)
+}
+
+func TestCreateReleaseImageHandoffUnwrapsMultiPlatformIndex(t *testing.T) {
+	archive, imageDigest, manifestDigest, configDigest := writeWrappedReleaseImageArchive(t)
+	output := filepath.Join(t.TempDir(), "handoff.json")
+	err := metadatautil.CreateReleaseImageHandoff(archive, output, "owner/repo", "12", "v1", "commit", "linux/amd64", imageDigest, manifestDigest, configDigest)
+	if err != nil {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
+	assertReleaseImageHandoff(t, output)
+}
+
+func TestCreateReleaseImageHandoffRejectsForeignWrappedImageDigest(t *testing.T) {
+	archive, _, manifestDigest, configDigest := writeWrappedReleaseImageArchive(t)
+	foreign := "sha256:" + strings.Repeat("4", 64)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", foreign, manifestDigest, configDigest)
+	if err == nil || !strings.Contains(err.Error(), "does not match image digest") {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
+}
+
+func TestCreateReleaseImageHandoffRejectsForeignFlatImageDigest(t *testing.T) {
+	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", false)
+	foreign := "sha256:" + strings.Repeat("5", 64)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", foreign, manifestDigest, configDigest)
+	if err == nil || !strings.Contains(err.Error(), "does not match the bound manifest digest") {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
+}
+
+func TestCreateReleaseImageHandoffRejectsMissingLayerBlob(t *testing.T) {
+	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", false)
+	members := readReleaseArchiveMembers(t, archive)
+	kept := members[:0]
+	for _, member := range members {
+		if member.name != releaseArchiveBlobName(contentDigest([]byte("layer"))) {
+			kept = append(kept, member)
+		}
+	}
+	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, kept), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
+	if err == nil || !strings.Contains(err.Error(), "lacks layer blob") {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
 }
 
 func TestCreateReleaseImageHandoffRejectsMismatchedArchive(t *testing.T) {
@@ -39,7 +82,7 @@ func TestCreateReleaseImageHandoffRejectsMismatchedArchive(t *testing.T) {
 func TestCreateReleaseImageHandoffRejectsWrongConfiguration(t *testing.T) {
 	wrongDigest := "sha256:" + strings.Repeat("1", 64)
 	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, wrongDigest, false)
-	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err == nil || !strings.Contains(err.Error(), "config digest") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -47,7 +90,7 @@ func TestCreateReleaseImageHandoffRejectsWrongConfiguration(t *testing.T) {
 
 func TestCreateReleaseImageHandoffRejectsDuplicateDescriptors(t *testing.T) {
 	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 2, "", false)
-	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err == nil || !strings.Contains(err.Error(), "found 2") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -55,7 +98,7 @@ func TestCreateReleaseImageHandoffRejectsDuplicateDescriptors(t *testing.T) {
 
 func TestCreateReleaseImageHandoffRejectsDuplicateMembers(t *testing.T) {
 	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", true)
-	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err == nil || !strings.Contains(err.Error(), "duplicate member") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -73,7 +116,7 @@ func TestCreateReleaseImageHandoffRejectsMislabeledBlob(t *testing.T) {
 		{name: "blobs/sha256/" + strings.TrimPrefix(configDigest, "sha256:"), content: []byte("wrong")},
 	}
 	archive := writeReleaseArchiveMembers(t, members)
-	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err == nil || !strings.Contains(err.Error(), "blob content") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -83,7 +126,7 @@ func TestCreateReleaseImageHandoffRejectsTraversal(t *testing.T) {
 	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", false)
 	members := readReleaseArchiveMembers(t, archive)
 	members = append(members, releaseArchiveMember{name: "../preflight-subjects/workcell.rb", content: []byte("replacement")})
-	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, members), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, members), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err == nil || !strings.Contains(err.Error(), "unexpected member") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -93,7 +136,7 @@ func TestCreateReleaseImageHandoffRejectsLinks(t *testing.T) {
 	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", false)
 	members := readReleaseArchiveMembers(t, archive)
 	members = append(members, releaseArchiveMember{name: "blobs/sha256/" + strings.Repeat("3", 64), typeflag: tar.TypeSymlink, linkname: "../index.json"})
-	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, members), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", manifestDigest, configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, members), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", manifestDigest, manifestDigest, configDigest)
 	if err == nil || !strings.Contains(err.Error(), "special member") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -120,25 +163,59 @@ func validReleaseImageHandoff(handoff map[string]any) bool {
 
 func writeReleaseImageArchive(t *testing.T, descriptorCount int, manifestConfigDigest string, duplicateManifest bool) (string, string, string) {
 	t.Helper()
-	config := []byte(`{"architecture":"amd64","os":"linux"}`)
-	configDigest := contentDigest(config)
-	if manifestConfigDigest == "" {
-		manifestConfigDigest = configDigest
-	}
-	manifest := []byte(fmt.Sprintf(`{"config":{"digest":%q}}`, manifestConfigDigest))
-	manifestDigest := contentDigest(manifest)
+	manifestDigest, configDigest, blobs := releaseImageBlobs(t, manifestConfigDigest)
 	descriptor := fmt.Sprintf(`{"digest":%q,"platform":{"os":"linux","architecture":"amd64"}}`, manifestDigest)
 	index := []byte(`{"manifests":[` + strings.TrimSuffix(strings.Repeat(descriptor+",", descriptorCount), ",") + `]}`)
-	members := []releaseArchiveMember{
+	members := append([]releaseArchiveMember{
 		{name: "oci-layout", content: []byte(`{"imageLayoutVersion":"1.0.0"}`)},
 		{name: "index.json", content: index},
-		{name: "blobs/sha256/" + strings.TrimPrefix(manifestDigest, "sha256:"), content: manifest},
-		{name: "blobs/sha256/" + strings.TrimPrefix(configDigest, "sha256:"), content: config},
-	}
+	}, blobs...)
 	if duplicateManifest {
 		members = append(members, members[1])
 	}
 	return writeReleaseArchiveMembers(t, members), manifestDigest, configDigest
+}
+
+// releaseImageBlobs builds the manifest, config and layer blobs of a
+// single-platform OCI image.
+func releaseImageBlobs(t *testing.T, manifestConfigDigest string) (string, string, []releaseArchiveMember) {
+	t.Helper()
+	config := []byte(`{"architecture":"amd64","os":"linux"}`)
+	configDigest := contentDigest(config)
+	layer := []byte("layer")
+	layerDigest := contentDigest(layer)
+	if manifestConfigDigest == "" {
+		manifestConfigDigest = configDigest
+	}
+	manifest := []byte(fmt.Sprintf(`{"config":{"digest":%q},"layers":[{"digest":%q}]}`, manifestConfigDigest, layerDigest))
+	manifestDigest := contentDigest(manifest)
+	blobs := []releaseArchiveMember{
+		{name: releaseArchiveBlobName(manifestDigest), content: manifest},
+		{name: releaseArchiveBlobName(configDigest), content: config},
+		{name: releaseArchiveBlobName(layerDigest), content: layer},
+	}
+	return manifestDigest, configDigest, blobs
+}
+
+// writeWrappedReleaseImageArchive mirrors a BUILDKIT_MULTI_PLATFORM=1 export:
+// index.json holds one platform-free wrapper descriptor for a nested index that
+// carries the platform descriptors.
+func writeWrappedReleaseImageArchive(t *testing.T) (string, string, string, string) {
+	t.Helper()
+	manifestDigest, configDigest, blobs := releaseImageBlobs(t, "")
+	nested := []byte(fmt.Sprintf(`{"manifests":[{"digest":%q,"platform":{"os":"linux","architecture":"amd64"}},`+
+		`{"digest":%q,"platform":{"os":"unknown","architecture":"unknown"}}]}`, manifestDigest, contentDigest([]byte("attestation"))))
+	imageDigest := contentDigest(nested)
+	members := append([]releaseArchiveMember{
+		{name: "oci-layout", content: []byte(`{"imageLayoutVersion":"1.0.0"}`)},
+		{name: "index.json", content: []byte(fmt.Sprintf(`{"manifests":[{"digest":%q}]}`, imageDigest))},
+		{name: releaseArchiveBlobName(imageDigest), content: nested},
+	}, blobs...)
+	return writeReleaseArchiveMembers(t, members), imageDigest, manifestDigest, configDigest
+}
+
+func releaseArchiveBlobName(digest string) string {
+	return "blobs/sha256/" + strings.TrimPrefix(digest, "sha256:")
 }
 
 type releaseArchiveMember struct {
