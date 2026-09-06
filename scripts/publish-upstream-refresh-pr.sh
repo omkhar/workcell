@@ -167,7 +167,7 @@ if [[ "${run_head_branch}" != "${BASE_BRANCH}" ]]; then
   echo "Workflow run ${RUN_ID} must target ${BASE_BRANCH}, found ${run_head_branch:-unknown}." >&2
   exit 2
 fi
-if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml"* ]]; then
+if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then
   echo "Workflow run ${RUN_ID} does not come from the reviewed upstream-refresh workflow on ${BASE_BRANCH}." >&2
   exit 2
 fi
