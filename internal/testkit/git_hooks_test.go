@@ -338,6 +338,28 @@ func TestPrePushHookAcceptsNewRefOverDirectURL(t *testing.T) {
 	fixture.run("push", "--quiet", fixture.remote, "HEAD:refs/heads/topic")
 }
 
+func TestPrePushHookFailsClosedWhenRangeWalkFails(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
+	// A remote-tracking ref pointing at a missing object breaks the range
+	// walk; the hook must refuse the push rather than see an empty range.
+	broken := filepath.Join(fixture.root, ".git", "refs", "remotes", "origin", "broken")
+	if err := os.MkdirAll(filepath.Dir(broken), 0o755); err != nil {
+		t.Fatalf("mkdir for broken ref failed: %v", err)
+	}
+	missing := "24e6d5dc752f727899a698566b8933ff576aba47\n"
+	if err := os.WriteFile(broken, []byte(missing), 0o644); err != nil {
+		t.Fatalf("write broken ref failed: %v", err)
+	}
+	output, err := fixture.tryGit(nil, "push", "--quiet", "origin", "main")
+	if err == nil {
+		t.Fatal("pre-push accepted a push whose range walk failed")
+	}
+	if !strings.Contains(output, "could not enumerate the outgoing commits") {
+		t.Fatalf("pre-push rejection lacks range-walk guidance:\n%s", output)
+	}
+}
+
 func TestPrePushHookRejectsUnsignedTailBehindSignedHead(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.configureSSHSigning()

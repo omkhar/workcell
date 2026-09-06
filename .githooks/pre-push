@@ -40,6 +40,13 @@ while read -r _ local_sha _ remote_sha; do
     # inclusion and drag the published base into the walk.
     exclusions+=("${remote_sha}")
   fi
+  # Capture the walk rather than reading a process substitution: a failing
+  # rev-list there yields an empty loop and would let the push through.
+  if ! outgoing="$(git -C "${ROOT_DIR}" --no-replace-objects rev-list "${local_sha}" --not "${exclusions[@]}")"; then
+    echo "pre-push could not enumerate the outgoing commits for ${local_sha}; refusing the push." >&2
+    echo "Repair the repository, or set WORKCELL_SKIP_PUSH_SIGNATURES=1 only for an intentional bypass." >&2
+    exit 1
+  fi
   while IFS= read -r commit; do
     [[ -n "${commit}" ]] || continue
     if ! git -C "${ROOT_DIR}" --no-replace-objects verify-commit "${commit}" >/dev/null 2>&1; then
@@ -48,7 +55,7 @@ while read -r _ local_sha _ remote_sha; do
       echo "SSH signers also need gpg.ssh.allowedSignersFile; see CONTRIBUTING.md." >&2
       exit 1
     fi
-  done < <(git -C "${ROOT_DIR}" --no-replace-objects rev-list "${local_sha}" --not "${exclusions[@]}")
+  done <<<"${outgoing}"
 done
 
 exit 0
