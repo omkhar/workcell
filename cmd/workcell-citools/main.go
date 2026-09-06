@@ -103,6 +103,7 @@ func subcommands() []subcommand {
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
 		{"generate-build-input-manifest", "DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", 7, 7, cmdGenerateBuildInputManifest},
 		{"generate-builder-environment-manifest", "OUTPUT BUILDKIT_IMAGE BUILDX_VERSION_TARGET COSIGN_VERSION_TARGET QEMU_IMAGE SYFT_VERSION_TARGET BUILDX_VERSION BUILDX_INSPECT DOCKER_VERSION_JSON QEMU_VERSION COSIGN_VERSION CURL_VERSION GIT_VERSION GZIP_VERSION SYFT_VERSION TAR_VERSION", 16, 16, cmdGenerateBuilderEnvironmentManifest},
+		{"create-release-image-handoff", "ARCHIVE OUTPUT REPOSITORY RUN_ID TAG COMMIT PLATFORM IMAGE_DIGEST MANIFEST_DIGEST CONFIG_DIGEST", 10, 10, cmdCreateReleaseImageHandoff},
 		{"check-pinned-inputs", "REPO_ROOT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 2, 2, cmdCheckPinnedInputs},
 		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
@@ -172,6 +173,10 @@ func subcommands() []subcommand {
 		{"workcell-precommit-upstream-pin-gate", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckPrecommitUpstreamPinGate)},
 		{"workcell-trusted-docker-client-rg", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckTrustedDockerClientRg)},
 	}
+}
+
+func cmdCreateReleaseImageHandoff(args []string) error {
+	return metadatautil.CreateReleaseImageHandoff(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9])
 }
 
 // scenario-manifest is intentionally dispatched in main() rather than
