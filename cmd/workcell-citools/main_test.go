@@ -90,8 +90,11 @@ func TestWorkcellCheckBatchStopsAtFirstFailureWithByteIdenticalStderr(t *testing
 	hookExec := "workcell-precommit-hook-exec"
 	pinGate := "workcell-precommit-upstream-pin-gate"
 
-	_, hookExecStderr := runCitools(t, hookExec, emptyRoot)
-	_, pinGateStderr := runCitools(t, pinGate, emptyRoot)
+	hookExecCode, hookExecStderr := runCitools(t, hookExec, emptyRoot)
+	pinGateCode, pinGateStderr := runCitools(t, pinGate, emptyRoot)
+	if hookExecCode != 1 || pinGateCode != 1 {
+		t.Fatalf("individual exit codes = %d/%d, want 1/1", hookExecCode, pinGateCode)
+	}
 	if hookExecStderr == pinGateStderr {
 		t.Fatalf("individual checks share stderr %q; cannot prove ordering", hookExecStderr)
 	}
@@ -106,10 +109,6 @@ func TestWorkcellCheckBatchStopsAtFirstFailureWithByteIdenticalStderr(t *testing
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			individualCode, individualStderr := runCitools(t, tt.checks[0], emptyRoot)
-			if individualCode != 1 {
-				t.Fatalf("individual %s exit code = %d, want 1; stderr=%q", tt.checks[0], individualCode, individualStderr)
-			}
 			batchArgs := append([]string{"workcell-check-batch", emptyRoot}, tt.checks...)
 			batchCode, batchStderr := runCitools(t, batchArgs...)
 			if batchCode != 1 {
