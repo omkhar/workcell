@@ -248,6 +248,23 @@ func TestCommitMsgHookAcceptsSubjectWhenCommentCharIsRiskSymbol(t *testing.T) {
 	}
 }
 
+func TestCommitMsgHookHonorsCommandScopedCommentChar(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	message := "; Please enter the commit message for your changes.\n" +
+		"^F Add branch filter flag (tests pass; user-visible CLI flag)\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	// -c settings reach the hook through GIT_CONFIG_PARAMETERS, which the
+	// sanitized re-exec has to forward for stripspace to agree with Git.
+	fixture.run("-c", "core.commentChar=;", "commit", "--quiet", "--cleanup=strip", "-F", messageFile)
+}
+
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("seed.txt", "seed\n", "^F Seed fixture history (tests pass; fixture seed)")
@@ -414,6 +431,31 @@ func TestPrePushHookRejectsUnsignedBaseSentToAnotherRepository(t *testing.T) {
 	output, err := fixture.tryGit(nil, "push", "--quiet", elsewhere, "HEAD:refs/heads/topic")
 	if err == nil {
 		t.Fatal("pre-push sent an unsigned base to a repository that had not seen it")
+	}
+	if !strings.Contains(output, "unable to verify commit") {
+		t.Fatalf("pre-push rejection lacks signature guidance:\n%s", output)
+	}
+}
+
+func TestPrePushHookRejectsUnsignedBaseWhenPushURLDiffers(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
+	if output, err := fixture.tryGit(
+		[]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"},
+		"push", "--quiet", "origin", "main",
+	); err != nil {
+		t.Fatalf("bypassed seed push failed: %v\n%s", err, output)
+	}
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "two\n", "^B Correct fixture file (tests pass; fixture defect)", "-S")
+	// Tracking refs record what the fetch URL held, so they cannot vouch for a
+	// separately configured push destination.
+	elsewhere := filepath.Join(filepath.Dir(fixture.remote), "pushurl.git")
+	fixture.run("init", "--quiet", "--bare", elsewhere)
+	fixture.run("remote", "set-url", "--push", "origin", elsewhere)
+	output, err := fixture.tryGit(nil, "push", "--quiet", "origin", "main")
+	if err == nil {
+		t.Fatal("pre-push let fetch tracking refs vouch for a different push destination")
 	}
 	if !strings.Contains(output, "unable to verify commit") {
 		t.Fatalf("pre-push rejection lacks signature guidance:\n%s", output)

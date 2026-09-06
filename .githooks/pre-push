@@ -20,19 +20,17 @@ fi
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 readonly ZERO_OID_PATTERN='^0+$'
-REMOTE_NAME="${1:-origin}"
 REMOTE_URL="${2:-}"
 
-# Only a remote that points at this destination can vouch for what the
-# destination already holds. Tracking refs for anywhere else say nothing about
-# it, so they must not exclude commits from the walk.
+# A remote's tracking refs record what its fetch URL held. Only a remote
+# fetched from this destination can say what the destination already holds, so
+# the fetch URL is the one that has to match. A remote name, or a push URL set
+# separately from the fetch URL, would let one repository vouch for another.
 destination_exclusions=()
 while IFS= read -r name; do
   [[ -n "${name}" ]] || continue
   fetch_url="$(git -C "${ROOT_DIR}" remote get-url "${name}" 2>/dev/null || true)"
-  push_url="$(git -C "${ROOT_DIR}" remote get-url --push "${name}" 2>/dev/null || true)"
-  if [[ "${name}" == "${REMOTE_NAME}" ]] ||
-    [[ -n "${REMOTE_URL}" && ("${fetch_url}" == "${REMOTE_URL}" || "${push_url}" == "${REMOTE_URL}") ]]; then
+  if [[ -n "${REMOTE_URL}" && "${fetch_url}" == "${REMOTE_URL}" ]]; then
     destination_exclusions+=("--remotes=${name}")
   fi
 done < <(git -C "${ROOT_DIR}" remote)

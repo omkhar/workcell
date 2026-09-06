@@ -5,6 +5,7 @@ if [[ "${WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     PATH="${TRUSTED_HOST_PATH}" \
     HOME="${HOME:-/tmp}" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:-}" \
     WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}" \
     WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
@@ -34,6 +35,11 @@ notation_ok() {
   [[ "$1" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]
 }
 
+# GIT_CONFIG_PARAMETERS carries the outer `git -c name=value` settings, so
+# stripspace here resolves the same comment character the outer command will.
+# It is forwarded rather than scrubbed because the person running that command
+# already controls both the message and the documented bypass variable.
+#
 # Check the subject Git would retain first. A repository can configure
 # core.commentChar to a risk symbol such as ^, and comment stripping would
 # then delete a valid subject.
