@@ -53,10 +53,20 @@ func (h *darwinAuditTokenSignalHandle) Signal(signal syscall.Signal) error {
 func (*darwinAuditTokenSignalHandle) Close() error { return nil }
 
 func reapColimaProfileProcessesForHost(ctx context.Context, profile string, deps colimaProcessReaperDependencies) error {
-	if !darwinAuditTokenSignalAvailable() {
-		return passivelyReapColimaProfileProcesses(ctx, profile, deps)
+	return reapColimaProfileProcesses(ctx, profile, darwinReaperDependencies(deps, darwinAuditTokenSignalAvailable()))
+}
+
+// darwinReaperDependencies picks the signal handle for this kernel. The
+// proc_info audit-token signal arrived in Darwin 23.2 (macOS 14.2); below that
+// boundary the reaper keeps the generation-guarded bare-PID kill it used
+// before exact handles existed. Every caller treats a reaper failure as fatal
+// and three of them run before `colima delete`, so a non-signalling fallback
+// would take availability away from hosts that have it today.
+func darwinReaperDependencies(deps colimaProcessReaperDependencies, auditTokenSignalAvailable bool) colimaProcessReaperDependencies {
+	if !auditTokenSignalAvailable {
+		deps.openSignal = openLegacyPIDSignalHandle
 	}
-	return reapColimaProfileProcesses(ctx, profile, deps)
+	return deps
 }
 
 func darwinAuditTokenSignalAvailable() bool {

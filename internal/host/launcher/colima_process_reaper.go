@@ -56,24 +56,6 @@ func ReapColimaProfileProcesses(ctx context.Context, profile string) error {
 	return reapColimaProfileProcessesForHost(ctx, profile, deps)
 }
 
-func passivelyReapColimaProfileProcesses(ctx context.Context, profile string, deps colimaProcessReaperDependencies) error {
-	const polls = 20
-	const delay = 250 * time.Millisecond
-	for range polls {
-		owned, err := captureColimaProcessIdentities(ctx, profile, deps)
-		if err != nil {
-			return err
-		}
-		if len(owned) == 0 {
-			return nil
-		}
-		if err := deps.sleep(ctx, delay); err != nil {
-			return err
-		}
-	}
-	return fmt.Errorf("colima profile %s still has owned processes after passive cleanup", profile)
-}
-
 func reapColimaProfileProcesses(
 	ctx context.Context,
 	profile string,

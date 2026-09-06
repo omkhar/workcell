@@ -6,9 +6,30 @@
 package launcher
 
 import (
+	"os"
 	"testing"
 	"unsafe"
 )
+
+func TestDarwinReaperFallsBackToLegacyKillBelow232(t *testing.T) {
+	base := colimaProcessReaperDependencies{openSignal: openExactProcessSignalHandle}
+
+	legacy, err := darwinReaperDependencies(base, false).openSignal(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := legacy.(legacyPIDSignalHandle); !ok {
+		t.Fatalf("handle below Darwin 23.2 = %T, want legacyPIDSignalHandle", legacy)
+	}
+
+	exact, err := darwinReaperDependencies(base, true).openSignal(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := exact.(*darwinAuditTokenSignalHandle); !ok {
+		t.Fatalf("handle on Darwin 23.2 or newer = %T, want *darwinAuditTokenSignalHandle", exact)
+	}
+}
 
 func TestDarwinAuditTokenSignalVersionGate(t *testing.T) {
 	tests := map[string]bool{

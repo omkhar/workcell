@@ -7,11 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
-	"strings"
 	"syscall"
 	"testing"
-	"time"
 )
 
 func TestSignalCurrentProcessIdentityUsesBoundHandleInOrder(t *testing.T) {
@@ -138,16 +137,15 @@ func TestSignalCurrentProcessIdentityTreatsSignalESRCHAsComplete(t *testing.T) {
 	}
 }
 
-func TestPassiveColimaReaperNeverOpensSignalHandle(t *testing.T) {
-	opened := false
-	deps := newReaperFake().dependencies()
-	deps.openSignal = func(int) (exactProcessSignalHandle, error) {
-		opened = true
-		return nil, errors.New("unexpected open")
+func TestLegacyPIDSignalHandleSignalsThroughKill(t *testing.T) {
+	handle, err := openLegacyPIDSignalHandle(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
 	}
-	deps.sleep = func(context.Context, time.Duration) error { return nil }
-	err := passivelyReapColimaProfileProcesses(context.Background(), "wcl-c3-test", deps)
-	if err == nil || !strings.Contains(err.Error(), "still has owned processes after passive cleanup") || opened {
-		t.Fatalf("passive cleanup = %v, opened handle %t", err, opened)
+	if err := handle.Signal(0); err != nil {
+		t.Fatalf("legacy handle probe signal = %v, want nil", err)
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatalf("legacy handle close = %v, want nil", err)
 	}
 }
