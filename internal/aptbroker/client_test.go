@@ -4,10 +4,7 @@
 package aptbroker
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"io"
 	"reflect"
 	"testing"
 )
@@ -60,35 +57,3 @@ func TestRunClientRejectsPreservedInteractiveValueBeforeDial(t *testing.T) {
 		t.Fatalf("RunClient() response=%#v status=%d error=%v", response, status, err)
 	}
 }
-
-func TestWriteFullHandlesPartialWrites(t *testing.T) {
-	writer := &partialWriter{limit: 2}
-	if err := writeFull(writer, []byte("abcdef")); err != nil {
-		t.Fatal(err)
-	}
-	if got := writer.buffer.String(); got != "abcdef" {
-		t.Fatalf("writeFull() wrote %q", got)
-	}
-}
-
-func TestWriteFullRejectsNoProgress(t *testing.T) {
-	if err := writeFull(zeroWriter{}, []byte("data")); !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("writeFull() error = %v, want io.ErrShortWrite", err)
-	}
-}
-
-type partialWriter struct {
-	buffer bytes.Buffer
-	limit  int
-}
-
-func (w *partialWriter) Write(data []byte) (int, error) {
-	if len(data) > w.limit {
-		data = data[:w.limit]
-	}
-	return w.buffer.Write(data)
-}
-
-type zeroWriter struct{}
-
-func (zeroWriter) Write([]byte) (int, error) { return 0, nil }

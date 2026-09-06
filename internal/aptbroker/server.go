@@ -71,9 +71,6 @@ func (c *ServerConfig) applyDefaults() {
 	if c.MaxConcurrent == 0 {
 		c.MaxConcurrent = maxConcurrent
 	}
-	if c.ErrorWriter == nil {
-		c.ErrorWriter = os.Stderr
-	}
 }
 
 func (c ServerConfig) report(err error) {
@@ -234,7 +231,7 @@ func writeResponse(connection *net.UnixConn, response Response) error {
 	if err := connection.SetWriteDeadline(time.Now().Add(responseWriteTimeout)); err != nil {
 		return fmt.Errorf("set response deadline: %w", err)
 	}
-	if err := writeFull(connection, frame); err != nil {
+	if _, err := connection.Write(frame); err != nil {
 		return fmt.Errorf("write response: %w", err)
 	}
 	return nil
@@ -341,8 +338,7 @@ func isSocketFile(info os.FileInfo, err error) bool {
 
 func removeSocket(path string, listener *net.UnixListener) {
 	_ = listener.Close()
-	info, err := os.Lstat(path)
-	if err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode()&os.ModeSocket != 0 {
+	if isSocketFile(os.Lstat(path)) {
 		_ = os.Remove(path)
 	}
 }

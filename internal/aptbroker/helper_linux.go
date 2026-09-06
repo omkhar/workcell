@@ -406,7 +406,7 @@ func nonExitError(err error) error {
 	return err
 }
 
-func exitStatus(state interface{ ExitCode() int }) int {
+func exitStatus(state *os.ProcessState) int {
 	status := state.ExitCode()
 	if status < 0 {
 		return 1

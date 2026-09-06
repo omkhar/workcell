@@ -11,7 +11,7 @@ import (
 	"github.com/omkhar/workcell/internal/aptbroker"
 )
 
-const sudoCompatHelperPath = "/usr/local/libexec/workcell/apt-helper.sh"
+const sudoCompatHelperPath = aptbroker.DefaultHelperPath
 
 type sudoCompatOptions struct {
 	preserveCSV string

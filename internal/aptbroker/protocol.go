@@ -125,7 +125,7 @@ func decodeRequest(body []byte) (Request, error) {
 	if err != nil {
 		return Request{}, err
 	}
-	if parser.remaining() != 0 {
+	if parser.reader.Len() != 0 {
 		return Request{}, fmt.Errorf("trailing request data")
 	}
 	return Request{Args: args, Env: environment}, nil
@@ -155,7 +155,7 @@ func decodeResponse(body []byte) (Response, error) {
 		return Response{}, err
 	}
 	stderr, err := parser.output(stderrLength, "stderr")
-	if err != nil || parser.remaining() != 0 {
+	if err != nil || parser.reader.Len() != 0 {
 		return Response{}, fmt.Errorf("invalid response stderr")
 	}
 	return Response{Status: int(status), Stdout: stdout, Stderr: stderr}, nil
@@ -163,9 +163,6 @@ func decodeResponse(body []byte) (Response, error) {
 
 func validateRequest(request Request) error {
 	if err := validateArgumentCount(len(request.Args)); err != nil {
-		return err
-	}
-	if err := validateArgumentLengths(request.Args); err != nil {
 		return err
 	}
 	return validateEnvironment(request.Env)
@@ -178,15 +175,6 @@ func validateEnvironment(environment map[string]string) error {
 	for name, value := range environment {
 		if !isAllowedEnvironmentValue(name, value) {
 			return fmt.Errorf("unsupported environment value for %s", name)
-		}
-	}
-	return nil
-}
-
-func validateArgumentLengths(args []string) error {
-	for _, arg := range args {
-		if len(arg) > MaxRequestBytes {
-			return fmt.Errorf("request exceeds %d bytes", MaxRequestBytes)
 		}
 	}
 	return nil
@@ -288,7 +276,7 @@ func (p *parser) environment() (map[string]string, error) {
 }
 
 func (p *parser) environmentCount() (byte, error) {
-	count, err := p.byte()
+	count, err := p.reader.ReadByte()
 	if err != nil || int(count) > MaxEnvironment {
 		return 0, fmt.Errorf("invalid environment count")
 	}
@@ -316,7 +304,7 @@ func (p *parser) environmentEntry() (string, string, error) {
 }
 
 func (p *parser) environmentName() (string, error) {
-	nameLength, err := p.byte()
+	nameLength, err := p.reader.ReadByte()
 	if err != nil || nameLength == 0 {
 		return "", fmt.Errorf("invalid environment name")
 	}
@@ -367,11 +355,6 @@ func (p *parser) outputLength(name string) (uint32, error) {
 	return length, nil
 }
 
-func (p *parser) byte() (byte, error) {
-	value, err := p.reader.ReadByte()
-	return value, err
-}
-
 func (p *parser) u16() (uint16, error) {
 	var value uint16
 	err := binary.Read(p.reader, binary.BigEndian, &value)
@@ -400,5 +383,3 @@ func (p *parser) raw(length int) (string, error) {
 	_, err := io.ReadFull(p.reader, value)
 	return string(value), err
 }
-
-func (p *parser) remaining() int { return p.reader.Len() }

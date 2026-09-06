@@ -33,7 +33,7 @@ func RunClient(
 		return Response{}, 1, err
 	}
 	defer conn.Close()
-	if err := writeFull(conn, request); err != nil {
+	if _, err := conn.Write(request); err != nil {
 		return Response{}, 1, err
 	}
 	return readClientResponse(ctx, conn)
@@ -71,22 +71,6 @@ func dialBroker(ctx context.Context, socketPath string) (*net.UnixConn, error) {
 		return nil, fmt.Errorf("apt broker did not return a Unix connection")
 	}
 	return unixConn, nil
-}
-
-func writeFull(writer io.Writer, data []byte) error {
-	for len(data) > 0 {
-		written, err := writer.Write(data)
-		if written > 0 {
-			data = data[written:]
-		}
-		if err != nil {
-			return err
-		}
-		if written == 0 {
-			return io.ErrShortWrite
-		}
-	}
-	return nil
 }
 
 func readClientResponse(ctx context.Context, conn *net.UnixConn) (Response, int, error) {

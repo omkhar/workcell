@@ -304,12 +304,8 @@ func isStartedSocket(info os.FileInfo, err error) bool {
 }
 
 func validateStartedSocketParent(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o755 {
-		return errors.New("started server socket parent is invalid")
-	}
-	if fileUID(info) != 0 {
-		return errors.New("started server socket parent is not root-owned")
+	if err := validateStartupDirectory(path, true); err != nil {
+		return fmt.Errorf("started server socket parent is invalid: %w", err)
 	}
 	return nil
 }
