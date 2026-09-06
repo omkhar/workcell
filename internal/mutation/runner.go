@@ -336,9 +336,12 @@ func runRustGuardMutations(repoRoot string) (killed, total int, survivors []stri
 			}
 			defer os.RemoveAll(tempRoot)
 
+			// Local target/ trees hold hundreds of megabytes of build
+			// artifacts that no scoped test reads.
 			if err := copyTree(
 				filepath.Join(repoRoot, "runtime", "container", "rust"),
 				filepath.Join(tempRoot, "runtime", "container", "rust"),
+				"target",
 			); err != nil {
 				results <- result{label: tc.label, err: err}
 				return
@@ -440,10 +443,17 @@ func applyMutation(path string, original string, replacement string) error {
 	return os.WriteFile(path, []byte(updated), info.Mode().Perm())
 }
 
-func copyTree(sourceRoot string, destinationRoot string) error {
+func copyTree(sourceRoot string, destinationRoot string, skipDirNames ...string) error {
 	return filepath.WalkDir(sourceRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if d.IsDir() {
+			for _, skip := range skipDirNames {
+				if d.Name() == skip && path != sourceRoot {
+					return fs.SkipDir
+				}
+			}
 		}
 		relative, err := filepath.Rel(sourceRoot, path)
 		if err != nil {

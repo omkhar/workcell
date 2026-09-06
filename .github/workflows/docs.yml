@@ -102,8 +102,10 @@ jobs:
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
-          # docs.yml-scoped cache namespace to avoid colliding with the
-          # validator-main / validator-pr-* scopes used by ci.yml.
-          WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-docs-pr-{0}', github.event.pull_request.number) || 'validator-docs-main' }}
+          # Shares the validator-main / validator-pr-* cache scopes with
+          # ci.yml so this build reuses the layers ci.yml already built for
+          # the same commit. Concurrent writes to one scope are safe: cache
+          # entries are content-addressed and reads never block.
+          WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
         run: ./scripts/ci/job-docs.sh
