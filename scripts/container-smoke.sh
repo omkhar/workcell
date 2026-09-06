@@ -499,10 +499,6 @@ cleanup() {
   fi
 }
 
-select_docker_context() {
-  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
-}
-
 docker_cmd() {
   if [[ -n "${DOCKER_CONTEXT_NAME}" ]]; then
     docker --context "${DOCKER_CONTEXT_NAME}" "$@"
@@ -645,16 +641,43 @@ populate_workspace_import_mounts() {
   done < <(workspace_import_mounts)
 }
 
-run_container() {
+# Shared docker-run core for the nine run_* smoke helpers below. Each
+# wrapper resets the SMOKE_RUN_* controls, sets only what differs, and
+# delegates. smoke_run_container consumes: SMOKE_RUN_DOCKER_FLAGS (extra
+# docker-run flags), SMOKE_RUN_MUTABILITY (security profile + env value),
+# SMOKE_RUN_PROFILE (CODEX_PROFILE value), SMOKE_RUN_ENV_ARGS (variant env;
+# defaults to the workspace-mutable-exec skip knob, which the injection
+# variants intentionally omit), SMOKE_RUN_PRE_WORKSPACE_MOUNT_ARGS,
+# SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS, SMOKE_RUN_ENTRYPOINT (1 = first
+# command word becomes --entrypoint).
+smoke_run_reset() {
+  SMOKE_RUN_DOCKER_FLAGS=()
+  SMOKE_RUN_MUTABILITY=ephemeral
+  SMOKE_RUN_PROFILE=strict
+  SMOKE_RUN_ENV_ARGS=(-e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}")
+  SMOKE_RUN_PRE_WORKSPACE_MOUNT_ARGS=()
+  SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS=()
+  SMOKE_RUN_ENTRYPOINT=0
+}
+
+smoke_run_container() {
   local agent="$1"
   local docker_workspace=""
   shift
 
   docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
   populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
+  populate_runtime_security_args "${SMOKE_RUN_MUTABILITY}"
+
+  local -a entrypoint_args=()
+  local -a command_args=("$@")
+  if [[ "${SMOKE_RUN_ENTRYPOINT}" -eq 1 ]]; then
+    entrypoint_args=(--entrypoint "$1")
+    command_args=("${@:2}")
+  fi
 
   docker_cmd run --rm \
+    ${SMOKE_RUN_DOCKER_FLAGS[@]+"${SMOKE_RUN_DOCKER_FLAGS[@]}"} \
     ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
     --user 0:0 \
     --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
@@ -662,325 +685,101 @@ run_container() {
     --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
     -e AGENT_NAME="${agent}" \
     -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
+    -e WORKCELL_CONTAINER_MUTABILITY="${SMOKE_RUN_MUTABILITY}" \
     -e WORKCELL_HOST_UID="${HOST_UID}" \
     -e WORKCELL_HOST_GID="${HOST_GID}" \
     -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
+    -e CODEX_PROFILE="${SMOKE_RUN_PROFILE}" \
     -e HOME=/state/agent-home \
     -e CODEX_HOME=/state/agent-home/.codex \
     -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
+    ${SMOKE_RUN_ENV_ARGS[@]+"${SMOKE_RUN_ENV_ARGS[@]}"} \
     -e WORKCELL_RUNTIME=1 \
     -e WORKSPACE=/workspace \
     -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
+    ${SMOKE_RUN_PRE_WORKSPACE_MOUNT_ARGS[@]+"${SMOKE_RUN_PRE_WORKSPACE_MOUNT_ARGS[@]}"} \
     -v "${docker_workspace}:/workspace" \
     ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    --entrypoint "$1" \
-    "${IMAGE_TAG}" "${@:2}"
+    ${SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS[@]+"${SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS[@]}"} \
+    ${entrypoint_args[@]+"${entrypoint_args[@]}"} \
+    "${IMAGE_TAG}" \
+    ${command_args[@]+"${command_args[@]}"}
+}
+
+smoke_run_injection_bundle_setup() {
+  local agent="$1"
+  local bundle_root="$2"
+  local docker_bundle_root=""
+
+  populate_injection_bundle_credential_mounts "${agent}" "${bundle_root}"
+  docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
+  SMOKE_RUN_ENV_ARGS=(-e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json)
+  SMOKE_RUN_PRE_WORKSPACE_MOUNT_ARGS=(${COPILOT_HANDOFF_MOUNT_ARGS[@]+"${COPILOT_HANDOFF_MOUNT_ARGS[@]}"})
+  SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS=(
+    ${CREDENTIAL_MOUNT_ARGS[@]+"${CREDENTIAL_MOUNT_ARGS[@]}"}
+    -v "${docker_bundle_root}:/opt/workcell/host-injections:ro"
+  )
+  SMOKE_RUN_ENTRYPOINT=1
+}
+
+run_container() {
+  smoke_run_reset
+  SMOKE_RUN_ENTRYPOINT=1
+  smoke_run_container "$@"
 }
 
 run_container_stdin() {
-  local agent="$1"
-  local docker_workspace=""
-  shift
-
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm -i \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    -v "${docker_workspace}:/workspace" \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    --entrypoint "$1" \
-    "${IMAGE_TAG}" "${@:2}"
+  smoke_run_reset
+  SMOKE_RUN_DOCKER_FLAGS=(-i)
+  SMOKE_RUN_ENTRYPOINT=1
+  smoke_run_container "$@"
 }
 
 run_container_with_mutability() {
-  local agent="$1"
-  local mutability="$2"
-  local docker_workspace=""
-  shift 2
-
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args "${mutability}"
-
-  docker_cmd run --rm \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY="${mutability}" \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    -v "${docker_workspace}:/workspace" \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    --entrypoint "$1" \
-    "${IMAGE_TAG}" "${@:2}"
+  smoke_run_reset
+  SMOKE_RUN_MUTABILITY="$2"
+  SMOKE_RUN_ENTRYPOINT=1
+  smoke_run_container "$1" "${@:3}"
 }
 
 run_entrypoint() {
-  local agent="$1"
-  local docker_workspace=""
-  shift
-
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    -v "${docker_workspace}:/workspace" \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    "${IMAGE_TAG}" "$@"
+  smoke_run_reset
+  smoke_run_container "$@"
 }
 
 run_entrypoint_with_profile() {
-  local agent="$1"
-  local profile="$2"
-  local docker_workspace=""
-  shift 2
-
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE="${profile}" \
-    -e WORKCELL_MODE="${profile}" \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    -v "${docker_workspace}:/workspace" \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    "${IMAGE_TAG}" "$@"
+  smoke_run_reset
+  SMOKE_RUN_PROFILE="$2"
+  SMOKE_RUN_ENV_ARGS+=(-e WORKCELL_MODE="$2")
+  smoke_run_container "$1" "${@:3}"
 }
 
 run_entrypoint_with_init_profile() {
-  local agent="$1"
-  local profile="$2"
-  local docker_workspace=""
-  shift 2
-
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm \
-    --init \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE="${profile}" \
-    -e WORKCELL_MODE="${profile}" \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    -v "${docker_workspace}:/workspace" \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    "${IMAGE_TAG}" "$@"
+  smoke_run_reset
+  SMOKE_RUN_DOCKER_FLAGS=(--init)
+  SMOKE_RUN_PROFILE="$2"
+  SMOKE_RUN_ENV_ARGS+=(-e WORKCELL_MODE="$2")
+  smoke_run_container "$1" "${@:3}"
 }
 
 run_entrypoint_with_autonomy_and_bind() {
-  local agent="$1"
-  local autonomy="$2"
-  local bind_source="$3"
-  local bind_target="$4"
-  local docker_workspace=""
-  local docker_bind_source=""
-  shift 4
-
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  docker_bind_source="$(workcell_docker_host_path "${bind_source}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
-    -e WORKCELL_AGENT_AUTONOMY="${autonomy}" \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC="${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC-}" \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    -v "${docker_workspace}:/workspace" \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    -v "${docker_bind_source}:${bind_target}:ro" \
-    "${IMAGE_TAG}" "$@"
+  smoke_run_reset
+  SMOKE_RUN_ENV_ARGS+=(-e WORKCELL_AGENT_AUTONOMY="$2")
+  SMOKE_RUN_POST_WORKSPACE_MOUNT_ARGS=(-v "$(workcell_docker_host_path "$3"):$4:ro")
+  smoke_run_container "$1" "${@:5}"
 }
 
 run_container_with_injection_bundle() {
-  local agent="$1"
-  local bundle_root="$2"
-  shift 2
-  local docker_workspace=""
-  local docker_bundle_root=""
-
-  populate_injection_bundle_credential_mounts "${agent}" "${bundle_root}"
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    ${COPILOT_HANDOFF_MOUNT_ARGS[@]+"${COPILOT_HANDOFF_MOUNT_ARGS[@]}"} \
-    -v "${docker_workspace}:/workspace" \
-    ${CREDENTIAL_MOUNT_ARGS[@]+"${CREDENTIAL_MOUNT_ARGS[@]}"} \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
-    --entrypoint "$1" \
-    "${IMAGE_TAG}" "${@:2}"
+  smoke_run_reset
+  smoke_run_injection_bundle_setup "$1" "$2"
+  smoke_run_container "$1" "${@:3}"
 }
 
 run_container_with_injection_bundle_stdin() {
-  local agent="$1"
-  local bundle_root="$2"
-  shift 2
-  local docker_workspace=""
-  local docker_bundle_root=""
-
-  populate_injection_bundle_credential_mounts "${agent}" "${bundle_root}"
-  docker_workspace="$(workcell_docker_host_path "${SMOKE_WORKSPACE}")"
-  docker_bundle_root="$(workcell_docker_host_path "${bundle_root}")"
-  populate_workspace_import_mounts
-  populate_runtime_security_args ephemeral
-
-  docker_cmd run --rm -i \
-    ${RUNTIME_SECURITY_ARGS[@]+"${RUNTIME_SECURITY_ARGS[@]}"} \
-    --user 0:0 \
-    --tmpfs "/tmp:nosuid,nodev,noexec,size=1g,mode=1777" \
-    --tmpfs "/run:nosuid,nodev,size=64m,mode=755" \
-    --tmpfs "/state:exec,nosuid,nodev,size=1g,mode=1777" \
-    -e AGENT_NAME="${agent}" \
-    -e AGENT_UI=cli \
-    -e WORKCELL_CONTAINER_MUTABILITY=ephemeral \
-    -e WORKCELL_HOST_UID="${HOST_UID}" \
-    -e WORKCELL_HOST_GID="${HOST_GID}" \
-    -e WORKCELL_HOST_USER="${HOST_USER}" \
-    -e CODEX_PROFILE=strict \
-    -e HOME=/state/agent-home \
-    -e CODEX_HOME=/state/agent-home/.codex \
-    -e TMPDIR=/state/tmp \
-    -e WORKCELL_RUNTIME=1 \
-    -e WORKSPACE=/workspace \
-    -e WORKCELL_INJECTION_MANIFEST=/opt/workcell/host-injections/manifest.json \
-    -e WORKCELL_WORKSPACE_IMPORT_ROOT=/opt/workcell/workspace-control-plane \
-    ${COPILOT_HANDOFF_MOUNT_ARGS[@]+"${COPILOT_HANDOFF_MOUNT_ARGS[@]}"} \
-    -v "${docker_workspace}:/workspace" \
-    ${CREDENTIAL_MOUNT_ARGS[@]+"${CREDENTIAL_MOUNT_ARGS[@]}"} \
-    ${WORKSPACE_IMPORT_ARGS[@]+"${WORKSPACE_IMPORT_ARGS[@]}"} \
-    -v "${docker_bundle_root}:/opt/workcell/host-injections:ro" \
-    --entrypoint "$1" \
-    "${IMAGE_TAG}" "${@:2}"
+  smoke_run_reset
+  smoke_run_injection_bundle_setup "$1" "$2"
+  SMOKE_RUN_DOCKER_FLAGS=(-i)
+  smoke_run_container "$1" "${@:3}"
 }
 
 if [[ "${1:-}" == "--self-docker-probe" ]]; then
@@ -988,7 +787,7 @@ if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool script
   setup_workcell_trusted_docker_client
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
-    select_docker_context
+    select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
   fi
   buildx_cmd version >/dev/null
   echo "container-smoke-docker-probe-ok"
@@ -1006,7 +805,7 @@ trap cleanup EXIT
 cleanup_workspace_scratch "${ROOT_DIR}"
 prepare_smoke_workspace
 setup_workcell_trusted_docker_client
-select_docker_context
+select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
 
 printf 'container smoke workspace\n' >"${SMOKE_WORKSPACE}/README.md"
 cat <<'EOF' >"${SMOKE_WORKSPACE}/AGENTS.md"
