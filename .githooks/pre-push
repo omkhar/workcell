@@ -6,6 +6,7 @@ if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     HOME="${HOME:-/tmp}" \
     TMPDIR="${TMPDIR:-/tmp}" \
     GNUPGHOME="${GNUPGHOME:-}" \
+    GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:-}" \
     WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}" \
     WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1 \
     /bin/bash -p "$0" "$@"
@@ -17,6 +18,10 @@ if [[ "${WORKCELL_SKIP_PUSH_SIGNATURES:-0}" == "1" ]]; then
   exit 0
 fi
 
+# GIT_CONFIG_PARAMETERS carries the outer `git -c name=value` settings, so
+# verify-commit here uses the same verification configuration as the push that
+# invoked it. It is forwarded rather than scrubbed because whoever runs that
+# command already has the documented WORKCELL_SKIP_PUSH_SIGNATURES bypass.
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 readonly ZERO_OID_PATTERN='^0+$'

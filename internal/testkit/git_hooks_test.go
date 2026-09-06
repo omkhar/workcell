@@ -462,6 +462,17 @@ func TestPrePushHookRejectsUnsignedBaseWhenPushURLDiffers(t *testing.T) {
 	}
 }
 
+func TestPrePushHookHonorsCommandScopedVerificationConfig(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)", "-S")
+	signers := filepath.Join(fixture.homeDir, "allowed_signers")
+	fixture.run("config", "--unset", "gpg.ssh.allowedSignersFile")
+	// The allowed-signers file is supplied per command, so the sanitized
+	// re-exec has to forward it for verify-commit to see the same settings.
+	fixture.run("-c", "gpg.ssh.allowedSignersFile="+signers, "push", "--quiet", "origin", "main")
+}
+
 func TestPrePushHookFailsClosedWhenRangeWalkFails(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
