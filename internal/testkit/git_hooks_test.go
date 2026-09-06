@@ -396,6 +396,30 @@ func TestPrePushHookAcceptsNewRefOverUnfetchedRemote(t *testing.T) {
 	fixture.run("push", "--quiet", "mirror", "HEAD:refs/heads/topic")
 }
 
+func TestPrePushHookRejectsUnsignedBaseSentToAnotherRepository(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
+	if output, err := fixture.tryGit(
+		[]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"},
+		"push", "--quiet", "origin", "main",
+	); err != nil {
+		t.Fatalf("bypassed seed push failed: %v\n%s", err, output)
+	}
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "two\n", "^B Correct fixture file (tests pass; fixture defect)", "-S")
+	// A second repository has never seen the unsigned base, so tracking refs
+	// for the first one must not exclude it from the walk.
+	elsewhere := filepath.Join(filepath.Dir(fixture.remote), "elsewhere.git")
+	fixture.run("init", "--quiet", "--bare", elsewhere)
+	output, err := fixture.tryGit(nil, "push", "--quiet", elsewhere, "HEAD:refs/heads/topic")
+	if err == nil {
+		t.Fatal("pre-push sent an unsigned base to a repository that had not seen it")
+	}
+	if !strings.Contains(output, "unable to verify commit") {
+		t.Fatalf("pre-push rejection lacks signature guidance:\n%s", output)
+	}
+}
+
 func TestPrePushHookFailsClosedWhenRangeWalkFails(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")

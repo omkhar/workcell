@@ -21,21 +21,30 @@ HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 readonly ZERO_OID_PATTERN='^0+$'
 REMOTE_NAME="${1:-origin}"
+REMOTE_URL="${2:-}"
+
+# Only a remote that points at this destination can vouch for what the
+# destination already holds. Tracking refs for anywhere else say nothing about
+# it, so they must not exclude commits from the walk.
+destination_exclusions=()
+while IFS= read -r name; do
+  [[ -n "${name}" ]] || continue
+  fetch_url="$(git -C "${ROOT_DIR}" remote get-url "${name}" 2>/dev/null || true)"
+  push_url="$(git -C "${ROOT_DIR}" remote get-url --push "${name}" 2>/dev/null || true)"
+  if [[ "${name}" == "${REMOTE_NAME}" ]] ||
+    [[ -n "${REMOTE_URL}" && ("${fetch_url}" == "${REMOTE_URL}" || "${push_url}" == "${REMOTE_URL}") ]]; then
+    destination_exclusions+=("--remotes=${name}")
+  fi
+done < <(git -C "${ROOT_DIR}" remote)
 
 while read -r _ local_sha _ remote_sha; do
   [[ -n "${local_sha}" ]] || continue
   if [[ "${local_sha}" =~ ${ZERO_OID_PATTERN} ]]; then
     continue
   fi
-  scoped="$(git -C "${ROOT_DIR}" for-each-ref --count=1 --format='%(refname)' "refs/remotes/${REMOTE_NAME}/")"
-  if [[ -n "${scoped}" ]]; then
-    exclusions=("--remotes=${REMOTE_NAME}")
-  else
-    # A direct-URL target, or a named remote never fetched, has no tracking
-    # namespace, so a scoped pattern would match nothing and drag the
-    # published base into the walk.
-    exclusions=("--remotes")
-  fi
+  # An unknown destination leaves this empty, so the walk covers the whole
+  # ancestry and the push fails closed on any commit it cannot verify.
+  exclusions=(${destination_exclusions[@]+"${destination_exclusions[@]}"})
   if [[ ! "${remote_sha}" =~ ${ZERO_OID_PATTERN} ]] &&
     git -C "${ROOT_DIR}" rev-parse --verify --quiet "${remote_sha}^{commit}" >/dev/null; then
     # Already negated by --not; a caret here would re-invert it into an
@@ -44,7 +53,7 @@ while read -r _ local_sha _ remote_sha; do
   fi
   # Capture the walk rather than reading a process substitution: a failing
   # rev-list there yields an empty loop and would let the push through.
-  if ! outgoing="$(git -C "${ROOT_DIR}" --no-replace-objects rev-list "${local_sha}" --not "${exclusions[@]}")"; then
+  if ! outgoing="$(git -C "${ROOT_DIR}" --no-replace-objects rev-list "${local_sha}" --not ${exclusions[@]+"${exclusions[@]}"})"; then
     echo "pre-push could not enumerate the outgoing commits for ${local_sha}; refusing the push." >&2
     echo "Repair the repository, or set WORKCELL_SKIP_PUSH_SIGNATURES=1 only for an intentional bypass." >&2
     exit 1
