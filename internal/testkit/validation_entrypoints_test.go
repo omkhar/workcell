@@ -1593,6 +1593,7 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 		`git -C "${ROOT_DIR}" status --short`,
 		`git -C "${ROOT_DIR}" fetch origin "${BASE_BRANCH}"`,
 		`refs/remotes/origin/${BASE_BRANCH}`,
+		`if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then`,
 		`gh run download "${RUN_ID}" --repo "${REPO}" --name upstream-refresh-candidate`,
 		`Candidate patch digest mismatch`,
 		`Candidate tree OID mismatch`,
