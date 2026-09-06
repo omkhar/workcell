@@ -21,15 +21,15 @@ type colimaProcessIdentity struct {
 }
 
 type colimaProcessReaperDependencies struct {
-	list      func(context.Context) ([]byte, error)
-	started   func(int) (string, error)
-	state     func(int) (string, error)
-	signal    func(int, syscall.Signal) error
-	sleep     func(context.Context, time.Duration) error
-	termDelay time.Duration
-	termPolls int
-	killDelay time.Duration
-	killPolls int
+	list       func(context.Context) ([]byte, error)
+	started    func(int) (string, error)
+	state      func(int) (string, error)
+	openSignal func(int) (exactProcessSignalHandle, error)
+	sleep      func(context.Context, time.Duration) error
+	termDelay  time.Duration
+	termPolls  int
+	killDelay  time.Duration
+	killPolls  int
 }
 
 // ReapColimaProfileProcesses terminates only processes whose command and
@@ -44,16 +44,34 @@ func ReapColimaProfileProcesses(ctx context.Context, profile string) error {
 			}
 			return output, nil
 		},
-		started:   processGeneration,
-		state:     processState,
-		signal:    syscall.Kill,
-		sleep:     sleepWithContext,
-		termDelay: time.Second,
-		termPolls: 5,
-		killDelay: 100 * time.Millisecond,
-		killPolls: 10,
+		started:    processGeneration,
+		state:      processState,
+		openSignal: openExactProcessSignalHandle,
+		sleep:      sleepWithContext,
+		termDelay:  time.Second,
+		termPolls:  5,
+		killDelay:  100 * time.Millisecond,
+		killPolls:  10,
 	}
-	return reapColimaProfileProcesses(ctx, profile, deps)
+	return reapColimaProfileProcessesForHost(ctx, profile, deps)
+}
+
+func passivelyReapColimaProfileProcesses(ctx context.Context, profile string, deps colimaProcessReaperDependencies) error {
+	const polls = 20
+	const delay = 250 * time.Millisecond
+	for range polls {
+		owned, err := captureColimaProcessIdentities(ctx, profile, deps)
+		if err != nil {
+			return err
+		}
+		if len(owned) == 0 {
+			return nil
+		}
+		if err := deps.sleep(ctx, delay); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("colima profile %s still has owned processes after passive cleanup", profile)
 }
 
 func reapColimaProfileProcesses(
@@ -200,46 +218,82 @@ func signalCurrentProcessIdentity(
 	identity colimaProcessIdentity,
 	signal syscall.Signal,
 	deps colimaProcessReaperDependencies,
-) error {
-	started, err := deps.started(identity.pid)
-	if IsProcessGone(err) || (err == nil && started != identity.started) {
+) (resultErr error) {
+	handle, err := deps.openSignal(identity.pid)
+	if IsProcessGone(err) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("revalidate Colima profile process %d: %w", identity.pid, err)
+		return fmt.Errorf("open exact Colima profile process %d signal handle: %w", identity.pid, err)
 	}
-	output, err := deps.list(ctx)
-	if err != nil {
-		return fmt.Errorf("revalidate Colima profile process command: %w", err)
-	}
-	pids, err := ColimaProfileProcessPIDs(output, profile)
-	if err != nil {
+	defer func() { resultErr = errors.Join(resultErr, handle.Close()) }()
+	ready, err := colimaProcessReadyForSignal(ctx, profile, identity, deps)
+	if err != nil || !ready {
 		return err
 	}
-	if !slices.Contains(pids, identity.pid) {
-		started, err := deps.started(identity.pid)
-		if IsProcessGone(err) || (err == nil && started != identity.started) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("revalidate Colima profile process %d: %w", identity.pid, err)
-		}
-		return fmt.Errorf("colima profile process %d command identity changed before signal", identity.pid)
-	}
-	started, err = deps.started(identity.pid)
-	if IsProcessGone(err) || (err == nil && started != identity.started) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("revalidate Colima profile process %d immediately before signal: %w", identity.pid, err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := deps.signal(identity.pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := handle.Signal(signal); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("signal Colima profile process %d: %w", identity.pid, err)
 	}
 	return nil
+}
+
+func colimaProcessReadyForSignal(ctx context.Context, profile string, identity colimaProcessIdentity, deps colimaProcessReaperDependencies) (bool, error) {
+	current, err := currentColimaProcessGeneration(identity, deps)
+	if err != nil {
+		return false, fmt.Errorf("revalidate Colima profile process %d: %w", identity.pid, err)
+	}
+	if !current {
+		return false, nil
+	}
+	listed, err := colimaProfileContainsProcess(ctx, profile, identity.pid, deps)
+	if err != nil {
+		return false, err
+	}
+	if !listed {
+		return colimaProcessMissingFromProfile(identity, deps)
+	}
+	current, err = currentColimaProcessGeneration(identity, deps)
+	if err != nil {
+		return false, fmt.Errorf("revalidate Colima profile process %d immediately before signal: %w", identity.pid, err)
+	}
+	if !current {
+		return false, nil
+	}
+	return true, ctx.Err()
+}
+
+func colimaProfileContainsProcess(ctx context.Context, profile string, pid int, deps colimaProcessReaperDependencies) (bool, error) {
+	output, err := deps.list(ctx)
+	if err != nil {
+		return false, fmt.Errorf("revalidate Colima profile process command: %w", err)
+	}
+	pids, err := ColimaProfileProcessPIDs(output, profile)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(pids, pid), nil
+}
+
+func colimaProcessMissingFromProfile(identity colimaProcessIdentity, deps colimaProcessReaperDependencies) (bool, error) {
+	current, err := currentColimaProcessGeneration(identity, deps)
+	if err != nil {
+		return false, fmt.Errorf("revalidate Colima profile process %d: %w", identity.pid, err)
+	}
+	if current {
+		return false, fmt.Errorf("colima profile process %d command identity changed before signal", identity.pid)
+	}
+	return false, nil
+}
+
+func currentColimaProcessGeneration(identity colimaProcessIdentity, deps colimaProcessReaperDependencies) (bool, error) {
+	started, err := deps.started(identity.pid)
+	if IsProcessGone(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return started == identity.started, nil
 }
 
 func currentProcessIdentities(
