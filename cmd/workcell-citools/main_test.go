@@ -51,24 +51,12 @@ func TestUpstreamFetchCommandsRejectWrongArity(t *testing.T) {
 // the given argv tail and asserts a usage exit (code 2 + "usage:" on stderr).
 func assertCitoolsUsageExit(t *testing.T, argv ...string) {
 	t.Helper()
-	runArgs := append([]string{"-test.run=TestCitoolsHelperProcess", "--"}, argv...)
-	cmd := exec.Command(os.Args[0], runArgs...)
-	cmd.Env = append(os.Environ(), "WORKCELL_CITOOLS_HELPER_PROCESS=1")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		t.Fatalf("workcell-citools %v exited 0, want usage error", argv)
+	code, stderr := runCitools(t, argv...)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2; stderr=%q", code, stderr)
 	}
-	exitErr, ok := err.(*exec.ExitError)
-	if !ok {
-		t.Fatalf("cmd.Run() error = %T %v, want ExitError", err, err)
-	}
-	if exitErr.ExitCode() != 2 {
-		t.Fatalf("exit code = %d, want 2; stderr=%q", exitErr.ExitCode(), stderr.String())
-	}
-	if s := stderr.String(); !strings.Contains(s, "usage:") && !strings.Contains(s, "unknown command") {
-		t.Fatalf("stderr = %q, want usage or unknown-command text", s)
+	if !strings.Contains(stderr, "usage:") && !strings.Contains(stderr, "unknown command") {
+		t.Fatalf("stderr = %q, want usage or unknown-command text", stderr)
 	}
 }
 

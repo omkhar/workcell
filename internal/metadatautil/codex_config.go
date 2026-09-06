@@ -5,10 +5,11 @@ package metadatautil
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -260,7 +261,7 @@ func requireCodexAssignment(path, section string, table map[string]any, key stri
 	if !present {
 		return fmt.Errorf("Expected %s section [%s] to define %s", path, codexSectionLabel(section), key)
 	}
-	if !codexValueEqual(actual, expected) {
+	if !reflect.DeepEqual(actual, expected) {
 		return fmt.Errorf(
 			"Expected %s section [%s] to set %s=%s, got %s",
 			path, codexSectionLabel(section), key,
@@ -273,36 +274,14 @@ func requireCodexAssignment(path, section string, table map[string]any, key stri
 // set, preserving the bash require_toml_exact_keys first line and replacing
 // its diff -u dump with sorted expected/actual key listings.
 func requireCodexExactKeys(path, sectionLabel string, table map[string]any, expected []string) error {
-	actual := make([]string, 0, len(table))
-	for key := range table {
-		actual = append(actual, key)
-	}
-	sort.Strings(actual)
-	want := append([]string(nil), expected...)
-	sort.Strings(want)
+	actual := slices.Sorted(maps.Keys(table))
+	want := slices.Sorted(slices.Values(expected))
 	if !slices.Equal(want, actual) {
 		return fmt.Errorf(
 			"Expected %s section [%s] to contain the exact reviewed key set\nexpected keys: %s\nactual keys: %s",
 			path, sectionLabel, strings.Join(want, " "), strings.Join(actual, " "))
 	}
 	return nil
-}
-
-func codexValueEqual(actual, expected any) bool {
-	expectedList, ok := expected.([]any)
-	if !ok {
-		return actual == expected
-	}
-	actualList, ok := actual.([]any)
-	if !ok || len(actualList) != len(expectedList) {
-		return false
-	}
-	for i := range expectedList {
-		if actualList[i] != expectedList[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // formatCodexTOMLValue renders a decoded value in TOML literal form so the
