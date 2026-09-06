@@ -25,8 +25,8 @@ func TestReleaseImageNonTargetBlobUsesBoundedStreaming(t *testing.T) {
 }
 
 func TestReleaseImageDocumentLimit(t *testing.T) {
-	reader := io.LimitReader(strings.NewReader(strings.Repeat("x", maxReleaseImageDocumentSize+1)), maxReleaseImageDocumentSize+1)
-	_, err := readReleaseImageDocument(reader, "index.json")
+	oversized := strings.NewReader(strings.Repeat("x", maxReleaseImageDocumentSize+1))
+	_, err := readReleaseImageDocument(oversized, "index.json")
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("readReleaseImageDocument() error = %v", err)
 	}
