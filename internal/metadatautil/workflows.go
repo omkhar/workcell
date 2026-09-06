@@ -434,7 +434,64 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must not contain %q", forbidden)
 		}
 	}
+	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/upstream-refresh.yml", "refresh")
+}
+
+func ValidateHostedControlsWorkflow(workflowText string) error {
+	for _, needle := range []string{
+		`name: hosted-controls-audit`,
+		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
+		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
+	} {
+		if !strings.Contains(workflowText, needle) {
+			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
+		}
+	}
+	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/hosted-controls.yml", "verify-hosted-controls")
+}
+
+func validateManualPrivilegedWorkflowRef(workflowText, workflowPath, jobName string) error {
+	root, err := parseWorkflowRoot(workflowText, workflowPath)
+	if err != nil {
+		return err
+	}
+	jobs, err := requireWorkflowMapping(root, "jobs", workflowPath+" must define exactly one jobs mapping")
+	if err != nil {
+		return err
+	}
+	job, err := requireWorkflowMapping(jobs, jobName, workflowPath+" must define exactly one "+jobName+" job mapping")
+	if err != nil {
+		return err
+	}
+	return validateWorkflowMainRef(job, workflowPath, jobName)
+}
+
+func requireWorkflowMapping(parent *yaml.Node, key, message string) (*yaml.Node, error) {
+	values := yamlMappingValues(parent, key)
+	if len(values) != 1 || values[0].Kind != yaml.MappingNode {
+		return nil, errors.New(message)
+	}
+	return values[0], nil
+}
+
+func validateWorkflowMainRef(job *yaml.Node, workflowPath, jobName string) error {
+	guards := yamlMappingValues(job, "if")
+	if len(guards) != 1 {
+		return mainRefGuardError(workflowPath, jobName)
+	}
+	guard := guards[0]
+	if guard.Kind != yaml.ScalarNode || guard.Tag != "!!str" {
+		return mainRefGuardError(workflowPath, jobName)
+	}
+	if strings.TrimSpace(guard.Value) != "github.ref == 'refs/heads/main'" {
+		return mainRefGuardError(workflowPath, jobName)
+	}
 	return nil
+}
+
+func mainRefGuardError(workflowPath, jobName string) error {
+	return fmt.Errorf("%s %s job must require github.ref == 'refs/heads/main'", workflowPath, jobName)
 }
 
 // readText lives in core.go.
