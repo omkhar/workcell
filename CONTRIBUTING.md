@@ -25,7 +25,7 @@ Use the bootstrap helper:
 ```
 
 That script installs the common local toolchain, configures `.githooks` as the
-repo hook path, and leaves you ready to run the local gates.
+repo hook path, and runs `./scripts/dev-quick-check.sh` to verify the setup.
 
 ## Prerequisites
 

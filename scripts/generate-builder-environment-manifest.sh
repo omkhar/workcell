@@ -41,10 +41,6 @@ require_tool() {
   }
 }
 
-select_docker_context() {
-  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
-}
-
 docker_cmd() {
   if [[ -n "${DOCKER_CONTEXT_NAME}" ]]; then
     docker --context "${DOCKER_CONTEXT_NAME}" "$@"
@@ -63,7 +59,7 @@ if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
   setup_workcell_trusted_docker_client
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
-    select_docker_context
+    select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
   fi
   buildx_cmd version >/dev/null
   echo "generate-builder-environment-manifest-docker-probe-ok"
@@ -78,7 +74,7 @@ fi
 require_tool docker
 require_tool go
 setup_workcell_trusted_docker_client
-select_docker_context
+select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
 
 docker_version_json="$(docker_cmd version --format '{{json .}}')"
 buildx_version="$(buildx_cmd version)"

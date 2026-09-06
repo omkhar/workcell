@@ -121,10 +121,6 @@ cleanup() {
 
 trap cleanup EXIT
 
-select_docker_context() {
-  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
-}
-
 prepare_sanitized_clone() {
   local source_repo="$1"
   local clone_dir="$2"
@@ -163,7 +159,7 @@ if [[ "${1:-}" == "--self-docker-probe" ]]; then
   require_tool docker
   setup_workcell_trusted_docker_client
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
-    select_docker_context
+    select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
   fi
   buildx_cmd version >/dev/null
   echo "verify-release-bundle-docker-probe-ok"
@@ -269,7 +265,7 @@ fi
 
 if command -v docker >/dev/null 2>&1; then
   setup_workcell_trusted_docker_client
-  select_docker_context
+  select_workcell_docker_context "Requested Docker context" "No healthy Docker context found" colima default
   if [[ -z "${BUILDX_BUILDER:-}" ]]; then
     safe_builder_context="${DOCKER_CONTEXT_NAME//[^[:alnum:]_.-]/-}"
     BUILDX_BUILDER="workcell-release-${safe_builder_context}"

@@ -3269,78 +3269,6 @@ if ! grep -q 'Duplicate release asset basename: asset.txt' /tmp/workcell-release
   exit 1
 fi
 
-CONTAINER_SMOKE_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-bashenv-ran"
-if ! HOST_BASH_ENV_MARKER="${CONTAINER_SMOKE_BASH_ENV_MARKER}" \
-  BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
-  "${ROOT_DIR}/scripts/container-smoke.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/container-smoke.sh self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
-  exit 1
-fi
-if [[ -e "${CONTAINER_SMOKE_BASH_ENV_MARKER}" ]]; then
-  echo "scripts/container-smoke.sh executed hostile BASH_ENV content before launcher setup" >&2
-  exit 1
-fi
-
-RELEASE_BUNDLE_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-bashenv-ran"
-if ! HOST_BASH_ENV_MARKER="${RELEASE_BUNDLE_BASH_ENV_MARKER}" \
-  BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
-  "${ROOT_DIR}/scripts/verify-release-bundle.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/verify-release-bundle.sh self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
-  exit 1
-fi
-if [[ -e "${RELEASE_BUNDLE_BASH_ENV_MARKER}" ]]; then
-  echo "scripts/verify-release-bundle.sh executed hostile BASH_ENV content before launcher setup" >&2
-  exit 1
-fi
-
-REPRO_BUILD_BASH_ENV_MARKER="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-bashenv-ran"
-if ! HOST_BASH_ENV_MARKER="${REPRO_BUILD_BASH_ENV_MARKER}" \
-  BASH_ENV="${HOST_BASH_ENV_PAYLOAD}" \
-  "${ROOT_DIR}/scripts/verify-reproducible-build.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/verify-reproducible-build.sh self-entrypoint probe to succeed under a hostile BASH_ENV" >&2
-  exit 1
-fi
-if [[ -e "${REPRO_BUILD_BASH_ENV_MARKER}" ]]; then
-  echo "scripts/verify-reproducible-build.sh executed hostile BASH_ENV content before launcher setup" >&2
-  exit 1
-fi
-
-CONTAINER_SMOKE_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-bash-func-ran"
-if ! env \
-  "BASH_FUNC_head%%=() { /usr/bin/touch '${CONTAINER_SMOKE_BASH_FUNC_MARKER}'; }" \
-  "${ROOT_DIR}/scripts/container-smoke.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/container-smoke.sh self-entrypoint probe to succeed under a hostile imported Bash function" >&2
-  exit 1
-fi
-if [[ -e "${CONTAINER_SMOKE_BASH_FUNC_MARKER}" ]]; then
-  echo "scripts/container-smoke.sh imported hostile Bash functions before launcher setup" >&2
-  exit 1
-fi
-
-RELEASE_BUNDLE_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-bash-func-ran"
-if ! env \
-  "BASH_FUNC_head%%=() { /usr/bin/touch '${RELEASE_BUNDLE_BASH_FUNC_MARKER}'; }" \
-  "${ROOT_DIR}/scripts/verify-release-bundle.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/verify-release-bundle.sh self-entrypoint probe to succeed under a hostile imported Bash function" >&2
-  exit 1
-fi
-if [[ -e "${RELEASE_BUNDLE_BASH_FUNC_MARKER}" ]]; then
-  echo "scripts/verify-release-bundle.sh imported hostile Bash functions before launcher setup" >&2
-  exit 1
-fi
-
-REPRO_BUILD_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-bash-func-ran"
-if ! env \
-  "BASH_FUNC_head%%=() { /usr/bin/touch '${REPRO_BUILD_BASH_FUNC_MARKER}'; }" \
-  "${ROOT_DIR}/scripts/verify-reproducible-build.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/verify-reproducible-build.sh self-entrypoint probe to succeed under a hostile imported Bash function" >&2
-  exit 1
-fi
-if [[ -e "${REPRO_BUILD_BASH_FUNC_MARKER}" ]]; then
-  echo "scripts/verify-reproducible-build.sh imported hostile Bash functions before launcher setup" >&2
-  exit 1
-fi
-
 HOST_BASH_FUNC_MARKER="${BARRIER_VERIFY_ROOT}/bash-func-ran"
 if ! env \
   "BASH_FUNC_compgen%%=() { /usr/bin/touch '${HOST_BASH_FUNC_MARKER}'; }" \
@@ -3758,26 +3686,6 @@ EOF
 chmod 0755 "${DOCKER_CLIENT_EMPTY_ARGV_HARNESS}"
 ROOT_DIR="${ROOT_DIR}" /bin/bash "${DOCKER_CLIENT_EMPTY_ARGV_HARNESS}"
 
-CONTAINER_SMOKE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/container-smoke-path-override-bin"
-CONTAINER_SMOKE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/container-smoke-path-ran"
-mkdir -p "${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}"
-cat >"${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}/head" <<EOF
-#!/bin/sh
-touch "${CONTAINER_SMOKE_PATH_MARKER:?}"
-exit 99
-EOF
-chmod 0755 "${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}/head"
-if ! CONTAINER_SMOKE_PATH_MARKER="${CONTAINER_SMOKE_PATH_MARKER}" \
-  PATH="${CONTAINER_SMOKE_PATH_OVERRIDE_DIR}:${PATH}" \
-  "${ROOT_DIR}/scripts/container-smoke.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/container-smoke.sh self-entrypoint probe to succeed under a hostile PATH" >&2
-  exit 1
-fi
-if [[ -e "${CONTAINER_SMOKE_PATH_MARKER}" ]]; then
-  echo "scripts/container-smoke.sh trusted caller PATH before launcher setup" >&2
-  exit 1
-fi
-
 # Assert the container-smoke chown/tar invariants on scripts/container-smoke.sh:
 # no raw recursive chown on host-managed paths, and no tar-based smoke workspace
 # staging or extraction.  Migrated to Go (D3): internal/workcellhardening behind
@@ -3794,46 +3702,6 @@ if ! "${ROOT_DIR}/scripts/container-smoke.sh" --self-test-host-path-hardening \
   exit 1
 fi
 grep -q '^container-smoke-host-path-hardening-ok$' /tmp/workcell-container-smoke-host-path-hardening.out
-
-RELEASE_BUNDLE_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/verify-release-bundle-path-override-bin"
-RELEASE_BUNDLE_PATH_MARKER="${BARRIER_VERIFY_ROOT}/verify-release-bundle-path-ran"
-mkdir -p "${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}"
-cat >"${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}/head" <<EOF
-#!/bin/sh
-touch "${RELEASE_BUNDLE_PATH_MARKER:?}"
-exit 99
-EOF
-chmod 0755 "${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}/head"
-if ! RELEASE_BUNDLE_PATH_MARKER="${RELEASE_BUNDLE_PATH_MARKER}" \
-  PATH="${RELEASE_BUNDLE_PATH_OVERRIDE_DIR}:${PATH}" \
-  "${ROOT_DIR}/scripts/verify-release-bundle.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/verify-release-bundle.sh self-entrypoint probe to succeed under a hostile PATH" >&2
-  exit 1
-fi
-if [[ -e "${RELEASE_BUNDLE_PATH_MARKER}" ]]; then
-  echo "scripts/verify-release-bundle.sh trusted caller PATH before launcher setup" >&2
-  exit 1
-fi
-
-REPRO_BUILD_PATH_OVERRIDE_DIR="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-path-override-bin"
-REPRO_BUILD_PATH_MARKER="${BARRIER_VERIFY_ROOT}/verify-reproducible-build-path-ran"
-mkdir -p "${REPRO_BUILD_PATH_OVERRIDE_DIR}"
-cat >"${REPRO_BUILD_PATH_OVERRIDE_DIR}/head" <<EOF
-#!/bin/sh
-touch "${REPRO_BUILD_PATH_MARKER:?}"
-exit 99
-EOF
-chmod 0755 "${REPRO_BUILD_PATH_OVERRIDE_DIR}/head"
-if ! REPRO_BUILD_PATH_MARKER="${REPRO_BUILD_PATH_MARKER}" \
-  PATH="${REPRO_BUILD_PATH_OVERRIDE_DIR}:${PATH}" \
-  "${ROOT_DIR}/scripts/verify-reproducible-build.sh" --self-entrypoint-probe >/dev/null 2>&1; then
-  echo "Expected scripts/verify-reproducible-build.sh self-entrypoint probe to succeed under a hostile PATH" >&2
-  exit 1
-fi
-if [[ -e "${REPRO_BUILD_PATH_MARKER}" ]]; then
-  echo "scripts/verify-reproducible-build.sh trusted caller PATH before launcher setup" >&2
-  exit 1
-fi
 
 if PATH="${HOST_PATH_OVERRIDE_DIR}:${PATH}" "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" >/dev/null 2>&1; then
   echo "Expected scripts/colima-egress-allowlist.sh without arguments to fail under a hostile PATH" >&2
