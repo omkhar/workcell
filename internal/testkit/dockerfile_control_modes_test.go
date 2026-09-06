@@ -13,9 +13,9 @@ import (
 
 const (
 	runtimeBuilderPermissionsStart = "RUN mkdir -p /etc/claude-code \\\n"
-	readOnlyControlScriptsStart    = "  && chmod 0444 \\\n    /usr/local/libexec/workcell/assurance.sh \\\n"
-	executableControlScriptsStart  = "  && chmod +x \\\n"
 	runtimeBuilderPermissionsEnd   = "  && find /opt/workcell/adapters /etc/claude-code /usr/local/libexec/workcell"
+	readOnlyModeStart              = "  && chmod 0444 \\\n"
+	executableModeStart            = "  && chmod +x \\\n"
 )
 
 var executableControlScripts = []string{
@@ -24,33 +24,36 @@ var executableControlScripts = []string{
 	"/usr/local/libexec/workcell/provider-policy.sh",
 }
 
-func runtimeBuilderPermissions(dockerfile string) (string, error) {
+// splitControlScriptModes cuts the runtime-builder permission block into the
+// text preceding the last read-only chmod, that read-only chmod, and the
+// executable chmod that must follow it.
+func splitControlScriptModes(dockerfile string) (prefix string, readOnly string, executable string, err error) {
 	start := strings.Index(dockerfile, runtimeBuilderPermissionsStart)
 	if start < 0 {
-		return "", fmt.Errorf("runtime-builder permission block start is missing")
+		return "", "", "", fmt.Errorf("runtime-builder permission block start is missing")
 	}
-	remainder := dockerfile[start:]
-	end := strings.Index(remainder, runtimeBuilderPermissionsEnd)
+	permissions := dockerfile[start:]
+	end := strings.Index(permissions, runtimeBuilderPermissionsEnd)
 	if end < 0 {
-		return "", fmt.Errorf("runtime-builder permission block end is missing")
+		return "", "", "", fmt.Errorf("runtime-builder permission block end is missing")
 	}
-	return remainder[:end], nil
+	permissions = permissions[:end]
+	executableAt := strings.Index(permissions, executableModeStart)
+	if executableAt < 0 {
+		return "", "", "", fmt.Errorf("executable mode command is missing")
+	}
+	readOnlyAt := strings.LastIndex(permissions[:executableAt], readOnlyModeStart)
+	if readOnlyAt < 0 {
+		return "", "", "", fmt.Errorf("read-only mode command is missing before the executable mode command")
+	}
+	return permissions[:readOnlyAt], permissions[readOnlyAt:executableAt], permissions[executableAt:], nil
 }
 
 func validateControlScriptModes(dockerfile string) error {
-	permissions, err := runtimeBuilderPermissions(dockerfile)
+	_, readOnly, executable, err := splitControlScriptModes(dockerfile)
 	if err != nil {
 		return err
 	}
-	readOnly := strings.Index(permissions, readOnlyControlScriptsStart)
-	executable := strings.Index(permissions, executableControlScriptsStart)
-	if readOnly < 0 || executable < 0 || readOnly >= executable {
-		return fmt.Errorf("control script mode commands are missing or out of order")
-	}
-	return requireControlScripts(permissions[readOnly:executable], permissions[executable:])
-}
-
-func requireControlScripts(readOnly string, executable string) error {
 	for _, path := range executableControlScripts {
 		line := "    " + path + " \\\n"
 		if count := strings.Count(readOnly, line); count != 1 {
@@ -64,17 +67,11 @@ func requireControlScripts(readOnly string, executable string) error {
 }
 
 func reorderControlScriptModeCommands(dockerfile string) (string, error) {
-	permissions, err := runtimeBuilderPermissions(dockerfile)
+	prefix, readOnly, executable, err := splitControlScriptModes(dockerfile)
 	if err != nil {
 		return "", err
 	}
-	readOnly := strings.Index(permissions, readOnlyControlScriptsStart)
-	executable := strings.Index(permissions, executableControlScriptsStart)
-	if readOnly < 0 || executable < 0 || readOnly >= executable {
-		return "", fmt.Errorf("control script mode commands cannot be reordered")
-	}
-	reordered := permissions[:readOnly] + permissions[executable:] + permissions[readOnly:executable]
-	return strings.Replace(dockerfile, permissions, reordered, 1), nil
+	return strings.Replace(dockerfile, prefix+readOnly+executable, prefix+executable+readOnly, 1), nil
 }
 
 func readRuntimeDockerfile(t *testing.T) string {
@@ -96,12 +93,10 @@ func TestDockerfileNormalizesControlScriptModesBeforeMakingThemExecutable(t *tes
 func TestDockerfileControlScriptModeValidationRejectsMissingReadOnlyMode(t *testing.T) {
 	dockerfile := readRuntimeDockerfile(t)
 	for _, path := range executableControlScripts {
-		t.Run(filepath.Base(path)+" missing read-only mode", func(t *testing.T) {
-			mutant := strings.Replace(dockerfile, "    "+path+" \\\n", "", 1)
-			if err := validateControlScriptModes(mutant); err == nil {
-				t.Fatal("validation accepted a control script without read-only mode normalization")
-			}
-		})
+		mutant := strings.Replace(dockerfile, "    "+path+" \\\n", "", 1)
+		if err := validateControlScriptModes(mutant); err == nil {
+			t.Fatalf("validation accepted %s without read-only mode normalization", path)
+		}
 	}
 }
 
@@ -120,7 +115,7 @@ func TestDockerfileControlScriptModeValidationRejectsDuplicateExecutablePath(t *
 	dockerfile := readRuntimeDockerfile(t)
 	for _, path := range executableControlScripts {
 		line := "    " + path + " \\\n"
-		mutant := strings.Replace(dockerfile, executableControlScriptsStart, executableControlScriptsStart+line, 1)
+		mutant := strings.Replace(dockerfile, executableModeStart, executableModeStart+line, 1)
 		if err := validateControlScriptModes(mutant); err == nil {
 			t.Fatalf("validation accepted duplicate executable path %s", path)
 		}
