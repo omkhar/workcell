@@ -464,7 +464,11 @@ func validateManualPrivilegedWorkflowRef(workflowText, workflowPath, jobName str
 	if err != nil {
 		return err
 	}
-	return validateWorkflowMainRef(job, workflowPath, jobName)
+	guards := yamlMappingValues(job, "if")
+	if len(guards) != 1 || guards[0].Tag != "!!str" || yamlScalarValue(guards[0]) != "github.ref == 'refs/heads/main'" {
+		return fmt.Errorf("%s %s job must require github.ref == 'refs/heads/main'", workflowPath, jobName)
+	}
+	return nil
 }
 
 func requireWorkflowMapping(parent *yaml.Node, key, message string) (*yaml.Node, error) {
@@ -473,25 +477,6 @@ func requireWorkflowMapping(parent *yaml.Node, key, message string) (*yaml.Node,
 		return nil, errors.New(message)
 	}
 	return values[0], nil
-}
-
-func validateWorkflowMainRef(job *yaml.Node, workflowPath, jobName string) error {
-	guards := yamlMappingValues(job, "if")
-	if len(guards) != 1 {
-		return mainRefGuardError(workflowPath, jobName)
-	}
-	guard := guards[0]
-	if guard.Kind != yaml.ScalarNode || guard.Tag != "!!str" {
-		return mainRefGuardError(workflowPath, jobName)
-	}
-	if strings.TrimSpace(guard.Value) != "github.ref == 'refs/heads/main'" {
-		return mainRefGuardError(workflowPath, jobName)
-	}
-	return nil
-}
-
-func mainRefGuardError(workflowPath, jobName string) error {
-	return fmt.Errorf("%s %s job must require github.ref == 'refs/heads/main'", workflowPath, jobName)
 }
 
 // readText lives in core.go.
