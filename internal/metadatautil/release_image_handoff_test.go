@@ -71,9 +71,33 @@ func TestCreateReleaseImageHandoffRejectsMissingLayerBlob(t *testing.T) {
 	}
 }
 
+func TestCreateReleaseImageHandoffRejectsMissingNestedDescriptorBlob(t *testing.T) {
+	archive, imageDigest, manifestDigest, configDigest := writeWrappedReleaseImageArchive(t)
+	members := readReleaseArchiveMembers(t, archive)
+	kept := members[:0]
+	for _, member := range members {
+		if member.name != releaseArchiveBlobName(contentDigest([]byte("attestation"))) {
+			kept = append(kept, member)
+		}
+	}
+	err := metadatautil.CreateReleaseImageHandoff(writeReleaseArchiveMembers(t, kept), filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", imageDigest, manifestDigest, configDigest)
+	if err == nil || !strings.Contains(err.Error(), "lacks descriptor blob") {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
+}
+
+func TestCreateReleaseImageHandoffRejectsUnqualifiedDigest(t *testing.T) {
+	archive, manifestDigest, configDigest := writeReleaseImageArchive(t, 1, "", false)
+	raw := strings.TrimPrefix(manifestDigest, "sha256:")
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", raw, raw, configDigest)
+	if err == nil || !strings.Contains(err.Error(), "malformed release") {
+		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
+	}
+}
+
 func TestCreateReleaseImageHandoffRejectsMismatchedArchive(t *testing.T) {
 	archive, _, configDigest := writeReleaseImageArchive(t, 1, "", false)
-	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:i", "sha256:"+strings.Repeat("0", 64), configDigest)
+	err := metadatautil.CreateReleaseImageHandoff(archive, filepath.Join(t.TempDir(), "out"), "r", "1", "v1", "c", "linux/amd64", "sha256:"+strings.Repeat("0", 64), "sha256:"+strings.Repeat("0", 64), configDigest)
 	if err == nil || !strings.Contains(err.Error(), "lacks the OCI layout") {
 		t.Fatalf("CreateReleaseImageHandoff() error = %v", err)
 	}
@@ -203,13 +227,16 @@ func releaseImageBlobs(t *testing.T, manifestConfigDigest string) (string, strin
 func writeWrappedReleaseImageArchive(t *testing.T) (string, string, string, string) {
 	t.Helper()
 	manifestDigest, configDigest, blobs := releaseImageBlobs(t, "")
+	attestation := []byte("attestation")
+	attestationDigest := contentDigest(attestation)
 	nested := []byte(fmt.Sprintf(`{"manifests":[{"digest":%q,"platform":{"os":"linux","architecture":"amd64"}},`+
-		`{"digest":%q,"platform":{"os":"unknown","architecture":"unknown"}}]}`, manifestDigest, contentDigest([]byte("attestation"))))
+		`{"digest":%q,"platform":{"os":"unknown","architecture":"unknown"}}]}`, manifestDigest, attestationDigest))
 	imageDigest := contentDigest(nested)
 	members := append([]releaseArchiveMember{
 		{name: "oci-layout", content: []byte(`{"imageLayoutVersion":"1.0.0"}`)},
 		{name: "index.json", content: []byte(fmt.Sprintf(`{"manifests":[{"digest":%q}]}`, imageDigest))},
 		{name: releaseArchiveBlobName(imageDigest), content: nested},
+		{name: releaseArchiveBlobName(attestationDigest), content: attestation},
 	}, blobs...)
 	return writeReleaseArchiveMembers(t, members), imageDigest, manifestDigest, configDigest
 }

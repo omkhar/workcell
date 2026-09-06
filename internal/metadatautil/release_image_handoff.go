@@ -56,6 +56,11 @@ type releaseImageHandoff struct {
 }
 
 func CreateReleaseImageHandoff(archivePath, outputPath, repository, runID, tag, commit, platform, imageDigest, manifestDigest, configDigest string) error {
+	for role, digest := range map[string]string{"image": imageDigest, "manifest": manifestDigest, "config": configDigest} {
+		if !validReleaseImageDigest(digest) {
+			return fmt.Errorf("malformed release %s digest %q", role, digest)
+		}
+	}
 	index, manifest, archiveDigest, err := inspectReleaseImageArchive(archivePath, imageDigest, manifestDigest, configDigest)
 	if err != nil {
 		return err
@@ -106,8 +111,14 @@ func inspectReleaseImageArchive(path, imageDigest, manifestDigest, configDigest 
 	if err := members.requireLayers(manifest); err != nil {
 		return index, manifest, "", err
 	}
+	if err := members.requireDescriptorBlobs(index); err != nil {
+		return index, manifest, "", err
+	}
 	index, err = resolveReleaseImageSubject(file, index, imageDigest, manifestDigest)
-	return index, manifest, archiveDigest, err
+	if err != nil {
+		return index, manifest, "", err
+	}
+	return index, manifest, archiveDigest, members.requireDescriptorBlobs(index)
 }
 
 // resolveReleaseImageSubject binds the caller's image digest to the archive and
@@ -250,10 +261,34 @@ func (members *releaseImageMembers) requireLayers(manifest releaseImageManifest)
 		return errors.New("release image manifest does not reference any layer")
 	}
 	for _, layer := range manifest.Layers {
-		name := releaseImageBlobName(layer.Digest)
-		if _, ok := members.seen[name]; !ok {
-			return fmt.Errorf("release image archive lacks layer blob %q", layer.Digest)
+		if err := members.requireBlob(layer.Digest, "layer"); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// requireDescriptorBlobs rejects an index that names a manifest the archive does
+// not carry, so the handoff cannot describe an image a later copy or push
+// cannot materialize.
+func (members *releaseImageMembers) requireDescriptorBlobs(index releaseImageIndex) error {
+	if len(index.Manifests) == 0 {
+		return errors.New("release image index does not contain any descriptor")
+	}
+	for _, descriptor := range index.Manifests {
+		if err := members.requireBlob(descriptor.Digest, "descriptor"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (members *releaseImageMembers) requireBlob(digest, role string) error {
+	if !validReleaseImageDigest(digest) {
+		return fmt.Errorf("malformed release image %s digest %q", role, digest)
+	}
+	if _, ok := members.seen[releaseImageBlobName(digest)]; !ok {
+		return fmt.Errorf("release image archive lacks %s blob %q", role, digest)
 	}
 	return nil
 }
@@ -306,11 +341,18 @@ func validReleaseImageMemberName(name string, directory bool) bool {
 
 func validReleaseImageBlobName(name string) bool {
 	encoded := strings.TrimPrefix(name, "blobs/sha256/")
-	if encoded == name || len(encoded) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(encoded)
-	return err == nil
+	return encoded != name && validReleaseImageEncodedDigest(encoded)
+}
+
+// validReleaseImageDigest requires the algorithm-qualified OCI form, so a raw
+// hexadecimal string can never reach a blob name or a handoff field.
+func validReleaseImageDigest(digest string) bool {
+	encoded := strings.TrimPrefix(digest, "sha256:")
+	return encoded != digest && validReleaseImageEncodedDigest(encoded)
+}
+
+func validReleaseImageEncodedDigest(encoded string) bool {
+	return len(encoded) == 64 && strings.TrimLeft(encoded, "0123456789abcdef") == ""
 }
 
 func readReleaseImageDocument(reader io.Reader, name string) ([]byte, error) {
