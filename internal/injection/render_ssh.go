@@ -25,9 +25,6 @@ func renderSSHWithBudget(
 	agent, mode string,
 	budget *injectionTreeBudget,
 ) (map[string]any, error) {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	raw := policy["ssh"]
 	if raw == nil {
 		return map[string]any{}, nil

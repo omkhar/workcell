@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/omkhar/workcell/internal/host/hoststate"
+	"github.com/omkhar/workcell/internal/runtimeutil"
 )
 
 func TestReadInjectionFileAllowsExactPerFileLimit(t *testing.T) {
@@ -298,7 +299,7 @@ func TestStageDirectMountsBoundsMountSpecification(t *testing.T) {
 	t.Run("exact count", func(t *testing.T) {
 		root := t.TempDir()
 		spec := filepath.Join(root, "mounts.json")
-		entries := make([]map[string]any, maxInjectionMounts)
+		entries := make([]map[string]any, runtimeutil.MaxDirectMountEntries)
 		for index := range entries {
 			entries[index] = map[string]any{}
 		}
@@ -310,7 +311,7 @@ func TestStageDirectMountsBoundsMountSpecification(t *testing.T) {
 	t.Run("over count", func(t *testing.T) {
 		root := t.TempDir()
 		spec := filepath.Join(root, "mounts.json")
-		entries := make([]map[string]any, maxInjectionMounts+1)
+		entries := make([]map[string]any, runtimeutil.MaxDirectMountEntries+1)
 		for index := range entries {
 			entries[index] = map[string]any{}
 		}

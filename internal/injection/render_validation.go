@@ -238,9 +238,6 @@ func validateSecretTree(source Path, label string) error {
 // tree is bind-mounted rather than copied, but its size and entry count still
 // bound the fingerprint walk and the container's view of host material.
 func validateSecretTreeWithBudget(source Path, label string, budget *injectionTreeBudget) error {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	if err := requireNoSymlink(source, label); err != nil {
 		return err
 	}

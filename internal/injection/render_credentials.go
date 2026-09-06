@@ -29,9 +29,6 @@ func renderCredentialsWithBudget(
 	agent, mode string,
 	budget *injectionTreeBudget,
 ) (map[string]map[string]string, error) {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	raw := policy["credentials"]
 	if raw == nil {
 		return map[string]map[string]string{}, nil

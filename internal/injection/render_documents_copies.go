@@ -28,9 +28,6 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 }
 
 func renderDocumentsWithBudget(policy map[string]any, outputRoot, policyDir Path, budget *injectionTreeBudget) (map[string]string, error) {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	raw := policy["documents"]
 	if raw == nil {
 		return map[string]string{}, nil
@@ -75,9 +72,6 @@ func renderCopiesWithBudget(
 	agent, mode string,
 	budget *injectionTreeBudget,
 ) ([]map[string]any, error) {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	raw := policy["copies"]
 	if raw == nil {
 		return []map[string]any{}, nil
@@ -170,9 +164,6 @@ func copySource(source, destination Path) (string, error) {
 }
 
 func copySourceWithBudget(source, destination Path, budget *injectionTreeBudget) (string, error) {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	sourceFile, _, kind, err := openDirectMountSource(source.String())
 	if err != nil {
 		return "", err
@@ -243,9 +234,6 @@ func copyOpenDirectoryToRootWithState(
 	state *injectionDestinationState,
 	budget *injectionTreeBudget,
 ) error {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	// Read one entry past the remaining allowance so an oversized directory is
 	// refused without materialising its whole listing.
 	entries, err := source.ReadDir(budget.remainingEntries() + 1)
@@ -354,10 +342,8 @@ func writeFileExclusive(root *os.Root, path string, data []byte, perm os.FileMod
 }
 
 func stageFile(source, outputRoot Path, relpath string, budget *injectionTreeBudget) error {
-	if budget != nil {
-		if err := budget.addEntries(source.String(), 1); err != nil {
-			return err
-		}
+	if err := budget.addEntries(source.String(), 1); err != nil {
+		return err
 	}
 	root, err := os.OpenRoot(outputRoot.String())
 	if err != nil {

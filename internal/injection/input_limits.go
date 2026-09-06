@@ -4,12 +4,9 @@
 package injection
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/omkhar/workcell/internal/runtimeutil"
 )
 
 // Injection inputs are operator-selected host material. These limits bound
@@ -18,11 +15,8 @@ const (
 	maxInjectionFileBytes      int64 = 16 * 1024 * 1024
 	maxInjectionTreeBytes      int64 = 64 * 1024 * 1024
 	maxInjectionTreeEntries          = 4096
-	maxInjectionMounts               = runtimeutil.MaxDirectMountEntries
 	maxInjectionMountPathBytes       = 4096
 )
-
-var errInjectionInputTooLarge = errors.New("injection input exceeds its read limit")
 
 // injectionTreeBudget accumulates the bytes and entries consumed by every
 // selected input in one bundle render or one direct-mount staging pass, so a
@@ -86,23 +80,10 @@ func accountInjectionSourceSize(source Path, budget *injectionTreeBudget) error 
 	return accountInjectionFileSize(info.Size(), source.String(), budget)
 }
 
-func readBounded(reader io.Reader, limit int64) ([]byte, error) {
-	if limit < 0 {
-		return nil, errInjectionInputTooLarge
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, errInjectionInputTooLarge
-	}
-	return data, nil
-}
-
 // readInjectionFile reads an already-opened injection input under the smaller
-// of the per-file limit and the budget's remaining bytes. The read itself is
-// bounded, so an oversize input is refused without being buffered whole.
+// of the per-file limit and the budget's remaining bytes. The read stops one
+// byte past that limit, so an oversize input is refused without being buffered
+// whole.
 func readInjectionFile(reader io.Reader, source string, budget *injectionTreeBudget) ([]byte, error) {
 	limit := maxInjectionFileBytes
 	limitDescription := fmt.Sprintf("the per-file limit of %d bytes", maxInjectionFileBytes)
@@ -110,12 +91,12 @@ func readInjectionFile(reader io.Reader, source string, budget *injectionTreeBud
 		limit = budget.remainingBytes()
 		limitDescription = fmt.Sprintf("the aggregate tree limit of %d bytes", maxInjectionTreeBytes)
 	}
-	data, err := readBounded(reader, limit)
-	if errors.Is(err, errInjectionInputTooLarge) {
-		return nil, fmt.Errorf("injection input %s exceeds %s", source, limitDescription)
-	}
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read injection input %s: %w", source, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("injection input %s exceeds %s", source, limitDescription)
 	}
 	if budget != nil {
 		budget.bytes += int64(len(data))

@@ -159,9 +159,6 @@ func validateDirectMount(hostSource, mountPath string) error {
 // stageDirectMountEntry copies a host source into stagedSource, replicating
 // "cp -R ${src}/." for directories and "cp -f ${src}" for files.
 func stageDirectMountEntry(hostSource, stagedSource string, budget *injectionTreeBudget) error {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	source, mode, kind, err := openDirectMountSource(hostSource)
 	if err != nil {
 		return err
@@ -275,9 +272,6 @@ func validateInjectionDirectoryEntriesWith(
 }
 
 func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState, budget *injectionTreeBudget) error {
-	if budget == nil {
-		budget = newInjectionTreeBudget()
-	}
 	// Read one entry past the remaining allowance so an oversized directory is
 	// refused without materialising its whole listing.
 	entries, err := src.ReadDir(budget.remainingEntries() + 1)
