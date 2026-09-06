@@ -171,6 +171,22 @@ func TestCommitMsgHookSkipsLeadingComments(t *testing.T) {
 	fixture.run("commit", "--quiet", "--cleanup=strip", "-F", messageFile)
 }
 
+func TestCommitMsgHookHonorsConfiguredCommentChar(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.run("config", "core.commentChar", ";")
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	message := "; Please enter the commit message for your changes.\n" +
+		"^F Add branch filter flag (tests pass; user-visible CLI flag)\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	fixture.run("commit", "--quiet", "--cleanup=strip", "-F", messageFile)
+}
+
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("seed.txt", "seed\n", "^F Seed fixture history (tests pass; fixture seed)")
@@ -244,6 +260,46 @@ func TestPrePushHookAllowsEmptyRangeAndDeletes(t *testing.T) {
 	fixture.run("push", "--quiet", "origin", "main")
 	fixture.run("push", "--quiet", "origin", "main:refs/heads/topic")
 	fixture.run("push", "--quiet", "origin", ":refs/heads/topic")
+}
+
+func TestPrePushHookIgnoresReplacementRefs(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)", "-S")
+	root := fixture.run("rev-parse", "HEAD")
+	fixture.commitFile("file.txt", "two\n", "^B Correct fixture file (tests pass; fixture defect)")
+	fixture.commitFile("file.txt", "three\n", "^B Correct fixture file again (tests pass; fixture defect)", "-S")
+	// A signed graft that hides the unsigned middle commit must not hide it
+	// from the hook: the push still sends the original history.
+	head := fixture.run("rev-parse", "HEAD")
+	graft := fixture.run(
+		"commit-tree", "-S", "-p", root, "-m",
+		"^B Graft fixture head (tests pass; fixture graft)", "HEAD^{tree}",
+	)
+	fixture.run("update-ref", "refs/replace/"+head, graft)
+	output, err := fixture.tryGit(nil, "push", "--quiet", "origin", "main")
+	if err == nil {
+		t.Fatal("pre-push followed a replacement ref past an unsigned commit")
+	}
+	if !strings.Contains(output, "unable to verify commit") {
+		t.Fatalf("pre-push rejection lacks signature guidance:\n%s", output)
+	}
+}
+
+func TestPrePushHookAcceptsDirectURLPush(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
+	if output, err := fixture.tryGit(
+		[]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"},
+		"push", "--quiet", "origin", "main",
+	); err != nil {
+		t.Fatalf("bypassed seed push failed: %v\n%s", err, output)
+	}
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "two\n", "^B Correct fixture file (tests pass; fixture defect)", "-S")
+	// No remote-tracking ref matches a direct URL, so only the advertised
+	// remote tip bounds the walk; the unsigned base must stay excluded.
+	fixture.run("push", "--quiet", fixture.remote, "main")
 }
 
 func TestPrePushHookRejectsUnsignedTailBehindSignedHead(t *testing.T) {

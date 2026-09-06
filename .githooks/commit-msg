@@ -22,7 +22,13 @@ if [[ -z "${message_file}" || ! -f "${message_file}" ]]; then
   exit 2
 fi
 
-subject="$(grep -m1 -v '^#' "${message_file}" || true)"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
+
+# stripspace honours core.commentChar, so a repository that configures a
+# non-default comment character still gets its real subject checked.
+body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
+subject="${body%%$'\n'*}"
 
 case "${subject}" in
   "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)

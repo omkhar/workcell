@@ -30,16 +30,19 @@ while read -r _ local_sha _ remote_sha; do
   exclusions=("--remotes=${REMOTE_NAME}")
   if [[ ! "${remote_sha}" =~ ${ZERO_OID_PATTERN} ]] &&
     git -C "${ROOT_DIR}" rev-parse --verify --quiet "${remote_sha}^{commit}" >/dev/null; then
-    exclusions+=("^${remote_sha}")
+    # Already negated by --not; a caret here would re-invert it into an
+    # inclusion and drag the published base into the walk.
+    exclusions+=("${remote_sha}")
   fi
   while IFS= read -r commit; do
     [[ -n "${commit}" ]] || continue
     if ! git -C "${ROOT_DIR}" --no-replace-objects verify-commit "${commit}" >/dev/null 2>&1; then
       echo "pre-push requires verifiable signed commits; unable to verify commit ${commit}." >&2
       echo "Sign the commit, or set WORKCELL_SKIP_PUSH_SIGNATURES=1 only for an intentional bypass." >&2
+      echo "SSH signers also need gpg.ssh.allowedSignersFile; see CONTRIBUTING.md." >&2
       exit 1
     fi
-  done < <(git -C "${ROOT_DIR}" rev-list "${local_sha}" --not "${exclusions[@]}")
+  done < <(git -C "${ROOT_DIR}" --no-replace-objects rev-list "${local_sha}" --not "${exclusions[@]}")
 done
 
 exit 0

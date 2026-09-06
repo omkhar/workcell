@@ -74,6 +74,19 @@ git config --global commit.gpgsign true
 git config --global user.signingkey <your-key>
 ```
 
+If you sign with SSH rather than GPG, also configure a local allowed-signers
+file. Without it `git verify-commit` cannot verify your own commits and the
+`pre-push` hook rejects every push:
+
+```bash
+git config --global gpg.format ssh
+printf '%s %s\n' "your@email" "$(cat ~/.ssh/id_ed25519.pub)" \
+  >> ~/.config/git/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+```
+
+Confirm the setup with `git log -1 --format='%G?'`, which must print `G`.
+
 See [GitHub's docs on signing commits][sign-docs] for setup details.
 
 [sign-docs]: https://docs.github.com/en/authentication/managing-commit-signature-verification
