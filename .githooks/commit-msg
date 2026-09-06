@@ -1,0 +1,47 @@
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
+if [[ "${WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  exec /usr/bin/env -i \
+    PATH="${TRUSTED_HOST_PATH}" \
+    HOME="${HOME:-/tmp}" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}" \
+    WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1 \
+    /bin/bash -p "$0" "$@"
+fi
+set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
+
+if [[ "${WORKCELL_SKIP_COMMIT_NOTATION:-0}" == "1" ]]; then
+  exit 0
+fi
+
+message_file="${1:-}"
+if [[ -z "${message_file}" || ! -f "${message_file}" ]]; then
+  echo "commit-msg hook requires the commit message file argument." >&2
+  exit 2
+fi
+
+subject=""
+while IFS= read -r line || [[ -n "${line}" ]]; do
+  [[ "${line}" == \#* ]] && continue
+  subject="${line}"
+  break
+done <"${message_file}"
+
+case "${subject}" in
+  "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)
+    exit 0
+    ;;
+esac
+
+if [[ "${subject}" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]; then
+  exit 0
+fi
+
+echo "Commit subject does not follow Risk-Aware Commit Notation." >&2
+echo "Required format: <risk><intent> <description> (risk reason; case reason)" >&2
+echo "Risk symbols: . ^ ! @  Intent letters: F B R D (or lowercase)." >&2
+echo "See .claude/skills/commit/SKILL.md for the full rules." >&2
+echo "Set WORKCELL_SKIP_COMMIT_NOTATION=1 only for an intentional bypass." >&2
+exit 1

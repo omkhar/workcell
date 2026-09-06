@@ -27,6 +27,11 @@ Use the bootstrap helper:
 That script installs the common local toolchain, configures `.githooks` as the
 repo hook path, and runs `./scripts/dev-quick-check.sh` to verify the setup.
 
+The repo hooks enforce three local gates. The `pre-commit` hook checks for
+pending pinned upstream updates. The `commit-msg` hook checks the Risk-Aware
+Commit Notation subject format. The `pre-push` hook verifies the signature of
+each outgoing commit.
+
 ## Prerequisites
 
 Local development expects:
