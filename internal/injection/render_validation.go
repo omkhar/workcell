@@ -223,10 +223,24 @@ func validateSecretFile(source Path, label string) (Path, error) {
 	if err := requireSecretOwnerOnly(source, label); err != nil {
 		return Path(""), err
 	}
+	if err := accountInjectionFileSize(info.Size(), source.String(), nil); err != nil {
+		return Path(""), err
+	}
 	return source, nil
 }
 
 func validateSecretTree(source Path, label string) error {
+	return validateSecretTreeWithBudget(source, label, newInjectionTreeBudget())
+}
+
+// validateSecretTreeWithBudget checks ownership and link safety of a secret
+// source and charges its material against the injection input limits. A secret
+// tree is bind-mounted rather than copied, but its size and entry count still
+// bound the fingerprint walk and the container's view of host material.
+func validateSecretTreeWithBudget(source Path, label string, budget *injectionTreeBudget) error {
+	if budget == nil {
+		budget = newInjectionTreeBudget()
+	}
 	if err := requireNoSymlink(source, label); err != nil {
 		return err
 	}
@@ -234,9 +248,14 @@ func validateSecretTree(source Path, label string) error {
 	if err != nil {
 		return err
 	}
-	if info.Mode().IsRegular() {
-		_, err = validateSecretFile(source, label)
+	if err := budget.addEntries(source.String(), 1); err != nil {
 		return err
+	}
+	if info.Mode().IsRegular() {
+		if _, err := validateSecretFile(source, label); err != nil {
+			return err
+		}
+		return accountInjectionFileSize(info.Size(), source.String(), budget)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%s must point at a file or directory: %s", label, source)
@@ -258,7 +277,20 @@ func validateSecretTree(source Path, label string) error {
 		if err := requireNoSymlink(child, label); err != nil {
 			return err
 		}
-		return requireSecretOwnerOnly(child, label)
+		if err := requireSecretOwnerOnly(child, label); err != nil {
+			return err
+		}
+		if err := budget.addEntries(source.String(), 1); err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return accountInjectionFileSize(info.Size(), current, budget)
 	})
 }
 

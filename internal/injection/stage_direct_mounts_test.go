@@ -36,7 +36,7 @@ func TestCopyDirContentsWithStateRejectsPreReservedUnicodeAlias(t *testing.T) {
 	if err := state.reserve(filepath.Join(destination, "straße"), "reserved"); err != nil {
 		t.Fatal(err)
 	}
-	err = copyDirContentsWithState(source, sourcePath, destination, state)
+	err = copyDirContentsWithState(source, sourcePath, destination, state, newInjectionTreeBudget())
 	if err == nil || !strings.Contains(err.Error(), "destination path collision") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCopyDirContentsWithStateRejectsInvalidUTF8Reservation(t *testing.T) {
 	}
 	defer source.Close()
 	destination := t.TempDir()
-	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState())
+	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState(), newInjectionTreeBudget())
 	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -113,7 +113,7 @@ func TestCopyDirContentsWithStateRejectsLinuxInvalidUTF8SpecialFile(t *testing.T
 	}
 	defer source.Close()
 	destination := t.TempDir()
-	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState())
+	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState(), newInjectionTreeBudget())
 	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestCopyDirContentsRejectsControlCharactersBeforeLogging(t *testing.T) {
 			previousOutput := log.Writer()
 			log.SetOutput(&output)
 			t.Cleanup(func() { log.SetOutput(previousOutput) })
-			err = copyDirContentsWithState(source, sourcePath, t.TempDir(), newInjectionDestinationState())
+			err = copyDirContentsWithState(source, sourcePath, t.TempDir(), newInjectionDestinationState(), newInjectionTreeBudget())
 			assertUnsafeInjectionDescendantError(t, err)
 			if output.Len() != 0 {
 				t.Fatalf("control name reached the log: %q", output.String())

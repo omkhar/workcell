@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -21,6 +20,18 @@ import (
 var allowedCredentialEntryKeys = mapKeysSet([]string{"source", "providers", "modes"})
 
 func renderCredentials(policy map[string]any, policyDir Path, agent, mode string) (map[string]map[string]string, error) {
+	return renderCredentialsWithBudget(policy, policyDir, agent, mode, newInjectionTreeBudget())
+}
+
+func renderCredentialsWithBudget(
+	policy map[string]any,
+	policyDir Path,
+	agent, mode string,
+	budget *injectionTreeBudget,
+) (map[string]map[string]string, error) {
+	if budget == nil {
+		budget = newInjectionTreeBudget()
+	}
 	raw := policy["credentials"]
 	if raw == nil {
 		return map[string]map[string]string{}, nil
@@ -93,6 +104,9 @@ func renderCredentials(policy map[string]any, policyDir Path, agent, mode string
 		}
 		source, err = validateSecretFile(source, "credentials."+key)
 		if err != nil {
+			return nil, err
+		}
+		if err := accountInjectionSourceSize(source, budget); err != nil {
 			return nil, err
 		}
 		switch key {
@@ -202,7 +216,7 @@ func validateGeminiEnvFile(source Path) (map[string]any, error) {
 
 func parseSimpleEnvFile(source Path) (map[string]string, error) {
 	values := map[string]string{}
-	data, err := os.ReadFile(source.String())
+	data, err := readInjectionPath(source, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +304,7 @@ func normalizeVertexLocation(value string) string {
 }
 
 func validateJSONObjFile(source Path, label string) (map[string]any, error) {
-	data, err := os.ReadFile(source.String())
+	data, err := readInjectionPath(source, nil)
 	if err != nil {
 		return nil, err
 	}

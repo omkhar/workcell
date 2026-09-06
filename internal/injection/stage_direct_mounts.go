@@ -47,6 +47,9 @@ func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
 		return nil, err
 	}
 
+	// One budget spans every mount in the specification so a set of
+	// individually legal sources cannot add up to an unbounded staging copy.
+	budget := newInjectionTreeBudget()
 	args := make([]string, 0, len(mounts)*2)
 	for _, mount := range mounts {
 		if mount.Source == "" {
@@ -57,7 +60,7 @@ func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
 		}
 		entryHash := hoststate.DirectMountCacheKey(mount.Source, mount.MountPath)
 		stagedSource := filepath.Join(stagedRoot, entryHash)
-		if err := stageDirectMountEntry(mount.Source, stagedSource); err != nil {
+		if err := stageDirectMountEntry(mount.Source, stagedSource, budget); err != nil {
 			return nil, err
 		}
 		// bash: chmod -R go-rwx — best effort; ignore errors as bash did.
@@ -84,6 +87,14 @@ func StageDirectMounts(bundleRoot, mountSpecPath string) ([]string, error) {
 // slash); HasPrefix on the bare path would let an attacker mount the root
 // itself, which has no defensible meaning for a per-entry direct mount.
 func validateDirectMount(hostSource, mountPath string) error {
+	// Bound both pathnames before any filesystem work: every later step walks
+	// the source component by component and joins the mount path.
+	if len(hostSource) > maxInjectionMountPathBytes {
+		return fmt.Errorf("Direct input source exceeds the path length limit of %d bytes", maxInjectionMountPathBytes)
+	}
+	if len(mountPath) > maxInjectionMountPathBytes {
+		return fmt.Errorf("Direct input mount path exceeds the path length limit of %d bytes", maxInjectionMountPathBytes)
+	}
 	if !filepath.IsAbs(hostSource) {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
@@ -147,12 +158,18 @@ func validateDirectMount(hostSource, mountPath string) error {
 
 // stageDirectMountEntry copies a host source into stagedSource, replicating
 // "cp -R ${src}/." for directories and "cp -f ${src}" for files.
-func stageDirectMountEntry(hostSource, stagedSource string) error {
+func stageDirectMountEntry(hostSource, stagedSource string, budget *injectionTreeBudget) error {
+	if budget == nil {
+		budget = newInjectionTreeBudget()
+	}
 	source, mode, kind, err := openDirectMountSource(hostSource)
 	if err != nil {
 		return err
 	}
 	defer source.Close()
+	if err := budget.addEntries(hostSource, 1); err != nil {
+		return err
+	}
 
 	switch kind {
 	case directMountSourceDir:
@@ -162,12 +179,12 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 		if err := os.Mkdir(stagedSource, 0o700); err != nil {
 			return err
 		}
-		return copyDirContents(source, filepath.Clean(hostSource), stagedSource)
+		return copyDirContentsWithState(source, filepath.Clean(hostSource), stagedSource, newInjectionDestinationState(), budget)
 	case directMountSourceRegular:
 		if err := os.MkdirAll(filepath.Dir(stagedSource), 0o755); err != nil {
 			return err
 		}
-		return copyOpenFileWithMode(source, stagedSource, mode)
+		return copyOpenFileWithMode(source, stagedSource, hostSource, mode, budget)
 	default:
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", hostSource)
 	}
@@ -189,7 +206,7 @@ func stageDirectMountEntry(hostSource, stagedSource string) error {
 // opened with openat(O_NOFOLLOW), so a parent path swapped after validation
 // cannot redirect staging to a different host tree.
 func copyDirContents(src *os.File, srcDisplay, dst string) error {
-	return copyDirContentsWithState(src, srcDisplay, dst, newInjectionDestinationState())
+	return copyDirContentsWithState(src, srcDisplay, dst, newInjectionDestinationState(), newInjectionTreeBudget())
 }
 
 // validateInjectionDirectoryDescendants checks each descendant through an
@@ -257,9 +274,17 @@ func validateInjectionDirectoryEntriesWith(
 	return nil
 }
 
-func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState) error {
-	entries, err := src.ReadDir(-1)
-	if err != nil {
+func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injectionDestinationState, budget *injectionTreeBudget) error {
+	if budget == nil {
+		budget = newInjectionTreeBudget()
+	}
+	// Read one entry past the remaining allowance so an oversized directory is
+	// refused without materialising its whole listing.
+	entries, err := src.ReadDir(budget.remainingEntries() + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	if err := budget.addEntries(srcDisplay, len(entries)); err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -299,7 +324,7 @@ func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injec
 				child.Close()
 				return err
 			}
-			if err := copyDirContentsWithState(child, displayPath, target, state); err != nil {
+			if err := copyDirContentsWithState(child, displayPath, target, state, budget); err != nil {
 				child.Close()
 				return err
 			}
@@ -315,7 +340,7 @@ func copyDirContentsWithState(src *os.File, srcDisplay, dst string, state *injec
 				child.Close()
 				return err
 			}
-			if err := copyOpenFileWithMode(child, target, childMode); err != nil {
+			if err := copyOpenFileWithMode(child, target, displayPath, childMode, budget); err != nil {
 				child.Close()
 				return err
 			}
@@ -340,10 +365,20 @@ func copyFileWithMode(src, dst string, _ os.FileMode) error {
 	if kind != directMountSourceRegular {
 		return fmt.Errorf("Direct input source is missing, not absolute, or not a regular file/directory: %s", src)
 	}
-	return copyOpenFileWithMode(in, dst, sourceMode)
+	return copyOpenFileWithMode(in, dst, src, sourceMode, nil)
 }
 
-func copyOpenFileWithMode(in *os.File, dst string, mode os.FileMode) error {
+// copyOpenFileWithMode is the single choke point for every direct-mount file
+// copy, so the injection input limits are charged here — before the destination
+// is created, which keeps an over-limit input from leaving partial output.
+func copyOpenFileWithMode(in *os.File, dst, source string, mode os.FileMode, budget *injectionTreeBudget) error {
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if err := accountInjectionFileSize(info.Size(), source, budget); err != nil {
+		return err
+	}
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, mode)
 	if err != nil {
 		return err

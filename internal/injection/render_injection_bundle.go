@@ -152,19 +152,22 @@ func runRenderInjectionBundle(policyPath, agent, mode, outputRoot, policyMetadat
 		return err
 	}
 
-	renderedDocuments, err := renderDocuments(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)))
+	// One budget spans the whole bundle so a set of individually legal
+	// selections cannot add up to an unbounded copy.
+	budget := newInjectionTreeBudget()
+	renderedDocuments, err := renderDocumentsWithBudget(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)), budget)
 	if err != nil {
 		return err
 	}
-	renderedCopies, err := renderCopies(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)), agent, mode)
+	renderedCopies, err := renderCopiesWithBudget(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)), agent, mode, budget)
 	if err != nil {
 		return err
 	}
-	renderedCredentials, err := renderCredentials(policy, Path(filepath.Dir(resolvedPolicyPath)), agent, mode)
+	renderedCredentials, err := renderCredentialsWithBudget(policy, Path(filepath.Dir(resolvedPolicyPath)), agent, mode, budget)
 	if err != nil {
 		return err
 	}
-	renderedSSH, err := renderSSH(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)), agent, mode)
+	renderedSSH, err := renderSSHWithBudget(policy, Path(resolvedOutputRoot), Path(filepath.Dir(resolvedPolicyPath)), agent, mode, budget)
 	if err != nil {
 		return err
 	}
@@ -369,7 +372,14 @@ func pathMaterialSHA256(path Path) (string, error) {
 		return hex.EncodeToString(sum[:]), nil
 	}
 	if info.Mode().IsRegular() {
-		data, err := os.ReadFile(path.String())
+		file, err := os.Open(path.String())
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", path, err)
+		}
+		data, err := readInjectionFile(file, path.String(), nil)
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", path, err)
 		}
