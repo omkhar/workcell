@@ -41,51 +41,17 @@ extern long workcell_syscall(long number, long arg1, long arg2, long arg3, long 
 
 #define WORKCELL_PUBLIC __attribute__((visibility("default")))
 
-static int collect_exec_args(const char *arg0, va_list args, char ***result) {
+// Flattens the NULL-terminated variadic argument list into an argv array. When
+// `envp` is non-NULL the caller is execle, so the element after the sentinel is
+// also read and stored there.
+static int collect_exec_args(const char *arg0, va_list args, char ***result,
+                             char *const **envp) {
     size_t count = 1;
     int terminated = 0;
     va_list probe;
     va_copy(probe, args);
     while (count < WORKCELL_MAX_EXEC_ELEMENTS) {
-        char *arg = va_arg(probe, char *);
-        if (arg == NULL) {
-            terminated = 1;
-            break;
-        }
-        count++;
-    }
-    va_end(probe);
-    if (!terminated) {
-        errno = E2BIG;
-        return -1;
-    }
-
-    char **argv = calloc(count + 1, sizeof(*argv));
-    if (argv == NULL) {
-        errno = ENOMEM;
-        return -1;
-    }
-    argv[0] = (char *)arg0;
-    va_list copy;
-    va_copy(copy, args);
-    for (size_t index = 1; index < count; index++) {
-        argv[index] = va_arg(copy, char *);
-    }
-    va_end(copy);
-    argv[count] = NULL;
-    *result = argv;
-    return 0;
-}
-
-static int collect_exec_args_and_env(const char *arg0, va_list args, char ***result,
-                                     char *const **envp) {
-    size_t count = 1;
-    int terminated = 0;
-    va_list probe;
-    va_copy(probe, args);
-    while (count < WORKCELL_MAX_EXEC_ELEMENTS) {
-        char *arg = va_arg(probe, char *);
-        if (arg == NULL) {
+        if (va_arg(probe, char *) == NULL) {
             terminated = 1;
             break;
         }
@@ -96,7 +62,7 @@ static int collect_exec_args_and_env(const char *arg0, va_list args, char ***res
         errno = E2BIG;
         return -1;
     }
-    char *const *child_env = va_arg(probe, char *const *);
+    char *const *child_env = envp != NULL ? va_arg(probe, char *const *) : NULL;
     va_end(probe);
 
     char **argv = calloc(count + 1, sizeof(*argv));
@@ -110,11 +76,12 @@ static int collect_exec_args_and_env(const char *arg0, va_list args, char ***res
     for (size_t index = 1; index < count; index++) {
         argv[index] = va_arg(copy, char *);
     }
-    (void)va_arg(copy, char *);
     va_end(copy);
     argv[count] = NULL;
     *result = argv;
-    *envp = child_env;
+    if (envp != NULL) {
+        *envp = child_env;
+    }
     return 0;
 }
 
@@ -122,7 +89,7 @@ WORKCELL_PUBLIC int workcell_export_execl(const char *path, const char *arg0, ..
     va_list args;
     va_start(args, arg0);
     char **argv = NULL;
-    int result = collect_exec_args(arg0, args, &argv);
+    int result = collect_exec_args(arg0, args, &argv, NULL);
     va_end(args);
     if (result != 0) {
         return -1;
@@ -138,7 +105,7 @@ WORKCELL_PUBLIC int workcell_export_execlp(const char *file, const char *arg0, .
     va_list args;
     va_start(args, arg0);
     char **argv = NULL;
-    int result = collect_exec_args(arg0, args, &argv);
+    int result = collect_exec_args(arg0, args, &argv, NULL);
     va_end(args);
     if (result != 0) {
         return -1;
@@ -155,7 +122,7 @@ WORKCELL_PUBLIC int workcell_export_execle(const char *path, const char *arg0, .
     va_start(args, arg0);
     char **argv = NULL;
     char *const *envp = NULL;
-    int result = collect_exec_args_and_env(arg0, args, &argv, &envp);
+    int result = collect_exec_args(arg0, args, &argv, &envp);
     va_end(args);
     if (result != 0) {
         return -1;

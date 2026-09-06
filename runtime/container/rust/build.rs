@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -58,5 +57,4 @@ fn main() {
     // Bind adapter calls to the Rust bridges in this shared object. This avoids
     // a caller-controlled interposer replacing the guard's internal dispatch.
     println!("cargo:rustc-link-arg-cdylib=-Wl,-Bsymbolic-functions");
-    let _ = fs::metadata(source).expect("variadic exec adapter source exists");
 }
