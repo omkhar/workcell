@@ -173,7 +173,7 @@ func copySourceWithBudget(source, destination Path, budget *injectionTreeBudget)
 		return "", err
 	}
 	if kind == directMountSourceDir {
-		if err := validateInjectionDirectoryDescendants(sourceFile); err != nil {
+		if err := validateInjectionDirectoryDescendants(sourceFile, source.String(), budget); err != nil {
 			return "", err
 		}
 		if err := os.MkdirAll(destination.Parent().String(), 0o755); err != nil {

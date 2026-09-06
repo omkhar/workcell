@@ -170,7 +170,7 @@ func stageDirectMountEntry(hostSource, stagedSource string, budget *injectionTre
 
 	switch kind {
 	case directMountSourceDir:
-		if err := validateInjectionDirectoryDescendants(source); err != nil {
+		if err := validateInjectionDirectoryDescendants(source, hostSource, budget); err != nil {
 			return err
 		}
 		if err := os.Mkdir(stagedSource, 0o700); err != nil {
@@ -189,7 +189,11 @@ func stageDirectMountEntry(hostSource, stagedSource string, budget *injectionTre
 
 // validateInjectionDirectoryDescendants checks each descendant through an
 // opened directory descriptor. It never builds a path from an unchecked name.
-func validateInjectionDirectoryDescendants(source *os.File) error {
+//
+// The walk runs before the copy that charges the shared budget, so it carries a
+// private counter seeded with the shared remaining allowance. That stops the
+// metadata walk at the same entry limit without charging the tree twice.
+func validateInjectionDirectoryDescendants(source *os.File, display string, budget *injectionTreeBudget) error {
 	fd, err := unix.Openat(int(source.Fd()), ".", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return err
@@ -200,20 +204,27 @@ func validateInjectionDirectoryDescendants(source *os.File) error {
 		return errors.New("cannot inspect injection source directory")
 	}
 	defer copy.Close()
-	return validateInjectionDirectoryEntries(copy)
+	return validateInjectionDirectoryEntries(copy, display, &injectionTreeBudget{entries: budget.entries})
 }
 
-func validateInjectionDirectoryEntries(source *os.File) error {
-	return validateInjectionDirectoryEntriesWith(source, classifyDirectMountChild, openDirectMountChild)
+func validateInjectionDirectoryEntries(source *os.File, display string, walk *injectionTreeBudget) error {
+	return validateInjectionDirectoryEntriesWith(source, display, walk, classifyDirectMountChild, openDirectMountChild)
 }
 
 func validateInjectionDirectoryEntriesWith(
 	source *os.File,
+	display string,
+	walk *injectionTreeBudget,
 	classifyChild func(*os.File, string) (os.FileMode, directMountSourceKind, error),
 	openChild func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error),
 ) error {
-	entries, err := source.ReadDir(-1)
-	if err != nil {
+	// Read one entry past the remaining allowance so an oversized directory is
+	// refused without materialising its whole listing.
+	entries, err := source.ReadDir(walk.remainingEntries() + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	if err := walk.addEntries(display, len(entries)); err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -239,7 +250,7 @@ func validateInjectionDirectoryEntriesWith(
 			return err
 		}
 		if kind == directMountSourceDir {
-			err = validateInjectionDirectoryEntriesWith(child, classifyChild, openChild)
+			err = validateInjectionDirectoryEntriesWith(child, display, walk, classifyChild, openChild)
 		}
 		closeErr := child.Close()
 		if err != nil {
@@ -362,6 +373,10 @@ func copyFileWithMode(src, dst string, _ os.FileMode) error {
 // copyOpenFileWithMode is the single choke point for every direct-mount file
 // copy, so the injection input limits are charged here — before the destination
 // is created, which keeps an over-limit input from leaving partial output.
+//
+// The reported size only pre-screens the input. A regular file can grow after
+// the stat, and a pseudo-file can report an undersized st_size, so the copy
+// itself stops one byte past the live allowance and removes partial output.
 func copyOpenFileWithMode(in *os.File, dst, source string, mode os.FileMode, budget *injectionTreeBudget) error {
 	info, err := in.Stat()
 	if err != nil {
@@ -370,16 +385,34 @@ func copyOpenFileWithMode(in *os.File, dst, source string, mode os.FileMode, bud
 	if err := accountInjectionFileSize(info.Size(), source, budget); err != nil {
 		return err
 	}
+	allowance := maxInjectionFileBytes
+	if budget != nil {
+		// accountInjectionFileSize already charged the reported size to this
+		// file, so the live allowance adds it back to what the tree has left.
+		if live := budget.remainingBytes() + info.Size(); live < allowance {
+			allowance = live
+		}
+	}
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, mode)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	written, err := io.Copy(out, io.LimitReader(in, allowance+1))
+	if err == nil && written > allowance {
+		err = fmt.Errorf("injection input %s exceeds the byte limit accounted for it of %d bytes", source, allowance)
+	}
+	if err == nil {
+		err = out.Close()
+	} else {
 		out.Close()
+	}
+	if err != nil {
+		_ = os.Remove(dst)
 		return err
 	}
-	if err := out.Close(); err != nil {
-		return err
+	if budget != nil {
+		// Charge what the copy actually read, not the stale reported size.
+		budget.bytes += written - info.Size()
 	}
 	return os.Chmod(dst, mode)
 }

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -377,6 +378,77 @@ func TestBoundedValidationReadersRejectOversize(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The pre-copy validation walk reads its own listing, so it has to stop at the
+// entry allowance instead of materialising every entry for the copy to refuse.
+func TestValidateInjectionDirectoryDescendantsRejectsAggregateTreeEntryLimit(t *testing.T) {
+	root := t.TempDir()
+	for index := 0; index <= maxInjectionTreeEntries; index++ {
+		writeSparseInjectionFile(t, filepath.Join(root, "file-"+strconv.Itoa(index)), 0)
+	}
+	source, err := os.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+
+	err = validateInjectionDirectoryDescendants(source, root, newInjectionTreeBudget())
+	if err == nil || !strings.Contains(err.Error(), "aggregate entry limit") {
+		t.Fatalf("validateInjectionDirectoryDescendants error = %v, want aggregate entry limit", err)
+	}
+}
+
+// A pseudo-file reports an undersized st_size, so the copy is the only place
+// that can charge and bound the bytes it actually reads.
+func TestCopyOpenFileWithModeBoundsUndersizedReportedSize(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("needs a pseudo-file that under-reports st_size")
+	}
+	open := func(t *testing.T) *os.File {
+		t.Helper()
+		file, err := os.Open("/proc/" + strconv.Itoa(os.Getpid()) + "/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = file.Close() })
+		info, err := file.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() != 0 {
+			t.Skipf("pseudo-file reports size %d, not an under-report", info.Size())
+		}
+		return file
+	}
+
+	t.Run("charges the copied bytes", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "staged")
+		budget := newInjectionTreeBudget()
+		if err := copyOpenFileWithMode(open(t), destination, "status", 0o600, budget); err != nil {
+			t.Fatalf("copyOpenFileWithMode: %v", err)
+		}
+		info, err := os.Stat(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() == 0 || budget.bytes != info.Size() {
+			t.Fatalf("budget charged %d bytes for a %d byte copy", budget.bytes, info.Size())
+		}
+	})
+
+	t.Run("rejects and removes output past the allowance", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "staged")
+		budget := newInjectionTreeBudget()
+		budget.bytes = maxInjectionTreeBytes - 8
+		err := copyOpenFileWithMode(open(t), destination, "status", 0o600, budget)
+		if err == nil || !strings.Contains(err.Error(), "byte limit") {
+			t.Fatalf("copyOpenFileWithMode error = %v, want a byte-limit error", err)
+		}
+		if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+			t.Fatalf("over-limit copy left output, lstat error = %v", err)
+		}
+	})
 }
 
 func writeSparseInjectionFile(t *testing.T, path string, size int64) {

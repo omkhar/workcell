@@ -371,6 +371,23 @@ credentials, and copies.
 
 ## Explicit limits
 
+### Selected input trust boundary
+
+These limits apply to the host material that a policy selects.
+They apply to `[documents]`, `[credentials]`, `[ssh]`, `[[copies]]`, and direct
+mounts.
+
+Workcell accepts at most 16 MiB for one selected file.
+Workcell accepts at most 64 MiB and 4,096 entries for one render.
+One direct-mount staging pass has the same 64 MiB and 4,096-entry allowance.
+The byte and entry counts are the total of all selected inputs in that pass.
+A selected directory counts each descendant against the entry allowance.
+Workcell rejects the render when a selected input passes an allowance.
+
+Workcell accepts at most 4,096 bytes for a direct-mount source path.
+Workcell accepts at most 4,096 bytes for a direct-mount mount path.
+Workcell accepts at most 4,096 entries in one direct-mount specification.
+
 ### Policy reader trust boundary
 
 The policy reader accepts at most 16 MiB for one policy file.

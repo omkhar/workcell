@@ -165,7 +165,7 @@ func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
 
 	t.Run("other skips opener", func(t *testing.T) {
 		opened := false
-		err := validateInjectionDirectoryEntriesWith(newSource(t),
+		err := validateInjectionDirectoryEntriesWith(newSource(t), "source", newInjectionTreeBudget(),
 			func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
 				return 0, directMountSourceOther, nil
 			},
@@ -184,7 +184,7 @@ func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
 
 	t.Run("classifier error propagates", func(t *testing.T) {
 		sentinel := errors.New("classify sentinel")
-		err := validateInjectionDirectoryEntriesWith(newSource(t),
+		err := validateInjectionDirectoryEntriesWith(newSource(t), "source", newInjectionTreeBudget(),
 			func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
 				return 0, directMountSourceOther, sentinel
 			},
@@ -208,7 +208,7 @@ func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
 		{name: "EIO propagates", err: unix.EIO},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			err := validateInjectionDirectoryEntriesWith(newSource(t),
+			err := validateInjectionDirectoryEntriesWith(newSource(t), "source", newInjectionTreeBudget(),
 				func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
 					return 0, directMountSourceRegular, nil
 				},
