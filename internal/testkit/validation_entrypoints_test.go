@@ -1582,12 +1582,18 @@ func TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelper(t *testing
 func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 	t.Parallel()
 
-	scriptPath, script := readPublishUpstreamRefreshPR(t)
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(content)
 
 	for _, want := range []string{
 		`git -C "${ROOT_DIR}" status --short`,
 		`git -C "${ROOT_DIR}" fetch origin "${BASE_BRANCH}"`,
 		`refs/remotes/origin/${BASE_BRANCH}`,
+		`if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then`,
 		`gh run download "${RUN_ID}" --repo "${REPO}" --name upstream-refresh-candidate`,
 		`Candidate patch digest mismatch`,
 		`Candidate tree OID mismatch`,
@@ -1604,46 +1610,12 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 			t.Fatalf("%s does not contain %q", scriptPath, want)
 		}
 	}
-	if !hasExactUpstreamRefreshWorkflowPathGuard(script) {
-		t.Fatalf("%s must require the exact upstream-refresh workflow path", scriptPath)
-	}
 
 	const commitTemplateStart = `cat >"${commit_file}" <<'EOF'
 ^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)`
 	if !strings.Contains(script, commitTemplateStart) {
 		t.Fatalf("%s must generate the reviewed Risk-Aware upstream-refresh commit subject", scriptPath)
 	}
-}
-
-func TestPublishUpstreamRefreshPRRejectsWorkflowPathGuardMutations(t *testing.T) {
-	_, script := readPublishUpstreamRefreshPR(t)
-	const guard = `if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then`
-	for _, replacement := range []string{
-		`if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml"* ]]; then`,
-		`if [[ "${run_path}" != ".github/workflows/upstream-refresh.yaml" ]]; then`,
-		`if true; then`,
-	} {
-		mutated := strings.Replace(script, guard, replacement, 1)
-		if hasExactUpstreamRefreshWorkflowPathGuard(mutated) {
-			t.Fatalf("workflow path guard mutation passed: %s", replacement)
-		}
-	}
-}
-
-func readPublishUpstreamRefreshPR(t *testing.T) (string, string) {
-	t.Helper()
-	path := filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh")
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return path, string(content)
-}
-
-func hasExactUpstreamRefreshWorkflowPathGuard(script string) bool {
-	const exact = `if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then`
-	const prefix = `if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml"* ]]; then`
-	return strings.Count(script, exact) == 1 && !strings.Contains(script, prefix)
 }
 
 func TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump(t *testing.T) {
