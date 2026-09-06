@@ -25,35 +25,37 @@ fi
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 
-# stripspace honours core.commentChar, so a repository that configures a
-# non-default comment character still gets its real subject checked.
+notation_ok() {
+  case "$1" in
+    "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)
+      return 0
+      ;;
+  esac
+  [[ "$1" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]
+}
+
+# Check the subject Git would retain first. A repository can configure
+# core.commentChar to a risk symbol such as ^, and comment stripping would
+# then delete a valid subject.
+retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
+if notation_ok "${retained%%$'\n'*}"; then
+  exit 0
+fi
+
+# Otherwise fall back to the comment-stripped view. stripspace honours
+# core.commentChar, so a configured comment character is handled here too.
 body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
 subject="${body%%$'\n'*}"
 
-# Git only strips comments for editor-cleaned messages, so -m and -F keep
-# them. Whenever the checked subject is not the one Git would retain, write
-# the stripped body back so the retained subject is the validated subject.
-retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
-accept() {
-  if [[ "${retained%%$'\n'*}" != "${subject}" ]]; then
-    # Drop only the comment lines ahead of the subject. The body keeps every
-    # line the contributor wrote, comment-prefixed ones included.
-    # ENVIRON, not -v: awk applies escape processing to a -v assignment, so a
-    # backslash in the subject would stop it matching its own line.
-    trimmed="$(SUBJECT="${subject}" awk 'found || $0 == ENVIRON["SUBJECT"] { found = 1; print }' "${message_file}")"
-    printf '%s\n' "${trimmed}" >"${message_file}"
-  fi
+if notation_ok "${subject}"; then
+  # Git only strips comments for editor-cleaned messages, so -m and -F keep
+  # them. Drop just the comment lines ahead of the subject, so Git retains the
+  # subject that was checked and the body keeps every line as written.
+  # ENVIRON, not -v: awk applies escape processing to a -v assignment, so a
+  # backslash in the subject would stop it matching its own line.
+  trimmed="$(SUBJECT="${subject}" awk 'found || $0 == ENVIRON["SUBJECT"] { found = 1; print }' "${message_file}")"
+  printf '%s\n' "${trimmed}" >"${message_file}"
   exit 0
-}
-
-case "${subject}" in
-  "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)
-    accept
-    ;;
-esac
-
-if [[ "${subject}" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]; then
-  accept
 fi
 
 echo "Commit subject does not follow Risk-Aware Commit Notation." >&2

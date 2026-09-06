@@ -232,6 +232,22 @@ func TestCommitMsgHookNormalizesSubjectWithBackslash(t *testing.T) {
 	}
 }
 
+func TestCommitMsgHookAcceptsSubjectWhenCommentCharIsRiskSymbol(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.run("config", "core.commentChar", "^")
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	body := "Detail line."
+	// Comment stripping would delete this subject, so the retained subject
+	// has to be checked before stripping is used as a fallback.
+	fixture.commitFile("seed.txt", "seed\n", valid+"\n\n"+body)
+	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
+		t.Fatalf("retained subject %q is not the validated subject %q", got, valid)
+	}
+	if got := fixture.run("log", "-1", "--format=%B"); !strings.Contains(got, body) {
+		t.Fatalf("comment stripping discarded the body:\n%s", got)
+	}
+}
+
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("seed.txt", "seed\n", "^F Seed fixture history (tests pass; fixture seed)")
