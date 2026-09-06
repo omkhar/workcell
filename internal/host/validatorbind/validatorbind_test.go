@@ -183,7 +183,12 @@ func TestRequireLocalDeadlineFailsClosedAndCleansChallengeAndContainer(t *testin
 	docker := executableFixture(t, "docker")
 	var cleanupArgs []string
 	var probeName string
-	err := requireWithProbeTimeout(context.Background(), Options{
+	// Watchdog only: the zero probe timeout expires immediately, so this
+	// deadline cannot compete with it, but it bounds the probe-context wait
+	// below if probe-context cancellation ever regresses.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := requireWithProbeTimeout(ctx, Options{
 		DockerBinary: docker,
 		Image:        "validator:fixture",
 		Workspace:    workspace,
