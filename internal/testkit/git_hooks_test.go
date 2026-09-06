@@ -338,6 +338,23 @@ func TestPrePushHookAcceptsNewRefOverDirectURL(t *testing.T) {
 	fixture.run("push", "--quiet", fixture.remote, "HEAD:refs/heads/topic")
 }
 
+func TestPrePushHookAcceptsNewRefOverUnfetchedRemote(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
+	if output, err := fixture.tryGit(
+		[]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"},
+		"push", "--quiet", "origin", "main",
+	); err != nil {
+		t.Fatalf("bypassed seed push failed: %v\n%s", err, output)
+	}
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "two\n", "^B Correct fixture file (tests pass; fixture defect)", "-S")
+	// A configured but never-fetched alias has an empty tracking namespace,
+	// so the scoped exclusion matches nothing and must fall back.
+	fixture.run("remote", "add", "mirror", fixture.remote)
+	fixture.run("push", "--quiet", "mirror", "HEAD:refs/heads/topic")
+}
+
 func TestPrePushHookFailsClosedWhenRangeWalkFails(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")

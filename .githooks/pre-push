@@ -27,11 +27,13 @@ while read -r _ local_sha _ remote_sha; do
   if [[ "${local_sha}" =~ ${ZERO_OID_PATTERN} ]]; then
     continue
   fi
-  if git -C "${ROOT_DIR}" config --get "remote.${REMOTE_NAME}.url" >/dev/null 2>&1; then
+  scoped="$(git -C "${ROOT_DIR}" for-each-ref --count=1 --format='%(refname)' "refs/remotes/${REMOTE_NAME}/")"
+  if [[ -n "${scoped}" ]]; then
     exclusions=("--remotes=${REMOTE_NAME}")
   else
-    # A direct-URL push has no tracking namespace of its own, so a name-scoped
-    # pattern would match nothing and drag the published base into the walk.
+    # A direct-URL target, or a named remote never fetched, has no tracking
+    # namespace, so a scoped pattern would match nothing and drag the
+    # published base into the walk.
     exclusions=("--remotes")
   fi
   if [[ ! "${remote_sha}" =~ ${ZERO_OID_PATTERN} ]] &&
