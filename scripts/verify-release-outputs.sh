@@ -4,6 +4,20 @@
 
 # Verify the release outputs produced by the signing job. This script only
 # reads release files and remote metadata. It has no publication authority.
+#
+# Language-boundary justification (AGENTS.md, "Change discipline"): this
+# verifier stays in shell instead of Go, and the justification is recorded here
+# in the same change that adds it. Every trust decision the script makes is made
+# by an external CLI -- `cosign verify-blob`, `cosign verify`, and
+# `gh attestation verify`. What the script itself contributes is argument
+# construction against a fixed asset inventory plus digest comparison around
+# those calls. It is the workflow-side mirror of the installer-side
+# `scripts/verify-release-artifact.sh`, which must run on a consumer machine
+# with no Go toolchain; keeping both verifiers in one language and one shape
+# lets them be diffed against each other whenever the release asset set moves.
+# A Go port would wrap the same three commands through `os/exec` and add a build
+# step to a job whose whole purpose is to depend on as little of this repository
+# as possible.
 set -euo pipefail
 IFS=$' \t\n'
 
