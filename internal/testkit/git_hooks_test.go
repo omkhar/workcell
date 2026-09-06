@@ -221,6 +221,17 @@ func TestCommitMsgHookKeepsCommentedBodyWhenNormalizing(t *testing.T) {
 	}
 }
 
+func TestCommitMsgHookNormalizesSubjectWithBackslash(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := `^F Document C:\temp path (tests pass; user-visible docs)`
+	// The subject is matched literally, so a backslash must not be read as an
+	// escape while the leading comment is trimmed.
+	fixture.commitFile("seed.txt", "seed\n", "# leading comment\n"+valid)
+	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
+		t.Fatalf("retained subject %q is not the validated subject %q", got, valid)
+	}
+}
+
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("seed.txt", "seed\n", "^F Seed fixture history (tests pass; fixture seed)")

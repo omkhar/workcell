@@ -38,7 +38,9 @@ accept() {
   if [[ "${retained%%$'\n'*}" != "${subject}" ]]; then
     # Drop only the comment lines ahead of the subject. The body keeps every
     # line the contributor wrote, comment-prefixed ones included.
-    trimmed="$(awk -v subject="${subject}" 'found || $0 == subject { found = 1; print }' "${message_file}")"
+    # ENVIRON, not -v: awk applies escape processing to a -v assignment, so a
+    # backslash in the subject would stop it matching its own line.
+    trimmed="$(SUBJECT="${subject}" awk 'found || $0 == ENVIRON["SUBJECT"] { found = 1; print }' "${message_file}")"
     printf '%s\n' "${trimmed}" >"${message_file}"
   fi
   exit 0

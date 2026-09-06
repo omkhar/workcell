@@ -32,14 +32,15 @@ pending pinned upstream updates. The `commit-msg` hook checks the Risk-Aware
 Commit Notation subject format. The `pre-push` hook verifies the signature of
 each outgoing commit.
 
-These three hooks are shell rather than Go, which is the documented exception
-to the Go-first language boundary in `AGENTS.md`. A hook has to run on a fresh
-clone, before any build, and `pre-push` in particular has to keep working when
-the Go toolchain or the `workcell-*` binaries are absent or themselves
-unverified. Dispatching to a built Go tool would put a bootstrap dependency in
-front of the gate that guards the bootstrap. Each hook stays small, re-execs
-through `env -i` onto a trusted PATH, and calls only `git`; policy that does
-not have to run pre-build belongs in Go.
+These three hooks are shell, not Go. This is the documented exception to the
+Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before
+any build. The `pre-push` hook must also work when the Go toolchain and the
+`workcell-*` binaries are absent. A built Go tool would add a bootstrap
+dependency to the gate that guards the bootstrap.
+
+Each hook stays small. Each hook re-execs through `env -i` onto a trusted PATH.
+Each hook calls only `git`. Put policy that does not run before the build
+in Go.
 
 ## Prerequisites
 
