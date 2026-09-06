@@ -1,6 +1,6 @@
 # Provenance, signatures, and SBOMs
 
-Workcell publishes signed release data for each successful tagged release.
+Workcell publishes signed release data for each successful dispatched release.
 The release uses two verification systems:
 
 1. Keyless Sigstore and Cosign signatures
@@ -33,7 +33,7 @@ Nine assets contain release data:
 The other nine assets contain one Sigstore bundle for each release-data asset.
 The release also signs the runtime image in the container registry.
 
-By default, the release creates GitHub build-provenance attestations for these subjects:
+The release creates GitHub build-provenance attestations for these subjects:
 
 - the runtime image
 - the source bundle
@@ -46,9 +46,30 @@ The release also attaches an SBOM predicate to the image and source-bundle subje
 The SBOM files are not attestation subjects.
 Cosign signs each SBOM file as a release asset.
 
+After the signing job completes, an independent read-only release job verifies all nine Sigstore
+bundles and the runtime image signature.
+It verifies the release image tag and the `sha-<commit>` image tag against the signed digest.
+It verifies eight provenance attestations and two SBOM attestations.
+The final publisher repeats the checks before it uploads the release assets.
+
+GitHub release immutability does not make GHCR tags immutable.
+Consumers must use `workcell-image.digest` as the image trust anchor.
+
+New releases use this exact workflow identity:
+
+```text
+https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main
+```
+
+Cosign checks also bind the certificate to the workflow SHA.
+Source checks bind the payload tag to its 40-hex release commit.
+New releases require that commit to equal the current `main` workflow commit.
+The `v1.0.2` release and earlier releases retain the tag workflow identity.
+
 ## Published v1.0.2 evidence
 
 [`v1.0.2`](https://github.com/omkhar/workcell/releases/tag/v1.0.2) is the first published stable Workcell 1.0 release.
+It uses the legacy tag workflow identity.
 GitHub reports this release as final and immutable.
 GitHub also reports a SHA-256 digest for each of the 18 workflow-uploaded assets.
 
@@ -84,7 +105,8 @@ Release preflight checks these items before publication:
 The bundle job does not prove complete bundle uninstall behavior.
 
 The amd64 image job rebuilds from the archived source bundle.
-A separate native arm64 job builds from the checked-out signed tag.
+A separate native arm64 job builds from the checked-out release commit.
+The tag gate verifies that this commit is the signed tag target.
 The amd64 job checks the archived provider pins again.
 The workflow binds both platform digests and the image manifests to the preflight results.
 It then signs and stages the release asset set.
@@ -101,27 +123,23 @@ The Sigstore path uses these parts:
 - short-lived Fulcio certificates
 - keyless Cosign signatures
 - Rekor transparency data in Sigstore bundles
+- post-signature verification of release outputs
 
 This check does not need the GitHub attestation service.
-It still trusts the named GitHub release workflow identity.
+New releases use the named `main` workflow identity and workflow SHA.
+The `v1.0.2` release and earlier releases use the named tag identity.
 
 ## GitHub attestation path
 
 The canonical public repository creates GitHub attestations.
-Its hosted-control policy requires both repository variables below to be `false`:
-
-- `WORKCELL_RELEASE_NO_ATTEST`
-- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS`
-
-Do not set either variable to `true` in the canonical repository.
-The hosted-control check fails if a variable has a different value.
+The release workflow does not use a mutable repository variable for this decision.
 Thus, a variable change alone cannot create an upstream release without attestations.
 
 Do not use the old `WORKCELL_ENABLE_GITHUB_ATTESTATIONS` variable.
 The release workflow no longer uses that opt-in variable.
 
-A fork cannot enable an exception with a variable or policy-file change alone.
-It must first change and review both the hosted-control policy and its validator.
+A fork cannot enable an exception with a variable change.
+It must first change and review the workflow and its validator.
 This is a code-and-policy change, not an operator exception.
 A fork release without GitHub attestations has lower assurance.
 It must still create all Sigstore signatures.
@@ -246,16 +264,17 @@ gh attestation verify "${asset}" \
 The verified installer runs the Cosign and digest checks before extraction.
 Add `--attestation` to require the GitHub check.
 
-The shipped installer pins the repository workflow but accepts any release tag identity.
-Use the manual procedure above when you require exact-tag certificate binding.
+The shipped installer pins the `main` workflow identity for new releases.
+The `v1.0.2` release and earlier releases use the legacy tag identity.
+Use the manual procedure above for those legacy releases.
 
 ## SLSA v1.0 Build-track gap analysis
 
 [SLSA v1.0](https://slsa.dev/spec/v1.0/levels) defines Build levels L1 through L3.
 It does not define a Source track.
 
-For releases with GitHub attestations, Workcell claims Build L2 for the eight build-provenance subjects.
-Workcell does not claim a Build level for other release files or for releases that disable GitHub attestations.
+Workcell claims Build L2 for the eight build-provenance subjects in canonical releases.
+Workcell does not claim a Build level for other release files or fork releases without GitHub attestations.
 Workcell does not claim Build L3.
 
 Reproducibility and hermeticity do not set a SLSA v1.0 Build level.

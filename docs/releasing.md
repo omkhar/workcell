@@ -53,11 +53,13 @@ honestly in docs, status reports, and release commentary.
   exists.
 - For agentic release PR publication and follow-up, use the repo-local
   `workcell-pr-lifecycle` skill in addition to this release runbook.
-- Wait for `main` to be green before pushing the release tag.
-- Follow the tag-triggered `Release` workflow through completion.
-- Before pushing the tag, verify the hosted-controls audit confirms that the
-  `release` environment permits only `v*` deployment tags, with no deployment
-  branches, variables, secrets, or administrator bypass.
+- Wait for `main` to be green before creating the release tag.
+- Follow the `repository_dispatch` `Release` workflow through completion.
+- Before creating the tag, verify that the `release` environment permits only `main`.
+- Verify that this environment has no tags, variables, secrets, or administrator bypass.
+- Verify the release-tag rulesets before creating the tag.
+- The creation ruleset permits only repository role ID 5, the administrator role.
+- A separate ruleset blocks tag updates and deletion without bypass actors.
 - Approve the `release` environment only after release preflight and install
   verification are green.
 - Verify that the repository-level immutable-release control is enabled before
@@ -491,7 +493,7 @@ gh api -X PUT repos/"${REPO}"/immutable-releases
 In `review-gated` mode, stop with the third checkpoint packet before pushing
 the signed tag.
 
-Create a signed tag on the merged `main` commit:
+Create a signed annotated tag on the merged `main` commit.
 
 ```sh
 git tag -s "${VERSION}" -m "${VERSION}" <main-commit-sha>
@@ -501,14 +503,26 @@ git push origin "refs/tags/${VERSION}"
 
 Never move or rewrite an existing release tag.
 
-## 10. Follow the tag-triggered `Release` workflow
+## 10. Dispatch and follow the `Release` workflow
 
-Watch the `Release` workflow for the tagged commit until it completes:
+Dispatch the release workflow after the signed tag reaches GitHub.
+Send the tag and its 40-hex peeled commit in the JSON payload.
 
 ```sh
-gh run list --repo "${REPO}" --workflow Release --limit 10
+release_commit="$(git rev-parse --verify "${VERSION}^{commit}")"
+release_payload="$(jq -cn \
+  --arg tag "${VERSION}" \
+  --arg commit "${release_commit}" \
+  '{event_type:"release",client_payload:{tag:$tag,commit:$commit}}')"
+gh api --method POST "repos/${REPO}/dispatches" --input - <<<"${release_payload}"
+gh run list --repo "${REPO}" --workflow Release --event repository_dispatch --limit 10
 gh run watch <release-run-id> --repo "${REPO}"
 ```
+
+The trusted workflow comes from `main`.
+The first job verifies the signed annotated tag before it checks out release-source code.
+It requires the tag target to equal the payload commit.
+It also requires the payload commit to equal the current `main` workflow commit.
 
 If the workflow enters a waiting state for the `release` environment:
 
@@ -519,10 +533,18 @@ If the workflow enters a waiting state for the `release` environment:
 In `review-gated` mode, stop with the fourth checkpoint packet before approving
 the environment.
 
-The workflow starts with a read-only tag-policy gate. The gate and host-side
-publisher use the same Go tag-classification policy, and every later release
-job depends on the gate directly. The publisher also classifies the tag before
-its first GitHub release-API request.
+The workflow starts with a trusted read-only tag gate before checkout.
+The payload contains the release tag and its 40-hex release commit.
+The gate verifies the signed annotated tag and binds it to that payload commit.
+The gate also requires the tag target to equal the current `main` workflow commit.
+The publisher repeats the tag-to-payload check before publication.
+The gate uses the current workflow commit as the release commit.
+New releases use the `main` workflow identity and the workflow SHA.
+Release-source checks use the payload tag and release commit.
+The `v1.0.2` release and earlier releases retain the tag workflow identity.
+The gate and host-side publisher use the same Go tag-classification policy.
+Every later release job depends on the gate directly.
+The publisher also classifies the tag before its first GitHub release-API request.
 Unsupported tags therefore fail before a write-capable job or API mutation can
 run. Release candidates are published as prereleases and never become latest;
 final tags are non-prereleases and become latest only when their populated
@@ -538,8 +560,10 @@ native Darwin ACL lane. Require the validator Linux ACL fixture to pass. The
 entrypoint also binds publication to the locally checked-out annotated tag
 object and its peeled commit.
 
-The Go publisher verifies that exact binding against GitHub before and after
-publication. Release preflight verifies repository release immutability
+The Go publisher verifies that exact binding against GitHub before publication.
+It checks the binding again after publication.
+The later check detects tag movement but cannot undo a published release.
+Release preflight verifies repository release immutability
 with the environment-scoped `WORKCELL_HOSTED_CONTROLS_TOKEN`. After the
 release-approved job seals and uploads its workflow artifact, a minimal final
 job in `hosted-controls-audit` refreshes that check immediately before
@@ -687,6 +711,10 @@ If drift is reported, apply the refresh:
 ```sh
 ./scripts/update-upstream-pins.sh --apply
 ```
+
+The upstream refresh publisher accepts runs only from the exact workflow path
+`.github/workflows/upstream-refresh.yml` on `main`.
+It rejects lookalike workflow paths before it downloads a candidate artifact.
 
 Then update the changelog, merge the fix to `main`, and cut the next patch
 release rather than reusing the failed tag.

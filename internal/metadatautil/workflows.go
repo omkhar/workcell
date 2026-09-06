@@ -33,6 +33,8 @@ type workflowJob struct {
 
 type workflowStep struct {
 	Name string            `yaml:"name"`
+	If   yaml.Node         `yaml:"if"`
+	Uses string            `yaml:"uses"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
 }
@@ -58,6 +60,9 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
 func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
+	if strings.Contains(workflowText, "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH") {
+		return errors.New("release workflow must not override the reviewed GitHub hosted-controls policy path")
+	}
 	var document workflowDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
 		return fmt.Errorf("parse release publication gate: %w", err)
@@ -69,19 +74,45 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	if releaseJob.Permissions["contents"] != "read" {
 		return errors.New("release artifact job must keep contents permission read-only")
 	}
+	verifyJob, ok := document.Jobs["verify-release-outputs"]
+	if !ok {
+		return errors.New("release workflow must define the independent verify-release-outputs job")
+	}
+	if verifyJob.Needs.Kind != yaml.SequenceNode || len(verifyJob.Needs.Content) != 2 ||
+		verifyJob.Needs.Content[0].Value != "tag-policy" || verifyJob.Needs.Content[1].Value != "release" {
+		return errors.New("release output verification job must depend directly on tag-policy and the release artifact job")
+	}
+	if len(verifyJob.Permissions) != 4 || verifyJob.Permissions["actions"] != "read" ||
+		verifyJob.Permissions["attestations"] != "read" || verifyJob.Permissions["contents"] != "read" ||
+		verifyJob.Permissions["packages"] != "read" {
+		return errors.New("release output verification job must grant only read permissions for artifacts, attestations, contents, and packages")
+	}
+	verificationFound := false
+	for _, step := range verifyJob.Steps {
+		if strings.Contains(step.Run, "./scripts/verify-release-outputs.sh") {
+			verificationFound = true
+			break
+		}
+	}
+	if !verificationFound {
+		return errors.New("release output verification job must run verify-release-outputs.sh")
+	}
 	publishJob, ok := document.Jobs["publish-github-release"]
 	if !ok {
 		return errors.New("release workflow must define the final publish-github-release job")
 	}
-	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
-		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" {
-		return errors.New("final GitHub release publication job must depend directly on tag-policy and the release artifact job")
+	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 3 ||
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" ||
+		publishJob.Needs.Content[2].Value != "verify-release-outputs" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy, the release artifact job, and output verification")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
 	}
-	if len(publishJob.Permissions) != 2 || publishJob.Permissions["actions"] != "read" || publishJob.Permissions["contents"] != "write" {
-		return errors.New("final GitHub release publication job must grant only actions: read and contents: write")
+	if len(publishJob.Permissions) != 4 || publishJob.Permissions["actions"] != "read" ||
+		publishJob.Permissions["attestations"] != "read" || publishJob.Permissions["contents"] != "write" ||
+		publishJob.Permissions["packages"] != "read" {
+		return errors.New("final GitHub release publication job must grant only read verification permissions and contents: write")
 	}
 	for _, step := range publishJob.Steps {
 		if step.Name != "Recheck hosted controls and publish GitHub release assets" {
@@ -94,8 +125,9 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		}
 		auditIndex := strings.Index(step.Run, `./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`)
 		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
-		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`)
+		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${RELEASE_TAG}"`)
 		if auditIndex < 0 || unsetIndex <= auditIndex || publishIndex <= unsetIndex ||
+			!strings.Contains(step.Run[publishIndex:], `--expected-tag-object "${RELEASE_TAG_OBJECT}"`) ||
 			!strings.Contains(step.Run[publishIndex:], "--immutable-releases-preverified-by-hosted-controls") {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
@@ -291,30 +323,76 @@ func ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
 }
 
 func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error {
-	if !strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}") {
-		return errors.New(".github/workflows/release.yml must gate GitHub attestations on public visibility or an explicit private-repo capability flag")
+	if strings.Contains(releaseWorkflow, "RELEASE_NO_ATTEST") || strings.Contains(releaseWorkflow, "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS") ||
+		strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED") {
+		return errors.New(".github/workflows/release.yml must not use mutable repository variables to skip GitHub attestations")
 	}
-	if !strings.Contains(releaseWorkflow, "RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}") {
-		return errors.New(".github/workflows/release.yml must expose RELEASE_NO_ATTEST as an explicit opt-out env var sourced from vars.WORKCELL_RELEASE_NO_ATTEST")
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(releaseWorkflow), &document); err != nil {
+		return fmt.Errorf("parse release attestation flow: %w", err)
 	}
-	if !strings.Contains(releaseWorkflow, "name: Confirm attestation environment policy") {
-		return errors.New(".github/workflows/release.yml must include the fail-closed attestation preflight step")
+	releaseJob, ok := document.Jobs["release"]
+	if !ok {
+		return errors.New("release workflow must define the release artifact job")
 	}
-	attestationPolicyStep := namedWorkflowStep(releaseWorkflow, "Confirm attestation environment policy")
-	if !strings.Contains(attestationPolicyStep, `ENABLE_GITHUB_ATTESTATIONS_SUPPORTED`) ||
-		!strings.Contains(attestationPolicyStep, `!= "true"`) ||
-		!strings.Contains(attestationPolicyStep, `exit 1`) {
-		return errors.New(".github/workflows/release.yml must keep the fail-closed attestation preflight script body (must `exit 1` when ENABLE_GITHUB_ATTESTATIONS_SUPPORTED is not 'true' and RELEASE_NO_ATTEST is not 'true')")
+	guardIndex := -1
+	firstAttestIndex := -1
+	releaseAttestSteps := 0
+	for index, step := range releaseJob.Steps {
+		if step.Name == "Confirm attestation environment policy" {
+			if guardIndex >= 0 {
+				return errors.New("release artifact job must contain exactly one attestation environment policy step")
+			}
+			guardIndex = index
+			if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "" {
+				return errors.New("release artifact job must run the attestation environment policy step unconditionally")
+			}
+			if len(step.Env) != 1 || step.Env["REPOSITORY_VISIBILITY"] != "${{ github.event.repository.visibility }}" {
+				return errors.New("release artifact job must bind repository visibility from the GitHub event in the attestation environment policy step")
+			}
+			if strings.TrimSpace(step.Run) != releaseAttestationEnvironmentPolicyScript {
+				return errors.New("release artifact job must use the exact fail-closed public repository visibility check")
+			}
+		}
+		if !strings.HasPrefix(step.Uses, "actions/attest@") {
+			continue
+		}
+		if firstAttestIndex < 0 {
+			firstAttestIndex = index
+		}
+		releaseAttestSteps++
+		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "" {
+			return errors.New(".github/workflows/release.yml must run every reviewed actions/attest step without a mutable condition")
+		}
 	}
-	const attestGuard = "if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
-	attestStepRE := regexp.MustCompile(`(?m)^\s*-\s+uses:\s+actions/attest@`)
-	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.RELEASE_NO_ATTEST != 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
-	totalAttestSteps := len(attestStepRE.FindAllString(releaseWorkflow, -1))
-	if totalAttestSteps != 10 {
+	if guardIndex < 0 {
+		return errors.New("release artifact job must contain exactly one attestation environment policy step")
+	}
+	if firstAttestIndex < 0 || guardIndex >= firstAttestIndex {
+		return errors.New("release artifact job must check attestation support before its first attestation step")
+	}
+	for jobName, job := range document.Jobs {
+		if jobName == "release" {
+			continue
+		}
+		for _, step := range job.Steps {
+			if !strings.HasPrefix(step.Uses, "actions/attest@") {
+				continue
+			}
+			return fmt.Errorf("release workflow must keep every actions/attest step in the release artifact job, found one in %q", jobName)
+		}
+	}
+	if releaseAttestSteps != 10 {
 		return errors.New(".github/workflows/release.yml must keep exactly ten reviewed GitHub attestation steps")
 	}
-	if len(guardedAttestStepRE.FindAllString(releaseWorkflow, -1)) != totalAttestSteps {
-		return fmt.Errorf(".github/workflows/release.yml must guard every actions/attest step with %q", attestGuard)
+	for _, jobName := range []string{"verify-release-outputs", "publish-github-release"} {
+		job, ok := document.Jobs[jobName]
+		if !ok {
+			return fmt.Errorf("release workflow must define the %s job", jobName)
+		}
+		if err := validateReleaseAttestationVerifier(job, jobName); err != nil {
+			return err
+		}
 	}
 	for _, needle := range []string{
 		"subject-name: ${{ env.IMAGE_NAME }}",
@@ -331,6 +409,51 @@ func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 		if !strings.Contains(releaseWorkflow, needle) {
 			return fmt.Errorf(".github/workflows/release.yml must contain %q", needle)
 		}
+	}
+	return nil
+}
+
+const releaseAttestationEnvironmentPolicyScript = `if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+  echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
+  echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
+  exit 1
+fi`
+
+const releaseAttestationVerificationScript = `set -euo pipefail
+docker_config="$(mktemp -d "${RUNNER_TEMP}/workcell-docker-config.XXXXXX")"
+chmod 0700 "${docker_config}"
+trap 'rm -rf -- "${docker_config}"' EXIT
+export DOCKER_CONFIG="${docker_config}"
+printf '%s' "${GITHUB_TOKEN}" | docker login ghcr.io \
+  --username "${GITHUB_REPOSITORY_OWNER}" \
+  --password-stdin
+verify_args=(
+  --assets-dir dist
+  --repo "${GITHUB_REPOSITORY}"
+  --tag "${RELEASE_TAG}"
+  --image-repository "${IMAGE_NAME}"
+  --source-digest "${RELEASE_COMMIT}"
+  --workflow-digest "${GITHUB_WORKFLOW_SHA}"
+)
+verify_args+=(--attestations)
+./scripts/verify-release-outputs.sh "${verify_args[@]}"`
+
+func validateReleaseAttestationVerifier(job workflowJob, jobName string) error {
+	verificationSteps := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Run, "./scripts/verify-release-outputs.sh") {
+			continue
+		}
+		verificationSteps++
+		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "" {
+			return fmt.Errorf("%s job must run release-output attestation verification unconditionally", jobName)
+		}
+		if strings.TrimSpace(step.Run) != releaseAttestationVerificationScript {
+			return fmt.Errorf("%s job must run the exact unconditional release-output attestation verification", jobName)
+		}
+	}
+	if verificationSteps != 1 {
+		return fmt.Errorf("%s job must contain exactly one release-output attestation verification step", jobName)
 	}
 	return nil
 }

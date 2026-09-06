@@ -514,7 +514,7 @@
       "job_id": "build-arm64-image",
       "job_name": "Build native arm64 release image",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -534,7 +534,7 @@
         "language": "go"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -554,7 +554,7 @@
         "language": "javascript-typescript"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -574,7 +574,7 @@
         "language": "rust"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -594,7 +594,7 @@
         "runner_label": "macos-15"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -614,7 +614,7 @@
         "runner_label": "macos-26"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -630,7 +630,7 @@
       "job_id": "preflight",
       "job_name": "Release preflight",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -646,7 +646,7 @@
       "job_id": "preflight-amd64-repro",
       "job_name": "Release reproducible image (amd64)",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -662,7 +662,7 @@
       "job_id": "preflight-arm64-copilot-runtime",
       "job_name": "Release Copilot runtime image probe (arm64)",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -678,7 +678,7 @@
       "job_id": "preflight-arm64-repro",
       "job_name": "Release reproducible image (arm64)",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -694,7 +694,7 @@
       "job_id": "preflight-container-smoke",
       "job_name": "Release container smoke",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -710,7 +710,7 @@
       "job_id": "publish-github-release",
       "job_name": "Publish GitHub release",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -726,7 +726,7 @@
       "job_id": "release",
       "job_name": "Publish release artifacts",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -742,14 +742,30 @@
       "job_id": "tag-policy",
       "job_name": "Release tag policy",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
       ],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "the exact pushed-tag event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
+      "github_only_reason": "the exact repository_dispatch event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
+    },
+    {
+      "id": "release.yml/verify-release-outputs",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "verify-release-outputs",
+      "job_name": "Verify release signatures and attestations",
+      "workflow_events": [
+        "repository_dispatch"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release output verification reads GitHub artifact attestations and the GHCR image after signing"
     },
     {
       "id": "scorecard.yml/analysis",

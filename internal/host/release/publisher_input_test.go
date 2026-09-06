@@ -270,8 +270,9 @@ func TestReleaseWorkflowUsesSingleAuthoritativeTagPolicyGate(t *testing.T) {
 	if strings.Count(workflow, "release classify-tag") != 1 {
 		t.Fatalf("release workflow classify-tag invocation count = %d, want 1", strings.Count(workflow, "release classify-tag"))
 	}
-	if strings.Contains(workflow, "=~") || strings.Contains(workflow, `^v[0-9]`) {
-		t.Fatal("release workflow contains a competing release-tag regex")
+	envelopeCheck := `if [[ ! "${RELEASE_TAG}" =~ ^v[0-9A-Za-z.-]{1,63}$ ]]; then`
+	if count := strings.Count(workflow, envelopeCheck); count != 1 {
+		t.Fatalf("release workflow bounded tag envelope count = %d, want 1", count)
 	}
 
 	var document struct {
@@ -287,8 +288,8 @@ func TestReleaseWorkflowUsesSingleAuthoritativeTagPolicyGate(t *testing.T) {
 	if !ok {
 		t.Fatal("release workflow is missing tag-policy job")
 	}
-	if len(tagPolicy.Permissions) != 1 || tagPolicy.Permissions["contents"] != "read" {
-		t.Fatalf("tag-policy permissions = %#v, want only contents: read", tagPolicy.Permissions)
+	if len(tagPolicy.Permissions) != 2 || tagPolicy.Permissions["contents"] != "read" || tagPolicy.Permissions["actions"] != "read" {
+		t.Fatalf("tag-policy permissions = %#v, want contents and actions read", tagPolicy.Permissions)
 	}
 	for jobID, job := range document.Jobs {
 		if jobID == "tag-policy" {
@@ -311,10 +312,17 @@ func TestReleaseWorkflowUsesSingleAuthoritativeTagPolicyGate(t *testing.T) {
 	if strings.Contains(publisher, "curl ") || strings.Contains(publisher, "api GET") {
 		t.Fatal("publisher shell must delegate GitHub release API policy to the Go publisher")
 	}
-	for _, binding := range []string{`"${TAG_REF}^{tag}"`, `"${TAG_REF}^{commit}"`} {
+	for _, binding := range []string{
+		`"${TAG_REF}^{tag}"`,
+		`cat-file tag "${TAG_OBJECT_SHA}"`,
+		`object_type != "commit"`,
+	} {
 		if strings.Count(publisher, binding) != 1 {
 			t.Fatalf("publisher tag binding %q count = %d, want 1", binding, strings.Count(publisher, binding))
 		}
+	}
+	if strings.Contains(publisher, `"${TAG_REF}^{commit}"`) || strings.Contains(publisher, `"${TAG_OBJECT_SHA}^{commit}"`) {
+		t.Fatal("publisher must read the commit only from the captured annotated tag object headers")
 	}
 }
 
@@ -344,7 +352,7 @@ func TestWorkflowInventoryParserAcceptsBothBundlePlaceholderForms(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			marker := "- name: Upload workflow artifacts"
 			if tc.name == "expression placeholder in publisher" {
-				marker = `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`
+				marker = `./scripts/publish-github-release.sh "${RELEASE_TAG}"`
 			}
 			mutated := replaceWorkflowSection(workflow, marker, tc.old, tc.new)
 			if mutated == workflow {
@@ -400,7 +408,7 @@ func TestWorkflowInventoryParserRejectsMutations(t *testing.T) {
 		{
 			name: "unresolved placeholder",
 			mutate: func(value string) string {
-				return replaceWorkflowSection(value, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`, "            \"dist/${BUNDLE_NAME}\" \\\n", "            \"dist/${UNRESOLVED_BUNDLE}\" \\\n")
+				return replaceWorkflowSection(value, `./scripts/publish-github-release.sh "${RELEASE_TAG}"`, "            \"dist/${BUNDLE_NAME}\" \\\n", "            \"dist/${UNRESOLVED_BUNDLE}\" \\\n")
 			},
 			want: "unresolved placeholder",
 		},
@@ -414,7 +422,7 @@ func TestWorkflowInventoryParserRejectsMutations(t *testing.T) {
 		{
 			name: "duplicate publisher invocation",
 			mutate: func(value string) string {
-				return value + "\n          ./scripts/publish-github-release.sh \"${GITHUB_REF_NAME}\" \\\n            dist/workcell.rb\n"
+				return value + "\n          ./scripts/publish-github-release.sh \"${RELEASE_TAG}\" \\\n            dist/workcell.rb\n"
 			},
 			want: "exactly one publisher inventory",
 		},
@@ -633,7 +641,7 @@ func parseWorkflowAssetInventories(workflow, tag string) (map[string][]string, e
 			}
 		case section == "artifact" && strings.HasPrefix(trimmed, "retention-days:"):
 			section = ""
-		case strings.HasPrefix(trimmed, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`):
+		case strings.HasPrefix(trimmed, `./scripts/publish-github-release.sh "${RELEASE_TAG}"`):
 			publisherInventories++
 			section = "publisher"
 		case section == "publisher":

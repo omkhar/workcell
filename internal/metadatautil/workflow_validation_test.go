@@ -39,15 +39,29 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
   release:
     permissions:
       contents: read
+  verify-release-outputs:
+    needs:
+      - tag-policy
+      - release
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - run: ./scripts/verify-release-outputs.sh
   publish-github-release:
     needs:
       - tag-policy
       - release
+      - verify-release-outputs
     environment:
       name: hosted-controls-audit
     permissions:
       actions: read
+      attestations: read
       contents: write
+      packages: read
     steps:
       - name: Recheck hosted controls and publish GitHub release assets
         env:
@@ -57,7 +71,8 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
         run: |
           ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
           unset WORKCELL_HOSTED_CONTROLS_TOKEN
-          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+          ./scripts/publish-github-release.sh "${RELEASE_TAG}" \
+            --expected-tag-object "${RELEASE_TAG_OBJECT}" \
             --immutable-releases-preverified-by-hosted-controls \
             dist/workcell.tar.gz
 `
@@ -68,11 +83,13 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		name, old, replacement, want string
 	}{
 		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
-		{name: "depends on sealed artifacts", old: "      - release", replacement: "      - preflight", want: "depend directly"},
+		{name: "depends on verified artifacts", old: "      - verify-release-outputs\n    environment:", replacement: "      - preflight\n    environment:", want: "depend directly"},
 		{name: "uses audit environment", old: "name: hosted-controls-audit", replacement: "name: release", want: "hosted-controls-audit"},
-		{name: "minimal permissions", old: "contents: write\n    steps:", replacement: "contents: write\n      packages: write\n    steps:", want: "grant only"},
+		{name: "minimal permissions", old: "packages: read\n    steps:", replacement: "packages: write\n    steps:", want: "grant only"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
+		{name: "binds original tag object", old: `--expected-tag-object "${RELEASE_TAG_OBJECT}"`, replacement: "--other", want: "explicit preverified publisher"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
+		{name: "fixed hosted policy", old: "GITHUB_TOKEN: ${{ github.token }}", replacement: "GITHUB_TOKEN: ${{ github.token }}\n          WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH: /tmp/relaxed.toml", want: "must not override the reviewed GitHub hosted-controls policy path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
@@ -1071,12 +1088,15 @@ jobs:
 	}
 }
 
-func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(t *testing.T) {
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsLegacySupportVariables(t *testing.T) {
 	t.Parallel()
 	releaseWorkflow := `env:
-  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
+  RELEASE_NO_ATTEST: "false"
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ !github.event.repository.private || github.event.repository.owner.type != 'User' }}
 
+jobs:
+  release:
+    steps:
       - name: Confirm attestation environment policy
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.RELEASE_NO_ATTEST != 'true'
@@ -1094,62 +1114,97 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(
 	if err == nil {
 		t.Fatal("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "public visibility or an explicit private-repo capability flag") {
+	if !strings.Contains(err.Error(), "must not use mutable repository variables") {
 		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
 	}
 }
 
-func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(t *testing.T) {
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMutableDecisionVariables(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	for _, tc := range []struct {
+		name        string
+		old         string
+		replacement string
+		want        string
+	}{
+		{
+			name:        "attestation opt-out",
+			old:         "env:\n",
+			replacement: "env:\n  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}\n",
+			want:        "must not use mutable repository variables",
+		},
+		{
+			name:        "private capability flag",
+			old:         "env:\n",
+			replacement: "env:\n  WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS }}\n",
+			want:        "must not use mutable repository variables",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("release workflow does not contain %q", tc.old)
+			}
+			err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsConditionalAttestStep(t *testing.T) {
 	t.Parallel()
 	releaseWorkflow := `env:
-  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
-  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
 
+jobs:
+  release:
+    steps:
       - name: Confirm attestation environment policy
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
-          if [[ "${ENABLE_GITHUB_ATTESTATIONS_SUPPORTED}" != "true" ]]; then
+          if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+            echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
+            echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
             exit 1
           fi
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        if: github.event.repository.visibility == 'public'
         with:
           subject-name: ${{ env.IMAGE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true'
         with:
           sbom-path: dist/workcell-image.spdx.json
           subject-name: ${{ env.IMAGE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/${{ env.BUNDLE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-source.spdx.json
           subject-path: dist/${{ env.BUNDLE_NAME }}
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell.rb
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-image.digest
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-build-inputs.json
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-control-plane.json
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-builder-environment.json
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/SHA256SUMS
 `
@@ -1158,68 +1213,201 @@ func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(
 	if err == nil {
 		t.Fatal("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "guard every actions/attest step") {
-		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
+	if !strings.Contains(err.Error(), "without a mutable condition") {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want conditional attestation failure", err)
 	}
 }
 
 func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *testing.T) {
 	t.Parallel()
-	releaseWorkflow := `env:
-  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
-  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
+	if err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(string(content)); err != nil {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsInvalidVisibilityBinding(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	for _, tc := range []struct {
+		name        string
+		old         string
+		replacement string
+		want        string
+	}{
+		{
+			name:        "mutable repository variable",
+			old:         "REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}",
+			replacement: "REPOSITORY_VISIBILITY: ${{ vars.REPOSITORY_VISIBILITY }}",
+			want:        "must bind repository visibility from the GitHub event",
+		},
+		{
+			name:        "undefined runner variable",
+			old:         `if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then`,
+			replacement: `if [[ "${GITHUB_REPOSITORY_VISIBILITY}" != "public" ]]; then`,
+			want:        "must use the exact fail-closed public repository visibility check",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("release workflow does not contain %q", tc.old)
+			}
+			err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsGuardOutsideReleaseJob(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	mutated := strings.Replace(workflow,
+		"      - name: Confirm attestation environment policy\n",
+		"      - name: Attestation environment policy moved out of release\n", 1)
+	mutated = strings.Replace(mutated,
+		"    steps:\n      - name: Verify signed tag binding before checkout\n",
+		`    steps:
       - name: Confirm attestation environment policy
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
-          if [[ "${ENABLE_GITHUB_ATTESTATIONS_SUPPORTED}" != "true" ]]; then
+          if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+            echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
+            echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
             exit 1
           fi
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-name: ${{ env.IMAGE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          sbom-path: dist/workcell-image.spdx.json
-          subject-name: ${{ env.IMAGE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/${{ env.BUNDLE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          sbom-path: dist/workcell-source.spdx.json
-          subject-path: dist/${{ env.BUNDLE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell.rb
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-image.digest
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-build-inputs.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-control-plane.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-builder-environment.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/SHA256SUMS
-`
 
-	if err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
-		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+      - name: Verify signed tag binding before checkout
+`, 1)
+	if mutated == workflow {
+		t.Fatal("release workflow guard mutation did not change the fixture")
+	}
+	err = metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+	if err == nil || !strings.Contains(err.Error(), "release artifact job must contain exactly one attestation environment policy step") {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want release-job guard rejection", err)
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsGuardAfterAttestation(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	guardStart := strings.Index(workflow, "      - name: Confirm attestation environment policy\n")
+	if guardStart < 0 {
+		t.Fatal("release workflow does not contain the attestation environment policy step")
+	}
+	guardEndOffset := strings.Index(workflow[guardStart:], "\n\n")
+	if guardEndOffset < 0 {
+		t.Fatal("release workflow attestation environment policy step has no end")
+	}
+	guardEnd := guardStart + guardEndOffset + 2
+	guard := workflow[guardStart:guardEnd]
+	mutated := workflow[:guardStart] + workflow[guardEnd:]
+	firstAttest := strings.Index(mutated, "      - uses: actions/attest@")
+	if firstAttest < 0 {
+		t.Fatal("release workflow does not contain an attestation step")
+	}
+	firstAttestEndOffset := strings.Index(mutated[firstAttest:], "\n\n")
+	if firstAttestEndOffset < 0 {
+		t.Fatal("release workflow first attestation step has no end")
+	}
+	firstAttestEnd := firstAttest + firstAttestEndOffset + 2
+	mutated = mutated[:firstAttestEnd] + guard + mutated[firstAttestEnd:]
+	err = metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+	if err == nil || !strings.Contains(err.Error(), "must check attestation support before its first attestation step") {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want guard-order rejection", err)
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsConditionalVerifierCalls(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	for _, stepName := range []string{
+		"Verify release outputs",
+		"Re-verify sealed release outputs before publication",
+	} {
+		t.Run(stepName, func(t *testing.T) {
+			old := "      - name: " + stepName + "\n"
+			mutated := strings.Replace(workflow, old, old+"        if: github.event.repository.visibility == 'public'\n", 1)
+			if mutated == workflow {
+				t.Fatalf("release workflow does not contain %q", stepName)
+			}
+			err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+			if err == nil || !strings.Contains(err.Error(), "must run release-output attestation verification unconditionally") {
+				t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want unconditional verifier rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingVerifierAttestations(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	const requiredLine = "          verify_args+=(--attestations)\n"
+	first := strings.Index(workflow, requiredLine)
+	last := strings.LastIndex(workflow, requiredLine)
+	if first < 0 || last <= first {
+		t.Fatal("release workflow must contain two attestation verifier arguments")
+	}
+	for _, tc := range []struct {
+		name  string
+		index int
+		want  string
+	}{
+		{name: "independent verifier", index: first, want: "verify-release-outputs job"},
+		{name: "pre-publication verifier", index: last, want: "publish-github-release job"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := workflow[:tc.index] + workflow[tc.index+len(requiredLine):]
+			err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsDuplicateYAMLKeys(t *testing.T) {
+	t.Parallel()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(content)
+	const jobName = "    name: Release reproducible image (amd64)\n"
+	mutated := strings.Replace(workflow, jobName, jobName+jobName, 1)
+	if mutated == workflow {
+		t.Fatal("release workflow does not contain the amd64 job name")
+	}
+	err = metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(mutated)
+	if err == nil || !strings.Contains(err.Error(), "parse release attestation flow") {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want duplicate-key parse rejection", err)
 	}
 }
 

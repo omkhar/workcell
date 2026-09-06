@@ -366,7 +366,8 @@ func (check *pinnedInputsCheck) validateReleaseRequiredSteps() error {
 		"docker buildx imagetools inspect --raw",
 		"{{json .Manifest}}",
 		"vnd.docker.reference.type",
-		"RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}",
+		`REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}`,
+		`if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then`,
 		"actions/attest@",
 		"Verify release bundle matches preflight",
 		"Verify control-plane manifest matches preflight",
@@ -422,8 +423,8 @@ func (check *pinnedInputsCheck) validateReleaseLegacyReferences() error {
 	); err != nil {
 		return err
 	}
-	if count := strings.Count(check.releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 2 {
-		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures in preflight and publish jobs, found %d checks", count)
+	if count := strings.Count(check.releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 5 {
+		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures before every release mutation phase, found %d checks", count)
 	}
 	return nil
 }

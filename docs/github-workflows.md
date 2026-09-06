@@ -98,11 +98,12 @@ The release install matrix runs the same ACL script before it uses release artif
 ## Release workflow
 
 The preflight job records the expected digest for its source archive.
-The release job independently creates and extracts its own archive from the checked-out release tag.
+The release job independently creates and extracts its own archive from the checked-out release commit.
 It then compares the archive digest with the expected digest.
 It creates source-dependent manifests and the amd64 image from the extracted tree.
 It creates the formula from the verified archive digest.
-The native arm64 image job builds from the checked-out release tag.
+The native arm64 image job builds from the checked-out release commit.
+The tag gate verifies that this commit is the signed tag target.
 
 The workflow also creates the builder-environment manifest, image-digest file, software bills of materials, signatures, and checksums.
 The release job seals the assets in one workflow artifact.
@@ -129,7 +130,7 @@ No image reaches GHCR before that gate.
 The `hosted-controls-audit` environment gates release preflight and final GitHub release publication.
 
 The release uses Cosign to create keyless Sigstore signatures.
-It also creates GitHub attestations when the reviewed hosted controls permit them.
+It creates GitHub attestations after a fixed public-repository guard.
 GitHub attestations do not replace Sigstore signatures.
 
 The final publisher has `actions: read` and `contents: write` permissions.
@@ -191,18 +192,19 @@ Some release controls are outside Git:
 - the `release` environment
 - the `hosted-controls-audit` environment
 - the `upstream-refresh` environment
-- repository variables for attestation policy
 
 `scripts/verify-github-hosted-controls.sh` compares those controls with
 [`policy/github-hosted-controls.toml`](../policy/github-hosted-controls.toml).
 
-The canonical repository requires these variable values:
+The release workflow pins the attestation decision in versioned source.
+It does not use a mutable repository variable to skip attestations.
 
-- `WORKCELL_RELEASE_NO_ATTEST=false`
-- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=false`
-
-The release environment permits protected `v*` tags only.
+The release environment permits the protected `main` branch only.
 It has no secret or variable content and no administrator bypass.
+
+The release-tag controls use one creation ruleset.
+That ruleset permits repository role ID 5, the administrator role, to create tags.
+A separate ruleset blocks tag updates and deletion without bypass actors.
 
 ## Public and private repositories
 
@@ -211,7 +213,8 @@ This requirement applies to public and private repositories.
 Private code scans and SARIF uploads depend on the GitHub plan.
 
 The public repository creates GitHub attestations.
-A private repository needs reviewed policy and plan support before it creates them.
+The canonical workflow fails for a private repository.
+A private repository needs a reviewed workflow change, policy change, and plan support.
 
 ## Deliberate omissions
 

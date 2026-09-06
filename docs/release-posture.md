@@ -18,12 +18,13 @@ It does these checks:
 - It keeps Antigravity unsupported until that provider passes the same gate.
 
 The preflight job records the expected digest for its source archive.
-The release job creates and extracts an independent archive from the checked-out release tag.
+The release job creates and extracts an independent archive from the checked-out release commit.
 It compares that archive digest with the expected digest.
 It creates source-dependent manifests and the amd64 image from the extracted tree.
 It creates the Homebrew formula from the verified archive digest.
 
-The native arm64 image job builds from the checked-out release tag.
+The native arm64 image job builds from the checked-out release commit.
+The tag gate verifies that this commit is the signed tag target.
 The workflow compares the published platform digests with the preflight data.
 
 The hosted install jobs prove these properties on Apple Silicon `macos-26` and `macos-15`:
@@ -43,11 +44,11 @@ The `hosted-controls-audit` environment gates release preflight and final GitHub
 
 The workflow uses Cosign to create keyless Sigstore signatures.
 It signs the image, source archive, Homebrew formula, image-digest file, checksums, manifests, and software bills of materials.
-It also creates GitHub attestations when the reviewed hosted controls permit them.
+It creates GitHub attestations after a fixed public-repository guard.
 GitHub attestations are an additional verification surface.
 They do not replace Sigstore signatures.
 
-Forks can keep the GitHub attestation gates off.
-The upstream repository audits those gates as hosted control-plane state.
+Forks can remove GitHub attestation gates through a reviewed code and policy change.
+The upstream workflow does not accept a mutable variable opt-out.
 
 See [provenance.md](provenance.md) and [github-workflows.md](github-workflows.md).
