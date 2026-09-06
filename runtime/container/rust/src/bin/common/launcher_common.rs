@@ -15,6 +15,7 @@ unsafe extern "C" {
 }
 
 pub const BASH_PATH: &str = "/bin/bash";
+pub const GUARD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
 
 #[cfg(not(test))]
 static MANAGED_CHILD_PID: AtomicI32 = AtomicI32::new(0);
@@ -53,6 +54,9 @@ pub fn sanitize_env() {
         // SAFETY: called during single-threaded launcher startup before any thread or child is spawned; no concurrent env access.
         unsafe { env::remove_var(key) };
     }
+    // Restore only the immutable Workcell guard after removing caller-controlled loader state.
+    // SAFETY: called during single-threaded launcher startup before any thread or child is spawned.
+    unsafe { env::set_var("LD_PRELOAD", GUARD_PRELOAD) };
 }
 
 pub fn set_env_var(key: &str, value: &str) {
