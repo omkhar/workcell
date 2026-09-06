@@ -90,15 +90,6 @@ var (
 		"VERTEX_LOCATION":           {},
 		"VERTEX_AI_LOCATION":        {},
 	}
-	allowedRootPolicyKeys = map[string]struct{}{
-		"version":     {},
-		"includes":    {},
-		"documents":   {},
-		"ssh":         {},
-		"copies":      {},
-		"credentials": {},
-		"network":     {},
-	}
 )
 
 // PolicySource is an alias for injectionpolicy.PolicySource — the

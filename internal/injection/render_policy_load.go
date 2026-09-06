@@ -6,16 +6,13 @@ package injection
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"path/filepath"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/rootio"
-	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
 func loadPolicyBundle(policyPath Path) (map[string]any, []PolicySource, error) {
@@ -28,95 +25,20 @@ func loadPolicyBundle(policyPath Path) (map[string]any, []PolicySource, error) {
 }
 
 func loadPolicyBundleWithReader(policyPath Path, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
-	loadedPaths := map[string]struct{}{}
-	merged, sources, err := loadPolicyBundleRecursive(policyPath, policyPath.Parent(), nil, loadedPaths, reader)
-	if err != nil {
-		return nil, nil, err
-	}
-	return merged, sources, nil
-}
-
-func loadPolicyBundleRecursive(policyPath, entrypointRoot Path, activeStack []Path, loadedPaths map[string]struct{}, reader *injectionpolicy.BundleReader) (map[string]any, []PolicySource, error) {
-	if slices.Contains(activeStack, policyPath) {
-		cycle := append(append([]Path{}, activeStack...), policyPath)
-		parts := make([]string, 0, len(cycle))
-		for _, p := range cycle {
-			parts = append(parts, p.String())
-		}
-		return nil, nil, fmt.Errorf("injection policy include cycle detected: %s", strings.Join(parts, " -> "))
-	}
-	if _, ok := loadedPaths[policyPath.String()]; ok {
-		return nil, nil, fmt.Errorf("injection policy includes the same file more than once: %s", policyPath)
-	}
-	loadedPaths[policyPath.String()] = struct{}{}
-
-	file, err := reader.Read(policyPath.String())
-	if err != nil {
-		return nil, nil, err
-	}
-	loaded, err := parseTOMLSubset(string(file.Bytes), policyPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := validateAllowedKeys(loaded, allowedRootPolicyKeys, "root policy"); err != nil {
-		return nil, nil, err
-	}
-	version := 1
-	if rawVersion, ok := loaded["version"]; ok {
-		if v, ok := rawVersion.(int); ok {
-			version = v
-		} else {
-			return nil, nil, fmt.Errorf("unsupported injection policy version: %v", rawVersion)
-		}
-	}
-	if version != 1 {
-		return nil, nil, fmt.Errorf("unsupported injection policy version: %d", version)
-	}
-
-	includes, _ := loaded["includes"].([]any)
-	if includes == nil {
-		if rawIncludes, ok := loaded["includes"]; ok && rawIncludes != nil {
-			var err error
-			includes, err = anySlice(rawIncludes, "includes")
+	return injectionpolicy.LoadBundle(policyPath.String(), policyPath.Parent().String(), reader, injectionpolicy.LoadOptions{
+		Parse: func(content, path string) (map[string]any, error) {
+			return parseTOMLSubset(content, Path(path))
+		},
+		ValidateInclude: func(raw any, label, base, entrypointRoot string) (string, error) {
+			source, err := validatePolicyInclude(raw, label, Path(base), Path(entrypointRoot))
 			if err != nil {
-				return nil, nil, err
+				return "", err
 			}
-		} else {
-			includes = []any{}
-		}
-	}
-	merged := map[string]any{"version": 1}
-	sources := make([]PolicySource, 0)
-	nextStack := append(append([]Path{}, activeStack...), policyPath)
-	for index, include := range includes {
-		includePath, err := validatePolicyInclude(include, fmt.Sprintf("includes[%d]", index), policyPath.Parent(), entrypointRoot)
-		if err != nil {
-			return nil, nil, err
-		}
-		included, includedSources, err := loadPolicyBundleRecursive(includePath, entrypointRoot, nextStack, loadedPaths, reader)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := mergePolicyFragment(merged, included, includePath); err != nil {
-			return nil, nil, err
-		}
-		sources = append(sources, includedSources...)
-	}
-
-	currentPolicy := maps.Clone(loaded)
-	delete(currentPolicy, "includes")
-	if len(activeStack) > 0 {
-		currentPolicy = rebasePolicyFragment(currentPolicy, policyPath.Parent())
-	}
-	if err := mergePolicyFragment(merged, currentPolicy, policyPath); err != nil {
-		return nil, nil, err
-	}
-	sources = append(sources, PolicySource{
-		Path:     logicalPolicyPath(policyPath, entrypointRoot),
-		Sha256:   file.Sha256,
-		Fragment: loaded,
+			return source.String(), nil
+		},
+		RebasePath:    rebaseFragmentPathString,
+		StrictVersion: true,
 	})
-	return merged, sources, nil
 }
 
 func loadPolicyMetadataOverride(rawPath string) (string, []PolicySource, error) {
@@ -160,173 +82,29 @@ func loadPolicyMetadataOverride(rawPath string) (string, []PolicySource, error) 
 }
 
 // parseTOMLSubset parses an injection-policy TOML file via the shared
-// tomlsubset.ParseDocument API and reshapes the result into the
-// map[string]any tree the rest of injection consumes.  Injection policy
-// allows one specific array-of-tables construct ([[copies]]) which the
-// shared strict parser rejects, so we strip those blocks out and parse
-// each entry separately through tomlsubset.Parse before reassembling.
-//
-// This mirrors the adapter pattern PR 37 introduced for authpolicy and
-// authresolve; the only injection-specific divergence is the allowed
-// credential-table whitelist (credentialContainerPaths) and the local
-// table whitelist (documents/ssh/credentials).
+// injectionpolicy.ParsePolicyTOML seam. The UTF-8 guard and the
+// credential-table whitelist (credentialContainerPaths, vs authpolicy's
+// CredentialKeys) are the injection-specific pieces.
 func parseTOMLSubset(content string, policyPath Path) (map[string]any, error) {
 	policy := policyPath.String()
 	if !utf8.ValidString(content) {
 		return nil, fmt.Errorf("%s must contain valid UTF-8", policy)
 	}
-	subsetContent, copiesEntries, err := extractCopiesBlocks(content, policy)
-	if err != nil {
-		return nil, err
-	}
-	doc, err := tomlsubset.ParseDocument(subsetContent, policy)
-	if err != nil {
-		return nil, err
-	}
-	root, err := documentToInjectionMap(doc, policy)
-	if err != nil {
-		return nil, err
-	}
-	if len(copiesEntries) > 0 {
-		copies := make([]any, 0, len(copiesEntries))
-		for _, entry := range copiesEntries {
-			copies = append(copies, entry)
-		}
-		root["copies"] = copies
-	}
-	return root, nil
+	return injectionpolicy.ParsePolicyTOML(content, policy, credentialTableKeys)
 }
 
-// extractCopiesBlocks scans content for `[[copies]]` headers, parses each
-// following key/value block as a single TOML subset table via
-// tomlsubset.Parse, and returns the remaining content with those blocks
-// elided plus the parsed entries in declaration order.  Any other
-// [[array-of-table]] header is rejected here so the caller-visible error
-// message matches the legacy injection parser.
-func extractCopiesBlocks(content, policyPath string) (string, []map[string]any, error) {
-	var (
-		kept    strings.Builder
-		entries []map[string]any
-	)
-	lines := strings.Split(content, "\n")
-	for idx := 0; idx < len(lines); idx++ {
-		rawLine := lines[idx]
-		stripped := tomlsubset.StripComment(rawLine)
-		if strings.HasPrefix(stripped, "[[") && strings.HasSuffix(stripped, "]]") {
-			tableName := strings.TrimSpace(stripped[2 : len(stripped)-2])
-			if tableName != "copies" {
-				return "", nil, fmt.Errorf("%s:%d: unsupported array-of-table [%s]", policyPath, idx+1, tableName)
-			}
-			block, consumed, err := readCopiesBlock(lines, idx+1, policyPath)
-			if err != nil {
-				return "", nil, err
-			}
-			entries = append(entries, block)
-			idx = consumed - 1
-			// Emit a blank line so downstream line numbers stay roughly
-			// aligned for diagnostic output.
-			kept.WriteByte('\n')
-			continue
-		}
-		kept.WriteString(rawLine)
-		kept.WriteByte('\n')
+// credentialTableKeys is the [credentials.<name>] whitelist view of
+// credentialContainerPaths.
+var credentialTableKeys = func() map[string]struct{} {
+	keys := make(map[string]struct{}, len(credentialContainerPaths))
+	for key := range credentialContainerPaths {
+		keys[key] = struct{}{}
 	}
-	result := kept.String()
-	if strings.HasSuffix(result, "\n") {
-		result = result[:len(result)-1]
-	}
-	return result, entries, nil
-}
-
-// readCopiesBlock consumes lines starting at idx until the next [header]
-// (single or double-bracketed) or end of input, parses the collected
-// `key = value` pairs as a one-off TOML subset table, and returns the
-// parsed entry plus the next unconsumed line index.
-func readCopiesBlock(lines []string, idx int, policyPath string) (map[string]any, int, error) {
-	var block strings.Builder
-	end := idx
-	for end < len(lines) {
-		stripped := tomlsubset.StripComment(lines[end])
-		if strings.HasPrefix(stripped, "[") {
-			break
-		}
-		block.WriteString(lines[end])
-		block.WriteByte('\n')
-		end++
-	}
-	parsed, err := tomlsubset.Parse(block.String(), policyPath)
-	if err != nil {
-		return nil, end, err
-	}
-	return parsed, end, nil
-}
-
-// documentToInjectionMap converts a tomlsubset.Document into the
-// nested-map shape the rest of injection expects.  Only the
-// `documents`, `ssh`, `credentials`, and `credentials.<name>` tables get
-// special structural treatment; any other table name is rejected to
-// preserve the strict subset semantics of the legacy injection parser.
-// The credential whitelist is credentialContainerPaths (vs authpolicy's
-// CredentialKeys) — these two maps stay in sync but live in different
-// packages so each can evolve independently.
-func documentToInjectionMap(doc *tomlsubset.Document, policyPath string) (map[string]any, error) {
-	root := map[string]any{}
-	for _, pair := range doc.TopLevel.Pairs {
-		root[pair.Key] = pair.Value
-	}
-	for _, table := range doc.Tables {
-		name := table.Name
-		if strings.HasPrefix(name, "credentials.") {
-			credentialKey := strings.SplitN(name, ".", 2)[1]
-			if _, ok := credentialContainerPaths[credentialKey]; !ok {
-				return nil, fmt.Errorf("%s:%d: unsupported credentials table [%s]", policyPath, table.Line, name)
-			}
-			credentialsRaw, exists := root["credentials"]
-			credentials, _ := credentialsRaw.(map[string]any)
-			switch {
-			case !exists:
-				credentials = map[string]any{}
-				root["credentials"] = credentials
-			case credentials == nil:
-				return nil, fmt.Errorf("%s:%d: credentials table conflicts with scalar key credentials", policyPath, table.Line)
-			case credentials[credentialKey] != nil:
-				return nil, fmt.Errorf("%s:%d: duplicate credentials entry: %s", policyPath, table.Line, credentialKey)
-			}
-			entry := map[string]any{}
-			credentials[credentialKey] = entry
-			for _, pair := range table.Pairs {
-				entry[pair.Key] = pair.Value
-			}
-			continue
-		}
-		if name != "documents" && name != "ssh" && name != "credentials" && name != "network" {
-			return nil, fmt.Errorf("%s:%d: unsupported table [%s]", policyPath, table.Line, name)
-		}
-		targetRaw, exists := root[name]
-		target, _ := targetRaw.(map[string]any)
-		switch {
-		case !exists:
-			target = map[string]any{}
-			root[name] = target
-		case target == nil:
-			return nil, fmt.Errorf("%s:%d: table [%s] conflicts with scalar key %s", policyPath, table.Line, name, name)
-		}
-		for _, pair := range table.Pairs {
-			if _, exists := target[pair.Key]; exists {
-				return nil, fmt.Errorf("%s:%d: duplicate key across table forms: %s.%s", policyPath, pair.Line, name, pair.Key)
-			}
-			target[pair.Key] = pair.Value
-		}
-	}
-	return root, nil
-}
+	return keys
+}()
 
 func logicalPolicyPath(policyPath, entrypointRoot Path) string {
-	relative, err := filepath.Rel(entrypointRoot.String(), policyPath.String())
-	if err != nil {
-		return policyPath.String()
-	}
-	return filepath.ToSlash(relative)
+	return injectionpolicy.LogicalPolicyPath(policyPath.String(), entrypointRoot.String())
 }
 
 func rebaseFragmentPath(raw any, fragmentDir Path) any {
@@ -341,75 +119,12 @@ func rebaseFragmentPath(raw any, fragmentDir Path) any {
 	return expanded.String()
 }
 
+func rebaseFragmentPathString(raw any, fragmentDir string) any {
+	return rebaseFragmentPath(raw, Path(fragmentDir))
+}
+
 func rebasePolicyFragment(policy map[string]any, fragmentDir Path) map[string]any {
-	rebased := map[string]any{}
-	for key, value := range policy {
-		switch key {
-		case "documents":
-			if documents, ok := value.(map[string]any); ok {
-				rebasedDocs := map[string]any{}
-				for documentKey, documentValue := range documents {
-					rebasedDocs[documentKey] = rebaseFragmentPath(documentValue, fragmentDir)
-				}
-				rebased[key] = rebasedDocs
-				continue
-			}
-		case "copies":
-			if copies, ok := value.([]any); ok {
-				rebasedCopies := make([]any, 0, len(copies))
-				for _, entry := range copies {
-					if entryMap, ok := entry.(map[string]any); ok {
-						rebasedEntry := maps.Clone(entryMap)
-						if source, ok := rebasedEntry["source"]; ok {
-							rebasedEntry["source"] = rebaseFragmentPath(source, fragmentDir)
-						}
-						rebasedCopies = append(rebasedCopies, rebasedEntry)
-						continue
-					}
-					rebasedCopies = append(rebasedCopies, entry)
-				}
-				rebased[key] = rebasedCopies
-				continue
-			}
-		case "ssh":
-			if ssh, ok := value.(map[string]any); ok {
-				rebasedSSH := maps.Clone(ssh)
-				for _, sshKey := range []string{"config", "known_hosts"} {
-					if sshValue, ok := rebasedSSH[sshKey]; ok {
-						rebasedSSH[sshKey] = rebaseFragmentPath(sshValue, fragmentDir)
-					}
-				}
-				if identities, err := anySlice(rebasedSSH["identities"], "ssh.identities"); err == nil {
-					next := make([]any, 0, len(identities))
-					for _, identity := range identities {
-						next = append(next, rebaseFragmentPath(identity, fragmentDir))
-					}
-					rebasedSSH["identities"] = next
-				}
-				rebased[key] = rebasedSSH
-				continue
-			}
-		case "credentials":
-			if credentials, ok := value.(map[string]any); ok {
-				rebasedCredentials := map[string]any{}
-				for credentialKey, credentialValue := range credentials {
-					if credentialMap, ok := credentialValue.(map[string]any); ok {
-						rebasedCredential := maps.Clone(credentialMap)
-						if source, ok := rebasedCredential["source"]; ok {
-							rebasedCredential["source"] = rebaseFragmentPath(source, fragmentDir)
-						}
-						rebasedCredentials[credentialKey] = rebasedCredential
-						continue
-					}
-					rebasedCredentials[credentialKey] = rebaseFragmentPath(credentialValue, fragmentDir)
-				}
-				rebased[key] = rebasedCredentials
-				continue
-			}
-		}
-		rebased[key] = value
-	}
-	return rebased
+	return injectionpolicy.RebasePolicyFragment(policy, fragmentDir.String(), rebaseFragmentPathString)
 }
 
 func validatePolicyInclude(raw any, label string, base, entrypointRoot Path) (Path, error) {
@@ -440,90 +155,6 @@ func requirePolicyIncludePathWithin(root, candidate Path, label string) error {
 	}
 	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return fmt.Errorf("%s must stay within %s: %s", label, root, candidate)
-	}
-	return nil
-}
-
-func mergePolicyFragment(base, addition map[string]any, sourcePath Path) error {
-	version := 1
-	if rawVersion, ok := addition["version"]; ok {
-		if v, ok := rawVersion.(int); ok {
-			version = v
-		}
-	}
-	if version != 1 {
-		return fmt.Errorf("unsupported injection policy version: %v", version)
-	}
-	for _, tableName := range []string{"documents", "ssh", "credentials"} {
-		table := addition[tableName]
-		if table == nil {
-			continue
-		}
-		tableMap, ok := table.(map[string]any)
-		if !ok {
-			return fmt.Errorf("injection policy fragment must keep %s as a table: %s", tableName, sourcePath)
-		}
-		destination, _ := base[tableName].(map[string]any)
-		if destination == nil {
-			destination = map[string]any{}
-			base[tableName] = destination
-		}
-		for key, value := range tableMap {
-			if _, exists := destination[key]; exists {
-				return fmt.Errorf("injection policy fragments declare the same setting more than once: %s.%s (%s)", tableName, key, sourcePath)
-			}
-			destination[key] = value
-		}
-	}
-	if copies, ok := addition["copies"]; ok {
-		copyList, ok := copies.([]any)
-		if !ok {
-			return fmt.Errorf("injection policy fragment must keep copies as an array of tables: %s", sourcePath)
-		}
-		destinationCopies, _ := base["copies"].([]any)
-		destinationCopies = append(destinationCopies, copyList...)
-		base["copies"] = destinationCopies
-	}
-	if err := mergeNetworkFragment(base, addition, sourcePath); err != nil {
-		return err
-	}
-	return nil
-}
-
-// mergeNetworkFragment folds an included fragment's `[network]` table into the
-// merged policy.  Unlike documents/ssh/credentials (which reject a key that is
-// declared twice), the network endpoint lists are UNIONED across fragments so
-// several operator-owned fragments can each contribute allow/deny endpoints.
-// Values are preserved as-is (renderNetwork validates the merged result), so
-// an unknown key or non-array value still surfaces as a fail-closed error at
-// render time.  Nothing here can introduce a policy-mode setting: `[network]`
-// only ever carries endpoint lists.
-func mergeNetworkFragment(base, addition map[string]any, sourcePath Path) error {
-	raw, ok := addition["network"]
-	if !ok || raw == nil {
-		return nil
-	}
-	network, ok := raw.(map[string]any)
-	if !ok {
-		return fmt.Errorf("injection policy fragment must keep network as a table: %s", sourcePath)
-	}
-	destination, _ := base["network"].(map[string]any)
-	if destination == nil {
-		destination = map[string]any{}
-		base["network"] = destination
-	}
-	for key, value := range network {
-		existing, present := destination[key]
-		if !present {
-			destination[key] = value
-			continue
-		}
-		existingList, errExisting := anySlice(existing, "network."+key)
-		additionList, errAddition := anySlice(value, "network."+key)
-		if errExisting != nil || errAddition != nil {
-			return fmt.Errorf("injection policy fragments declare conflicting non-array network.%s: %s", key, sourcePath)
-		}
-		destination[key] = append(existingList, additionList...)
 	}
 	return nil
 }

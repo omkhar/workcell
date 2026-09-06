@@ -482,8 +482,8 @@ func structJSONFields(source, structName, path string) ([]string, error) {
 }
 
 // checkInjectionTables asserts that the injection-policy contract matches the
-// authoritative root-key gate `allowedRootPolicyKeys` in
-// internal/injection/render_injection_bundle.go — the map validated (via
+// authoritative root-key gate `RootPolicyKeys` in
+// internal/injectionpolicy/bundle_load.go — the map validated (via
 // validateAllowedKeys) before any table parsing runs, so it is the first and
 // definitive gate on which top-level keys a policy may carry. The contract's
 // [injection_tables].tables (documents/ssh/credentials/copies) plus its
@@ -491,34 +491,34 @@ func structJSONFields(source, structName, path string) ([]string, error) {
 // keys; dropping a key from the gate then fails this check (a later
 // `name != …` chain scrape would miss that, since the gate rejects first).
 func checkInjectionTables(rootDir, contractPath string, tables, scalarRootKeys []string) error {
-	bundlePath := filepath.Join(rootDir, "internal", "injection", "render_injection_bundle.go")
+	bundlePath := filepath.Join(rootDir, "internal", "injectionpolicy", "bundle_load.go")
 	source, err := readText(bundlePath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
 
 	// 1. The full root-key set (tables + scalars) must equal the authoritative
-	//    allowedRootPolicyKeys gate, so no accepted root key is dropped.
-	gateKeys, err := mapStringSetKeys(source, "allowedRootPolicyKeys", bundlePath)
+	//    RootPolicyKeys gate, so no accepted root key is dropped.
+	gateKeys, err := mapStringSetKeys(source, "RootPolicyKeys", bundlePath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
 	contractKeys := append(append([]string{}, tables...), scalarRootKeys...)
-	if err := assertSetsEqual(contractPath, "injection_tables.tables + scalar_root_keys", "the allowedRootPolicyKeys gate in "+bundlePath, gateKeys, contractKeys); err != nil {
+	if err := assertSetsEqual(contractPath, "injection_tables.tables + scalar_root_keys", "the RootPolicyKeys gate in "+bundlePath, gateKeys, contractKeys); err != nil {
 		return err
 	}
 
 	// 2. Separately, [injection_tables].tables must equal the actual accepted
-	//    TABLE names — the `name != …` guard in documentToInjectionMap (single-
+	//    TABLE names — the `name != …` guard in the shared injectionpolicy documentToPolicyMap (single-
 	//    bracket tables) and the `tableName != …` guard in extractCopiesBlocks
 	//    (the one array-of-tables) — so moving a table into scalar_root_keys (or
 	//    vice versa) fails even though the flattened union would still match.
-	renderPolicyPath := filepath.Join(rootDir, "internal", "injection", "render_policy_load.go")
+	renderPolicyPath := filepath.Join(rootDir, "internal", "injectionpolicy", "bundle_load.go")
 	policySource, err := readText(renderPolicyPath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
-	singleBracketTables, err := functionScopedMatches(policySource, "documentToInjectionMap", `name != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
+	singleBracketTables, err := functionScopedMatches(policySource, "documentToPolicyMap", `name != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
