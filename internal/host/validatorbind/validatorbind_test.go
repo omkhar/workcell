@@ -19,6 +19,8 @@ import (
 
 var errInvalidCleanupContext = errors.New("cleanup context is canceled or unbounded")
 
+const completedProbeLogMarker = "workcell-validator-bind-probe-log-complete"
+
 func TestRequireProvesExactWorkspaceAndCleansChallenge(t *testing.T) {
 	t.Parallel()
 	workspace := createWorkspace(t, "workspace,with-comma")
@@ -179,12 +181,9 @@ func TestRequireLocalDeadlineFailsClosedAndCleansChallengeAndContainer(t *testin
 	t.Parallel()
 	workspace := createWorkspace(t, "workspace")
 	docker := executableFixture(t, "docker")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
 	var cleanupArgs []string
 	var probeName string
-	err := requireWithProbeTimeout(ctx, Options{
+	err := requireWithProbeTimeout(context.Background(), Options{
 		DockerBinary: docker,
 		Image:        "validator:fixture",
 		Workspace:    workspace,
@@ -440,8 +439,9 @@ fi
 if [ "$1" = "rm" ]; then
 	exit 0
 fi
+printf '%%s\n' %q >> %q
 exec /bin/sleep 60
-`, commandLog)
+`, commandLog, completedProbeLogMarker, commandLog)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func waitForLoggedProbeStart(t *testing.T, commandLog string, timeout time.Durat
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if data, err := os.ReadFile(commandLog); err == nil && slices.Contains(strings.Split(string(data), "\n"), "run") {
+		if data, err := os.ReadFile(commandLog); err == nil && completedProbeLog(data) {
 			return
 		}
 		select {
@@ -566,6 +566,21 @@ func waitForLoggedProbeStart(t *testing.T, commandLog string, timeout time.Durat
 			t.Fatal("blocking Docker executable did not record the probe command")
 		case <-ticker.C:
 		}
+	}
+}
+
+func completedProbeLog(data []byte) bool {
+	return slices.Contains(strings.Split(string(data), "\n"), completedProbeLogMarker)
+}
+
+func TestCompletedProbeLogRequiresCompletionMarker(t *testing.T) {
+	partial := []byte("--context\nfixture-context\nrun\n")
+	if completedProbeLog(partial) {
+		t.Fatal("partial probe log reported completion")
+	}
+	complete := append(partial, []byte(completedProbeLogMarker+"\n")...)
+	if !completedProbeLog(complete) {
+		t.Fatal("completed probe log did not report completion")
 	}
 }
 
