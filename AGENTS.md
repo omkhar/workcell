@@ -124,6 +124,37 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   plane.
 - Ship invariant checks with new controls whenever practical.
 
+## Code Review Rules
+
+### Security boundaries
+
+- Flag any change that widens the VM or container boundary, adds a host
+  mount, or passes a host credential, socket, or auth state into the runtime.
+- Flag any file access that trusts a path across a check/use gap: opens
+  without `O_NOFOLLOW` parent-descriptor discipline, containment checks on
+  non-canonical paths, or symlinked parents.
+- Flag any state write without staged rename, fsync of the file and its
+  created parents, and owner-only modes.
+
+### Contract lockstep
+
+- Flag any edit to one of `adapters/codex/.codex/config.toml`,
+  `adapters/codex/managed_config.toml`, `adapters/codex/requirements.toml`,
+  or `adapters/codex/.codex/rules/default.rules` without the matching edits
+  and validator updates in the aligned files.
+- Flag any control-plane file change without a regenerated
+  `runtime/container/control-plane-manifest.json` and updated contract
+  fixtures.
+
+### Validation honesty
+
+- Flag any documentation claim of an enforcement that no test or control
+  proves.
+- Flag any new validator that matches bare substrings instead of anchored,
+  comment-stripped syntax, or that ships without a negative fixture.
+- Flag any external lookup or parser that treats an error as absence or
+  success instead of failing closed.
+
 ## Pull request workflow
 
 - For publish, PR follow-up, or merge requests in this repository, use the
