@@ -207,6 +207,20 @@ func TestCommitMsgHookKeepsCommentedBodyWhenSubjectIsFirst(t *testing.T) {
 	}
 }
 
+func TestCommitMsgHookKeepsCommentedBodyWhenNormalizing(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	// Leading comments are dropped so the retained subject is the validated
+	// one, but comment-prefixed body lines are the contributor's content.
+	fixture.commitFile("seed.txt", "seed\n", "# leading comment\n"+valid+"\n\n# Summary\nDetail line.")
+	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
+		t.Fatalf("retained subject %q is not the validated subject %q", got, valid)
+	}
+	if got := fixture.run("log", "-1", "--format=%B"); !strings.Contains(got, "# Summary") {
+		t.Fatalf("normalization discarded a comment-prefixed body line:\n%s", got)
+	}
+}
+
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("seed.txt", "seed\n", "^F Seed fixture history (tests pass; fixture seed)")

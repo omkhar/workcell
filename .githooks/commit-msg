@@ -36,7 +36,10 @@ subject="${body%%$'\n'*}"
 retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
 accept() {
   if [[ "${retained%%$'\n'*}" != "${subject}" ]]; then
-    printf '%s\n' "${body}" >"${message_file}"
+    # Drop only the comment lines ahead of the subject. The body keeps every
+    # line the contributor wrote, comment-prefixed ones included.
+    trimmed="$(awk -v subject="${subject}" 'found || $0 == subject { found = 1; print }' "${message_file}")"
+    printf '%s\n' "${trimmed}" >"${message_file}"
   fi
   exit 0
 }
