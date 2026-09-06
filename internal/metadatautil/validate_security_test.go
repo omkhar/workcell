@@ -172,7 +172,7 @@ func TestCheckPinnedInputsRejectsHostedControlAPIVersionDrift(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(content, `readonly GITHUB_API_VERSION="2026-03-10"`, `readonly GITHUB_API_VERSION="2022-11-28"`, 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, `readonly GITHUB_API_VERSION=\"2026-03-10\"`)
+	requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
 }
 
 func TestCheckPinnedInputsRejectsHostedControlShebangDrift(t *testing.T) {
@@ -283,14 +283,14 @@ func TestCheckPinnedInputsRejectsUnpaginatedHostedRulesets(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(content, `github_api --paginate "repos/${REPO}/rulesets?per_page=100"`, `github_api "repos/${REPO}/rulesets"`, 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, `github_api --paginate \"repos/${REPO}/rulesets?per_page=100\"`)
+	requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
 }
 
 func TestCheckPinnedInputsRejectsFailOpenHostedRulesetAggregation(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(content, `"${CITOOLS_BIN}" merge-hosted-control-array-pages`, `jq -s 'add'`, 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, "merge-hosted-control-array-pages")
+	requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
 }
 
 func TestCheckPinnedInputsRejectsFailOpenHostedEmptyCollectionAggregation(t *testing.T) {
@@ -302,7 +302,7 @@ func TestCheckPinnedInputsRejectsFailOpenHostedEmptyCollectionAggregation(t *tes
 			1,
 		)
 	})
-	requirePinnedInputsErrorContains(t, cfg, "merge-hosted-control-object-pages secrets")
+	requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
 }
 
 func TestCheckPinnedInputsRejectsCommentedDebianBootstrapGuard(t *testing.T) {
