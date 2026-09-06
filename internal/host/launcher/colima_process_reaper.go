@@ -250,7 +250,7 @@ func colimaProcessReadyForSignal(ctx context.Context, profile string, identity c
 		return false, err
 	}
 	if !listed {
-		return colimaProcessMissingFromProfile(identity, deps)
+		return false, colimaProcessMissingFromProfile(identity, deps)
 	}
 	current, err = currentColimaProcessGeneration(identity, deps)
 	if err != nil {
@@ -274,15 +274,15 @@ func colimaProfileContainsProcess(ctx context.Context, profile string, pid int, 
 	return slices.Contains(pids, pid), nil
 }
 
-func colimaProcessMissingFromProfile(identity colimaProcessIdentity, deps colimaProcessReaperDependencies) (bool, error) {
+func colimaProcessMissingFromProfile(identity colimaProcessIdentity, deps colimaProcessReaperDependencies) error {
 	current, err := currentColimaProcessGeneration(identity, deps)
 	if err != nil {
-		return false, fmt.Errorf("revalidate Colima profile process %d: %w", identity.pid, err)
+		return fmt.Errorf("revalidate Colima profile process %d: %w", identity.pid, err)
 	}
 	if current {
-		return false, fmt.Errorf("colima profile process %d command identity changed before signal", identity.pid)
+		return fmt.Errorf("colima profile process %d command identity changed before signal", identity.pid)
 	}
-	return false, nil
+	return nil
 }
 
 func currentColimaProcessGeneration(identity colimaProcessIdentity, deps colimaProcessReaperDependencies) (bool, error) {

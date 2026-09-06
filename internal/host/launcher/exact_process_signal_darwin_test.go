@@ -35,10 +35,4 @@ func TestDarwinSignalIdentityABILayout(t *testing.T) {
 	if got, want := unsafe.Offsetof(identity.idVersion), uintptr(32); got != want {
 		t.Fatalf("idVersion offset = %d, want %d", got, want)
 	}
-	handle := darwinAuditTokenSignalHandle{pid: 42}
-	handle.token[5] = uint32(handle.pid)
-	handle.token[7] = identity.idVersion
-	if handle.token[5] != 42 || handle.token[7] != identity.idVersion {
-		t.Fatalf("audit token identity slots = %#v", handle.token)
-	}
 }

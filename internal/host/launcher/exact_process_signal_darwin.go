@@ -65,24 +65,14 @@ func darwinAuditTokenSignalAvailable() bool {
 }
 
 func darwinReleaseSupportsAuditTokenSignal(release string) bool {
-	major, minor, ok := parseDarwinKernelRelease(release)
-	if !ok {
+	parts := strings.SplitN(release, ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	major, majorErr := strconv.Atoi(parts[0])
+	minor, minorErr := strconv.Atoi(parts[1])
+	if majorErr != nil || minorErr != nil || major < 0 || minor < 0 {
 		return false
 	}
 	return major > darwinAuditTokenSignalMajor || major == darwinAuditTokenSignalMajor && minor >= darwinAuditTokenSignalMinor
-}
-
-func parseDarwinKernelRelease(release string) (int, int, bool) {
-	parts := strings.SplitN(release, ".", 3)
-	if len(parts) < 2 {
-		return 0, 0, false
-	}
-	major, majorOK := parseDarwinKernelVersionPart(parts[0])
-	minor, minorOK := parseDarwinKernelVersionPart(parts[1])
-	return major, minor, majorOK && minorOK
-}
-
-func parseDarwinKernelVersionPart(value string) (int, bool) {
-	parsed, err := strconv.Atoi(value)
-	return parsed, err == nil && parsed >= 0
 }

@@ -310,29 +310,21 @@ func WriteProfileOwner(ownerPath string, pid int) error {
 func ObserveProcessGeneration(pid int, recorded string) (string, error) {
 	switch {
 	case strings.HasPrefix(recorded, "darwin:"):
-		return observeDarwinProcessGeneration(pid, recorded)
+		if !validDarwinProcessGeneration(recorded) {
+			return "", errors.New("invalid darwin process generation")
+		}
+		return observeValidDarwinProcessGeneration(pid, recorded)
 	case strings.HasPrefix(recorded, "linux:"):
-		return observeLinuxProcessGeneration(pid, recorded)
+		if !validLinuxProcessGeneration(recorded) {
+			return "", errors.New("invalid linux process generation")
+		}
+		if runtime.GOOS != "linux" {
+			return "", fmt.Errorf("linux process generation does not match %s host", runtime.GOOS)
+		}
+		return processGeneration(pid)
 	default:
 		return ProcessStartTime(pid)
 	}
-}
-
-func observeDarwinProcessGeneration(pid int, recorded string) (string, error) {
-	if !validDarwinProcessGeneration(recorded) {
-		return "", errors.New("invalid darwin process generation")
-	}
-	return observeValidDarwinProcessGeneration(pid, recorded)
-}
-
-func observeLinuxProcessGeneration(pid int, recorded string) (string, error) {
-	if !validLinuxProcessGeneration(recorded) {
-		return "", errors.New("invalid linux process generation")
-	}
-	if runtime.GOOS != "linux" {
-		return "", fmt.Errorf("linux process generation does not match %s host", runtime.GOOS)
-	}
-	return processGeneration(pid)
 }
 
 // IsExactProcessGeneration reports whether a generation record uses a valid

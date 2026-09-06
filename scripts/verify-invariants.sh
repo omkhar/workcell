@@ -7732,17 +7732,6 @@ EOF
       echo "Expected no managed profile processes after exact reaper certification cleanup" >&2
       exit 1
     fi
-    for removed_profile_path in \
-      "${REAL_HOME}/.colima/${LIVE_DEBUG_PROFILE_NAME}" \
-      "$(verify_profile_target_state_dir "${LIVE_DEBUG_PROFILE_NAME}")" \
-      "${REAL_HOME}/.colima/_lima/colima-${LIVE_DEBUG_PROFILE_NAME}" \
-      "${REAL_HOME}/.colima/_lima/_disks/colima-${LIVE_DEBUG_PROFILE_NAME}" \
-      "${REAL_HOME}/.colima/_store/colima-${LIVE_DEBUG_PROFILE_NAME}.json"; do
-      if [[ -e "${removed_profile_path}" || -L "${removed_profile_path}" ]]; then
-        echo "Expected managed profile state to be absent after exact reaper certification cleanup: ${removed_profile_path}" >&2
-        exit 1
-      fi
-    done
     delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME}"
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"

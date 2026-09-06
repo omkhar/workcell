@@ -62,22 +62,15 @@ func observeValidDarwinProcessGeneration(pid int, recorded string) (string, erro
 func legacyDarwinProcessGeneration(pid int) (string, error) {
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
-		return "", classifyLegacyDarwinProcessGenerationError(pid, err)
+		if killErr := syscall.Kill(pid, 0); errors.Is(killErr, syscall.ESRCH) {
+			return "", processGoneErr{pid: pid}
+		}
+		return "", fmt.Errorf("read process %d kernel identity: %w", pid, err)
 	}
 	if int(info.Proc.P_pid) != pid {
 		return "", fmt.Errorf("read process %d kernel identity: returned pid %d", pid, info.Proc.P_pid)
 	}
-	return formatLegacyDarwinProcessGeneration(pid, info.Proc.P_starttime)
-}
-
-func classifyLegacyDarwinProcessGenerationError(pid int, err error) error {
-	if killErr := syscall.Kill(pid, 0); errors.Is(killErr, syscall.ESRCH) {
-		return processGoneErr{pid: pid}
-	}
-	return fmt.Errorf("read process %d kernel identity: %w", pid, err)
-}
-
-func formatLegacyDarwinProcessGeneration(pid int, started unix.Timeval) (string, error) {
+	started := info.Proc.P_starttime
 	if started.Sec <= 0 || started.Usec < 0 || started.Usec >= 1_000_000 {
 		return "", fmt.Errorf("read process %d kernel identity: invalid start time", pid)
 	}
