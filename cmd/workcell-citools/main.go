@@ -103,7 +103,7 @@ func subcommands() []subcommand {
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
 		{"generate-build-input-manifest", "DOCKERFILE PACKAGE_JSON PACKAGE_LOCK OUTPUT BUILD_REF SOURCE_DATE_EPOCH REQUIRE_TRACKED", 7, 7, cmdGenerateBuildInputManifest},
 		{"generate-builder-environment-manifest", "OUTPUT BUILDKIT_IMAGE BUILDX_VERSION_TARGET COSIGN_VERSION_TARGET QEMU_IMAGE SYFT_VERSION_TARGET BUILDX_VERSION BUILDX_INSPECT DOCKER_VERSION_JSON QEMU_VERSION COSIGN_VERSION CURL_VERSION GIT_VERSION GZIP_VERSION SYFT_VERSION TAR_VERSION", 16, 16, cmdGenerateBuilderEnvironmentManifest},
-		{"check-pinned-inputs", "DOCKERFILE VALIDATOR_DOCKERFILE PROVIDERS_PACKAGE_JSON PROVIDERS_PACKAGE_LOCK WORKFLOWS_DIR CI_WORKFLOW RELEASE_WORKFLOW PIN_HYGIENE_WORKFLOW CODEOWNERS CODEX_REQUIREMENTS CODEX_MCP_CONFIG HOSTED_CONTROLS_POLICY HOSTED_CONTROLS_SCRIPT PROVIDER_BUMP_POLICY MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 15, 15, cmdCheckPinnedInputs},
+		{"check-pinned-inputs", "REPO_ROOT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 2, 2, cmdCheckPinnedInputs},
 		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
@@ -512,27 +512,11 @@ func cmdGenerateBuilderEnvironmentManifest(args []string) error {
 }
 
 func cmdCheckPinnedInputs(args []string) error {
-	maxAge, err := strconv.Atoi(args[14])
+	maxAge, err := strconv.Atoi(args[1])
 	if err != nil {
 		return err
 	}
-	return metadatautil.CheckPinnedInputs(metadatautil.PinnedInputsConfig{
-		RuntimeDockerfilePath:    args[0],
-		ValidatorDockerfilePath:  args[1],
-		ProvidersPackageJSONPath: args[2],
-		ProvidersPackageLockPath: args[3],
-		WorkflowsDir:             args[4],
-		CIWorkflowPath:           args[5],
-		ReleaseWorkflowPath:      args[6],
-		PinHygieneWorkflowPath:   args[7],
-		CodeownersPath:           args[8],
-		CodexRequirementsPath:    args[9],
-		CodexMCPConfigPath:       args[10],
-		HostedControlsPolicyPath: args[11],
-		HostedControlsScriptPath: args[12],
-		ProviderBumpPolicyPath:   args[13],
-		MaxDebianSnapshotAgeDays: maxAge,
-	})
+	return metadatautil.CheckPinnedInputs(metadatautil.NewPinnedInputsConfig(args[0], maxAge))
 }
 
 func cmdVerifyReproducibleBuild(args []string) error {
