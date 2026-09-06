@@ -15,12 +15,9 @@ import (
 func TestHostedControlsRunnerRelaysTokenOnlyThroughStdin(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
-	if err := os.Mkdir(scriptsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	copyHostedControlFixture(t, "scripts/run-hosted-controls-audit.sh", filepath.Join(scriptsDir, "run-hosted-controls-audit.sh"))
 	verifier := filepath.Join(scriptsDir, "verify-github-hosted-controls.sh")
-	writeHostedControlFixture(t, verifier, hostedControlChildProbe, 0o755)
+	writeCanonicalFixture(t, verifier, []byte(hostedControlChildProbe), 0o755)
 
 	stdinPath := filepath.Join(root, "stdin")
 	argsPath := filepath.Join(root, "args")
@@ -35,12 +32,9 @@ func TestHostedControlsRunnerRelaysTokenOnlyThroughStdin(t *testing.T) {
 func TestHostedControlsRunnerRequiresNamespacedTokenInGitHubActions(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
-	if err := os.Mkdir(scriptsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	runner := filepath.Join(scriptsDir, "run-hosted-controls-audit.sh")
 	copyHostedControlFixture(t, "scripts/run-hosted-controls-audit.sh", runner)
-	writeHostedControlFixture(t, filepath.Join(scriptsDir, "verify-github-hosted-controls.sh"), hostedControlChildProbe, 0o755)
+	writeCanonicalFixture(t, filepath.Join(scriptsDir, "verify-github-hosted-controls.sh"), []byte(hostedControlChildProbe), 0o755)
 	environment := hostedControlProbeEnvironment(filepath.Join(root, "stdin"), filepath.Join(root, "args"), filepath.Join(root, "environment"), "0")
 	environment = environmentWithout(environment, "WORKCELL_HOSTED_CONTROLS_TOKEN")
 	cmd := exec.Command(runner, "owner/repo")
@@ -55,12 +49,9 @@ func TestHostedControlsRunnerRequiresNamespacedTokenInGitHubActions(t *testing.T
 func TestHostedControlsRunnerUsesGitHubTokenOutsideActions(t *testing.T) {
 	root := t.TempDir()
 	scriptsDir := filepath.Join(root, "scripts")
-	if err := os.Mkdir(scriptsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	runner := filepath.Join(scriptsDir, "run-hosted-controls-audit.sh")
 	copyHostedControlFixture(t, "scripts/run-hosted-controls-audit.sh", runner)
-	writeHostedControlFixture(t, filepath.Join(scriptsDir, "verify-github-hosted-controls.sh"), hostedControlChildProbe, 0o755)
+	writeCanonicalFixture(t, filepath.Join(scriptsDir, "verify-github-hosted-controls.sh"), []byte(hostedControlChildProbe), 0o755)
 	stdinPath := filepath.Join(root, "stdin")
 	argsPath := filepath.Join(root, "args")
 	envPath := filepath.Join(root, "environment")
@@ -87,7 +78,7 @@ func TestHostedControlsVerifierRelaysAmbientTokenOnce(t *testing.T) {
 	if mutant == string(content) {
 		t.Fatal("direct-relay probe anchor is missing")
 	}
-	writeHostedControlFixture(t, verifier, mutant, 0o755)
+	writeCanonicalFixture(t, verifier, []byte(mutant), 0o755)
 
 	stdinPath := filepath.Join(root, "stdin")
 	argsPath := filepath.Join(root, "args")
@@ -102,7 +93,7 @@ func TestHostedControlsVerifierRelaysAmbientTokenOnce(t *testing.T) {
 func TestHostedControlsVerifierRejectsAmbientGoBinaryBeforeExecution(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "executed")
 	goWrapper := filepath.Join(t.TempDir(), "go")
-	writeHostedControlFixture(t, goWrapper, "#!/bin/sh\nprintf executed >\"$WORKCELL_TEST_MARKER\"\n", 0o755)
+	writeCanonicalFixture(t, goWrapper, []byte("#!/bin/sh\nprintf executed >\"$WORKCELL_TEST_MARKER\"\n"), 0o755)
 	verifier := filepath.Join(repoRoot(t), "scripts", "verify-github-hosted-controls.sh")
 	cmd := exec.Command(verifier, "owner/repo")
 	cmd.Env = append(os.Environ(),
@@ -172,23 +163,21 @@ func requireHostedControlGitHubLog(t *testing.T, path string) {
 
 func prepareHostedControlCommandGraphFixture(t *testing.T, root string) {
 	t.Helper()
-	for _, directory := range []string{"scripts", "scripts/lib", "logs", "bin"} {
-		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(filepath.Join(root, "logs"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	copyHostedControlFixture(t, "scripts/lib/canonical-build-env.sh", filepath.Join(root, "scripts", "lib", "canonical-build-env.sh"))
 	copyHostedControlFixture(t, "scripts/lib/go-run-env.sh", filepath.Join(root, "scripts", "lib", "go-run-env.sh"))
 	copyHostedControlFixture(t, "go.mod", filepath.Join(root, "go.mod"))
-	writeHostedControlFixture(t, filepath.Join(root, "bin", "go"), hostedControlFakeGo, 0o755)
-	writeHostedControlFixture(t, filepath.Join(root, "bin", "gh"), hostedControlFakeGH, 0o755)
+	writeCanonicalFixture(t, filepath.Join(root, "bin", "go"), []byte(hostedControlFakeGo), 0o755)
+	writeCanonicalFixture(t, filepath.Join(root, "bin", "gh"), []byte(hostedControlFakeGH), 0o755)
 	jqPath, err := exec.LookPath("jq")
 	if err != nil {
 		t.Fatal(err)
 	}
 	jqFixture := strings.Replace(hostedControlFakeJQ, "@JQ_PATH@", jqPath, 1)
-	writeHostedControlFixture(t, filepath.Join(root, "bin", "jq"), jqFixture, 0o755)
-	writeHostedControlFixture(t, filepath.Join(root, "citools-template"), hostedControlFakeCITools, 0o755)
+	writeCanonicalFixture(t, filepath.Join(root, "bin", "jq"), []byte(jqFixture), 0o755)
+	writeCanonicalFixture(t, filepath.Join(root, "citools-template"), []byte(hostedControlFakeCITools), 0o755)
 
 	source, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "verify-github-hosted-controls.sh"))
 	if err != nil {
@@ -198,7 +187,7 @@ func prepareHostedControlCommandGraphFixture(t *testing.T, root string) {
 	fixture = strings.Replace(fixture, `GO_BIN="$(resolve_trusted_go_bin)"`, `GO_BIN="`+filepath.Join(root, "bin", "go")+`"`, 1)
 	fixture = strings.Replace(fixture, `GH_BIN="$(resolve_trusted_tool /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)"`, `GH_BIN="`+filepath.Join(root, "bin", "gh")+`"`, 1)
 	fixture = strings.Replace(fixture, `JQ_BIN="$(resolve_trusted_tool /opt/homebrew/bin/jq /usr/local/bin/jq /usr/bin/jq)"`, `JQ_BIN="`+filepath.Join(root, "bin", "jq")+`"`, 1)
-	writeHostedControlFixture(t, filepath.Join(root, "scripts", "verify-github-hosted-controls.sh"), fixture, 0o755)
+	writeCanonicalFixture(t, filepath.Join(root, "scripts", "verify-github-hosted-controls.sh"), []byte(fixture), 0o755)
 }
 
 func hostedControlProbeEnvironment(stdinPath, argsPath, envPath, status string) []string {
@@ -260,18 +249,7 @@ func requireExitStatus(t *testing.T, err error, want int, output []byte) {
 
 func copyHostedControlFixture(t *testing.T, source, destination string) {
 	t.Helper()
-	content, err := os.ReadFile(filepath.Join(repoRoot(t), filepath.FromSlash(source)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeHostedControlFixture(t, destination, string(content), 0o755)
-}
-
-func writeHostedControlFixture(t *testing.T, path, content string, mode os.FileMode) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
-		t.Fatal(err)
-	}
+	copyCanonicalFixture(t, filepath.Join(repoRoot(t), filepath.FromSlash(source)), destination)
 }
 
 const hostedControlChildProbe = `#!/bin/bash -p
