@@ -80,7 +80,9 @@ func subcommands() []subcommand {
 		{"plan-workflow-lanes", "MANIFEST_PATH CONFIG_JSON_PATH", 2, 2, cmdPlanWorkflowLanes},
 		{"merge-hosted-control-array-pages", "", 0, 0, cmdMergeHostedControlArrayPages},
 		{"merge-hosted-control-object-pages", "FIELD", 1, 1, cmdMergeHostedControlObjectPages},
-		{"fetch-rulesets", "TMP_DIR REPO", 2, 2, cmdFetchRulesets},
+		{"list-hosted-control-ruleset-ids", "SUMMARY_PATH", 1, 1, cmdListHostedControlRulesetIDs},
+		{"normalize-hosted-control-ruleset", "EXPECTED_ID", 1, 1, cmdNormalizeHostedControlRuleset},
+		{"assemble-hosted-control-rulesets", "SUMMARY_PATH DETAILS_PATH OUTPUT_PATH", 3, 3, cmdAssembleHostedControlRulesets},
 		{"list-hosted-control-environments", "POLICY_PATH", 1, 1, cmdListHostedControlEnvironments},
 		{"verify-github-hosted-controls", "TMP_DIR REPO POLICY_PATH", 3, 3, cmdVerifyGitHubHostedControls},
 		{"extract-dockerfile-arg", "DOCKERFILE_PATH ARG_NAME", 2, 2, cmdExtractDockerfileArg},
@@ -295,8 +297,16 @@ func cmdPlanWorkflowLanes(args []string) error {
 	return nil
 }
 
-func cmdFetchRulesets(args []string) error {
-	return metadatautil.FetchRulesets(args[0], args[1])
+func cmdListHostedControlRulesetIDs(args []string) error {
+	return metadatautil.ListHostedControlRulesetIDs(args[0], os.Stdout)
+}
+
+func cmdNormalizeHostedControlRuleset(args []string) error {
+	return metadatautil.NormalizeHostedControlRuleset(os.Stdin, os.Stdout, args[0])
+}
+
+func cmdAssembleHostedControlRulesets(args []string) error {
+	return metadatautil.AssembleHostedControlRulesets(args[0], args[1], args[2])
 }
 
 func cmdMergeHostedControlArrayPages(_ []string) error {

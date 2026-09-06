@@ -700,11 +700,12 @@ func stagedCanonicalEntrypoint(
 		tb.Fatal(err)
 	}
 	text := string(content)
-	guardEnd := strings.Index(text, canonicalGuardBlock)
+	const canonicalCall = "workcell_require_canonical_build_environment\n"
+	guardEnd := strings.Index(text, canonicalCall)
 	if guardEnd < 0 {
 		tb.Fatalf("%s does not contain the canonical guard block", relative)
 	}
-	header := text[:guardEnd+len(canonicalGuardBlock)]
+	header := text[:guardEnd+len(canonicalCall)]
 	if removeGuard {
 		header = strings.Replace(
 			header,
@@ -718,6 +719,30 @@ func stagedCanonicalEntrypoint(
 	staged := filepath.Join(root, filepath.FromSlash(relative))
 	writeCanonicalFixture(tb, staged, []byte(header), 0o755)
 	return staged
+}
+
+func canonicalEntrypointOrder(text, relative, firstOperation string) bool {
+	anchors := []string{
+		`ROOT_DIR="$(CDPATH='' cd -- `,
+		`source "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"`,
+		`workcell_require_modern_privileged_bash "$@"`,
+		"workcell_require_canonical_build_environment",
+		firstOperation,
+	}
+	if relative == "scripts/verify-github-hosted-controls.sh" {
+		anchors[0] = `source "${BASH_SOURCE[0]%/*}/lib/canonical-build-env.sh"`
+		anchors[1] = `workcell_require_modern_privileged_bash "$@"`
+		anchors[2] = `ROOT_DIR="$(CDPATH='' cd -- `
+	}
+	previous := -1
+	for _, anchor := range anchors {
+		current := strings.Index(text, anchor)
+		if current <= previous {
+			return false
+		}
+		previous = current
+	}
+	return true
 }
 
 func TestCanonicalBuildEnvironmentDirectEntrypoints(t *testing.T) {
@@ -742,13 +767,7 @@ func TestCanonicalBuildEnvironmentDirectEntrypoints(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := string(content)
-			rootAt := strings.Index(text, `ROOT_DIR="$(CDPATH='' cd -- `)
-			guardAt := strings.Index(text, canonicalGuardBlock)
-			riskAt := strings.Index(text, tc.firstOperation)
-			if !strings.HasPrefix(text, "#!/bin/bash -p\n") ||
-				rootAt < 0 ||
-				guardAt < rootAt ||
-				riskAt < guardAt+len(canonicalGuardBlock) {
+			if !strings.HasPrefix(text, "#!/bin/bash -p\n") || !canonicalEntrypointOrder(text, tc.relative, tc.firstOperation) {
 				t.Fatalf("%s must run the privileged canonical guard before %q", tc.relative, tc.firstOperation)
 			}
 
@@ -879,6 +898,17 @@ func TestCanonicalBuildEnvironmentPrivilegedEntrypoint(t *testing.T) {
 	if code, output := canonicalBuildEnvProbe(t, `exec /bin/bash "$2" --help`, nil, script); code != 2 ||
 		!strings.Contains(output, "execute the script directly") {
 		t.Fatalf("nonprivileged interpreter did not fail closed: code=%d output=%q", code, output)
+	}
+}
+
+func TestCanonicalBuildEnvironmentModernBashProbeDoesNotReadCallerInput(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "lib", "canonical-build-env.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"${candidate}" -p -c '((BASH_VERSINFO[0] >= 4))' </dev/null`
+	if strings.Count(string(content), want) != 1 {
+		t.Fatalf("modern Bash probe must redirect standard input with exactly %q", want)
 	}
 }
 
