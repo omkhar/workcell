@@ -370,6 +370,11 @@ func pathMaterialSHA256(path Path, budget *injectionTreeBudget) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("lstat %s: %w", path, err)
 	}
+	// The root counts too. walkInjectionTree charges only descendants, so
+	// without this a manifest of many roots reads past the entry allowance.
+	if err := budget.addEntries(path.String(), 1); err != nil {
+		return "", err
+	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(path.String())
 		if err != nil {

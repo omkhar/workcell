@@ -494,6 +494,18 @@ func TestPathMaterialSHA256BoundsDirectoryMaterial(t *testing.T) {
 		}
 	})
 
+	t.Run("charges every hashed root", func(t *testing.T) {
+		root := t.TempDir()
+		source := filepath.Join(root, "input")
+		writeSparseInjectionFile(t, source, 0)
+
+		budget := newInjectionTreeBudget()
+		budget.entries = maxInjectionTreeEntries
+		if _, err := pathMaterialSHA256(Path(source), budget); err == nil || !strings.Contains(err.Error(), "aggregate entry limit") {
+			t.Fatalf("pathMaterialSHA256 error = %v, want aggregate entry limit", err)
+		}
+	})
+
 	t.Run("shares one budget across hashed paths", func(t *testing.T) {
 		root := t.TempDir()
 		first := filepath.Join(root, "first")
