@@ -509,16 +509,16 @@ func checkInjectionTables(rootDir, contractPath string, tables, scalarRootKeys [
 	}
 
 	// 2. Separately, [injection_tables].tables must equal the actual accepted
-	//    TABLE names — the `name != …` guard in documentToInjectionMap (single-
+	//    TABLE names — the `name != …` guard in the shared injectionpolicy documentToPolicyMap (single-
 	//    bracket tables) and the `tableName != …` guard in extractCopiesBlocks
 	//    (the one array-of-tables) — so moving a table into scalar_root_keys (or
 	//    vice versa) fails even though the flattened union would still match.
-	renderPolicyPath := filepath.Join(rootDir, "internal", "injection", "render_policy_load.go")
+	renderPolicyPath := filepath.Join(rootDir, "internal", "injectionpolicy", "bundle_load.go")
 	policySource, err := readText(renderPolicyPath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}
-	singleBracketTables, err := functionScopedMatches(policySource, "documentToInjectionMap", `name != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
+	singleBracketTables, err := functionScopedMatches(policySource, "documentToPolicyMap", `name != "([a-zA-Z0-9_]+)"`, renderPolicyPath)
 	if err != nil {
 		return fmt.Errorf("%s injection_tables: %w", contractPath, err)
 	}

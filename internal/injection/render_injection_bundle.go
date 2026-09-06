@@ -60,8 +60,21 @@ var (
 		"setenv":              {},
 		"userknownhostsfile":  {},
 	}
-	reservedTargets           = adapters.ReservedTargets()
-	credentialContainerPaths  = adapters.CredentialContainerPathsForProviders(providerid.AllProviders)
+	reservedTargets          = adapters.ReservedTargets()
+	credentialContainerPaths = adapters.CredentialContainerPathsForProviders(providerid.AllProviders)
+	// allowedRootPolicyKeys is the closed root-key set. The public
+	// contract (policy/public-contract.toml) pins this literal in this
+	// file; the shared loader in internal/injectionpolicy enforces the
+	// same set at load time.
+	allowedRootPolicyKeys = map[string]struct{}{
+		"version":     {},
+		"includes":    {},
+		"documents":   {},
+		"ssh":         {},
+		"copies":      {},
+		"credentials": {},
+		"network":     {},
+	}
 	agentScopedCredentialKeys = adapters.AgentScopedCredentialKeys()
 	sharedCredentialKeys      = adapters.SharedCredentialKeys()
 	googleAuthEndpoints       = adapters.GeminiGoogleAuthEndpoints
@@ -89,15 +102,6 @@ var (
 		"CLOUD_ML_REGION":           {},
 		"VERTEX_LOCATION":           {},
 		"VERTEX_AI_LOCATION":        {},
-	}
-	allowedRootPolicyKeys = map[string]struct{}{
-		"version":     {},
-		"includes":    {},
-		"documents":   {},
-		"ssh":         {},
-		"copies":      {},
-		"credentials": {},
-		"network":     {},
 	}
 )
 

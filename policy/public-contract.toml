@@ -44,7 +44,7 @@ fields = ["version", "session_id", "profile", "target_kind", "target_provider", 
 export_fields = ["session", "audit_records"]
 
 # The injection-policy top-level table whitelist accepted by
-# internal/injection/render_policy_load.go (documents/ssh/credentials are
+# internal/injectionpolicy/bundle_load.go (documents/ssh/credentials are
 # single-bracket tables; copies is the one supported [[array-of-table]]).
 # The complete set of key= prefixes emitted by internal/host/sessions
 # SessionShowLines (the `workcell session show --text` summary). Enforced by
