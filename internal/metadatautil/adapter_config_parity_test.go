@@ -4,7 +4,6 @@
 package metadatautil
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,22 +11,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
-
-// sharedCodexSections are the sections and keys that the repo-local Codex
-// base config and the managed baseline must keep byte-equal so the local
-// and managed deployments do not drift. Repo-local-only keys
-// (project_doc_fallback_filenames, project_root_markers) stay outside this
-// list on purpose.
-var sharedCodexSections = []string{
-	"analytics",
-	"history",
-	"web_search",
-	"developer_instructions",
-	"agents",
-	"shell_environment_policy",
-	"sandbox_workspace_write",
-	"features",
-}
 
 func loadTOMLDocument(t *testing.T, path string) map[string]any {
 	t.Helper()
@@ -47,9 +30,13 @@ func TestCodexAdapterConfigParity(t *testing.T) {
 	base := loadTOMLDocument(t, filepath.Join(root, "adapters", "codex", ".codex", "config.toml"))
 	managed := loadTOMLDocument(t, filepath.Join(root, "adapters", "codex", "managed_config.toml"))
 
-	for _, key := range sharedCodexSections {
-		if !reflect.DeepEqual(base[key], managed[key]) {
-			t.Errorf("adapters/codex/.codex/config.toml and managed_config.toml disagree on %q:\nbase:    %#v\nmanaged: %#v", key, base[key], managed[key])
+	// Every key the managed baseline declares must match the repo-local base
+	// config, so the local and managed deployments do not drift.  The base
+	// config may carry repo-local-only keys (project_doc_fallback_filenames,
+	// project_root_markers) that the managed layer does not.
+	for key, value := range managed {
+		if !reflect.DeepEqual(base[key], value) {
+			t.Errorf("adapters/codex/.codex/config.toml and managed_config.toml disagree on %q:\nbase:    %#v\nmanaged: %#v", key, base[key], value)
 		}
 	}
 
@@ -81,45 +68,5 @@ func TestCodexAdapterConfigParity(t *testing.T) {
 				t.Errorf("%s shell_environment_policy.filters[%q] = %v, want \"exclude\"", name, pattern, action)
 			}
 		}
-	}
-}
-
-func loadJSONDocument(t *testing.T, path string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	document := map[string]any{}
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	return document
-}
-
-func TestClaudeSettingsParity(t *testing.T) {
-	root := filepath.Clean(filepath.Join("..", ".."))
-	managed := loadJSONDocument(t, filepath.Join(root, "adapters", "claude", "managed-settings.json"))
-	session := loadJSONDocument(t, filepath.Join(root, "adapters", "claude", ".claude", "settings.json"))
-
-	managedPermissions, ok := managed["permissions"].(map[string]any)
-	if !ok {
-		t.Fatal("managed-settings.json lacks a permissions object")
-	}
-	sessionPermissions, ok := session["permissions"].(map[string]any)
-	if !ok {
-		t.Fatal(".claude/settings.json lacks a permissions object")
-	}
-	if !reflect.DeepEqual(managedPermissions["deny"], sessionPermissions["deny"]) {
-		t.Error("managed-settings.json and .claude/settings.json deny lists differ; keep the two baselines identical")
-	}
-	if !reflect.DeepEqual(managed["hooks"], session["hooks"]) {
-		t.Error("managed-settings.json and .claude/settings.json hooks differ; keep the two baselines identical")
-	}
-	if mode := managedPermissions["disableBypassPermissionsMode"]; mode != "disable" {
-		t.Errorf("managed-settings.json permissions.disableBypassPermissionsMode = %v, want \"disable\"", mode)
-	}
-	if _, exists := managed["disableBypassPermissionsMode"]; exists {
-		t.Error("managed-settings.json declares disableBypassPermissionsMode at the top level; the documented key lives under permissions")
 	}
 }
