@@ -297,8 +297,8 @@ printf '%s\n' "${title}" >"${title_file}"
 cat >"${body_file}" <<EOF
 ## Summary
 
-- refresh provider pins and Linux base/toolchain inputs from reviewed upstream metadata
-- refresh release-build helper versions, image digests, and workflow-managed install tools
+- apply the exact upstream refresh candidate from the reviewed workflow
+- preserve the candidate patch, tree, and changed-file bindings
 
 ## Candidate
 
@@ -322,10 +322,10 @@ $(cat "${diffstat_path}")
 EOF
 
 cat >"${commit_file}" <<'EOF'
-^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)
+^F Refresh pinned upstreams (pr-parity passed; upstream maintenance)
 
-- refresh provider pins and Linux base/toolchain inputs
-- refresh release-build helper versions and image digests
+- apply the exact reviewed upstream refresh candidate
+- preserve the candidate patch, tree, and changed-file bindings
 EOF
 
 "${ROOT_DIR}/scripts/repo-publish-pr.sh" \
