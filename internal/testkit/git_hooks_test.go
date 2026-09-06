@@ -65,7 +65,7 @@ func newGitHooksFixture(t *testing.T) *gitHooksFixture {
 	fixture.run("config", "core.hooksPath", ".githooks")
 	fixture.run("config", "user.name", "Workcell Test")
 	fixture.run("config", "user.email", "workcell-test@example.invalid")
-	runGitHooksCommand(t, gitBin, stateRoot, fixture.env(), "init", "--quiet", "--bare", fixture.remote)
+	fixture.run("init", "--quiet", "--bare", fixture.remote)
 	fixture.run("remote", "add", "origin", fixture.remote)
 	return fixture
 }
@@ -82,7 +82,11 @@ func (f *gitHooksFixture) env() []string {
 
 func (f *gitHooksFixture) run(args ...string) string {
 	f.t.Helper()
-	return runGitHooksCommand(f.t, f.git, f.root, f.env(), args...)
+	output, err := f.tryGit(nil, args...)
+	if err != nil {
+		f.t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return strings.TrimSpace(output)
 }
 
 func (f *gitHooksFixture) tryGit(extraEnv []string, args ...string) (string, error) {
@@ -135,18 +139,6 @@ func (f *gitHooksFixture) configureSSHSigning() {
 	f.run("config", "gpg.format", "ssh")
 	f.run("config", "gpg.ssh.allowedSignersFile", signers)
 	f.run("config", "user.signingkey", keyPath)
-}
-
-func runGitHooksCommand(t *testing.T, gitBin string, dir string, env []string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command(gitBin, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
-	}
-	return strings.TrimSpace(string(output))
 }
 
 func TestCommitMsgHookAcceptsNotationSubjects(t *testing.T) {
@@ -225,7 +217,7 @@ func TestPrePushHookRejectsUnsignedCommits(t *testing.T) {
 	if err == nil {
 		t.Fatal("pre-push accepted an unsigned commit")
 	}
-	if !strings.Contains(output, "unable to verify commit") && !strings.Contains(output, "signed") {
+	if !strings.Contains(output, "unable to verify commit") {
 		t.Fatalf("pre-push rejection lacks signature guidance:\n%s", output)
 	}
 }
@@ -263,7 +255,7 @@ func TestPrePushHookRejectsUnsignedTailBehindSignedHead(t *testing.T) {
 	if err == nil {
 		t.Fatal("pre-push accepted an unsigned commit behind a signed head")
 	}
-	if !strings.Contains(output, "unable to verify commit") && !strings.Contains(output, "signed") {
+	if !strings.Contains(output, "unable to verify commit") {
 		t.Fatalf("pre-push rejection lacks signature guidance:\n%s", output)
 	}
 }
