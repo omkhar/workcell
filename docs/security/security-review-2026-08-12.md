@@ -8,6 +8,8 @@ Status: The working tree contains 59 fixes.
 Two findings remain as explicit residuals.
 Full validation passed.
 No commit exists for this review.
+The Result column shows the state of that working tree.
+Each fix reaches the default branch in a separate reviewed pull request.
 
 ## Scope
 
