@@ -187,6 +187,26 @@ func TestCommitMsgHookHonorsConfiguredCommentChar(t *testing.T) {
 	fixture.run("commit", "--quiet", "--cleanup=strip", "-F", messageFile)
 }
 
+func TestCommitMsgHookNormalizesRetainedSubject(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	// -m keeps comment lines, so the hook must make the retained subject the
+	// subject it validated rather than leaving the comment in front of it.
+	fixture.commitFile("seed.txt", "seed\n", "# invalid subject\n"+valid)
+	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
+		t.Fatalf("retained subject %q is not the validated subject %q", got, valid)
+	}
+}
+
+func TestCommitMsgHookKeepsCommentedBodyWhenSubjectIsFirst(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	fixture.commitFile("seed.txt", "seed\n", valid+"\n\n# Summary\nDetail line.")
+	if got := fixture.run("log", "-1", "--format=%B"); !strings.Contains(got, "# Summary") {
+		t.Fatalf("hook discarded a body the contributor asked Git to keep:\n%s", got)
+	}
+}
+
 func TestCommitMsgHookRejectsInvalidSubjects(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.commitFile("seed.txt", "seed\n", "^F Seed fixture history (tests pass; fixture seed)")
@@ -300,6 +320,22 @@ func TestPrePushHookAcceptsDirectURLPush(t *testing.T) {
 	// No remote-tracking ref matches a direct URL, so only the advertised
 	// remote tip bounds the walk; the unsigned base must stay excluded.
 	fixture.run("push", "--quiet", fixture.remote, "main")
+}
+
+func TestPrePushHookAcceptsNewRefOverDirectURL(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
+	if output, err := fixture.tryGit(
+		[]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"},
+		"push", "--quiet", "origin", "main",
+	); err != nil {
+		t.Fatalf("bypassed seed push failed: %v\n%s", err, output)
+	}
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "two\n", "^B Correct fixture file (tests pass; fixture defect)", "-S")
+	// A new ref pushed by URL reports a zero remote tip, so the published
+	// unsigned base must still be excluded by the remote-tracking fallback.
+	fixture.run("push", "--quiet", fixture.remote, "HEAD:refs/heads/topic")
 }
 
 func TestPrePushHookRejectsUnsignedTailBehindSignedHead(t *testing.T) {

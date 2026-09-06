@@ -80,6 +80,7 @@ file. Without it `git verify-commit` cannot verify your own commits and the
 
 ```bash
 git config --global gpg.format ssh
+mkdir -p ~/.config/git
 printf '%s %s\n' "your@email" "$(cat ~/.ssh/id_ed25519.pub)" \
   >> ~/.config/git/allowed_signers
 git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers

@@ -30,14 +30,25 @@ ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
 subject="${body%%$'\n'*}"
 
+# Git only strips comments for editor-cleaned messages, so -m and -F keep
+# them. Whenever the checked subject is not the one Git would retain, write
+# the stripped body back so the retained subject is the validated subject.
+retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
+accept() {
+  if [[ "${retained%%$'\n'*}" != "${subject}" ]]; then
+    printf '%s\n' "${body}" >"${message_file}"
+  fi
+  exit 0
+}
+
 case "${subject}" in
   "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)
-    exit 0
+    accept
     ;;
 esac
 
 if [[ "${subject}" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]; then
-  exit 0
+  accept
 fi
 
 echo "Commit subject does not follow Risk-Aware Commit Notation." >&2

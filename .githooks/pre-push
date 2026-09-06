@@ -27,7 +27,13 @@ while read -r _ local_sha _ remote_sha; do
   if [[ "${local_sha}" =~ ${ZERO_OID_PATTERN} ]]; then
     continue
   fi
-  exclusions=("--remotes=${REMOTE_NAME}")
+  if git -C "${ROOT_DIR}" config --get "remote.${REMOTE_NAME}.url" >/dev/null 2>&1; then
+    exclusions=("--remotes=${REMOTE_NAME}")
+  else
+    # A direct-URL push has no tracking namespace of its own, so a name-scoped
+    # pattern would match nothing and drag the published base into the walk.
+    exclusions=("--remotes")
+  fi
   if [[ ! "${remote_sha}" =~ ${ZERO_OID_PATTERN} ]] &&
     git -C "${ROOT_DIR}" rev-parse --verify --quiet "${remote_sha}^{commit}" >/dev/null; then
     # Already negated by --not; a caret here would re-invert it into an
