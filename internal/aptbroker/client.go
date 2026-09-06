@@ -33,10 +33,7 @@ func RunClient(
 		return Response{}, 1, err
 	}
 	defer conn.Close()
-	if _, err := conn.Write(request); err != nil {
-		return Response{}, 1, err
-	}
-	return readClientResponse(ctx, conn)
+	return exchange(ctx, conn, request)
 }
 
 func preservedEnvironment(preserve []string, lookup func(string) (string, bool)) (map[string]string, error) {
@@ -73,12 +70,19 @@ func dialBroker(ctx context.Context, socketPath string) (*net.UnixConn, error) {
 	return unixConn, nil
 }
 
-func readClientResponse(ctx context.Context, conn *net.UnixConn) (Response, int, error) {
+// exchange writes the request and reads the response under one cancellation
+// watcher. The write must be covered too: a request can exceed the socket send
+// buffer, so it blocks until the broker reads.
+func exchange(ctx context.Context, conn *net.UnixConn, request []byte) (Response, int, error) {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 	result := make(chan responseResult, 1)
 	go func() {
+		if _, err := conn.Write(request); err != nil {
+			result <- responseResult{err: err}
+			return
+		}
 		response, err := readResponse(conn)
 		result <- responseResult{response: response, err: err}
 	}()
