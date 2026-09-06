@@ -1630,24 +1630,21 @@ func TestPublishUpstreamRefreshPRMetadataSupportsTimestampOnlyCandidate(t *testi
 		t.Fatalf("%s does not contain refresh metadata", scriptPath)
 	}
 	metadata := string(content[metadataStart:])
-	checks := []struct {
-		text    string
-		present bool
-	}{
-		{"apply the exact upstream refresh candidate from the reviewed workflow", true},
-		{"apply the exact reviewed upstream refresh candidate", true},
-		{"preserve the candidate patch, tree, and changed-file bindings", true},
-		{"provider pins", false},
-		{"toolchain inputs", false},
-		{"helper versions", false},
-		{"image digests", false},
-		{"install tools", false},
-		{"provider maintenance", false},
+	for _, want := range []string{
+		"apply the exact upstream refresh candidate from the reviewed workflow",
+		"apply the exact reviewed upstream refresh candidate",
+		"preserve the candidate patch, tree, and changed-file bindings",
+	} {
+		if !strings.Contains(metadata, want) {
+			t.Fatalf("%s refresh metadata does not contain %q", scriptPath, want)
+		}
 	}
-	for _, check := range checks {
-		actual := strings.Contains(metadata, check.text)
-		if actual != check.present {
-			t.Fatalf("%s refresh metadata presence for %q = %t, want %t", scriptPath, check.text, actual, check.present)
+	for _, unwanted := range []string{
+		"provider pins", "toolchain inputs", "helper versions",
+		"image digests", "install tools", "provider maintenance",
+	} {
+		if strings.Contains(metadata, unwanted) {
+			t.Fatalf("%s refresh metadata still claims %q, which a timestamp-only candidate does not change", scriptPath, unwanted)
 		}
 	}
 }
