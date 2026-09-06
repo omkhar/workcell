@@ -54,6 +54,10 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	return names, nil
 }
 
+// verifyReleaseOutputsScript is the release output verifier the publication
+// gate requires the independent verification job to execute.
+const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
+
 // ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
@@ -84,8 +88,17 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	}
 	verificationFound := false
 	for _, step := range verifyJob.Steps {
-		if strings.Contains(step.Run, "./scripts/verify-release-outputs.sh") {
-			verificationFound = true
+		// Match the script only as the start of a statement, so an inert
+		// mention (a comment, or an argument to echo) cannot satisfy the gate.
+		for _, line := range strings.Split(step.Run, "\n") {
+			statement := strings.TrimLeft(line, " \t")
+			if statement == verifyReleaseOutputsScript ||
+				strings.HasPrefix(statement, verifyReleaseOutputsScript+" ") {
+				verificationFound = true
+				break
+			}
+		}
+		if verificationFound {
 			break
 		}
 	}

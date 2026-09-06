@@ -74,7 +74,9 @@ validate_repository() {
 validate_release_tag() {
   local tag="$1"
 
-  [[ "${#tag}" -le 64 ]] || return 1
+  # Same accepted set as release.ClassifyTag, which the tag-policy job runs.
+  # Do not add a bound this verifier alone enforces: a tag that clears the
+  # policy gate and fails here would stall an otherwise valid release.
   [[ "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.([1-9][0-9]*))?$ ]]
 }
 

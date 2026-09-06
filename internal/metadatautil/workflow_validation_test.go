@@ -84,6 +84,8 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
 		{name: "depends on verified artifacts", old: "      - verify-release-outputs\n    environment:", replacement: "      - preflight\n    environment:", want: "depend directly"},
 		{name: "verifies sealed outputs", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: true", want: "must run verify-release-outputs.sh"},
+		{name: "rejects a commented verifier mention", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: \"# ./scripts/verify-release-outputs.sh\"", want: "must run verify-release-outputs.sh"},
+		{name: "rejects an echoed verifier mention", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: echo ./scripts/verify-release-outputs.sh", want: "must run verify-release-outputs.sh"},
 		{name: "uses audit environment", old: "name: hosted-controls-audit", replacement: "name: release", want: "hosted-controls-audit"},
 		{name: "minimal publisher permissions", old: "contents: write\n      packages: read", replacement: "contents: write\n      packages: write", want: "grant only read verification permissions"},
 		{name: "minimal verifier permissions", old: "contents: read\n      packages: read", replacement: "contents: read\n      packages: write", want: "grant only read permissions"},
