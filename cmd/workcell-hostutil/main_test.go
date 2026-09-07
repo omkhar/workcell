@@ -46,6 +46,34 @@ func TestReapColimaProfileProcessesHelperAcceptsAbsentProfile(t *testing.T) {
 	}
 }
 
+func TestWriteColimaProfileProcessPIDsUsesLauncherMatcher(t *testing.T) {
+	input := []byte("12 /usr/local/bin/limactl hostagent /tmp/colima-target/ha.pid\n13 unrelated target\n14 ssh: /tmp/colima-target/ssh.sock [mux]\n")
+	var output bytes.Buffer
+	if err := writeColimaProfileProcessPIDs(&output, input, "target"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "12\n14\n"; got != want {
+		t.Fatalf("profile process PIDs = %q, want %q", got, want)
+	}
+	output.Reset()
+	if err := writeColimaProfileProcessPIDs(&output, []byte("bad /usr/local/bin/limactl hostagent /tmp/colima-target/ha.pid\n"), "target"); err == nil || output.Len() != 0 {
+		t.Fatalf("invalid profile process inventory = %v, output %q", err, output.String())
+	}
+}
+
+type rejectingProfilePIDWriter struct{}
+
+func (rejectingProfilePIDWriter) Write([]byte) (int, error) {
+	return 0, fmt.Errorf("profile PID output rejected")
+}
+
+func TestWriteColimaProfileProcessPIDsReturnsWriterError(t *testing.T) {
+	input := []byte("12 /usr/local/bin/limactl hostagent /tmp/colima-target/ha.pid\n")
+	if err := writeColimaProfileProcessPIDs(rejectingProfilePIDWriter{}, input, "target"); err == nil || !strings.Contains(err.Error(), "output rejected") {
+		t.Fatalf("writer error = %v", err)
+	}
+}
+
 func TestRunHelperSessionTimeline(t *testing.T) {
 	colimaRoot := t.TempDir()
 	auditLogPath := filepath.Join(colimaRoot, "wcl-one", "workcell.audit.log")

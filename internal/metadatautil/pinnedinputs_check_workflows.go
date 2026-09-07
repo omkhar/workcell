@@ -301,8 +301,8 @@ func (check *pinnedInputsCheck) validateSecurityWorkflowDispatch() error {
 }
 
 func (check *pinnedInputsCheck) validateReleaseManifestAndRuntimeSources() error {
-	if !strings.Contains(check.releaseWorkflow, "docker buildx imagetools create") {
-		return errors.New(".github/workflows/release.yml must assemble the published multi-arch manifest with docker buildx imagetools create")
+	if !strings.Contains(check.releaseWorkflow, "oras manifest index create --oci-layout") {
+		return errors.New(".github/workflows/release.yml must assemble the published multi-arch manifest in an OCI layout")
 	}
 	if regexp.MustCompile(`docker/build-push-action@.*?platforms:\s*linux/amd64,linux/arm64`).MatchString(check.releaseWorkflow) {
 		return errors.New(".github/workflows/release.yml must not publish the final multi-arch image through one opaque multi-platform build-push step")
@@ -356,15 +356,15 @@ func (check *pinnedInputsCheck) validateReleaseRequiredSteps() error {
 		"macos-26",
 		"macos-15",
 		"actions/download-artifact@",
-		"context: dist/release-source",
+		"outputs: type=oci,dest=${{ runner.temp }}/workcell-amd64.oci.tar",
 		"name: Re-verify pinned upstreams from archived source tree",
 		"name: Verify GitHub macOS release test runners",
 		"working-directory: dist/release-source",
 		"WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source",
 		"WORKCELL_CONTROL_PLANE_ROOT: ${{ github.workspace }}/dist/release-source",
-		"Verify published platform digests match preflight",
-		"docker buildx imagetools inspect --raw",
-		"{{json .Manifest}}",
+		"Verify bound platform digests match preflight",
+		"oras manifest index create --oci-layout",
+		"oras cp --recursive --from-oci-layout",
 		"vnd.docker.reference.type",
 		"RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}",
 		"actions/attest@",
@@ -402,6 +402,7 @@ func (check *pinnedInputsCheck) validateReleaseArtifactFlows() error {
 		},
 		func() error { return ValidateReleaseWorkflowGitHubAttestationFlow(check.releaseWorkflow) },
 		func() error { return ValidateReleaseWorkflowPublicationGate(check.releaseWorkflow) },
+		func() error { return ValidateReleaseWorkflowAuthoritySplit(check.releaseWorkflow) },
 	)
 }
 
@@ -461,17 +462,7 @@ func (check *pinnedInputsCheck) validateHostedControlsWorkflow() error {
 	if err != nil {
 		return err
 	}
-	for _, needle := range []string{
-		`name: hosted-controls-audit`,
-		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
-		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
-	} {
-		if !strings.Contains(workflow, needle) {
-			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
-		}
-	}
-	return nil
+	return ValidateHostedControlsWorkflow(workflow)
 }
 
 func (check *pinnedInputsCheck) validateReleaseVerificationJobs() error {

@@ -377,7 +377,7 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex.tar.gz -C /tmp \
-  && mv "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
+  && install -o 0 -g 0 -m 0755 "/tmp/codex-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex \
   && if [[ -n "${CODEX_CODE_MODE_HOST_RELEASE_URL}" ]]; then \
        curl --ipv4 -fsSL "${CODEX_CODE_MODE_HOST_RELEASE_URL}" \
          --retry 8 \
@@ -395,12 +395,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
      fi \
   && echo "${CODEX_CODE_MODE_HOST_SHA256}  /tmp/codex-code-mode-host.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/codex-code-mode-host.tar.gz -C /tmp \
-  && mv "/tmp/codex-code-mode-host-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex-code-mode-host \
-  && chmod 0755 /usr/local/libexec/workcell/real/codex \
-    /usr/local/libexec/workcell/real/codex-code-mode-host \
+  && install -o 0 -g 0 -m 0755 "/tmp/codex-code-mode-host-${CODEX_ARCH}" /usr/local/libexec/workcell/real/codex-code-mode-host \
   && touch -d "@${SOURCE_DATE_EPOCH}" /usr/local/libexec/workcell/real/codex \
     /usr/local/libexec/workcell/real/codex-code-mode-host \
-  && rm -f /tmp/codex.tar.gz /tmp/codex-code-mode-host.tar.gz
+  && rm -f /tmp/codex.tar.gz /tmp/codex-code-mode-host.tar.gz \
+    "/tmp/codex-${CODEX_ARCH}" "/tmp/codex-code-mode-host-${CODEX_ARCH}"
 
 RUN TARGET_ARCH="${TARGETARCH:-}" \
   && if [[ -z "${TARGET_ARCH}" ]]; then \
@@ -518,7 +517,10 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/entrypoint.sh \
     /usr/local/libexec/workcell/git-wrapper.sh \
+    /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
+    /usr/local/libexec/workcell/public-node-guard.mjs \
+    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/provider-wrapper.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/libexec/workcell/runtime-user.sh \

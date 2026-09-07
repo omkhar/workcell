@@ -4,8 +4,12 @@
 package metadatautil
 
 import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +23,16 @@ import (
 
 type workflowDocument struct {
 	Jobs map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowNodeDocument struct {
+	Env      map[string]string    `yaml:"env"`
+	Jobs     map[string]yaml.Node `yaml:"jobs"`
+	Defaults struct {
+		Run struct {
+			Shell string `yaml:"shell"`
+		} `yaml:"run"`
+	} `yaml:"defaults"`
 }
 
 type workflowJob struct {
@@ -35,7 +49,14 @@ type workflowStep struct {
 	Name string            `yaml:"name"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
+	With map[string]string `yaml:"with"`
 }
+
+// This digest covers the complete parsed sign-release job plus the workflow-level
+// ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
+// rejects unknown fields, reordered steps, changed commands, changed action inputs,
+// a swapped publisher, a redirected registry, and a weakened shell default.
+const releaseSignerContractSHA256 = "59d426ff05378de33e64dc11f715e25f21727eb07e9f33d7cead528856e84982"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -54,6 +75,10 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	return names, nil
 }
 
+// verifyReleaseOutputsScript is the release output verifier the publication
+// gate requires the independent verification job to execute.
+const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
+
 // ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
@@ -69,19 +94,54 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	if releaseJob.Permissions["contents"] != "read" {
 		return errors.New("release artifact job must keep contents permission read-only")
 	}
+	verifyJob, ok := document.Jobs["verify-release-outputs"]
+	if !ok {
+		return errors.New("release workflow must define the independent verify-release-outputs job")
+	}
+	if verifyJob.Needs.Kind != yaml.SequenceNode || len(verifyJob.Needs.Content) != 2 ||
+		verifyJob.Needs.Content[0].Value != "tag-policy" || verifyJob.Needs.Content[1].Value != "sign-release" {
+		return errors.New("release output verification job must depend directly on tag-policy and the signing job")
+	}
+	if len(verifyJob.Permissions) != 4 || verifyJob.Permissions["actions"] != "read" ||
+		verifyJob.Permissions["attestations"] != "read" || verifyJob.Permissions["contents"] != "read" ||
+		verifyJob.Permissions["packages"] != "read" {
+		return errors.New("release output verification job must grant only read permissions for artifacts, attestations, contents, and packages")
+	}
+	verificationFound := false
+	for _, step := range verifyJob.Steps {
+		// Match the script only as the start of a statement, so an inert
+		// mention (a comment, or an argument to echo) cannot satisfy the gate.
+		for _, line := range strings.Split(step.Run, "\n") {
+			statement := strings.TrimLeft(line, " \t")
+			if statement == verifyReleaseOutputsScript ||
+				strings.HasPrefix(statement, verifyReleaseOutputsScript+" ") {
+				verificationFound = true
+				break
+			}
+		}
+		if verificationFound {
+			break
+		}
+	}
+	if !verificationFound {
+		return errors.New("release output verification job must run verify-release-outputs.sh")
+	}
 	publishJob, ok := document.Jobs["publish-github-release"]
 	if !ok {
 		return errors.New("release workflow must define the final publish-github-release job")
 	}
-	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
-		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" {
-		return errors.New("final GitHub release publication job must depend directly on tag-policy and the release artifact job")
+	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 3 ||
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "sign-release" ||
+		publishJob.Needs.Content[2].Value != "verify-release-outputs" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy, the signing job, and output verification")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
 	}
-	if len(publishJob.Permissions) != 2 || publishJob.Permissions["actions"] != "read" || publishJob.Permissions["contents"] != "write" {
-		return errors.New("final GitHub release publication job must grant only actions: read and contents: write")
+	if len(publishJob.Permissions) != 4 || publishJob.Permissions["actions"] != "read" ||
+		publishJob.Permissions["attestations"] != "read" || publishJob.Permissions["contents"] != "write" ||
+		publishJob.Permissions["packages"] != "read" {
+		return errors.New("final GitHub release publication job must grant only read verification permissions and contents: write")
 	}
 	for _, step := range publishJob.Steps {
 		if step.Name != "Recheck hosted controls and publish GitHub release assets" {
@@ -102,6 +162,173 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		return nil
 	}
 	return errors.New("release workflow must combine the fresh hosted-controls check and GitHub release publication in one reviewed step")
+}
+
+func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("parse release authority split: %w", err)
+	}
+	if err := validateUnprivilegedReleaseJobs(document); err != nil {
+		return err
+	}
+	if err := validateReleaseSigner(document); err != nil {
+		return err
+	}
+	if err := validateReleaseAssembly(document); err != nil {
+		return err
+	}
+	return validateReleaseSignerContract(workflowText)
+}
+
+// validateReleaseAssembly reads the parsed release job so that a comment or an
+// unrelated job naming the commands cannot satisfy the assembly requirements.
+func validateReleaseAssembly(document workflowDocument) error {
+	steps := document.Jobs["release"].Steps
+	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
+		var targets []string
+		for _, args := range commandArgs(step.Run, "oras cp --recursive --from-oci-layout") {
+			if at := slices.Index(args, "--to-oci-layout"); at >= 0 && at+1 < len(args) {
+				targets = append(targets, args[at+1])
+			}
+		}
+		return slices.Contains(targets, "dist/release-image:amd64") &&
+			slices.Contains(targets, "dist/release-image:arm64")
+	}) {
+		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
+	}
+	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
+		return len(commandArgs(step.Run, "oras manifest index create --oci-layout")) > 0
+	}) {
+		return errors.New("release job must assemble the multi-arch index in an OCI layout")
+	}
+	return nil
+}
+
+var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
+
+var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
+
+// commandArgs returns the arguments of each invocation of command in script. It
+// joins continuations and drops comments, inline ones included, and heredoc bodies,
+// so no decoy text counts as a command and one call cannot satisfy a two-call rule.
+func commandArgs(script, command string) [][]string {
+	var invocations [][]string
+	var current strings.Builder
+	var heredoc string
+	for line := range strings.Lines(script) {
+		trimmed := strings.TrimSpace(line)
+		if heredoc != "" {
+			if trimmed == heredoc {
+				heredoc = ""
+			}
+			continue
+		}
+		if current.Len() > 0 {
+			current.WriteString(" ")
+		}
+		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
+		if strings.HasSuffix(trimmed, "\\") {
+			continue
+		}
+		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
+		current.Reset()
+		// Here-strings are blanked first so that a redirection such as
+		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
+		if match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(logical, "<<<", " ")); match != nil {
+			heredoc = cmp.Or(match[1], match[2], match[3])
+		}
+		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+			invocations = append(invocations, strings.Fields(rest))
+		}
+	}
+	return invocations
+}
+
+func validateUnprivilegedReleaseJobs(document workflowDocument) error {
+	for _, name := range []string{"build-amd64-image", "build-arm64-image", "bind-release-subjects", "release"} {
+		job, ok := document.Jobs[name]
+		if !ok || len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+			return fmt.Errorf("release job %s must grant only contents: read", name)
+		}
+	}
+	return nil
+}
+
+func validateReleaseSigner(document workflowDocument) error {
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	expected := map[string]string{"artifact-metadata": "write", "attestations": "write", "contents": "read", "id-token": "write", "packages": "write"}
+	if signer.Environment.Name != "release" || !maps.Equal(signer.Permissions, expected) {
+		return errors.New("sign-release must use the release environment and exact publication permissions")
+	}
+	if !needsExactly(signer.Needs, []string{"tag-policy", "preflight", "bind-release-subjects", "preflight-amd64-repro", "preflight-arm64-repro", "release"}) {
+		return errors.New("sign-release must depend directly on policy, both platform preflights, and assembly")
+	}
+	return validateReleaseSignerInputs(signer)
+}
+
+// validateReleaseSignerInputs reads the parsed signer steps so that a comment or
+// an unrelated job cannot satisfy the bound-input requirement.
+func validateReleaseSignerInputs(signer workflowJob) error {
+	var downloaded []string
+	validates := false
+	for _, step := range signer.Steps {
+		if id, ok := step.With["artifact-ids"]; ok {
+			downloaded = append(downloaded, id)
+		}
+		validates = validates || step.Name == "Validate privileged handoff"
+	}
+	if !slices.Equal(downloaded, []string{"${{ needs.release.outputs.artifact_id }}", "${{ needs.bind-release-subjects.outputs.artifact_id }}"}) {
+		return errors.New("sign-release must download exactly the bound release and subject artifacts by immutable id")
+	}
+	if !validates {
+		return errors.New("sign-release must validate the privileged handoff before it publishes")
+	}
+	return nil
+}
+
+func validateReleaseSignerContract(workflowText string) error {
+	var document workflowNodeDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return err
+	}
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	// The signer installs its publisher from the workflow-level ORAS pins and
+	// publishes to the workflow-level IMAGE_NAME, so the contract covers those
+	// too. Swapping the publisher or the registry destination for one the
+	// maintainer did not review must break this digest. Privileged run steps also
+	// inherit the workflow shell, so dropping -e there must break it too.
+	content, err := yaml.Marshal(struct {
+		Signer       yaml.Node `yaml:"sign-release"`
+		OrasPins     []string  `yaml:"oras-pins"`
+		RegistryName string    `yaml:"image-name"`
+		ShellDefault string    `yaml:"shell-default"`
+	}{
+		Signer:       signer,
+		OrasPins:     []string{document.Env["WORKCELL_ORAS_VERSION"], document.Env["WORKCELL_ORAS_LINUX_AMD64_SHA256"]},
+		RegistryName: document.Env["IMAGE_NAME"],
+		ShellDefault: document.Defaults.Run.Shell,
+	})
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+	if digest != releaseSignerContractSHA256 {
+		return fmt.Errorf("sign-release must match the exact privileged step contract: got %s", digest)
+	}
+	return nil
+}
+
+func needsExactly(node yaml.Node, expected []string) bool {
+	return node.Kind == yaml.SequenceNode &&
+		slices.EqualFunc(node.Content, expected, func(actual *yaml.Node, name string) bool { return actual.Value == name })
 }
 
 func CheckWorkflows(rootDir, policyPath string) error {
@@ -434,7 +661,49 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must not contain %q", forbidden)
 		}
 	}
+	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/upstream-refresh.yml", "refresh")
+}
+
+func ValidateHostedControlsWorkflow(workflowText string) error {
+	for _, needle := range []string{
+		`name: hosted-controls-audit`,
+		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
+		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
+	} {
+		if !strings.Contains(workflowText, needle) {
+			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
+		}
+	}
+	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/hosted-controls.yml", "verify-hosted-controls")
+}
+
+func validateManualPrivilegedWorkflowRef(workflowText, workflowPath, jobName string) error {
+	root, err := parseWorkflowRoot(workflowText, workflowPath)
+	if err != nil {
+		return err
+	}
+	jobs, err := requireWorkflowMapping(root, "jobs", workflowPath+" must define exactly one jobs mapping")
+	if err != nil {
+		return err
+	}
+	job, err := requireWorkflowMapping(jobs, jobName, workflowPath+" must define exactly one "+jobName+" job mapping")
+	if err != nil {
+		return err
+	}
+	guards := yamlMappingValues(job, "if")
+	if len(guards) != 1 || guards[0].Tag != "!!str" || yamlScalarValue(guards[0]) != "github.ref == 'refs/heads/main'" {
+		return fmt.Errorf("%s %s job must require github.ref == 'refs/heads/main'", workflowPath, jobName)
+	}
 	return nil
+}
+
+func requireWorkflowMapping(parent *yaml.Node, key, message string) (*yaml.Node, error) {
+	values := yamlMappingValues(parent, key)
+	if len(values) != 1 || values[0].Kind != yaml.MappingNode {
+		return nil, errors.New(message)
+	}
+	return values[0], nil
 }
 
 // readText lives in core.go.

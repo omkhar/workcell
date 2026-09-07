@@ -508,11 +508,11 @@
       "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
     },
     {
-      "id": "release.yml/build-arm64-image",
+      "id": "release.yml/bind-release-subjects",
       "workflow_path": ".github/workflows/release.yml",
       "workflow_name": "Release",
-      "job_id": "build-arm64-image",
-      "job_name": "Build native arm64 release image",
+      "job_id": "bind-release-subjects",
+      "job_name": "Bind independent release subjects",
       "workflow_events": [
         "push"
       ],
@@ -521,7 +521,39 @@
       ],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "native arm64 release image build and GHCR push remain GitHub-only and gated on the release environment"
+      "github_only_reason": "independent release-subject binding consumes GitHub-hosted architecture and preflight artifacts"
+    },
+    {
+      "id": "release.yml/build-amd64-image",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "build-amd64-image",
+      "job_name": "Build native amd64 release image artifact",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "native amd64 release image artifact build requires the GitHub-hosted release workflow"
+    },
+    {
+      "id": "release.yml/build-arm64-image",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "build-arm64-image",
+      "job_name": "Build native arm64 release image artifact",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "native arm64 release image artifact build requires the GitHub-hosted arm64 runner"
     },
     {
       "id": "release.yml/codeql-preflight[build-mode=autobuild,language=go]",
@@ -724,7 +756,7 @@
       "workflow_path": ".github/workflows/release.yml",
       "workflow_name": "Release",
       "job_id": "release",
-      "job_name": "Publish release artifacts",
+      "job_name": "Assemble release artifacts",
       "workflow_events": [
         "push"
       ],
@@ -733,7 +765,23 @@
       ],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "release artifact signing, attestation, and registry publication remain GitHub-only"
+      "github_only_reason": "bound release artifact assembly depends on GitHub-hosted architecture artifacts"
+    },
+    {
+      "id": "release.yml/sign-release",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "sign-release",
+      "job_name": "Publish and sign bound release artifacts",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release-approved registry publication, signing, and attestation require GitHub credentials and hosted release state"
     },
     {
       "id": "release.yml/tag-policy",
@@ -750,6 +798,22 @@
       "authority": "release-only",
       "local_mode": "none",
       "github_only_reason": "the exact pushed-tag event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
+    },
+    {
+      "id": "release.yml/verify-release-outputs",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "verify-release-outputs",
+      "job_name": "Verify release signatures and attestations",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release output verification reads GitHub artifact attestations and the GHCR image after signing"
     },
     {
       "id": "scorecard.yml/analysis",

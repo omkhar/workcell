@@ -901,665 +901,18 @@ done
 # append trap diagnostics, preserving the exact failure stderr surface.
 go_verify_citools workcell-config-safety "${ROOT_DIR}" || exit 1
 
-toml_section_assignments() {
-  local file="$1"
-  local section="$2"
-
-  awk -v want="${section}" '
-    function trim(value) {
-      sub(/^[[:space:]]+/, "", value)
-      sub(/[[:space:]]+$/, "", value)
-      return value
-    }
-
-    function hex_value(ch) {
-      if (ch >= "0" && ch <= "9") {
-        return ch + 0
-      }
-      ch = tolower(ch)
-      if (ch >= "a" && ch <= "f") {
-        return index("abcdef", ch) + 9
-      }
-      return -1
-    }
-
-    function decode_toml_basic_string(value, i, ch, escaped, hex, code, digit, j) {
-      escaped = ""
-
-      for (i = 1; i <= length(value); i++) {
-        ch = substr(value, i, 1)
-        if (ch != "\\") {
-          escaped = escaped ch
-          continue
-        }
-
-        i++
-        if (i > length(value)) {
-          parse_error = 1
-          return value
-        }
-        ch = substr(value, i, 1)
-
-        if (ch == "b") {
-          escaped = escaped sprintf("%c", 8)
-        } else if (ch == "t") {
-          escaped = escaped sprintf("%c", 9)
-        } else if (ch == "n") {
-          escaped = escaped sprintf("%c", 10)
-        } else if (ch == "f") {
-          escaped = escaped sprintf("%c", 12)
-        } else if (ch == "r") {
-          escaped = escaped sprintf("%c", 13)
-        } else if (ch == "\"" || ch == "\\") {
-          escaped = escaped ch
-        } else if (ch == "u" || ch == "U") {
-          hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
-          if (length(hex) != (ch == "u" ? 4 : 8)) {
-            parse_error = 1
-            return value
-          }
-          code = 0
-          for (j = 1; j <= length(hex); j++) {
-            digit = hex_value(substr(hex, j, 1))
-            if (digit < 0) {
-              parse_error = 1
-              return value
-            }
-            code = (code * 16) + digit
-          }
-          escaped = escaped sprintf("%c", code)
-          i += length(hex)
-        } else {
-          parse_error = 1
-          return value
-        }
-      }
-
-      return escaped
-    }
-
-    function normalize_toml_segment(value, first, last) {
-      value = trim(value)
-      first = substr(value, 1, 1)
-      last = substr(value, length(value), 1)
-
-      if (first == "\"" && last == "\"") {
-        value = decode_toml_basic_string(substr(value, 2, length(value) - 2))
-      } else if (first == "'"'"'" && last == "'"'"'") {
-        value = substr(value, 2, length(value) - 2)
-      }
-
-      gsub(/\\/, "\\\\", value)
-      gsub(/\./, "\\.", value)
-      return value
-    }
-
-    function normalize_toml_name(value, i, ch, prev, quote, segment, normalized) {
-      value = trim(value)
-      quote = ""
-      segment = ""
-      normalized = ""
-
-      for (i = 1; i <= length(value); i++) {
-        ch = substr(value, i, 1)
-        prev = (i > 1 ? substr(value, i - 1, 1) : "")
-
-        if (quote != "") {
-          segment = segment ch
-          if (ch == quote && prev != "\\") {
-            quote = ""
-          }
-          continue
-        }
-
-        if (ch == "\"" || ch == "'"'"'" ) {
-          quote = ch
-          segment = segment ch
-          continue
-        }
-
-        if (ch == ".") {
-          segment = normalize_toml_segment(segment)
-          if (normalized != "") {
-            normalized = normalized "."
-          }
-          normalized = normalized segment
-          segment = ""
-          continue
-        }
-
-        segment = segment ch
-      }
-
-      segment = normalize_toml_segment(segment)
-      if (normalized != "") {
-        normalized = normalized "."
-      }
-      normalized = normalized segment
-      return normalized
-    }
-
-    BEGIN {
-      parse_error = 0
-      current = "__top__"
-      if (want == "") {
-        want = "__top__"
-      } else {
-        want = normalize_toml_name(want)
-      }
-    }
-
-    {
-      line = $0
-      sub(/[[:space:]]+#.*$/, "", line)
-
-      if (line ~ /^[[:space:]]*$/) {
-        next
-      }
-
-      if (line ~ /^[[:space:]]*\[/) {
-        current = line
-        gsub(/^[[:space:]]*\[/, "", current)
-        gsub(/\][[:space:]]*$/, "", current)
-        current = normalize_toml_name(current)
-        next
-      }
-
-      if (current != want) {
-        next
-      }
-
-      if (line !~ /=/) {
-        next
-      }
-
-      split(line, parts, "=")
-      key = normalize_toml_name(parts[1])
-      value = trim(substr(line, index(line, "=") + 1))
-      print key "=" value
-    }
-    END {
-      if (parse_error) {
-        exit 2
-      }
-    }
-  ' "${file}"
-}
-
-toml_section_names() {
-  local file="$1"
-
-  awk '
-    function trim(value) {
-      sub(/^[[:space:]]+/, "", value)
-      sub(/[[:space:]]+$/, "", value)
-      return value
-    }
-
-    function hex_value(ch) {
-      if (ch >= "0" && ch <= "9") {
-        return ch + 0
-      }
-      ch = tolower(ch)
-      if (ch >= "a" && ch <= "f") {
-        return index("abcdef", ch) + 9
-      }
-      return -1
-    }
-
-    function decode_toml_basic_string(value, i, ch, escaped, hex, code, digit, j) {
-      escaped = ""
-
-      for (i = 1; i <= length(value); i++) {
-        ch = substr(value, i, 1)
-        if (ch != "\\") {
-          escaped = escaped ch
-          continue
-        }
-
-        i++
-        if (i > length(value)) {
-          parse_error = 1
-          return value
-        }
-        ch = substr(value, i, 1)
-
-        if (ch == "b") {
-          escaped = escaped sprintf("%c", 8)
-        } else if (ch == "t") {
-          escaped = escaped sprintf("%c", 9)
-        } else if (ch == "n") {
-          escaped = escaped sprintf("%c", 10)
-        } else if (ch == "f") {
-          escaped = escaped sprintf("%c", 12)
-        } else if (ch == "r") {
-          escaped = escaped sprintf("%c", 13)
-        } else if (ch == "\"" || ch == "\\") {
-          escaped = escaped ch
-        } else if (ch == "u" || ch == "U") {
-          hex = substr(value, i + 1, (ch == "u" ? 4 : 8))
-          if (length(hex) != (ch == "u" ? 4 : 8)) {
-            parse_error = 1
-            return value
-          }
-          code = 0
-          for (j = 1; j <= length(hex); j++) {
-            digit = hex_value(substr(hex, j, 1))
-            if (digit < 0) {
-              parse_error = 1
-              return value
-            }
-            code = (code * 16) + digit
-          }
-          escaped = escaped sprintf("%c", code)
-          i += length(hex)
-        } else {
-          parse_error = 1
-          return value
-        }
-      }
-
-      return escaped
-    }
-
-    function normalize_toml_segment(value, first, last) {
-      value = trim(value)
-      first = substr(value, 1, 1)
-      last = substr(value, length(value), 1)
-
-      if (first == "\"" && last == "\"") {
-        value = decode_toml_basic_string(substr(value, 2, length(value) - 2))
-      } else if (first == "'"'"'" && last == "'"'"'") {
-        value = substr(value, 2, length(value) - 2)
-      }
-
-      gsub(/\\/, "\\\\", value)
-      gsub(/\./, "\\.", value)
-      return value
-    }
-
-    function normalize_toml_name(value, i, ch, prev, quote, segment, normalized) {
-      value = trim(value)
-      quote = ""
-      segment = ""
-      normalized = ""
-
-      for (i = 1; i <= length(value); i++) {
-        ch = substr(value, i, 1)
-        prev = (i > 1 ? substr(value, i - 1, 1) : "")
-
-        if (quote != "") {
-          segment = segment ch
-          if (ch == quote && prev != "\\") {
-            quote = ""
-          }
-          continue
-        }
-
-        if (ch == "\"" || ch == "'"'"'" ) {
-          quote = ch
-          segment = segment ch
-          continue
-        }
-
-        if (ch == ".") {
-          segment = normalize_toml_segment(segment)
-          if (normalized != "") {
-            normalized = normalized "."
-          }
-          normalized = normalized segment
-          segment = ""
-          continue
-        }
-
-        segment = segment ch
-      }
-
-      segment = normalize_toml_segment(segment)
-      if (normalized != "") {
-        normalized = normalized "."
-      }
-      normalized = normalized segment
-      return normalized
-    }
-
-    BEGIN {
-      parse_error = 0
-    }
-
-    {
-      line = $0
-      sub(/[[:space:]]+#.*$/, "", line)
-
-      if (line !~ /^[[:space:]]*\[/) {
-        next
-      }
-
-      section = line
-      gsub(/^[[:space:]]*\[/, "", section)
-      gsub(/\][[:space:]]*$/, "", section)
-      print normalize_toml_name(section)
-    }
-    END {
-      if (parse_error) {
-        exit 2
-      }
-    }
-  ' "${file}"
-}
-
-require_toml_assignment() {
-  local file="$1"
-  local section="$2"
-  local key="$3"
-  local expected="$4"
-  local actual=""
-
-  actual="$(
-    toml_section_assignments "${file}" "${section}" | awk -F= -v want="${key}" '
-      $1 == want {
-        print substr($0, length($1) + 2)
-        found = 1
-        exit
-      }
-      END {
-        if (!found) {
-          exit 1
-        }
-      }
-    '
-  )" || {
-    echo "Expected ${file} section [${section:-top-level}] to define ${key}" >&2
-    return 1
-  }
-
-  if [[ "${actual}" != "${expected}" ]]; then
-    echo "Expected ${file} section [${section:-top-level}] to set ${key}=${expected}, got ${actual}" >&2
-    return 1
-  fi
-}
-
-require_toml_key_absent() {
-  local file="$1"
-  local section="$2"
-  local key="$3"
-  local actual_keys=""
-
-  actual_keys="$(toml_section_assignments "${file}" "${section}" | cut -d= -f1)" || return 1
-
-  if printf '%s\n' "${actual_keys}" | grep -Fxq -- "${key}"; then
-    echo "Expected ${file} section [${section:-top-level}] not to define ${key}" >&2
-    return 1
-  fi
-}
-
-require_toml_exact_keys() {
-  local file="$1"
-  local section="$2"
-  local tmpdir=""
-  local expected_keys=""
-  local actual_keys=""
-  shift 2
-
-  tmpdir="$(mktemp -d)"
-  expected_keys="${tmpdir}/expected"
-  actual_keys="${tmpdir}/actual"
-
-  printf '%s\n' "$@" | sort >"${expected_keys}"
-  if ! toml_section_assignments "${file}" "${section}" | cut -d= -f1 | sort >"${actual_keys}"; then
-    rm -rf "${tmpdir}"
-    return 1
-  fi
-
-  if ! diff -u "${expected_keys}" "${actual_keys}" >/dev/null; then
-    echo "Expected ${file} section [${section:-top-level}] to contain the exact reviewed key set" >&2
-    diff -u "${expected_keys}" "${actual_keys}" >&2 || true
-    rm -rf "${tmpdir}"
-    return 1
-  fi
-
-  rm -rf "${tmpdir}"
-}
-
-verify_codex_managed_config_invariants() {
-  local file="$1"
-  local absent_key=""
-  local managed_requirement=""
-  local requirement_section=""
-  local requirement_key=""
-  local requirement_expected=""
-  local -a absent_keys=(
-    "profile"
-    "sandbox"
-    "sandbox_mode"
-    "sandbox_permissions"
-    "approval_policy"
-    "model"
-    "model_reasoning_effort"
-  )
-  local -a managed_requirements=(
-    "sandbox_workspace_write:exclude_slash_tmp:true"
-    "sandbox_workspace_write:exclude_tmpdir_env_var:false"
-    "sandbox_workspace_write:network_access:false"
-    "features:unified_exec:true"
-    "features:code_mode_host:true"
-    "features:plugins:false"
-    "features:plugin_sharing:false"
-    "features:remote_plugin:false"
-    "agents:enabled:true"
-    "agents:max_concurrent_threads_per_session:3"
-    'agents:default_subagent_model:"gpt-5.6-terra"'
-    'agents:default_subagent_reasoning_effort:"medium"'
-  )
-
-  # Codex 0.134+ profile-v2: the base config must not select or inline a
-  # profile. Profile selection is supplied by the runtime wrapper via
-  # `--profile`, and the per-profile layers live in separate
-  # `<name>.config.toml` files validated by verify_codex_profile_layer_invariants.
-  for absent_key in "${absent_keys[@]}"; do
-    require_toml_key_absent "${file}" "" "${absent_key}" || return 1
-  done
-
-  require_toml_exact_keys "${file}" "sandbox_workspace_write" \
-    "exclude_slash_tmp" \
-    "exclude_tmpdir_env_var" \
-    "network_access" || return 1
-
-  require_toml_exact_keys "${file}" "features" \
-    "unified_exec" \
-    "code_mode_host" \
-    "plugins" \
-    "plugin_sharing" \
-    "remote_plugin" || return 1
-  for managed_requirement in "${managed_requirements[@]}"; do
-    IFS=: read -r requirement_section requirement_key requirement_expected <<<"${managed_requirement}"
-    require_toml_assignment \
-      "${file}" \
-      "${requirement_section}" \
-      "${requirement_key}" \
-      "${requirement_expected}" || return 1
-  done
-
-  # The base config must carry no inline `[profiles...]` tables (dotted-path
-  # form). Quoted single-segment section names with literal dots normalize to a
-  # backslash-escaped form and remain distinct, so they do not trip this guard.
-  if toml_section_names "${file}" | grep -Eq '^profiles(\.|$)'; then
-    echo "Expected ${file} not to define any [profiles...] section; profile-v2 uses separate <name>.config.toml layers" >&2
-    return 1
-  fi
-}
-
-# Validate one Codex profile-v2 layer file (strict/development/build/breakglass).
-# A layer is a flat key set: exactly approval_policy, sandbox_mode, web_search,
-# with no nested profile selection and no sections (a `[sandbox_workspace_write]`
-# override inside a layer could widen network access, so it is rejected).
-verify_codex_profile_layer_invariants() {
-  local file="$1"
-  local expected_sandbox_mode="$2"
-  local expected_approval_policy="$3"
-  local sections=""
-
-  require_toml_key_absent "${file}" "" "profile" || return 1
-  require_toml_exact_keys "${file}" "" \
-    "approval_policy" \
-    "sandbox_mode" \
-    "web_search" || return 1
-  require_toml_assignment "${file}" "" "sandbox_mode" "${expected_sandbox_mode}" || return 1
-  require_toml_assignment "${file}" "" "approval_policy" "${expected_approval_policy}" || return 1
-  require_toml_assignment "${file}" "" "web_search" '"disabled"' || return 1
-
-  sections="$(toml_section_names "${file}")" || return 1
-  if [[ -n "${sections}" ]]; then
-    echo "Expected ${file} to contain no [sections]; a profile-v2 layer is a flat key set" >&2
-    return 1
-  fi
-}
-
-assert_codex_managed_config_rejected() {
-  local file="$1"
-  local reason="$2"
-
-  if verify_codex_managed_config_invariants "${file}" >/dev/null 2>&1; then
-    echo "Expected Codex managed config invariant to reject ${reason}" >&2
-    return 1
-  fi
-}
-
-CODEX_CONFIG="${ROOT_DIR}/adapters/codex/.codex/config.toml"
-CODEX_MANAGED_CONFIG="${ROOT_DIR}/adapters/codex/managed_config.toml"
-CODEX_PROFILE_DIR="${ROOT_DIR}/adapters/codex/.codex"
-verify_codex_managed_config_invariants "${CODEX_CONFIG}" || exit 1
-verify_codex_managed_config_invariants "${CODEX_MANAGED_CONFIG}" || exit 1
-go_verify_citools validate-codex-routing-configs \
-  "${CODEX_CONFIG}" \
-  "${CODEX_MANAGED_CONFIG}" || exit 1
-verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/strict.config.toml" '"workspace-write"' '"on-request"' || exit 1
-verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/development.config.toml" '"workspace-write"' '"on-request"' || exit 1
-verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/build.config.toml" '"workspace-write"' '"never"' || exit 1
-verify_codex_profile_layer_invariants "${CODEX_PROFILE_DIR}/breakglass.config.toml" '"danger-full-access"' '"never"' || exit 1
-require_toml_assignment \
-  "${ROOT_DIR}/adapters/codex/requirements.toml" \
-  "" \
-  "allowed_sandbox_modes" \
-  '["workspace-write", "danger-full-access"]' || {
-  echo 'Expected adapters/codex/requirements.toml to allow the two reviewed Codex sandbox values' >&2
-  exit 1
-}
-
-if ! grep -Fq 'MANAGED_CODEX_SANDBOX_ARGS=(--sandbox danger-full-access)' "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo 'Expected the managed Codex CLI wrapper to disable the incompatible native sandbox' >&2
-  exit 1
-fi
-if ! grep -Fq "MANAGED_CODEX_APP_SERVER_ARGS=(-c 'sandbox_mode=\"danger-full-access\"')" "${ROOT_DIR}/runtime/container/provider-wrapper.sh"; then
-  echo 'Expected the managed Codex GUI wrapper to disable the incompatible native sandbox' >&2
-  exit 1
-fi
-
-# The adapter AGENTS.md requires config.toml, managed_config.toml, and
-# requirements.toml to stay aligned on security-boundary config. Lock the
-# requirements [features] values in lockstep with the managed baseline.
-require_toml_exact_keys "${ROOT_DIR}/adapters/codex/requirements.toml" "features" \
-  "unified_exec" \
-  "code_mode_host" \
-  "plugins" \
-  "plugin_sharing" \
-  "remote_plugin" || exit 1
-require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "unified_exec" "true" || exit 1
-require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "code_mode_host" "true" || exit 1
-require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugins" "false" || exit 1
-require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "plugin_sharing" "false" || exit 1
-require_toml_assignment "${ROOT_DIR}/adapters/codex/requirements.toml" "features" "remote_plugin" "false" || exit 1
-
-codex_managed_config_tmpdir="$(mktemp -d)"
-
-codex_agent_mutation=""
-codex_agent_mutant_name=""
-codex_agent_assignment=""
-codex_agent_replacement=""
-codex_agent_reason=""
-codex_agent_mutant=""
-codex_agent_mutations=(
-  'missing-enabled|enabled = true|__DELETE__|missing agents.enabled'
-  'changed-thread-limit|max_concurrent_threads_per_session = 3|max_concurrent_threads_per_session = 4|changed agents.max_concurrent_threads_per_session'
-  'changed-child-model|default_subagent_model = "gpt-5.6-terra"|default_subagent_model = "gpt-5.6-luna"|changed agents.default_subagent_model'
-  'changed-child-effort|default_subagent_reasoning_effort = "medium"|default_subagent_reasoning_effort = "high"|changed agents.default_subagent_reasoning_effort'
-)
-for codex_agent_mutation in "${codex_agent_mutations[@]}"; do
-  IFS='|' read -r codex_agent_mutant_name codex_agent_assignment codex_agent_replacement codex_agent_reason <<<"${codex_agent_mutation}"
-  codex_agent_mutant="${codex_managed_config_tmpdir}/${codex_agent_mutant_name}.toml"
-  awk -v expected="${codex_agent_assignment}" -v replacement="${codex_agent_replacement}" '
-    $0 == expected {
-      if (replacement != "__DELETE__") {
-        print replacement
-      }
-      replaced = 1
-      next
-    }
-    { print }
-    END {
-      if (!replaced) {
-        exit 1
-      }
-    }
-  ' "${CODEX_MANAGED_CONFIG}" >"${codex_agent_mutant}" || {
-    echo "Expected managed Codex config fixture to contain ${codex_agent_assignment}" >&2
-    exit 1
-  }
-  assert_codex_managed_config_rejected "${codex_agent_mutant}" "${codex_agent_reason}" || exit 1
-done
-
-quoted_key_config="${codex_managed_config_tmpdir}/quoted-key.toml"
-awk '
-  {
-    print
-    if ($0 == "web_search = \"disabled\"") {
-      print "\"approval_policy\" = \"never\""
-    }
-  }
-' "${CODEX_MANAGED_CONFIG}" >"${quoted_key_config}"
-assert_codex_managed_config_rejected "${quoted_key_config}" 'quoted top-level approval_policy override' || exit 1
-
-escaped_key_config="${codex_managed_config_tmpdir}/escaped-key.toml"
-awk '
-  {
-    print
-    if ($0 == "web_search = \"disabled\"") {
-      print "\"approval\\u005fpolicy\" = \"never\""
-    }
-  }
-' "${CODEX_MANAGED_CONFIG}" >"${escaped_key_config}"
-assert_codex_managed_config_rejected "${escaped_key_config}" 'escaped top-level approval_policy override' || exit 1
-
-spaced_section_config="${codex_managed_config_tmpdir}/spaced-section.toml"
-cp "${CODEX_MANAGED_CONFIG}" "${spaced_section_config}"
-printf '\n[ profiles.strict.sandbox_workspace_write ]\nnetwork_access = true\n' >>"${spaced_section_config}"
-assert_codex_managed_config_rejected "${spaced_section_config}" 'whitespace-padded strict sandbox override section' || exit 1
-
-quoted_segment_section_config="${codex_managed_config_tmpdir}/quoted-segment-section.toml"
-cp "${CODEX_MANAGED_CONFIG}" "${quoted_segment_section_config}"
-printf '\n[ "profiles" . "strict" . "sandbox_workspace_write" ]\nnetwork_access = true\n' >>"${quoted_segment_section_config}"
-assert_codex_managed_config_rejected "${quoted_segment_section_config}" 'quoted strict segment sandbox override section' || exit 1
-
-invalid_escape_key_config="${codex_managed_config_tmpdir}/invalid-escape-key.toml"
-awk '
-  {
-    print
-    if ($0 == "web_search = \"disabled\"") {
-      print "\"approval\\u00ZZpolicy\" = \"never\""
-    }
-  }
-' "${CODEX_MANAGED_CONFIG}" >"${invalid_escape_key_config}"
-assert_codex_managed_config_rejected "${invalid_escape_key_config}" 'malformed escaped approval_policy override' || exit 1
-
-literal_dot_section_config="${codex_managed_config_tmpdir}/literal-dot-section.toml"
-cp "${CODEX_MANAGED_CONFIG}" "${literal_dot_section_config}"
-printf '\n["profiles.strict.sandbox_workspace_write"]\nnetwork_access = true\n' >>"${literal_dot_section_config}"
-if ! verify_codex_managed_config_invariants "${literal_dot_section_config}" >/dev/null 2>&1; then
-  echo 'Expected quoted single-segment section names with literal dots to remain distinct from forbidden dotted paths' >&2
-  exit 1
-fi
-
-rm -rf "${codex_managed_config_tmpdir}"
+# Codex TOML config invariants: the managed baselines (config.toml and
+# managed_config.toml), the routing-config parity check, the four profile-v2
+# layer files, and the requirements.toml/provider-wrapper lockstep checks.
+# Migrated to Go (D3): internal/metadatautil (ValidateCodexManagedConfig,
+# ValidateCodexProfileLayer, ValidateCodexAdapterLockstep) behind the
+# workcell-citools workcell-codex-toml-invariants subcommand, which runs the
+# checks in the original script order (the routing check stays between the
+# managed-config and profile-layer validations). The former in-script mutant
+# fixtures (managed-config mutations through the literal-dot-section positive
+# control) live on as Go unit tests in
+# internal/metadatautil/codex_config_test.go.
+go_verify_citools workcell-codex-toml-invariants "${ROOT_DIR}" || exit 1
 
 # Codex subcommand-namespace COMPLETENESS check.
 #
@@ -7182,6 +6535,39 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
         exit 1
       fi
     done
+    LIVE_DEBUG_COLIMA_BIN="/usr/local/bin/colima"
+    if [[ -x /opt/homebrew/bin/colima ]]; then
+      LIVE_DEBUG_COLIMA_BIN="/opt/homebrew/bin/colima"
+    fi
+    if ! go_verify_hostutil helper run-host-colima-with-timeout 60 \
+      "--colima-bin=${LIVE_DEBUG_COLIMA_BIN}" \
+      "--real-home=${REAL_HOME}" \
+      "--colima-home=${REAL_HOME}/.colima" \
+      -- start --profile "${LIVE_DEBUG_PROFILE_NAME}" >/dev/null; then
+      echo "Expected managed profile to start before exact reaper certification" >&2
+      exit 1
+    fi
+    LIVE_DEBUG_OLD_PROFILE_PIDS=""
+    for _ in {1..20}; do
+      LIVE_DEBUG_OLD_PROFILE_PIDS="$(
+        ps -axo pid=,command= | go_verify_hostutil helper colima-profile-process-pids "${LIVE_DEBUG_PROFILE_NAME}"
+      )"
+      [[ -z "${LIVE_DEBUG_OLD_PROFILE_PIDS}" ]] || break
+      sleep 0.25
+    done
+    if [[ -z "${LIVE_DEBUG_OLD_PROFILE_PIDS}" ]]; then
+      echo "Expected a managed profile process before exact reaper certification" >&2
+      exit 1
+    fi
+    LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE="${BARRIER_VERIFY_ROOT}/debug/live-debug.pre-refresh-processes.out"
+    : >"${LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE}"
+    while IFS= read -r old_profile_pid; do
+      if ! ps -p "${old_profile_pid}" -o pid=,command= >>"${LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE}"; then
+        echo "Expected managed profile process ${old_profile_pid} to remain observable before exact reaper certification" >&2
+        exit 1
+      fi
+    done <<<"${LIVE_DEBUG_OLD_PROFILE_PIDS}"
+    sed 's/^/exact_reaper_pre_refresh_process=/' "${LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE}"
     if ! run_workcell_verify GIT_PAGER=cat PAGER=cat \
       --agent codex \
       --mode development \
@@ -7198,6 +6584,16 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     fi
     grep -q '^WORKCELL_DEVELOPMENT_REFRESH_OK$' "${LIVE_DEBUG_REFRESH_OUT}"
     grep -q "Refreshing managed Colima profile ${LIVE_DEBUG_PROFILE_NAME} to apply the requested reviewed VM resources." "${LIVE_DEBUG_REFRESH_OUT}"
+    if ! LIVE_DEBUG_POST_REFRESH_PS="$(ps -axo pid=,command=)"; then
+      echo "Expected to read the host process inventory after exact reaper certification" >&2
+      exit 1
+    fi
+    while IFS= read -r old_profile_pid; do
+      if ! awk -v pid="${old_profile_pid}" '$1 == pid { found = 1 } END { exit found }' <<<"${LIVE_DEBUG_POST_REFRESH_PS}"; then
+        echo "Expected refreshed profile process ${old_profile_pid} to be absent after exact reaper certification" >&2
+        exit 1
+      fi
+    done <<<"${LIVE_DEBUG_OLD_PROFILE_PIDS}"
     if grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' "${LIVE_DEBUG_REFRESH_OUT}" &&
       ! grep -q 'Workcell timed out waiting for managed Colima profile' "${LIVE_DEBUG_REFRESH_OUT}"; then
       echo "Expected refreshed managed development shell to reuse or restore the prepared runtime image without rebuilding" >&2
@@ -7675,6 +7071,20 @@ EOF
       exit 1
     fi
     delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
+    if ! LIVE_DEBUG_POST_CLEANUP_PS="$(ps -axo pid=,command=)"; then
+      echo "Expected to read the host process inventory after exact reaper certification cleanup" >&2
+      exit 1
+    fi
+    if ! LIVE_DEBUG_REMAINING_PROFILE_PIDS="$(
+      go_verify_hostutil helper colima-profile-process-pids "${LIVE_DEBUG_PROFILE_NAME}" <<<"${LIVE_DEBUG_POST_CLEANUP_PS}"
+    )"; then
+      echo "Expected to classify managed profile processes after exact reaper certification cleanup" >&2
+      exit 1
+    fi
+    if [[ -n "${LIVE_DEBUG_REMAINING_PROFILE_PIDS}" ]]; then
+      echo "Expected no managed profile processes after exact reaper certification cleanup" >&2
+      exit 1
+    fi
     delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME}"
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"

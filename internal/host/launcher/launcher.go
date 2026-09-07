@@ -131,10 +131,14 @@ func readProfileLockOwner(lockDir string) (profileLockOwner, error) {
 }
 
 func observedProfileLockGeneration(owner profileLockOwner) (string, error) {
-	if strings.HasPrefix(owner.Started, "darwin:") || strings.HasPrefix(owner.Started, "linux:") {
-		return processGeneration(owner.PID)
+	tagged := strings.HasPrefix(owner.Started, "darwin:") || strings.HasPrefix(owner.Started, "linux:")
+	if !tagged {
+		return ProcessStartTime(owner.PID)
 	}
-	return ProcessStartTime(owner.PID)
+	if IsExactProcessGeneration(owner.Started) {
+		return ObserveProcessGeneration(owner.PID, owner.Started)
+	}
+	return processGeneration(owner.PID)
 }
 
 func ProfileLockIsStale(lockDir string) (bool, error) {
@@ -309,10 +313,7 @@ func ObserveProcessGeneration(pid int, recorded string) (string, error) {
 		if !validDarwinProcessGeneration(recorded) {
 			return "", errors.New("invalid darwin process generation")
 		}
-		if runtime.GOOS != "darwin" {
-			return "", fmt.Errorf("darwin process generation does not match %s host", runtime.GOOS)
-		}
-		return processGeneration(pid)
+		return observeValidDarwinProcessGeneration(pid, recorded)
 	case strings.HasPrefix(recorded, "linux:"):
 		if !validLinuxProcessGeneration(recorded) {
 			return "", errors.New("invalid linux process generation")
@@ -329,27 +330,33 @@ func ObserveProcessGeneration(pid int, recorded string) (string, error) {
 // IsExactProcessGeneration reports whether a generation record uses a valid
 // kernel-backed format supported by the host process identity probes.
 func IsExactProcessGeneration(recorded string) bool {
-	switch {
-	case strings.HasPrefix(recorded, "darwin:"):
-		return validDarwinProcessGeneration(recorded)
-	case strings.HasPrefix(recorded, "linux:"):
-		return validLinuxProcessGeneration(recorded)
-	default:
-		return false
-	}
+	return validDarwinProcessGeneration(recorded) || validLinuxProcessGeneration(recorded)
 }
 
 func validDarwinProcessGeneration(recorded string) bool {
-	seconds, microseconds, ok := strings.Cut(strings.TrimPrefix(recorded, "darwin:"), ".")
-	if !ok || !isPositiveCanonicalInt64(seconds) || len(microseconds) != 6 || !isDecimal(microseconds) {
+	value, ok := strings.CutPrefix(recorded, "darwin:")
+	if !ok {
 		return false
 	}
-	value, err := strconv.ParseUint(microseconds, 10, 32)
-	return err == nil && value <= 999_999
+	started, uniqueID, exact := strings.Cut(value, ":")
+	if !exact {
+		return validLegacyDarwinProcessGeneration(started)
+	}
+	return validLegacyDarwinProcessGeneration(started) && isPositiveCanonicalUint64(uniqueID)
+}
+
+func validLegacyDarwinProcessGeneration(value string) bool {
+	seconds, microseconds, ok := strings.Cut(value, ".")
+	if !ok || !isPositiveCanonicalInt64(seconds) || len(microseconds) != 6 {
+		return false
+	}
+	parsed, err := strconv.ParseUint(microseconds, 10, 32)
+	return err == nil && parsed <= 999_999
 }
 
 func validLinuxProcessGeneration(recorded string) bool {
-	return isPositiveCanonicalUint64(strings.TrimPrefix(recorded, "linux:"))
+	value, ok := strings.CutPrefix(recorded, "linux:")
+	return ok && isPositiveCanonicalUint64(value)
 }
 
 func isPositiveCanonicalInt64(value string) bool {
@@ -360,15 +367,6 @@ func isPositiveCanonicalInt64(value string) bool {
 func isPositiveCanonicalUint64(value string) bool {
 	parsed, err := strconv.ParseUint(value, 10, 64)
 	return err == nil && parsed > 0 && strconv.FormatUint(parsed, 10) == value
-}
-
-func isDecimal(value string) bool {
-	for _, char := range value {
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // ProcessStartTime returns the `ps -o lstart=` value for pid, or an error

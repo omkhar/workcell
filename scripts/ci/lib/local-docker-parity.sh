@@ -28,6 +28,38 @@ cleanup_workcell_validator_image() {
   workcell_ci_docker image rm -f "${image}" >/dev/null 2>&1 || true
 }
 
+workcell_validator_image_default_tag() {
+  local root="$1"
+  local dockerfile_cksum=""
+  local bootstrap_cksum=""
+
+  dockerfile_cksum="$(cksum "${root}/tools/validator/Dockerfile" | awk '{print $1}')" || return
+  bootstrap_cksum="$(cksum "${root}/runtime/container/debian-bootstrap.env" | awk '{print $1}')" || return
+  printf 'workcell-validator:local-%s-%s\n' "${dockerfile_cksum}" "${bootstrap_cksum}"
+}
+
+claim_workcell_validator_image() {
+  local root="$1"
+  local image_variable="$2"
+  local reservation_variable="$3"
+  local prefix=""
+  local claimed_reservation=""
+
+  prefix="$(workcell_validator_image_default_tag "${root}")" || return
+  [[ "${prefix}" == workcell-validator:local-[0-9]*-[0-9]* ]] || return 1
+  claimed_reservation="$(mktemp -d "${TMPDIR:-/tmp}/workcell-validator-owner.XXXXXX")" || return
+  printf -v "${reservation_variable}" '%s' "${claimed_reservation}"
+  printf -v "${image_variable}" '%s-%s' "${prefix}" "${claimed_reservation##*/}"
+}
+
+cleanup_workcell_owned_validator_image() {
+  local image="$1"
+  local reservation="$2"
+
+  cleanup_workcell_validator_image "${image}"
+  rmdir -- "${reservation}" >/dev/null 2>&1 || true
+}
+
 workcell_ci_docker() {
   if [[ -n "${DOCKER_CONTEXT_NAME:-}" ]]; then
     docker --context "${DOCKER_CONTEXT_NAME}" "$@"
