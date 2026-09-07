@@ -44,11 +44,11 @@ The `hosted-controls-audit` environment gates release preflight and final GitHub
 
 The workflow uses Cosign to create keyless Sigstore signatures.
 It signs the image, source archive, Homebrew formula, image-digest file, checksums, manifests, and software bills of materials.
-It also creates GitHub attestations when the reviewed hosted controls permit them.
+It creates GitHub attestations after a fixed public-repository guard.
 GitHub attestations are an additional verification surface.
 They do not replace Sigstore signatures.
 
-Forks can keep the GitHub attestation gates off.
-The upstream repository audits those gates as hosted control-plane state.
+Forks can remove the GitHub attestation steps with a reviewed code change.
+The upstream workflow does not accept a variable opt-out.
 
 See [provenance.md](provenance.md) and [github-workflows.md](github-workflows.md).
