@@ -258,8 +258,10 @@ gh attestation verify "${asset}" \
 The verified installer runs the Cosign and digest checks before extraction.
 Add `--attestation` to require the GitHub check.
 
-The shipped installer pins the repository workflow but accepts any release tag identity.
-Use the manual procedure above when you require exact-tag certificate binding.
+The shipped installer pins one exact identity, not any release tag. A release
+published after `v1.0.2` carries only the `refs/heads/main` identity. For the
+closed set of earlier tag-signed releases, the installer accepts that one exact
+tag identity as well, and no other.
 
 ## SLSA v1.0 Build-track gap analysis
 
