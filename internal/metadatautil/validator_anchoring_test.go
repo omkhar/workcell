@@ -28,8 +28,11 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 		{"corpus run missing", anchor + anchor, corpus, "2 call(s) of ShellInvocations but 1 run(s)"},
 		{"corpus run without an anchor", anchor, corpus + corpus, "1 call(s) of ShellInvocations but 2 run(s)"},
 		{"no anchored validator", "", corpus, "lost its subject"},
-		{"comment naming a call", anchor + "\t// " + corpus, "\t// " + anchor + corpus, ""},
-		{"literal naming a call", anchor + "\t_ = `" + corpus + "`\n", "\t_ = \"ShellInvocations(\"\n" + corpus, ""},
+		{"line comment names an anchor", anchor + "\t// " + anchor, corpus, ""},
+		{"literal names an anchor", anchor + "\t_ = \"ShellInvocations(\"\n", corpus, ""},
+		{"line comment names a corpus run", anchor, corpus + "\t// " + corpus, ""},
+		{"block comment names a corpus run", anchor, corpus + "\t/* text\n" + corpus + "\t*/\n", ""},
+		{"raw literal names a corpus run", anchor, corpus + "\t_ = `text\n" + corpus + "`\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

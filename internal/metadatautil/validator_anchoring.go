@@ -92,7 +92,15 @@ func dropCommentsAndLiterals(source string) string {
 		character := source[index]
 		switch {
 		case character == '\n':
-			state, lineComment = 0, false
+			// A newline ends a line comment. A block comment and a raw
+			// literal both run on, so their state has to survive it. An
+			// interpreted literal cannot span a line at all, so a newline
+			// inside one means the scan has lost its place; clear it and read
+			// the next line as code rather than blanking the rest of the file.
+			lineComment = false
+			if state == '"' || state == '\'' {
+				state = 0
+			}
 			out.WriteByte(character)
 		case lineComment:
 			out.WriteByte(' ')
