@@ -1353,7 +1353,7 @@ pub unsafe extern "C" fn workcell_syscall_shim(
         if number == SYS_EXECVE {
             // SAFETY: number==SYS_execve, so arg1..arg3 are the (path, argv, envp) pointers of the execve ABI.
             return unsafe {
-                execve(
+                guarded_execve(
                     arg1 as *const c_char,
                     arg2 as *const *const c_char,
                     arg3 as *const *const c_char,
@@ -1363,7 +1363,7 @@ pub unsafe extern "C" fn workcell_syscall_shim(
         if number == SYS_EXECVEAT {
             // SAFETY: number==SYS_execveat, so arg1..arg5 are (dirfd, pathname, argv, envp, flags) per the execveat ABI.
             return unsafe {
-                execveat(
+                guarded_execveat(
                     arg1 as c_int,
                     arg2 as *const c_char,
                     arg3 as *const *const c_char,
@@ -1379,7 +1379,7 @@ pub unsafe extern "C" fn workcell_syscall_shim(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execve(
+unsafe extern "C" fn guarded_execve(
     path: *const c_char,
     argv: *const *const c_char,
     envp: *const *const c_char,
@@ -1414,7 +1414,7 @@ pub unsafe extern "C" fn execve(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) -> c_int {
+unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_char) -> c_int {
     let path_string = c_path_string(path);
     let args = collect_cstring_array(argv);
     // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
@@ -1446,7 +1446,7 @@ pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
+unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
     let file_string = c_path_string(file);
     let args = collect_cstring_array(argv);
     // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
@@ -1479,7 +1479,7 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execvpe(
+unsafe extern "C" fn guarded_execvpe(
     file: *const c_char,
     argv: *const *const c_char,
     envp: *const *const c_char,
@@ -1515,7 +1515,7 @@ pub unsafe extern "C" fn execvpe(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execveat(
+unsafe extern "C" fn guarded_execveat(
     dirfd: c_int,
     pathname: *const c_char,
     argv: *const *const c_char,
@@ -1644,7 +1644,7 @@ pub unsafe extern "C" fn execveat(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fexecve(
+unsafe extern "C" fn guarded_fexecve(
     fd: c_int,
     argv: *const *const c_char,
     envp: *const *const c_char,
@@ -1688,7 +1688,7 @@ pub unsafe extern "C" fn fexecve(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn(
+unsafe extern "C" fn guarded_posix_spawn(
     pid: *mut pid_t,
     path: *const c_char,
     file_actions: *const libc::posix_spawn_file_actions_t,
@@ -1726,7 +1726,7 @@ pub unsafe extern "C" fn posix_spawn(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnp(
+unsafe extern "C" fn guarded_posix_spawnp(
     pid: *mut pid_t,
     file: *const c_char,
     file_actions: *const libc::posix_spawn_file_actions_t,
@@ -1762,6 +1762,120 @@ pub unsafe extern "C" fn posix_spawnp(
 
     // SAFETY: forwards the caller's original, unmodified posix_spawnp arguments to the real libc posix_spawnp resolved via RTLD_NEXT.
     unsafe { posix_spawnp_fn()(pid, file, file_actions, attrp, argv, envp) }
+}
+
+// glibc resolves execl/execlp/execle internally, so interposing execv/execvp/
+// execve alone leaves the variadic forms outside the guard. Rust cannot express
+// a C variadic definition, so each name is a bare jump into the C adapter in
+// src/exec_variadic.c, which flattens the argument list and re-enters the guard
+// through the guarded_* implementations above.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+macro_rules! define_variadic_exec_trampoline {
+    ($name:ident, $target:ident) => {
+        #[unsafe(naked)]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name() {
+            core::arch::naked_asm!(concat!("jmp ", stringify!($target)));
+        }
+    };
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+macro_rules! define_variadic_exec_trampoline {
+    ($name:ident, $target:ident) => {
+        #[unsafe(naked)]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name() {
+            core::arch::naked_asm!(concat!("b ", stringify!($target)));
+        }
+    };
+}
+
+#[cfg(target_os = "linux")]
+define_variadic_exec_trampoline!(execl, workcell_export_execl);
+#[cfg(target_os = "linux")]
+define_variadic_exec_trampoline!(execlp, workcell_export_execlp);
+#[cfg(target_os = "linux")]
+define_variadic_exec_trampoline!(execle, workcell_export_execle);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn execve(
+    path: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // SAFETY: forwards the original execve ABI to the guard implementation.
+    unsafe { guarded_execve(path, argv, envp) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) -> c_int {
+    // SAFETY: forwards the original execv ABI to the guard implementation.
+    unsafe { guarded_execv(path, argv) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
+    // SAFETY: forwards the original execvp ABI to the guard implementation.
+    unsafe { guarded_execvp(file, argv) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn execvpe(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // SAFETY: forwards the original execvpe ABI to the guard implementation.
+    unsafe { guarded_execvpe(file, argv, envp) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn execveat(
+    dirfd: c_int,
+    pathname: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    flags: c_int,
+) -> c_int {
+    // SAFETY: forwards the original execveat ABI to the guard implementation.
+    unsafe { guarded_execveat(dirfd, pathname, argv, envp, flags) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fexecve(
+    fd: c_int,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // SAFETY: forwards the original fexecve ABI to the guard implementation.
+    unsafe { guarded_fexecve(fd, argv, envp) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawn(
+    pid: *mut pid_t,
+    path: *const c_char,
+    file_actions: *const libc::posix_spawn_file_actions_t,
+    attrp: *const libc::posix_spawnattr_t,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // SAFETY: forwards the original posix_spawn ABI to the guard implementation.
+    unsafe { guarded_posix_spawn(pid, path, file_actions, attrp, argv, envp) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawnp(
+    pid: *mut pid_t,
+    file: *const c_char,
+    file_actions: *const libc::posix_spawn_file_actions_t,
+    attrp: *const libc::posix_spawnattr_t,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // SAFETY: forwards the original posix_spawnp ABI to the guard implementation.
+    unsafe { guarded_posix_spawnp(pid, file, file_actions, attrp, argv, envp) }
 }
 
 /// Fuzzing-only re-exports of the internal exec-guard classifiers and parsers.
@@ -2162,5 +2276,58 @@ mod tests {
         ));
 
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    /// Holds the variadic entry points to the guard.
+    ///
+    /// `execl`/`execlp`/`execle` are the naked trampolines defined above, and
+    /// `build.rs` links the C adapter into test binaries as well as the preload
+    /// shared object, so these calls take the same route a preloaded child
+    /// takes. The target is absolute and nonexistent: the policy rejects it on
+    /// the `git` basename before any exec, while a regression that drops a
+    /// trampoline, its adapter, or an architecture arm falls through to libc,
+    /// which cannot exec the path and reports `ENOENT` instead of `EPERM`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn variadic_exec_entry_points_stay_behind_the_guard() {
+        const TARGET: &[u8] = b"/nonexistent/workcell-variadic-probe/git\0";
+        const ARG0: &[u8] = b"git\0";
+        const FLAG: &[u8] = b"-c\0";
+        const SPEC: &[u8] = b"core.pager=sh -c id\0";
+
+        let path = TARGET.as_ptr().cast::<c_char>();
+        let arg0 = ARG0.as_ptr().cast::<c_char>();
+        let flag = FLAG.as_ptr().cast::<c_char>();
+        let spec = SPEC.as_ptr().cast::<c_char>();
+        let end = std::ptr::null::<c_char>();
+        let envp: [*const c_char; 1] = [std::ptr::null()];
+
+        fn last_errno() -> c_int {
+            std::io::Error::last_os_error()
+                .raw_os_error()
+                .expect("errno after a failed exec")
+        }
+
+        // SAFETY: every pointer is a NUL-terminated literal that outlives the
+        // call, and the argument list carries the NULL sentinel execl requires.
+        let execl_result = unsafe { libc::execl(path, arg0, flag, spec, end) };
+        let execl_errno = last_errno();
+        // SAFETY: as above; the path contains a slash, so execlp performs no
+        // PATH search and cannot reach a different binary on a regression.
+        let execlp_result = unsafe { libc::execlp(path, arg0, flag, spec, end) };
+        let execlp_errno = last_errno();
+        // SAFETY: as above, plus the environment pointer execle reads after the
+        // sentinel, which is an empty NULL-terminated array valid for the call.
+        let execle_result = unsafe { libc::execle(path, arg0, flag, spec, end, envp.as_ptr()) };
+        let execle_errno = last_errno();
+
+        for (name, result, errno) in [
+            ("execl", execl_result, execl_errno),
+            ("execlp", execlp_result, execlp_errno),
+            ("execle", execle_result, execle_errno),
+        ] {
+            assert_eq!(result, -1, "{name} must refuse the blocked target");
+            assert_eq!(errno, libc::EPERM, "{name} must be refused by the guard");
+        }
     }
 }
