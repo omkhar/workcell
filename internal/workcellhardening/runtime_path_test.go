@@ -13,9 +13,17 @@ import (
 
 const runtimePathPin = "readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'\nexport PATH\n"
 
+// Privileged mode keeps the script's own shell from reading BASH_ENV and ENV,
+// but leaves them exported for the plain-bash children these scripts start.
+// The prologue must clear them, which is what the replaced shebang did.
+const runtimeStartupPin = "#!/bin/bash -p\n" +
+	"# -p keeps this shell from reading BASH_ENV/ENV, but leaves them exported.\n" +
+	"# The plain-bash children below would still read them, so clear them here.\n" +
+	"unset BASH_ENV ENV\n"
+
 func TestRuntimePathPrologues(t *testing.T) {
-	executable := "#!/bin/bash -p\n" + runtimePathPin + "set -euo pipefail\n"
-	library := "#!/bin/bash -p\n" +
+	executable := runtimeStartupPin + runtimePathPin + "set -euo pipefail\n"
+	library := runtimeStartupPin +
 		"if [[ \"${PATH}\" != '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ]]; then\n" +
 		"  PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'\n" +
 		"fi\nreadonly PATH\nexport PATH\n"
