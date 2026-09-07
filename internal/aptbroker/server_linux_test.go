@@ -51,6 +51,21 @@ func TestServerReportsMalformedRequest(t *testing.T) {
 	}
 }
 
+// A privileged socket path must be unreachable from any directory an
+// unprivileged uid can write, so no ancestor can be repointed after validation.
+func TestValidateSocketAncestryRejectsMutableAncestors(t *testing.T) {
+	if err := validateSocketAncestry("/"); err != nil {
+		t.Fatalf("root-owned ancestry was rejected: %v", err)
+	}
+	// /tmp is world-writable, so nothing beneath it can be trusted.
+	if err := validateSocketAncestry("/tmp"); err == nil {
+		t.Fatal("world-writable ancestor was accepted")
+	}
+	if err := validateSocketAncestry(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing ancestor was accepted")
+	}
+}
+
 func startTestBroker(t *testing.T) (context.Context, string) {
 	t.Helper()
 	if os.Getuid() == 0 {

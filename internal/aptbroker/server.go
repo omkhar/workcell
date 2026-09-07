@@ -295,13 +295,40 @@ func validateSocketParent(path string, requireRoot bool) error {
 	if !isTrustedSocketDirectory(parent) {
 		return fmt.Errorf("apt broker socket parent is not trusted")
 	}
-	if requireRoot && fileUID(parent) != 0 {
+	if !requireRoot {
+		return nil
+	}
+	if fileUID(parent) != 0 {
 		return fmt.Errorf("apt broker socket parent is not root-owned")
 	}
-	if requireRoot && parent.Mode().Perm() != 0o755 {
+	if parent.Mode().Perm() != 0o755 {
 		return fmt.Errorf("apt broker socket parent mode is not 0755")
 	}
-	return nil
+	return validateSocketAncestry(path)
+}
+
+// Checking the immediate parent alone trusts a pathname the bind resolves for
+// itself a moment later. Any ancestor that an unprivileged uid can replace,
+// including a symlink the parent Stat above would have followed, could be
+// repointed in between so the socket lands somewhere else. Requiring every
+// ancestor to be a real directory that only root can write removes the uid that
+// would perform the swap, rather than trying to win the race against it.
+func validateSocketAncestry(path string) error {
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("apt broker socket ancestor %s is not a directory", current)
+		}
+		if fileUID(info) != 0 || info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("apt broker socket ancestor %s is writable outside root", current)
+		}
+		if filepath.Dir(current) == current {
+			return nil
+		}
+	}
 }
 
 func isTrustedSocketDirectory(info os.FileInfo) bool {
