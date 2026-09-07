@@ -76,10 +76,18 @@ esac
 
 CITOOLS_BIN=""
 BUILD_CACHE_DIR="${ROOT_DIR}/.workcell-build-cache"
+SHEBANG_STDOUT=""
+SHEBANG_STDERR=""
 
 cleanup() {
   if [[ -n "${CITOOLS_BIN}" && -e "${CITOOLS_BIN}" ]]; then
     rm -f "${CITOOLS_BIN}"
+  fi
+  if [[ -n "${SHEBANG_STDOUT}" && -e "${SHEBANG_STDOUT}" ]]; then
+    rm -f "${SHEBANG_STDOUT}"
+  fi
+  if [[ -n "${SHEBANG_STDERR}" && -e "${SHEBANG_STDERR}" ]]; then
+    rm -f "${SHEBANG_STDERR}"
   fi
   rm -rf "${BUILD_CACHE_DIR}"
 }
@@ -312,8 +320,9 @@ done
 # Accept only an interpreter whose basename is exactly `bash`. A bare `*bash*`
 # test also matches `#!/usr/bin/env bashful`. Both house forms put `bash` in its
 # own token: `#!/bin/bash -p` and `#!/usr/bin/env -S BASH_ENV= ENV= bash`.
-# `env -S` splits its argument and removes quotes, so `-S "bash" -e` runs Bash.
-# Strip a surrounding quote from each token before the comparison.
+# `env` accepts the split string attached as well as detached: `-S bash`,
+# `-Sbash` and `--split-string=bash` all run Bash. Strip that option prefix,
+# and strip a quote, before the comparison.
 is_bash_shebang() {
   local line="$1"
   local -a tokens=()
@@ -322,6 +331,8 @@ is_bash_shebang() {
   [[ "${line}" == '#!'* ]] || return 1
   IFS=$' \t' read -r -a tokens <<<"${line#'#!'}"
   for token in "${tokens[@]}"; do
+    token="${token#--split-string=}"
+    token="${token#-S}"
     token="${token//\"/}"
     token="${token//\'/}"
     [[ "${token##*/}" == "bash" ]] && return 0
@@ -337,14 +348,32 @@ is_bash_shebang() {
 # followed and there is no window between the check and the read. It also
 # removes the end-of-file case, because Git yields the line rather than a
 # `read` status.
+#
+# `git grep` exits 1 only when nothing matched, and the inventory assertion
+# below rejects that. It exits 0 with partial output when an indexed blob is
+# unreadable, and reports the failure on stderr alone. Read it through a file
+# so both channels are testable: a diagnostic means the index was not read
+# completely, and an omitted path would otherwise be classified as "not Bash"
+# and silently left unlinted.
+SHEBANG_STDOUT="$(mktemp "${TMPDIR:-/tmp}/workcell-shebangs.XXXXXX")"
+SHEBANG_STDERR="$(mktemp "${TMPDIR:-/tmp}/workcell-shebang-errors.XXXXXX")"
+shebang_read_status=0
+git -C "${ROOT_DIR}" grep --cached -z -I -n -E '^#!' \
+  >"${SHEBANG_STDOUT}" 2>"${SHEBANG_STDERR}" || shebang_read_status=$?
+
+if [[ "${shebang_read_status}" -gt 1 || -s "${SHEBANG_STDERR}" ]]; then
+  echo "Reading tracked shebangs from the index failed; shell lint coverage is unverified" >&2
+  sed 's/^/  /' "${SHEBANG_STDERR}" >&2
+  exit 1
+fi
+
 declare -A tracked_shebangs=()
-# shellcheck disable=SC2312 # the non-empty assertion below is the compensating control
 while IFS= read -r -d '' shebang_path &&
   IFS= read -r -d '' shebang_lineno &&
   IFS= read -r shebang_line; do
   [[ "${shebang_lineno}" == "1" ]] || continue
   tracked_shebangs["${shebang_path}"]="${shebang_line}"
-done < <(git -C "${ROOT_DIR}" grep --cached -z -I -n -E '^#!')
+done <"${SHEBANG_STDOUT}"
 
 if [[ "${#tracked_shebangs[@]}" -eq 0 ]]; then
   echo "Tracked shebang inventory is empty; shell lint coverage is unverified" >&2
