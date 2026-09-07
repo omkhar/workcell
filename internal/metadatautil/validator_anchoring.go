@@ -12,10 +12,6 @@ import (
 	"strings"
 )
 
-// anchoringCheckerPrefix names this file and its test. The check skips both so
-// that the needles they carry as text are not counted as call sites.
-const anchoringCheckerPrefix = "validator_anchoring"
-
 // CheckValidatorAnchoring requires each validator that anchors on the shared
 // shell-invocation parser to run the shared evasion corpus. A validator that
 // reads a command out of file content is bypassed by a comment, a heredoc body
@@ -44,9 +40,10 @@ func CheckValidatorAnchoring(rootDir string) error {
 }
 
 // countCallSites returns the number of lines under internal/ that call needle.
-// It reads test sources when inTests is set and non-test sources otherwise, and
-// it skips declaration lines so that a function is never counted as its own
-// caller.
+// It reads test sources when inTests is set and non-test sources otherwise, it
+// removes comments and string literals first so that text about a call is not
+// counted as one, and it skips declaration lines so that a function is never
+// counted as its own caller.
 func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 	count := 0
 	root := filepath.Join(rootDir, "internal")
@@ -55,7 +52,7 @@ func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 			return err
 		}
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasPrefix(name, anchoringCheckerPrefix) {
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
 			return nil
 		}
 		if strings.HasSuffix(name, "_test.go") != inTests {
@@ -65,7 +62,7 @@ func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 		if err != nil {
 			return err
 		}
-		for line := range strings.Lines(string(content)) {
+		for line := range strings.Lines(dropCommentsAndLiterals(string(content))) {
 			if strings.Contains(line, needle) && !strings.HasPrefix(line, "func ") {
 				count++
 			}
@@ -76,4 +73,63 @@ func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 		return 0, fmt.Errorf("scan %s for %s: %w", root, needle, err)
 	}
 	return count, nil
+}
+
+// dropCommentsAndLiterals blanks the comments and string literals of Go source
+// and keeps every newline, so a line number and the code on it survive. A
+// comment or a literal that names a call is text about the call, not the call,
+// and counting it would let a mention satisfy the parity gate or break it.
+//
+// A byte scan is enough for this one caller, the same choice this package
+// records for structJSONFields, and it avoids go/ast.
+func dropCommentsAndLiterals(source string) string {
+	var out strings.Builder
+	out.Grow(len(source))
+	// state is 0 in code, or the byte that ends the current span.
+	var state byte
+	var lineComment bool
+	for index := 0; index < len(source); index++ {
+		character := source[index]
+		switch {
+		case character == '\n':
+			state, lineComment = 0, false
+			out.WriteByte(character)
+		case lineComment:
+			out.WriteByte(' ')
+		case state == '*':
+			if character == '*' && index+1 < len(source) && source[index+1] == '/' {
+				index++
+				state = 0
+				out.WriteString("  ")
+				continue
+			}
+			out.WriteByte(' ')
+		case state != 0:
+			// A backslash escapes the next byte in an interpreted literal. A
+			// raw literal has no escapes, so only " and ' take this branch.
+			if character == '\\' && state != '`' && index+1 < len(source) {
+				index++
+				out.WriteString("  ")
+				continue
+			}
+			if character == state {
+				state = 0
+			}
+			out.WriteByte(' ')
+		case character == '/' && index+1 < len(source) && source[index+1] == '/':
+			lineComment = true
+			out.WriteString("  ")
+			index++
+		case character == '/' && index+1 < len(source) && source[index+1] == '*':
+			state = '*'
+			out.WriteString("  ")
+			index++
+		case character == '"' || character == '\'' || character == '`':
+			state = character
+			out.WriteByte(' ')
+		default:
+			out.WriteByte(character)
+		}
+	}
+	return out.String()
 }
