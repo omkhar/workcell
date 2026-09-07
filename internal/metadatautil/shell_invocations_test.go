@@ -31,6 +31,41 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"one", "two"}},
 		},
 		{
+			name:   "a continuation joins the halves with nothing between them",
+			script: "oras cp --to-oci-layout\\\ndist/release-image:amd64\n",
+			want:   [][]string{{"--to-oci-layoutdist/release-image:amd64"}},
+		},
+		{
+			name:   "a space after a backslash ends the line, so the next line is another command",
+			script: "oras cp one \\ \n--to-oci-layout dist/release-image:amd64\n",
+			want:   [][]string{{"one", " "}},
+		},
+		{
+			name:   "an escaped backslash ends the line, so the next line is another command",
+			script: "oras cp one \\\\\n--to-oci-layout dist/release-image:amd64\n",
+			want:   [][]string{{"one", "\\"}},
+		},
+		{
+			name:   "an indented terminator leaves a plain heredoc body open",
+			script: "cat <<PLAN\n  PLAN\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a tab-indented terminator leaves a plain heredoc body open",
+			script: "cat <<PLAN\n\tPLAN\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a space-indented terminator leaves a tab-stripped heredoc body open",
+			script: "cat <<-PLAN\n  PLAN\noras cp one\n\tPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a terminator with trailing text leaves the body open",
+			script: "cat <<PLAN\nPLAN \noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "a full-line comment runs nothing",
 			script: "# oras cp one\n",
 		},

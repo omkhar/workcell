@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// heredoc is one body a script line opened. The dash form matters after the
+// opening line, because it alone lets the terminator carry leading tabs.
+type heredoc struct {
+	delimiter string
+	dashForm  bool
+}
+
 // ShellInvocations returns the arguments of each invocation of command in
 // script. It joins line continuations and drops comments, inline ones
 // included, and heredoc bodies, so that no decoy text counts as a command and
@@ -17,20 +24,32 @@ func ShellInvocations(script, command string) [][]string {
 	prefix := strings.Fields(command)
 	var invocations [][]string
 	var current strings.Builder
-	var heredocs []string
+	var heredocs []heredoc
 	for line := range strings.Lines(script) {
-		trimmed := strings.TrimSpace(line)
+		body := strings.TrimSuffix(line, "\n")
 		if len(heredocs) > 0 {
-			if trimmed == heredocs[0] {
+			// Bash compares the whole line against the delimiter, and only the
+			// dash form removes leading tabs first. A terminator that carries
+			// any other text, one space included, leaves the body open and
+			// keeps swallowing the commands below it.
+			terminator := body
+			if heredocs[0].dashForm {
+				terminator = strings.TrimLeft(terminator, "\t")
+			}
+			if terminator == heredocs[0].delimiter {
 				heredocs = heredocs[1:]
 			}
 			continue
 		}
-		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
-		if strings.HasSuffix(trimmed, "\\") {
-			current.WriteString(" ")
+		// A backslash continues the line only when it is not itself escaped,
+		// and bash then joins the two halves with nothing between them. A
+		// space after the backslash escapes the space instead, which ends the
+		// line and makes the next one a separate command.
+		if backslashes := len(body) - len(strings.TrimRight(body, `\`)); backslashes%2 == 1 {
+			current.WriteString(body[:len(body)-1])
 			continue
 		}
+		current.WriteString(body)
 		words, opened := shellWords(current.String())
 		current.Reset()
 		heredocs = append(heredocs, opened...)
@@ -50,16 +69,16 @@ func ShellInvocations(script, command string) [][]string {
 // One pass keeps the three answers consistent. A pattern per answer cannot:
 // each has to rediscover the quoting, and the one that gets it wrong reads
 // syntax where the shell reads text.
-func shellWords(line string) (words, heredocs []string) {
+func shellWords(line string) (words []string, heredocs []heredoc) {
 	var word strings.Builder
-	inWord, quote, pending := false, byte(0), false
+	inWord, quote, pending, dashForm := false, byte(0), false, false
 	flush := func() {
 		if !inWord {
 			return
 		}
 		if pending {
-			heredocs = append(heredocs, word.String())
-			pending = false
+			heredocs = append(heredocs, heredoc{delimiter: word.String(), dashForm: dashForm})
+			pending, dashForm = false, false
 		} else {
 			words = append(words, word.String())
 		}
@@ -120,6 +139,7 @@ func shellWords(line string) (words, heredocs []string) {
 			}
 			if index+1 < len(line) && line[index+1] == '-' {
 				index++
+				dashForm = true
 			}
 			pending = true
 		case pending && strings.IndexByte(";&|<>()", character) >= 0:
