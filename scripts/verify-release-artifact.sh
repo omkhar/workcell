@@ -73,6 +73,9 @@ Required:
 Options:
   --repo OWNER/REPO  Release repository to pin the signer identity against
                      (default: omkhar/workcell, or $GITHUB_REPOSITORY).
+  --tag vX.Y.Z       Release tag being verified. Releases published before the
+                     dispatch trigger were signed from that tag, so naming it
+                     also accepts that one exact historical identity.
   --attestation      Additionally require `gh attestation verify` to pass.
   --skip-verify      Do NOT verify. Requires --i-understand-unverified-install
                      and prints a loud warning. For documented air-gapped use.
@@ -121,6 +124,7 @@ regex_escape() {
 
 ASSETS_DIR=""
 ARTIFACT=""
+TAG=""
 REPO="${GITHUB_REPOSITORY:-${DEFAULT_REPO}}"
 REQUIRE_ATTESTATION=0
 SKIP_VERIFY=0
@@ -138,6 +142,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --repo)
       REPO="${2:?--repo requires OWNER/REPO}"
+      shift 2
+      ;;
+    --tag)
+      TAG="${2:?--tag requires a release tag}"
       shift 2
       ;;
     --attestation)
@@ -171,6 +179,12 @@ done
 }
 if [[ "${ARTIFACT}" == */* ]]; then
   echo "--artifact must be a basename, not a path: ${ARTIFACT}" >&2
+  exit 2
+fi
+# Same tag shape the release workflow accepts, so a malformed value cannot reach
+# the identity expression.
+if [[ -n "${TAG}" ]] && [[ ! "${TAG}" =~ ^v[0-9A-Za-z.-]{1,63}$ ]]; then
+  echo "--tag must be a release tag of the form vX.Y.Z: ${TAG}" >&2
   exit 2
 fi
 
@@ -216,10 +230,22 @@ artifact_path="${ASSETS_DIR}/${ARTIFACT}"
 
 # Anchor (^…$) and escape every fixed segment, leaving no wildcard at all.
 # release.yml is triggered solely by repository_dispatch, which always loads the
-# workflow from the default branch, so the keyless Fulcio identity is exactly
+# workflow from the default branch, so the keyless Fulcio identity of a release
+# published under that trigger is exactly
 # https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main.
+#
+# Releases published before that change were signed from the pushed tag. When
+# the caller names the tag it is verifying, that one exact tag identity is
+# accepted as well. Both alternatives stay exact: the tag branch is pinned to
+# the requested tag, so it is no looser than the branch one and cannot match a
+# different release.
 repo_escaped="$(regex_escape "${REPO}")"
-identity_regexp="^https://github\.com/${repo_escaped}/\.github/workflows/release\.yml@refs/heads/main\$"
+identity_prefix="https://github\.com/${repo_escaped}/\.github/workflows/release\.yml@"
+identity_refs="refs/heads/main"
+if [[ -n "${TAG}" ]]; then
+  identity_refs="${identity_refs}|refs/tags/$(regex_escape "${TAG}")"
+fi
+identity_regexp="^${identity_prefix}(${identity_refs})\$"
 
 echo "Verifying ${ARTIFACT} against ${REPO} release signing identity..." >&2
 
