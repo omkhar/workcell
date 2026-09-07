@@ -382,14 +382,20 @@ fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
 // oversized variable must not turn a searched exec into E2BIG.
 fn current_process_path_value() -> Result<Option<String>, ExecInputTooLarge> {
     const PREFIX: &str = "PATH=";
+    // clearenv() leaves environ null on glibc, and a bare-name search is still
+    // valid there: libc falls back to its default search path.
+    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
+    let entries = unsafe { environ.cast::<*const c_char>() };
+    if entries.is_null() {
+        return Ok(None);
+    }
     let mut index = 0usize;
     loop {
         if index == MAX_EXEC_ELEMENTS {
             return Err(ExecInputTooLarge);
         }
-        // SAFETY: environ is a libc-initialized, NUL-sentinel-terminated char**, read in the
-        // calling thread with no concurrent setenv/putenv; index walks up to the sentinel below.
-        let current = unsafe { *environ.cast::<*const c_char>().add(index) };
+        // SAFETY: entries is a non-null, NUL-sentinel-terminated char**; index walks up to the sentinel below.
+        let current = unsafe { *entries.add(index) };
         if current.is_null() {
             return Ok(None);
         }
@@ -459,19 +465,25 @@ fn resolve_command_via_path_value(
         // The loader drops LD_PRELOAD for set-user-ID programs, so this guard is
         // never loaded where the two differ.
         // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
-        let executable = unsafe { libc::access(cstring.as_ptr(), libc::X_OK) == 0 }
-            // X_OK also succeeds for a searchable directory, and the kernel
-            // refuses to execute anything that is not a regular file. libc
-            // records that refusal as EACCES and keeps searching, so a
-            // directory must not end the guard's search either -- otherwise the
-            // guard classifies the directory while libc goes on to execute a
-            // later, unclassified entry.
-            && fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file());
-        if !executable {
-            // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
-            if unsafe { libc::access(cstring.as_ptr(), libc::F_OK) == 0 } {
+        if unsafe { libc::access(cstring.as_ptr(), libc::X_OK) } != 0 {
+            // libc remembers an EACCES from a candidate and keeps searching,
+            // then reports it when no later entry holds the command. Read the
+            // error from the lookup that failed: a candidate under an
+            // unsearchable directory answers EACCES to an existence probe too,
+            // so probing for existence would read it as absent.
+            // SAFETY: errno_location() returns the current thread's valid errno slot.
+            if unsafe { *errno_location() } == libc::EACCES {
                 permission_denied = true;
             }
+            continue;
+        }
+        // X_OK also succeeds for a searchable directory, and the kernel refuses
+        // to execute anything that is not a regular file, reporting EACCES.
+        // libc keeps searching on that too, so a directory must not end the
+        // guard's search either -- otherwise the guard classifies the directory
+        // while libc goes on to execute a later, unclassified entry.
+        if !fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file()) {
+            permission_denied = true;
             continue;
         }
 
@@ -2667,6 +2679,38 @@ mod tests {
             resolve_command_via_path_value("probe", Some(&shadow.display().to_string())),
             Err(ExecSearchError::PermissionDenied)
         );
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn path_search_reports_permission_denied_like_libc() {
+        let dir = create_temp_test_dir("path-eacces");
+        let plain = dir.join("plain");
+        fs::create_dir(&plain).expect("plain dir");
+        let unreadable = dir.join("unreadable");
+        fs::create_dir(&unreadable).expect("unreadable dir");
+
+        // A present but non-executable file: libc gets EACCES from execve,
+        // remembers it, and reports it when nothing later matches.
+        fs::write(plain.join("probe"), "").expect("plain probe");
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&plain.display().to_string())),
+            Err(ExecSearchError::PermissionDenied)
+        );
+
+        // A candidate under a directory the caller cannot search answers EACCES
+        // to an existence probe as well, so it must be read from the failed
+        // executable lookup rather than mistaken for an absent file.
+        fs::write(unreadable.join("probe"), "").expect("unreadable probe");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).expect("dir mode");
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } != 0 {
+            assert_eq!(
+                resolve_command_via_path_value("probe", Some(&unreadable.display().to_string())),
+                Err(ExecSearchError::PermissionDenied)
+            );
+        }
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o700)).expect("restore mode");
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 
