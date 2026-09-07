@@ -100,6 +100,13 @@ func releaseOutputStubBin(t *testing.T, cosignFailGlob, ghFailGlob string) (stri
 	return releaseOutputStubDriver(t, verifyReleaseOutputsScript(t), cosignFailGlob, ghFailGlob, strings.Repeat("a", 64), strings.Repeat("a", 64))
 }
 
+// shQuote renders s as a single-quoted Bash literal. Go's %q produces a Go
+// string literal, which Bash double-quote rules still expand: a $ or backtick
+// in a path would substitute while the driver starts.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func releaseOutputStubDriver(t *testing.T, scriptPath, cosignFailGlob, ghFailGlob, releaseTagDigest, commitTagDigest string) (string, string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -107,9 +114,9 @@ func releaseOutputStubDriver(t *testing.T, scriptPath, cosignFailGlob, ghFailGlo
 	ghLog := filepath.Join(dir, "gh.log")
 	driver := filepath.Join(dir, "verify-release-outputs-test-driver.sh")
 	script := fmt.Sprintf(`#!/bin/bash
-source %q
-cosign_fail_glob=%q
-gh_fail_glob=%q
+source %s
+cosign_fail_glob=%s
+gh_fail_glob=%s
 log_call() {
   local log="$1"
   shift
@@ -117,11 +124,11 @@ log_call() {
 }
 cosign() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${GH_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 96
-  log_call %q "$@"
+  log_call %s "$@"
   if [[ "${1:-}" == "verify" ]]; then
-    tag_digest=%q
+    tag_digest=%s
     if [[ "$*" == *":sha-%s"* ]]; then
-      tag_digest=%q
+      tag_digest=%s
     fi
     if [[ -z "${tag_digest}" ]]; then
       printf '[]\n'
@@ -140,12 +147,12 @@ gh() {
   for arg in "$@"; do
     [[ "${arg}" != "--hostname" && "${arg}" != --hostname=* ]] || return 93
   done
-  log_call %q "$@"
+  log_call %s "$@"
   [[ -n "${gh_fail_glob}" && "$*" == ${gh_fail_glob} ]] && return 1
   return 0
 }
 main "$@"
-`, scriptPath, cosignFailGlob, ghFailGlob, cosignLog, releaseTagDigest, strings.Repeat("c", 40), commitTagDigest, ghLog)
+`, shQuote(scriptPath), shQuote(cosignFailGlob), shQuote(ghFailGlob), shQuote(cosignLog), shQuote(releaseTagDigest), strings.Repeat("c", 40), shQuote(commitTagDigest), shQuote(ghLog))
 	if err := os.WriteFile(driver, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -236,10 +243,14 @@ func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "startup-ran")
 	startup := filepath.Join(dir, "startup.sh")
-	if err := os.WriteFile(startup, []byte("printf ran >\""+marker+"\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(startup, []byte("printf ran >"+shQuote(marker)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hostile := []string{"BASH_ENV=" + startup, "ENV=" + startup}
+	// Bash expands the VALUE of BASH_ENV before using it as a path, so the
+	// expansion-active characters a hostile TMPDIR can contain must be escaped
+	// for the literal file to be the one that runs.
+	escaped := strings.NewReplacer(`\`, `\\`, "$", `\$`, "`", "\\`").Replace(startup)
+	hostile := []string{"BASH_ENV=" + escaped, "ENV=" + escaped}
 
 	code, out := runVerifyDriver(t, verifyReleaseOutputsScript(t), nil, hostile)
 	if code == 0 || !strings.Contains(out, "assets directory is required") {
@@ -483,12 +494,19 @@ func flagOccurrences(args []string, flag string, aliases ...string) int {
 	seen := 0
 	for _, spelling := range append([]string{flag}, aliases...) {
 		for _, arg := range args {
-			if arg == spelling || strings.HasPrefix(arg, spelling+"=") {
+			if arg == spelling || strings.HasPrefix(arg, spelling+"=") ||
+				(shortFlag(spelling) && len(arg) > 2 && strings.HasPrefix(arg, spelling)) {
 				seen++
 			}
 		}
 	}
 	return seen
+}
+
+// shortFlag reports whether spelling is a single-dash short option, which gh
+// also accepts in the compact attached form (-Rvalue), not only spaced.
+func shortFlag(spelling string) bool {
+	return len(spelling) == 2 && spelling[0] == '-' && spelling[1] != '-'
 }
 
 // flagValue returns the argument bound to flag, and only when the flag appears
@@ -506,6 +524,9 @@ func flagValue(args []string, flag string, aliases ...string) string {
 			}
 			if value, ok := strings.CutPrefix(arg, spelling+"="); ok {
 				return value
+			}
+			if shortFlag(spelling) && len(arg) > 2 && strings.HasPrefix(arg, spelling) {
+				return strings.TrimPrefix(arg[2:], "=")
 			}
 		}
 	}
@@ -934,5 +955,14 @@ func TestFlagValueRejectsShortAliasOverride(t *testing.T) {
 	}
 	if got := flagValue([]string{"-R", "omkhar/workcell"}, "--repo", "-R"); got != "omkhar/workcell" {
 		t.Fatalf("flagValue missed the short alias alone, got %q", got)
+	}
+	// gh also parses the compact attached form: a later -Rattacker/repo must
+	// fail the single-occurrence rule just like the spaced spelling.
+	compact := []string{"sha256:aa", "--repo", "omkhar/workcell", "-Rattacker/repo"}
+	if got := flagValue(compact, "--repo", "-R"); got != "" {
+		t.Fatalf("flagValue tolerated a compact short-alias override, got %q", got)
+	}
+	if got := flagValue([]string{"-Romkhar/workcell"}, "--repo", "-R"); got != "omkhar/workcell" {
+		t.Fatalf("flagValue missed the compact short alias alone, got %q", got)
 	}
 }
