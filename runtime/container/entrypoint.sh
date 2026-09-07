@@ -1,4 +1,6 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
 set -euo pipefail
 
 AGENT_NAME="${AGENT_NAME:-}"

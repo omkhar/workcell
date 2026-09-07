@@ -58,6 +58,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 	srcRoot := metadatautilRepoRoot(tb)
 	dstRoot := tb.TempDir()
 	for _, relativePath := range []string{
+		".dockerignore",
 		"go.mod",
 		".github/CODEOWNERS",
 		".github/workflows/ci.yml",

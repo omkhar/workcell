@@ -1,4 +1,9 @@
-#!/usr/bin/env -S BASH_ENV= ENV= bash
+#!/bin/bash -p
+if [[ "${PATH}" != '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ]]; then
+  PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+fi
+readonly PATH
+export PATH
 
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh

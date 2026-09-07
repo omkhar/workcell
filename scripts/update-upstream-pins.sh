@@ -503,6 +503,9 @@ current_debian_ca_sha256="$(jq -er '.ca_certificates_sha256' <<<"${current_debia
 current_go_toolchain="$(awk '/^toolchain / { sub(/^toolchain go/, "", $0); print; exit }' "${GO_MOD_PATH}")"
 current_go_language="$(awk '/^go / { print $2; exit }' "${GO_MOD_PATH}")"
 current_validator_go_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_VERSION)"
+current_runtime_go_version="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" GO_VERSION)"
+current_runtime_go_sha_amd64="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" GO_LINUX_X86_64_SHA256)"
+current_runtime_go_sha_arm64="$(extract_dockerfile_arg "${RUNTIME_DOCKERFILE_PATH}" GO_LINUX_ARM64_SHA256)"
 current_go_sha_amd64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_LINUX_X86_64_SHA256)"
 current_go_sha_arm64="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" GO_LINUX_ARM64_SHA256)"
 current_deadcode_version="$(extract_dockerfile_arg "${VALIDATOR_DOCKERFILE_PATH}" DEADCODE_VERSION)"
@@ -627,6 +630,9 @@ for current_target_pair in \
   "${current_go_toolchain}|${target_go_toolchain}" \
   "${current_go_language}|${target_go_language}" \
   "${current_validator_go_version}|${target_go_toolchain}" \
+  "${current_runtime_go_version}|${target_go_toolchain}" \
+  "${current_runtime_go_sha_amd64}|${target_go_sha_amd64}" \
+  "${current_runtime_go_sha_arm64}|${target_go_sha_arm64}" \
   "${current_go_sha_amd64}|${target_go_sha_amd64}" \
   "${current_go_sha_arm64}|${target_go_sha_arm64}" \
   "${current_deadcode_version}|${target_deadcode_version}" \
@@ -695,6 +701,9 @@ print_summary() {
   print_summary_line "debian-ca-certificates-sha256" "${current_debian_ca_sha256}" "${target_debian_ca_sha256}"
   print_summary_line "go-toolchain" "${current_go_toolchain}" "${target_go_toolchain}"
   print_summary_line "go-language" "${current_go_language}" "${target_go_language}"
+  print_summary_line "runtime-go" "${current_runtime_go_version}" "${target_go_toolchain}"
+  print_summary_line "runtime-go-amd64-sha256" "${current_runtime_go_sha_amd64}" "${target_go_sha_amd64}"
+  print_summary_line "runtime-go-arm64-sha256" "${current_runtime_go_sha_arm64}" "${target_go_sha_arm64}"
   print_summary_line "deadcode-validator" "${current_deadcode_version}" "${target_deadcode_version}"
   print_summary_line "deadcode-script" "${current_deadcode_script_version}" "${target_deadcode_version}"
   print_summary_line "rust-toolchain" "${current_rust_version}" "${target_rust_version}"
@@ -743,6 +752,9 @@ if [[ "${debian_has_changes}" -eq 1 ]]; then
 fi
 
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG NODE_BASE_IMAGE=' "ARG NODE_BASE_IMAGE=${target_runtime_base}"
+replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG GO_VERSION=' "ARG GO_VERSION=${target_go_toolchain}"
+replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG GO_LINUX_X86_64_SHA256=' "ARG GO_LINUX_X86_64_SHA256=${target_go_sha_amd64}"
+replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG GO_LINUX_ARM64_SHA256=' "ARG GO_LINUX_ARM64_SHA256=${target_go_sha_arm64}"
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG RUST_VERSION=' "ARG RUST_VERSION=${target_rust_version}"
 replace_line_with_prefix "${RUNTIME_DOCKERFILE_PATH}" 'ARG RUST_TOOLCHAIN_IMAGE=' "ARG RUST_TOOLCHAIN_IMAGE=${target_runtime_rust_toolchain_image}"
 

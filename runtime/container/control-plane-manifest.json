@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "0be4e87ae344ebdeade6d02e3c33139f75feb6e2b2167d743bdbb7cb4dbab1bc"
+      "sha256": "5ab7eb1df7d3e4249771fb2e3e30947a2d755b9f8f918f34cc15323929811a64"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -218,13 +218,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/development-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
-      "sha256": "2e6c4c65b86a166f7a963e390e85e3d43d963d90a0bf5a73d0f8456a36641a4a"
+      "sha256": "274d315151d1d690de7a53de9b68983a5d7972a5f69ffe4d46e991d7bd938b89"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "49a33dc4b43c0d87090c2dcc0be78ffe8d9af14cd7832e7ad72c19c69dd386ef"
+      "sha256": "1960df04c34276d32b5b50549f63692c70d883570e193533bb82b69e0af86106"
     },
     {
       "kind": "runtime-control-plane",
@@ -236,7 +236,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "f699292966cf737b9700008c090750319b23ab7dac617a4e236e82f2952e2b35"
+      "sha256": "b0fedb560b519d65f38d04dac940277c606238cc4efd2c94b1b96ca9362efb38"
     },
     {
       "kind": "runtime-control-plane",
@@ -254,7 +254,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "fdf553db0f799ec09d9e4e02a359f5f97bada6e3b0d18a94e9d191ecc6a3392b"
+      "sha256": "29bdabf0859cb1fe5a31050905f6214497bf9d2d94a48a1d52c55231138c637e"
     },
     {
       "kind": "runtime-control-plane",
@@ -266,7 +266,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "b9a4bd99fd90f322f4f07dab9dae43b2f2787a27ad6dc65e11c2818e4c28193e"
+      "sha256": "36d2cd77ea2a6b51c044682dd51e86152ae7e8e1d8cc7312cc5de5cef7a093f3"
     },
     {
       "kind": "runtime-control-plane",
