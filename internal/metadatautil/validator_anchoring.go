@@ -39,7 +39,9 @@ func CheckValidatorAnchoring(rootDir string) error {
 	return nil
 }
 
-// countCallSites returns the number of lines under internal/ that call needle.
+// countCallSites returns the number of calls of needle under internal/. It
+// counts every occurrence on a line, not one per line, so a second call added
+// to an existing line still needs its own corpus run.
 // It reads test sources when inTests is set and non-test sources otherwise, it
 // removes comments and string literals first so that text about a call is not
 // counted as one, and it reads a declaration line from its body onwards so that
@@ -64,9 +66,7 @@ func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 			return err
 		}
 		for line := range strings.Lines(dropCommentsAndLiterals(string(content))) {
-			if strings.Contains(afterDeclaration(line), needle) {
-				count++
-			}
+			count += strings.Count(afterDeclaration(line), needle)
 		}
 		return nil
 	})
