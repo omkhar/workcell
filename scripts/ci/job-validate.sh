@@ -97,6 +97,9 @@ fi
 echo "[ci/validate] pinned input policy"
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
 
+echo "[ci/validate] validator evasion corpus registration"
+"${ROOT_DIR}/scripts/check-validator-anchoring.sh"
+
 echo "[ci/validate] GitHub macOS release test runners"
 "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15
 

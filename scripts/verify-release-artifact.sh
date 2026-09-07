@@ -267,6 +267,7 @@ expected_digest="$(awk -v name="${ARTIFACT}" '$2 == name {print $1}' "${sums_pat
 if [[ -z "${expected_digest}" ]]; then
   fail "SHA256SUMS (verified) has no entry for ${ARTIFACT}; it is not part of this signed release"
 fi
+# shellcheck disable=SC2312 # wc counts an already-captured string; the empty case is rejected above
 if [[ "$(printf '%s\n' "${expected_digest}" | wc -l)" -ne 1 ]]; then
   fail "SHA256SUMS has multiple entries for ${ARTIFACT}; refusing ambiguous match"
 fi

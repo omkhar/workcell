@@ -1,0 +1,102 @@
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
+if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  sanitized_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    TMPDIR="${TMPDIR:-/tmp}"
+    WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}"
+    WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1
+  )
+  # HOME is forwarded only when the caller has one. Replacing an absent HOME
+  # with /tmp would point Git at /tmp/.gitconfig, which any user can write on
+  # a shared temporary directory, and verify-commit would run a gpg.program
+  # named there. The invoking Git never read that file.
+  #
+  # The destination query below uses the same transport as the push, so it
+  # needs the same authentication state. Without it the query fails, the walk
+  # covers the whole ancestry, and an already published base is rejected.
+  # GIT_NAMESPACE is here too: without it the query reads the default
+  # namespace and would exclude commits the pushed namespace never held.
+  #
+  # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
+  # Git reads, and the GIT_SSL, GIT_HTTP, and GIT_CURL prefixes carry the HTTPS
+  # settings the query needs. All of them are forwarded rather than scrubbed so
+  # verify-commit uses the same settings as the push that invoked it. Whoever
+  # runs that command already has the documented bypass, so forwarding them
+  # adds no trust. The prefix forms also cover the numbered GIT_CONFIG_KEY_n
+  # and GIT_CONFIG_VALUE_n pairs.
+  for forwarded_name in HOME XDG_CONFIG_HOME GNUPGHOME \
+    SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT \
+    GIT_ASKPASS SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY GIT_NAMESPACE \
+    GIT_PROXY_COMMAND CURL_CA_BUNDLE \
+    HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY \
+    http_proxy https_proxy all_proxy no_proxy \
+    ${!GIT_CONFIG@} ${!GIT_SSL@} ${!GIT_HTTP@} ${!GIT_CURL@}; do
+    [[ -n "${!forwarded_name:-}" ]] || continue
+    sanitized_env+=("${forwarded_name}=${!forwarded_name}")
+  done
+  exec /usr/bin/env -i "${sanitized_env[@]}" /bin/bash -p "$0" "$@"
+fi
+set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
+
+if [[ "${WORKCELL_SKIP_PUSH_SIGNATURES:-0}" == "1" ]]; then
+  exit 0
+fi
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
+readonly ZERO_OID_PATTERN='^0+$'
+REMOTE_URL="${2:-}"
+
+# Ask the destination what it holds. A remote's tracking refs only record what
+# some earlier fetch saw: a remote whose URL changed, or whose branches moved
+# out of band, keeps refs that name commits the destination never had, and
+# excluding those commits would send them unverified. The advertisement is the
+# only current answer, and it needs no URL comparison because Git passes the
+# destination itself as the hook's second argument.
+destination_exclusions=()
+if [[ -n "${REMOTE_URL}" ]] &&
+  advertised="$(git -C "${ROOT_DIR}" ls-remote "${REMOTE_URL}" 2>/dev/null)"; then
+  while read -r advertised_sha _; do
+    [[ -n "${advertised_sha}" ]] || continue
+    # A tag object or a ref this clone never fetched is not a commit here.
+    if git -C "${ROOT_DIR}" rev-parse --verify --quiet "${advertised_sha}^{commit}" >/dev/null; then
+      destination_exclusions+=("${advertised_sha}")
+    fi
+  done <<<"${advertised}"
+fi
+# A destination that cannot be reached leaves this empty, so the walk covers
+# the whole ancestry and the push fails closed on any commit it cannot verify.
+
+while read -r _ local_sha _ remote_sha; do
+  [[ -n "${local_sha}" ]] || continue
+  if [[ "${local_sha}" =~ ${ZERO_OID_PATTERN} ]]; then
+    continue
+  fi
+  exclusions=(${destination_exclusions[@]+"${destination_exclusions[@]}"})
+  if [[ ! "${remote_sha}" =~ ${ZERO_OID_PATTERN} ]] &&
+    git -C "${ROOT_DIR}" rev-parse --verify --quiet "${remote_sha}^{commit}" >/dev/null; then
+    # Already negated by --not; a caret here would re-invert it into an
+    # inclusion and drag the published base into the walk.
+    exclusions+=("${remote_sha}")
+  fi
+  # Capture the walk rather than reading a process substitution: a failing
+  # rev-list there yields an empty loop and would let the push through.
+  if ! outgoing="$(git -C "${ROOT_DIR}" --no-replace-objects rev-list "${local_sha}" --not ${exclusions[@]+"${exclusions[@]}"})"; then
+    echo "pre-push could not enumerate the outgoing commits for ${local_sha}; refusing the push." >&2
+    echo "Repair the repository, or set WORKCELL_SKIP_PUSH_SIGNATURES=1 only for an intentional bypass." >&2
+    exit 1
+  fi
+  while IFS= read -r commit; do
+    [[ -n "${commit}" ]] || continue
+    if ! git -C "${ROOT_DIR}" --no-replace-objects verify-commit "${commit}" >/dev/null 2>&1; then
+      echo "pre-push requires verifiable signed commits; unable to verify commit ${commit}." >&2
+      echo "Sign the commit, or set WORKCELL_SKIP_PUSH_SIGNATURES=1 only for an intentional bypass." >&2
+      echo "SSH signers also need gpg.ssh.allowedSignersFile; see CONTRIBUTING.md." >&2
+      exit 1
+    fi
+  done <<<"${outgoing}"
+done
+
+exit 0

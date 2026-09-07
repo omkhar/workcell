@@ -5,8 +5,10 @@ package aptbroker
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -248,4 +250,29 @@ func requestBodyWithDuplicateEnvironment(t *testing.T) []byte {
 		writeString(&body, "noninteractive")
 	}
 	return body.Bytes()
+}
+
+// A pathname past sun_path must be refused with a message naming the limit and
+// the offending length, not with the kernel's bare "invalid argument", and both
+// endpoints must refuse it before they touch the filesystem.  A long TMPDIR is
+// how an over-long path reaches this package, which is also why the suite's own
+// binds go through shortSocketDir.
+func TestSocketPathOverSunPathLimitIsRejectedWithTheLimit(t *testing.T) {
+	over := "/tmp/" + strings.Repeat("p", maxSocketPathLength) + "/socket"
+	atLimit := "/tmp/" + strings.Repeat("p", maxSocketPathLength-len("/tmp//socket")) + "/socket"
+	if len(atLimit) != maxSocketPathLength {
+		t.Fatalf("boundary fixture is %d bytes, want %d", len(atLimit), maxSocketPathLength)
+	}
+	want := fmt.Sprintf("apt broker socket path is %d bytes, over the %d-byte AF_UNIX limit: %s",
+		len(over), maxSocketPathLength, over)
+
+	if _, err := listenSocket(over, false); err == nil || err.Error() != want {
+		t.Fatalf("listenSocket error = %v, want %s", err, want)
+	}
+	if _, err := dialBroker(context.Background(), over); err == nil || err.Error() != want {
+		t.Fatalf("dialBroker error = %v, want %s", err, want)
+	}
+	if err := checkSocketPathLength(atLimit); err != nil {
+		t.Fatalf("path at the limit rejected: %v", err)
+	}
 }

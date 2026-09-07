@@ -446,20 +446,19 @@ var releaseTagRecheckPhases = map[string]struct {
 	"publish-github-release": {1, "Recheck hosted controls and publish GitHub release assets"},
 }
 
-// releaseTagRecheckArguments is the complete reviewed argument list. A recheck
-// missing the commit or tag-object binding proves less than its name suggests,
-// so a partial invocation does not count towards a phase.
-var releaseTagRecheckArguments = []string{
-	"--github-repo", `"${GITHUB_REPOSITORY}"`,
-	"--repo-root", `"${GITHUB_WORKSPACE}"`,
-	"--tag", `"${RELEASE_TAG}"`,
-	"--expected-commit", `"${RELEASE_COMMIT}"`,
-	"--expected-tag-object", `"${RELEASE_TAG_OBJECT}"`,
-}
+// releaseTagRecheckCommand is the complete reviewed recheck, and a step whose
+// whole run body is not exactly it does not count towards a phase. Each
+// recheck has a step to itself, so equality is both simpler and stricter than
+// parsing the body: a recheck missing the commit or tag-object binding proves
+// less than its name suggests, and a comment, an extra command or a fallback
+// that discards the exit status all leave a body that is not this one.
+const releaseTagRecheckCommand = `./scripts/check-release-tag-signature.sh ` +
+	`--github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" ` +
+	`--tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" ` +
+	`--expected-tag-object "${RELEASE_TAG_OBJECT}"`
 
 // validateReleaseTagRechecks requires each mutation phase to run its own fully
-// bound tag recheck, and no other job to run one. It reads parsed run
-// statements, so a check converted into a comment does not count.
+// bound tag recheck, and no other job to run one.
 func validateReleaseTagRechecks(workflowText string) error {
 	var document workflowDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
@@ -470,11 +469,9 @@ func validateReleaseTagRechecks(workflowText string) error {
 		phase := releaseTagRecheckPhases[name]
 		found, lastAt := 0, -1
 		for at, step := range job.Steps {
-			for _, arguments := range commandArgs(step.Run, "./scripts/check-release-tag-signature.sh") {
-				if slices.Equal(arguments, releaseTagRecheckArguments) {
-					found++
-					lastAt = at
-				}
+			if strings.TrimSpace(step.Run) == releaseTagRecheckCommand {
+				found++
+				lastAt = at
 			}
 		}
 		if found != phase.count {

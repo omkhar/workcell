@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omkhar/workcell/internal/testkit"
 )
 
 var errInvalidCleanupContext = errors.New("cleanup context is canceled or unbounded")
@@ -70,7 +72,7 @@ func TestRequireProvesExactWorkspaceAndCleansChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mount, err := MountSpec(canonical, true)
+	mount, err := MountSpec(canonical, "/workspace", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,22 +102,34 @@ func TestRequireProvesExactWorkspaceAndCleansChallenge(t *testing.T) {
 func TestMountSpecCSVEncodesWorkspaceAndReadonlyMode(t *testing.T) {
 	t.Parallel()
 	workspace := `/tmp/workspace,with"quote`
-	readOnly, err := MountSpec(workspace, true)
+	readOnly, err := MountSpec(workspace, "/workspace", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := `type=bind,"src=/tmp/workspace,with""quote",dst=/workspace,readonly`; readOnly != want {
 		t.Fatalf("readonly mount = %q, want %q", readOnly, want)
 	}
-	readWrite, err := MountSpec(workspace, false)
+	readWrite, err := MountSpec(workspace, "/workspace", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := `type=bind,"src=/tmp/workspace,with""quote",dst=/workspace`; readWrite != want {
 		t.Fatalf("read-write mount = %q, want %q", readWrite, want)
 	}
-	if _, err := MountSpec("relative", false); err == nil {
-		t.Fatal("relative workspace mount accepted")
+	if _, err := MountSpec("relative", "/workspace", false); err == nil {
+		t.Fatal("relative bind source accepted")
+	}
+	if _, err := MountSpec(workspace, "relative", false); err == nil {
+		t.Fatal("relative bind target accepted")
+	}
+	// A target other than the workspace uses the same encoder, so a source
+	// holding a comma or a quote still forms one record.
+	passwd, err := MountSpec(workspace, "/etc/passwd", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `type=bind,"src=/tmp/workspace,with""quote",dst=/etc/passwd,readonly`; passwd != want {
+		t.Fatalf("passwd mount = %q, want %q", passwd, want)
 	}
 }
 
@@ -437,16 +451,16 @@ func blockingDockerFixture(t *testing.T) (string, string) {
 	path := filepath.Join(t.TempDir(), "docker")
 	commandLog := path + ".log"
 	script := fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$@" >> %q
+printf '%%s\n' "$@" >> %s
 if [ "$1" = "--context" ]; then
 	shift 2
 fi
 if [ "$1" = "rm" ]; then
 	exit 0
 fi
-printf '%%s\n' %q >> %q
+printf '%%s\n' %s >> %s
 exec /bin/sleep 60
-`, commandLog, completedProbeLogMarker, commandLog)
+`, testkit.ShellQuote(commandLog), testkit.ShellQuote(completedProbeLogMarker), testkit.ShellQuote(commandLog))
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -24,6 +24,7 @@ import (
 const (
 	validatorBindProbeTimeout   = 30 * time.Second
 	validatorBindCleanupTimeout = 5 * time.Second
+	defaultWorkspaceTarget      = "/workspace"
 )
 
 var errValidatorBindProbeTimeout = errors.New("validator workspace bind probe timed out")
@@ -95,7 +96,7 @@ func requireWithProbeTimeout(ctx context.Context, options Options, command comma
 	if err := os.Chmod(challengePath, 0o644); err != nil {
 		return fmt.Errorf("make validator workspace bind challenge readable: %w", err)
 	}
-	mount, err := MountSpec(workspace, true)
+	mount, err := MountSpec(workspace, defaultWorkspaceTarget, true)
 	if err != nil {
 		return err
 	}
@@ -161,23 +162,27 @@ func withProbeCleanup(primary error, command commandFunc, workspace string, opti
 	return primary
 }
 
-// MountSpec returns a Docker --mount CSV record for the workspace bind.
-func MountSpec(workspace string, readOnly bool) (string, error) {
-	if !filepath.IsAbs(workspace) {
-		return "", fmt.Errorf("validator workspace must be an absolute path")
+// MountSpec returns a Docker --mount CSV record for a validator bind. The
+// record is CSV encoded because a source path may hold a comma or a quote.
+func MountSpec(source string, target string, readOnly bool) (string, error) {
+	if !filepath.IsAbs(source) {
+		return "", fmt.Errorf("validator bind source must be an absolute path")
 	}
-	fields := []string{"type=bind", "src=" + workspace, "dst=/workspace"}
+	if !filepath.IsAbs(target) {
+		return "", fmt.Errorf("validator bind target must be an absolute path")
+	}
+	fields := []string{"type=bind", "src=" + source, "dst=" + target}
 	if readOnly {
 		fields = append(fields, "readonly")
 	}
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
 	if err := writer.Write(fields); err != nil {
-		return "", fmt.Errorf("encode validator workspace mount: %w", err)
+		return "", fmt.Errorf("encode validator bind mount: %w", err)
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {
-		return "", fmt.Errorf("encode validator workspace mount: %w", err)
+		return "", fmt.Errorf("encode validator bind mount: %w", err)
 	}
 	return strings.TrimSuffix(buffer.String(), "\n"), nil
 }

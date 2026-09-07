@@ -96,6 +96,7 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "minimal publisher permissions", old: "contents: write\n      packages: read", replacement: "contents: write\n      packages: write", want: "grant only read verification permissions"},
 		{name: "minimal verifier permissions", old: "contents: read\n      packages: read", replacement: "contents: read\n      packages: write", want: "grant only read permissions"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
+		{name: "audits the repository and nothing else", old: "run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"", replacement: "run-hosted-controls-audit.sh wrong \"${GITHUB_REPOSITORY}\" || true", want: "recheck hosted controls"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
 		{name: "publisher bound to the verified tag object", old: `--expected-tag-object "${RELEASE_TAG_OBJECT}"`, replacement: `--expected-tag-object "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
 		{name: "publisher bound to the verified tag", old: `publish-github-release.sh "${RELEASE_TAG}"`, replacement: `publish-github-release.sh "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
@@ -118,6 +119,7 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 				"            dist/workcell.tar.gz ; : --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
 			want: "explicit preverified publisher",
 		},
+		{name: "preverified flag in the position the publisher reads", old: "--expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n            --immutable-releases-preverified-by-hosted-controls \\\n            dist/workcell.tar.gz", replacement: "--expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n            dist/workcell.tar.gz \\\n            --immutable-releases-preverified-by-hosted-controls", want: "explicit preverified publisher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
@@ -192,6 +194,85 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
+// TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions runs the shared
+// evasion corpus against each command the release assembly step must run. Both
+// anchors of validateReleaseAssembly are covered, so a parser change that
+// stops reading one of them fails here rather than in review.
+func TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	t.Run("platform copies", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          oras cp --recursive --from-oci-layout \\\n"+
+				"            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n"+
+				"            --to-oci-layout dist/release-image:amd64\n"+
+				"          oras cp --recursive --from-oci-layout \\\n"+
+				"            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n"+
+				"            --to-oci-layout dist/release-image:arm64",
+			"copy both platform images", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
+	})
+	t.Run("multi-arch index", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          oras manifest index create --oci-layout \\\n"+
+				"            \"dist/release-image:${RELEASE_TAG}\" \\\n"+
+				"            amd64 arm64 >/dev/null",
+			"assemble the multi-arch index", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
+	})
+}
+
+// TestValidateReleaseWorkflowPublicationGateRejectsEvasions runs the shared
+// evasion corpus against each command the publication gate must find running.
+// The gate guards the credential that publishes a release, so a comment, a
+// heredoc body, an unrun branch or a longer command name must never satisfy it.
+func TestValidateReleaseWorkflowPublicationGateRejectsEvasions(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const recheck = "recheck hosted controls"
+	t.Run("release output verification", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/verify-release-outputs.sh \"${verify_args[@]}\"",
+			"must run verify-release-outputs.sh", metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+	t.Run("hosted controls audit", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"",
+			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+	t.Run("credential unset", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          unset WORKCELL_HOSTED_CONTROLS_TOKEN",
+			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+	t.Run("preverified publisher", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/publish-github-release.sh \"${RELEASE_TAG}\" \\\n"+
+				"            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n"+
+				"            --immutable-releases-preverified-by-hosted-controls",
+			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+}
+
+// TestValidateReleaseWorkflowPublicationGateComparesParsedOrder proves the gate
+// reads the order bash reaches the three commands, not the order their names
+// first appear as text. A comment naming them in the required order must not
+// cover a step that mutates the release before the hosted-controls recheck.
+func TestValidateReleaseWorkflowPublicationGateComparesParsedOrder(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const ordered = "          ./scripts/run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"\n" +
+		"          unset WORKCELL_HOSTED_CONTROLS_TOKEN\n"
+	swapped := "          # order: ./scripts/run-hosted-controls-audit.sh\n" +
+		"          # then: unset WORKCELL_HOSTED_CONTROLS_TOKEN\n" +
+		"          # then: ./scripts/publish-github-release.sh\n" +
+		"          unset WORKCELL_HOSTED_CONTROLS_TOKEN\n" +
+		"          ./scripts/run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"\n"
+	mutated := strings.Replace(workflow, ordered, swapped, 1)
+	if mutated == workflow {
+		t.Fatal("the publication step no longer carries the audit and unset lines this test rewrites")
+	}
+	err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
+	if err == nil || !strings.Contains(err.Error(), "recheck hosted controls") {
+		t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want a recheck order failure", err)
+	}
+}
+
 func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T) {
 	workflow := string(readReleaseWorkflow(t))
 	decoys := []struct {
@@ -250,6 +331,129 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
 				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
 				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands replaced by the second body of two heredocs",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          cat <<'NOTE' <<'PLAN' >/dev/null\n" +
+				"          NOTE\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands hidden behind a quoted delimiter that desynchronises the queue",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          : <<'A' \"text <<B\"\n" +
+				"          A\n" +
+				"          cat <<'PLAN' >/dev/null\n" +
+				"          B\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "destinations moved inside a quoted argument the shell never reads as options",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          oras cp --recursive --from-oci-layout 'x --to-oci-layout dist/release-image:amd64 x' || true\n" +
+				"          oras cp --recursive --from-oci-layout 'x --to-oci-layout dist/release-image:arm64 x' || true",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands hidden behind a delimiter an escaped quote appears to quote",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          : \\' <<PLAN ''\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "copies renamed to a command bash never runs by a backslash in double quotes",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          \"or\\as\" cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64 || true\n" +
+				"          \"or\\as\" cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64 || true",
+			want: "copy both platform images",
+		},
+		{
+			name: "destinations exposed by a command substitution inside the quoted argument",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          oras cp --recursive --from-oci-layout \"$(printf x)\\ # --to-oci-layout dist/release-image:amd64 ignored\" || true\n" +
+				"          oras cp --recursive --from-oci-layout \"$(printf x)\\ # --to-oci-layout dist/release-image:arm64 ignored\" || true",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands moved into a heredoc a quoted command substitution opens",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          printf '%s' \"$(cat <<PLAN\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN\n" +
+				"          )\"",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands hidden behind an indented terminator bash never reads as one",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          cat <<PLAN >/dev/null\n" +
+				"            PLAN\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands hidden behind a space-indented terminator of a tab-stripped body",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          cat <<-PLAN >/dev/null\n" +
+				"            PLAN\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "destinations moved onto a line a space after the backslash detaches",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          oras cp --recursive --from-oci-layout \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\ \n" +
+				"          --to-oci-layout dist/release-image:amd64 || true\n" +
+				"          oras cp --recursive --from-oci-layout \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\ \n" +
+				"          --to-oci-layout dist/release-image:arm64 || true",
+			want: "copy both platform images",
+		},
+		{
+			name: "destinations joined to their option by a continuation that inserts no space",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          oras cp --recursive --from-oci-layout \"dist/image-amd64/layout@${AMD64_DIGEST}\" --to-oci-layout\\\n" +
+				"          dist/release-image:amd64 || true\n" +
+				"          oras cp --recursive --from-oci-layout \"dist/image-arm64/layout@${ARM64_DIGEST}\" --to-oci-layout\\\n" +
+				"          dist/release-image:arm64 || true",
 			want: "copy both platform images",
 		},
 		{
