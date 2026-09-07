@@ -31,11 +31,8 @@ const (
 	releaseOutputIdentity = "https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main"
 )
 
-// releaseIdentity holds the per-release values the verifier derives its
-// subjects, image tags and certificate identity from. Every success run builds
-// its fixture, stubs and expectations from one of these, so a verifier that
-// hard-codes any single value passes the primary release and fails the
-// alternate one.
+// releaseIdentity holds the per-release values the verifier derives its subjects, image
+// tags and certificate identity from, so a verifier that hard-codes one fails the alternate.
 type releaseIdentity struct {
 	repo        string
 	tag         string
@@ -62,8 +59,7 @@ func (r releaseIdentity) identity() string {
 	return "https://github.com/" + r.repo + "/.github/workflows/release.yml@refs/heads/main"
 }
 
-// assets mirrors DATA_ASSETS in scripts/verify-release-outputs.sh, in the order
-// the verifier walks it.
+// assets mirrors DATA_ASSETS in the verifier, in the order it walks them.
 func (r releaseIdentity) assets() []string {
 	return []string{
 		r.bundle(),
@@ -78,8 +74,7 @@ func (r releaseIdentity) assets() []string {
 	}
 }
 
-// checksumAssets mirrors CHECKSUM_ASSETS: every release asset SHA256SUMS itself
-// must bind, which is every data asset except SHA256SUMS.
+// checksumAssets mirrors CHECKSUM_ASSETS: every data asset except SHA256SUMS itself.
 func (r releaseIdentity) checksumAssets() []string {
 	assets := make([]string, 0, len(r.assets())-1)
 	for _, asset := range r.assets() {
@@ -90,12 +85,9 @@ func (r releaseIdentity) checksumAssets() []string {
 	return assets
 }
 
-// requireSHA256Sum skips when the verifier's trusted path holds no sha256sum.
-// The shipped script checksums every asset with that command; macOS 26 provides
-// it in /sbin, but earlier macOS releases ship only shasum, and there the whole
-// host-native `go test ./...` loop would fail on a missing tool rather than on a
-// verifier defect. The trusted path is read from the script so this gate cannot
-// drift away from the one the verifier actually uses.
+// requireSHA256Sum skips when the verifier's trusted path holds no sha256sum, so a host
+// that ships only shasum fails on the missing tool rather than on a verifier defect. The
+// trusted path is read from the script so this gate cannot drift from the one it uses.
 func requireSHA256Sum(t *testing.T) {
 	t.Helper()
 	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
@@ -162,14 +154,11 @@ func releaseOutputFixtureFor(t *testing.T, release releaseIdentity) string {
 	return dir
 }
 
-// stubOptions selects what the driver's cosign and gh stubs accept and what
-// they return. Each fail glob selects which invocations of that tool fail: ""
-// fails none, "*" fails every one, and a narrower glob fails a single call, so a
-// negative control cannot be satisfied by an earlier check rejecting first. An
-// empty tag digest makes the matching `cosign verify` return an empty result
-// array instead of failing, which is the case a vacuously-true `all` predicate
-// would accept; the object fields return a well-shaped but out-of-contract
-// response instead of an array.
+// stubOptions selects what the driver's cosign and gh stubs accept and return. Each fail
+// glob selects which invocations fail: "" none, "*" every one, a narrower glob a single
+// call, so a negative control cannot be satisfied by an earlier check rejecting first. An
+// empty tag digest returns an empty result array (the case a vacuously-true `all` predicate
+// accepts); the object fields return a well-shaped but out-of-contract response instead.
 type stubOptions struct {
 	scriptPath       string
 	cosignFailGlob   string
@@ -192,8 +181,7 @@ func defaultStubOptions(t *testing.T) stubOptions {
 	}
 }
 
-// releaseOutputStubBin builds a driver that sources the real verifier and
-// replaces cosign and gh with logging stubs.
+// releaseOutputStubBin builds a driver that sources the real verifier and replaces cosign and gh with logging stubs.
 func releaseOutputStubBin(t *testing.T, cosignFailGlob, ghFailGlob string) (string, string, string) {
 	t.Helper()
 	opts := defaultStubOptions(t)
@@ -202,9 +190,8 @@ func releaseOutputStubBin(t *testing.T, cosignFailGlob, ghFailGlob string) (stri
 	return releaseOutputStubDriver(t, opts)
 }
 
-// shQuote renders s as a single-quoted Bash literal. Go's %q produces a Go
-// string literal, which Bash double-quote rules still expand: a $ or backtick
-// in a path would substitute while the driver starts.
+// shQuote renders s as a single-quoted Bash literal; Go's %q leaves a $ or backtick in a
+// path to substitute under Bash double-quote rules while the driver starts.
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -224,11 +211,9 @@ log_call() {
   shift
   { printf '%%s\x1f' "$@"; printf '\n'; } >>"${log}"
 }
-# Both stubs are shell functions, so they shadow the real executable before Bash
-# consults PATH: a verifier that widened PATH around one call site alone would
-# never surface as a failed lookup here. Assert the effective PATH on every call
-# instead, and reject the help mode that makes both real tools exit 0 without
-# verifying anything.
+# Both stubs shadow the real executable before Bash consults PATH, so a PATH widened around
+# one call site would never surface as a failed lookup. Assert the effective PATH on every
+# call instead, and reject the help mode that makes both real tools exit 0 proving nothing.
 reject_unsafe_call() {
   [[ "${PATH}" == "${TRUSTED_PATH}" ]] || return 91
   local arg=""
@@ -241,13 +226,10 @@ cosign() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${GH_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 96
   reject_unsafe_call "$@" || return $?
   for arg in "$@"; do
-    # Cosign 3.1.3 weakens verification through these three options:
-    # --insecure-ignore-tlog drops the Rekor transparency check,
-    # --insecure-ignore-sct drops the certificate timestamp check, and
-    # --allow-insecure-registry drops registry TLS. Match each option as a
-    # whole token in both accepted forms; a bare substring test would also
-    # reject a subject or identity whose path or repository name happens to
-    # contain the word.
+    # Cosign 3.1.3 weakens verification through these three options: --insecure-ignore-tlog
+    # drops the Rekor check, --insecure-ignore-sct the certificate timestamp check, and
+    # --allow-insecure-registry registry TLS. Match each as a whole token in both accepted
+    # forms; a substring test would also reject a subject whose path contains the word.
     case "${arg}" in
       --insecure-ignore-tlog | --insecure-ignore-tlog=* | \
         --insecure-ignore-sct | --insecure-ignore-sct=* | \
@@ -283,8 +265,7 @@ gh() {
   reject_unsafe_call "$@" || return $?
   for arg in "$@"; do
     [[ "${arg}" != "--hostname" && "${arg}" != --hostname=* ]] || return 93
-    # --custom-trusted-root replaces the Sigstore trust root the verification is
-    # anchored to, so a shipped call must never carry it.
+    # --custom-trusted-root replaces the Sigstore trust root, so a shipped call must not carry it.
     [[ "${arg}" != "--custom-trusted-root" && "${arg}" != --custom-trusted-root=* ]] || return 92
   done
   log_call %[11]s "$@"
@@ -328,8 +309,7 @@ func releaseOutputArgs(assets, repository, tag, imageRepository, sourceDigest, w
 
 func runVerifyDriver(t *testing.T, driver string, args, env []string) (int, string) {
 	t.Helper()
-	// Bash startup files are cleared unless the caller sets them deliberately,
-	// so a test can hand the verifier hostile startup state on purpose.
+	// Bash startup files are cleared unless the caller sets them deliberately, so a test can hand the verifier hostile startup state.
 	full := append([]string{}, env...)
 	for _, name := range []string{"BASH_ENV", "ENV"} {
 		if !slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, name+"=") }) {
@@ -356,9 +336,8 @@ func runVerifyReleaseOutputs(t *testing.T, driver, assets string, attestations b
 func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDigest, workflowDigest string, attestations bool) (int, string) {
 	t.Helper()
 	args := releaseOutputArgs(assets, "omkhar/workcell", releaseOutputTag, releaseOutputImage, sourceDigest, workflowDigest, attestations)
-	// The hostile GitHub host and enterprise credentials must never reach gh:
-	// the verifier pins GH_HOST and clears both enterprise aliases per call, and
-	// the stub rejects any invocation where that pinning did not happen.
+	// The hostile host and enterprise credentials must never reach gh: the verifier pins
+	// GH_HOST and clears both aliases per call, and the stub rejects any call that lacks it.
 	return runVerifyDriver(t, driver, args, []string{
 		"GITHUB_TOKEN=test-token",
 		"GH_HOST=attacker.example.com",
@@ -367,12 +346,9 @@ func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDige
 	})
 }
 
-// TestVerifyReleaseOutputsRunsFromItsEntryPoint executes the shipped script
-// directly rather than through the sourcing driver every other test uses. A
-// script whose entry-point guard no longer calls main would exit 0 having
-// verified nothing, and one that calls `main` without "$@" would drop the
-// verify_args the release workflow passes, so both the no-argument fail-closed
-// path and argument forwarding are checked.
+// TestVerifyReleaseOutputsRunsFromItsEntryPoint executes the shipped script directly. A guard
+// that no longer calls main would exit 0 having verified nothing, and one calling main without
+// "$@" would drop the workflow's verify_args, so both fail-closed and forwarding are checked.
 func TestVerifyReleaseOutputsRunsFromItsEntryPoint(t *testing.T) {
 	t.Parallel()
 	script := verifyReleaseOutputsScript(t)
@@ -386,10 +362,9 @@ func TestVerifyReleaseOutputsRunsFromItsEntryPoint(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsIgnoresHostileBashStartup hands the shipped script a
-// BASH_ENV pointing at attacker-controlled startup code. The `#!/bin/bash -p`
-// shebang must make Bash ignore it; without privileged mode that file runs
-// before the verifier pins PATH and could replace cosign or gh outright.
+// TestVerifyReleaseOutputsIgnoresHostileBashStartup hands the script a BASH_ENV pointing at
+// attacker startup code. The `#!/bin/bash -p` shebang must make Bash ignore it; unprivileged,
+// that file runs before the verifier pins PATH and could replace cosign or gh outright.
 func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -398,9 +373,8 @@ func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 	if err := os.WriteFile(startup, []byte("printf ran >"+shQuote(marker)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Bash expands the VALUE of BASH_ENV before using it as a path, so the
-	// expansion-active characters a hostile TMPDIR can contain must be escaped
-	// for the literal file to be the one that runs.
+	// Bash expands the VALUE of BASH_ENV before using it as a path, so the expansion-active
+	// characters a hostile TMPDIR can contain must be escaped for the literal file to run.
 	escaped := strings.NewReplacer(`\`, `\\`, "$", `\$`, "`", "\\`").Replace(startup)
 	hostile := []string{"BASH_ENV=" + escaped, "ENV=" + escaped}
 
@@ -412,8 +386,7 @@ func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 		t.Fatalf("release verifier executed caller-selected Bash startup code (%v)", err)
 	}
 
-	// Negative fixture: the same startup file does run when the privileged
-	// shebang is dropped, so the check above is not passing on an inert path.
+	// Negative fixture: the same startup file does run once the privileged shebang is dropped.
 	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
 	if err != nil {
 		t.Fatal(err)
@@ -432,10 +405,9 @@ func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsIsolatesTokensFromCosign supplies GH_TOKEN, which the
-// attestation runs never exercise because they pass GITHUB_TOKEN. The stub
-// cosign refuses any invocation that can still see a token, so the run only
-// succeeds if run_cosign cleared this alias too.
+// TestVerifyReleaseOutputsIsolatesTokensFromCosign supplies GH_TOKEN, which the attestation
+// runs never exercise. The stub cosign refuses any invocation that can still see a token, so
+// the run only succeeds if run_cosign cleared this alias too.
 func TestVerifyReleaseOutputsIsolatesTokensFromCosign(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
@@ -450,9 +422,8 @@ func TestVerifyReleaseOutputsIsolatesTokensFromCosign(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsAcceptsGHTokenForAttestations covers the documented
-// GITHUB_TOKEN-or-GH_TOKEN credential fallback with attestations enabled, which
-// every other attestation run misses by supplying GITHUB_TOKEN.
+// TestVerifyReleaseOutputsAcceptsGHTokenForAttestations covers the documented GITHUB_TOKEN-or-
+// GH_TOKEN fallback with attestations on, which every other attestation run misses.
 func TestVerifyReleaseOutputsAcceptsGHTokenForAttestations(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
@@ -472,8 +443,7 @@ func TestVerifyReleaseOutputsAcceptsGHTokenForAttestations(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsRejectsUnexpectedReleaseFile leaves SHA256SUMS intact
-// so only the directory inventory walk can reject the extra file.
+// TestVerifyReleaseOutputsRejectsUnexpectedReleaseFile leaves SHA256SUMS intact so only the directory inventory walk can reject the extra file.
 func TestVerifyReleaseOutputsRejectsUnexpectedReleaseFile(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
@@ -491,14 +461,7 @@ func TestVerifyReleaseOutputsRejectsDifferentSourceAndWorkflowCommits(t *testing
 	t.Parallel()
 	assets := releaseOutputFixture(t)
 	bin, _, _ := releaseOutputStubBin(t, "", "")
-	code, out := runVerifyReleaseOutputsWithDigests(
-		t,
-		bin,
-		assets,
-		strings.Repeat("b", 40),
-		strings.Repeat("c", 40),
-		false,
-	)
+	code, out := runVerifyReleaseOutputsWithDigests(t, bin, assets, strings.Repeat("b", 40), strings.Repeat("c", 40), false)
 	if code == 0 || !strings.Contains(out, "source and trusted workflow digests must match") {
 		t.Fatalf("expected release/workflow digest mismatch rejection, got %d\n%s", code, out)
 	}
@@ -539,9 +502,8 @@ func logLines(t *testing.T, path string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-// mutatedVerifierDriver stubs a copy of the verifier with one textual change
-// applied, so a negative fixture can show the assertion under test really does
-// fail against the regression it claims to catch.
+// mutatedVerifierDriver stubs a copy of the verifier with one textual change applied, so a
+// negative fixture can show the assertion really fails against the regression it claims to catch.
 func mutatedVerifierDriver(t *testing.T, source, old, replacement string) string {
 	t.Helper()
 	mutated := strings.Replace(source, old, replacement, 1)
@@ -558,8 +520,7 @@ func mutatedVerifierDriver(t *testing.T, source, old, replacement string) string
 	return driver
 }
 
-// poisonedToolPath returns a directory whose every tool the verifier shells out
-// to exits non-zero, so any run that resolves a tool from it cannot complete.
+// poisonedToolPath returns a directory where every tool the verifier shells out to exits non-zero, so any run resolving from it cannot complete.
 func poisonedToolPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -571,15 +532,12 @@ func poisonedToolPath(t *testing.T) string {
 	return dir
 }
 
-// TestVerifyReleaseOutputsPinsToolPath runs the verifier with the caller-supplied
-// tool-path variables named below aimed at a directory of failing tools. The run
-// must still succeed, which is only possible if the script resolved its tools
-// from its own fixed trusted path and honoured none of those overrides. The
-// assertion is execution-based rather than a source scan, but it only covers the
-// variable names it poisons: an override read from an unlisted name would be
-// unset here and would leave this test green.
-// TestVerifyReleaseOutputsRejectsDisarmedVerification closes the narrower case
-// of a PATH widened around one call site, which no argument assertion can see.
+// TestVerifyReleaseOutputsPinsToolPath aims the caller-supplied tool-path variables named below
+// at a directory of failing tools. The run must still succeed, which is only possible if the
+// script resolved its tools from its own fixed trusted path. The check only covers the names it
+// poisons: an override read from an unlisted name would be unset here and leave this green.
+// TestVerifyReleaseOutputsRejectsDisarmedVerification closes the narrower case of a PATH widened
+// around one call site, which no argument assertion can see.
 func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	t.Parallel()
 	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
@@ -607,23 +565,11 @@ func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 		t.Fatalf("release verifier honoured a caller-selected tool path, got %d\n%s", code, out)
 	}
 
-	// Negative fixtures: both regression shapes this guards against do fail
-	// under exactly the environment above, so the success is not vacuous.
-	for _, tc := range []struct {
-		name        string
-		old         string
-		replacement string
-	}{
-		{
-			name:        "inherits the caller PATH",
-			old:         `export PATH="${TRUSTED_PATH}"`,
-			replacement: `export PATH="${PATH}"`,
-		},
-		{
-			name:        "honours a caller override variable",
-			old:         `readonly TRUSTED_PATH="`,
-			replacement: `readonly TRUSTED_PATH="${WORKCELL_RELEASE_VERIFY_TRUSTED_PATH:+${WORKCELL_RELEASE_VERIFY_TRUSTED_PATH}:}`,
-		},
+	// Negative fixtures: both regression shapes this guards against do fail under exactly the
+	// environment above, so the success is not vacuous.
+	for _, tc := range []struct{ name, old, replacement string }{
+		{name: "inherits the caller PATH", old: `export PATH="${TRUSTED_PATH}"`, replacement: `export PATH="${PATH}"`},
+		{name: "honours a caller override variable", old: `readonly TRUSTED_PATH="`, replacement: `readonly TRUSTED_PATH="${WORKCELL_RELEASE_VERIFY_TRUSTED_PATH:+${WORKCELL_RELEASE_VERIFY_TRUSTED_PATH}:}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -635,13 +581,10 @@ func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsRejectsDisarmedVerification covers the regressions
-// that leave both external verifiers running and exiting 0 while proving
-// nothing: help mode, a caller-supplied Sigstore trust root, and a PATH widened
-// around a single call site. Argument-level assertions cannot see the last one
-// because the stubs are shell functions that shadow the real executables, so
-// the stubs check the effective PATH instead; each mutant below shows that
-// check, and the help and trust-root checks, are not vacuous.
+// TestVerifyReleaseOutputsRejectsDisarmedVerification covers the regressions that leave both
+// external verifiers running and exiting 0 while proving nothing: help mode, a caller-supplied
+// Sigstore trust root, and a PATH widened around a single call site. Argument assertions cannot
+// see the last one, so the stubs check the effective PATH; each mutant proves a check non-vacuous.
 func TestVerifyReleaseOutputsRejectsDisarmedVerification(t *testing.T) {
 	t.Parallel()
 	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
@@ -651,55 +594,21 @@ func TestVerifyReleaseOutputsRejectsDisarmedVerification(t *testing.T) {
 	source := string(content)
 	poisoned := poisonedToolPath(t)
 
+	const cosignWant, ghWant = "Cosign verification failed for ", "GitHub attestation verification failed for "
+	const certSHA = "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" \\\n"
+	const denySelfHosted = "      --deny-self-hosted-runners \\\n"
+	widened := []string{"WORKCELL_RELEASE_VERIFY_PATH=" + poisoned}
 	for _, tc := range []struct {
-		name         string
-		old          string
-		replacement  string
-		want         string
-		attestations bool
-		extraEnv     []string
+		name, old, replacement, want string
+		attestations                 bool
+		extraEnv                     []string
 	}{
-		{
-			name:        "Cosign runs in help mode",
-			old:         "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" \\\n",
-			replacement: "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" --help \\\n",
-			want:        "Cosign verification failed for ",
-		},
-		{
-			name:        "Cosign skips the transparency log",
-			old:         "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" \\\n",
-			replacement: "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" --insecure-ignore-tlog \\\n",
-			want:        "Cosign verification failed for ",
-		},
-		{
-			name:         "gh runs in help mode",
-			old:          "      --deny-self-hosted-runners \\\n",
-			replacement:  "      --deny-self-hosted-runners --help \\\n",
-			want:         "GitHub attestation verification failed for ",
-			attestations: true,
-		},
-		{
-			name:         "gh takes a caller-supplied trust root",
-			old:          "      --deny-self-hosted-runners \\\n",
-			replacement:  "      --custom-trusted-root /tmp/attacker-root.jsonl --deny-self-hosted-runners \\\n",
-			want:         "GitHub attestation verification failed for ",
-			attestations: true,
-		},
-		{
-			name:        "Cosign runs with a widened path",
-			old:         "    cosign \"$@\"\n",
-			replacement: "    PATH=\"${WORKCELL_RELEASE_VERIFY_PATH:-}:${PATH}\" cosign \"$@\"\n",
-			want:        "Cosign verification failed for ",
-			extraEnv:    []string{"WORKCELL_RELEASE_VERIFY_PATH=" + poisoned},
-		},
-		{
-			name:         "gh runs with a widened path",
-			old:          "      gh attestation verify \"${subject}\" \\\n",
-			replacement:  "      PATH=\"${WORKCELL_RELEASE_VERIFY_PATH:-}:${PATH}\" gh attestation verify \"${subject}\" \\\n",
-			want:         "GitHub attestation verification failed for ",
-			attestations: true,
-			extraEnv:     []string{"WORKCELL_RELEASE_VERIFY_PATH=" + poisoned},
-		},
+		{name: "Cosign runs in help mode", old: certSHA, replacement: "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" --help \\\n", want: cosignWant},
+		{name: "Cosign skips the transparency log", old: certSHA, replacement: "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" --insecure-ignore-tlog \\\n", want: cosignWant},
+		{name: "gh runs in help mode", old: denySelfHosted, replacement: "      --deny-self-hosted-runners --help \\\n", want: ghWant, attestations: true},
+		{name: "gh takes a caller-supplied trust root", old: denySelfHosted, replacement: "      --custom-trusted-root /tmp/attacker-root.jsonl --deny-self-hosted-runners \\\n", want: ghWant, attestations: true},
+		{name: "Cosign runs with a widened path", old: "    cosign \"$@\"\n", replacement: "    PATH=\"${WORKCELL_RELEASE_VERIFY_PATH:-}:${PATH}\" cosign \"$@\"\n", want: cosignWant, extraEnv: widened},
+		{name: "gh runs with a widened path", old: "      gh attestation verify \"${subject}\" \\\n", replacement: "      PATH=\"${WORKCELL_RELEASE_VERIFY_PATH:-}:${PATH}\" gh attestation verify \"${subject}\" \\\n", want: ghWant, attestations: true, extraEnv: widened},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -721,17 +630,15 @@ func TestVerifyReleaseOutputsRejectsDisarmedVerification(t *testing.T) {
 	}
 }
 
-// callArgs splits one logged stub call back into its argument vector. The stub
-// separates arguments with a unit separator rather than logging "$*", so a path
-// containing whitespace stays one argument.
+// callArgs splits one logged stub call back into its argument vector. The stub separates
+// arguments with a unit separator, so a path containing whitespace stays one argument.
 func callArgs(line string) []string {
 	return strings.Split(strings.TrimSuffix(line, "\x1f"), "\x1f")
 }
 
-// flagOccurrences counts every appearance of flag, in both the separate-argument
-// and the --flag=value forms that gh and cosign accept. Aliases name alternate
-// spellings of the same flag (gh's -R for --repo), which the tools treat
-// identically, so an occurrence of any spelling counts.
+// flagOccurrences counts every appearance of flag, in both the separate-argument and the
+// --flag=value forms. Aliases name alternate spellings the tools treat identically (gh's -R
+// for --repo), so an occurrence of any spelling counts.
 func flagOccurrences(args []string, flag string, aliases ...string) int {
 	seen := 0
 	for _, spelling := range append([]string{flag}, aliases...) {
@@ -745,16 +652,14 @@ func flagOccurrences(args []string, flag string, aliases ...string) int {
 	return seen
 }
 
-// shortFlag reports whether spelling is a single-dash short option, which gh
-// also accepts in the compact attached form (-Rvalue), not only spaced.
+// shortFlag reports whether spelling is a single-dash short option, which gh also accepts in the compact attached form (-Rvalue).
 func shortFlag(spelling string) bool {
 	return len(spelling) == 2 && spelling[0] == '-' && spelling[1] != '-'
 }
 
-// flagValue returns the argument bound to flag, and only when the flag appears
-// exactly once in either accepted form. Both tools take the last occurrence of a
-// repeated flag, so a weaker second --cert-identity or --predicate-type would
-// otherwise pass an assertion made against the first.
+// flagValue returns the argument bound to flag, and only when it appears exactly once. Both
+// tools take the last occurrence of a repeated flag, so a weaker second --cert-identity or
+// --predicate-type would otherwise pass an assertion made against the first.
 func flagValue(args []string, flag string, aliases ...string) string {
 	if flagOccurrences(args, flag, aliases...) != 1 {
 		return ""
@@ -775,10 +680,9 @@ func flagValue(args []string, flag string, aliases ...string) string {
 	return ""
 }
 
-// callSubjects reduces each logged stub call to the subject it verified, plus
-// the bundle and predicate type that select what is being proved about it.
-// Comparing the whole multiset means a verifier that checks one subject
-// repeatedly cannot pass by call count alone.
+// callSubjects reduces each logged stub call to the subject it verified, plus the bundle and
+// predicate type that select what is proved about it. Comparing the whole multiset means a
+// verifier that checks one subject repeatedly cannot pass by call count alone.
 func callSubjects(t *testing.T, path string) []string {
 	t.Helper()
 	subjects := make([]string, 0)
@@ -815,22 +719,15 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 	assertVerifiedRelease(t, release, assets, cosignLog, ghLog)
 }
 
-// TestVerifyReleaseOutputsVerifiesAnAlternateRelease runs a second successful
-// release whose repository, tag class, release commit, image digest and
-// attestation credential all differ from the primary fixture. Every one of those
-// values reaches an argument the verifier derives rather than copies, so a
-// verifier that substituted any single literal -- the fixture image digest, the
-// upstream repository, the `sha-<commit>` tag built from the release commit, the
-// release-candidate branch of the tag policy, or the credential it reads --
-// passes the rest of this suite and fails here.
+// TestVerifyReleaseOutputsVerifiesAnAlternateRelease runs a second successful release whose
+// repository, tag class, release commit, image digest and attestation credential all differ from
+// the primary fixture. Each reaches an argument the verifier derives rather than copies, so a
+// verifier substituting any single literal passes the rest of this suite and fails here.
 func TestVerifyReleaseOutputsVerifiesAnAlternateRelease(t *testing.T) {
 	t.Parallel()
 	release := releaseIdentity{
-		// The repository name carries the words the stubs screen for as
-		// options, so every subject, image tag and certificate identity in
-		// this run contains them. A stub that matched an option as a bare
-		// substring rather than as a whole token would reject this valid
-		// release.
+		// The repository name carries the words the stubs screen for as options, so a stub
+		// matching an option as a substring rather than a whole token rejects this valid release.
 		repo:        "acme-fork/workcell-insecure-hostname-mirror",
 		tag:         "v1.4.0-rc.2",
 		imageDigest: strings.Repeat("f", 64),
@@ -857,10 +754,9 @@ func TestVerifyReleaseOutputsVerifiesAnAlternateRelease(t *testing.T) {
 	assertVerifiedRelease(t, release, assets, cosignLog, ghLog)
 }
 
-// assertVerifiedRelease checks that a successful run verified exactly the
-// subjects the release identity implies, and that every logged call carries the
-// identity, issuer, commit and repository derived from it. Both success runs
-// share it, so an expectation can only be met by values the verifier derived.
+// assertVerifiedRelease checks that a run verified exactly the subjects the release identity
+// implies, and that every logged call carries the identity, issuer, commit and repository derived
+// from it. Both success runs share it, so an expectation only holds for derived values.
 func assertVerifiedRelease(t *testing.T, release releaseIdentity, assets, cosignLog, ghLog string) {
 	t.Helper()
 	wantCosign := make([]string, 0, 12)
@@ -884,8 +780,7 @@ func assertVerifiedRelease(t *testing.T, release releaseIdentity, assets, cosign
 		"attestation verify " + filepath.Join(assets, release.bundle()) + " predicate=" + spdxPredicate,
 	}
 	for _, asset := range release.assets() {
-		// The two SPDX documents are release data but are not themselves
-		// attested subjects; the image and source bundle carry those SBOMs.
+		// The two SPDX documents are release data but not attested subjects; the image and source bundle carry those SBOMs.
 		if strings.HasSuffix(asset, ".spdx.json") {
 			continue
 		}
@@ -898,9 +793,8 @@ func assertVerifiedRelease(t *testing.T, release releaseIdentity, assets, cosign
 
 	for _, line := range logLines(t, ghLog) {
 		args := callArgs(line)
-		// Exactly one occurrence, in the bare form: gh also accepts
-		// --deny-self-hosted-runners=false and uses the last occurrence, so
-		// neither an appended equals form nor a repeat may be tolerated.
+		// Exactly one occurrence, in the bare form: gh also accepts --deny-self-hosted-runners=false
+		// and uses the last occurrence, so neither an equals form nor a repeat may be tolerated.
 		if flagOccurrences(args, "--deny-self-hosted-runners") != 1 ||
 			!slices.Contains(args, "--deny-self-hosted-runners") {
 			t.Fatalf("gh attestation call lacks an unconditional self-hosted runner denial: %s", line)
@@ -920,9 +814,8 @@ func assertVerifiedRelease(t *testing.T, release releaseIdentity, assets, cosign
 		if got := flagValue(args, "--source-ref"); got != "refs/heads/main" {
 			t.Fatalf("gh attestation call lacks trusted main source ref: %s", line)
 		}
-		// gh also accepts -R as an alias, and the last occurrence wins: a
-		// later -R would silently redirect the attestation lookup, so any
-		// second spelling must fail the single-occurrence rule.
+		// gh also accepts -R and the last occurrence wins: a later -R would silently redirect the
+		// lookup, so any second spelling must fail the single-occurrence rule.
 		if got := flagValue(args, "--repo", "-R"); got != release.repo {
 			t.Fatalf("gh attestation call lacks the release repository: %s", line)
 		}
@@ -949,52 +842,27 @@ func TestVerifyReleaseOutputsRejectsMissingSignature(t *testing.T) {
 	}
 	bin, _, _ := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
-	// The inventory-completeness guard counts the deleted signature before the
-	// per-file check runs, so it reports the miss first; either message proves
-	// the verifier fails closed on an absent signature.
+	// The inventory-completeness guard counts the deleted signature before the per-file check
+	// runs, so it reports first; either message proves the verifier fails closed.
 	if code == 0 || !(strings.Contains(out, "required release file is missing") ||
 		strings.Contains(out, "release directory listing is incomplete")) {
 		t.Fatalf("expected missing signature rejection, got %d\n%s", code, out)
 	}
 }
 
-// TestVerifyReleaseOutputsRejectsCosignFailure fails one Cosign call at a time
-// so each rejection is attributable to the call under test rather than to an
-// earlier check that would reject first.
+// TestVerifyReleaseOutputsRejectsCosignFailure fails one Cosign call at a time so each rejection
+// is attributable to the call under test rather than to an earlier check that would reject first.
 func TestVerifyReleaseOutputsRejectsCosignFailure(t *testing.T) {
 	t.Parallel()
 	imageRef := releaseOutputImage + "@sha256:" + strings.Repeat("a", 64)
+	releaseTag := releaseOutputImage + ":" + releaseOutputTag
 	commitTag := releaseOutputImage + ":sha-" + strings.Repeat("c", 40)
-	for _, tc := range []struct {
-		name     string
-		failGlob string
-		want     string
-	}{
-		{
-			name:     "every call",
-			failGlob: "*",
-			want:     "Cosign verification failed for " + releaseOutputBundle,
-		},
-		{
-			name:     "one blob signature",
-			failGlob: "verify-blob *workcell.rb --bundle *",
-			want:     "Cosign verification failed for workcell.rb",
-		},
-		{
-			name:     "image digest",
-			failGlob: "verify " + imageRef + " *",
-			want:     "Cosign image verification failed for " + imageRef,
-		},
-		{
-			name:     "release tag",
-			failGlob: "verify " + releaseOutputImage + ":" + releaseOutputTag + " *",
-			want:     "Cosign image verification failed for " + releaseOutputImage + ":" + releaseOutputTag,
-		},
-		{
-			name:     "commit tag",
-			failGlob: "verify " + commitTag + " *",
-			want:     "Cosign image verification failed for " + commitTag,
-		},
+	for _, tc := range []struct{ name, failGlob, want string }{
+		{name: "every call", failGlob: "*", want: "Cosign verification failed for " + releaseOutputBundle},
+		{name: "one blob signature", failGlob: "verify-blob *workcell.rb --bundle *", want: "Cosign verification failed for workcell.rb"},
+		{name: "image digest", failGlob: "verify " + imageRef + " *", want: "Cosign image verification failed for " + imageRef},
+		{name: "release tag", failGlob: "verify " + releaseTag + " *", want: "Cosign image verification failed for " + releaseTag},
+		{name: "commit tag", failGlob: "verify " + commitTag + " *", want: "Cosign image verification failed for " + commitTag},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1033,17 +901,14 @@ func TestVerifyReleaseOutputsRejectsMovedCommitImageTag(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsRejectsAttestationFailure fails one gh attestation
-// call at a time. The verifier makes ten, and only the first is reachable by a
-// blanket failure, so the later OCI SBOM, per-asset provenance and source-bundle
-// SBOM calls each need their own case to prove their result is not swallowed.
-// TestVerifyReleaseOutputsRejectsOutOfContractImageVerification covers Cosign
-// calls that succeed but return something other than a non-empty result array.
-// A digest predicate built only from `all` is vacuously true on an empty array,
-// and one that omits the array type check accepts an object whose values happen
-// to carry a matching digest, because jq's `length` and `.[]` both work on
-// objects. Each shape is applied to one named tag at a time so the rejection is
-// attributable to the tag under test.
+// TestVerifyReleaseOutputsRejectsAttestationFailure fails one gh attestation call at a time. The
+// verifier makes ten and only the first is reachable by a blanket failure, so the later OCI SBOM,
+// per-asset provenance and source-bundle SBOM calls each need a case of their own.
+// TestVerifyReleaseOutputsRejectsOutOfContractImageVerification covers Cosign calls that succeed
+// but return something other than a non-empty result array. A digest predicate built only from
+// `all` is vacuously true on an empty array, and one omitting the array type check accepts an
+// object, because jq's `length` and `.[]` both work on objects. Each shape is applied to one
+// named tag at a time so the rejection is attributable to the tag under test.
 func TestVerifyReleaseOutputsRejectsOutOfContractImageVerification(t *testing.T) {
 	t.Parallel()
 	release := defaultRelease()
@@ -1054,26 +919,10 @@ func TestVerifyReleaseOutputsRejectsOutOfContractImageVerification(t *testing.T)
 		opts func(stubOptions) stubOptions
 		want string
 	}{
-		{
-			name: "empty result array for the release tag",
-			opts: func(o stubOptions) stubOptions { o.releaseTagDigest = ""; return o },
-			want: releaseTagWant,
-		},
-		{
-			name: "empty result array for the commit tag",
-			opts: func(o stubOptions) stubOptions { o.commitTagDigest = ""; return o },
-			want: commitTagWant,
-		},
-		{
-			name: "object response for the release tag",
-			opts: func(o stubOptions) stubOptions { o.releaseTagObject = true; return o },
-			want: releaseTagWant,
-		},
-		{
-			name: "object response for the commit tag",
-			opts: func(o stubOptions) stubOptions { o.commitTagObject = true; return o },
-			want: commitTagWant,
-		},
+		{name: "empty result array for the release tag", opts: func(o stubOptions) stubOptions { o.releaseTagDigest = ""; return o }, want: releaseTagWant},
+		{name: "empty result array for the commit tag", opts: func(o stubOptions) stubOptions { o.commitTagDigest = ""; return o }, want: commitTagWant},
+		{name: "object response for the release tag", opts: func(o stubOptions) stubOptions { o.releaseTagObject = true; return o }, want: releaseTagWant},
+		{name: "object response for the commit tag", opts: func(o stubOptions) stubOptions { o.commitTagObject = true; return o }, want: commitTagWant},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1090,31 +939,12 @@ func TestVerifyReleaseOutputsRejectsOutOfContractImageVerification(t *testing.T)
 func TestVerifyReleaseOutputsRejectsAttestationFailure(t *testing.T) {
 	t.Parallel()
 	imageRef := releaseOutputImage + "@sha256:" + strings.Repeat("a", 64)
-	for _, tc := range []struct {
-		name     string
-		failGlob string
-		want     string
-	}{
-		{
-			name:     "every call",
-			failGlob: "*",
-			want:     "GitHub attestation verification failed for oci://" + imageRef,
-		},
-		{
-			name:     "image SBOM",
-			failGlob: "attestation verify oci://* --predicate-type " + spdxPredicate + " *",
-			want:     "GitHub attestation verification failed for oci://" + imageRef,
-		},
-		{
-			name:     "one asset provenance",
-			failGlob: "attestation verify *SHA256SUMS --repo *",
-			want:     "GitHub attestation verification failed for ",
-		},
-		{
-			name:     "source bundle SBOM",
-			failGlob: "attestation verify *" + releaseOutputBundle + " --repo * --predicate-type " + spdxPredicate + " *",
-			want:     "GitHub attestation verification failed for ",
-		},
+	const ghWant = "GitHub attestation verification failed for "
+	for _, tc := range []struct{ name, failGlob, want string }{
+		{name: "every call", failGlob: "*", want: ghWant + "oci://" + imageRef},
+		{name: "image SBOM", failGlob: "attestation verify oci://* --predicate-type " + spdxPredicate + " *", want: ghWant + "oci://" + imageRef},
+		{name: "one asset provenance", failGlob: "attestation verify *SHA256SUMS --repo *", want: ghWant},
+		{name: "source bundle SBOM", failGlob: "attestation verify *" + releaseOutputBundle + " --repo * --predicate-type " + spdxPredicate + " *", want: ghWant},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1124,8 +954,7 @@ func TestVerifyReleaseOutputsRejectsAttestationFailure(t *testing.T) {
 			if code == 0 || !strings.Contains(out, tc.want) {
 				t.Fatalf("expected GitHub attestation rejection %q, got %d\n%s", tc.want, code, out)
 			}
-			// Exactly one call may fail, so the run must stop on the call the
-			// glob selected rather than on an earlier one.
+			// Exactly one call may fail, so the run must stop on the call the glob selected.
 			calls := logLines(t, ghLog)
 			last := calls[len(calls)-1]
 			if tc.failGlob != "*" && len(calls) < 2 {
@@ -1138,20 +967,17 @@ func TestVerifyReleaseOutputsRejectsAttestationFailure(t *testing.T) {
 	}
 }
 
-// TestVerifyReleaseOutputsRejectsChecksumMismatch alters one asset at a time
-// across the whole checksum inventory. A verifier that skipped any single entry
-// could publish that file alongside a stale, separately signed SHA256SUMS, so
-// one mutated asset is not enough: every asset must be shown to reach the
-// binding check.
+// TestVerifyReleaseOutputsRejectsChecksumMismatch alters one asset at a time across the whole
+// checksum inventory. A verifier skipping any single entry could publish that file alongside a
+// stale, separately signed SHA256SUMS, so every asset must be shown to reach the binding check.
 func TestVerifyReleaseOutputsRejectsChecksumMismatch(t *testing.T) {
 	t.Parallel()
 	for _, asset := range defaultRelease().checksumAssets() {
 		t.Run(asset, func(t *testing.T) {
 			t.Parallel()
 			assets := releaseOutputFixture(t)
-			// The build input manifest is parsed for its release-commit
-			// binding before the checksum walk, so its replacement keeps that
-			// binding and changes only the bytes.
+			// The build input manifest is parsed for its release-commit binding before the
+			// checksum walk, so its replacement keeps that binding and changes only the bytes.
 			content := []byte("changed\n")
 			if asset == "workcell-build-inputs.json" {
 				content = []byte(`{"build":{"ref":"` + defaultRelease().commit + `"}}` + "\n")
@@ -1207,9 +1033,8 @@ func TestVerifyReleaseOutputsRejectsSymlinkBundle(t *testing.T) {
 	}
 }
 
-// rewriteAsset replaces one release asset and its SHA256SUMS entry so the
-// checksum inventory still matches the mutated content. That keeps a negative
-// control aimed at the check under test instead of tripping the checksum gate.
+// rewriteAsset replaces one release asset and its SHA256SUMS entry so the inventory still
+// matches, keeping a negative control aimed at the check under test rather than the checksum gate.
 func rewriteAsset(t *testing.T, assets, name string, content []byte) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(assets, name), content, 0o644); err != nil {
@@ -1237,9 +1062,8 @@ func rewriteAsset(t *testing.T, assets, name string, content []byte) {
 	}
 }
 
-// TestVerifyReleaseOutputsRejectsUnboundBuildInputs points the build input
-// manifest at another commit while keeping SHA256SUMS valid, so only the
-// verifier's .build.ref binding can reject it.
+// TestVerifyReleaseOutputsRejectsUnboundBuildInputs points the build input manifest at another
+// commit while keeping SHA256SUMS valid, so only the verifier's .build.ref binding can reject it.
 func TestVerifyReleaseOutputsRejectsUnboundBuildInputs(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
@@ -1253,21 +1077,9 @@ func TestVerifyReleaseOutputsRejectsUnboundBuildInputs(t *testing.T) {
 
 func TestVerifyReleaseOutputsRejectsMalformedImageDigestFile(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name:    "multiple lines",
-			content: "ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\nextra\n",
-			want:    "exactly one line",
-		},
-		{
-			name:    "uppercase digest",
-			content: "ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\n",
-			want:    "lowercase SHA-256 digest",
-		},
+	for _, tc := range []struct{ name, content, want string }{
+		{name: "multiple lines", content: "ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\nextra\n", want: "exactly one line"},
+		{name: "uppercase digest", content: "ghcr.io/omkhar/workcell@sha256:" + strings.Repeat("A", 64) + "\n", want: "lowercase SHA-256 digest"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1290,8 +1102,7 @@ func TestFlagValueRejectsShortAliasOverride(t *testing.T) {
 	if got := flagValue([]string{"-R", "omkhar/workcell"}, "--repo", "-R"); got != "omkhar/workcell" {
 		t.Fatalf("flagValue missed the short alias alone, got %q", got)
 	}
-	// gh also parses the compact attached form: a later -Rattacker/repo must
-	// fail the single-occurrence rule just like the spaced spelling.
+	// gh also parses the compact attached form: a later -Rattacker/repo must fail the single-occurrence rule too.
 	compact := []string{"sha256:aa", "--repo", "omkhar/workcell", "-Rattacker/repo"}
 	if got := flagValue(compact, "--repo", "-R"); got != "" {
 		t.Fatalf("flagValue tolerated a compact short-alias override, got %q", got)
