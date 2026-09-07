@@ -39,10 +39,13 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
   release:
     permissions:
       contents: read
+  sign-release:
+    environment:
+      name: release
   publish-github-release:
     needs:
       - tag-policy
-      - release
+      - sign-release
     environment:
       name: hosted-controls-audit
     permissions:
@@ -68,7 +71,7 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		name, old, replacement, want string
 	}{
 		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
-		{name: "depends on sealed artifacts", old: "      - release", replacement: "      - preflight", want: "depend directly"},
+		{name: "depends on sealed artifacts", old: "      - sign-release", replacement: "      - preflight", want: "depend directly"},
 		{name: "uses audit environment", old: "name: hosted-controls-audit", replacement: "name: release", want: "hosted-controls-audit"},
 		{name: "minimal permissions", old: "contents: write\n    steps:", replacement: "contents: write\n      packages: write\n    steps:", want: "grant only"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
@@ -81,6 +84,47 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
+	content := readReleaseWorkflow(t)
+	if err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(string(content)); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v", err)
+	}
+	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
+	requireReleaseAuthorityError(t, mutated, "build-amd64-image")
+	mutated = strings.Replace(string(content), "    steps:\n      - name: Download bound unsigned release artifact", "    steps:\n      - uses: actions/checkout@bad\n      - name: Download bound unsigned release artifact", 1)
+	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
+}
+
+func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
+	content := readReleaseWorkflow(t)
+	workflow := string(content)
+	mutations := []string{
+		strings.Replace(workflow, "sha256sum -c dist/SHA256SUMS", "source dist/SHA256SUMS", 1),
+		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
+		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
+	}
+	for _, mutated := range mutations {
+		requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
+	}
+}
+
+func readReleaseWorkflow(t *testing.T) []byte {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
+}
+
+func requireReleaseAuthorityError(t *testing.T, workflow, want string) {
+	t.Helper()
+	err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v, want %q", err, want)
 	}
 }
 

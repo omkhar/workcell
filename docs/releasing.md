@@ -399,6 +399,11 @@ If the release workflow later waits on the release environment, I will record
 that self-review publicly with the workflow run URL and timestamp.
 ```
 
+The approval starts the registry and signing job.
+The architecture build jobs and assembly job have no write or OIDC authority.
+The signing job validates the bound handoff before it publishes the image.
+The final publisher uploads the 18 GitHub release assets separately.
+
 ## 6. Follow release PR checks and comments until green
 
 Stay on the release PR until all required checks succeed and all actionable

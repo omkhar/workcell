@@ -104,9 +104,14 @@ It creates source-dependent manifests and the amd64 image from the extracted tre
 It creates the formula from the verified archive digest.
 The native arm64 image job builds from the checked-out release tag.
 
-The workflow also creates the builder-environment manifest, image-digest file, software bills of materials, signatures, and checksums.
-The release job seals the assets in one workflow artifact.
-The final job publishes that sealed artifact.
+The assembly job creates manifests, software bills of materials, checksums, and one OCI layout.
+The architecture build jobs and assembly job have only `contents: read` permission.
+They transfer bound artifacts with GitHub Actions artifact runtime credentials.
+A separate read-only job creates the nine non-image signing subjects.
+The signer downloads those subjects by immutable artifact ID and requires exact byte matches.
+A release-approved signing job validates the handoff and publishes the OCI layout.
+The signing job uses fixed tools and does not check out repository code.
+The final job publishes the 18 signed GitHub release assets.
 
 Release preflight does these checks:
 
@@ -124,8 +129,8 @@ It uses native `ubuntu-24.04-arm` for arm64.
 The workflow compares both platform digests with preflight data.
 Then it creates one multi-platform manifest.
 
-The `release` environment gates image pushes and sealed-asset construction.
-No image reaches GHCR before that gate.
+The `release` environment gates registry publication, signatures, and attestations.
+No architecture build or assembly step can push packages or request an OIDC token.
 The `hosted-controls-audit` environment gates release preflight and final GitHub release publication.
 
 The release uses Cosign to create keyless Sigstore signatures.
@@ -135,6 +140,7 @@ GitHub attestations do not replace Sigstore signatures.
 The final publisher has `actions: read` and `contents: write` permissions.
 It checks hosted controls immediately before publication.
 It removes the administration token before it uses the default publication token.
+This authority split does not make a SLSA Build L3 claim.
 
 ## Upstream refresh
 

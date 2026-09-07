@@ -4,8 +4,11 @@
 package metadatautil
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +22,10 @@ import (
 
 type workflowDocument struct {
 	Jobs map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowNodeDocument struct {
+	Jobs map[string]yaml.Node `yaml:"jobs"`
 }
 
 type workflowJob struct {
@@ -36,6 +43,10 @@ type workflowStep struct {
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
 }
+
+// This digest covers the complete parsed sign-release job. It rejects unknown
+// fields, reordered steps, changed commands, and changed action inputs.
+const releaseSignerContractSHA256 = "de015b893267df308bf6e8904bf00b97e826e6e7183300323110189da8ec0cff"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -74,8 +85,8 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		return errors.New("release workflow must define the final publish-github-release job")
 	}
 	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
-		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" {
-		return errors.New("final GitHub release publication job must depend directly on tag-policy and the release artifact job")
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "sign-release" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy and the signing job")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
@@ -102,6 +113,83 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		return nil
 	}
 	return errors.New("release workflow must combine the fresh hosted-controls check and GitHub release publication in one reviewed step")
+}
+
+func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("parse release authority split: %w", err)
+	}
+	if err := validateUnprivilegedReleaseJobs(document); err != nil {
+		return err
+	}
+	if err := validateReleaseSigner(document); err != nil {
+		return err
+	}
+	if err := validateReleaseSignerContract(workflowText); err != nil {
+		return err
+	}
+	return requireReleaseAuthorityText(workflowText)
+}
+
+func requireReleaseAuthorityText(workflowText string) error {
+	for _, required := range []string{"artifact-ids: ${{ needs.release.outputs.artifact_id }}", "artifact-ids: ${{ needs.bind-release-subjects.outputs.artifact_id }}", "Validate privileged handoff"} {
+		if !strings.Contains(workflowText, required) {
+			return fmt.Errorf("release authority split must contain %q", required)
+		}
+	}
+	return nil
+}
+
+func validateUnprivilegedReleaseJobs(document workflowDocument) error {
+	for _, name := range []string{"build-amd64-image", "build-arm64-image", "bind-release-subjects", "release"} {
+		job, ok := document.Jobs[name]
+		if !ok || len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+			return fmt.Errorf("release job %s must grant only contents: read", name)
+		}
+	}
+	return nil
+}
+
+func validateReleaseSigner(document workflowDocument) error {
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	expected := map[string]string{"artifact-metadata": "write", "attestations": "write", "contents": "read", "id-token": "write", "packages": "write"}
+	if signer.Environment.Name != "release" || !maps.Equal(signer.Permissions, expected) {
+		return errors.New("sign-release must use the release environment and exact publication permissions")
+	}
+	if !needsExactly(signer.Needs, []string{"tag-policy", "preflight", "bind-release-subjects", "preflight-amd64-repro", "preflight-arm64-repro", "release"}) {
+		return errors.New("sign-release must depend directly on policy, both platform preflights, and assembly")
+	}
+	return nil
+}
+
+func validateReleaseSignerContract(workflowText string) error {
+	var document workflowNodeDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return err
+	}
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	content, err := yaml.Marshal(signer)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(content)
+	digest := hex.EncodeToString(sum[:])
+	if digest != releaseSignerContractSHA256 {
+		return fmt.Errorf("sign-release must match the exact privileged step contract: got %s", digest)
+	}
+	return nil
+}
+
+func needsExactly(node yaml.Node, expected []string) bool {
+	return node.Kind == yaml.SequenceNode &&
+		slices.EqualFunc(node.Content, expected, func(actual *yaml.Node, name string) bool { return actual.Value == name })
 }
 
 func CheckWorkflows(rootDir, policyPath string) error {

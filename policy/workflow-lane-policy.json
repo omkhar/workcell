@@ -135,11 +135,23 @@
       "local_mode": "none",
       "github_only_reason": "pull_request_target metadata policy remains GitHub-only"
     },
+    "release.yml/build-amd64-image": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "native amd64 release image artifact build requires the GitHub-hosted release workflow"
+    },
     "release.yml/build-arm64-image": {
       "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "native arm64 release image build and GHCR push remain GitHub-only and gated on the release environment"
+      "github_only_reason": "native arm64 release image artifact build requires the GitHub-hosted arm64 runner"
+    },
+    "release.yml/bind-release-subjects": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "independent release-subject binding consumes GitHub-hosted architecture and preflight artifacts"
     },
     "release.yml/codeql-preflight[build-mode=autobuild,language=go]": {
       "profiles": ["release-preflight"],
@@ -205,7 +217,13 @@
       "profiles": ["release-preflight"],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "release artifact signing, attestation, and registry publication remain GitHub-only"
+      "github_only_reason": "bound release artifact assembly depends on GitHub-hosted architecture artifacts"
+    },
+    "release.yml/sign-release": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release-approved registry publication, signing, and attestation require GitHub credentials and hosted release state"
     },
     "release.yml/publish-github-release": {
       "profiles": ["release-preflight"],

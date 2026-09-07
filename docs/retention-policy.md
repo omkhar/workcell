@@ -20,6 +20,10 @@ The local `pr-parity` gate and the `Security` workflow run this check.
 | `fuzz.yml` | `rust-fuzz-reproducers` | 14 |
 | `fuzz.yml` | `rust-fuzz-lockfile` | 14 |
 | `release.yml` | `workcell-release-preflight` | 90 |
+| `release.yml` | `workcell-release-preflight-subjects` | 90 |
+| `release.yml` | `workcell-release-image-amd64` | 7 |
+| `release.yml` | `workcell-release-image-arm64` | 7 |
+| `release.yml` | `workcell-release-unsigned` | 7 |
 | `release.yml` | `workcell-release-install-candidate` | 90 |
 | `release.yml` | `workcell-release-artifacts` | 7 |
 | `security.yml` | `zizmor-sarif` | 5 |
@@ -31,6 +35,9 @@ The local `pr-parity` gate and the `Security` workflow run this check.
 ### Release artifacts
 
 `workcell-release-preflight` contains four preflight manifests.
+`workcell-release-preflight-subjects` contains nine independently bound signing subjects.
+The architecture artifacts contain bound OCI layouts for unprivileged assembly.
+`workcell-release-unsigned` contains the bound input for the release-approved signing job.
 The manifests bind build inputs, the control plane, the source bundle, and runtime images.
 
 `workcell-release-install-candidate` contains the source bundle and Homebrew formula used by the macOS install jobs.
