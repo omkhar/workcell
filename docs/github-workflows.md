@@ -100,9 +100,10 @@ The release install matrix runs the same ACL script before it uses release artif
 The preflight job records the expected digest for its source archive.
 The release job independently creates and extracts its own archive from the checked-out release tag.
 It then compares the archive digest with the expected digest.
-It creates source-dependent manifests and the amd64 image from the extracted tree.
+It creates source-dependent manifests from the extracted tree.
 It creates the formula from the verified archive digest.
-The native arm64 image job builds from the checked-out release tag.
+The native amd64 and arm64 image jobs build from the checked-out release tag.
+Each one binds its image digest to the matching preflight reproducibility digest.
 
 A separate read-only job creates the nine non-image signing subjects.
 That job creates the software bills of materials, the builder-environment manifest, and the checksums.
