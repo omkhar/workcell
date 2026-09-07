@@ -23,8 +23,8 @@ import (
 func runReleaseOutputsInventoryGuard(t *testing.T, dir string) (int, string) {
 	t.Helper()
 	driver := filepath.Join(t.TempDir(), "release-outputs-inventory-driver.sh")
-	script := fmt.Sprintf("#!/bin/bash\nsource %q\ncosign() { return 0; }\nmain \"$@\"\n",
-		filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh"))
+	script := fmt.Sprintf("#!/bin/bash\nsource %s\ncosign() { return 0; }\nmain \"$@\"\n",
+		ShellQuote(filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh")))
 	if err := os.WriteFile(driver, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

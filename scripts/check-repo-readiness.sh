@@ -359,6 +359,7 @@ while true; do
   if [[ "${REPO_READINESS}" == "ready" || "${WATCH}" -eq 0 ]]; then
     break
   fi
+  # shellcheck disable=SC2312 # `date +%s` reads the clock; it has no failure mode that masks a decision
   if [[ "$(date +%s)" -ge "${deadline}" ]]; then
     break
   fi
