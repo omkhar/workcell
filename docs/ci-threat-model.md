@@ -77,8 +77,7 @@ The action owner and repository must be in `policy/allowed-actions.toml`.
 
 The release workflow has the main publication authority.
 Its architecture build and assembly jobs have only `contents: read` permission.
-They cannot write packages, repository contents, or attestations, and they cannot request an OIDC token.
-They can still write Actions artifacts, which the privileged jobs read only by immutable artifact id.
+They can write only Actions artifacts, never packages, repository contents, or attestations, and they cannot request an OIDC token.
 A release-approved job validates the artifact handoff before publication and signing.
 That job does not check out or execute repository code.
 A separate read-only job binds every non-image signing subject before approval.
@@ -244,8 +243,7 @@ The installer also comes from a repository clone, not a signed standalone asset.
 The release workflow verifies inputs, the release-tag signature, and reproducibility.
 A read-only job also verifies the new release signatures after the workflow creates them.
 
-That job runs `cosign verify-blob` on the release assets and `cosign verify` on the new image.
-It runs `gh attestation verify` on the new attestations.
+That job runs `cosign verify-blob` on the assets, `cosign verify` on the image, and `gh attestation verify` on the attestations.
 Publication depends on that job, so an unverified output set cannot reach a release.
 
 ### SLSA posture
@@ -391,8 +389,7 @@ Run the hosted-control audit again.
 
 2. **Workcell does not meet SLSA Build L3.**
    Build, assembly, and provenance authorities are now separate jobs.
-   The workflow still trusts GitHub artifact transport between those jobs.
-   A trusted builder must also isolate the build platform itself.
+   The workflow still trusts GitHub artifact transport and does not isolate the build platform.
 
 3. **The build is not hermetic.**
    Image builds use network package sources.

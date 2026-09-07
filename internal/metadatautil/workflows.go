@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -186,44 +187,35 @@ func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
 func validateReleaseAssembly(document workflowDocument) error {
 	steps := document.Jobs["release"].Steps
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
-		targets := layoutCopyTargets(step.Run)
+		var targets []string
+		for _, args := range commandArgs(step.Run, "oras cp --recursive --from-oci-layout") {
+			if at := slices.Index(args, "--to-oci-layout"); at >= 0 && at+1 < len(args) {
+				targets = append(targets, args[at+1])
+			}
+		}
 		return slices.Contains(targets, "dist/release-image:amd64") &&
 			slices.Contains(targets, "dist/release-image:arm64")
 	}) {
 		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
 	}
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
-		return runsCommand(step.Run, "oras manifest index create --oci-layout")
+		return len(commandArgs(step.Run, "oras manifest index create --oci-layout")) > 0
 	}) {
 		return errors.New("release job must assemble the multi-arch index in an OCI layout")
 	}
 	return nil
 }
 
-// layoutCopyTargets returns the --to-oci-layout destination of every executed
-// layout copy in script. Each destination must come from its own invocation, so
-// commenting one copy out while leaving its destination text in place does not
-// let the remaining copy satisfy both platforms.
-func layoutCopyTargets(script string) []string {
-	var targets []string
-	for _, command := range shellCommands(script) {
-		rest, found := strings.CutPrefix(command, "oras cp --recursive --from-oci-layout")
-		if !found || (rest != "" && !strings.HasPrefix(rest, " ") && !strings.HasPrefix(rest, "\t")) {
-			continue
-		}
-		fields := strings.Fields(rest)
-		if index := slices.Index(fields, "--to-oci-layout"); index >= 0 && index+1 < len(fields) {
-			targets = append(targets, fields[index+1])
-		}
-	}
-	return targets
-}
+var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
 
-// shellCommands splits script into logical commands: it joins backslash
-// continuations, drops comment lines, and skips heredoc bodies, so a decoy
-// written inside a comment or a heredoc is never read as an executed command.
-func shellCommands(script string) []string {
-	var commands []string
+// commandArgs returns the arguments of each invocation of command in script. It
+// joins backslash continuations, drops comments, and skips heredoc bodies, so a
+// decoy written as a comment, a heredoc body, or a quoted argument such as
+// echo "<command>" never counts, and neither does a longer flag spelling. Each
+// invocation is reported on its own, so one call cannot satisfy a requirement
+// that two separate calls must meet.
+func commandArgs(script, command string) [][]string {
+	var invocations [][]string
 	var current strings.Builder
 	var heredoc string
 	for line := range strings.Lines(script) {
@@ -234,57 +226,25 @@ func shellCommands(script string) []string {
 			}
 			continue
 		}
-		continued := strings.HasSuffix(trimmed, "\\")
 		if current.Len() > 0 {
 			current.WriteString(" ")
 		}
 		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
-		if continued {
+		if strings.HasSuffix(trimmed, "\\") {
 			continue
 		}
-		command := current.String()
+		logical := current.String()
 		current.Reset()
-		heredoc = heredocDelimiter(command)
-		if !strings.HasPrefix(command, "#") {
-			commands = append(commands, command)
+		// Here-strings are blanked first so that a redirection such as
+		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
+		if match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(logical, "<<<", " ")); match != nil {
+			heredoc = cmp.Or(match[1], match[2], match[3])
+		}
+		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+			invocations = append(invocations, strings.Fields(rest))
 		}
 	}
-	if command := current.String(); command != "" && !strings.HasPrefix(command, "#") {
-		commands = append(commands, command)
-	}
-	return commands
-}
-
-var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
-
-// heredocDelimiter returns the terminator that ends the heredoc command opens,
-// or an empty string when it opens none. Here-strings are removed first so that
-// <<<"${value}" is never read as a heredoc introducing the delimiter ${value}.
-func heredocDelimiter(command string) string {
-	match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(command, "<<<", " "))
-	if match == nil {
-		return ""
-	}
-	for _, group := range match[1:] {
-		if group != "" {
-			return group
-		}
-	}
-	return ""
-}
-
-// runsCommand reports whether the script invokes command as a command. The
-// logical command must start with it and end the last token there, so neither a
-// comment, a heredoc body, a quoted argument such as echo "<command>", nor a
-// longer flag spelling counts.
-func runsCommand(script, command string) bool {
-	for _, line := range shellCommands(script) {
-		rest, found := strings.CutPrefix(line, command)
-		if found && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t")) {
-			return true
-		}
-	}
-	return false
+	return invocations
 }
 
 func validateUnprivilegedReleaseJobs(document workflowDocument) error {
