@@ -253,9 +253,16 @@ func (watcher *helperWatcher) close() {
 }
 
 func (watcher *helperWatcher) watch() {
-	poll := []unix.PollFd{{Fd: int32(watcher.fd), Events: unix.POLLIN}}
+	watcher.watchWith(unix.Poll)
+}
+
+func (watcher *helperWatcher) watchWith(poll func([]unix.PollFd, int) (int, error)) {
+	descriptors := []unix.PollFd{{Fd: int32(watcher.fd), Events: unix.POLLIN}}
 	for {
-		ready, err := unix.Poll(poll, 100)
+		ready, err := poll(descriptors, 100)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
 		if err != nil {
 			watcher.err = err
 			close(watcher.done)
@@ -407,6 +414,9 @@ func nonExitError(err error) error {
 }
 
 func exitStatus(state *os.ProcessState) int {
+	if wait, ok := state.Sys().(syscall.WaitStatus); ok && wait.Signaled() {
+		return 128 + int(wait.Signal())
+	}
 	status := state.ExitCode()
 	if status < 0 {
 		return 1

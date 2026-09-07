@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestStopOwnedHelperDrainsBeforeSingleWait(t *testing.T) {
@@ -242,6 +244,44 @@ func TestHelperResponsePreservesCleanupPrecedenceOverLatentOverflow(t *testing.T
 	}
 }
 
+func TestHelperWatcherRetriesInterruptedPoll(t *testing.T) {
+	watcher := &helperWatcher{fd: -1, done: make(chan struct{})}
+	polls := 0
+	watcher.watchWith(func([]unix.PollFd, int) (int, error) {
+		polls++
+		if polls == 1 {
+			return -1, unix.EINTR
+		}
+		return 1, nil
+	})
+	select {
+	case <-watcher.done:
+	default:
+		t.Fatal("interrupted watcher never finished")
+	}
+	if polls != 2 || watcher.err != nil {
+		t.Fatalf("interrupted watcher polls=%d err=%v", polls, watcher.err)
+	}
+}
+
+func TestHelperWatcherReportsNonTransientPollFailure(t *testing.T) {
+	watcher := &helperWatcher{fd: -1, done: make(chan struct{})}
+	watcher.watchWith(func([]unix.PollFd, int) (int, error) { return -1, unix.EBADF })
+	if !errors.Is(watcher.err, unix.EBADF) {
+		t.Fatalf("watcher error = %v, want %v", watcher.err, unix.EBADF)
+	}
+}
+
+func TestExitStatusPreservesSignalTermination(t *testing.T) {
+	command := exec.Command("/bin/sh", "-c", "kill -TERM $$")
+	if err := command.Run(); err == nil {
+		t.Fatal("fixture command unexpectedly succeeded")
+	}
+	if got := exitStatus(command.ProcessState); got != 128+int(syscall.SIGTERM) {
+		t.Fatalf("signalled exit status = %d, want %d", got, 128+int(syscall.SIGTERM))
+	}
+}
+
 func recordingHelperSystem(log *[]string) helperSystem {
 	return helperSystem{
 		start:          func(*exec.Cmd) error { *log = append(*log, "start"); return nil },
@@ -385,23 +425,25 @@ func TestRunOwnedHelperReturnsTimeoutStatus(t *testing.T) {
 	}
 }
 
+// A bound socket path must fit the AF_UNIX sun_path limit, which a long test
+// name under a long TMPDIR overruns. A socketpair needs no path at all.
 func unixConnectionPair(t *testing.T) (*net.UnixConn, *net.UnixConn) {
 	t.Helper()
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(t.TempDir(), "socket"), Net: "unix"})
+	descriptors, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-	client, err := net.DialUnix("unix", nil, listener.Addr().(*net.UnixAddr))
-	if err != nil {
-		t.Fatal(err)
+	connections := make([]*net.UnixConn, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		file := os.NewFile(uintptr(descriptor), "socketpair")
+		connection, err := net.FileConn(file)
+		_ = file.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, connection.(*net.UnixConn))
 	}
-	server, err := listener.AcceptUnix()
-	if err != nil {
-		client.Close()
-		t.Fatal(err)
-	}
-	return server, client
+	return connections[0], connections[1]
 }
 
 func writeHelper(t *testing.T, body string) string {
