@@ -241,12 +241,20 @@ cosign() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${GH_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 96
   reject_unsafe_call "$@" || return $?
   for arg in "$@"; do
-    # Cosign 3.1.3 spells every verification weakening with "insecure":
+    # Cosign 3.1.3 weakens verification through these three options:
     # --insecure-ignore-tlog drops the Rekor transparency check,
     # --insecure-ignore-sct drops the certificate timestamp check, and
-    # --allow-insecure-registry drops registry TLS. Match the family rather
-    # than one flag, in both the spaced and the equals form.
-    [[ "${arg}" != *insecure* ]] || return 89
+    # --allow-insecure-registry drops registry TLS. Match each option as a
+    # whole token in both accepted forms; a bare substring test would also
+    # reject a subject or identity whose path or repository name happens to
+    # contain the word.
+    case "${arg}" in
+      --insecure-ignore-tlog | --insecure-ignore-tlog=* | \
+        --insecure-ignore-sct | --insecure-ignore-sct=* | \
+        --allow-insecure-registry | --allow-insecure-registry=*)
+        return 89
+        ;;
+    esac
   done
   log_call %[4]s "$@"
   if [[ "${1:-}" == "verify" ]]; then
@@ -818,7 +826,12 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 func TestVerifyReleaseOutputsVerifiesAnAlternateRelease(t *testing.T) {
 	t.Parallel()
 	release := releaseIdentity{
-		repo:        "acme-fork/workcell-mirror",
+		// The repository name carries the words the stubs screen for as
+		// options, so every subject, image tag and certificate identity in
+		// this run contains them. A stub that matched an option as a bare
+		// substring rather than as a whole token would reject this valid
+		// release.
+		repo:        "acme-fork/workcell-insecure-hostname-mirror",
 		tag:         "v1.4.0-rc.2",
 		imageDigest: strings.Repeat("f", 64),
 		commit:      strings.Repeat("e", 40),
