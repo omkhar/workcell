@@ -572,3 +572,57 @@ func TestValidatorLanesMountSynthesizedPasswd(t *testing.T) {
 		})
 	}
 }
+
+// The hostile lane earns its runtime only while TMPDIR keeps every shape that
+// reproduced a finding by hand, so the derivation is executed here rather than
+// pattern-matched: a dropped backslash that lets bash expand $HOME, or a
+// shortened padding component, leaves the lane green for the wrong reason.
+func TestHostileTMPDIRKeepsTheShapesThatReproducedFindings(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	lane := filepath.Join(root, "scripts", "ci", "run-validate-in-validator.sh")
+	content, err := os.ReadFile(lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derivation := ""
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), `validator_tmp="${validator_tmp}/`) {
+			derivation = strings.TrimSpace(line)
+			break
+		}
+	}
+	if derivation == "" {
+		t.Fatal("run-validate-in-validator.sh no longer derives a hostile TMPDIR")
+	}
+
+	script := `validator_tmp="/tmp/workcell-home-1000/.tmp"; ` + derivation + `; printf '%s' "${validator_tmp}"`
+	command := exec.Command("/bin/bash", "-c", script)
+	command.Env = append(os.Environ(), "HOME=/hostile-home-must-not-expand")
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("hostile TMPDIR derivation failed: %v", err)
+	}
+	hostile := string(output)
+
+	if !strings.Contains(hostile, " ") {
+		t.Fatalf("hostile TMPDIR %q has no whitespace component", hostile)
+	}
+	if !strings.Contains(hostile, "$") {
+		t.Fatalf("hostile TMPDIR %q has no unexpanded dollar sign", hostile)
+	}
+	option, padded := false, false
+	for _, word := range strings.Fields(hostile) {
+		option = option || strings.HasPrefix(word, "--")
+	}
+	for _, component := range strings.Split(hostile, "/") {
+		padded = padded || len(component) >= 80
+	}
+	if !option {
+		t.Fatalf("hostile TMPDIR %q has no --prefixed token", hostile)
+	}
+	if !padded {
+		t.Fatalf("hostile TMPDIR %q has no ~80-character padding component", hostile)
+	}
+}

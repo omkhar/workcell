@@ -66,6 +66,21 @@
       "local_order": 40
     },
     {
+      "id": "ci.yml/hostile-tmpdir",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "hostile-tmpdir",
+      "job_name": "Hostile TMPDIR (advisory)",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "advisory hostile-TMPDIR rerun of repository validation; it carries continue-on-error and is absent from required_status_checks while its first failures are triaged, so it never gates a PR or release and is not part of any local profile plan; a developer reproduces it on demand with WORKCELL_HOSTILE_TMPDIR=1 scripts/ci/run-validate-in-validator.sh"
+    },
+    {
       "id": "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]",
       "workflow_path": ".github/workflows/ci.yml",
       "workflow_name": "CI",

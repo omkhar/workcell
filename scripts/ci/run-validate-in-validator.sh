@@ -39,6 +39,16 @@ validator_gid="$(id -g)"
 validator_home="/tmp/workcell-home-${validator_uid}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
+# WORKCELL_HOSTILE_TMPDIR=1 points TMPDIR at a directory whose name carries the
+# shapes that have broken this repository under review: a space, a literal `$`
+# that a re-expanding generator would substitute, a `--`-prefixed component that
+# a substring flag check mistakes for an option, and ~80 characters of padding
+# that pushes any AF_UNIX path derived from TMPDIR past sun_path.  Three review
+# findings were first reproduced by hand this way; the advisory
+# .github/workflows/ci.yml `hostile-tmpdir` lane runs it on every pull request.
+if [[ "${WORKCELL_HOSTILE_TMPDIR:-0}" == "1" ]]; then
+  validator_tmp="${validator_tmp}/hostile \$HOME --hostname/$(printf 'p%.0s' {1..80})"
+fi
 
 setup_workcell_ci_docker
 
