@@ -210,7 +210,7 @@ func validateReleaseAssembly(document workflowDocument) error {
 // word, a here-string and a parameter expansion are each read the way bash
 // reads them and none of them can hide or invent a redirection.
 //
-// A parenthesised group is the one construct this scanner does not resolve:
+// A bracketed group is the one construct this scanner does not resolve:
 // bash re-enters command parsing inside a command substitution, and it decides
 // between arithmetic and a nested subshell by re-parsing the group. Rather than
 // guess, the scan skips a group that cannot open a heredoc at all and fails
@@ -233,7 +233,14 @@ func heredocDelimiters(line string) ([]string, bool) {
 			quoted = !quoted
 			index++
 		case strings.HasPrefix(rest, "$("), strings.HasPrefix(rest, "(("):
-			group := rest[:parenGroupWidth(rest)]
+			group := rest[:balancedSpanWidth(rest, '(', ')')]
+			if groupCanOpenHeredoc(group) {
+				return nil, false
+			}
+			index += len(group)
+		case strings.HasPrefix(rest, "$["):
+			// The deprecated $[ ] arithmetic form is read the same way.
+			group := rest[:balancedSpanWidth(rest, '[', ']')]
 			if groupCanOpenHeredoc(group) {
 				return nil, false
 			}
@@ -263,15 +270,21 @@ func heredocDelimiters(line string) ([]string, bool) {
 	return delimiters, true
 }
 
-// parenGroupWidth returns the length of the parenthesised group that opens text,
-// or the length of text when the group does not close on this line.
-func parenGroupWidth(text string) int {
+// balancedSpanWidth returns the length of the bracketed span that opens text at
+// its first open byte, or the length of text when that span does not close on
+// this line. It honours escaping and quoting, so a bracket inside a quoted word
+// cannot end the span early and leave the rest of the line misread.
+func balancedSpanWidth(text string, open, close byte) int {
 	depth := 0
-	for index := strings.IndexByte(text, '('); index >= 0 && index < len(text); index++ {
-		switch text[index] {
-		case '(':
+	for index := strings.IndexByte(text, open); index >= 0 && index < len(text); index++ {
+		switch character := text[index]; {
+		case character == '\\':
+			index++
+		case character == '\'' || character == '"':
+			index += quotedWidth(text[index:]) - 1
+		case character == open:
 			depth++
-		case ')':
+		case character == close:
 			if depth--; depth == 0 {
 				return index + 1
 			}
