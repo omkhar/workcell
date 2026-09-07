@@ -362,6 +362,9 @@ func TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks(t *testing.T) {
 		"recheck missing its tag-object binding": func(content string) string {
 			return strings.Replace(content, ` --expected-tag-object "${RELEASE_TAG_OBJECT}"`, "", 1)
 		},
+		"recheck failure ignored with a fallback": func(content string) string {
+			return strings.Replace(content, recheck+"\n", recheck+" || true\n", 1)
+		},
 		"recheck missing its commit binding": func(content string) string {
 			return strings.Replace(content, ` --expected-commit "${RELEASE_COMMIT}"`, "", 1)
 		},

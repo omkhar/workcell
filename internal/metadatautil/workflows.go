@@ -226,7 +226,9 @@ func assignsInRun(script, name string) bool {
 		// they apply, so neither the leading word nor an option ends the run.
 		// Every word of such a statement is examined rather than only the
 		// leading assignments.
-		if words[0] == "export" || words[0] == "env" {
+		// Every builtin that can carry an assignment, so none of them ends the
+		// scan at its own name.
+		if slices.Contains([]string{"export", "env", "declare", "typeset", "readonly", "local"}, words[0]) {
 			if slices.ContainsFunc(words[1:], func(word string) bool { return assignsWord(word, name) }) {
 				return true
 			}
@@ -326,22 +328,26 @@ func commandArgs(script, command string) [][]string {
 			heredoc = cmp.Or(match[1], match[2], match[3])
 		}
 		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-			invocations = append(invocations, commandWords(rest))
+			if words, runs := commandWords(rest); runs {
+				invocations = append(invocations, words)
+			}
 		}
 	}
 	return invocations
 }
 
-// commandWords returns the words bash passes to one command: the fields of rest
-// up to the first shell separator. A word carrying a separator ends the command
-// there, so text after a ; or a && belongs to the next command and must not be
-// read as this one's argument.
-func commandWords(rest string) []string {
+// commandWords returns the words bash passes to one command, the fields of rest
+// up to the first shell separator, and whether the command's result is acted on.
+// Text after a ; or a && belongs to the next command and is not this one's
+// argument, and a command whose failure is swallowed by || proves nothing, so it
+// does not count as an invocation at all.
+func commandWords(rest string) ([]string, bool) {
 	fields := strings.Fields(rest)
-	if at := slices.IndexFunc(fields, endsCommand); at >= 0 {
-		return fields[:at]
+	at := slices.IndexFunc(fields, endsCommand)
+	if at < 0 {
+		return fields, true
 	}
-	return fields
+	return fields[:at], !strings.HasPrefix(fields[at], "||")
 }
 
 // endsCommand reports whether a word carries a shell separator and therefore

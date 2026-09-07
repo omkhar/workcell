@@ -161,6 +161,8 @@ func TestValidateReleaseWorkflowPublicationGateRejectsPolicyPathOverrides(t *tes
 		"single-quoted assignment": `          env 'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		"double-quoted assignment": `          env "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml" ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 		"quoted assignment prefix": `          'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"declare -x export":        "          declare -x WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"readonly export":          "          readonly WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, auditCall, override, 1)
