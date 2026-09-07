@@ -69,9 +69,21 @@ func TestTrackedBashScriptsNeutralizeStartupFiles(t *testing.T) {
 	root := repoRoot(t)
 	checked := 0
 	for _, rel := range trackedFiles(t, root) {
-		content, err := os.ReadFile(filepath.Join(root, rel))
+		path := filepath.Join(root, rel)
+		info, err := os.Lstat(path)
 		if err != nil {
-			// Tracked symlinks and gitlinks have no readable body.
+			t.Errorf("stat %s: %v", rel, err)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			// A tracked symlink or submodule gitlink holds no script body.
+			continue
+		}
+		// A regular tracked file that cannot be read is a candidate this walk
+		// failed to judge, not one it cleared.
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s: %v", rel, err)
 			continue
 		}
 		shebang, _, _ := strings.Cut(string(content), "\n")
