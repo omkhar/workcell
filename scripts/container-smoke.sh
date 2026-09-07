@@ -2909,6 +2909,18 @@ if run_entrypoint claude claude --append-subagent-system-prompt evil --version >
 fi
 grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt.out
 
+if run_entrypoint claude claude --append-subagent-system-prompt-file /workspace/prompt.txt --version >/tmp/workcell-entrypoint-claude-subagent-prompt-file.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude subagent prompt files outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt-file.out
+
+if run_entrypoint claude claude --append-subagent-system-prompt-file=/workspace/prompt.txt --version >/tmp/workcell-entrypoint-claude-subagent-prompt-file-equals.out 2>&1; then
+  echo "expected Workcell entrypoint to reject Claude subagent prompt file equals syntax outside breakglass" >&2
+  exit 1
+fi
+grep -q "Workcell blocked unsafe Claude override" /tmp/workcell-entrypoint-claude-subagent-prompt-file-equals.out
+
 if run_entrypoint claude claude --system-prompt-file /workspace/evil.md --version >/tmp/workcell-entrypoint-claude-system-prompt-file.out 2>&1; then
   echo "expected Workcell entrypoint to reject Claude file-based system prompt overrides outside breakglass" >&2
   exit 1
@@ -3278,6 +3290,8 @@ test -f "$CODEX_HOME/config.toml"
     grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
     grep -Eq "^code_mode_host[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
     test -x /usr/local/libexec/workcell/real/codex-code-mode-host
+    test "$(stat -c '%u:%g:%a' /usr/local/libexec/workcell/real/codex)" = 0:0:755
+    test "$(stat -c '%u:%g:%a' /usr/local/libexec/workcell/real/codex-code-mode-host)" = 0:0:755
     if command -v python3 >/tmp/python-which.out 2>&1; then
       echo "expected runtime image to omit python3 from the operator PATH" >&2
       exit 1
