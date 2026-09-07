@@ -6,7 +6,7 @@
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
-      "sha256": "8c79f6a37251e007026ac111994d2e171940a695152b8d9462f423d5f52779e8"
+      "sha256": "864c914e668d2949392f2bde0624962b52900c3caf4a4dddfb224beb4e1c4054"
     },
     {
       "repo_path": "scripts/lib/extract_direct_mounts",
@@ -206,13 +206,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/sudo-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
-      "sha256": "081b450611b9a2c0702a2541c7dd04062725365661c5f358eac209c8ac37af40"
+      "sha256": "e2492c0f7691c2af73d6e6c7c192486b5845a9927e4462b5e97c0988b17bbcc7"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/detached-stdin-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
-      "sha256": "8abf7c68352a6133b03bd3b7bd3e308b0d9cfeddc45e4fa5df05a12dc95ef3f3"
+      "sha256": "7e60e90cfdfb9c0a45ee24c1b74562ccba0fda7abdff09c7c8d79dfa3081433c"
     },
     {
       "kind": "runtime-control-plane",
