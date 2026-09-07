@@ -632,6 +632,31 @@ workcell_ci_validator_passwd_file docker fixture-image 1000 1000 /home/fixture "
 	}
 }
 
+// A failing lookup must not read as "the image has no record for this uid".
+// Folding awk's error status into the absent case would append a second record
+// for a uid the image already carries, and glibc resolves to whichever record
+// comes first.
+func TestValidatorPasswdFailsClosedWhenTheLookupErrors(t *testing.T) {
+	t.Parallel()
+
+	library := filepath.Join(repoRoot(t), "scripts", "ci", "lib", "validator-passwd.sh")
+	binDir := t.TempDir()
+	writeExecutable(t, binDir, "docker", "#!/bin/bash\nprintf 'root:x:0:0:root:/root:/bin/bash\\n'\n")
+	writeExecutable(t, binDir, "awk", "#!/bin/bash\necho 'awk: fixture read error' >&2\nexit 2\n")
+	probe := writeExecutable(t, t.TempDir(), "probe", `#!/bin/bash
+set -euo pipefail
+PATH="$1:${PATH}"
+export PATH
+source "$2"
+workcell_ci_validator_passwd_file docker fixture-image 1000 1000 /home/fixture "$3"
+`)
+
+	output, err := exec.Command("/bin/bash", probe, binDir, library, t.TempDir()).CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "Validator passwd lookup failed with status 2") {
+		t.Fatalf("failing lookup accepted: %v\n%s", err, output)
+	}
+}
+
 // The hostile lane earns its runtime only while each axis keeps the shapes that
 // reproduced a finding by hand, so the derivations are executed here rather
 // than pattern-matched: a dropped backslash that lets bash expand $HOME, a

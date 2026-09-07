@@ -50,11 +50,24 @@ workcell_ci_validator_passwd_file() {
   file="$(mktemp "${directory}/workcell-validator-passwd.XXXXXX")" || return
   "${docker_command}" run --rm --entrypoint /bin/bash "${image}" \
     -lc 'cat /etc/passwd' >"${file}" || return
-  if ! awk -F: -v uid="${uid}" '$3 == uid { found = 1 } END { exit !found }' \
-    "${file}"; then
-    printf 'workcell-ci:x:%s:%s:workcell ci:%s:/bin/bash\n' \
-      "${uid}" "${gid}" "${home}" >>"${file}"
-  fi
+  # "absent" gets its own exit status.  Folding every nonzero status into
+  # "absent" would let a missing or failing awk append a second record for a uid
+  # the image already has, and glibc would then resolve the uid to whichever
+  # record comes first.  An error here fails the lane instead.
+  local lookup=0
+  awk -F: -v uid="${uid}" '$3 == uid { found = 1 } END { exit found ? 0 : 10 }' \
+    "${file}" || lookup=$?
+  case "${lookup}" in
+    0) ;;
+    10)
+      printf 'workcell-ci:x:%s:%s:workcell ci:%s:/bin/bash\n' \
+        "${uid}" "${gid}" "${home}" >>"${file}"
+      ;;
+    *)
+      echo "Validator passwd lookup failed with status ${lookup}" >&2
+      return 1
+      ;;
+  esac
   # Owner-only whenever the workload runs as the uid that creates the file,
   # which is every lane except the remapped-uid axis.  There, rootful Docker
   # keeps the numeric owner across the bind, so an owner-only file would be
