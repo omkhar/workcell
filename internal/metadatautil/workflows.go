@@ -215,12 +215,12 @@ var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
 func commandArgs(script, command string) [][]string {
 	var invocations [][]string
 	var current strings.Builder
-	var heredoc string
+	var heredocs []string
 	for line := range strings.Lines(script) {
 		trimmed := strings.TrimSpace(line)
-		if heredoc != "" {
-			if trimmed == heredoc {
-				heredoc = ""
+		if len(heredocs) > 0 {
+			if trimmed == heredocs[0] {
+				heredocs = heredocs[1:]
 			}
 			continue
 		}
@@ -235,8 +235,10 @@ func commandArgs(script, command string) [][]string {
 		current.Reset()
 		// Here-strings are blanked first so that a redirection such as
 		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
-		if match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(logical, "<<<", " ")); match != nil {
-			heredoc = cmp.Or(match[1], match[2], match[3])
+		// Every delimiter on the line opens a body, and bash reads them in the
+		// order they appear, so they are queued rather than overwritten.
+		for _, match := range heredocPattern.FindAllStringSubmatch(strings.ReplaceAll(logical, "<<<", " "), -1) {
+			heredocs = append(heredocs, cmp.Or(match[1], match[2], match[3]))
 		}
 		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
 			invocations = append(invocations, strings.Fields(rest))
