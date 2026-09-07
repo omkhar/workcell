@@ -133,14 +133,14 @@ type Invocation struct {
 	Position int
 }
 
-// ShellInvocations returns each invocation of command in
-// script. It joins line continuations, splits each line at the operators that
-// end one command, and drops comments, inline ones included, heredoc bodies,
-// the body of a function definition, the body of a compound command, and the
-// rest of a quoted word that runs past the end of its line, so that no decoy
-// text counts as a command and one call cannot satisfy a two-call rule. A
-// validator that must anchor on the commands a script really runs uses this in
-// place of a substring search.
+// ShellInvocations returns each invocation of command in script, with the
+// arguments it receives. It joins line continuations, splits each line at the
+// operators that end one command, and drops comments, inline ones included,
+// heredoc bodies, the body of a function definition, the body of a compound
+// command, and the rest of a quoted word that runs past the end of its line,
+// so that no decoy text counts as a command and one call cannot satisfy a
+// two-call rule. A validator that must anchor on the commands a script really
+// runs uses this in place of a substring search.
 func ShellInvocations(script, commandName string) []Invocation {
 	prefix := strings.Fields(commandName)
 	if len(prefix) == 0 {
