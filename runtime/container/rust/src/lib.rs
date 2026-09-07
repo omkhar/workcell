@@ -974,10 +974,11 @@ fn should_block_loader_env_for_fd(_fd: c_int, _env_entries: &[String]) -> bool {
     false
 }
 
-// The child environment must carry the guard and nothing else in LD_PRELOAD:
-// a second entry would let an attacker-chosen library load alongside it, and
-// the loader silently drops the whole variable for set-user-ID targets, so
-// "contains the guard" is not the same question as "is exactly the guard".
+// The child environment must carry the guard and nothing else in LD_PRELOAD.
+// The loader honours every entry it is given, so a second one loads an
+// attacker-chosen library alongside the guard: "contains the guard" is not the
+// same question as "is exactly the guard", and only the second one is safe to
+// answer yes to.
 #[cfg(target_os = "linux")]
 fn env_has_approved_guard_preload(env_entries: &[String]) -> bool {
     let mut preload_entries = 0;
@@ -1004,11 +1005,13 @@ fn path_is_approved_control_script(path: &str) -> bool {
     path.starts_with('/') && path_matches_any_same_file(Path::new(path), APPROVED_CONTROL_SCRIPTS)
 }
 
-// The one exec that legitimately precedes the preload: an approved native
-// launcher handing control to bash running an approved control script, which is
-// the script that sets LD_PRELOAD for everything below it. Both paths must be
-// absolute, so the same-file check resolves the file the kernel will run rather
-// than a working-directory namesake.
+// The one exec that may legitimately precede the preload: an approved native
+// launcher handing control to bash on an approved control script. The launcher
+// restores the preload before it execs, so in the shipped image this is a
+// fallback rather than a normal path; it keeps the container startable if that
+// restore is ever lost, and widens nothing else. Both paths must be absolute,
+// so the same-file check resolves the file the kernel will run rather than a
+// working-directory namesake.
 #[cfg(target_os = "linux")]
 fn is_approved_launcher_control_transition(path: &str, args: &[String]) -> bool {
     path.starts_with('/')
