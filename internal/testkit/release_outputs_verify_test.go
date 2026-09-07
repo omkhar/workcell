@@ -155,8 +155,16 @@ func releaseOutputArgs(assets, tag, imageRepository, sourceDigest, workflowDiges
 
 func runVerifyDriver(t *testing.T, driver string, args, env []string) (int, string) {
 	t.Helper()
+	// Bash startup files are cleared unless the caller sets them deliberately,
+	// so a test can hand the verifier hostile startup state on purpose.
+	full := append([]string{}, env...)
+	for _, name := range []string{"BASH_ENV", "ENV"} {
+		if !slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, name+"=") }) {
+			full = append(full, name+"=")
+		}
+	}
 	cmd := exec.Command(driver, args...)
-	cmd.Env = append([]string{"BASH_ENV=", "ENV="}, env...)
+	cmd.Env = full
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return 0, string(out)
@@ -202,6 +210,48 @@ func TestVerifyReleaseOutputsRunsFromItsEntryPoint(t *testing.T) {
 	code, out := runVerifyDriver(t, script, []string{"--help"}, nil)
 	if code != 0 || !strings.Contains(out, "Usage: verify-release-outputs.sh") {
 		t.Fatalf("release verifier entry point does not forward its arguments, got %d\n%s", code, out)
+	}
+}
+
+// TestVerifyReleaseOutputsIgnoresHostileBashStartup hands the shipped script a
+// BASH_ENV pointing at attacker-controlled startup code. The `#!/bin/bash -p`
+// shebang must make Bash ignore it; without privileged mode that file runs
+// before the verifier pins PATH and could replace cosign or gh outright.
+func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "startup-ran")
+	startup := filepath.Join(dir, "startup.sh")
+	if err := os.WriteFile(startup, []byte("printf ran >"+marker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hostile := []string{"BASH_ENV=" + startup, "ENV=" + startup}
+
+	code, out := runVerifyDriver(t, verifyReleaseOutputsScript(t), nil, hostile)
+	if code == 0 || !strings.Contains(out, "assets directory is required") {
+		t.Fatalf("release verifier did not run under hostile startup state, got %d\n%s", code, out)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("release verifier executed caller-selected Bash startup code (%v)", err)
+	}
+
+	// Negative fixture: the same startup file does run when the privileged
+	// shebang is dropped, so the check above is not passing on an inert path.
+	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unprivileged := strings.Replace(string(content), "#!/bin/bash -p\n", "#!/bin/bash\n", 1)
+	if unprivileged == string(content) {
+		t.Fatal("release verifier no longer uses a privileged Bash shebang")
+	}
+	copyPath := filepath.Join(t.TempDir(), "unprivileged-verify-release-outputs.sh")
+	if err := os.WriteFile(copyPath, []byte(unprivileged), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runVerifyDriver(t, copyPath, nil, hostile)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("dropping the privileged shebang did not run the startup file, so the control is vacuous (%v)", err)
 	}
 }
 
@@ -404,24 +454,36 @@ func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	}
 }
 
-// flagValue returns the argument that follows flag in a logged stub call, and
-// only when the flag appears exactly once. Both gh and cosign take the last
-// occurrence of a repeated flag, so a weaker second --cert-identity or
-// --predicate-type would otherwise pass an assertion made against the first.
-func flagValue(line, flag string) string {
-	fields := strings.Fields(line)
-	value := ""
+// flagOccurrences counts every appearance of flag in a logged call, in both the
+// space-separated and the --flag=value forms that gh and cosign accept.
+func flagOccurrences(line, flag string) int {
 	seen := 0
-	for i, field := range fields {
-		if field == flag && i+1 < len(fields) {
-			value = fields[i+1]
+	for _, field := range strings.Fields(line) {
+		if field == flag || strings.HasPrefix(field, flag+"=") {
 			seen++
 		}
 	}
-	if seen != 1 {
+	return seen
+}
+
+// flagValue returns the argument bound to flag in a logged stub call, and only
+// when the flag appears exactly once in either accepted form. Both tools take
+// the last occurrence of a repeated flag, so a weaker second --cert-identity or
+// --predicate-type would otherwise pass an assertion made against the first.
+func flagValue(line, flag string) string {
+	if flagOccurrences(line, flag) != 1 {
 		return ""
 	}
-	return value
+	fields := strings.Fields(line)
+	for i, field := range fields {
+		if field == flag && i+1 < len(fields) {
+			return fields[i+1]
+		}
+		if value, ok := strings.CutPrefix(field, flag+"="); ok {
+			return value
+		}
+	}
+	return ""
 }
 
 // callSubjects reduces each logged stub call to the subject it verified, plus
@@ -495,10 +557,12 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 	}
 
 	for _, line := range logLines(t, ghLog) {
-		// Must be the exact standalone flag: gh also accepts
-		// --deny-self-hosted-runners=false, which a substring match would pass.
-		if !slices.Contains(strings.Fields(line), "--deny-self-hosted-runners") {
-			t.Fatalf("gh attestation call lacks self-hosted runner denial: %s", line)
+		// Exactly one occurrence, in the bare form: gh also accepts
+		// --deny-self-hosted-runners=false and uses the last occurrence, so
+		// neither an appended equals form nor a repeat may be tolerated.
+		if flagOccurrences(line, "--deny-self-hosted-runners") != 1 ||
+			!slices.Contains(strings.Fields(line), "--deny-self-hosted-runners") {
+			t.Fatalf("gh attestation call lacks an unconditional self-hosted runner denial: %s", line)
 		}
 		if got := flagValue(line, "--cert-identity"); got != releaseOutputIdentity {
 			t.Fatalf("gh attestation cert identity = %q, want %q: %s", got, releaseOutputIdentity, line)
