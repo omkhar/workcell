@@ -145,10 +145,13 @@ func TestValidateReleaseWorkflowPublicationGateRejectsPolicyPathOverrides(t *tes
 	workflow := string(readReleaseWorkflow(t))
 	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
 	for name, override := range map[string]string{
-		"env command prefix":      `          env WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		"env with an option":      `          env -i WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		"plain assignment prefix": `          WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		"export statement":        "          export WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"env command prefix":       `          env WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"env with an option":       `          env -i WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"plain assignment prefix":  `          WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"export statement":         "          export WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"single-quoted assignment": `          env 'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"double-quoted assignment": `          env "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml" ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"quoted assignment prefix": `          'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, auditCall, override, 1)

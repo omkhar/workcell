@@ -227,13 +227,13 @@ func assignsInRun(script, name string) bool {
 		// Every word of such a statement is examined rather than only the
 		// leading assignments.
 		if words[0] == "export" || words[0] == "env" {
-			if slices.ContainsFunc(words[1:], func(word string) bool { return strings.HasPrefix(word, name+"=") }) {
+			if slices.ContainsFunc(words[1:], func(word string) bool { return assignsWord(word, name) }) {
 				return true
 			}
 			continue
 		}
 		for _, word := range words {
-			if strings.HasPrefix(word, name+"=") {
+			if assignsWord(word, name) {
 				return true
 			}
 			// A plain assignment prefix precedes the command word, which has no "=".
@@ -243,6 +243,12 @@ func assignsInRun(script, name string) bool {
 		}
 	}
 	return false
+}
+
+// assignsWord reports whether one shell word assigns name. Bash strips the
+// quotes before it reads the assignment, so a leading quote must not hide it.
+func assignsWord(word, name string) bool {
+	return strings.HasPrefix(strings.TrimLeft(word, `'"`), name+"=")
 }
 
 func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {

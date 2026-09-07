@@ -429,15 +429,21 @@ func (check *pinnedInputsCheck) validateReleaseLegacyReferences() error {
 	return validateReleaseTagRechecks(check.releaseWorkflow)
 }
 
-// releaseTagRecheckPhases names each job that mutates release state and the
-// number of bound rechecks it must run before doing so. Counting per job, not
-// across the file, keeps a recheck deleted from one phase from being covered by
-// a duplicate added to an unrelated job.
-var releaseTagRecheckPhases = map[string]int{
-	"preflight":              1,
-	"release":                1,
-	"sign-release":           2,
-	"publish-github-release": 1,
+// releaseTagRecheckPhases names each job that mutates release state, the number
+// of bound rechecks it must run, and the step every one of them must precede.
+// Counting per job, not across the file, keeps a recheck deleted from one phase
+// from being covered by a duplicate added to an unrelated job. Requiring the
+// step order keeps a recheck moved below its mutation from counting either: a
+// check that runs after the mutation proves nothing about the tag the mutation
+// used.
+var releaseTagRecheckPhases = map[string]struct {
+	count  int
+	before string
+}{
+	"preflight":              {1, "Build preflight release install artifacts"},
+	"release":                {1, "Assemble deterministic multi-arch OCI layout"},
+	"sign-release":           {2, "Publish bound OCI layout"},
+	"publish-github-release": {1, "Recheck hosted controls and publish GitHub release assets"},
 }
 
 // releaseTagRecheckArguments is the complete reviewed argument list. A recheck
@@ -461,16 +467,28 @@ func validateReleaseTagRechecks(workflowText string) error {
 	}
 	const requirement = ".github/workflows/release.yml must verify release tag signatures before every release mutation phase"
 	for name, job := range document.Jobs {
-		found := 0
-		for _, step := range job.Steps {
+		phase := releaseTagRecheckPhases[name]
+		found, lastAt := 0, -1
+		for at, step := range job.Steps {
 			for _, arguments := range commandArgs(step.Run, "./scripts/check-release-tag-signature.sh") {
 				if slices.Equal(arguments, releaseTagRecheckArguments) {
 					found++
+					lastAt = at
 				}
 			}
 		}
-		if want := releaseTagRecheckPhases[name]; found != want {
-			return fmt.Errorf("%s: job %s runs %d bound checks, want %d", requirement, name, found, want)
+		if found != phase.count {
+			return fmt.Errorf("%s: job %s runs %d bound checks, want %d", requirement, name, found, phase.count)
+		}
+		if phase.count == 0 {
+			continue
+		}
+		mutationAt := slices.IndexFunc(job.Steps, func(step workflowStep) bool { return step.Name == phase.before })
+		if mutationAt < 0 {
+			return fmt.Errorf("%s: job %s must keep its %q step", requirement, name, phase.before)
+		}
+		if lastAt > mutationAt {
+			return fmt.Errorf("%s: job %s runs a check after its %q step", requirement, name, phase.before)
 		}
 	}
 	for name := range releaseTagRecheckPhases {

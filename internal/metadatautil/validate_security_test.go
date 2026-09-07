@@ -365,6 +365,15 @@ func TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks(t *testing.T) {
 		"recheck missing its commit binding": func(content string) string {
 			return strings.Replace(content, ` --expected-commit "${RELEASE_COMMIT}"`, "", 1)
 		},
+		"publication recheck moved below the publication step": func(content string) string {
+			// Swap the two steps so the check still exists, and still runs in
+			// the publishing job, but no longer runs before the mutation.
+			const check = "      - name: Verify release tag signature\n" +
+				"        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" + recheck + "\n\n"
+			const mutation = "      - name: Recheck hosted controls and publish GitHub release assets\n"
+			return strings.Replace(content, check+mutation, mutation, 1) +
+				"\n" + strings.TrimSuffix(check, "\n")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := rewritePinnedInputsFixtureFile(t, ".github/workflows/release.yml", func(content string) string {
