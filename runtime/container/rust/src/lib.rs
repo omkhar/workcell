@@ -852,8 +852,9 @@ fn env_has_unsafe_loader_override(env_entries: &[String]) -> bool {
     env_entries.iter().any(|entry| {
         env_entry_value(entry, "LD_AUDIT").is_some_and(|value| !value.is_empty())
             || env_entry_value(entry, "LD_LIBRARY_PATH").is_some_and(|value| !value.is_empty())
-            || env_entry_value(entry, "LD_TRACE_LOADED_OBJECTS")
-                .is_some_and(|value| !value.is_empty())
+            // The loader enters trace mode on the presence of this variable,
+            // whatever its value, so an empty one is an override too.
+            || env_entry_value(entry, "LD_TRACE_LOADED_OBJECTS").is_some()
             || env_entry_value(entry, "LD_PRELOAD")
                 .is_some_and(|value| !value.is_empty() && value != ALLOWED_LD_PRELOAD)
     })
@@ -912,9 +913,7 @@ fn should_block_workcell_launcher_fd_loader_env(fd: c_int, env_entries: &[String
 fn file_descriptor_is_loader_sensitive(fd: c_int) -> bool {
     duplicate_fd_file(fd)
         .and_then(|file| file.metadata().ok())
-        .map_or(true, |metadata| {
-            (metadata.mode() & file_type_bits()) == regular_file_mode()
-        })
+        .is_none_or(|metadata| (metadata.mode() & file_type_bits()) == regular_file_mode())
 }
 
 #[cfg(target_os = "linux")]
@@ -922,9 +921,11 @@ fn path_is_loader_sensitive(path: &str) -> bool {
     if let Some(proc_fd) = path_is_current_process_fd_path(path) {
         return file_descriptor_is_loader_sensitive(proc_fd);
     }
-    fs::metadata(path).map_or(true, |metadata| {
-        (metadata.mode() & file_type_bits()) == regular_file_mode()
-    })
+    match fs::metadata(path) {
+        Ok(metadata) => (metadata.mode() & file_type_bits()) == regular_file_mode(),
+        // A target the guard cannot stat stays unclassified.
+        Err(_) => true,
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1405,16 +1406,31 @@ fn loader_arg_targets_mutable_native_exec(target: &str) -> bool {
     path_is_mutable_native_exec(target)
 }
 
-/// A loader library search list is refused when it is empty or carries an
-/// empty segment, because the loader then resolves against the working
-/// directory the guard cannot pin.
+/// A loader search-list entry names a directory to search or a shared object
+/// to load, never an exec target, so it is judged by where it lives rather
+/// than by its contents. `--library-path /workspace` names no ELF file at all,
+/// yet the loader will still take a dependency from there.
+fn loader_path_list_entry_targets_mutable_root(entry: &str) -> bool {
+    if entry.is_empty() {
+        return true;
+    }
+    canonicalize_existing_path(entry)
+        .is_some_and(|resolved| resolved_path_is_mutable_root(&resolved))
+}
+
+/// A loader search list is refused when it is empty, carries an empty entry,
+/// or names anything under a mutable root. An empty list or entry makes the
+/// loader resolve against the working directory the guard cannot pin. The
+/// loader splits such a list on whitespace as well as on colons, so all three
+/// separators are honoured; splitting more finely than the loader does can
+/// only add entries to check, never hide one.
 fn loader_path_list_targets_mutable_native_exec(value: &str) -> bool {
     if value.is_empty() {
         return true;
     }
     value
-        .split(':')
-        .any(|target| target.is_empty() || loader_arg_targets_mutable_native_exec(target))
+        .split([':', ' ', '\t'])
+        .any(loader_path_list_entry_targets_mutable_root)
 }
 
 /// Walks a dynamic loader argument vector the way the loader does: the options
@@ -2748,6 +2764,10 @@ mod tests {
         assert!(env_has_unsafe_loader_override(&[
             "LD_TRACE_LOADED_OBJECTS=1".to_string()
         ]));
+        // The loader enters trace mode on presence, not on value.
+        assert!(env_has_unsafe_loader_override(&[
+            "LD_TRACE_LOADED_OBJECTS=".to_string()
+        ]));
         assert!(!env_has_unsafe_loader_override(&[format!(
             "LD_PRELOAD={ALLOWED_LD_PRELOAD}"
         )]));
@@ -3159,15 +3179,38 @@ mod tests {
 
     #[test]
     fn loader_control_options_reject_mutable_values() {
-        // An empty list, or an empty segment, makes the loader search the
+        // An empty list, or an empty entry, makes the loader search the
         // working directory the guard cannot pin.
         assert!(loader_path_list_targets_mutable_native_exec(""));
         assert!(loader_path_list_targets_mutable_native_exec("/usr/lib:"));
         assert!(loader_path_list_targets_mutable_native_exec(":/usr/lib"));
+        assert!(loader_path_list_entry_targets_mutable_root(""));
         assert!(!loader_path_list_targets_mutable_native_exec("/usr/lib"));
         assert!(!loader_path_list_targets_mutable_native_exec(
             "/usr/lib:/lib"
         ));
+
+        // The loader splits a search list on whitespace as well as on colons.
+        // A doubled separator only yields an empty entry once the list is
+        // split the same way, so this fails if whitespace is not a separator.
+        assert!(loader_path_list_targets_mutable_native_exec(
+            "/usr/lib  /lib"
+        ));
+        assert!(loader_path_list_targets_mutable_native_exec(
+            "/usr/lib \t/lib"
+        ));
+        assert!(!loader_path_list_targets_mutable_native_exec(
+            "/usr/lib /lib"
+        ));
+
+        // A mutable-root entry is refused as a directory, without being an
+        // ELF file itself. MUTABLE_EXEC_ROOTS only exist inside the runtime
+        // image, so the container probe covers the positive case; here the
+        // predicate is pinned to the root check it must use.
+        assert!(MUTABLE_EXEC_ROOTS.iter().all(|root| {
+            canonicalize_existing_path(root)
+                .is_none_or(|resolved| resolved_path_is_mutable_root(&resolved))
+        }));
 
         let loader = "/lib64/ld-linux-x86-64.so.2".to_string();
         for arguments in [
