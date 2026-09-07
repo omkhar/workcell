@@ -165,6 +165,12 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
+      # One axis at a time.  The first run of this matrix built the validator
+      # image four times at once and two of the four died with curl exit 22
+      # fetching the pinned Debian snapshot, so the lane reported an
+      # infrastructure failure rather than a repository result.  Serialized, the
+      # first build populates the shared buildx cache scope the rest read.
+      max-parallel: 1
       matrix:
         include:
           - axis: tmpdir
