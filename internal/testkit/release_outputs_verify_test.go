@@ -187,15 +187,21 @@ func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDige
 }
 
 // TestVerifyReleaseOutputsRunsFromItsEntryPoint executes the shipped script
-// directly rather than through the sourcing driver every other test uses. With
-// no arguments it must run main and fail closed; a script whose entry-point
-// guard no longer calls main would exit 0 having verified nothing, which is how
-// the release workflow invokes it.
+// directly rather than through the sourcing driver every other test uses. A
+// script whose entry-point guard no longer calls main would exit 0 having
+// verified nothing, and one that calls `main` without "$@" would drop the
+// verify_args the release workflow passes, so both the no-argument fail-closed
+// path and argument forwarding are checked.
 func TestVerifyReleaseOutputsRunsFromItsEntryPoint(t *testing.T) {
 	t.Parallel()
-	code, out := runVerifyDriver(t, verifyReleaseOutputsScript(t), nil, nil)
-	if code == 0 || !strings.Contains(out, "assets directory is required") {
+	script := verifyReleaseOutputsScript(t)
+	if code, out := runVerifyDriver(t, script, nil, nil); code == 0 || !strings.Contains(out, "assets directory is required") {
 		t.Fatalf("release verifier did not run from its entry point, got %d\n%s", code, out)
+	}
+	// --help is only reachable if the guard forwarded "$@" to main.
+	code, out := runVerifyDriver(t, script, []string{"--help"}, nil)
+	if code != 0 || !strings.Contains(out, "Usage: verify-release-outputs.sh") {
+		t.Fatalf("release verifier entry point does not forward its arguments, got %d\n%s", code, out)
 	}
 }
 
@@ -214,6 +220,28 @@ func TestVerifyReleaseOutputsIsolatesTokensFromCosign(t *testing.T) {
 	}
 	if got := len(logLines(t, cosignLog)); got != 12 {
 		t.Fatalf("Cosign calls = %d, want the full signature set to have run", got)
+	}
+}
+
+// TestVerifyReleaseOutputsAcceptsGHTokenForAttestations covers the documented
+// GITHUB_TOKEN-or-GH_TOKEN credential fallback with attestations enabled, which
+// every other attestation run misses by supplying GITHUB_TOKEN.
+func TestVerifyReleaseOutputsAcceptsGHTokenForAttestations(t *testing.T) {
+	t.Parallel()
+	assets := releaseOutputFixture(t)
+	bin, _, ghLog := releaseOutputStubBin(t, "", "")
+	args := releaseOutputArgs(assets, releaseOutputTag, releaseOutputImage, strings.Repeat("c", 40), strings.Repeat("c", 40), true)
+	code, out := runVerifyDriver(t, bin, args, []string{
+		"GH_TOKEN=test-token",
+		"GH_HOST=attacker.example.com",
+		"GH_ENTERPRISE_TOKEN=attacker-enterprise-token",
+		"GITHUB_ENTERPRISE_TOKEN=attacker-enterprise-token",
+	})
+	if code != 0 {
+		t.Fatalf("release verifier rejected GH_TOKEN as the attestation credential, got %d\n%s", code, out)
+	}
+	if got := len(logLines(t, ghLog)); got != 10 {
+		t.Fatalf("gh attestation calls = %d, want the full attestation set to have run", got)
 	}
 }
 
@@ -376,15 +404,24 @@ func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	}
 }
 
-// flagValue returns the argument that follows flag in a logged stub call.
+// flagValue returns the argument that follows flag in a logged stub call, and
+// only when the flag appears exactly once. Both gh and cosign take the last
+// occurrence of a repeated flag, so a weaker second --cert-identity or
+// --predicate-type would otherwise pass an assertion made against the first.
 func flagValue(line, flag string) string {
 	fields := strings.Fields(line)
+	value := ""
+	seen := 0
 	for i, field := range fields {
 		if field == flag && i+1 < len(fields) {
-			return fields[i+1]
+			value = fields[i+1]
+			seen++
 		}
 	}
-	return ""
+	if seen != 1 {
+		return ""
+	}
+	return value
 }
 
 // callSubjects reduces each logged stub call to the subject it verified, plus
