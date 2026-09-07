@@ -61,63 +61,30 @@ func readTrackedFile(path string) ([]byte, error) {
 	return io.ReadAll(file)
 }
 
-// shebangNeutralizesStartupFiles reports whether a Bash shebang line stops the
-// interpreter from reading a caller-controlled startup file. Bash sources
-// $BASH_ENV, and $ENV in POSIX mode, before the script's first line, so a
-// script whose shebang leaves those names alone runs the caller's code first.
+// hardenedShebangs is the exact set of interpreter lines a tracked Bash script
+// may use. Each one stops Bash from reading a caller-controlled startup file:
+// Bash sources $BASH_ENV, and $ENV in POSIX mode, before the script's first
+// line, and each form here either runs Bash privileged (-p), under which both
+// variables are ignored, or clears both names with an env(1) prefix.
 //
-// Two spellings close that, and this repository uses both: privileged mode
-// (-p), under which Bash ignores both variables outright, and an env(1) prefix
-// that clears both names for the interpreter.
-//
-// Position decides which spelling a token belongs to. env(1) takes assignments
-// before the command name and passes everything after it to that command, so
-// "env -S bash BASH_ENV= ENV=" hands Bash two arguments and leaves an inherited
-// BASH_ENV in force. Bash in turn reads options only until -- or until its
-// script operand, so "bash -- -p" and "bash /dev/null -p" are not privileged.
-// A later assignment of the same name also wins, so the final value of each
-// name decides, not whether a cleared spelling appeared anywhere.
+// This is an exact-match set and not a parser. A Bash and env(1) command line
+// carries more grammar than the property needs -- quoting inside -S, option
+// arity, an option terminator, a script operand, repeated assignments where
+// the last wins -- and each of those is a way for a line to read as hardened
+// while behaving otherwise. Matching whole reviewed lines has no such grammar
+// to work around. Adding a form is a deliberate edit here, which is the review
+// the property deserves.
+var hardenedShebangs = map[string]bool{
+	"#!/bin/bash -p":                        true,
+	"#!/usr/bin/env -S BASH_ENV= ENV= bash": true,
+	"#!/usr/bin/env -S -i PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin BASH_ENV= ENV= /bin/bash": true,
+	"#!/usr/bin/env -S -uPOSIXLY_CORRECT -uPOSIX_PEDANTIC BASH_ENV= ENV= SHELLOPTS= BASHOPTS= BASH_COMPAT= BASH_XTRACEFD= FUNCNEST= LC_ALL=C bash -p":                                                      true,
+}
+
+// shebangNeutralizesStartupFiles reports whether a Bash interpreter line is one
+// of the reviewed hardened forms.
 func shebangNeutralizesStartupFiles(shebang string) bool {
-	fields := strings.Fields(shebang)
-	command := -1
-	for i, field := range fields {
-		if field == "bash" || strings.HasSuffix(field, "/bash") {
-			command = i
-			break
-		}
-	}
-	if command < 0 {
-		return false
-	}
-	for _, arg := range fields[command+1:] {
-		if arg == "-p" {
-			return true
-		}
-		if arg == "--" || !strings.HasPrefix(arg, "-") {
-			// The option terminator, or the script operand: Bash reads no
-			// further options after either.
-			break
-		}
-	}
-	if command == 0 {
-		// The interpreter line names Bash directly and carried no -p, so there
-		// is no room before it for an assignment.
-		return false
-	}
-	bashEnv, env := "unset", "unset"
-	for _, assignment := range fields[1:command] {
-		name, value, isAssignment := strings.Cut(assignment, "=")
-		if !isAssignment {
-			continue
-		}
-		switch name {
-		case "BASH_ENV":
-			bashEnv = value
-		case "ENV":
-			env = value
-		}
-	}
-	return bashEnv == "" && env == ""
+	return hardenedShebangs[shebang]
 }
 
 // TestTrackedBashScriptsNeutralizeStartupFiles extends the single-script
@@ -183,6 +150,11 @@ func TestReadTrackedFileRefusesASymlinkedPath(t *testing.T) {
 	}
 }
 
+// TestShebangNeutralizesStartupFilesRejectsUnhardenedForms covers the reviewed
+// forms and the lines that read as hardened but are not. The last group is the
+// point of an exact-match set: each of those was empirically shown to run an
+// inherited BASH_ENV, and a predicate that parsed the command line accepted
+// several of them.
 func TestShebangNeutralizesStartupFilesRejectsUnhardenedForms(t *testing.T) {
 	t.Parallel()
 
@@ -191,28 +163,31 @@ func TestShebangNeutralizesStartupFilesRejectsUnhardenedForms(t *testing.T) {
 		shebang string
 		want    bool
 	}{
-		{"cleared env prefix", "#!/usr/bin/env -S BASH_ENV= ENV= bash", true},
+		{"env prefix", "#!/usr/bin/env -S BASH_ENV= ENV= bash", true},
 		{"privileged", "#!/bin/bash -p", true},
-		{"cleared prefix and privileged", "#!/usr/bin/env -S BASH_ENV= ENV= LC_ALL=C bash -p", true},
+
 		{"bare", "#!/bin/bash", false},
 		{"bare env", "#!/usr/bin/env bash", false},
 		{"BASH_ENV cleared only", "#!/usr/bin/env -S BASH_ENV= bash", false},
 		{"ENV cleared only", "#!/usr/bin/env -S ENV= bash", false},
 		{"assigned not cleared", "#!/usr/bin/env -S BASH_ENV=/tmp/rc ENV=/tmp/rc bash", false},
-		// env(1) passes everything after the command name to that command, so
-		// these two are Bash arguments and an inherited BASH_ENV still runs.
+
+		// Each of these runs an inherited BASH_ENV. env(1) passes everything
+		// after the command name to that command; Bash reads options only
+		// until -- or its script operand, and --rcfile consumes the next
+		// argument; a repeated assignment is won by the last one; and -S
+		// removes quotes, so a quoted name is the same name.
 		{"cleared after the command", "#!/usr/bin/env -S bash BASH_ENV= ENV=", false},
-		// -p is a Bash option, so it counts only after the command name, and
-		// only before the -- that ends Bash option parsing.
 		{"privileged before the command", "#!/usr/bin/env -S -p bash", false},
 		{"privileged after the option terminator", "#!/usr/bin/env -S bash -- -p", false},
-		{"privileged before the option terminator", "#!/usr/bin/env -S bash -p --", true},
-		// Bash reads no further options once its script operand appears.
 		{"privileged after the script operand", "#!/usr/bin/env -S bash /dev/null -p", false},
-		// A later assignment of the same name wins, so the final value decides.
+		{"privileged consumed by an option", "#!/usr/bin/env -S bash --rcfile -p", false},
 		{"cleared then reassigned", "#!/usr/bin/env -S BASH_ENV= ENV= BASH_ENV=/tmp/rc bash", false},
-		{"assigned then cleared", "#!/usr/bin/env -S BASH_ENV=/tmp/rc ENV= BASH_ENV= bash", true},
-		{"absolute interpreter after assignments", "#!/usr/bin/env -S BASH_ENV= ENV= /bin/bash", true},
+		{"cleared then reassigned through quotes", "#!/usr/bin/env -S BASH_ENV= ENV= BASH_'ENV'=/tmp/rc bash", false},
+
+		// Safe in themselves, but not reviewed lines. An equivalent form is
+		// rejected until it is added to the set on purpose.
+		{"unlisted equivalent", "#!/usr/bin/env -S BASH_ENV= ENV= LC_ALL=C bash -p", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

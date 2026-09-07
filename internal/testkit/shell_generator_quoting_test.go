@@ -49,17 +49,20 @@ func hasGoQuoteDirective(text string) bool {
 	return false
 }
 
-// goQuoteInShellLiteral reports the 1-based lines of goSource where a shell
-// script literal interpolates a value with Go's q conversion.
+// goQuoteInShellLiteral reports the 1-based lines of goSource that build a
+// shell script literal interpolating a value with Go's q conversion.
 //
-// The scan tokenises rather than reading lines. A generated script is written
-// as string literals joined by +, so the marker that identifies the text as
-// shell and the directive that spoils it are usually in different fragments of
-// one expression; the fragments are therefore grouped and judged together.
-// Taking them from the tokeniser also means comments never reach the scan and
-// both literal forms decode the same way, which reading lines cannot do: a
-// trailing or block comment about shell syntax is not script text, and a raw
-// literal's body lines are.
+// The scan tokenises rather than reading lines, and judges a whole
+// concatenation rather than its fragments. A generated script is written as
+// string literals joined by +, so both the marker that identifies the text as
+// shell and the directive that spoils it are properties of the joined value:
+// "printf " + "%" + "q" is a real directive that no fragment contains, and
+// "%" + "%q" is an escaped percent that one fragment appears to contain.
+// Taking the tokens from go/scanner also keeps comments out of the scan and
+// decodes both literal forms alike, which reading lines cannot do: a trailing
+// or block comment about shell syntax is not script text, and a raw literal's
+// body lines are. Each group is reported at the line its first fragment
+// starts on.
 func goQuoteInShellLiteral(goSource string) []int {
 	fileSet := token.NewFileSet()
 	file := fileSet.AddFile("", fileSet.Base(), len(goSource))
@@ -67,12 +70,12 @@ func goQuoteInShellLiteral(goSource string) []int {
 	lexer.Init(file, []byte(goSource), nil, 0)
 
 	var found []int
-	group, directiveLines := "", []int(nil)
+	group, groupLine, open := "", 0, false
 	flush := func() {
-		if shellSourceMarker.MatchString(group) {
-			found = append(found, directiveLines...)
+		if open && shellSourceMarker.MatchString(group) && hasGoQuoteDirective(group) {
+			found = append(found, groupLine)
 		}
-		group, directiveLines = "", nil
+		group, groupLine, open = "", 0, false
 	}
 	for {
 		pos, tok, literal := lexer.Scan()
@@ -81,11 +84,10 @@ func goQuoteInShellLiteral(goSource string) []int {
 			flush()
 			return found
 		case token.STRING:
-			text := decodeGoLiteral(literal)
-			group += text
-			if hasGoQuoteDirective(text) {
-				directiveLines = append(directiveLines, fileSet.Position(pos).Line)
+			if !open {
+				groupLine, open = fileSet.Position(pos).Line, true
 			}
+			group += decodeGoLiteral(literal)
 		case token.ADD:
 			// A concatenation keeps the fragments of one literal together.
 		default:
@@ -133,9 +135,10 @@ func TestGeneratedShellScriptsDoNotUseGoQuoting(t *testing.T) {
 	}
 }
 
-// goQuoteFixture is Go source that carries every form the scan must judge.
-// The q conversions are assembled from pieces so this file does not report
-// itself, and every line is numbered against the fixture, not this file.
+// goQuoteFixture is Go source carrying every form the scan must judge. Each
+// generator is its own statement, so each reports at its own line. The q
+// conversions are assembled from pieces so this file does not report itself,
+// and the line numbers are the fixture's own.
 func goQuoteFixture() string {
 	q := "%" + "q"
 	pct := "%"
@@ -144,38 +147,42 @@ func goQuoteFixture() string {
 		`package p`,             // 1
 		``,                      // 2
 		`func concatenated() {`, // 3
-		`	_ = fmt.Sprintf("set -euo pipefail\n"+`, // 4: the marker fragment
-		`		"builtin source ` + q + `\n"+`,         // 5: reported
-		`		"cmd ` + q + `\n", one, two)`,          // 6: reported
-		`	t.Fatalf("output ` + q + `", got)`,      // 7: prose, a separate expression
+		`	_ = fmt.Sprintf("set -euo pipefail\n"+`, // 4: reported, the group starts here
+		`		"builtin source ` + q + `\n"+`,         // 5: same group
+		`		"cmd ` + q + `\n", one, two)`,          // 6: same group
+		`	t.Fatalf("output ` + q + `", got)`,      // 7: its own group, no marker
 		`}`,                                       // 8
 		``,                                        // 9
 		`func rawLiteral() {`,                     // 10
-		`	_ = fmt.Sprintf(` + tick + `#!/bin/sh`,  // 11: a raw literal opens on the marker
-		`printf 'x' >> ` + q,                      // 12: reported, same literal
+		`	_ = fmt.Sprintf(` + tick + `#!/bin/sh`,  // 11: reported, one token spans to 14
+		`printf 'x' >> ` + q,                      // 12
 		`exec /bin/sleep 60`,                      // 13
 		tick + `, commandLog)`,                    // 14
 		`}`,                                       // 15
 		``,                                        // 16
 		`func directiveForms() {`,                 // 17
-		`	_ = fmt.Sprintf("#!/bin/bash\n"+`,       // 18: the marker fragment
-		`		"indexed ` + pct + `[1]q\n"+`,          // 19: reported
-		`		"flagged ` + pct + `#q\n"+`,            // 20: reported
-		`		"padded ` + pct + `-8q\n"+`,            // 21: reported
-		`		"star ` + pct + `*q\n"+`,               // 22: reported
-		`		"star indexed ` + pct + `[2]*[1]q\n"+`, // 23: reported
-		`		"escaped then real ` + pct + pct + pct + `q\n"+`, // 24: reported
-		`		"literal ` + pct + pct + `q\n"+`,                 // 25: an escaped percent only
-		`		"safe ` + pct + `s\n", a, b, c)`,                 // 26: a different conversion
-		`}`,                                                 // 27
-		``,                                                  // 28
-		`func comments() {`,                                 // 29
-		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 30
-		`	_ = fmt.Sprintf("set -euo pipefail\n") /* ` + pct + `q */`,  // 31: inline comment
-		`	/*`, // 32
-		`	   #!/bin/bash ` + pct + `q in a block comment`, // 33
-		`	*/`, // 34
-		`}`,   // 35
+		`	_ = fmt.Sprintf("#!/bin/bash\nindexed ` + pct + `[1]q\n", a)`,                    // 18: reported
+		`	_ = fmt.Sprintf("#!/bin/bash\nflagged ` + pct + `#q\n", a)`,                      // 19: reported
+		`	_ = fmt.Sprintf("#!/bin/bash\npadded ` + pct + `-8q\n", a)`,                      // 20: reported
+		`	_ = fmt.Sprintf("#!/bin/bash\nstar ` + pct + `*q\n", w, a)`,                      // 21: reported
+		`	_ = fmt.Sprintf("#!/bin/bash\nstar indexed ` + pct + `[2]*[1]q\n", a, w)`,        // 22: reported
+		`	_ = fmt.Sprintf("#!/bin/bash\nescaped then real ` + pct + pct + pct + `q\n", a)`, // 23: reported
+		`	_ = fmt.Sprintf("#!/bin/bash\nliteral ` + pct + pct + `q\n")`,                    // 24: an escaped percent only
+		`	_ = fmt.Sprintf("#!/bin/bash\nsafe ` + pct + `s\n", a)`,                          // 25: a different conversion
+		`}`,                             // 26
+		``,                              // 27
+		`func splitAcrossFragments() {`, // 28
+		`	_ = fmt.Sprintf("#!/bin/bash\nprintf " + "` + pct + `" + "q\n", a)`,         // 29: reported, the joined value is a directive
+		`	_ = fmt.Sprintf("#!/bin/bash\nprintf " + "` + pct + `" + "` + pct + `q\n")`, // 30: the joined value is an escaped percent
+		`}`,                 // 31
+		``,                  // 32
+		`func comments() {`, // 33
+		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 34
+		`	_ = fmt.Sprintf("set -euo pipefail\n") /* ` + pct + `q */`,  // 35: trailing comment
+		`	/*`, // 36
+		`	   #!/bin/bash ` + pct + `q in a block comment`, // 37
+		`	*/`, // 38
+		`}`,   // 39
 	}, "\n")
 }
 
@@ -186,9 +193,10 @@ func TestGoQuoteInShellLiteralFindsEveryGeneratorForm(t *testing.T) {
 	t.Parallel()
 
 	requireLines(t, goQuoteInShellLiteral(goQuoteFixture()),
-		5, 6, // concatenated fragments after a marker fragment
-		11,                     // a raw literal, reported at the line its single token starts on
-		19, 20, 21, 22, 23, 24, // the directive spellings
+		4,                      // a concatenation whose marker and directives are in different fragments
+		11,                     // a raw literal, reported where its single token starts
+		18, 19, 20, 21, 22, 23, // the directive spellings
+		29, // a directive spelled across fragments
 	)
 }
 
