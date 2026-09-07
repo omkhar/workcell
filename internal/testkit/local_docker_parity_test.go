@@ -528,3 +528,47 @@ func stringsFromNUL(data []byte) []string {
 	}
 	return result
 }
+
+// Every validator lane runs its workload as a uid the image has no /etc/passwd
+// record for, so a lane without the synthesized entry loses ssh-keygen, and
+// with it git's ssh signing and verification.  The synthesis lives in one
+// library precisely so a lane cannot half-adopt it: this test fails when a lane
+// stops sourcing it, calls it more than once, or drops the read-only mount.
+func TestValidatorLanesMountSynthesizedPasswd(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	validatorMounts := []string{
+		`workcell_ci_workspace_mount_spec "${validator_passwd}" true /etc/passwd`,
+		`--mount "${validator_passwd_mount}"`,
+	}
+	for rel, mounts := range map[string][]string{
+		"scripts/ci/run-docs-in-validator.sh":     validatorMounts,
+		"scripts/ci/run-fuzz-in-validator.sh":     validatorMounts,
+		"scripts/ci/run-mutation-in-validator.sh": validatorMounts,
+		"scripts/ci/run-validate-in-validator.sh": validatorMounts,
+		"scripts/build-and-test.sh":               {`-v "${passwd_file}:/etc/passwd:ro"`},
+	} {
+		rel, mounts := rel, mounts
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+
+			content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lane := string(content)
+			if !strings.Contains(lane, "scripts/ci/lib/validator-passwd.sh") {
+				t.Fatalf("%s must use the shared passwd synthesis library", rel)
+			}
+			if got := strings.Count(lane, "workcell_ci_validator_passwd_file"); got != 1 {
+				t.Fatalf("%s calls the passwd synthesis %d times, want 1", rel, got)
+			}
+			for _, mount := range mounts {
+				if !strings.Contains(lane, mount) {
+					t.Fatalf("%s must mount the synthesized passwd file: %s", rel, mount)
+				}
+			}
+		})
+	}
+}

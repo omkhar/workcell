@@ -98,6 +98,7 @@ run_validate_repo_in_validator_snapshot() {
     "WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME=${validator_home}" \
     "WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE=${validator_cache}" \
     "WORKCELL_BUILD_AND_TEST_VALIDATOR_TMP=${validator_tmp}" \
+    "WORKCELL_BUILD_AND_TEST_PASSWD_LIB=${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh" \
     "${ROOT_DIR}/scripts/with-validation-snapshot.sh" \
     --repo "${ROOT_DIR}" \
     --mode worktree \
@@ -105,6 +106,17 @@ run_validate_repo_in_validator_snapshot() {
     -- \
     /bin/bash -p -c '
       workspace="$(pwd -P)"
+      # Same synthesized passwd entry the CI lanes mount: the workload runs as
+      # a uid the image has no /etc/passwd record for, and git shelling out to
+      # ssh-keygen for signing dies with "No user exists for uid <n>" without
+      # one.  The file lives in the disposable snapshot, which is already the
+      # bind source, so the Colima VM can see it.
+      source "${WORKCELL_BUILD_AND_TEST_PASSWD_LIB}"
+      passwd_file="$(workcell_ci_validator_passwd_file docker "$1" \
+        "${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}" \
+        "${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}" \
+        "${WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME}" \
+        "${workspace}")"
       docker run --rm \
         --user "${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}:${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}" \
         --entrypoint /bin/bash \
@@ -115,6 +127,7 @@ run_validate_repo_in_validator_snapshot() {
         -e CARGO_TARGET_DIR="${WORKCELL_BUILD_AND_TEST_VALIDATOR_CACHE}/cargo-target" \
         -e TMPDIR="${WORKCELL_BUILD_AND_TEST_VALIDATOR_TMP}" \
         -v "${workspace}:/workspace" \
+        -v "${passwd_file}:/etc/passwd:ro" \
         -w /workspace \
         "$1" \
         -lc '"'"'
@@ -122,6 +135,7 @@ run_validate_repo_in_validator_snapshot() {
           mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
           ./scripts/validate-repo.sh "$@"
         '"'"' bash "${@:2}"
+      rm -f "${passwd_file}"
       ./scripts/verify-invariants.sh
     ' bash "${image_tag}" "$@"
 }
