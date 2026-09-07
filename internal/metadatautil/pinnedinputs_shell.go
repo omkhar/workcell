@@ -17,7 +17,7 @@ import (
 // former mvdan.cc/sh AST audit (command allowlist, call counts, and
 // canonical function bodies): every structural drift those checks caught
 // also changes the file bytes.
-const canonicalHostedShellFileSHA256 = "3acb99675027bf0d1fa625f34b7464a0754a40a48def0b08b1644367812561e9"
+const canonicalHostedShellFileSHA256 = "dcb4bb32cb48ca2411d004f905ff90f5f1508d0b959e339f939c277e45c65cc0"
 
 var errHostedShellRouting = errors.New("scripts/verify-github-hosted-controls.sh must use the exact reviewed command graph and versioned github_api wrapper")
 

@@ -119,6 +119,7 @@ you on timing.
 Closed-finding evidence and assurance artifacts from past reviews live under
 [docs/security/](docs/security/):
 
+- [2026-08-12 security review](docs/security/security-review-2026-08-12.md)
 - [2026-04-24 validation summary](docs/security/security-findings-2026-04-24-validation.md)
 - [2026-04-24 PoC matrix](docs/security/security-findings-2026-04-24-poc-matrix.md)
 - [2026-04-24 mutation results](docs/security/security-findings-2026-04-24-mutation-results.md)

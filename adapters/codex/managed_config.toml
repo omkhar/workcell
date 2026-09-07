@@ -35,25 +35,27 @@ default_subagent_reasoning_effort = "medium"
 
 [shell_environment_policy]
 inherit = "core"
-exclude = [
-  "*_TOKEN",
-  "*_TOKEN_*",
-  "*_SECRET",
-  "*_SECRET_*",
-  "*_KEY",
-  "*_KEY_*",
-  "AWS_*",
-  "AZURE_*",
-  "GCP_*",
-  "GOOGLE_*",
-  "KUBECONFIG",
-  "SSH_AUTH_SOCK",
-  "SSH_AGENT_PID",
-  "DOCKER_HOST",
-  "DOCKER_TLS_VERIFY",
-  "DOCKER_CERT_PATH",
-]
 set = { WORKCELL_RUNTIME = "1" }
+
+# Canonical filters form. The legacy `exclude` array is deprecated and the
+# requirements layer accepts only this keyed form.
+[shell_environment_policy.filters]
+"*_TOKEN" = "exclude"
+"*_TOKEN_*" = "exclude"
+"*_SECRET" = "exclude"
+"*_SECRET_*" = "exclude"
+"*_KEY" = "exclude"
+"*_KEY_*" = "exclude"
+"AWS_*" = "exclude"
+"AZURE_*" = "exclude"
+"GCP_*" = "exclude"
+"GOOGLE_*" = "exclude"
+"KUBECONFIG" = "exclude"
+"SSH_AUTH_SOCK" = "exclude"
+"SSH_AGENT_PID" = "exclude"
+"DOCKER_HOST" = "exclude"
+"DOCKER_TLS_VERIFY" = "exclude"
+"DOCKER_CERT_PATH" = "exclude"
 
 [sandbox_workspace_write]
 exclude_slash_tmp = true
@@ -75,22 +77,6 @@ plugins = false
 plugin_sharing = false
 remote_plugin = false
 
-[[rules.prefix_rules]]
-pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { token = "commit" }, { any_of = ["--no-verify", "-n"] }]
-decision = "forbidden"
-justification = "Do not bypass git hooks with --no-verify or git commit -n from Workcell."
-
-[[rules.prefix_rules]]
-pattern = [{ any_of = ["git", "/usr/bin/git", "/usr/local/libexec/workcell/git", "/usr/local/libexec/workcell/core/git", "/usr/local/libexec/workcell/real/git"] }, { any_of = ["push", "merge", "rebase", "am"] }, { token = "--no-verify" }]
-decision = "forbidden"
-justification = "Do not bypass git hooks with --no-verify from Workcell."
-
-[[rules.prefix_rules]]
-pattern = [{ any_of = ["codex", "claude", "copilot", "gemini", "/usr/local/libexec/workcell/provider-wrapper.sh", "/usr/local/libexec/workcell/core/codex", "/usr/local/libexec/workcell/core/claude", "/usr/local/libexec/workcell/core/copilot", "/usr/local/libexec/workcell/core/gemini", "/usr/local/libexec/workcell/real/codex", "/usr/local/libexec/workcell/real/claude", "/usr/local/libexec/workcell/real/copilot", "/opt/workcell/providers/node_modules/.bin/gemini"] }]
-decision = "forbidden"
-justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
-
-[[rules.prefix_rules]]
-pattern = [{ token = "node" }, { any_of = ["/opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js"] }]
-decision = "forbidden"
-justification = "Do not launch nested coding-agent CLIs or bypass Workcell provider mediation from inside Codex."
+# Prefix rules do not exist in the config-layer schema, so this file declares
+# none. The enforced copies live in requirements.toml (admin layer) and
+# .codex/rules/default.rules (execpolicy).

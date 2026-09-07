@@ -3658,7 +3658,7 @@ jobs:
 `
 
 // adapterRuleGuardBashHappyCodexRule is a minimal Codex rule file (used for both
-// managed_config.toml and requirements.toml) containing the four required
+// .codex/rules/default.rules and requirements.toml) containing the four required
 // bypass-path needles and NOT the removed npm entrypoint.
 const adapterRuleGuardBashHappyCodexRule = `# codex rule
 deny = [
@@ -3685,7 +3685,7 @@ doc_regex="copilot\.md"
 // writeAdapterRuleGuardBashRepo materializes a fake repo with the four files
 // this group reads set to the given bodies; a body of "" means "do not create
 // that file" (unreadable-target case).
-func writeAdapterRuleGuardBashRepo(t *testing.T, releaseYML, managedConfig, requirements, guardBash string) string {
+func writeAdapterRuleGuardBashRepo(t *testing.T, releaseYML, defaultRules, requirements, guardBash string) string {
 	t.Helper()
 	root := t.TempDir()
 	write := func(rel, body string) {
@@ -3701,7 +3701,7 @@ func writeAdapterRuleGuardBashRepo(t *testing.T, releaseYML, managedConfig, requ
 		}
 	}
 	write(releaseWorkflowRelPath, releaseYML)
-	write(codexManagedConfigRelPath, managedConfig)
+	write(codexDefaultRulesRelPath, defaultRules)
 	write(codexRequirementsRelPath, requirements)
 	write(claudeGuardBashRelPath, guardBash)
 	return root
@@ -3709,149 +3709,149 @@ func writeAdapterRuleGuardBashRepo(t *testing.T, releaseYML, managedConfig, requ
 
 func TestCheckAdapterRuleGuardBash(t *testing.T) {
 	tests := []struct {
-		name          string
-		releaseYML    string
-		managedConfig string
-		requirements  string
-		guardBash     string
-		wantErr       string // "" means expect success
+		name         string
+		releaseYML   string
+		defaultRules string
+		requirements string
+		guardBash    string
+		wantErr      string // "" means expect success
 	}{
 		{
-			name:          "happy path all invariants hold",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
+			name:         "happy path all invariants hold",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
 		},
 		{
 			// kindCountAtLeast: zero native lines fails the count guard.
-			name:          "release yml zero native lines fails count",
-			releaseYML:    strings.ReplaceAll(adapterRuleGuardBashHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_MODE: native", "WORKCELL_COPILOT_RELEASE_HELP_MODE: docker"),
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
+			name:         "release yml zero native lines fails count",
+			releaseYML:   strings.ReplaceAll(adapterRuleGuardBashHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_MODE: native", "WORKCELL_COPILOT_RELEASE_HELP_MODE: docker"),
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
 		},
 		{
 			// kindCountAtLeast: one native line fails the count guard (< 2).
-			name:          "release yml one native line fails count",
-			releaseYML:    strings.Replace(adapterRuleGuardBashHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_MODE: native", "WORKCELL_COPILOT_RELEASE_HELP_MODE: docker", 1),
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
+			name:         "release yml one native line fails count",
+			releaseYML:   strings.Replace(adapterRuleGuardBashHappyReleaseYML, "WORKCELL_COPILOT_RELEASE_HELP_MODE: native", "WORKCELL_COPILOT_RELEASE_HELP_MODE: docker", 1),
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
 		},
 		{
 			// kindCountAtLeast line semantics: two occurrences on ONE line count
 			// as one matching line (grep -Fc counts LINES, not occurrences), so
 			// this still fails the minCount(2) guard.
-			name:          "release yml two occurrences on one line fails count",
-			releaseYML:    "name: release\nenv: WORKCELL_COPILOT_RELEASE_HELP_MODE: native WORKCELL_COPILOT_RELEASE_HELP_MODE: native\n",
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
+			name:         "release yml two occurrences on one line fails count",
+			releaseYML:   "name: release\nenv: WORKCELL_COPILOT_RELEASE_HELP_MODE: native WORKCELL_COPILOT_RELEASE_HELP_MODE: native\n",
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
 		},
 		{
 			// kindCountAtLeast: three native lines satisfies the count guard.
-			name:          "release yml three native lines passes count",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML + "      WORKCELL_COPILOT_RELEASE_HELP_MODE: native\n",
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
+			name:         "release yml three native lines passes count",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML + "      WORKCELL_COPILOT_RELEASE_HELP_MODE: native\n",
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
 		},
 		{
-			// codex_rule_file loop, managed_config.toml, probe 1.
-			name:          "managed_config missing provider-wrapper path",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: strings.Replace(adapterRuleGuardBashHappyCodexRule, "/usr/local/libexec/workcell/provider-wrapper.sh", "/other/path", 1),
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected managed_config.toml to block direct provider-wrapper launches",
+			// codex_rule_file loop, default.rules, probe 1.
+			name:         "default_rules missing provider-wrapper path",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: strings.Replace(adapterRuleGuardBashHappyCodexRule, "/usr/local/libexec/workcell/provider-wrapper.sh", "/other/path", 1),
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected default.rules to block direct provider-wrapper launches",
 		},
 		{
-			// codex_rule_file loop, managed_config.toml, probe 3 (second needle):
+			// codex_rule_file loop, default.rules, probe 3 (second needle):
 			// proves the two-needle probe shares one message.
-			name:          "managed_config missing real copilot path",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: strings.Replace(adapterRuleGuardBashHappyCodexRule, "/usr/local/libexec/workcell/real/copilot", "/other/copilot", 1),
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected managed_config.toml to block Copilot provider mediation bypass paths",
+			name:         "default_rules missing real copilot path",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: strings.Replace(adapterRuleGuardBashHappyCodexRule, "/usr/local/libexec/workcell/real/copilot", "/other/copilot", 1),
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected default.rules to block Copilot provider mediation bypass paths",
 		},
 		{
-			// codex_rule_file loop, managed_config.toml, probe 4 (negated cli.js).
-			name:          "managed_config references removed npm entrypoint",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule + "allow = [\"@anthropic-ai/claude-code/cli.js\"]\n",
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "managed_config.toml should not reference the removed Claude npm entrypoint",
+			// codex_rule_file loop, default.rules, probe 4 (negated cli.js).
+			name:         "default_rules references removed npm entrypoint",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule + "allow = [\"@anthropic-ai/claude-code/cli.js\"]\n",
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "default.rules should not reference the removed Claude npm entrypoint",
 		},
 		{
 			// codex_rule_file loop, requirements.toml, probe 2: proves the loop
 			// runs the same probes against the second file with its basename.
-			name:          "requirements missing native claude path",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  strings.Replace(adapterRuleGuardBashHappyCodexRule, "/usr/local/libexec/workcell/real/claude", "/other/claude", 1),
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected requirements.toml to block the native Claude binary path",
+			name:         "requirements missing native claude path",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: strings.Replace(adapterRuleGuardBashHappyCodexRule, "/usr/local/libexec/workcell/real/claude", "/other/claude", 1),
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected requirements.toml to block the native Claude binary path",
 		},
 		{
 			// guard-bash.sh: the regex-escaped provider-wrapper needle carries a
 			// literal backslash-dot; removing it fails this probe.
-			name:          "guard missing escaped provider-wrapper needle",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     strings.Replace(adapterRuleGuardBashHappyGuard, `/usr/local/libexec/workcell/provider-wrapper\.sh`, "/other/wrapper", 1),
-			wantErr:       "Expected Claude Bash guard to block direct provider-wrapper launches",
+			name:         "guard missing escaped provider-wrapper needle",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    strings.Replace(adapterRuleGuardBashHappyGuard, `/usr/local/libexec/workcell/provider-wrapper\.sh`, "/other/wrapper", 1),
+			wantErr:      "Expected Claude Bash guard to block direct provider-wrapper launches",
 		},
 		{
 			// guard-bash.sh multi-path probe: the `\\.copilot` home-control needle
 			// (two literal backslashes) shares guardBypassMessage.
-			name:          "guard missing double-backslash copilot needle",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     strings.Replace(adapterRuleGuardBashHappyGuard, `\\.copilot`, `\\.other`, 1),
-			wantErr:       "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths",
+			name:         "guard missing double-backslash copilot needle",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    strings.Replace(adapterRuleGuardBashHappyGuard, `\\.copilot`, `\\.other`, 1),
+			wantErr:      "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths",
 		},
 		{
 			// guard-bash.sh multi-path probe: the `copilot\.md` needle shares the
 			// same message.
-			name:          "guard missing copilot md needle",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     strings.Replace(adapterRuleGuardBashHappyGuard, `copilot\.md`, `other\.md`, 1),
-			wantErr:       "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths",
+			name:         "guard missing copilot md needle",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    strings.Replace(adapterRuleGuardBashHappyGuard, `copilot\.md`, `other\.md`, 1),
+			wantErr:      "Expected Claude Bash guard to block Copilot provider and home control-plane bypass paths",
 		},
 		{
 			// guard-bash.sh: negated cli.js check (present is a violation).
-			name:          "guard references removed npm entrypoint",
-			releaseYML:    adapterRuleGuardBashHappyReleaseYML,
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard + "legacy=\"@anthropic-ai/claude-code/cli.js\"\n",
-			wantErr:       "Claude Bash guard should not reference the removed Claude npm entrypoint",
+			name:         "guard references removed npm entrypoint",
+			releaseYML:   adapterRuleGuardBashHappyReleaseYML,
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard + "legacy=\"@anthropic-ai/claude-code/cli.js\"\n",
+			wantErr:      "Claude Bash guard should not reference the removed Claude npm entrypoint",
 		},
 		{
 			// A missing release.yml is empty content: zero native lines, so the
 			// first (count) check fails.
-			name:          "missing release yml",
-			releaseYML:    "",
-			managedConfig: adapterRuleGuardBashHappyCodexRule,
-			requirements:  adapterRuleGuardBashHappyCodexRule,
-			guardBash:     adapterRuleGuardBashHappyGuard,
-			wantErr:       "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
+			name:         "missing release yml",
+			releaseYML:   "",
+			defaultRules: adapterRuleGuardBashHappyCodexRule,
+			requirements: adapterRuleGuardBashHappyCodexRule,
+			guardBash:    adapterRuleGuardBashHappyGuard,
+			wantErr:      "Expected release workflow to force native Copilot release help verification for amd64 and arm64 lanes",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			root := writeAdapterRuleGuardBashRepo(t, tc.releaseYML, tc.managedConfig, tc.requirements, tc.guardBash)
+			root := writeAdapterRuleGuardBashRepo(t, tc.releaseYML, tc.defaultRules, tc.requirements, tc.guardBash)
 			err := CheckAdapterRuleGuardBash(root)
 			if tc.wantErr == "" {
 				if err != nil {
@@ -5245,14 +5245,26 @@ func TestExtractGoFunctionBlock(t *testing.T) {
 
 // --- D3 simple-clusters sweep: buildx-builder-trust ---
 
-// buildxBuilderTrustHappyFiles returns the six-file fixture map that satisfies
-// all eight buildx-builder-trust invariants.
+// buildxBuilderTrustHappyFiles returns the fixture map that satisfies all
+// buildx-builder-trust invariants.
 func buildxBuilderTrustHappyFiles() map[string]string {
+	const ownedJob = `#!/usr/bin/env bash
+VALIDATOR_IMAGE_INPUT="${WORKCELL_VALIDATOR_IMAGE:-}"
+if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
+  claim_workcell_validator_image "${ROOT_DIR}" VALIDATOR_IMAGE VALIDATOR_IMAGE_RESERVATION
+  VALIDATOR_IMAGE_OWNED=1
+  export WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}"
+fi
+  if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then
+    cleanup_workcell_owned_validator_image "${VALIDATOR_IMAGE}" "${VALIDATOR_IMAGE_RESERVATION}"
+  fi
+`
 	return map[string]string{
 		verifyReleaseBundleRelPath:     "#!/usr/bin/env bash\nBUILDX_BUILDER=\"workcell-release-${ctx}\"\n",
 		buildAndTestRelPath:            "#!/usr/bin/env bash\n: \"${WORKCELL_KEEP_VALIDATOR_IMAGE:-}\"\n",
-		jobValidateRelPath:             "#!/usr/bin/env bash\ncleanup_workcell_validator_image\n",
-		jobDocsRelPath:                 "#!/usr/bin/env bash\ncleanup_workcell_validator_image\n",
+		jobValidateRelPath:             ownedJob,
+		jobDocsRelPath:                 ownedJob,
+		localDockerParityRelPath:       "#!/usr/bin/env bash\nprintf -v \"${image_variable}\" '%s-%s' \"${prefix}\" \"${claimed_reservation##*/}\"\n[[ \"${WORKCELL_KEEP_VALIDATOR_IMAGE:-0}\" != \"1\" ]] || return 0\n",
 		verifyReproducibleBuildRelPath: "#!/usr/bin/env bash\n: \"${WORKCELL_REPRO_OWNS_BUILDER:-}\"\n",
 		trustedDockerClientRelPath:     "#!/usr/bin/env bash\nbuildx_expected_endpoints() { :; }\ndocker context inspect \"${DOCKER_CONTEXT_NAME}\" --format '{{.x}}'\n",
 		colimaEgressAllowlistRelPath:   "#!/usr/bin/env bash\nCOLIMA_HOME=\"${colima_home}\"\n",
@@ -5281,18 +5293,74 @@ func TestCheckBuildxBuilderTrust(t *testing.T) {
 			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
 		},
 		{
-			name: "job-validate cleanup needle missing",
+			name: "owned tag suffix missing",
 			mutate: func(f map[string]string) {
-				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "cleanup_workcell_validator_image", "X", 1)
+				f[localDockerParityRelPath] = strings.Replace(f[localDockerParityRelPath], `"${claimed_reservation##*/}"`, `"shared"`, 1)
 			},
-			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+			wantErr: "Expected local validator jobs to give each automatically managed image a reservation-owned tag",
 		},
 		{
-			name: "job-docs cleanup needle missing",
+			name: "owned image retention guard missing",
 			mutate: func(f map[string]string) {
-				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "cleanup_workcell_validator_image", "X", 1)
+				f[localDockerParityRelPath] = strings.Replace(f[localDockerParityRelPath], "WORKCELL_KEEP_VALIDATOR_IMAGE", "X", 1)
 			},
-			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+			wantErr: "Expected owned validator-image cleanup to preserve images when retention is requested",
+		},
+		{
+			name: "job-validate caller input missing",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "VALIDATOR_IMAGE_INPUT", "X", 1)
+			},
+			wantErr: "Expected job-validate.sh to preserve whether the caller supplied a validator image",
+		},
+		{
+			name: "job-validate implicit claim missing",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "if [[ -z \"${VALIDATOR_IMAGE_INPUT}\" ]]; then", "if false; then", 1)
+			},
+			wantErr: "Expected job-validate.sh to claim a unique validator image only when the caller did not provide one",
+		},
+		{
+			name: "job-validate owned cleanup guard removed",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], `if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then`, "if true; then", 1)
+			},
+			wantErr: "Expected job-validate.sh to clean its exact reservation-owned validator image",
+		},
+		{
+			name: "job-validate owned cleanup guard inverted",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], `"${VALIDATOR_IMAGE_OWNED}" -eq 1`, `"${VALIDATOR_IMAGE_OWNED}" -ne 1`, 1)
+			},
+			wantErr: "Expected job-validate.sh to clean its exact reservation-owned validator image",
+		},
+		{
+			name: "job-docs caller input missing",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "VALIDATOR_IMAGE_INPUT", "X", 1)
+			},
+			wantErr: "Expected job-docs.sh to preserve whether the caller supplied a validator image",
+		},
+		{
+			name: "job-docs implicit claim missing",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "if [[ -z \"${VALIDATOR_IMAGE_INPUT}\" ]]; then", "if false; then", 1)
+			},
+			wantErr: "Expected job-docs.sh to claim a unique validator image only when the caller did not provide one",
+		},
+		{
+			name: "job-docs owned cleanup guard removed",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], `if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then`, "if true; then", 1)
+			},
+			wantErr: "Expected job-docs.sh to clean its exact reservation-owned validator image",
+		},
+		{
+			name: "job-docs owned cleanup guard inverted",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], `"${VALIDATOR_IMAGE_OWNED}" -eq 1`, `"${VALIDATOR_IMAGE_OWNED}" -ne 1`, 1)
+			},
+			wantErr: "Expected job-docs.sh to clean its exact reservation-owned validator image",
 		},
 		{
 			name: "repro-owns-builder needle missing",
@@ -5343,7 +5411,7 @@ func TestCheckBuildxBuilderTrust(t *testing.T) {
 }
 
 func TestCheckBuildxBuilderTrustCount(t *testing.T) {
-	if got, want := len(buildxBuilderTrustChecks), 8; got != want {
+	if got, want := len(buildxBuilderTrustChecks), 14; got != want {
 		t.Fatalf("buildxBuilderTrustChecks has %d checks, want %d", got, want)
 	}
 }
