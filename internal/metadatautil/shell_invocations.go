@@ -77,12 +77,24 @@ func shellWords(line string) (words, heredocs []string) {
 				word.WriteByte(character)
 			}
 		case quote == '"':
-			if character == '\\' && index+1 < len(line) {
+			switch {
+			case character == '\\' && index+1 < len(line) && strings.IndexByte("$`\"\\", line[index+1]) >= 0:
+				// A backslash escapes only these characters here. Before any
+				// other one it is a literal byte of the word, so a name such
+				// as "or\as" is not the command it resembles.
 				index++
 				word.WriteByte(line[index])
-			} else if character == '"' {
+			case character == '"':
 				quote = 0
-			} else {
+			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
+				// A command substitution resumes shell syntax inside the
+				// quotes. Where it closes is beyond a line reader, so syntax
+				// is read to the end of the line. That reads more heredocs and
+				// comments than bash, never fewer, so it can only drop an
+				// invocation, never invent one.
+				quote = 0
+				word.WriteByte(character)
+			default:
 				word.WriteByte(character)
 			}
 		case character == '\\' && index+1 < len(line):
