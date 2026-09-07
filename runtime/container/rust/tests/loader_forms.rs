@@ -243,9 +243,93 @@ const FORMS: &[Form] = &[
         ANY,
     ),
     form(
+        "--glibc-hwcaps-prepend separate value",
+        Execve(
+            LOADER,
+            &["ld", "--glibc-hwcaps-prepend", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        NotRefused,
+        ANY,
+    ),
+    form(
+        "--hwcap-mask separate value",
+        Execve(
+            LOADER,
+            &["ld", "--hwcap-mask", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        NotRefused,
+        ANY,
+    ),
+    form(
         "valueless option leaves the next argument as the target",
         Execve(LOADER, &["ld", "--inhibit-cache", TARGET], GUARDED_ENV),
         NotRefused,
+        ANY,
+    ),
+    // One row per remaining valueless option. Each puts UNKNOWN_OPTION where a
+    // value would sit: a walk that reads it as this option's value skips it and
+    // refuses nothing, so the refusal is the proof that the option consumed
+    // nothing.
+    form(
+        "--list consumes no value",
+        Execve(
+            LOADER,
+            &["ld", "--list", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
+        ANY,
+    ),
+    form(
+        "--list-diagnostics consumes no value",
+        Execve(
+            LOADER,
+            &["ld", "--list-diagnostics", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
+        ANY,
+    ),
+    form(
+        "--verify consumes no value",
+        Execve(
+            LOADER,
+            &["ld", "--verify", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
+        ANY,
+    ),
+    form(
+        "--inhibit-cache consumes no value",
+        Execve(
+            LOADER,
+            &["ld", "--inhibit-cache", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
+        ANY,
+    ),
+    form(
+        "--help consumes no value",
+        Execve(
+            LOADER,
+            &["ld", "--help", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
+        ANY,
+    ),
+    form(
+        "--version consumes no value",
+        Execve(
+            LOADER,
+            &["ld", "--version", UNKNOWN_OPTION, TARGET],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
         ANY,
     ),
     form(
