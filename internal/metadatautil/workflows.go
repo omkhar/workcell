@@ -220,13 +220,20 @@ func layoutCopyTargets(script string) []string {
 }
 
 // shellCommands splits script into logical commands: it joins backslash
-// continuations and drops comment lines, so a decoy inside a comment is never
-// read as an executed command.
+// continuations, drops comment lines, and skips heredoc bodies, so a decoy
+// written inside a comment or a heredoc is never read as an executed command.
 func shellCommands(script string) []string {
 	var commands []string
 	var current strings.Builder
+	var heredoc string
 	for line := range strings.Lines(script) {
 		trimmed := strings.TrimSpace(line)
+		if heredoc != "" {
+			if trimmed == heredoc {
+				heredoc = ""
+			}
+			continue
+		}
 		continued := strings.HasSuffix(trimmed, "\\")
 		if current.Len() > 0 {
 			current.WriteString(" ")
@@ -235,10 +242,12 @@ func shellCommands(script string) []string {
 		if continued {
 			continue
 		}
-		if command := current.String(); !strings.HasPrefix(command, "#") {
+		command := current.String()
+		current.Reset()
+		heredoc = heredocDelimiter(command)
+		if !strings.HasPrefix(command, "#") {
 			commands = append(commands, command)
 		}
-		current.Reset()
 	}
 	if command := current.String(); command != "" && !strings.HasPrefix(command, "#") {
 		commands = append(commands, command)
@@ -246,12 +255,31 @@ func shellCommands(script string) []string {
 	return commands
 }
 
-// runsCommand reports whether the script invokes command as a command. The line
-// must start with it and end the last token there, so neither a comment line, a
-// quoted argument such as echo "<command>", nor a longer flag spelling counts.
+var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// heredocDelimiter returns the terminator that ends the heredoc command opens,
+// or an empty string when it opens none. Here-strings are removed first so that
+// <<<"${value}" is never read as a heredoc introducing the delimiter ${value}.
+func heredocDelimiter(command string) string {
+	match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(command, "<<<", " "))
+	if match == nil {
+		return ""
+	}
+	for _, group := range match[1:] {
+		if group != "" {
+			return group
+		}
+	}
+	return ""
+}
+
+// runsCommand reports whether the script invokes command as a command. The
+// logical command must start with it and end the last token there, so neither a
+// comment, a heredoc body, a quoted argument such as echo "<command>", nor a
+// longer flag spelling counts.
 func runsCommand(script, command string) bool {
-	for line := range strings.Lines(script) {
-		rest, found := strings.CutPrefix(strings.TrimSpace(line), command)
+	for _, line := range shellCommands(script) {
+		rest, found := strings.CutPrefix(line, command)
 		if found && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t")) {
 			return true
 		}

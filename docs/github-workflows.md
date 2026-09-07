@@ -108,7 +108,9 @@ Each one binds its image digest to the matching preflight reproducibility digest
 A separate read-only job creates the nine non-image signing subjects.
 That job creates the software bills of materials, the builder-environment manifest, and the checksums.
 The assembly job creates one OCI layout and the bound handoff manifest.
-It copies the nine subjects from the binding job and does not create them again.
+It also rebuilds the release bundle, the Homebrew formula, the control-plane manifest, and the build-input manifest.
+It requires the binding job to match those four byte for byte before it copies the nine subjects.
+The software bills of materials, the builder-environment manifest, and the checksums stay binder-only.
 The architecture build jobs and assembly job have only `contents: read` permission.
 They transfer bound artifacts with GitHub Actions artifact runtime credentials.
 The signer downloads those subjects by immutable artifact ID and requires exact byte matches.

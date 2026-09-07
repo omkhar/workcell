@@ -167,6 +167,18 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			want:  "copy both platform images",
 		},
 		{
+			name: "real commands replaced by a heredoc body naming them",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          cat <<'PLAN' >/dev/null\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
 			name:  "one platform copy commented out but its destination text kept",
 			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
 			decoy: "          # oras cp --recursive --from-oci-layout \\\n            # \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            # --to-oci-layout dist/release-image:amd64",

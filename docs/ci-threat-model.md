@@ -414,9 +414,9 @@ Run the hosted-control audit again.
    Hosted policy pins this value to `false` for the canonical repository.
    Cosign signatures remain mandatory.
 
-8. **The release workflow does not verify its new outputs.**
-   It creates signatures and attestations but does not verify them in the same run.
-   Add independent post-production verification to close this gap.
+8. **Output verification shares the release run.**
+   A read-only job verifies the new signatures and attestations before publication.
+   That check still runs inside the release workflow, not from an independent system.
 
 ## References
 
