@@ -657,6 +657,29 @@ workcell_ci_validator_passwd_file docker fixture-image 1000 1000 /home/fixture "
 	}
 }
 
+// The record is colon-delimited, and the dev-side home is derived from
+// ${TMPDIR}, where a colon is legal.  Writing one into the home field would
+// truncate it and shift every field after it, so the field is refused.
+func TestValidatorPasswdRefusesAColonInTheHomeField(t *testing.T) {
+	t.Parallel()
+
+	library := filepath.Join(repoRoot(t), "scripts", "ci", "lib", "validator-passwd.sh")
+	binDir := t.TempDir()
+	writeExecutable(t, binDir, "docker", "#!/bin/bash\nprintf 'root:x:0:0:root:/root:/bin/bash\\n'\n")
+	probe := writeExecutable(t, t.TempDir(), "probe", `#!/bin/bash
+set -euo pipefail
+PATH="$1:${PATH}"
+export PATH
+source "$2"
+workcell_ci_validator_passwd_file docker fixture-image 1000 1000 "/home/fixture:extra" "$3"
+`)
+
+	output, err := exec.Command("/bin/bash", probe, binDir, library, t.TempDir()).CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "not a usable passwd field") {
+		t.Fatalf("colon in the home field accepted: %v\n%s", err, output)
+	}
+}
+
 // The hostile lane earns its runtime only while each axis keeps the shapes that
 // reproduced a finding by hand, so the derivations are executed here rather
 // than pattern-matched: a dropped backslash that lets bash expand $HOME, a

@@ -201,9 +201,10 @@ A new publisher requires a reviewed policy change.
 `ci.yml` and `docs.yml` run the validator as the caller UID and GID.
 They use separate writable home, cache, and temporary roots.
 The launcher creates an isolated home if the caller has no passwd entry.
-Each validator lane also mounts a synthesized `/etc/passwd` record for that UID.
+Each validator lane in `ci.yml` and `docs.yml` also mounts a synthesized `/etc/passwd` record for that UID, and `scripts/build-and-test.sh --docker` does the same.
 `scripts/ci/lib/validator-passwd.sh` writes the record.
 A UID with no record breaks each tool that resolves the invoking user, such as `ssh-keygen`.
+The `Validate repository` step in `release.yml` runs its own container and does not mount that record yet.
 
 The mirrored local jobs are under `scripts/ci/`.
 Workflow YAML controls events, permissions, runners, and hosted-only steps.

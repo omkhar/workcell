@@ -47,6 +47,14 @@ workcell_ci_validator_passwd_file() {
     echo "Validator passwd directory is not the canonical ${directory}" >&2
     return 1
   fi
+  # The record is colon-delimited and newline-terminated, so a home carrying
+  # either character would truncate the home field and shift every field after
+  # it.  Both are legal in a Unix path, and the dev-side home comes from
+  # ${TMPDIR}, so the field is checked rather than assumed.
+  if [[ "${home}" == *:* || "${home}" == *$'\n'* ]]; then
+    echo "Validator home is not a usable passwd field: ${home}" >&2
+    return 1
+  fi
   file="$(mktemp "${directory}/workcell-validator-passwd.XXXXXX")" || return
   "${docker_command}" run --rm --entrypoint /bin/bash "${image}" \
     -lc 'cat /etc/passwd' >"${file}" || return
