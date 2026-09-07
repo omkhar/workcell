@@ -64,6 +64,11 @@ release must present the `main` identity, so a tag pushed after the change
 cannot sign a release. `install-release.sh` passes the version you requested,
 so verifying one of those historical releases needs no extra step.
 
+The manual commands below pin the `main` identity. To verify one of the
+historical releases by hand, `v1.0.2` among them, replace `refs/heads/main`
+with `refs/tags/` and that exact tag. Prefer `verify-release-artifact.sh`,
+which selects the identity for you.
+
 ```bash
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \

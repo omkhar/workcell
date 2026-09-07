@@ -117,7 +117,8 @@ The architecture build jobs and assembly job have only `contents: read` permissi
 They transfer bound artifacts with GitHub Actions artifact runtime credentials.
 The signer downloads those subjects by immutable artifact ID and requires exact byte matches.
 A release-approved signing job validates the handoff and publishes the OCI layout.
-The signing job uses fixed tools and does not check out repository code.
+The signing job uses fixed tools and checks out only the verified release commit,
+which it needs for the reviewed tag rechecks it runs before it signs and before it publishes.
 The final job publishes the 18 signed GitHub release assets.
 
 Release preflight does these checks:
