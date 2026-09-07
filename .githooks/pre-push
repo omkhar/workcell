@@ -33,26 +33,31 @@ ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 readonly ZERO_OID_PATTERN='^0+$'
 REMOTE_URL="${2:-}"
 
-# A remote's tracking refs record what its fetch URL held. Only a remote
-# fetched from this destination can say what the destination already holds, so
-# the fetch URL is the one that has to match. A remote name, or a push URL set
-# separately from the fetch URL, would let one repository vouch for another.
+# Ask the destination what it holds. A remote's tracking refs only record what
+# some earlier fetch saw: a remote whose URL changed, or whose branches moved
+# out of band, keeps refs that name commits the destination never had, and
+# excluding those commits would send them unverified. The advertisement is the
+# only current answer, and it needs no URL comparison because Git passes the
+# destination itself as the hook's second argument.
 destination_exclusions=()
-while IFS= read -r name; do
-  [[ -n "${name}" ]] || continue
-  fetch_url="$(git -C "${ROOT_DIR}" remote get-url "${name}" 2>/dev/null || true)"
-  if [[ -n "${REMOTE_URL}" && "${fetch_url}" == "${REMOTE_URL}" ]]; then
-    destination_exclusions+=("--remotes=${name}")
-  fi
-done < <(git -C "${ROOT_DIR}" remote)
+if [[ -n "${REMOTE_URL}" ]] &&
+  advertised="$(git -C "${ROOT_DIR}" ls-remote "${REMOTE_URL}" 2>/dev/null)"; then
+  while read -r advertised_sha _; do
+    [[ -n "${advertised_sha}" ]] || continue
+    # A tag object or a ref this clone never fetched is not a commit here.
+    if git -C "${ROOT_DIR}" rev-parse --verify --quiet "${advertised_sha}^{commit}" >/dev/null; then
+      destination_exclusions+=("${advertised_sha}")
+    fi
+  done <<<"${advertised}"
+fi
+# A destination that cannot be reached leaves this empty, so the walk covers
+# the whole ancestry and the push fails closed on any commit it cannot verify.
 
 while read -r _ local_sha _ remote_sha; do
   [[ -n "${local_sha}" ]] || continue
   if [[ "${local_sha}" =~ ${ZERO_OID_PATTERN} ]]; then
     continue
   fi
-  # An unknown destination leaves this empty, so the walk covers the whole
-  # ancestry and the push fails closed on any commit it cannot verify.
   exclusions=(${destination_exclusions[@]+"${destination_exclusions[@]}"})
   if [[ ! "${remote_sha}" =~ ${ZERO_OID_PATTERN} ]] &&
     git -C "${ROOT_DIR}" rev-parse --verify --quiet "${remote_sha}^{commit}" >/dev/null; then

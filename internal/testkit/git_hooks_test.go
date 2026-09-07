@@ -625,6 +625,26 @@ func TestPrePushHookHonorsXDGVerificationConfig(t *testing.T) {
 	}
 }
 
+func TestPrePushHookRejectsUnsignedBaseBehindStaleTrackingRefs(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("base.txt", "base\n", "^F Add unsigned base (tests pass; fixture seed)")
+	fixture.tryGit([]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"}, "push", "--quiet", "origin", "main")
+	fixture.commitFile("child.txt", "child\n", "^F Add signed child (tests pass; fixture seed)", "-S")
+	// origin now points at a second repository that holds nothing, but its
+	// tracking refs still name the unsigned base published to the first one.
+	other := filepath.Join(filepath.Dir(fixture.remote), "other.git")
+	fixture.run("init", "--quiet", "--bare", other)
+	fixture.run("remote", "set-url", "origin", other)
+	output, err := fixture.tryGit(nil, "push", "--quiet", "origin", "main:refs/heads/published")
+	if err == nil {
+		t.Fatalf("stale tracking refs excused an unsigned commit:\n%s", output)
+	}
+	if !strings.Contains(output, "unable to verify commit") {
+		t.Fatalf("rejection lacks signature guidance:\n%s", output)
+	}
+}
+
 func TestPrePushHookHonorsGlobalConfigSelector(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.configureSSHSigning()
@@ -646,16 +666,14 @@ func TestPrePushHookHonorsGlobalConfigSelector(t *testing.T) {
 
 func TestPrePushHookFailsClosedWhenRangeWalkFails(t *testing.T) {
 	fixture := newGitHooksFixture(t)
-	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)")
-	// A remote-tracking ref pointing at a missing object breaks the range
-	// walk; the hook must refuse the push rather than see an empty range.
-	broken := filepath.Join(fixture.root, ".git", "refs", "remotes", "origin", "broken")
-	if err := os.MkdirAll(filepath.Dir(broken), 0o755); err != nil {
-		t.Fatalf("mkdir for broken ref failed: %v", err)
-	}
-	missing := "24e6d5dc752f727899a698566b8933ff576aba47\n"
-	if err := os.WriteFile(broken, []byte(missing), 0o644); err != nil {
-		t.Fatalf("write broken ref failed: %v", err)
+	fixture.commitFile("base.txt", "one\n", "^F Add fixture base (tests pass; fixture seed)")
+	fixture.commitFile("file.txt", "two\n", "^F Add fixture file (tests pass; fixture seed)")
+	// A missing parent object breaks the range walk; the hook must refuse the
+	// push rather than see an empty range.
+	parent := fixture.run("rev-parse", "HEAD~1")
+	object := filepath.Join(fixture.root, ".git", "objects", parent[:2], parent[2:])
+	if err := os.Remove(object); err != nil {
+		t.Fatalf("remove parent object failed: %v", err)
 	}
 	output, err := fixture.tryGit(nil, "push", "--quiet", "origin", "main")
 	if err == nil {
