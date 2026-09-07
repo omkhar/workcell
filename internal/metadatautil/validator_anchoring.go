@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // CheckValidatorAnchoring requires each validator that anchors on the shared
@@ -22,11 +24,11 @@ import (
 // tree, the same choice the other checks in this package record: the call sites
 // are few, and a scan avoids go/ast for one caller.
 func CheckValidatorAnchoring(rootDir string) error {
-	anchors, err := countCallSites(rootDir, "ShellInvocations(", false)
+	anchors, err := countCallSites(rootDir, "ShellInvocations", false)
 	if err != nil {
 		return err
 	}
-	corpus, err := countCallSites(rootDir, "RequireRejectsAllEvasions(", true)
+	corpus, err := countCallSites(rootDir, "RequireRejectsAllEvasions", true)
 	if err != nil {
 		return err
 	}
@@ -157,27 +159,31 @@ func afterDeclaration(line string) string {
 	return body
 }
 
-// countCalls returns how many times text calls needle. A match must not
-// continue an identifier, so cachedShellInvocations( is not a call of it.
-func countCalls(text, needle string) int {
+// countCalls returns how many times text calls the function named name. The
+// match must be the whole identifier, so neither cachedShellInvocations nor a
+// name that begins with a letter outside ASCII is read as the call, and the
+// argument list must follow it. A comment between the callee and that list is
+// blanked to spaces by then, so the spaces are skipped before it is required.
+func countCalls(text, name string) int {
 	count, offset := 0, 0
 	for {
-		at := strings.Index(text[offset:], needle)
+		at := strings.Index(text[offset:], name)
 		if at < 0 {
 			return count
 		}
 		at += offset
-		if at == 0 || !isIdentifierByte(text[at-1]) {
+		offset = at + len(name)
+		previous, _ := utf8.DecodeLastRuneInString(text[:at])
+		if (at == 0 || !isIdentifierRune(previous)) &&
+			strings.HasPrefix(strings.TrimLeft(text[offset:], " \t"), "(") {
 			count++
 		}
-		offset = at + len(needle)
 	}
 }
 
-// isIdentifierByte reports whether the byte can appear inside a Go identifier.
-func isIdentifierByte(character byte) bool {
-	return character == '_' ||
-		character >= 'a' && character <= 'z' ||
-		character >= 'A' && character <= 'Z' ||
-		character >= '0' && character <= '9'
+// isIdentifierRune reports whether the rune can continue a Go identifier. Go
+// takes any Unicode letter or digit, so an ASCII test reads a name such as
+// 偽RequireRejectsAllEvasions as a call of the one it ends with.
+func isIdentifierRune(character rune) bool {
+	return character == '_' || unicode.IsLetter(character) || unicode.IsDigit(character)
 }

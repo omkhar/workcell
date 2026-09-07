@@ -37,6 +37,8 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 		{"declaration is not a call", "func ShellInvocations(script, command string) [][]string {\n" + anchor, corpus, ""},
 		{"a longer identifier is not the call", anchor + "\tcachedShellInvocations(script, command)\n", corpus, ""},
 		{"two calls on one line", strings.TrimSuffix(anchor, "\n") + strings.TrimPrefix(anchor, "\t"), corpus + corpus, ""},
+		{"a comment between the callee and its arguments is a call", "\t_ = ShellInvocations /* why */ (script, \"tool run\")\n", corpus, ""},
+		{"a Unicode identifier prefix is not the call", anchor, corpus + "\t偽RequireRejectsAllEvasions(t, artifact, anchor, want, validate)\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
