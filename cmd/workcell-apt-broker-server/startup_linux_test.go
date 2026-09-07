@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -114,16 +116,63 @@ func testPipe(t *testing.T) (*os.File, *os.File) {
 	return reader, writer
 }
 
-func TestValidateServerBinaryRejectsWritableFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "server")
-	if err := os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+func TestOpenServerBinaryRejectsUntrustedFile(t *testing.T) {
+	root := t.TempDir()
+	writable := filepath.Join(root, "writable")
+	if err := os.WriteFile(writable, []byte("fixture"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(path, 0o777); err != nil {
+	if err := os.Chmod(writable, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateServerBinary(path); err == nil {
-		t.Fatal("writable server binary was accepted")
+	directory := filepath.Join(root, "directory")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trusted := filepath.Join(root, "server")
+	if err := os.WriteFile(trusted, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(trusted, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"writable":  writable,
+		"directory": directory,
+		"symlink":   link,
+		"missing":   filepath.Join(root, "absent"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			binary, err := openServerBinary(path)
+			if err == nil {
+				binary.Close()
+				t.Fatal("untrusted server binary was accepted")
+			}
+		})
+	}
+}
+
+// The descriptor the child executes must be the descriptor openServerBinary
+// validated, and the handshake flags must name the pipe descriptors. All three
+// numbers come from the ExtraFiles order, so they are asserted together.
+func TestServerCommandExecutesTheValidatedDescriptor(t *testing.T) {
+	binary, ready, acknowledge := os.Stdout, os.Stdin, os.Stderr
+	command := serverCommand(binary, ready, acknowledge, 1000)
+	if got, want := command.Path, "/proc/self/fd/"+strconv.Itoa(startupBinaryFD); got != want {
+		t.Fatalf("command path = %q, want %q", got, want)
+	}
+	for descriptor, want := range map[int]*os.File{startupReadyFD: ready, startupAckFD: acknowledge, startupBinaryFD: binary} {
+		index := descriptor - 3
+		if index < 0 || index >= len(command.ExtraFiles) || command.ExtraFiles[index] != want {
+			t.Fatalf("descriptor %d does not carry the expected file", descriptor)
+		}
+	}
+	if !slices.Contains(command.Args, "--ready-fd") || !slices.Contains(command.Args, strconv.Itoa(startupReadyFD)) {
+		t.Fatalf("command args = %q", command.Args)
+	}
+	if !slices.Contains(command.Args, "--ack-fd") || !slices.Contains(command.Args, strconv.Itoa(startupAckFD)) {
+		t.Fatalf("command args = %q", command.Args)
 	}
 }
 

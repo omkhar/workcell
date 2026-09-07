@@ -50,10 +50,12 @@ func startServer(arguments []string) error {
 	if err := requireUnusedSocket(aptbroker.DefaultSocketPath); err != nil {
 		return err
 	}
-	if err := validateServerBinary(serverBinary); err != nil {
+	binary, err := openServerBinary(serverBinary)
+	if err != nil {
 		return err
 	}
-	return launchServer(serverBinary, peerUID)
+	defer binary.Close()
+	return launchServer(binary, peerUID)
 }
 
 func startPeerUID(arguments []string) (uint32, error) {
@@ -146,15 +148,34 @@ func hasTrustedStartupMode(info os.FileInfo) bool {
 	return fileUID(info) == 0 && info.Mode().Perm()&0o022 == 0
 }
 
-func validateServerBinary(path string) error {
-	info, err := os.Lstat(path)
+// A pathname that passes a check and a pathname that exec resolves a moment
+// later are not the same guarantee. Any uid that can repoint a parent directory
+// could substitute another file between the two lookups, and the starter runs
+// as root. The binary is opened once, validated through that descriptor, and
+// later executed through that same descriptor, so exec cannot reach a file the
+// check did not see. O_NOFOLLOW refuses a symlink at the leaf; a swap higher up
+// only changes which file is opened, and the checks below reject it.
+func openServerBinary(path string) (*os.File, error) {
+	binary, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
+		return nil, fmt.Errorf("open server binary: %w", err)
+	}
+	if err := validateServerBinary(binary); err != nil {
+		binary.Close()
+		return nil, err
+	}
+	return binary, nil
+}
+
+func validateServerBinary(binary *os.File) error {
+	var info unix.Stat_t
+	if err := unix.Fstat(int(binary.Fd()), &info); err != nil {
 		return fmt.Errorf("inspect server binary: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+	if info.Mode&unix.S_IFMT != unix.S_IFREG || info.Mode&0o022 != 0 {
 		return errors.New("server binary is not trusted")
 	}
-	if fileUID(info) != 0 {
+	if info.Uid != 0 {
 		return errors.New("server binary is not root-owned")
 	}
 	return nil
@@ -171,7 +192,7 @@ func requireUnusedSocket(path string) error {
 	return errors.New("apt broker socket already exists")
 }
 
-func launchServer(binary string, peerUID uint32) error {
+func launchServer(binary *os.File, peerUID uint32) error {
 	readyReader, readyWriter, err := os.Pipe()
 	if err != nil {
 		return err
@@ -183,13 +204,7 @@ func launchServer(binary string, peerUID uint32) error {
 		return err
 	}
 	defer ackWriter.Close()
-	command := exec.Command(binary, "--socket", aptbroker.DefaultSocketPath, "--peer-uid", strconv.FormatUint(uint64(peerUID), 10), "--ready-fd", "3", "--ack-fd", "4")
-	command.Env = fixedServerEnvironment()
-	command.Stdin = nil
-	command.Stdout = nil
-	command.Stderr = os.Stderr
-	command.ExtraFiles = []*os.File{readyWriter, ackReader}
-	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	command := serverCommand(binary, readyWriter, ackReader, peerUID)
 	if err := command.Start(); err != nil {
 		readyWriter.Close()
 		ackReader.Close()
@@ -200,6 +215,34 @@ func launchServer(binary string, peerUID uint32) error {
 	return finishStartup(command.Process, readyReader, ackWriter, func() error {
 		return validateStartedSocket(aptbroker.DefaultSocketPath)
 	})
+}
+
+// exec.Cmd gives the child descriptor 3 upward to ExtraFiles in order, so the
+// entries below decide these numbers. The child then executes itself through
+// the validated descriptor rather than through a pathname exec would resolve a
+// second time. The descriptor stays open in the server: it is read-only on the
+// server's own root-owned binary, and exec.Cmd gives it to no helper process.
+const (
+	startupReadyFD  = 3
+	startupAckFD    = 4
+	startupBinaryFD = 5
+)
+
+func serverCommand(binary, ready, acknowledge *os.File, peerUID uint32) *exec.Cmd {
+	command := exec.Command(
+		"/proc/self/fd/"+strconv.Itoa(startupBinaryFD),
+		"--socket", aptbroker.DefaultSocketPath,
+		"--peer-uid", strconv.FormatUint(uint64(peerUID), 10),
+		"--ready-fd", strconv.Itoa(startupReadyFD),
+		"--ack-fd", strconv.Itoa(startupAckFD),
+	)
+	command.Env = fixedServerEnvironment()
+	command.Stdin = nil
+	command.Stdout = nil
+	command.Stderr = os.Stderr
+	command.ExtraFiles = []*os.File{ready, acknowledge, binary}
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return command
 }
 
 func fixedServerEnvironment() []string {
