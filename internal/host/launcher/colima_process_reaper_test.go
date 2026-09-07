@@ -40,6 +40,20 @@ type reaperSignal struct {
 	signal syscall.Signal
 }
 
+type reaperSignalHandle struct {
+	pid    int
+	signal func(int, syscall.Signal) error
+	close  func() error
+}
+
+func (h *reaperSignalHandle) Signal(signal syscall.Signal) error { return h.signal(h.pid, signal) }
+func (h *reaperSignalHandle) Close() error {
+	if h.close == nil {
+		return nil
+	}
+	return h.close()
+}
+
 type reaperFake struct {
 	profile     string
 	processes   map[int]string
@@ -91,18 +105,20 @@ func (f *reaperFake) dependencies() colimaProcessReaperDependencies {
 			}
 			return state, nil
 		},
-		signal: func(pid int, signal syscall.Signal) error {
-			f.signals = append(f.signals, reaperSignal{pid: pid, signal: signal})
-			if f.signalErr != nil {
-				return f.signalErr
-			}
-			if signal == syscall.SIGTERM && f.termRemoves ||
-				signal == syscall.SIGKILL && f.killRemoves {
-				delete(f.processes, pid)
-				delete(f.started, pid)
-				delete(f.states, pid)
-			}
-			return nil
+		openSignal: func(pid int) (exactProcessSignalHandle, error) {
+			return &reaperSignalHandle{pid: pid, signal: func(pid int, signal syscall.Signal) error {
+				f.signals = append(f.signals, reaperSignal{pid: pid, signal: signal})
+				if f.signalErr != nil {
+					return f.signalErr
+				}
+				if signal == syscall.SIGTERM && f.termRemoves ||
+					signal == syscall.SIGKILL && f.killRemoves {
+					delete(f.processes, pid)
+					delete(f.started, pid)
+					delete(f.states, pid)
+				}
+				return nil
+			}}, nil
 		},
 		sleep:     func(context.Context, time.Duration) error { return nil },
 		termDelay: time.Millisecond,
@@ -240,12 +256,14 @@ func TestReapColimaProfileProcessesPollsForKillCompletion(t *testing.T) {
 func TestReapColimaProfileProcessesTreatsZombieAsTerminated(t *testing.T) {
 	fake := newReaperFake()
 	deps := fake.dependencies()
-	deps.signal = func(pid int, signal syscall.Signal) error {
-		fake.signals = append(fake.signals, reaperSignal{pid: pid, signal: signal})
-		if signal == syscall.SIGKILL {
-			fake.states[pid] = "Z+"
-		}
-		return nil
+	deps.openSignal = func(pid int) (exactProcessSignalHandle, error) {
+		return &reaperSignalHandle{pid: pid, signal: func(pid int, signal syscall.Signal) error {
+			fake.signals = append(fake.signals, reaperSignal{pid: pid, signal: signal})
+			if signal == syscall.SIGKILL {
+				fake.states[pid] = "Z+"
+			}
+			return nil
+		}}, nil
 	}
 	if err := reapColimaProfileProcesses(context.Background(), fake.profile, deps); err != nil {
 		t.Fatalf("reap error = %v", err)
