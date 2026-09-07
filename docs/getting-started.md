@@ -57,11 +57,12 @@ offline install. You can also give it a local attestation with `--bundle`.
 
 The regex below anchors and escapes the fixed identity text (`^…\.…$`). The
 release workflow always runs from `main`, so no part of the identity varies.
-`verify-release-artifact.sh` uses the same expression. It also accepts the one
-exact `refs/tags/TAG` identity when you give it `--tag`, because a release
-published before the dispatch trigger was signed from the pushed tag.
-`install-release.sh` passes the version you requested, so verifying an older
-release needs no extra step.
+`verify-release-artifact.sh` uses the same expression. It accepts an exact
+`refs/tags/TAG` identity only for the closed set of releases published before
+the dispatch trigger, which it names in `TAG_SIGNED_RELEASES`. Every later
+release must present the `main` identity, so a tag pushed after the change
+cannot sign a release. `install-release.sh` passes the version you requested,
+so verifying one of those historical releases needs no extra step.
 
 ```bash
 cosign verify-blob SHA256SUMS \
