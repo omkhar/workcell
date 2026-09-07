@@ -39,6 +39,12 @@ func TestCheckPinnedInputsRejectsMultiKeyBuildPreloadOverride(t *testing.T) {
 		"legacy ENV syntax": func(body string) string {
 			return body + "\nENV LD_PRELOAD /workspace/evil.so\n"
 		},
+		"key split across a continuation": func(body string) string {
+			return body + "\nENV MARKER=x \\\n    LD_PRELOAD=/workspace/evil.so\n"
+		},
+		"key behind a comment inside a continuation": func(body string) string {
+			return body + "\nENV MARKER=x \\\n# Docker drops this line before it joins the continuation.\n    LD_PRELOAD=/workspace/evil.so\n"
+		},
 		"multi-key export in the builder RUN": func(body string) string {
 			return strings.Replace(body, canonicalExport,
 				canonicalExport+"  && export MARKER=x LD_PRELOAD=/workspace/evil.so \\\n", 1)

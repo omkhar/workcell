@@ -555,9 +555,11 @@ func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(ru
 	return nil
 }
 
-// dockerfileInstructions returns text with its Dockerfile comment lines
-// removed. A # is only a comment when it opens a line; elsewhere it is part of
-// the instruction, so nothing else is stripped.
+// dockerfileInstructions returns text as logical instructions: comment lines
+// removed, then continuations joined. A # is only a comment when it opens a
+// line; elsewhere it is part of the instruction, so nothing else is stripped.
+// Docker drops a comment line before it joins a continuation, so the two run in
+// that order, and a key split across physical lines reads as one assignment.
 func dockerfileInstructions(text string) string {
 	var instructions strings.Builder
 	for line := range strings.Lines(text) {
@@ -566,7 +568,7 @@ func dockerfileInstructions(text string) string {
 		}
 		instructions.WriteString(line)
 	}
-	return instructions.String()
+	return strings.ReplaceAll(instructions.String(), "\\\n", " ")
 }
 
 func requireTextCount(text, needle string, want int, label, path string) error {
