@@ -332,19 +332,49 @@ func TestCommitMsgHookHonorsXDGCommentChar(t *testing.T) {
 	}
 }
 
-func TestCommitMsgHookAcceptsSubjectWhenCommentCharIsRiskSymbol(t *testing.T) {
+func TestCommitMsgHookRejectsSubjectWhenCommentCharIsRiskSymbol(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.run("config", "core.commentChar", "^")
-	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
-	body := "Detail line."
-	// Comment stripping would delete this subject, so the retained subject
-	// has to be checked before stripping is used as a fallback.
-	fixture.commitFile("seed.txt", "seed\n", valid+"\n\n"+body)
-	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
-		t.Fatalf("retained subject %q is not the validated subject %q", got, valid)
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	message := "^F Add branch filter flag (tests pass; user-visible CLI flag)\n" +
+		"INVALID BODY SUBJECT\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
 	}
-	if got := fixture.run("log", "-1", "--format=%B"); !strings.Contains(got, body) {
-		t.Fatalf("comment stripping discarded the body:\n%s", got)
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	// Git applies --cleanup after the hook, so accepting this subject lets
+	// Git strip it and commit the next line as an unvalidated subject.
+	output, err := fixture.tryGit(nil, "commit", "--quiet", "--cleanup=strip", "-F", messageFile)
+	if err == nil {
+		t.Fatalf("hook accepted a subject Git then removed:\n%s", output)
+	}
+	if !strings.Contains(output, "core.commentChar deletes") {
+		t.Fatalf("rejection lacks comment character guidance:\n%s", output)
+	}
+}
+
+func TestCommitMsgHookNormalizesCRLFMessages(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	// stripspace removes the carriage return before the check, so the trim
+	// has to find the subject on a line that still carries one.
+	message := "# leading comment\r\n" + valid + "\r\n\r\nDetail line.\r\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	if output, err := fixture.tryGit(nil, "commit", "--quiet", "--cleanup=verbatim", "-F", messageFile); err != nil {
+		t.Fatalf("commit with a CRLF message failed: %v\n%s", err, output)
+	}
+	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
+		t.Fatalf("stored subject %q is not the checked subject %q", got, valid)
 	}
 }
 

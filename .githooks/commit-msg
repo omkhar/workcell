@@ -45,17 +45,23 @@ notation_ok() {
   [[ "$1" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]
 }
 
-# Check the subject Git would retain first. A repository can configure
-# core.commentChar to a risk symbol such as ^, and comment stripping would
-# then delete a valid subject.
+# Git applies --cleanup after this hook returns, so the subject Git keeps is
+# the one that survives comment stripping. stripspace honours core.commentChar,
+# so a configured comment character is handled here too.
 retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
-subject="${retained%%$'\n'*}"
+body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
+retained_subject="${retained%%$'\n'*}"
+subject="${body%%$'\n'*}"
 
-if ! notation_ok "${subject}"; then
-  # Otherwise fall back to the comment-stripped view. stripspace honours
-  # core.commentChar, so a configured comment character is handled here too.
-  body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
-  subject="${body%%$'\n'*}"
+if [[ "${retained_subject}" != "${subject}" ]] && notation_ok "${retained_subject}"; then
+  # core.commentChar is a risk symbol, so comment stripping deletes the
+  # subject this gate would accept. Whether Git strips it depends on the
+  # cleanup mode, which the hook cannot read, so refuse instead of accepting
+  # a subject Git may replace with the next line.
+  echo "core.commentChar deletes the Risk-Aware Commit Notation subject." >&2
+  echo "Set core.commentChar to a character that is not . ^ ! or @." >&2
+  echo "Set WORKCELL_SKIP_COMMIT_NOTATION=1 only for an intentional bypass." >&2
+  exit 1
 fi
 
 if notation_ok "${subject}"; then
@@ -66,7 +72,9 @@ if notation_ok "${subject}"; then
   # subject this hook validated. Every later line stays as written.
   # ENVIRON, not -v: awk applies escape processing to a -v assignment, so a
   # backslash in the subject would stop it matching its own line.
-  normalized="$(SUBJECT="${subject}" awk 'found { print; next } { line = $0; sub(/[ \t]+$/, "", line) } line == ENVIRON["SUBJECT"] { found = 1; print line }' "${message_file}")"
+  # The carriage return is trimmed with the spaces and tabs, because
+  # stripspace removes it too and a CRLF message must still match.
+  normalized="$(SUBJECT="${subject}" awk 'found { print; next } { line = $0; sub(/[ \t\r]+$/, "", line) } line == ENVIRON["SUBJECT"] { found = 1; print line }' "${message_file}")"
   if [[ -z "${normalized}" ]]; then
     # Writing an empty message here would discard the message and let Git
     # commit an empty subject past this gate.

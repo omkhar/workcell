@@ -50,7 +50,12 @@ setup_workcell_ci_docker
 # an entry for the runtime uid, appended only when the image lacks one so an
 # existing uid keeps its own home.  The home field matches HOME below, so
 # identity- and env-based home discovery agree on one path.
-validator_passwd="$(mktemp "${TMPDIR:-/tmp}/workcell-validator-passwd.XXXXXX")"
+# The file is created under the workspace because that bind is preflighted
+# below. A host temporary directory is not always visible to the daemon: on
+# the documented macOS Colima path the daemon runs in a VM that does not mount
+# ${TMPDIR}, so the bind source would be missing.
+mkdir -p "${WORKSPACE}/tmp"
+validator_passwd="$(mktemp "${WORKSPACE}/tmp/workcell-validator-passwd.XXXXXX")"
 workcell_ci_docker run --rm --entrypoint /bin/bash "${VALIDATOR_IMAGE}" \
   -lc 'cat /etc/passwd' >"${validator_passwd}"
 if ! awk -F: -v uid="${validator_uid}" '$3 == uid { found = 1 } END { exit !found }' \

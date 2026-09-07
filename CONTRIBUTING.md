@@ -38,10 +38,12 @@ any build. The `pre-push` hook must also work when the Go toolchain and the
 `workcell-*` binaries are absent. A built Go tool would add a bootstrap
 dependency to the gate that guards the bootstrap.
 
-Each hook stays small. Each hook re-execs through `env -i` onto a trusted PATH.
-The `pre-push` hook calls only `git`. The `commit-msg` hook calls `git` and
-`awk`. The `pre-commit` hook calls `scripts/update-upstream-pins.sh`, which is
-repository code. Put policy that does not run before the build in Go.
+Each hook stays small. Each hook re-execs itself through `env -i` and
+`/bin/bash` onto a trusted PATH. Each hook then calls `dirname` to find the
+repository root. After that the `pre-push` hook calls only `git`. The
+`commit-msg` hook calls `git` and `awk`. The `pre-commit` hook calls
+`scripts/update-upstream-pins.sh`, which is repository code. Put policy that
+does not run before the build in Go.
 
 ## Prerequisites
 
@@ -97,7 +99,14 @@ printf '%s %s\n' "your@email" "$(cat ~/.ssh/id_ed25519.pub)" \
 git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
 ```
 
-Confirm the setup with `git log -1 --format='%G?'`, which must print `G`.
+Confirm your own key with a disposable commit. The existing `HEAD` proves
+nothing here, because a maintainer signed it with a different key:
+
+```bash
+WORKCELL_SKIP_COMMIT_NOTATION=1 git commit --allow-empty -S -m 'signing check'
+git log -1 --format='%G?'   # must print G
+git reset --soft HEAD~1
+```
 
 See [GitHub's docs on signing commits][sign-docs] for setup details.
 
