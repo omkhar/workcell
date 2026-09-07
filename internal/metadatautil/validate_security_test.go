@@ -152,6 +152,20 @@ func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInpu
 	}
 }
 
+func TestCheckPinnedInputsRejectsManualPrivilegedWorkflowWithoutMainGuard(t *testing.T) {
+	for _, workflowPath := range []string{
+		".github/workflows/hosted-controls.yml",
+		".github/workflows/upstream-refresh.yml",
+	} {
+		t.Run(workflowPath, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, workflowPath, func(content string) string {
+				return strings.Replace(content, "    if: github.ref == 'refs/heads/main'\n", "", 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "github.ref == 'refs/heads/main'")
+		})
+	}
+}
+
 func TestCheckPinnedInputsRejectsHostedControlAPIVersionDrift(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(content, `readonly GITHUB_API_VERSION="2026-03-10"`, `readonly GITHUB_API_VERSION="2022-11-28"`, 1)

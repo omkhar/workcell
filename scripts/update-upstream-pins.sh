@@ -581,15 +581,21 @@ target_qemu_tag="$(latest_qemu_tag)"
 target_qemu_image="tonistiigi/binfmt:${target_qemu_tag}@$(docker_image_digest "tonistiigi/binfmt:${target_qemu_tag}")"
 
 provider_summary="$("${ROOT_DIR}/scripts/update-provider-pins.sh")"
-provider_check_status=0
-"${ROOT_DIR}/scripts/update-provider-pins.sh" --check >/dev/null 2>&1 || provider_check_status=$?
-if [[ "${provider_check_status}" -ne 0 && "${provider_check_status}" -ne 1 ]]; then
-  echo "Unable to compute provider bump status." >&2
-  exit "${provider_check_status}"
+provider_plan_status=0
+provider_plan_json="$("${ROOT_DIR}/scripts/update-provider-pins.sh" --json)" || provider_plan_status=$?
+if [[ "${provider_plan_status}" -ne 0 ]]; then
+  echo "Unable to compute provider bump plan." >&2
+  exit "${provider_plan_status}"
 fi
-provider_has_changes=0
-if [[ "${provider_check_status}" -eq 1 ]]; then
-  provider_has_changes=1
+if ! provider_has_changes="$(jq -ser '
+  if length == 1 and (.[0] | type) == "object" and (.[0].has_changes | type) == "boolean" then
+    if .[0].has_changes then 1 else 0 end
+  else
+    error("provider bump plan must set has_changes to a boolean")
+  end
+' <<<"${provider_plan_json}")"; then
+  echo "Unable to read provider changes from the provider bump plan." >&2
+  exit 1
 fi
 
 debian_has_changes=0
