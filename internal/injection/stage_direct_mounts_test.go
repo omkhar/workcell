@@ -36,7 +36,7 @@ func TestCopyDirContentsWithStateRejectsPreReservedUnicodeAlias(t *testing.T) {
 	if err := state.reserve(filepath.Join(destination, "straße"), "reserved"); err != nil {
 		t.Fatal(err)
 	}
-	err = copyDirContentsWithState(source, sourcePath, destination, state)
+	err = copyDirContentsWithState(source, sourcePath, destination, state, newInjectionTreeBudget())
 	if err == nil || !strings.Contains(err.Error(), "destination path collision") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCopyDirContentsWithStateRejectsInvalidUTF8Reservation(t *testing.T) {
 	}
 	defer source.Close()
 	destination := t.TempDir()
-	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState())
+	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState(), newInjectionTreeBudget())
 	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -113,7 +113,7 @@ func TestCopyDirContentsWithStateRejectsLinuxInvalidUTF8SpecialFile(t *testing.T
 	}
 	defer source.Close()
 	destination := t.TempDir()
-	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState())
+	err = copyDirContentsWithState(source, sourcePath, destination, newInjectionDestinationState(), newInjectionTreeBudget())
 	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestCopyDirContentsRejectsControlCharactersBeforeLogging(t *testing.T) {
 			previousOutput := log.Writer()
 			log.SetOutput(&output)
 			t.Cleanup(func() { log.SetOutput(previousOutput) })
-			err = copyDirContentsWithState(source, sourcePath, t.TempDir(), newInjectionDestinationState())
+			err = copyDirContentsWithState(source, sourcePath, t.TempDir(), newInjectionDestinationState(), newInjectionTreeBudget())
 			assertUnsafeInjectionDescendantError(t, err)
 			if output.Len() != 0 {
 				t.Fatalf("control name reached the log: %q", output.String())
@@ -165,7 +165,7 @@ func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
 
 	t.Run("other skips opener", func(t *testing.T) {
 		opened := false
-		err := validateInjectionDirectoryEntriesWith(newSource(t),
+		err := validateInjectionDirectoryEntriesWith(newSource(t), "source", newInjectionTreeBudget(),
 			func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
 				return 0, directMountSourceOther, nil
 			},
@@ -184,7 +184,7 @@ func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
 
 	t.Run("classifier error propagates", func(t *testing.T) {
 		sentinel := errors.New("classify sentinel")
-		err := validateInjectionDirectoryEntriesWith(newSource(t),
+		err := validateInjectionDirectoryEntriesWith(newSource(t), "source", newInjectionTreeBudget(),
 			func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
 				return 0, directMountSourceOther, sentinel
 			},
@@ -208,7 +208,7 @@ func TestValidateInjectionDirectoryEntriesWith(t *testing.T) {
 		{name: "EIO propagates", err: unix.EIO},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			err := validateInjectionDirectoryEntriesWith(newSource(t),
+			err := validateInjectionDirectoryEntriesWith(newSource(t), "source", newInjectionTreeBudget(),
 				func(*os.File, string) (os.FileMode, directMountSourceKind, error) {
 					return 0, directMountSourceRegular, nil
 				},
@@ -826,8 +826,8 @@ func TestCopyDirContentsUsesOpenedDirectoryAfterPathSwap(t *testing.T) {
 	if err := os.MkdirAll(staged, 0o755); err != nil {
 		t.Fatalf("MkdirAll staged: %v", err)
 	}
-	if err := copyDirContents(source, sourceParent, staged); err != nil {
-		t.Fatalf("copyDirContents: %v", err)
+	if err := copyDirContentsWithState(source, sourceParent, staged, newInjectionDestinationState(), newInjectionTreeBudget()); err != nil {
+		t.Fatalf("copyDirContentsWithState: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(staged, "secret.txt"))
 	if err != nil {

@@ -81,7 +81,7 @@ func TestCopyOpenDirectoryToRootWithStateRejectsLinuxInvalidUTF8Symlink(t *testi
 		t.Fatal(err)
 	}
 	defer destination.Close()
-	err = copyOpenDirectoryToRootWithState(source, destination, sourcePath, ".", openDirectMountChild, newInjectionDestinationState())
+	err = copyOpenDirectoryToRootWithState(source, destination, sourcePath, ".", openDirectMountChild, newInjectionDestinationState(), newInjectionTreeBudget())
 	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -119,7 +119,7 @@ func TestCopyOpenDirectoryToRootWithStateRejectsPreReservedUnicodeAlias(t *testi
 	if err := state.reserve("café", "reserved"); err != nil {
 		t.Fatal(err)
 	}
-	err = copyOpenDirectoryToRootWithState(source, destination, sourceRoot, ".", openDirectMountChild, state)
+	err = copyOpenDirectoryToRootWithState(source, destination, sourceRoot, ".", openDirectMountChild, state, newInjectionTreeBudget())
 	if err == nil || !strings.Contains(err.Error(), "destination path collision") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCopyOpenDirectoryToRootWithStateRejectsInvalidUTF8(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer destination.Close()
-	err = copyOpenDirectoryToRootWithState(source, destination, sourceRoot, "target", openDirectMountChild, newInjectionDestinationState())
+	err = copyOpenDirectoryToRootWithState(source, destination, sourceRoot, "target", openDirectMountChild, newInjectionDestinationState(), newInjectionTreeBudget())
 	if !errors.Is(err, pathutil.ErrInvalidUTF8Path) || strings.Contains(err.Error(), "secret-prefix") {
 		t.Fatalf("copy error = %v", err)
 	}
@@ -180,7 +180,7 @@ func TestStageFileRejectsValidatedSourcePathReplacement(t *testing.T) {
 	}
 
 	output := t.TempDir()
-	err = stageFile(validated, Path(output), "documents/common.md")
+	err = stageFile(validated, Path(output), "documents/common.md", newInjectionTreeBudget())
 	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("stageFile error = %v, want symbolic-link rejection", err)
 	}
@@ -252,7 +252,7 @@ func TestStageDirectMountEntryRefusesExistingDestination(t *testing.T) {
 	if err := os.WriteFile(destination, []byte("preserve"), 0o600); err != nil {
 		t.Fatalf("write destination: %v", err)
 	}
-	if err := stageDirectMountEntry(source, destination); err == nil {
+	if err := stageDirectMountEntry(source, destination, newInjectionTreeBudget()); err == nil {
 		t.Fatal("stageDirectMountEntry accepted an existing destination")
 	}
 	data, err := os.ReadFile(destination)
@@ -310,7 +310,7 @@ func TestCopyOpenDirectoryRejectsChildReplacementAfterReadDir(t *testing.T) {
 		return openDirectMountChild(parent, name, displayPath)
 	}
 
-	err = copyOpenDirectoryToRoot(source, destination, sourcePath, ".", openChild)
+	err = copyOpenDirectoryToRootWithState(source, destination, sourcePath, ".", openChild, newInjectionDestinationState(), newInjectionTreeBudget())
 	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("copy directory error = %v, want symbolic-link rejection", err)
 	}
