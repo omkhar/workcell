@@ -24,11 +24,43 @@ func (h heredoc) endsAt(line string) bool {
 	return line == h.delimiter
 }
 
+// definesFunction reports whether the words open a function definition, in
+// either the name() or the function name spelling.
+func definesFunction(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	if words[0] == "function" {
+		return true
+	}
+	name, _, found := strings.Cut(words[0], "(")
+	if found && name != "" && strings.HasPrefix(words[0][len(name):], "()") {
+		return true
+	}
+	return len(words) > 1 && words[1] == "()"
+}
+
+// braceDepth returns the change in brace nesting the words make. Only a brace
+// that stands as its own word or ends one groups commands; a brace inside a
+// word belongs to an expansion such as ${VAR}.
+func braceDepth(words []string) int {
+	change := 0
+	for _, word := range words {
+		switch {
+		case word == "{" || strings.HasSuffix(word, "(){"):
+			change++
+		case word == "}" || word == "};":
+			change--
+		}
+	}
+	return change
+}
+
 // ShellInvocations returns the arguments of each invocation of command in
 // script. It joins line continuations and drops comments, inline ones
-// included, heredoc bodies, and the rest of a quoted word that runs past the
-// end of its line, so that no decoy text counts as a command and one call
-// cannot satisfy a two-call rule. A validator that must anchor on the commands
+// included, heredoc bodies, the body of a function definition, and the rest of
+// a quoted word that runs past the end of its line, so that no decoy text
+// counts as a command and one call cannot satisfy a two-call rule. A validator that must anchor on the commands
 // a script really runs uses this in place of a substring search.
 func ShellInvocations(script, command string) [][]string {
 	prefix := strings.Fields(command)
@@ -37,6 +69,8 @@ func ShellInvocations(script, command string) [][]string {
 	var heredocs []heredoc
 	var openQuote byte
 	var quotes []byte
+	var depth, definedAt int
+	var defining bool
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if openQuote != 0 {
@@ -64,6 +98,19 @@ func ShellInvocations(script, command string) [][]string {
 		current.Reset()
 		openQuote, quotes = quote, rest
 		heredocs = append(heredocs, opened...)
+		// A function definition is not a call. Bash reads the body and runs
+		// nothing, so a required command written inside a function that
+		// nobody calls does not satisfy a rule about what the step runs.
+		if !defining && definesFunction(words) {
+			defining, definedAt = true, depth
+		}
+		depth += braceDepth(words)
+		if defining {
+			if depth <= definedAt {
+				defining = false
+			}
+			continue
+		}
 		if len(words) >= len(prefix) && slices.Equal(words[:len(prefix)], prefix) {
 			invocations = append(invocations, words[len(prefix):])
 		}

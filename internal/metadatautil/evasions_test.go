@@ -62,6 +62,10 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+": <<'PLAN'\n"+i+"  PLAN", i+"PLAN")
 	})},
+	{"uncalled function definition", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"never_called() {", i+"}")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
