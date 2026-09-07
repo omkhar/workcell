@@ -83,11 +83,11 @@ Release preflight checks these items before publication:
 
 The bundle job does not prove complete bundle uninstall behavior.
 
-The amd64 image job rebuilds from the archived source bundle.
-A separate native arm64 job builds from the checked-out signed tag.
-The amd64 job checks the archived provider pins again.
+Native amd64 and arm64 image jobs each build from the checked-out signed tag.
+A separate read-only job binds every non-image signing subject.
+The assembly job checks the archived provider pins again.
 The workflow binds both platform digests and the image manifests to the preflight results.
-It then signs and stages the release asset set.
+A release-approved signing job then signs and stages the release asset set.
 
 The final job checks hosted controls again.
 It removes the administration token before publication.

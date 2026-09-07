@@ -77,7 +77,8 @@ The action owner and repository must be in `policy/allowed-actions.toml`.
 
 The release workflow has the main publication authority.
 Its architecture build and assembly jobs have only `contents: read` permission.
-They cannot write packages, metadata, or attestations, and they cannot request an OIDC token.
+They cannot write packages, repository contents, or attestations, and they cannot request an OIDC token.
+They can still write Actions artifacts, which the privileged jobs read only by immutable artifact id.
 A release-approved job validates the artifact handoff before publication and signing.
 That job does not check out or execute repository code.
 A separate read-only job binds every non-image signing subject before approval.
@@ -104,10 +105,10 @@ The environment requires maintainer approval and does not permit administrator b
 The final publisher uses the `hosted-controls-audit` environment.
 It refreshes the hosted-control proof before publication.
 
-The release job uploads a current-run Actions artifact.
-The final publisher downloads that current-run artifact and publishes its files.
-The publisher trusts this handoff.
-It does not verify the new signatures or attestations after the handoff.
+The signing job uploads a current-run Actions artifact.
+A read-only verification job downloads that artifact by immutable id.
+It checks the new signatures and attestations before publication.
+The final publisher downloads the same sealed artifact and publishes its files.
 
 The release publisher rejects extended ACLs on source and staging file handles.
 The required Darwin lane checks the native macOS ACL interface on every PR and `main` push.
@@ -238,14 +239,14 @@ The verified installer is the documented release-install path.
 However, a user can select a local path that does not verify the release.
 The installer also comes from a repository clone, not a signed standalone asset.
 
-### Pipeline verification gap
+### Pipeline output verification
 
 The release workflow verifies inputs, the release-tag signature, and reproducibility.
-It does not verify the new release signatures after it creates them.
+A read-only job also verifies the new release signatures after the workflow creates them.
 
-The workflow does not run `cosign verify` on the new image or bundles.
-It also does not run `gh attestation verify` on the new attestations.
-This output-verification gap remains open.
+That job runs `cosign verify-blob` on the release assets and `cosign verify` on the new image.
+It runs `gh attestation verify` on the new attestations.
+Publication depends on that job, so an unverified output set cannot reach a release.
 
 ### SLSA posture
 

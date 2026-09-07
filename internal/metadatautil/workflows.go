@@ -25,8 +25,13 @@ type workflowDocument struct {
 }
 
 type workflowNodeDocument struct {
-	Env  map[string]string    `yaml:"env"`
-	Jobs map[string]yaml.Node `yaml:"jobs"`
+	Env      map[string]string    `yaml:"env"`
+	Jobs     map[string]yaml.Node `yaml:"jobs"`
+	Defaults struct {
+		Run struct {
+			Shell string `yaml:"shell"`
+		} `yaml:"run"`
+	} `yaml:"defaults"`
 }
 
 type workflowJob struct {
@@ -47,10 +52,11 @@ type workflowStep struct {
 }
 
 // This digest covers the complete parsed sign-release job plus the workflow-level
-// ORAS pins it installs its publisher from and the registry it publishes to. It
-// rejects unknown fields, reordered steps, changed commands, changed action
-// inputs, a swapped publisher, and a redirected registry destination.
-const releaseSignerContractSHA256 = "743c3414664a505d68f799d1db6c0bcfe4e882ea8004a7ea5583630a360795c2"
+// ORAS pins it installs its publisher from, the registry it publishes to, and the
+// shell its run steps inherit. It rejects unknown fields, reordered steps, changed
+// commands, changed action inputs, a swapped publisher, a redirected registry
+// destination, and a weakened shell default.
+const releaseSignerContractSHA256 = "59d426ff05378de33e64dc11f715e25f21727eb07e9f33d7cead528856e84982"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -180,9 +186,9 @@ func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
 func validateReleaseAssembly(document workflowDocument) error {
 	steps := document.Jobs["release"].Steps
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
-		return runsCommand(step.Run, "oras cp --recursive --from-oci-layout") &&
-			strings.Contains(step.Run, "--to-oci-layout dist/release-image:amd64") &&
-			strings.Contains(step.Run, "--to-oci-layout dist/release-image:arm64")
+		targets := layoutCopyTargets(step.Run)
+		return slices.Contains(targets, "dist/release-image:amd64") &&
+			slices.Contains(targets, "dist/release-image:arm64")
 	}) {
 		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
 	}
@@ -192,6 +198,52 @@ func validateReleaseAssembly(document workflowDocument) error {
 		return errors.New("release job must assemble the multi-arch index in an OCI layout")
 	}
 	return nil
+}
+
+// layoutCopyTargets returns the --to-oci-layout destination of every executed
+// layout copy in script. Each destination must come from its own invocation, so
+// commenting one copy out while leaving its destination text in place does not
+// let the remaining copy satisfy both platforms.
+func layoutCopyTargets(script string) []string {
+	var targets []string
+	for _, command := range shellCommands(script) {
+		rest, found := strings.CutPrefix(command, "oras cp --recursive --from-oci-layout")
+		if !found || (rest != "" && !strings.HasPrefix(rest, " ") && !strings.HasPrefix(rest, "\t")) {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if index := slices.Index(fields, "--to-oci-layout"); index >= 0 && index+1 < len(fields) {
+			targets = append(targets, fields[index+1])
+		}
+	}
+	return targets
+}
+
+// shellCommands splits script into logical commands: it joins backslash
+// continuations and drops comment lines, so a decoy inside a comment is never
+// read as an executed command.
+func shellCommands(script string) []string {
+	var commands []string
+	var current strings.Builder
+	for line := range strings.Lines(script) {
+		trimmed := strings.TrimSpace(line)
+		continued := strings.HasSuffix(trimmed, "\\")
+		if current.Len() > 0 {
+			current.WriteString(" ")
+		}
+		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
+		if continued {
+			continue
+		}
+		if command := current.String(); !strings.HasPrefix(command, "#") {
+			commands = append(commands, command)
+		}
+		current.Reset()
+	}
+	if command := current.String(); command != "" && !strings.HasPrefix(command, "#") {
+		commands = append(commands, command)
+	}
+	return commands
 }
 
 // runsCommand reports whether the script invokes command as a command. The line
@@ -264,15 +316,19 @@ func validateReleaseSignerContract(workflowText string) error {
 	// The signer installs its publisher from the workflow-level ORAS pins and
 	// publishes to the workflow-level IMAGE_NAME, so the contract covers those
 	// too. Swapping the publisher or the registry destination for one the
-	// maintainer did not review must break this digest.
+	// maintainer did not review must break this digest. Every privileged run
+	// step also inherits the workflow-level shell, so the contract covers it as
+	// well: dropping -e there would let a failed check continue to publication.
 	content, err := yaml.Marshal(struct {
 		Signer       yaml.Node `yaml:"sign-release"`
 		OrasPins     []string  `yaml:"oras-pins"`
 		RegistryName string    `yaml:"image-name"`
+		ShellDefault string    `yaml:"shell-default"`
 	}{
 		Signer:       signer,
 		OrasPins:     []string{document.Env["WORKCELL_ORAS_VERSION"], document.Env["WORKCELL_ORAS_LINUX_AMD64_SHA256"]},
 		RegistryName: document.Env["IMAGE_NAME"],
+		ShellDefault: document.Defaults.Run.Shell,
 	})
 	if err != nil {
 		return err

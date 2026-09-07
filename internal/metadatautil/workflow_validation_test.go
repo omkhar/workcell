@@ -166,6 +166,12 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			decoy: "          true",
 			want:  "copy both platform images",
 		},
+		{
+			name:  "one platform copy commented out but its destination text kept",
+			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
+			decoy: "          # oras cp --recursive --from-oci-layout \\\n            # \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            # --to-oci-layout dist/release-image:amd64",
+			want:  "copy both platform images",
+		},
 	}
 	for _, decoy := range decoys {
 		t.Run(decoy.name, func(t *testing.T) {
@@ -189,6 +195,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
 		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
+		strings.Replace(workflow, "    shell: bash --noprofile --norc -euo pipefail {0}", "    shell: bash {0}", 1),
 	}
 	for _, mutated := range mutations {
 		requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
