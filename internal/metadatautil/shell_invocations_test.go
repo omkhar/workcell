@@ -279,6 +279,26 @@ func TestShellInvocations(t *testing.T) {
 			script: "{\noras cp one\n}\n",
 			want:   [][]string{{"one"}},
 		},
+		{
+			name:   "an ANSI-C delimiter with an escape ends no body this reader can spell",
+			script: ": <<$'\\x50LAN'\n\\x50LAN\noras cp one\nPLAN\noras cp two\n",
+			want:   nil,
+		},
+		{
+			name:   "a backslash inside double quotes continues the line",
+			script: "\"or\\\nas\" cp one\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a conditional command guards no group a later operator opens",
+			script: "false && true; {\noras cp one\n}\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a command after a guarded group's closing brace is read",
+			script: "false && {\noras cp one\n}; oras cp two\n",
+			want:   [][]string{{"two"}},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

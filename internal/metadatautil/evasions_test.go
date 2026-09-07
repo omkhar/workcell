@@ -112,6 +112,10 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+": <<$'PLAN'\n"+i+"$PLAN", i+"PLAN")
 	})},
+	{"ANSI-C escape in a heredoc delimiter", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: <<$'\x50LAN'`+"\n"+i+`\x50LAN`, i+"PLAN")
+	})},
 	{"single-quoted line break", replaceAnchor(splitCommandWords)},
 	{"conditional command group", replaceAnchor(func(a string) string {
 		i := indentOf(a)

@@ -12,12 +12,22 @@ import (
 // ends it, and whether the <<- form lets the terminator line carry leading
 // tabs. Bash ends a <<WORD body only at a line that is the delimiter alone, so
 // an indented copy of the word inside the body is text.
+// unresolved records a delimiter this reader cannot spell. A $'…' delimiter
+// carries the ANSI-C escapes bash decodes before it compares a line, so
+// <<$'\x50LAN' ends at PLAN. Decoding them here would be a second, smaller copy
+// of that table, and a case it got wrong would end the body early and count
+// lines bash still reads as data. The body therefore runs to the end of the
+// script, which loses invocations rather than inventing them.
 type heredoc struct {
-	delimiter string
-	stripTabs bool
+	delimiter  string
+	stripTabs  bool
+	unresolved bool
 }
 
 func (h heredoc) endsAt(line string) bool {
+	if h.unresolved {
+		return false
+	}
 	if h.stripTabs {
 		return strings.TrimLeft(line, "\t") == h.delimiter
 	}
@@ -194,10 +204,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 	var depth, definedAt, control int
 	var defining, bodyOpened bool
 	// conditionalGroup is the brace depth outside a command group that a && or
-	// a || guards, or -1 when no such group is open. Bash decides the whole
+	// a || guards, or -1 when no such group is open, and groupDepth is the
+	// nesting the commands read so far have opened. Bash decides the whole
 	// group on one exit status, so nothing written inside false && { … } is
-	// proved to run, however many lines later the closing brace is.
-	conditionalGroup := -1
+	// proved to run.
+	conditionalGroup, groupDepth := -1, 0
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if openQuote != 0 {
@@ -256,7 +267,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 				defining, definedAt, bodyOpened = true, depth, false
 			}
 		}
-		outside := depth
 		depth += braceDepth(words)
 		if defining {
 			// A body may open on a later line, as in never_called ()
@@ -269,12 +279,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			continue
 		}
-		if conditionalGroup >= 0 {
-			if depth <= conditionalGroup {
-				conditionalGroup = -1
-			}
-			continue
-		}
 		commands := splitCommands(words)
 		nested := control > 0
 		for _, each := range commands {
@@ -283,6 +287,25 @@ func ShellInvocations(script, commandName string) []Invocation {
 				continue
 			}
 			position++
+			outside := groupDepth
+			groupDepth += braceDepth(args)
+			if conditionalGroup >= 0 {
+				// Nothing inside the guarded group is proved to run, however
+				// many lines later the closing brace is. The commands written
+				// after that brace on its own line are outside the group and
+				// are read.
+				if groupDepth <= conditionalGroup {
+					conditionalGroup = -1
+				}
+				continue
+			}
+			if each.conditional && groupDepth > outside {
+				// The group this command opens is the one the && or the || in
+				// front of it guards. A conditional command elsewhere on the
+				// line guards no group of its own, so false && true; { runs
+				// its group whatever the status of true.
+				conditionalGroup = outside
+			}
 			if !args[0].quoted {
 				// A quoted reserved word is an ordinary command, so a "fi"
 				// inside if false; then closes no branch and the lines after
@@ -314,11 +337,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 				invocations = append(invocations, Invocation{names[len(prefix):], position})
 			}
 		}
-		if depth > outside && slices.ContainsFunc(commands, func(each command) bool {
-			return each.conditional
-		}) {
-			conditionalGroup = outside
-		}
 	}
 	return invocations
 }
@@ -344,6 +362,7 @@ func shellWords(line string, stack []byte) (
 ) {
 	var text strings.Builder
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
+	ansiC, ansiEscape := false, false
 	arithmetic := 0
 	// A line that carries a quoted command substitution donates no words. Where
 	// the substitution ends is beyond a line reader, and reading syntax over
@@ -358,26 +377,35 @@ func shellWords(line string, stack []byte) (
 			return
 		}
 		if pending {
-			heredocs = append(heredocs, heredoc{text.String(), stripTabs})
+			heredocs = append(heredocs, heredoc{text.String(), stripTabs, ansiEscape})
 			pending, stripTabs = false, false
 		} else {
 			words = append(words, word{text.String(), quoted})
 		}
 		text.Reset()
-		inWord, quoted = false, false
+		inWord, quoted, ansiEscape = false, false, false
 	}
 	for index := 0; index < len(line); index++ {
 		character := line[index]
 		switch {
 		case quote == '\'':
-			// A backslash is literal inside single quotes.
-			if character == '\'' {
-				quote = 0
-			} else {
+			// A backslash is literal inside single quotes, and an escape bash
+			// would decode inside $'…' makes the word unspellable here.
+			switch {
+			case character == '\'':
+				quote, ansiC = 0, false
+			case character == '\\' && ansiC:
+				ansiEscape = true
+				text.WriteByte(character)
+			default:
 				text.WriteByte(character)
 			}
 		case quote == '"':
 			switch {
+			case character == '\\' && index+1 == len(line):
+				// Bash removes a backslash-newline pair inside double quotes,
+				// so the line continues here as it does outside them.
+				continues = true
 			case character == '\\' && index+1 < len(line) && strings.IndexByte("$`\"\\", line[index+1]) >= 0:
 				// A backslash escapes only these characters here. Before any
 				// other one it is a literal byte of the word, so a name such
@@ -422,6 +450,7 @@ func shellWords(line string, stack []byte) (
 			// quotes, so a body opened as <<$'PLAN' ends at a PLAN line.
 			index++
 			quote = line[index]
+			ansiC = quote == '\''
 			inWord, quoted = true, true
 		case character == ' ' || character == '\t':
 			flush()
