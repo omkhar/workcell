@@ -80,6 +80,26 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
 		},
 		{
+			name:   "a closing backtick restores the quote its substitution suspended",
+			script: ": \"`true`\noras cp --recursive --from-oci-layout one\n\"\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "nothing after an unconditional exit is an invocation",
+			script: "oras cp --recursive --from-oci-layout one\nexit 0\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "an exit inside a branch does not end the scan",
+			script: "if false; then\nexit 0\nfi\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "an alias over the command proves no invocation of it",
+			script: "shopt -s expand_aliases\nalias oras=':'\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a step that redefines the command proves no invocation of it",
 			script: "oras() { :; }\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

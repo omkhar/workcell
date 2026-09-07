@@ -41,9 +41,8 @@ func braceDepth(words []string) int {
 }
 
 // controlWords maps each word that opens or closes a compound command to the
-// change it makes to nesting. A command inside one of these is not proved to
-// run: bash never runs the body of if false, so a required command written
-// there does not satisfy a rule about what the step runs.
+// change it makes to nesting. Bash never runs the body of if false, so a
+// command inside one is not proved to run.
 var controlWords = map[string]int{
 	"if": 1, "while": 1, "until": 1, "for": 1, "case": 1, "select": 1,
 	"fi": -1, "done": -1, "esac": -1,
@@ -67,10 +66,9 @@ type command struct {
 	conditional bool
 }
 
-// splitCommands cuts one logical line into the separate commands bash runs,
-// at every control operator. Without this, a decoy after ; or || donates its
-// words to the invocation before it, as in
-// oras cp --from-oci-layout missing || true; : --to-oci-layout <target>.
+// splitCommands cuts one logical line into the separate commands bash runs, at
+// every control operator. Without this a decoy after ; or || donates its words
+// to the invocation before it.
 func splitCommands(words []string) []command {
 	commands := make([]command, 1)
 	for _, word := range words {
@@ -109,8 +107,7 @@ func definedName(words []string) string {
 
 // quoteCloseIndex returns the index of the byte that closes an open quote, or
 // -1 when the line does not close it. A backslash escapes the next byte inside
-// a double-quoted span, so an escaped quote is a literal character and not the
-// closer. A single-quoted span has no escapes.
+// a double-quoted span; a single-quoted span has no escapes.
 func quoteCloseIndex(line string, quote byte) int {
 	for index := 0; index < len(line); index++ {
 		if quote == '"' && line[index] == '\\' {
@@ -147,11 +144,9 @@ func ShellInvocations(script, commandName string) [][]string {
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if openQuote != 0 {
-			// Bash reads these lines as text inside one word, as in
-			// : "<newline>oras cp …<newline>", which runs no command. Read
-			// them as text too, up to the byte that closes the quote. What
-			// follows on that same line is syntax again, so read it: a closer
-			// such as " <<PLAN still opens a heredoc.
+			// Bash reads these lines as text inside one word, which runs no
+			// command. What follows the closing byte on that line is syntax
+			// again, so read it: a closer such as " <<PLAN opens a heredoc.
 			at := quoteCloseIndex(text, openQuote)
 			if at < 0 {
 				continue
@@ -172,9 +167,8 @@ func ShellInvocations(script, commandName string) [][]string {
 			continue
 		}
 		if strings.HasSuffix(trimmed, "&&") || strings.HasSuffix(trimmed, "|") {
-			// A list operator at the end of a line continues the command list
-			// onto the next one, so false && <newline> oras cp … is one
-			// logical line whose right side bash decides on the left.
+			// A list operator at the end of a line continues onto the next,
+			// so false && <newline> oras cp … is one logical line.
 			current.WriteString(" ")
 			continue
 		}
@@ -188,9 +182,7 @@ func ShellInvocations(script, commandName string) [][]string {
 		if !defining {
 			if name := definedName(words); name != "" {
 				if name == prefix[0] {
-					// The step redefines the anchored command itself, so every
-					// later call runs the definition rather than the program.
-					// Nothing in this script proves the command ran.
+					// Every later call runs the definition, not the program.
 					return nil
 				}
 				defining, definedAt, bodyOpened = true, depth, false
@@ -199,8 +191,7 @@ func ShellInvocations(script, commandName string) [][]string {
 		depth += braceDepth(words)
 		if defining {
 			// A body may open on a later line, as in never_called ()
-			// followed by { on its own line, so wait for it before looking
-			// for its end.
+			// followed by { on its own, so wait for it before seeking its end.
 			if depth > definedAt {
 				bodyOpened = true
 			}
@@ -223,6 +214,13 @@ func ShellInvocations(script, commandName string) [][]string {
 			}
 			if nested || control > 0 || each.conditional {
 				continue
+			}
+			if args[0] == "exit" || args[0] == "return" {
+				// The step ends here; nothing written after it runs.
+				return invocations
+			}
+			if args[0] == "alias" && shadowsByAlias(args, prefix[0]) {
+				return nil // Every later use expands to the alias.
 			}
 			if len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix) {
 				invocations = append(invocations, args[len(prefix):])
@@ -307,8 +305,7 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 		case character == '#' && !inWord:
 			return words, heredocs, 0, stack
 		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
-			// An arithmetic expansion is not shell syntax: the << inside
-			// $((1 << 2)) is a shift, not a heredoc operator.
+			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
 			arithmetic++
 			word.WriteString(line[index : index+3])
 			index += 2
@@ -346,7 +343,9 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 				operator += string(character)
 			}
 			words = append(words, operator)
-		case character == ')' && len(stack) > 0:
+		case len(stack) > 0 && (character == ')' || character == '`'):
+			// A substitution ends at ) or at its backtick, and the quote it
+			// suspended comes back with it.
 			quote = stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			word.WriteByte(character)
@@ -363,4 +362,15 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 		return words, heredocs, 0, stack
 	}
 	return words, heredocs, quote, stack
+}
+
+// shadowsByAlias reports whether an alias command rebinds name, as in
+// alias oras=':' after shopt -s expand_aliases.
+func shadowsByAlias(args []string, name string) bool {
+	for _, word := range args[1:] {
+		if bound, _, found := strings.Cut(word, "="); found && bound == name {
+			return true
+		}
+	}
+	return false
 }

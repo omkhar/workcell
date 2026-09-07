@@ -8,24 +8,20 @@ import (
 	"testing"
 )
 
-// Evasion rewrites one artifact so that the anchored command it must contain
-// is no longer run, while text that names the command stays in the file. Every
-// row is a bypass a reviewer found against a validator that read the artifact
-// as text instead of as shell words.
-//
-// Rewrite takes the whole artifact and the exact text of the anchored command,
+// Evasion rewrites one artifact so that the anchored command it must contain is
+// no longer run, while text that names the command stays in the file. Every row
+// is a bypass a reviewer found against a validator that read the artifact as
+// text. Rewrite takes the whole artifact and the anchored command's exact text,
 // so a row can move the command as well as disguise it.
 type Evasion struct {
 	Name    string
 	Rewrite func(artifact, anchor string) string
 }
 
-// Evasions is the shared negative corpus. A validator that reads file content
-// to decide that a command runs must reject every row.
-//
-// The corpus lives in the test package so that the parser it exercises stays
-// out of the shipped tool's dependency graph. Move it to a non-test file when
-// a validator outside this package needs it.
+// Evasions is the shared negative corpus. A validator that reads file content to
+// decide that a command runs must reject every row. It lives in the test package
+// to keep testing out of the shipped tool's dependency graph; move it to a
+// non-test file when a validator outside this package needs it.
 var Evasions = []Evasion{
 	{"full-line comment", replaceAnchor(func(a string) string {
 		return commentOut(a)
@@ -80,6 +76,9 @@ var Evasions = []Evasion{
 	{"conditional across a line break", replaceAnchor(func(a string) string {
 		return prefixCommands(a, "false &&\n"+indentOf(a))
 	})},
+	{"exit before the command", replaceAnchor(func(a string) string {
+		return indentOf(a) + "exit 0\n" + a
+	})},
 	{"definition brace on the next line", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return hide(a, i+"never_called ()\n"+i+"{", i+"}")
@@ -96,9 +95,8 @@ var Evasions = []Evasion{
 }
 
 // RequireRejectsAllEvasions applies every row of the corpus to artifact and
-// requires validate to reject the result, naming want in its error. want keeps
-// a row honest: a rewrite that merely broke the file's syntax would otherwise
-// pass for the wrong reason.
+// requires validate to reject the result, naming want in its error. want keeps a
+// row honest: a rewrite that only broke the syntax would otherwise pass.
 func RequireRejectsAllEvasions(t *testing.T, artifact, anchor, want string, validate func(string) error) {
 	t.Helper()
 
