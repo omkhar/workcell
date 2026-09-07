@@ -427,7 +427,14 @@ fn resolve_command_via_path_value(
         // The loader drops LD_PRELOAD for set-user-ID programs, so this guard is
         // never loaded where the two differ.
         // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
-        let executable = unsafe { libc::access(cstring.as_ptr(), libc::X_OK) == 0 };
+        let executable = unsafe { libc::access(cstring.as_ptr(), libc::X_OK) == 0 }
+            // X_OK also succeeds for a searchable directory, and the kernel
+            // refuses to execute anything that is not a regular file. libc
+            // records that refusal as EACCES and keeps searching, so a
+            // directory must not end the guard's search either -- otherwise the
+            // guard classifies the directory while libc goes on to execute a
+            // later, unclassified entry.
+            && fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file());
         if !executable {
             // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
             if unsafe { libc::access(cstring.as_ptr(), libc::F_OK) == 0 } {
@@ -2104,7 +2111,7 @@ pub mod fuzz_api {
 mod tests {
     use super::*;
     use crate::gitpolicy::*;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::PathBuf;
     use std::process;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2571,5 +2578,39 @@ mod tests {
             resolve_command_via_path_value("true", Some(&over_segments)),
             Err(ExecSearchError::InputTooLarge)
         );
+    }
+
+    #[test]
+    fn path_search_walks_past_a_directory_that_shadows_the_command() {
+        let dir = create_temp_test_dir("path-search");
+        let shadow = dir.join("shadow");
+        let real = dir.join("real");
+        fs::create_dir(&shadow).expect("shadow dir");
+        fs::create_dir(&real).expect("real dir");
+        // A searchable directory named like the command answers access(X_OK),
+        // but libc keeps searching past it, so the guard must too.
+        fs::create_dir(shadow.join("probe")).expect("shadow probe dir");
+        let target = real.join("probe");
+        fs::write(&target, "#!/bin/sh\nexit 0\n").expect("real probe");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("probe mode");
+
+        let path_value = format!("{}:{}", shadow.display(), real.display());
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&path_value)),
+            Ok(Some(
+                fs::canonicalize(&target)
+                    .expect("canonical probe")
+                    .to_string_lossy()
+                    .into_owned()
+            ))
+        );
+
+        // With only the directory on PATH the search reports the same
+        // permission failure libc reports, never the directory itself.
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&shadow.display().to_string())),
+            Err(ExecSearchError::PermissionDenied)
+        );
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 }
