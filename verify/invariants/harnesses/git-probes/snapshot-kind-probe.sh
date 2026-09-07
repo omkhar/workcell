@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 if [[ -d kind ]]; then
   printf 'kind=dir\n'
