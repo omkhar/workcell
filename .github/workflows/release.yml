@@ -1415,10 +1415,7 @@ jobs:
           test "$(find dist/trusted-subjects -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 9
           test -z "$(find dist/trusted-subjects -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
           test "$(cut -d@ -f2 dist/trusted-subjects/workcell-image.digest)" = "${ASSEMBLED_IMAGE_DIGEST}"
-          # This job rebuilt these subjects independently, so require the binder
-          # to agree byte for byte before its copies are used. Without this the
-          # signer would only compare binder bytes with binder bytes, and a
-          # compromised binder could substitute self-consistent subjects.
+          # The binder must agree byte for byte with what this job rebuilt.
           cmp -s "dist/${BUNDLE_NAME}" "dist/trusted-subjects/${BUNDLE_NAME}"
           cmp -s dist/workcell.rb dist/trusted-subjects/workcell.rb
           cmp -s dist/workcell-control-plane.json dist/trusted-subjects/workcell-control-plane.json

@@ -53,10 +53,9 @@ type workflowStep struct {
 }
 
 // This digest covers the complete parsed sign-release job plus the workflow-level
-// ORAS pins it installs its publisher from, the registry it publishes to, and the
-// shell its run steps inherit. It rejects unknown fields, reordered steps, changed
-// commands, changed action inputs, a swapped publisher, a redirected registry
-// destination, and a weakened shell default.
+// ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
+// rejects unknown fields, reordered steps, changed commands, changed action inputs,
+// a swapped publisher, a redirected registry, and a weakened shell default.
 const releaseSignerContractSHA256 = "59d426ff05378de33e64dc11f715e25f21727eb07e9f33d7cead528856e84982"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
@@ -208,12 +207,11 @@ func validateReleaseAssembly(document workflowDocument) error {
 
 var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
 
+var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
+
 // commandArgs returns the arguments of each invocation of command in script. It
-// joins backslash continuations, drops comments, and skips heredoc bodies, so a
-// decoy written as a comment, a heredoc body, or a quoted argument such as
-// echo "<command>" never counts, and neither does a longer flag spelling. Each
-// invocation is reported on its own, so one call cannot satisfy a requirement
-// that two separate calls must meet.
+// joins continuations and drops comments, inline ones included, and heredoc bodies,
+// so no decoy text counts as a command and one call cannot satisfy a two-call rule.
 func commandArgs(script, command string) [][]string {
 	var invocations [][]string
 	var current strings.Builder
@@ -233,7 +231,7 @@ func commandArgs(script, command string) [][]string {
 		if strings.HasSuffix(trimmed, "\\") {
 			continue
 		}
-		logical := current.String()
+		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
 		current.Reset()
 		// Here-strings are blanked first so that a redirection such as
 		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
@@ -304,9 +302,8 @@ func validateReleaseSignerContract(workflowText string) error {
 	// The signer installs its publisher from the workflow-level ORAS pins and
 	// publishes to the workflow-level IMAGE_NAME, so the contract covers those
 	// too. Swapping the publisher or the registry destination for one the
-	// maintainer did not review must break this digest. Every privileged run
-	// step also inherits the workflow-level shell, so the contract covers it as
-	// well: dropping -e there would let a failed check continue to publication.
+	// maintainer did not review must break this digest. Privileged run steps also
+	// inherit the workflow shell, so dropping -e there must break it too.
 	content, err := yaml.Marshal(struct {
 		Signer       yaml.Node `yaml:"sign-release"`
 		OrasPins     []string  `yaml:"oras-pins"`

@@ -179,6 +179,12 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			want: "copy both platform images",
 		},
 		{
+			name:  "copies disabled with their destinations moved into inline comments",
+			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
+			decoy: "          oras cp --recursive --from-oci-layout || true # --to-oci-layout dist/release-image:amd64",
+			want:  "copy both platform images",
+		},
+		{
 			name:  "one platform copy commented out but its destination text kept",
 			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
 			decoy: "          # oras cp --recursive --from-oci-layout \\\n            # \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            # --to-oci-layout dist/release-image:amd64",
