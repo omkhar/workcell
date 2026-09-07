@@ -134,27 +134,43 @@ jobs:
       - name: Run Workcell container smoke
         run: ./scripts/container-smoke.sh
 
-  hostile-tmpdir:
-    name: Hostile TMPDIR (advisory)
-    # Reruns repository validation with TMPDIR pointed at a directory whose name
-    # holds a space, a literal $, a --prefixed token and 80 characters of
-    # padding.  Three separate review findings -- a value quoted with Go's %q
-    # and then re-expanded by bash, an argv flattened through $*, and a
-    # --hostname check that matched a substring of a path -- were each first
-    # reproduced by hand exactly that way, so this lane reproduces the class
-    # before review instead of during it.
+  hostile-env:
+    name: Hostile environment (${{ matrix.axis }})
+    # Reruns repository validation once per hostile axis.  Each axis is a shape
+    # that review has already caught defects with, reproduced here before review
+    # instead of during it:
     #
-    # Advisory while its first failures are triaged: the job is deliberately
+    #   tmpdir     TMPDIR whose name holds a space, a literal $, a --prefixed
+    #              token and 80 characters of padding.  Reproduced a value
+    #              quoted with Go's %q and re-expanded by bash, an argv
+    #              flattened through $*, and a --hostname check that matched a
+    #              substring of a path.
+    #   workspace  bind source holding a space and a comma.  The --mount record
+    #              is CSV, so the comma has to survive the encoder.
+    #   root       the container runs as uid 0, where a chmod assertion and a
+    #              write-only read assertion stop holding.
+    #   uidmap     the container runs as a uid that owns none of the bind and
+    #              that the image has no passwd record for.
+    #
+    # Advisory while the first failures are triaged: these jobs are deliberately
     # absent from required_status_checks in policy/github-hosted-controls.toml
-    # and carries continue-on-error, so a red run reports without blocking a
+    # and carry continue-on-error, so a red run reports without blocking a
     # merge.  Gated on validate rather than pr-shape so the validator image
-    # layers are already in the shared buildx cache scope when this build runs.
+    # layers are already in the shared buildx cache scope when these builds run.
     continue-on-error: true
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - axis: tmpdir
+          - axis: workspace
+          - axis: root
+          - axis: uidmap
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -167,14 +183,14 @@ jobs:
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
-      - name: Validate repository under a hostile TMPDIR
+      - name: Validate repository under a hostile environment
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
           WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
           WORKCELL_VALIDATE_REPO_PROFILE: repo-core
-          WORKCELL_HOSTILE_TMPDIR: "1"
+          WORKCELL_HOSTILE_ENV: ${{ matrix.axis }}
         run: |
           built_image="$(./scripts/ci/build-validator-image.sh)"
           if [[ "${built_image}" != "${WORKCELL_VALIDATOR_IMAGE}" ]]; then

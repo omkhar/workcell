@@ -628,6 +628,101 @@ workcell_ci_validator_passwd_file docker fixture-image 1000 1000 /home/fixture "
 	}
 }
 
+// The hostile lane earns its runtime only while each axis keeps the shapes that
+// reproduced a finding by hand, so the derivations are executed here rather
+// than pattern-matched: a dropped backslash that lets bash expand $HOME, a
+// shortened padding component, or a comma quietly removed from the bind source
+// leaves the lane green for the wrong reason.
+func TestHostileAxesKeepTheShapesThatReproducedFindings(t *testing.T) {
+	t.Parallel()
+
+	tmpdir := runHostileDerivation(t, `validator_tmp="${validator_tmp}/`, `validator_tmp="/tmp/workcell-home-1000/.tmp"`, "validator_tmp")
+	if !strings.Contains(tmpdir, " ") {
+		t.Fatalf("hostile TMPDIR %q has no whitespace component", tmpdir)
+	}
+	if !strings.Contains(tmpdir, "$") {
+		t.Fatalf("hostile TMPDIR %q has no unexpanded dollar sign", tmpdir)
+	}
+	if !hasOptionToken(tmpdir) {
+		t.Fatalf("hostile TMPDIR %q has no --prefixed token", tmpdir)
+	}
+	padded := false
+	for _, component := range strings.Split(tmpdir, "/") {
+		padded = padded || len(component) >= 80
+	}
+	if !padded {
+		t.Fatalf("hostile TMPDIR %q has no ~80-character padding component", tmpdir)
+	}
+
+	workspace := runHostileDerivation(t, `hostile_workspace="${hostile_root}/`, `hostile_root="/tmp/workcell-hostile.fixture"`, "hostile_workspace")
+	if !strings.Contains(workspace, " ") {
+		t.Fatalf("hostile workspace %q has no whitespace component", workspace)
+	}
+	if !strings.Contains(workspace, ",") {
+		t.Fatalf("hostile workspace %q has no comma, so it never exercises the CSV mount record", workspace)
+	}
+	if !hasOptionToken(workspace) {
+		t.Fatalf("hostile workspace %q has no --prefixed token", workspace)
+	}
+}
+
+// An unknown axis must fail closed.  A typo that fell through to the ordinary
+// validation would report a green advisory lane that tested nothing hostile.
+func TestHostileAxisRejectsAnUnknownValue(t *testing.T) {
+	t.Parallel()
+
+	lane := filepath.Join(repoRoot(t), "scripts", "ci", "run-validate-in-validator.sh")
+	command := exec.Command(lane)
+	command.Env = append(os.Environ(), "WORKCELL_HOSTILE_ENV=not-an-axis")
+	output, err := command.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("unknown axis status = %v, want exit 2\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Unsupported WORKCELL_HOSTILE_ENV: not-an-axis") {
+		t.Fatalf("unknown axis output = %q", output)
+	}
+}
+
+func hasOptionToken(path string) bool {
+	for _, word := range strings.Fields(path) {
+		if strings.HasPrefix(word, "--") {
+			return true
+		}
+	}
+	return false
+}
+
+// runHostileDerivation executes the single assignment the lane derives an axis
+// with, so the test reads the value bash produces instead of the source text.
+func runHostileDerivation(t *testing.T, prefix, preset, variable string) string {
+	t.Helper()
+
+	lane := filepath.Join(repoRoot(t), "scripts", "ci", "run-validate-in-validator.sh")
+	content, err := os.ReadFile(lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derivation := ""
+	for _, line := range strings.Split(activeShellLines(string(content)), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			derivation = strings.TrimSpace(line)
+			break
+		}
+	}
+	if derivation == "" {
+		t.Fatalf("run-validate-in-validator.sh no longer derives %s", variable)
+	}
+	script := preset + "; " + derivation + `; printf '%s' "${` + variable + `}"`
+	command := exec.Command("/bin/bash", "-c", script)
+	command.Env = append(os.Environ(), "HOME=/hostile-home-must-not-expand")
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("%s derivation failed: %v", variable, err)
+	}
+	return string(output)
+}
+
 // activeShellLines drops whole-line comments so a lane cannot satisfy a check
 // with the statement it commented out.  A trailing comment is left alone: it
 // cannot carry a statement, and cutting at the first "#" would corrupt a

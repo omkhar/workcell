@@ -42,7 +42,7 @@ For an approved large adapter PR, use both required options:
 | --- | --- |
 | `bench.yml` | Measures exec-guard performance on a schedule or manual run. |
 | `ci-insights.yml` | Writes weekly flake and cost reports. See [CI reliability](ci-efficiency-and-reliability.md). |
-| `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, and PR-shape checks. |
+| `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and advisory hostile-environment reruns. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
 | `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
@@ -60,6 +60,18 @@ For an approved large adapter PR, use both required options:
 Normal PRs run the required deterministic lanes.
 The `Release asset ACL (Darwin)` lane runs on every PR and `main` push.
 It uses `macos-15` and checks the exact Go toolchain.
+
+The `Hostile environment` lanes run repository validation again on one hostile axis each.
+`WORKCELL_HOSTILE_ENV` selects the axis:
+
+- `tmpdir` puts `TMPDIR` in a directory whose name has a space, a literal `$`, a `--` token, and 80 characters of padding.
+- `workspace` copies the checkout to a bind source whose name has a space and a comma. The `--mount` record is CSV, so the comma must survive the encoder.
+- `root` runs the container as UID 0.
+- `uidmap` runs the container as a UID that owns none of the bind and has no record in the image.
+
+These shapes reproduce quoting, argument-boundary, mount-record, and `sun_path` defects before review.
+The lanes are advisory: they use `continue-on-error` and are not required checks.
+Run one axis on a host with `WORKCELL_HOSTILE_ENV=tmpdir ./scripts/ci/run-validate-in-validator.sh`.
 
 The `approved-heavy-ci` label enables these expensive PR lanes:
 
