@@ -35,6 +35,7 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 		{"raw literal names a corpus run", anchor, corpus + "\t_ = `text\n" + corpus + "`\n", ""},
 		{"call in a one-line function body", "func validate() {" + strings.TrimSuffix(anchor, "\n") + " }\n", corpus, ""},
 		{"declaration is not a call", "func ShellInvocations(script, command string) [][]string {\n" + anchor, corpus, ""},
+		{"a longer identifier is not the call", anchor + "\tcachedShellInvocations(script, command)\n", corpus, ""},
 		{"two calls on one line", strings.TrimSuffix(anchor, "\n") + strings.TrimPrefix(anchor, "\t"), corpus + corpus, ""},
 	}
 	for _, testCase := range cases {

@@ -66,7 +66,7 @@ func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 			return err
 		}
 		for line := range strings.Lines(dropCommentsAndLiterals(string(content))) {
-			count += strings.Count(afterDeclaration(line), needle)
+			count += countCalls(afterDeclaration(line), needle)
 		}
 		return nil
 	})
@@ -93,11 +93,9 @@ func dropCommentsAndLiterals(source string) string {
 		character := source[index]
 		switch {
 		case character == '\n':
-			// A newline ends a line comment. A block comment and a raw
-			// literal both run on, so their state has to survive it. An
-			// interpreted literal cannot span a line at all, so a newline
-			// inside one means the scan has lost its place; clear it and read
-			// the next line as code rather than blanking the rest of the file.
+			// A block comment and a raw literal run past a newline, so their
+			// state survives it. An interpreted literal cannot, so a newline
+			// inside one means the scan has lost its place; resync there.
 			lineComment = false
 			if state == '"' || state == '\'' {
 				state = 0
@@ -157,4 +155,29 @@ func afterDeclaration(line string) string {
 		return ""
 	}
 	return body
+}
+
+// countCalls returns how many times text calls needle. A match must not
+// continue an identifier, so cachedShellInvocations( is not a call of it.
+func countCalls(text, needle string) int {
+	count, offset := 0, 0
+	for {
+		at := strings.Index(text[offset:], needle)
+		if at < 0 {
+			return count
+		}
+		at += offset
+		if at == 0 || !isIdentifierByte(text[at-1]) {
+			count++
+		}
+		offset = at + len(needle)
+	}
+}
+
+// isIdentifierByte reports whether the byte can appear inside a Go identifier.
+func isIdentifierByte(character byte) bool {
+	return character == '_' ||
+		character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
 }
