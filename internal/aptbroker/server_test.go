@@ -126,8 +126,8 @@ func TestRemoveSocketPreservesReplacementWhileListenerIsOpen(t *testing.T) {
 	}
 }
 
-// The socket mode must come from the bind itself, not from a chmod applied to a
-// pathname afterwards, so a restrictive ambient umask must not leak into it.
+// Clients reach the broker through the socket, so its mode is fixed by the
+// server and an ambient umask must not leak into it.
 func TestListenSocketBindsSocketWithFinalMode(t *testing.T) {
 	previous := syscall.Umask(0o077)
 	defer syscall.Umask(previous)

@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -257,34 +256,44 @@ func listenSocket(path string, requireRoot bool) (*net.UnixListener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSocket(path, requireRoot); err != nil {
-		_ = listener.Close()
+	if err := secureSocket(path, listener, requireRoot); err != nil {
 		return nil, err
 	}
 	return listener, nil
 }
 
-// The socket carries its final mode out of the bind itself. Applying the mode
-// to the pathname afterwards lets anyone who can write the parent directory
-// swap in a symlink between the two steps and redirect a privileged chmod onto
-// a file of their choosing. The bind also already owns the socket as the server
-// uid, so an explicit chown would reopen that same window for an ownership the
-// kernel has given us anyway; validateSocket confirms it instead. Close must
-// not unlink either, or it would delete whatever holds the pathname at shutdown
-// before removeSocket can check that it is still our socket.
-//
-// ponytail: umask is process-global, which is safe here only because Serve
-// binds once during startup. Bind through a parent directory descriptor if this
-// ever has to run beside other file creation.
+// Close must not unlink, or it would delete whatever holds the pathname at
+// shutdown before removeSocket can check that it is still our socket.
 func bindSocket(path string) (*net.UnixListener, error) {
-	previous := syscall.Umask(0o111)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	syscall.Umask(previous)
 	if err != nil {
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
 	return listener, nil
+}
+
+// No chown is made: the bind already created the socket owned by the server
+// uid, so the kernel has given us the ownership validateSocket goes on to
+// confirm, and asking for it again by pathname would only add a way to be
+// pointed somewhere else. The mode does have to be set after the bind. That is
+// safe because a privileged deployment sets RequireRootSocket, and
+// validateSocketParent then proves no unprivileged uid can write any ancestor,
+// so none can substitute a symlink for the socket in between; without the flag
+// the server holds no privilege the mode change could abuse. validateSocket
+// re-checks the result with Lstat and fails closed if it is not our socket.
+func secureSocket(path string, listener *net.UnixListener, requireRoot bool) error {
+	fail := func(err error) error {
+		removeSocket(path, listener)
+		return err
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		return fail(err)
+	}
+	if err := validateSocket(path, requireRoot); err != nil {
+		return fail(err)
+	}
+	return nil
 }
 
 func validateSocketParent(path string, requireRoot bool) error {
