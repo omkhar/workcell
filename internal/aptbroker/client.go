@@ -58,6 +58,9 @@ func dialBroker(ctx context.Context, socketPath string) (*net.UnixConn, error) {
 	if socketPath == "" {
 		socketPath = DefaultSocketPath
 	}
+	if err := checkSocketPathLength(socketPath); err != nil {
+		return nil, err
+	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
 	if err != nil {
 		return nil, err

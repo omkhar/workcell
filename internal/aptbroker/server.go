@@ -248,6 +248,9 @@ func closeConnectionOnCancel(ctx context.Context, connection *net.UnixConn, fini
 }
 
 func listenSocket(path string, requireRoot bool) (*net.UnixListener, error) {
+	if err := checkSocketPathLength(path); err != nil {
+		return nil, err
+	}
 	if err := validateSocketParent(filepath.Dir(path), requireRoot); err != nil {
 		return nil, err
 	}
