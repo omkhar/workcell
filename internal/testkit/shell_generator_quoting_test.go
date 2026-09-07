@@ -4,7 +4,6 @@
 package testkit
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,12 +24,21 @@ var shellSourceMarker = regexp.MustCompile(`#!/|set -euo|\\n(builtin )?source |"
 // %q, %#q, %+q and %[1]q all apply the same shell-unsafe conversion.
 var goQuoteDirective = regexp.MustCompile(`%[-+# 0]*(\[\d+\])?\d*(\.\d+)?q`)
 
-// hasGoQuoteDirective reports whether line applies the q conversion. A doubled
-// percent sign is a literal percent rather than the start of a directive, so a
-// match that begins on the second sign of a pair does not count.
+// hasGoQuoteDirective reports whether line applies the q conversion.
+//
+// A doubled percent sign is a literal percent, so whether a match opens a real
+// directive is decided by the parity of the percent run that precedes it. An
+// even run is a sequence of complete escaped pairs and the match is a
+// directive; an odd run means this match's own percent closes the last pair.
+// %%q is therefore a literal, while %%%q is an escaped percent followed by a
+// real conversion.
 func hasGoQuoteDirective(line string) bool {
 	for _, match := range goQuoteDirective.FindAllStringIndex(line, -1) {
-		if match[0] > 0 && line[match[0]-1] == '%' {
+		run := 0
+		for i := match[0] - 1; i >= 0 && line[i] == '%'; i-- {
+			run++
+		}
+		if run%2 == 1 {
 			continue
 		}
 		return true
@@ -91,9 +99,12 @@ func TestGeneratedShellScriptsDoNotUseGoQuoting(t *testing.T) {
 		if !strings.HasSuffix(rel, ".go") {
 			continue
 		}
-		content, err := os.ReadFile(filepath.Join(root, rel))
+		// Read through the same no-follow descriptor discipline the Bash walk
+		// uses, so neither walk judges a file other than the one it named.
+		content, err := readTrackedFile(filepath.Join(root, rel))
 		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
+			t.Errorf("read %s: %v", rel, err)
+			continue
 		}
 		scanned++
 		for _, line := range goQuoteInShellLiteral(string(content)) {
@@ -161,12 +172,13 @@ func TestGoQuoteInShellLiteralReadsWholeFormatDirectives(t *testing.T) {
 		`		"flagged ` + pct + `#q\n"+`,                                // 4: reported
 		`		"padded ` + pct + `-8q\n"+`,                                // 5: reported
 		`		"literal ` + pct + pct + `q\n"+`,                           // 6: an escaped percent, not a directive
-		`		"safe ` + pct + `s\n", a, b, c, d)`,                        // 7: a different conversion
-		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 8: not script text
-		`}`, // 9
+		`		"escaped then real ` + pct + pct + pct + `q\n"+`,           // 7: a pair, then a directive
+		`		"safe ` + pct + `s\n", a, b, c, d)`,                        // 8: a different conversion
+		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 9: not script text
+		`}`, // 10
 	}, "\n")
 
-	requireLines(t, goQuoteInShellLiteral(source), 3, 4, 5)
+	requireLines(t, goQuoteInShellLiteral(source), 3, 4, 5, 7)
 }
 
 func requireLines(t *testing.T, got []int, want ...int) {

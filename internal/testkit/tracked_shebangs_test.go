@@ -88,6 +88,10 @@ func shebangNeutralizesStartupFiles(shebang string) bool {
 		return false
 	}
 	for _, arg := range fields[command+1:] {
+		if arg == "--" {
+			// Bash stops reading options here; anything after is the operand.
+			break
+		}
 		if arg == "-p" {
 			return true
 		}
@@ -191,8 +195,11 @@ func TestShebangNeutralizesStartupFilesRejectsUnhardenedForms(t *testing.T) {
 		// env(1) passes everything after the command name to that command, so
 		// these two are Bash arguments and an inherited BASH_ENV still runs.
 		{"cleared after the command", "#!/usr/bin/env -S bash BASH_ENV= ENV=", false},
-		// -p is a Bash option, so it counts only after the command name.
+		// -p is a Bash option, so it counts only after the command name, and
+		// only before the -- that ends Bash option parsing.
 		{"privileged before the command", "#!/usr/bin/env -S -p bash", false},
+		{"privileged after the option terminator", "#!/usr/bin/env -S bash -- -p", false},
+		{"privileged before the option terminator", "#!/usr/bin/env -S bash -p --", true},
 		{"absolute interpreter after assignments", "#!/usr/bin/env -S BASH_ENV= ENV= /bin/bash", true},
 	}
 	for _, test := range tests {
