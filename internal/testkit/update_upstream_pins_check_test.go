@@ -105,10 +105,12 @@ type updaterFixtureCurlCall struct {
 type updaterFixtureOptions struct {
 	Token             string
 	RelativeTokenFile bool
+	ProviderPlan      string
+	ProviderPlanCode  int
 }
 
 func defaultUpdaterFixtureOptions() updaterFixtureOptions {
-	return updaterFixtureOptions{}
+	return updaterFixtureOptions{ProviderPlan: `{"has_changes":false}`}
 }
 
 func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
@@ -138,7 +140,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 		"check-pinned-inputs":        0,
 		"upstream-get":               7,
 	})
-	if want := []string{"summary", "check"}; !reflect.DeepEqual(checkRun.ProviderLog, want) {
+	if want := []string{"summary", "json"}; !reflect.DeepEqual(checkRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", checkRun.ProviderLog, want)
 	}
 	assertUpdaterScratchHasOnlyLogs(t, checkScratch)
@@ -166,7 +168,7 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 		"check-pinned-inputs":        1,
 		"upstream-get":               7,
 	})
-	if want := []string{"summary", "check", "apply"}; !reflect.DeepEqual(applyRun.ProviderLog, want) {
+	if want := []string{"summary", "json", "apply"}; !reflect.DeepEqual(applyRun.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", applyRun.ProviderLog, want)
 	}
 	assertUpdaterScratchHasOnlyLogs(t, applyScratch)
@@ -208,6 +210,51 @@ func TestUpdateUpstreamPinsHermeticApplyAndCheck(t *testing.T) {
 	afterCleanCheck := snapshotUpdaterFixtureTree(t, fixtureRoot)
 	if !reflect.DeepEqual(afterCleanCheck, beforeCleanCheck) {
 		t.Fatalf("clean update-upstream-pins.sh --check was not byte-stable\nbefore: %#v\nafter:  %#v", beforeCleanCheck, afterCleanCheck)
+	}
+}
+
+func TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	plan := updaterTargetDebianPlan()
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	fixtureRoot := writeUpdaterFixture(t, updaterManifestFromPlan(plan), 0o640)
+
+	testCases := []struct {
+		name       string
+		plan       string
+		planCode   int
+		wantCode   int
+		wantOutput string
+	}{
+		{name: "unchanged", plan: `{"has_changes":false}`, wantCode: 0, wantOutput: "Pinned upstream refresh summary:\n"},
+		{name: "changed", plan: `{"has_changes":true}`, wantCode: 1, wantOutput: "Pinned upstream refresh summary:\n"},
+		{name: "operational status one", plan: `{"has_changes":false}`, planCode: 1, wantCode: 1, wantOutput: "fixture provider plan failure\nUnable to compute provider bump plan.\n"},
+		{name: "malformed", plan: `{`, wantCode: 1, wantOutput: "Unable to read provider changes from the provider bump plan.\n"},
+		{name: "empty stream", plan: ``, wantCode: 1, wantOutput: "Unable to read provider changes from the provider bump plan.\n"},
+		{name: "multiple documents", plan: "{\"has_changes\":false}\n{\"has_changes\":true}", wantCode: 1, wantOutput: "Unable to read provider changes from the provider bump plan.\n"},
+		{name: "missing status", plan: `{}`, wantCode: 1, wantOutput: "Unable to read provider changes from the provider bump plan.\n"},
+		{name: "nonboolean status", plan: `{"has_changes":"false"}`, wantCode: 1, wantOutput: "Unable to read provider changes from the provider bump plan.\n"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			options := defaultUpdaterFixtureOptions()
+			options.ProviderPlan = testCase.plan
+			options.ProviderPlanCode = testCase.planCode
+			run := runUpdaterFixtureWithOptions(t, fixtureRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, "--check", options)
+			if run.Code != testCase.wantCode {
+				t.Fatalf("update-upstream-pins exit code = %d, want %d\n%s", run.Code, testCase.wantCode, run.Output)
+			}
+			if !strings.Contains(run.Output, testCase.wantOutput) {
+				t.Fatalf("update-upstream-pins output = %q, want suffix %q", run.Output, testCase.wantOutput)
+			}
+			if want := []string{"summary", "json"}; !reflect.DeepEqual(run.ProviderLog, want) {
+				t.Fatalf("provider updater command log = %q, want %q", run.ProviderLog, want)
+			}
+		})
 	}
 }
 
@@ -289,7 +336,7 @@ func TestUpdateUpstreamPinsApplyFailureLeavesFixtureUnchanged(t *testing.T) {
 		"check-pinned-inputs":        0,
 		"upstream-get":               7,
 	})
-	if want := []string{"summary", "check"}; !reflect.DeepEqual(run.ProviderLog, want) {
+	if want := []string{"summary", "json"}; !reflect.DeepEqual(run.ProviderLog, want) {
 		t.Fatalf("provider updater command log = %q, want %q", run.ProviderLog, want)
 	}
 	assertUpdaterScratchHasOnlyLogs(t, scratchRoot)
@@ -512,8 +559,13 @@ case "${1:-}" in
     printf '%s\n' summary >>"${WORKCELL_FIXTURE_PROVIDER_LOG}"
     printf '%s\n' 'Provider pin refresh summary: fixture (up to date)'
     ;;
-  --check)
-    printf '%s\n' check >>"${WORKCELL_FIXTURE_PROVIDER_LOG}"
+  --json)
+    printf '%s\n' json >>"${WORKCELL_FIXTURE_PROVIDER_LOG}"
+    if [[ "${WORKCELL_FIXTURE_PROVIDER_PLAN_CODE}" -ne 0 ]]; then
+      printf '%s\n' 'fixture provider plan failure' >&2
+      exit "${WORKCELL_FIXTURE_PROVIDER_PLAN_CODE}"
+    fi
+    printf '%s\n' "${WORKCELL_FIXTURE_PROVIDER_PLAN}"
     ;;
   --apply)
     printf '%s\n' apply >>"${WORKCELL_FIXTURE_PROVIDER_LOG}"
@@ -648,6 +700,8 @@ func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citool
 		"WORKCELL_FIXTURE_HADOLINT_CHECKSUMS=" + pins.HadolintChecksums,
 		"WORKCELL_FIXTURE_HADOLINT_VERSION=" + pins.HadolintVersion,
 		"WORKCELL_FIXTURE_PROVIDER_LOG=" + providerLogPath,
+		"WORKCELL_FIXTURE_PROVIDER_PLAN=" + options.ProviderPlan,
+		fmt.Sprintf("WORKCELL_FIXTURE_PROVIDER_PLAN_CODE=%d", options.ProviderPlanCode),
 		"WORKCELL_FIXTURE_ROOT=" + fixtureRoot,
 		"WORKCELL_FIXTURE_QEMU_DIGEST=" + qemuDigest,
 		"WORKCELL_FIXTURE_QEMU_TAG=" + qemuTag,
