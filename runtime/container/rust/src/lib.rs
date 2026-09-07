@@ -1423,11 +1423,18 @@ fn loader_args_target_mutable_native_exec(args: &[String]) -> bool {
     let mut index = 1usize;
     while index < args.len() {
         let argument = &args[index];
-        let (option, inline_value) = argument
-            .split_once('=')
-            .map_or((argument.as_str(), None), |(option, value)| {
-                (option, Some(value))
-            });
+        // Only an option carries an inline value. The exec target is a
+        // pathname, and a pathname may contain an equals sign, so splitting
+        // every argument would check a truncated prefix of the real target.
+        let (option, inline_value) = if argument.starts_with('-') {
+            argument
+                .split_once('=')
+                .map_or((argument.as_str(), None), |(option, value)| {
+                    (option, Some(value))
+                })
+        } else {
+            (argument.as_str(), None)
+        };
 
         match option {
             "--preload" | "--audit" | "--library-path" => {
@@ -3239,6 +3246,10 @@ mod tests {
                 "/bin/true".to_string(),
                 "/usr/lib:".to_string(),
             ],
+            // A target pathname may contain an equals sign. It must be checked
+            // whole rather than truncated at the first one, so this target
+            // reaches path_is_mutable_native_exec intact and does not exist.
+            vec![loader.clone(), "/bin/true=x".to_string()],
         ] {
             assert!(
                 !loader_args_target_mutable_native_exec(&arguments),
