@@ -1362,10 +1362,15 @@ func TestGitHubWorkflowsVerifyHostedInstallEvidence(t *testing.T) {
 				} `yaml:"run"`
 			} `yaml:"defaults"`
 			Jobs map[string]struct {
-				If              string     `yaml:"if"`
-				RunsOn          string     `yaml:"runs-on"`
-				Needs           yaml.Node  `yaml:"needs"`
-				ContinueOnError *yaml.Node `yaml:"continue-on-error"`
+				If     string    `yaml:"if"`
+				RunsOn string    `yaml:"runs-on"`
+				Needs  yaml.Node `yaml:"needs"`
+				// yaml.v3 refuses to decode a scalar into *yaml.Node, so a
+				// pointer here made the whole workflow unparseable as soon as any
+				// job or step set continue-on-error, and the assertions below
+				// vacuously true until then.  A value Node decodes and IsZero
+				// reports absence.
+				ContinueOnError yaml.Node `yaml:"continue-on-error"`
 				Defaults        struct {
 					Run struct {
 						Shell string `yaml:"shell"`
@@ -1380,11 +1385,11 @@ func TestGitHubWorkflowsVerifyHostedInstallEvidence(t *testing.T) {
 					} `yaml:"matrix"`
 				} `yaml:"strategy"`
 				Steps []struct {
-					Name            string     `yaml:"name"`
-					Run             string     `yaml:"run"`
-					If              string     `yaml:"if"`
-					ContinueOnError *yaml.Node `yaml:"continue-on-error"`
-					Shell           string     `yaml:"shell"`
+					Name            string    `yaml:"name"`
+					Run             string    `yaml:"run"`
+					If              string    `yaml:"if"`
+					ContinueOnError yaml.Node `yaml:"continue-on-error"`
+					Shell           string    `yaml:"shell"`
 				} `yaml:"steps"`
 			} `yaml:"jobs"`
 		}
@@ -1404,7 +1409,7 @@ func TestGitHubWorkflowsVerifyHostedInstallEvidence(t *testing.T) {
 		}
 		if installJob.If != wantJobIf ||
 			installJob.RunsOn != "${{ matrix.runner }}" ||
-			installJob.ContinueOnError != nil ||
+			!installJob.ContinueOnError.IsZero() ||
 			installJob.Defaults.Run.Shell != "" {
 			t.Fatalf("%s install-verification job metadata does not match the hosted evidence contract", workflowPath)
 		}
@@ -1428,7 +1433,7 @@ func TestGitHubWorkflowsVerifyHostedInstallEvidence(t *testing.T) {
 		installerStepCount := 0
 		for _, step := range installJob.Steps {
 			if step.Name == "Verify release bundle installer" {
-				if step.If != "" || step.ContinueOnError != nil || step.Shell != "" {
+				if step.If != "" || !step.ContinueOnError.IsZero() || step.Shell != "" {
 					t.Fatalf("%s release bundle installer step must use required default execution", workflowPath)
 				}
 				installerRun = step.Run

@@ -1,6 +1,13 @@
-#!/bin/bash -p
-# -p hides these from this shell only; its plain-bash children still read them.
+#!/usr/bin/env -S BASH_ENV= ENV= bash
+# The shebang clears BASH_ENV/ENV only when the kernel applies it; these scripts
+# also run as plain `/bin/bash <script>`, so clear them for every child bash.
+# A startup file that already ran can pin either one readonly, which makes the
+# unset fail while errexit is still off, so refuse to run while one survives.
 unset BASH_ENV ENV
+[[ -z "${BASH_ENV+set}${ENV+set}" ]] || {
+  echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2
+  exit 2
+}
 readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH
 set -euo pipefail

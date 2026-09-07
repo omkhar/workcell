@@ -13,11 +13,18 @@ import (
 
 const runtimePathPin = "readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'\nexport PATH\n"
 
-// -p stops only this shell from reading BASH_ENV and ENV, so the prologue must
-// clear them for the plain-bash children, as the replaced shebang did.
-const runtimeStartupPin = "#!/bin/bash -p\n" +
-	"# -p hides these from this shell only; its plain-bash children still read them.\n" +
-	"unset BASH_ENV ENV\n"
+// The BASH_ENV/ENV clearing prologue is checked in internal/testkit; it is
+// repeated here so the PATH pin is held to the line right after it.
+const runtimeStartupPin = "#!/usr/bin/env -S BASH_ENV= ENV= bash\n" +
+	"# The shebang clears BASH_ENV/ENV only when the kernel applies it; these scripts\n" +
+	"# also run as plain `/bin/bash <script>`, so clear them for every child bash.\n" +
+	"# A startup file that already ran can pin either one readonly, which makes the\n" +
+	"# unset fail while errexit is still off, so refuse to run while one survives.\n" +
+	"unset BASH_ENV ENV\n" +
+	"[[ -z \"${BASH_ENV+set}${ENV+set}\" ]] || {\n" +
+	"  echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2\n" +
+	"  exit 2\n" +
+	"}\n"
 
 func TestRuntimePathPrologues(t *testing.T) {
 	executable := runtimeStartupPin + runtimePathPin + "set -euo pipefail\n"

@@ -5,12 +5,11 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
-  echo "check-pinned-inputs-entrypoint-ok"
+  echo "check-validator-anchoring-entrypoint-ok"
   exit 0
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MAX_DEBIAN_SNAPSHOT_AGE_DAYS="${WORKCELL_MAX_DEBIAN_SNAPSHOT_AGE_DAYS:-60}"
 
 GO_BIN="${WORKCELL_GO_BIN:-}"
 
@@ -37,4 +36,4 @@ resolve_go_bin() {
 
 resolve_go_bin
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-pinned-inputs "${ROOT_DIR}" "${MAX_DEBIAN_SNAPSHOT_AGE_DAYS}")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-validator-anchoring "${ROOT_DIR}")

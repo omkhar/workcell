@@ -4,7 +4,6 @@
 package metadatautil
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -79,6 +78,14 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 // gate requires the independent verification job to execute.
 const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
 
+// auditHostedControlsScript and publishGitHubReleaseScript are the two commands
+// the final publication step must run, in that order, around the credential
+// unset that separates them.
+const (
+	auditHostedControlsScript  = "./scripts/run-hosted-controls-audit.sh"
+	publishGitHubReleaseScript = "./scripts/publish-github-release.sh"
+)
+
 // ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
@@ -107,22 +114,12 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		verifyJob.Permissions["packages"] != "read" {
 		return errors.New("release output verification job must grant only read permissions for artifacts, attestations, contents, and packages")
 	}
-	verificationFound := false
-	for _, step := range verifyJob.Steps {
-		// Match the script only as the start of a statement, so an inert
-		// mention (a comment, or an argument to echo) cannot satisfy the gate.
-		for _, line := range strings.Split(step.Run, "\n") {
-			statement := strings.TrimLeft(line, " \t")
-			if statement == verifyReleaseOutputsScript ||
-				strings.HasPrefix(statement, verifyReleaseOutputsScript+" ") {
-				verificationFound = true
-				break
-			}
-		}
-		if verificationFound {
-			break
-		}
-	}
+	// Read the invocation the shell really runs. A statement-start scan still
+	// accepts the script inside a heredoc body, an unrun branch or a function
+	// body, because each of those keeps the line that starts with it.
+	verificationFound := slices.ContainsFunc(verifyJob.Steps, func(step workflowStep) bool {
+		return len(ShellInvocations(step.Run, verifyReleaseOutputsScript)) > 0
+	})
 	if !verificationFound {
 		return errors.New("release output verification job must run verify-release-outputs.sh")
 	}
@@ -152,11 +149,30 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 			step.Env["GITHUB_TOKEN"] != "${{ github.token }}" {
 			return errors.New("final GitHub release publication step must receive the required hosted-controls token and separate default mutation token")
 		}
-		auditIndex := strings.Index(step.Run, `./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`)
-		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
-		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`)
-		if auditIndex < 0 || unsetIndex <= auditIndex || publishIndex <= unsetIndex ||
-			!strings.Contains(step.Run[publishIndex:], "--immutable-releases-preverified-by-hosted-controls") {
+		// Each of the three must be an invocation the shell runs, not text that
+		// names it: a heredoc body, an unrun branch or a longer option leaves
+		// the text in place while the credential stays live. The argument
+		// checks compare whole words, so a longer name is a different command.
+		audit := ShellInvocations(step.Run, auditHostedControlsScript)
+		unset := ShellInvocations(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
+		publish := ShellInvocations(step.Run, publishGitHubReleaseScript)
+		if len(audit) == 0 || len(unset) == 0 || len(publish) == 0 ||
+			// The audit takes the repository and nothing else. It rejects a
+			// second argument before it audits anything, and a || true after
+			// it would let the step publish on that refusal, so a membership
+			// test over its arguments is not enough.
+			len(audit[0].Args) != 1 || audit[0].Args[0] != "${GITHUB_REPOSITORY}" ||
+			// The publisher reads the preverification flag only as the word
+			// straight after the tag. Later it is an asset name instead, and
+			// the publisher is told the release was not preverified.
+			len(publish[0].Args) < 2 || publish[0].Args[0] != "${GITHUB_REF_NAME}" ||
+			publish[0].Args[1] != "--immutable-releases-preverified-by-hosted-controls" {
+			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
+		}
+		// All three run, so compare the positions the parser proves rather
+		// than where the three names first appear in the text: a comment can
+		// name them in this order while the step mutates the release first.
+		if unset[0].Position <= audit[0].Position || publish[0].Position <= unset[0].Position {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
 		return nil
@@ -187,9 +203,9 @@ func validateReleaseAssembly(document workflowDocument) error {
 	steps := document.Jobs["release"].Steps
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
 		var targets []string
-		for _, args := range commandArgs(step.Run, "oras cp --recursive --from-oci-layout") {
-			if at := slices.Index(args, "--to-oci-layout"); at >= 0 && at+1 < len(args) {
-				targets = append(targets, args[at+1])
+		for _, invocation := range ShellInvocations(step.Run, "oras cp --recursive --from-oci-layout") {
+			if at := slices.Index(invocation.Args, "--to-oci-layout"); at >= 0 && at+1 < len(invocation.Args) {
+				targets = append(targets, invocation.Args[at+1])
 			}
 		}
 		return slices.Contains(targets, "dist/release-image:amd64") &&
@@ -198,51 +214,11 @@ func validateReleaseAssembly(document workflowDocument) error {
 		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
 	}
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
-		return len(commandArgs(step.Run, "oras manifest index create --oci-layout")) > 0
+		return len(ShellInvocations(step.Run, "oras manifest index create --oci-layout")) > 0
 	}) {
 		return errors.New("release job must assemble the multi-arch index in an OCI layout")
 	}
 	return nil
-}
-
-var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
-
-var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
-
-// commandArgs returns the arguments of each invocation of command in script. It
-// joins continuations and drops comments, inline ones included, and heredoc bodies,
-// so no decoy text counts as a command and one call cannot satisfy a two-call rule.
-func commandArgs(script, command string) [][]string {
-	var invocations [][]string
-	var current strings.Builder
-	var heredoc string
-	for line := range strings.Lines(script) {
-		trimmed := strings.TrimSpace(line)
-		if heredoc != "" {
-			if trimmed == heredoc {
-				heredoc = ""
-			}
-			continue
-		}
-		if current.Len() > 0 {
-			current.WriteString(" ")
-		}
-		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
-		if strings.HasSuffix(trimmed, "\\") {
-			continue
-		}
-		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
-		current.Reset()
-		// Here-strings are blanked first so that a redirection such as
-		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
-		if match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(logical, "<<<", " ")); match != nil {
-			heredoc = cmp.Or(match[1], match[2], match[3])
-		}
-		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-			invocations = append(invocations, strings.Fields(rest))
-		}
-	}
-	return invocations
 }
 
 func validateUnprivilegedReleaseJobs(document workflowDocument) error {

@@ -107,6 +107,7 @@ func subcommands() []subcommand {
 		{"generate-builder-environment-manifest", "OUTPUT BUILDKIT_IMAGE BUILDX_VERSION_TARGET COSIGN_VERSION_TARGET QEMU_IMAGE SYFT_VERSION_TARGET BUILDX_VERSION BUILDX_INSPECT DOCKER_VERSION_JSON QEMU_VERSION COSIGN_VERSION CURL_VERSION GIT_VERSION GZIP_VERSION SYFT_VERSION TAR_VERSION", 16, 16, cmdGenerateBuilderEnvironmentManifest},
 		{"create-release-image-handoff", "ARCHIVE OUTPUT REPOSITORY RUN_ID TAG COMMIT PLATFORM IMAGE_DIGEST MANIFEST_DIGEST CONFIG_DIGEST", 10, 10, cmdCreateReleaseImageHandoff},
 		{"check-pinned-inputs", "REPO_ROOT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 2, 2, cmdCheckPinnedInputs},
+		{"check-validator-anchoring", "REPO_ROOT", 1, 1, cmdCheckValidatorAnchoring},
 		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
@@ -526,6 +527,10 @@ func cmdGenerateBuilderEnvironmentManifest(args []string) error {
 		args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
 		args[8], args[9], args[10], args[11], args[12], args[13], args[14], args[15],
 	)
+}
+
+func cmdCheckValidatorAnchoring(args []string) error {
+	return metadatautil.CheckValidatorAnchoring(args[0])
 }
 
 func cmdCheckPinnedInputs(args []string) error {
