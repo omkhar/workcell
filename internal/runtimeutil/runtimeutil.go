@@ -22,6 +22,10 @@ const (
 	maxRuntimeManifestBytes  = rootio.MaxManifestBytes
 	maxRuntimeMountSpecBytes = rootio.MaxDirectMountSpecBytes
 	resolveIPTimeout         = 5 * time.Second
+	// MaxDirectMountEntries bounds how many entries one direct-mount
+	// specification may declare. The byte limit alone still admits a spec of
+	// minimal entries that costs one stat and one bind mount each.
+	MaxDirectMountEntries = 4096
 )
 
 type lookupIPAddrFunc func(context.Context, string) ([]net.IPAddr, error)
@@ -72,6 +76,9 @@ func ListDirectMounts(mountSpecPath string) ([]DirectMount, error) {
 	var entries []map[string]any
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, err
+	}
+	if len(entries) > MaxDirectMountEntries {
+		return nil, fmt.Errorf("direct mount specification exceeds the mount limit of %d: %s", MaxDirectMountEntries, mountSpecPath)
 	}
 	directMounts := make([]DirectMount, 0, len(entries))
 	for _, entry := range entries {

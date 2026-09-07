@@ -39,15 +39,29 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
   release:
     permissions:
       contents: read
+  verify-release-outputs:
+    needs:
+      - tag-policy
+      - release
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - run: ./scripts/verify-release-outputs.sh
   publish-github-release:
     needs:
       - tag-policy
       - release
+      - verify-release-outputs
     environment:
       name: hosted-controls-audit
     permissions:
       actions: read
+      attestations: read
       contents: write
+      packages: read
     steps:
       - name: Recheck hosted controls and publish GitHub release assets
         env:
@@ -68,9 +82,13 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		name, old, replacement, want string
 	}{
 		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
-		{name: "depends on sealed artifacts", old: "      - release", replacement: "      - preflight", want: "depend directly"},
+		{name: "depends on verified artifacts", old: "      - verify-release-outputs\n    environment:", replacement: "      - preflight\n    environment:", want: "depend directly"},
+		{name: "verifies sealed outputs", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: true", want: "must run verify-release-outputs.sh"},
+		{name: "rejects a commented verifier mention", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: \"# ./scripts/verify-release-outputs.sh\"", want: "must run verify-release-outputs.sh"},
+		{name: "rejects an echoed verifier mention", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: echo ./scripts/verify-release-outputs.sh", want: "must run verify-release-outputs.sh"},
 		{name: "uses audit environment", old: "name: hosted-controls-audit", replacement: "name: release", want: "hosted-controls-audit"},
-		{name: "minimal permissions", old: "contents: write\n    steps:", replacement: "contents: write\n      packages: write\n    steps:", want: "grant only"},
+		{name: "minimal publisher permissions", old: "contents: write\n      packages: read", replacement: "contents: write\n      packages: write", want: "grant only read verification permissions"},
+		{name: "minimal verifier permissions", old: "contents: read\n      packages: read", replacement: "contents: read\n      packages: write", want: "grant only read permissions"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
 	} {
@@ -894,6 +912,7 @@ env:
 
 jobs:
   refresh:
+    if: github.ref == 'refs/heads/main'
     environment:
       name: upstream-refresh
     permissions:
@@ -940,6 +959,91 @@ jobs:
 
 	if err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow); err != nil {
 		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v", err)
+	}
+	assertManualWorkflowMainRefGuard(t, workflow, metadatautil.ValidateUpstreamRefreshWorkflow)
+}
+
+func TestValidateHostedControlsWorkflowRequiresMainRef(t *testing.T) {
+	t.Parallel()
+	workflow := `name: Hosted controls
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-hosted-controls:
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: hosted-controls-audit
+    steps:
+      - name: Verify GitHub-hosted controls
+        env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
+`
+
+	if err := metadatautil.ValidateHostedControlsWorkflow(workflow); err != nil {
+		t.Fatalf("metadatautil.ValidateHostedControlsWorkflow() error = %v", err)
+	}
+	assertManualWorkflowMainRefGuard(t, workflow, metadatautil.ValidateHostedControlsWorkflow)
+}
+
+func TestValidateHostedControlsWorkflowRejectsAmbiguousJobMappings(t *testing.T) {
+	t.Parallel()
+	const workflow = `name: Hosted controls
+jobs:
+  verify-hosted-controls:
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: hosted-controls-audit
+    steps:
+      - env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
+`
+	mutations := []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{name: "duplicate jobs", old: "jobs:\n", replacement: "jobs: {}\njobs:\n"},
+		{name: "duplicate target job", old: "  verify-hosted-controls:\n", replacement: "  verify-hosted-controls: {}\n  verify-hosted-controls:\n"},
+		{name: "target job is not a mapping", old: "  verify-hosted-controls:\n", replacement: "  verify-hosted-controls: true\n  unrelated:\n"},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, mutation.old, mutation.replacement, 1)
+			if err := metadatautil.ValidateHostedControlsWorkflow(mutated); err == nil {
+				t.Fatal("metadatautil.ValidateHostedControlsWorkflow() unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func assertManualWorkflowMainRefGuard(t *testing.T, workflow string, validate func(string) error) {
+	t.Helper()
+	const guard = "    if: github.ref == 'refs/heads/main'"
+	mutations := []struct {
+		name        string
+		replacement string
+	}{
+		{name: "missing", replacement: ""},
+		{name: "wrong ref", replacement: "    if: github.ref == 'refs/heads/release'"},
+		{name: "fail open", replacement: "    if: always()"},
+		{name: "duplicate", replacement: guard + "\n" + guard},
+		{name: "boolean", replacement: "    if: true"},
+		{name: "mapping", replacement: "    if: {ref: main}"},
+		{name: "sibling text", replacement: "    note: \"github.ref == 'refs/heads/main'\""},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, guard, mutation.replacement, 1)
+			if err := validate(mutated); err == nil || !strings.Contains(err.Error(), guard[8:]) {
+				t.Fatalf("validator error = %v, want main-ref guard rejection", err)
+			}
+		})
 	}
 }
 

@@ -207,6 +207,12 @@
       "local_mode": "none",
       "github_only_reason": "release artifact signing, attestation, and registry publication remain GitHub-only"
     },
+    "release.yml/verify-release-outputs": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release output verification reads GitHub artifact attestations and the GHCR image after signing"
+    },
     "release.yml/publish-github-release": {
       "profiles": ["release-preflight"],
       "authority": "release-only",

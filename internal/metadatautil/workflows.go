@@ -54,6 +54,10 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	return names, nil
 }
 
+// verifyReleaseOutputsScript is the release output verifier the publication
+// gate requires the independent verification job to execute.
+const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
+
 // ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
@@ -69,19 +73,54 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	if releaseJob.Permissions["contents"] != "read" {
 		return errors.New("release artifact job must keep contents permission read-only")
 	}
+	verifyJob, ok := document.Jobs["verify-release-outputs"]
+	if !ok {
+		return errors.New("release workflow must define the independent verify-release-outputs job")
+	}
+	if verifyJob.Needs.Kind != yaml.SequenceNode || len(verifyJob.Needs.Content) != 2 ||
+		verifyJob.Needs.Content[0].Value != "tag-policy" || verifyJob.Needs.Content[1].Value != "release" {
+		return errors.New("release output verification job must depend directly on tag-policy and the release artifact job")
+	}
+	if len(verifyJob.Permissions) != 4 || verifyJob.Permissions["actions"] != "read" ||
+		verifyJob.Permissions["attestations"] != "read" || verifyJob.Permissions["contents"] != "read" ||
+		verifyJob.Permissions["packages"] != "read" {
+		return errors.New("release output verification job must grant only read permissions for artifacts, attestations, contents, and packages")
+	}
+	verificationFound := false
+	for _, step := range verifyJob.Steps {
+		// Match the script only as the start of a statement, so an inert
+		// mention (a comment, or an argument to echo) cannot satisfy the gate.
+		for _, line := range strings.Split(step.Run, "\n") {
+			statement := strings.TrimLeft(line, " \t")
+			if statement == verifyReleaseOutputsScript ||
+				strings.HasPrefix(statement, verifyReleaseOutputsScript+" ") {
+				verificationFound = true
+				break
+			}
+		}
+		if verificationFound {
+			break
+		}
+	}
+	if !verificationFound {
+		return errors.New("release output verification job must run verify-release-outputs.sh")
+	}
 	publishJob, ok := document.Jobs["publish-github-release"]
 	if !ok {
 		return errors.New("release workflow must define the final publish-github-release job")
 	}
-	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
-		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" {
-		return errors.New("final GitHub release publication job must depend directly on tag-policy and the release artifact job")
+	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 3 ||
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "release" ||
+		publishJob.Needs.Content[2].Value != "verify-release-outputs" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy, the release artifact job, and output verification")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
 	}
-	if len(publishJob.Permissions) != 2 || publishJob.Permissions["actions"] != "read" || publishJob.Permissions["contents"] != "write" {
-		return errors.New("final GitHub release publication job must grant only actions: read and contents: write")
+	if len(publishJob.Permissions) != 4 || publishJob.Permissions["actions"] != "read" ||
+		publishJob.Permissions["attestations"] != "read" || publishJob.Permissions["contents"] != "write" ||
+		publishJob.Permissions["packages"] != "read" {
+		return errors.New("final GitHub release publication job must grant only read verification permissions and contents: write")
 	}
 	for _, step := range publishJob.Steps {
 		if step.Name != "Recheck hosted controls and publish GitHub release assets" {
@@ -434,7 +473,49 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must not contain %q", forbidden)
 		}
 	}
+	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/upstream-refresh.yml", "refresh")
+}
+
+func ValidateHostedControlsWorkflow(workflowText string) error {
+	for _, needle := range []string{
+		`name: hosted-controls-audit`,
+		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
+		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
+	} {
+		if !strings.Contains(workflowText, needle) {
+			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
+		}
+	}
+	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/hosted-controls.yml", "verify-hosted-controls")
+}
+
+func validateManualPrivilegedWorkflowRef(workflowText, workflowPath, jobName string) error {
+	root, err := parseWorkflowRoot(workflowText, workflowPath)
+	if err != nil {
+		return err
+	}
+	jobs, err := requireWorkflowMapping(root, "jobs", workflowPath+" must define exactly one jobs mapping")
+	if err != nil {
+		return err
+	}
+	job, err := requireWorkflowMapping(jobs, jobName, workflowPath+" must define exactly one "+jobName+" job mapping")
+	if err != nil {
+		return err
+	}
+	guards := yamlMappingValues(job, "if")
+	if len(guards) != 1 || guards[0].Tag != "!!str" || yamlScalarValue(guards[0]) != "github.ref == 'refs/heads/main'" {
+		return fmt.Errorf("%s %s job must require github.ref == 'refs/heads/main'", workflowPath, jobName)
+	}
 	return nil
+}
+
+func requireWorkflowMapping(parent *yaml.Node, key, message string) (*yaml.Node, error) {
+	values := yamlMappingValues(parent, key)
+	if len(values) != 1 || values[0].Kind != yaml.MappingNode {
+		return nil, errors.New(message)
+	}
+	return values[0], nil
 }
 
 // readText lives in core.go.
