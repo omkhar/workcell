@@ -232,6 +232,57 @@ func TestCommitMsgHookNormalizesSubjectWithBackslash(t *testing.T) {
 	}
 }
 
+func TestCommitMsgHookNormalizesSubjectWithTrailingSpace(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	// stripspace drops the trailing space, so the validated subject no longer
+	// appears verbatim in the file the trim reads.
+	message := "# leading comment\n" + valid + "   \n\nDetail line.\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	fixture.run("commit", "--quiet", "--cleanup=verbatim", "-F", messageFile)
+	if got := fixture.run("log", "-1", "--format=%s"); got != valid {
+		t.Fatalf("retained subject %q is not the validated subject %q", got, valid)
+	}
+	if got := fixture.run("log", "-1", "--format=%B"); !strings.Contains(got, "Detail line.") {
+		t.Fatalf("normalization discarded the body:\n%s", got)
+	}
+}
+
+func TestCommitMsgHookHonorsXDGCommentChar(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	xdgDir := filepath.Join(fixture.homeDir, "xdg")
+	if err := os.MkdirAll(filepath.Join(xdgDir, "git"), 0o755); err != nil {
+		t.Fatalf("mkdir xdg config failed: %v", err)
+	}
+	config := "[core]\n\tcommentChar = \";\"\n"
+	if err := os.WriteFile(filepath.Join(xdgDir, "git", "config"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write xdg config failed: %v", err)
+	}
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	message := "; Please enter the commit message for your changes.\n" +
+		"^F Add branch filter flag (tests pass; user-visible CLI flag)\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	// Git reads $XDG_CONFIG_HOME/git/config, so the sanitized re-exec has to
+	// forward that variable for stripspace to agree with Git.
+	env := []string{"XDG_CONFIG_HOME=" + xdgDir}
+	if output, err := fixture.tryGit(env, "commit", "--quiet", "--cleanup=strip", "-F", messageFile); err != nil {
+		t.Fatalf("commit with XDG comment character failed: %v\n%s", err, output)
+	}
+}
+
 func TestCommitMsgHookAcceptsSubjectWhenCommentCharIsRiskSymbol(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.run("config", "core.commentChar", "^")
@@ -471,6 +522,28 @@ func TestPrePushHookHonorsCommandScopedVerificationConfig(t *testing.T) {
 	// The allowed-signers file is supplied per command, so the sanitized
 	// re-exec has to forward it for verify-commit to see the same settings.
 	fixture.run("-c", "gpg.ssh.allowedSignersFile="+signers, "push", "--quiet", "origin", "main")
+}
+
+func TestPrePushHookHonorsXDGVerificationConfig(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)", "-S")
+	signers := filepath.Join(fixture.homeDir, "allowed_signers")
+	fixture.run("config", "--unset", "gpg.ssh.allowedSignersFile")
+	xdgDir := filepath.Join(fixture.homeDir, "xdg")
+	if err := os.MkdirAll(filepath.Join(xdgDir, "git"), 0o755); err != nil {
+		t.Fatalf("mkdir xdg config failed: %v", err)
+	}
+	config := "[gpg \"ssh\"]\n\tallowedSignersFile = " + signers + "\n"
+	if err := os.WriteFile(filepath.Join(xdgDir, "git", "config"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write xdg config failed: %v", err)
+	}
+	// Git reads $XDG_CONFIG_HOME/git/config, so the sanitized re-exec has to
+	// forward that variable for verify-commit to see the same settings.
+	env := []string{"XDG_CONFIG_HOME=" + xdgDir}
+	if output, err := fixture.tryGit(env, "push", "--quiet", "origin", "main"); err != nil {
+		t.Fatalf("push with XDG signing configuration failed: %v\n%s", err, output)
+	}
 }
 
 func TestPrePushHookFailsClosedWhenRangeWalkFails(t *testing.T) {

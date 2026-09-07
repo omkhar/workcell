@@ -4,6 +4,7 @@ if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   exec /usr/bin/env -i \
     PATH="${TRUSTED_HOST_PATH}" \
     HOME="${HOME:-/tmp}" \
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}" \
     TMPDIR="${TMPDIR:-/tmp}" \
     GNUPGHOME="${GNUPGHOME:-}" \
     GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:-}" \
