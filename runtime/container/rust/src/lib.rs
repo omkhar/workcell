@@ -409,13 +409,14 @@ fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
     collect_cstring_array(unsafe { environ.cast() })
 }
 
-// A NULL envp gives the child an empty environment, so it strips the guard
-// preload just as effectively as an explicit environment that omits it. The
-// classifiers read `effective_env_ptr`, which substitutes the caller's own
-// environment for NULL and would therefore see a preload the child never gets;
-// this check has to run on the raw pointer, before that substitution.
+// A NULL envp gives the child an empty environment, so it asks exactly the
+// question the missing-guard classifier answers about an empty environment.
+// The other classifiers read `effective_env_ptr`, which substitutes the
+// caller's own environment for NULL and would therefore see a preload the
+// child never gets; this check has to run on the raw pointer, before that
+// substitution.
 fn should_block_null_explicit_env(envp: *const *const c_char) -> bool {
-    envp.is_null() && current_mode_blocks_mutable_native_exec()
+    envp.is_null() && should_block_missing_guard_env("", &[], &[])
 }
 
 // libc consults only PATH from the caller's environment when it searches, so
@@ -3131,12 +3132,14 @@ mod tests {
         let envp: [*const c_char; 2] = [entry.as_ptr(), std::ptr::null()];
 
         assert!(!should_block_null_explicit_env(envp.as_ptr()));
-        // A NULL envp hands the child an empty environment, so it strips the
-        // preload even though `effective_env_ptr` would report the caller's own.
+        // A NULL envp hands the child an empty environment, which is exactly
+        // the environment the missing-guard classifier refuses.
         assert_eq!(
             should_block_null_explicit_env(std::ptr::null()),
-            current_mode_blocks_mutable_native_exec()
+            should_block_missing_guard_env("", &[], &[])
         );
+        // It cannot be asked of the classifiers, because this substitution
+        // would report the caller's own environment as the child's.
         assert!(!effective_env_ptr(std::ptr::null::<*const c_char>()).is_null());
     }
 
