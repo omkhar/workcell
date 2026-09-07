@@ -4,7 +4,6 @@
 package metadatautil
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -187,7 +186,7 @@ func validateReleaseAssembly(document workflowDocument) error {
 	steps := document.Jobs["release"].Steps
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
 		var targets []string
-		for _, args := range commandArgs(step.Run, "oras cp --recursive --from-oci-layout") {
+		for _, args := range ShellInvocations(step.Run, "oras cp --recursive --from-oci-layout") {
 			if at := slices.Index(args, "--to-oci-layout"); at >= 0 && at+1 < len(args) {
 				targets = append(targets, args[at+1])
 			}
@@ -198,51 +197,11 @@ func validateReleaseAssembly(document workflowDocument) error {
 		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
 	}
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
-		return len(commandArgs(step.Run, "oras manifest index create --oci-layout")) > 0
+		return len(ShellInvocations(step.Run, "oras manifest index create --oci-layout")) > 0
 	}) {
 		return errors.New("release job must assemble the multi-arch index in an OCI layout")
 	}
 	return nil
-}
-
-var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
-
-var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
-
-// commandArgs returns the arguments of each invocation of command in script. It
-// joins continuations and drops comments, inline ones included, and heredoc bodies,
-// so no decoy text counts as a command and one call cannot satisfy a two-call rule.
-func commandArgs(script, command string) [][]string {
-	var invocations [][]string
-	var current strings.Builder
-	var heredoc string
-	for line := range strings.Lines(script) {
-		trimmed := strings.TrimSpace(line)
-		if heredoc != "" {
-			if trimmed == heredoc {
-				heredoc = ""
-			}
-			continue
-		}
-		if current.Len() > 0 {
-			current.WriteString(" ")
-		}
-		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
-		if strings.HasSuffix(trimmed, "\\") {
-			continue
-		}
-		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
-		current.Reset()
-		// Here-strings are blanked first so that a redirection such as
-		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
-		if match := heredocPattern.FindStringSubmatch(strings.ReplaceAll(logical, "<<<", " ")); match != nil {
-			heredoc = cmp.Or(match[1], match[2], match[3])
-		}
-		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-			invocations = append(invocations, strings.Fields(rest))
-		}
-	}
-	return invocations
 }
 
 func validateUnprivilegedReleaseJobs(document workflowDocument) error {
