@@ -24,22 +24,6 @@ func (h heredoc) endsAt(line string) bool {
 	return line == h.delimiter
 }
 
-// definesFunction reports whether the words open a function definition, in
-// either the name() or the function name spelling.
-func definesFunction(words []string) bool {
-	if len(words) == 0 {
-		return false
-	}
-	if words[0] == "function" {
-		return true
-	}
-	name, _, found := strings.Cut(words[0], "(")
-	if found && name != "" && strings.HasPrefix(words[0][len(name):], "()") {
-		return true
-	}
-	return len(words) > 1 && words[1] == "()"
-}
-
 // braceDepth returns the change in brace nesting the words make. Only a brace
 // that stands as its own word or ends one groups commands; a brace inside a
 // word belongs to an expansion such as ${VAR}.
@@ -75,36 +59,69 @@ func isOperator(word string) bool {
 	return false
 }
 
+// command is one command of a logical line, and whether an earlier command on
+// that line decides if it runs. Bash runs the right side of && or || only on
+// the exit status of the left, so a command written there is not proved to run.
+type command struct {
+	args        []string
+	conditional bool
+}
+
 // splitCommands cuts one logical line into the separate commands bash runs,
 // at every control operator. Without this, a decoy after ; or || donates its
 // words to the invocation before it, as in
 // oras cp --from-oci-layout missing || true; : --to-oci-layout <target>.
-func splitCommands(words []string) [][]string {
-	commands := make([][]string, 1)
+func splitCommands(words []string) []command {
+	commands := make([]command, 1)
 	for _, word := range words {
 		if isOperator(word) {
-			commands = append(commands, nil)
+			commands = append(commands, command{conditional: word == "&&" || word == "||"})
 			continue
 		}
-		commands[len(commands)-1] = append(commands[len(commands)-1], word)
+		last := &commands[len(commands)-1]
+		last.args = append(last.args, word)
 	}
 	return commands
 }
 
-// closesQuote reports whether the line closes an open quote. A backslash
-// escapes the next byte inside a double-quoted span, so an escaped quote is a
-// literal character and not the closer. A single-quoted span has no escapes.
-func closesQuote(line string, quote byte) bool {
+// definedName returns the name a function definition binds, in either the
+// name() or the function name spelling, or the empty string when the words do
+// not define one.
+func definedName(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	if words[0] == "function" {
+		if len(words) < 2 {
+			return ""
+		}
+		return strings.TrimSuffix(words[1], "()")
+	}
+	if name, _, found := strings.Cut(words[0], "("); found && name != "" &&
+		strings.HasPrefix(words[0][len(name):], "()") {
+		return name
+	}
+	if len(words) > 1 && words[1] == "()" {
+		return words[0]
+	}
+	return ""
+}
+
+// quoteCloseIndex returns the index of the byte that closes an open quote, or
+// -1 when the line does not close it. A backslash escapes the next byte inside
+// a double-quoted span, so an escaped quote is a literal character and not the
+// closer. A single-quoted span has no escapes.
+func quoteCloseIndex(line string, quote byte) int {
 	for index := 0; index < len(line); index++ {
 		if quote == '"' && line[index] == '\\' {
 			index++
 			continue
 		}
 		if line[index] == quote {
-			return true
+			return index
 		}
 	}
-	return false
+	return -1
 }
 
 // ShellInvocations returns the arguments of each invocation of command in
@@ -115,25 +132,32 @@ func closesQuote(line string, quote byte) bool {
 // text counts as a command and one call cannot satisfy a two-call rule. A
 // validator that must anchor on the commands a script really runs uses this in
 // place of a substring search.
-func ShellInvocations(script, command string) [][]string {
-	prefix := strings.Fields(command)
+func ShellInvocations(script, commandName string) [][]string {
+	prefix := strings.Fields(commandName)
+	if len(prefix) == 0 {
+		return nil
+	}
 	var invocations [][]string
 	var current strings.Builder
 	var heredocs []heredoc
 	var openQuote byte
 	var quotes []byte
 	var depth, definedAt, control int
-	var defining bool
+	var defining, bodyOpened bool
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if openQuote != 0 {
 			// Bash reads these lines as text inside one word, as in
 			// : "<newline>oras cp …<newline>", which runs no command. Read
-			// them as text too, up to the line that closes the quote.
-			if closesQuote(text, openQuote) {
-				openQuote = 0
+			// them as text too, up to the byte that closes the quote. What
+			// follows on that same line is syntax again, so read it: a closer
+			// such as " <<PLAN still opens a heredoc.
+			at := quoteCloseIndex(text, openQuote)
+			if at < 0 {
+				continue
 			}
-			continue
+			openQuote = 0
+			text = text[at+1:]
 		}
 		if len(heredocs) > 0 {
 			if heredocs[0].endsAt(text) {
@@ -154,19 +178,34 @@ func ShellInvocations(script, command string) [][]string {
 		// A function definition is not a call. Bash reads the body and runs
 		// nothing, so a required command written inside a function that
 		// nobody calls does not satisfy a rule about what the step runs.
-		if !defining && definesFunction(words) {
-			defining, definedAt = true, depth
+		if !defining {
+			if name := definedName(words); name != "" {
+				if name == prefix[0] {
+					// The step redefines the anchored command itself, so every
+					// later call runs the definition rather than the program.
+					// Nothing in this script proves the command ran.
+					return nil
+				}
+				defining, definedAt, bodyOpened = true, depth, false
+			}
 		}
 		depth += braceDepth(words)
 		if defining {
-			if depth <= definedAt {
+			// A body may open on a later line, as in never_called ()
+			// followed by { on its own line, so wait for it before looking
+			// for its end.
+			if depth > definedAt {
+				bodyOpened = true
+			}
+			if bodyOpened && depth <= definedAt {
 				defining = false
 			}
 			continue
 		}
 		commands := splitCommands(words)
 		nested := control > 0
-		for _, args := range commands {
+		for _, each := range commands {
+			args := each.args
 			if len(args) == 0 {
 				continue
 			}
@@ -175,7 +214,7 @@ func ShellInvocations(script, command string) [][]string {
 				nested = true
 				continue
 			}
-			if nested || control > 0 {
+			if nested || control > 0 || each.conditional {
 				continue
 			}
 			if len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix) {

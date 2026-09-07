@@ -74,6 +74,17 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+`: "`+"\n"+i+`\"`, i+`"`)
 	})},
+	{"conditional right-hand side", replaceAnchor(func(a string) string {
+		return prefixCommands(a, "false && ")
+	})},
+	{"definition brace on the next line", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"never_called ()\n"+i+"{", i+"}")
+	})},
+	{"heredoc opened as a quote closes", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: "`+"\n"+i+"x\n"+i+`" <<PLAN`, i+"PLAN")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
@@ -152,4 +163,18 @@ func extendFirstOption(anchor string) string {
 func indentOf(text string) string {
 	first, _, _ := strings.Cut(text, "\n")
 	return first[:len(first)-len(strings.TrimLeft(first, " \t"))]
+}
+
+// prefixCommands puts text in front of every line of the anchored command that
+// starts one, leaving the continuation lines alone.
+func prefixCommands(anchor, text string) string {
+	lines := strings.Split(anchor, "\n")
+	continues := false
+	for index, line := range lines {
+		if !continues {
+			lines[index] = indentOf(line) + text + strings.TrimLeft(line, " \t")
+		}
+		continues = strings.HasSuffix(strings.TrimSpace(line), "\\")
+	}
+	return strings.Join(lines, "\n")
 }

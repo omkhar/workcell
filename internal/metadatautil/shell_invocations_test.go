@@ -70,6 +70,21 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "a step that redefines the command proves no invocation of it",
+			script: "oras() { :; }\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a definition whose brace opens on the next line still hides its body",
+			script: "never_called ()\n{\noras cp --recursive --from-oci-layout one\n}\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "a heredoc opened as a quoted span closes still hides its body",
+			script: ": \"\nx\n\" <<PLAN\noras cp --recursive --from-oci-layout one\nPLAN\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
 			name:   "arguments end at a control operator",
 			script: "oras cp --recursive --from-oci-layout missing || true; : --to-oci-layout dist/release-image:amd64\n",
 			want:   [][]string{{"--recursive", "--from-oci-layout", "missing"}},
