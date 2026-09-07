@@ -218,9 +218,9 @@ GitHub also attaches SBOM predicates to the image and source-bundle subjects.
 The two SBOM files are not attestation subjects.
 Cosign signs both SBOM files as release assets.
 
-The amd64 release job rebuilds from the archived source bundle.
-The native arm64 job builds from the checked-out signed tag.
-The workflow combines both platform digests into one image index.
+The native amd64 and arm64 jobs build from the checked-out signed tag.
+Each job binds its image digest to the matching preflight reproducibility digest.
+The assembly job combines both bound platform digests into one image index.
 
 ### Consumer verification
 

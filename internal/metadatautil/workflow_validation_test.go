@@ -127,6 +127,12 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			decoy: "          echo \"oras manifest index create --oci-layout dist/release-image amd64 arm64\"",
 			want:  "assemble the multi-arch index",
 		},
+		{
+			name:  "assembly flag extended into a different flag",
+			old:   "          oras manifest index create --oci-layout \\",
+			decoy: "          oras manifest index create --oci-layout-disabled \\",
+			want:  "assemble the multi-arch index",
+		},
 	}
 	for _, decoy := range decoys {
 		t.Run(decoy.name, func(t *testing.T) {

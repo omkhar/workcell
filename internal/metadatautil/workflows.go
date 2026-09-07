@@ -146,11 +146,13 @@ func validateReleaseAssembly(document workflowDocument) error {
 	return nil
 }
 
-// runsCommand reports whether the script invokes command as a command, so that
-// a comment line or a quoted argument such as echo "<command>" does not count.
+// runsCommand reports whether the script invokes command as a command. The line
+// must start with it and end the last token there, so neither a comment line, a
+// quoted argument such as echo "<command>", nor a longer flag spelling counts.
 func runsCommand(script, command string) bool {
 	for line := range strings.Lines(script) {
-		if strings.HasPrefix(strings.TrimSpace(line), command) {
+		rest, found := strings.CutPrefix(strings.TrimSpace(line), command)
+		if found && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t")) {
 			return true
 		}
 	}
