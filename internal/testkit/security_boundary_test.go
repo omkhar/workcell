@@ -79,14 +79,14 @@ func TestHomeControlPlaneRejectsManagedDirectoryTargets(t *testing.T) {
 					"  fi\n"+
 					"  builtin source \"$@\"\n"+
 					"}\n"+
-					"builtin source %q\n"+
-					"if workcell_target_is_allowed %q; then\n"+
+					"builtin source %s\n"+
+					"if workcell_target_is_allowed %s; then\n"+
 					"  printf 'allowed\\n'\n"+
 					"else\n"+
 					"  printf 'blocked\\n'\n"+
 					"fi\n",
-				scriptPath,
-				target,
+				ShellQuote(scriptPath),
+				ShellQuote(target),
 			)
 			code, output := runBashProbe(t, probe, nil)
 			if code != 0 {
@@ -120,14 +120,14 @@ func TestHomeControlPlaneRejectsTraversalTargets(t *testing.T) {
 					"  fi\n"+
 					"  builtin source \"$@\"\n"+
 					"}\n"+
-					"builtin source %q\n"+
-					"if workcell_target_is_allowed %q; then\n"+
+					"builtin source %s\n"+
+					"if workcell_target_is_allowed %s; then\n"+
 					"  printf 'allowed\\n'\n"+
 					"else\n"+
 					"  printf 'blocked\\n'\n"+
 					"fi\n",
-				scriptPath,
-				target,
+				ShellQuote(scriptPath),
+				ShellQuote(target),
 			)
 			code, output := runBashProbe(t, probe, nil)
 			if code != 0 {
@@ -148,7 +148,7 @@ func TestResolveWorkcellRealHomeRejectsWorkspaceOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "lib", "trusted-docker-client.sh")
-	probe := fmt.Sprintf("set -euo pipefail\nROOT_DIR=%q\nsource %q\nresolve_workcell_real_home\n", workspace, scriptPath)
+	probe := fmt.Sprintf("set -euo pipefail\nROOT_DIR=%s\nsource %s\nresolve_workcell_real_home\n", ShellQuote(workspace), ShellQuote(scriptPath))
 	code, output := runBashProbe(t, probe, map[string]string{
 		"HOME":                      t.TempDir(),
 		"WORKCELL_DOCKER_REAL_HOME": overrideHome,
