@@ -15,8 +15,12 @@ use std::ffi::{CStr, CString};
 use std::fs::{self, File};
 use std::io::Read;
 use std::mem::{self, MaybeUninit};
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 mod gitpolicy;
@@ -129,7 +133,19 @@ const APPROVED_NATIVE_LAUNCHERS: &[&str] = &[
     "/usr/local/libexec/workcell/core/git",
 ];
 
-const MUTABLE_EXEC_ROOTS: &[&str] = &["/workspace", "/state"];
+// Every root a container process can write to and then execute from. The
+// workspace and state binds are the obvious two; the rest are the writable
+// kernel and runtime roots that exist in every image, so a target planted in
+// one of them is no more trustworthy than one planted in the workspace.
+const MUTABLE_EXEC_ROOTS: &[&str] = &[
+    "/workspace",
+    "/state",
+    "/tmp",
+    "/var/tmp",
+    "/run",
+    "/dev/shm",
+    "/dev/mqueue",
+];
 const ALLOWED_LD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
 // Bounds on the exec inputs this guard copies out of caller memory before it
 // can classify them. Without these an attacker-sized argv/envp forces the guard
@@ -159,7 +175,7 @@ const ARG_BLOCK_MESSAGE_SUFFIX: &str = ").\n";
 const ENV_BLOCK_MESSAGE: &str = "Workcell blocked git control-plane override: remove GIT_CONFIG_*, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_EXEC_PATH, GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE, GIT_ASKPASS, GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_SSH, GIT_SSH_COMMAND, SSH_ASKPASS, EDITOR, PAGER, or VISUAL overrides.\n";
 const PROTECTED_RUNTIME_BLOCK_MESSAGE: &str =
     "Workcell blocked direct protected runtime execution outside approved wrappers.\n";
-const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile.\n";
+const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile.\n";
 const WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE: &str =
     "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution.\n";
 const NATIVE_LOADER_ENV_BLOCK_MESSAGE: &str = "Workcell blocked unsafe dynamic-loader environment for native execution on the strict profile.\n";
@@ -287,6 +303,169 @@ fn path_is_current_process_fd_path(path: &str) -> Option<c_int> {
 
 fn trim_deleted_suffix(path: &str) -> &str {
     path.strip_suffix(" (deleted)").unwrap_or(path)
+}
+
+/// Paths the kernel resolves through a descriptor table rather than a
+/// directory walk. Their target can be replaced between this classification and
+/// the exec, and there is no pathname to pin, so they never count as trusted.
+#[cfg(target_os = "linux")]
+fn path_is_magic_exec_target(path: &str) -> bool {
+    path == "/proc"
+        || path.starts_with("/proc/")
+        || path == "/dev/fd"
+        || path.starts_with("/dev/fd/")
+        || matches!(path, "/dev/stdin" | "/dev/stdout" | "/dev/stderr")
+}
+
+/// Answers whether this process can write the path with its effective
+/// credentials, which is what decides whether it can replace an exec target.
+///
+/// A root runtime overrides ordinary permission checks, so `faccessat` answers
+/// yes for every file and would make the whole filesystem mutable. For that
+/// case the root-owned, not group/world-writable baseline is the answer
+/// instead. Every other runtime goes through `faccessat` so an ACL grant is
+/// part of the decision rather than invisible to it.
+#[cfg(target_os = "linux")]
+fn effective_access_can_write(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return true;
+    };
+    // SAFETY: geteuid is a niladic syscall wrapper with no invalid inputs.
+    let euid = unsafe { libc::geteuid() };
+    if euid == 0 && metadata.uid() == 0 && metadata.mode() & (libc::S_IWGRP | libc::S_IWOTH) == 0 {
+        return false;
+    }
+    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+        return true;
+    };
+    // SAFETY: c_path is a live NUL-terminated CString valid for the call, and
+    // faccessat only reads the path and this process's credentials.
+    unsafe {
+        libc::faccessat(
+            libc::AT_FDCWD,
+            c_path.as_ptr(),
+            libc::W_OK,
+            libc::AT_EACCESS,
+        ) == 0
+    }
+}
+
+/// A target is trusted only when neither it nor any directory on the way to it
+/// can be replaced by this process: a regular root-owned file with no group or
+/// world write bit, outside every mutable root, under trusted ancestors.
+#[cfg(target_os = "linux")]
+fn path_is_trusted_immutable(path: &Path) -> bool {
+    let Ok(canonical) = fs::canonicalize(path) else {
+        return false;
+    };
+    if resolved_path_is_mutable_root(&canonical.to_string_lossy()) {
+        return false;
+    }
+    let Ok(metadata) = fs::metadata(&canonical) else {
+        return false;
+    };
+    if (metadata.mode() & file_type_bits()) != regular_file_mode()
+        || metadata.uid() != 0
+        || metadata.mode() & (libc::S_IWGRP | libc::S_IWOTH) != 0
+        || effective_access_can_write(&canonical)
+    {
+        return false;
+    }
+
+    path_ancestors_are_trusted_immutable(canonical.parent().unwrap_or(Path::new("/")))
+}
+
+/// Walks from the directory to the root. A writable directory anywhere on that
+/// walk lets this process rename the target out from under the kernel lookup
+/// that follows, so the file's own mode is not enough.
+#[cfg(target_os = "linux")]
+fn path_ancestors_are_trusted_immutable(path: &Path) -> bool {
+    let Ok(canonical) = fs::canonicalize(path) else {
+        return false;
+    };
+    let mut ancestor = canonical.as_path();
+    loop {
+        let Ok(metadata) = fs::metadata(ancestor) else {
+            return false;
+        };
+        if metadata.uid() != 0
+            || metadata.mode() & (libc::S_IWGRP | libc::S_IWOTH) != 0
+            || effective_access_can_write(ancestor)
+        {
+            return false;
+        }
+        if ancestor == Path::new("/") {
+            return true;
+        }
+        let Some(parent) = ancestor.parent() else {
+            return false;
+        };
+        ancestor = parent;
+    }
+}
+
+/// Resolves `.` and `..` textually, without touching the filesystem. The
+/// filesystem answer is what the kernel will use, but it is also what an
+/// attacker can change; the lexical answer names the path the caller wrote, so
+/// a target under a mutable root cannot be laundered through a symlink.
+#[cfg(target_os = "linux")]
+fn lexical_normalized_path(path: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            component => result.push(component.as_os_str()),
+        }
+    }
+    result
+}
+
+/// Rebuilds the absolute pathname the kernel will resolve, from a relative name
+/// plus the directory it is relative to.
+#[cfg(target_os = "linux")]
+fn path_with_dirfd_base(path: &str, dirfd: c_int) -> PathBuf {
+    let input = Path::new(path);
+    let base = if input.is_absolute() {
+        PathBuf::new()
+    } else if dirfd != libc::AT_FDCWD {
+        fs::read_link(proc_fd_path(dirfd)).unwrap_or_default()
+    } else {
+        env::current_dir().unwrap_or_default()
+    };
+    lexical_normalized_path(&base.join(input))
+}
+
+/// True when the name itself, or any directory leading to it, is one this
+/// process can change before the kernel resolves it.
+#[cfg(target_os = "linux")]
+fn path_has_untrusted_provenance(path: &str, dirfd: c_int) -> bool {
+    let candidate = path_with_dirfd_base(path, dirfd);
+    let candidate_string = candidate.to_string_lossy();
+    if resolved_path_is_mutable_root(&candidate_string) {
+        return true;
+    }
+    let Some(parent) = candidate.parent() else {
+        return true;
+    };
+    !path_ancestors_are_trusted_immutable(parent)
+}
+
+/// The lexical name lands in a mutable root, whatever it resolves to.
+#[cfg(target_os = "linux")]
+fn path_has_mutable_provenance(path: &str, dirfd: c_int) -> bool {
+    resolved_path_is_mutable_root(&path_with_dirfd_base(path, dirfd).to_string_lossy())
+}
+
+/// The resolved target lands in a mutable root, whatever the name looked like.
+#[cfg(target_os = "linux")]
+fn path_resolves_to_mutable_root(path: &str, dirfd: c_int) -> bool {
+    let Ok(resolved) = fs::canonicalize(path_with_dirfd_base(path, dirfd)) else {
+        return false;
+    };
+    resolved_path_is_mutable_root(&resolved.to_string_lossy())
 }
 
 fn proc_fd_path(fd: c_int) -> String {
@@ -499,11 +678,17 @@ fn resolve_command_via_path_value(
             continue;
         };
 
-        // access() answers for the real uid/gid rather than the effective pair.
-        // The loader drops LD_PRELOAD for set-user-ID programs, so this guard is
-        // never loaded where the two differ.
-        // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
-        if unsafe { libc::access(cstring.as_ptr(), libc::X_OK) } != 0 {
+        // SAFETY: cstring is a live NUL-terminated CString valid for the call;
+        // faccessat only reads the path and this process's credentials.
+        if unsafe {
+            libc::faccessat(
+                libc::AT_FDCWD,
+                cstring.as_ptr(),
+                libc::X_OK,
+                libc::AT_EACCESS,
+            )
+        } != 0
+        {
             // Read the error from the lookup that failed: a candidate under an
             // unsearchable directory answers EACCES to an existence probe too,
             // so probing for existence would read it as absent.
@@ -530,9 +715,9 @@ fn resolve_command_via_path_value(
             continue;
         }
 
-        if let Ok(canonical) = fs::canonicalize(&candidate) {
-            return Ok(Some(canonical.to_string_lossy().into_owned()));
-        }
+        // Return the pathname libc would exec, not what it resolves to today.
+        // The classifiers decide on provenance, and a resolved name hides the
+        // mutable component the caller actually wrote.
         return Ok(Some(candidate));
     }
 
@@ -796,6 +981,51 @@ fn canonicalize_existing_path(path: &str) -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
+/// Decides whether a native exec target is one this process could have planted
+/// or could still replace.
+///
+/// The former test was "does it resolve into a mutable root": a target could be
+/// reached through a writable directory anywhere else on the filesystem and
+/// still pass. This asks the two questions that matter instead. Is the target
+/// itself trusted-immutable, and is the pathname the caller wrote free of any
+/// component this process can change before the kernel resolves it? Either
+/// answer being no is a block, so a target that does not exist yet but whose
+/// directory is writable is refused rather than admitted.
+#[cfg(target_os = "linux")]
+fn path_is_mutable_native_exec(path: &str) -> bool {
+    if !current_mode_blocks_mutable_native_exec() || path.is_empty() {
+        return false;
+    }
+
+    if let Some(proc_fd) = path_is_current_process_fd_path(path) {
+        return file_descriptor_is_mutable_native_exec(proc_fd);
+    }
+
+    let untrusted_provenance = path_has_untrusted_provenance(path, libc::AT_FDCWD);
+    let Some(resolved) = canonicalize_existing_path(path) else {
+        // The name does not resolve. Only a regular file can be executed, so a
+        // name that is not one is left to the kernel's own errno.
+        let Ok(metadata) = fs::metadata(path) else {
+            return false;
+        };
+        return (metadata.mode() & file_type_bits()) == regular_file_mode() && untrusted_provenance;
+    };
+    let trusted = path_is_trusted_immutable(Path::new(&resolved));
+    let Ok(mut file) = File::open(&resolved) else {
+        return !trusted || untrusted_provenance;
+    };
+    match file.metadata() {
+        Ok(metadata) if (metadata.mode() & file_type_bits()) == regular_file_mode() => {}
+        _ => return false,
+    }
+    let mut header = [0u8; 4];
+    if file.read_exact(&mut header).is_err() {
+        return !trusted || untrusted_provenance;
+    }
+    header == [0x7f, b'E', b'L', b'F'] && (!trusted || untrusted_provenance)
+}
+
+#[cfg(not(target_os = "linux"))]
 fn path_is_mutable_native_exec(path: &str) -> bool {
     if !current_mode_blocks_mutable_native_exec() || path.is_empty() {
         return false;
@@ -1445,8 +1675,30 @@ fn classify_loader_fd_target(fd: c_int, args: &[String]) -> ProtectedRuntime {
 }
 
 fn loader_arg_targets_mutable_native_exec(target: &str) -> bool {
+    // A loader argument is a name the loader looks up later, in its own
+    // process, after this guard has returned. A relative name resolves against
+    // a working directory this process can change, and a magic descriptor path
+    // resolves against a table it can rewrite, so neither can be approved on
+    // the strength of what it names now.
+    #[cfg(target_os = "linux")]
+    if current_mode_blocks_mutable_native_exec()
+        && (!Path::new(target).is_absolute() || path_is_magic_exec_target(target))
+    {
+        return true;
+    }
     if let Some(proc_fd) = path_is_current_process_fd_path(target) {
         return file_descriptor_is_mutable_native_exec(proc_fd);
+    }
+    #[cfg(target_os = "linux")]
+    if current_mode_blocks_mutable_native_exec()
+        && (path_has_mutable_provenance(target, libc::AT_FDCWD)
+            || path_resolves_to_mutable_root(target, libc::AT_FDCWD)
+            || path_has_untrusted_provenance(target, libc::AT_FDCWD))
+    {
+        // The loader reads this argument as a library path or a target, and
+        // resolves it after the exec. A mutable name is a lookup race whatever
+        // it currently points at.
+        return true;
     }
     path_is_mutable_native_exec(target)
 }
@@ -1518,7 +1770,17 @@ fn loader_args_target_mutable_native_exec(args: &[String]) -> bool {
 }
 
 fn loader_targets_mutable_native_exec(path: &str, args: &[String]) -> bool {
-    path_points_to_dynamic_loader(path) && loader_args_target_mutable_native_exec(args)
+    if !path_points_to_dynamic_loader(path) {
+        return false;
+    }
+    // A loader named through /proc or /dev/fd can be swapped before it performs
+    // its own target lookup, and a loader pathname cannot be pinned to a
+    // descriptor without changing the loader ABI.
+    #[cfg(target_os = "linux")]
+    if current_mode_blocks_mutable_native_exec() && path_is_magic_exec_target(path) {
+        return true;
+    }
+    loader_args_target_mutable_native_exec(args)
 }
 
 fn loader_fd_targets_mutable_native_exec(fd: c_int, args: &[String]) -> bool {
@@ -3112,14 +3374,12 @@ mod tests {
         fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("probe mode");
 
         let path_value = format!("{}:{}", shadow.display(), real.display());
+        // The search reports the pathname libc would exec, not what it resolves
+        // to: the classifiers decide on the provenance of the name the caller
+        // wrote, and canonicalising it here would hide a mutable component.
         assert_eq!(
             resolve_command_via_path_value("probe", Some(&path_value)),
-            Ok(Some(
-                fs::canonicalize(&target)
-                    .expect("canonical probe")
-                    .to_string_lossy()
-                    .into_owned()
-            ))
+            Ok(Some(target.to_string_lossy().into_owned()))
         );
 
         // With only the directory on PATH the search reports the same
@@ -3306,6 +3566,100 @@ mod tests {
                 "env{cursor} must stay allowed"
             );
         }
+    }
+
+    #[test]
+    fn every_writable_runtime_root_counts_as_mutable() {
+        for path in [
+            "/workspace/tool",
+            "/state/tool",
+            "/tmp/tool",
+            "/var/tmp/tool",
+            "/run/tool",
+            "/dev/shm/tool",
+            "/dev/mqueue/tool",
+        ] {
+            assert!(resolved_path_is_mutable_root(path), "{path}");
+        }
+        // A longer directory name that only starts with a root name is a
+        // different directory, and /usr/bin stays trusted.
+        assert!(!resolved_path_is_mutable_root("/tmpfoo/tool"));
+        assert!(!resolved_path_is_mutable_root("/usr/bin/tool"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn writable_runtime_native_paths_are_not_trusted() {
+        for path in ["/tmp", "/var/tmp", "/run", "/dev/shm"] {
+            assert!(resolved_path_is_mutable_root(path));
+            assert!(!path_is_trusted_immutable(Path::new(path)));
+        }
+        assert!(path_is_trusted_immutable(Path::new("/bin/true")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mutable_path_provenance_is_lexical_and_survives_parent_components() {
+        // The lexical answer names what the caller wrote. Resolving first would
+        // let a parent component walk out of a mutable root and back in.
+        assert!(path_has_mutable_provenance(
+            "/workspace/../state/tool",
+            libc::AT_FDCWD
+        ));
+        assert!(path_has_mutable_provenance(
+            "/state/../workspace/tool",
+            libc::AT_FDCWD
+        ));
+        assert!(path_has_mutable_provenance(
+            "/workspace/../tmp/tool",
+            libc::AT_FDCWD
+        ));
+        assert!(!path_has_mutable_provenance(
+            "/usr/bin/tool",
+            libc::AT_FDCWD
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn untrusted_provenance_reads_the_directory_not_the_root_list() {
+        // The former test was membership in a fixed root list. A writable
+        // directory anywhere else is the same risk, so provenance answers for
+        // it too.
+        assert!(!path_has_untrusted_provenance("/bin/true", libc::AT_FDCWD));
+
+        let dir = create_temp_test_dir("provenance");
+        let target = dir.join("probe");
+        fs::write(&target, "probe").expect("write probe");
+        assert!(path_has_untrusted_provenance(
+            target.to_str().expect("probe path"),
+            libc::AT_FDCWD
+        ));
+        // The target does not have to exist: a writable directory means the
+        // name can be filled in after this decision.
+        assert!(path_has_untrusted_provenance(
+            dir.join("absent").to_str().expect("absent path"),
+            libc::AT_FDCWD
+        ));
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn magic_and_relative_loader_targets_are_rejected() {
+        assert!(path_is_magic_exec_target("/proc/self/fd/9"));
+        assert!(path_is_magic_exec_target("/proc/self/cwd/bin/true"));
+        assert!(path_is_magic_exec_target("/dev/fd/9"));
+        assert!(!path_is_magic_exec_target("/usr/bin/true"));
+        // A loader argument is looked up after this guard returns, so a name
+        // that resolves against a working directory or a descriptor table is
+        // refused whatever it names now.
+        assert!(loader_arg_targets_mutable_native_exec("relative-target"));
+        assert!(loader_arg_targets_mutable_native_exec(
+            "/proc/self/cwd/bin/true"
+        ));
+        assert!(!loader_arg_targets_mutable_native_exec("/bin/true"));
     }
 
     #[test]
