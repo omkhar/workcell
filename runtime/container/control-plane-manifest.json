@@ -80,7 +80,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/AGENTS.md",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/AGENTS.md",
-      "sha256": "96d7fd89abf99b88f58b6f3b296dc1caf4c7d5d496c91f3917e3983c61f06ee4"
+      "sha256": "8cf2b8674c8e9ef894b33b0a6939c3179899f03cabd6b8385e391f42db0de869"
     },
     {
       "kind": "adapter-baseline",
@@ -122,7 +122,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/config.toml",
-      "sha256": "db581aee43fa23f948a4ce489a3b5efdf7df6ef174646aa42e47b4e4e474254c"
+      "sha256": "b5f1ce4a73c4581dd233b2cabab6f40b746da62905df4d2753169053d6d3d6bb"
     },
     {
       "kind": "adapter-baseline",
@@ -134,7 +134,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/.codex/rules/default.rules",
       "runtime_path": "/opt/workcell/adapters/codex/.codex/rules/default.rules",
-      "sha256": "36216ff78322664d49b759e905ac82b92dc90e75f89fba470c73b12aebf462be"
+      "sha256": "9f951f1bbc528bc3ca66cb2115abc25722fac22ee943609ce81a1d5771d7698d"
     },
     {
       "kind": "adapter-baseline",
@@ -146,7 +146,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/managed_config.toml",
       "runtime_path": "/opt/workcell/adapters/codex/managed_config.toml",
-      "sha256": "0663d6adb44c2e7bf5c1ebcb6002ee20a6f4fa536d5b233d8f8c1069008adfcc"
+      "sha256": "e1faacc43b87a11b2af3f364c35bf3dccb5ae6cc7bfe8c88015f599f584e706a"
     },
     {
       "kind": "adapter-baseline",

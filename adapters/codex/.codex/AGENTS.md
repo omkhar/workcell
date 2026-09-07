@@ -36,7 +36,9 @@ policy boundary.
 
 - Keep the policy files aligned. If you change one security boundary, update
   `config.toml`, `managed_config.toml`, `requirements.toml`, and
-  `rules/default.rules` together.
+  `rules/default.rules` together. `TestCodexAdapterConfigParity` enforces the
+  config baseline parity. Prefix rules live only in `requirements.toml` and
+  `rules/default.rules`; the config layer has no rules schema.
 - Prefer prompt over allow, and forbid over prompt for destructive actions.
 - Use `codex execpolicy check` when changing rules so the strictest decision is
   visible before merging.

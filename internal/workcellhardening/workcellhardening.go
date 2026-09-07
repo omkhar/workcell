@@ -277,13 +277,13 @@ const jobValidateRelPath = "scripts/ci/job-validate.sh"
 // ${ROOT_DIR}/.github/workflows/release.yml.
 const releaseWorkflowRelPath = ".github/workflows/release.yml"
 
-// codexManagedConfigRelPath and codexRequirementsRelPath are the repo-relative
-// paths to the two Codex adapter rule files.  The adapter-rule/guard-bash block
-// reads both (via the per-check targetFile field) for its provider-mediation
-// bypass-path invariants, mirroring the shell `grep -Fq` probes that ran against
-// ${ROOT_DIR}/adapters/codex/managed_config.toml and
-// ${ROOT_DIR}/adapters/codex/requirements.toml in the codex_rule_file loop.
-const codexManagedConfigRelPath = "adapters/codex/managed_config.toml"
+// codexDefaultRulesRelPath and codexRequirementsRelPath are the repo-relative
+// paths to the two Codex adapter rule files that actually carry prefix rules —
+// the execpolicy rules file and the admin requirements layer.  The
+// adapter-rule/guard-bash block reads both (via the per-check targetFile field)
+// for its provider-mediation bypass-path invariants.  managed_config.toml is not
+// one of them: the config-layer schema has no rules table.
+const codexDefaultRulesRelPath = "adapters/codex/.codex/rules/default.rules"
 const codexRequirementsRelPath = "adapters/codex/requirements.toml"
 
 // claudeGuardBashRelPath is the repo-relative path to the Claude adapter Bash
@@ -2823,7 +2823,7 @@ func adapterRuleGuardBashChecks() []check {
 	// mediation-bypass guard) was a two-needle `||` and is two ordered
 	// kindPresent checks sharing one message.
 	for _, f := range []struct{ path, base string }{
-		{codexManagedConfigRelPath, "managed_config.toml"},
+		{codexDefaultRulesRelPath, "default.rules"},
 		{codexRequirementsRelPath, "requirements.toml"},
 	} {
 		cs = append(cs,
