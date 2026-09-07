@@ -92,7 +92,9 @@ func releaseOutputFixture(t *testing.T) string {
 // replaces cosign and gh with logging stubs. Each fail glob selects which
 // invocations of that tool fail: "" fails none, "*" fails every one, and a
 // narrower glob fails a single call, so a negative control cannot be satisfied
-// by an earlier check rejecting first.
+// by an earlier check rejecting first. An empty tag digest makes the matching
+// `cosign verify` return an empty result array instead of failing, which is the
+// case a vacuously-true `all` predicate would accept.
 func releaseOutputStubBin(t *testing.T, cosignFailGlob, ghFailGlob string) (string, string, string) {
 	t.Helper()
 	return releaseOutputStubDriver(t, verifyReleaseOutputsScript(t), cosignFailGlob, ghFailGlob, strings.Repeat("a", 64), strings.Repeat("a", 64))
@@ -116,7 +118,11 @@ cosign() {
     if [[ "$*" == *":sha-%s"* ]]; then
       tag_digest=%q
     fi
-    printf '[{"critical":{"image":{"docker-manifest-digest":"sha256:%%s"}}}]\n' "${tag_digest}"
+    if [[ -z "${tag_digest}" ]]; then
+      printf '[]\n'
+    else
+      printf '[{"critical":{"image":{"docker-manifest-digest":"sha256:%%s"}}}]\n' "${tag_digest}"
+    fi
   fi
   [[ -n "${cosign_fail_glob}" && "$*" == ${cosign_fail_glob} ]] && return 1
   return 0
@@ -126,6 +132,7 @@ gh() {
   [[ "${GH_TOKEN:-}" == "test-token" ]] || return 97
   [[ "${GH_HOST:-}" == "github.com" ]] || return 95
   [[ -z "${GH_ENTERPRISE_TOKEN:-}" && -z "${GITHUB_ENTERPRISE_TOKEN:-}" ]] || return 94
+  [[ "$*" != *--hostname* ]] || return 93
   printf '%%s\n' "$*" >>%q
   [[ -n "${gh_fail_glob}" && "$*" == ${gh_fail_glob} ]] && return 1
   return 0
@@ -683,6 +690,40 @@ func TestVerifyReleaseOutputsRejectsMovedCommitImageTag(t *testing.T) {
 // call at a time. The verifier makes ten, and only the first is reachable by a
 // blanket failure, so the later OCI SBOM, per-asset provenance and source-bundle
 // SBOM calls each need their own case to prove their result is not swallowed.
+// TestVerifyReleaseOutputsRejectsEmptyImageVerification covers a Cosign call
+// that succeeds but returns no verification results. A digest predicate built
+// only from `all` is vacuously true on an empty array, so the verifier must
+// also require at least one result before trusting a named tag.
+func TestVerifyReleaseOutputsRejectsEmptyImageVerification(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                           string
+		releaseTagDigest, commitDigest string
+		want                           string
+	}{
+		{
+			name:         "release tag",
+			commitDigest: strings.Repeat("a", 64),
+			want:         "named image tag " + releaseOutputImage + ":" + releaseOutputTag + " does not bind",
+		},
+		{
+			name:             "commit tag",
+			releaseTagDigest: strings.Repeat("a", 64),
+			want:             "named image tag " + releaseOutputImage + ":sha-" + strings.Repeat("c", 40) + " does not bind",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assets := releaseOutputFixture(t)
+			bin, _, _ := releaseOutputStubDriver(t, verifyReleaseOutputsScript(t), "", "", tc.releaseTagDigest, tc.commitDigest)
+			code, out := runVerifyReleaseOutputs(t, bin, assets, false)
+			if code == 0 || !strings.Contains(out, tc.want) {
+				t.Fatalf("expected empty verification rejection %q, got %d\n%s", tc.want, code, out)
+			}
+		})
+	}
+}
+
 func TestVerifyReleaseOutputsRejectsAttestationFailure(t *testing.T) {
 	t.Parallel()
 	imageRef := releaseOutputImage + "@sha256:" + strings.Repeat("a", 64)
