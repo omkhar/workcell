@@ -318,14 +318,21 @@ enum ExecSearchError {
 }
 
 fn bounded_c_string(path: *const c_char) -> Result<String, ExecInputTooLarge> {
+    bounded_c_string_with_limit(path, MAX_EXEC_STRING_BYTES)
+}
+
+fn bounded_c_string_with_limit(
+    path: *const c_char,
+    limit: usize,
+) -> Result<String, ExecInputTooLarge> {
     if path.is_null() {
         return Ok(String::new());
     }
 
     // SAFETY: path is supplied by the exec ABI. strnlen limits the read before
     // the bytes are copied into an owned string.
-    let length = unsafe { libc::strnlen(path, MAX_EXEC_STRING_BYTES + 1) };
-    if length > MAX_EXEC_STRING_BYTES {
+    let length = unsafe { libc::strnlen(path, limit + 1) };
+    if length > limit {
         return Err(ExecInputTooLarge);
     }
     // SAFETY: strnlen found the NUL terminator within the bounded region.
@@ -391,17 +398,25 @@ fn current_process_path_value() -> Result<Option<String>, ExecInputTooLarge> {
     }
     let mut index = 0usize;
     loop {
-        if index == MAX_EXEC_ELEMENTS {
-            return Err(ExecInputTooLarge);
-        }
         // SAFETY: entries is a non-null, NUL-sentinel-terminated char**; index walks up to the sentinel below.
         let current = unsafe { *entries.add(index) };
         if current.is_null() {
             return Ok(None);
         }
+        // The sentinel is read before the bound is applied, so an environment of
+        // exactly MAX_EXEC_ELEMENTS entries is accepted here as it is by
+        // collect_cstring_array.
+        if index == MAX_EXEC_ELEMENTS {
+            return Err(ExecInputTooLarge);
+        }
         // SAFETY: current is a valid NUL-terminated C string; strncmp reads at most PREFIX bytes of it.
         if unsafe { libc::strncmp(current, c"PATH=".as_ptr(), PREFIX.len()) } == 0 {
-            return bounded_c_string(current).map(|entry| Some(entry[PREFIX.len()..].to_owned()));
+            // A PATH value gets the PATH budget, not the per-string one:
+            // validate_path_value below is what enforces MAX_EXEC_PATH_BYTES and
+            // the per-segment limit, and it can only do that if the whole entry
+            // was read.
+            return bounded_c_string_with_limit(current, PREFIX.len() + MAX_EXEC_PATH_BYTES)
+                .map(|entry| Some(entry[PREFIX.len()..].to_owned()));
         }
         index += 1;
     }
@@ -2645,6 +2660,22 @@ mod tests {
         assert_eq!(
             resolve_command_via_path_value("true", Some(&over_segments)),
             Err(ExecSearchError::InputTooLarge)
+        );
+
+        // A PATH value is read against the PATH budget, not the per-string one,
+        // so validate_path_value is what decides -- a value between the two
+        // limits must reach it rather than being refused by the reader.
+        let between_limits = CString::new(vec![b'/'; MAX_EXEC_STRING_BYTES + 1])
+            .expect("path value between the string and PATH limits");
+        assert_eq!(
+            bounded_c_string(between_limits.as_ptr()),
+            Err(ExecInputTooLarge)
+        );
+        assert_eq!(
+            bounded_c_string_with_limit(between_limits.as_ptr(), MAX_EXEC_PATH_BYTES)
+                .expect("PATH budget accepts it")
+                .len(),
+            MAX_EXEC_STRING_BYTES + 1
         );
     }
 
