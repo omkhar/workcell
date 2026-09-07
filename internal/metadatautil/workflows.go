@@ -210,12 +210,16 @@ func validateReleaseAssembly(document workflowDocument) error {
 // word, a here-string and a parameter expansion are each read the way bash
 // reads them and none of them can hide or invent a redirection.
 //
-// A bracketed group is the one construct this scanner does not resolve:
-// bash re-enters command parsing inside a command substitution, and it decides
-// between arithmetic and a nested subshell by re-parsing the group. Rather than
-// guess, the scan skips a group that cannot open a heredoc at all and fails
-// closed on one that could. A group opens no heredoc when the only << it
-// contains is a here-string, which is what the reviewed workflow uses.
+// The scan never guesses. Where it cannot resolve the line it reports false and
+// the caller drops the whole script, so an unresolved construct can never hide
+// a heredoc that desynchronises the body queue. That covers three cases: a
+// bracketed group, because bash re-enters command parsing inside a command
+// substitution and re-parses the group to choose between arithmetic and a
+// nested subshell; a subscript or arithmetic bracket, which bash also parses as
+// arithmetic; and a word left open at the end of the line, whose quoting state
+// this line-at-a-time scan cannot carry. A group or bracket is skipped only
+// when it cannot open a heredoc at all, which is when the only << it contains
+// is a here-string, and that is what the reviewed workflow uses.
 func heredocDelimiters(line string) ([]string, bool) {
 	var delimiters []string
 	quoted := false
@@ -226,7 +230,11 @@ func heredocDelimiters(line string) ([]string, bool) {
 		case rest[0] == '\\':
 			index += 2
 		case rest[0] == '\'' && !quoted:
-			index += quotedWidth(rest)
+			width, terminated := quotedWidth(rest)
+			if !terminated {
+				return nil, false
+			}
+			index += width
 		case rest[0] == '"':
 			// A double-quoted word is not skipped whole: bash still expands a
 			// command substitution inside it, and that reopens command parsing.
@@ -238,8 +246,9 @@ func heredocDelimiters(line string) ([]string, bool) {
 				return nil, false
 			}
 			index += len(group)
-		case strings.HasPrefix(rest, "$["):
-			// The deprecated $[ ] arithmetic form is read the same way.
+		case rest[0] == '[':
+			// A subscript, a test, and the deprecated $[ ] arithmetic form all
+			// read the same way: bash parses a subscript as arithmetic too.
 			group := rest[:balancedSpanWidth(rest, '[', ']')]
 			if groupCanOpenHeredoc(group) {
 				return nil, false
@@ -267,6 +276,11 @@ func heredocDelimiters(line string) ([]string, bool) {
 			index++
 		}
 	}
+	// A word or expansion still open at the end of the line carries its state
+	// into the next physical line, which this scan does not see.
+	if quoted || expansion > 0 {
+		return nil, false
+	}
 	return delimiters, true
 }
 
@@ -281,7 +295,8 @@ func balancedSpanWidth(text string, open, close byte) int {
 		case character == '\\':
 			index++
 		case character == '\'' || character == '"':
-			index += quotedWidth(text[index:]) - 1
+			width, _ := quotedWidth(text[index:])
+			index += width - 1
 		case character == open:
 			depth++
 		case character == close:
@@ -311,10 +326,11 @@ func groupCanOpenHeredoc(group string) bool {
 	}
 }
 
-// quotedWidth returns the length of the quoted word that opens text, or the
-// length of text when that word is unterminated. A backslash escapes the next
-// byte inside a double-quoted word and is literal inside a single-quoted one.
-func quotedWidth(text string) int {
+// quotedWidth returns the length of the quoted word that opens text and whether
+// that word closes on this line. An unterminated word returns the length of
+// text. A backslash escapes the next byte inside a double-quoted word and is
+// literal inside a single-quoted one.
+func quotedWidth(text string) (int, bool) {
 	quote := text[0]
 	for index := 1; index < len(text); index++ {
 		if quote == '"' && text[index] == '\\' {
@@ -322,10 +338,10 @@ func quotedWidth(text string) int {
 			continue
 		}
 		if text[index] == quote {
-			return index + 1
+			return index + 1, true
 		}
 	}
-	return len(text)
+	return len(text), false
 }
 
 // heredocDelimiter reads the delimiter of the heredoc redirection that opens
@@ -344,11 +360,12 @@ func heredocDelimiter(text string) (string, int) {
 		return "", index
 	}
 	if quote := text[index]; quote == '\'' || quote == '"' {
-		word := text[index : index+quotedWidth(text[index:])]
-		if len(word) < 2 || word[len(word)-1] != quote {
-			return "", index + len(word)
+		width, terminated := quotedWidth(text[index:])
+		word := text[index : index+width]
+		if !terminated {
+			return "", index + width
 		}
-		return word[1 : len(word)-1], index + len(word)
+		return word[1 : len(word)-1], index + width
 	}
 	// A backslash before the delimiter quotes it, as in <<\EOF.
 	if text[index] == '\\' {

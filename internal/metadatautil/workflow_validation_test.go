@@ -302,6 +302,34 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			want: "copy both platform images",
 		},
 		{
+			name: "real commands hidden behind a quoted word left open across lines",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          : \"text\n" +
+				"          \" <<'PLAN'\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name: "real commands hidden behind an array-subscript shift",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          B=0; : <<'A'; a[1<<B]=4\n" +
+				"          A\n" +
+				"          cat <<'PLAN' >/dev/null\n" +
+				"          B\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
 			name:  "copies disabled with their destinations moved into inline comments",
 			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
 			decoy: "          oras cp --recursive --from-oci-layout || true # --to-oci-layout dist/release-image:amd64",
