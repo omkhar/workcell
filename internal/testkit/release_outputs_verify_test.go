@@ -476,12 +476,16 @@ func callArgs(line string) []string {
 }
 
 // flagOccurrences counts every appearance of flag, in both the separate-argument
-// and the --flag=value forms that gh and cosign accept.
-func flagOccurrences(args []string, flag string) int {
+// and the --flag=value forms that gh and cosign accept. Aliases name alternate
+// spellings of the same flag (gh's -R for --repo), which the tools treat
+// identically, so an occurrence of any spelling counts.
+func flagOccurrences(args []string, flag string, aliases ...string) int {
 	seen := 0
-	for _, arg := range args {
-		if arg == flag || strings.HasPrefix(arg, flag+"=") {
-			seen++
+	for _, spelling := range append([]string{flag}, aliases...) {
+		for _, arg := range args {
+			if arg == spelling || strings.HasPrefix(arg, spelling+"=") {
+				seen++
+			}
 		}
 	}
 	return seen
@@ -491,16 +495,18 @@ func flagOccurrences(args []string, flag string) int {
 // exactly once in either accepted form. Both tools take the last occurrence of a
 // repeated flag, so a weaker second --cert-identity or --predicate-type would
 // otherwise pass an assertion made against the first.
-func flagValue(args []string, flag string) string {
-	if flagOccurrences(args, flag) != 1 {
+func flagValue(args []string, flag string, aliases ...string) string {
+	if flagOccurrences(args, flag, aliases...) != 1 {
 		return ""
 	}
-	for i, arg := range args {
-		if arg == flag && i+1 < len(args) {
-			return args[i+1]
-		}
-		if value, ok := strings.CutPrefix(arg, flag+"="); ok {
-			return value
+	for _, spelling := range append([]string{flag}, aliases...) {
+		for i, arg := range args {
+			if arg == spelling && i+1 < len(args) {
+				return args[i+1]
+			}
+			if value, ok := strings.CutPrefix(arg, spelling+"="); ok {
+				return value
+			}
 		}
 	}
 	return ""
@@ -601,7 +607,10 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 		if got := flagValue(args, "--source-ref"); got != "refs/heads/main" {
 			t.Fatalf("gh attestation call lacks trusted main source ref: %s", line)
 		}
-		if got := flagValue(args, "--repo"); got != "omkhar/workcell" {
+		// gh also accepts -R as an alias, and the last occurrence wins: a
+		// later -R would silently redirect the attestation lookup, so any
+		// second spelling must fail the single-occurrence rule.
+		if got := flagValue(args, "--repo", "-R"); got != "omkhar/workcell" {
 			t.Fatalf("gh attestation call lacks the release repository: %s", line)
 		}
 	}
@@ -915,5 +924,15 @@ func TestVerifyReleaseOutputsRejectsMalformedImageDigestFile(t *testing.T) {
 				t.Fatalf("expected image digest rejection %q, got %d\n%s", tc.want, code, out)
 			}
 		})
+	}
+}
+
+func TestFlagValueRejectsShortAliasOverride(t *testing.T) {
+	args := []string{"sha256:aa", "--repo", "omkhar/workcell", "-R", "attacker/repo"}
+	if got := flagValue(args, "--repo", "-R"); got != "" {
+		t.Fatalf("flagValue tolerated a short-alias repository override, got %q", got)
+	}
+	if got := flagValue([]string{"-R", "omkhar/workcell"}, "--repo", "-R"); got != "omkhar/workcell" {
+		t.Fatalf("flagValue missed the short alias alone, got %q", got)
 	}
 }
