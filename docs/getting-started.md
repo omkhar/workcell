@@ -55,20 +55,20 @@ steps can run offline with the downloaded Sigstore bundle.
 The GitHub attestation step requires network access by default. Omit it for an
 offline install. You can also give it a local attestation with `--bundle`.
 
-The regex below anchors and escapes the fixed identity text (`^…\.…$`). Thus,
-only the release tag is variable. `verify-release-artifact.sh` uses the same
-expression.
+The regex below anchors and escapes the fixed identity text (`^…\.…$`). The
+release workflow always runs from `main`, so no part of the identity varies.
+`verify-release-artifact.sh` uses the same expression.
 
 ```bash
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
+  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
 # needs network; pins the same anchored/escaped identity regex + OIDC issuer that
 # install-release.sh --attestation uses (not --signer-workflow, which can over-match).
 gh attestation verify workcell-vX.Y.Z.tar.gz --repo omkhar/workcell \
-  --cert-identity-regex '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
+  --cert-identity-regex '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/heads/main$' \
   --cert-oidc-issuer https://token.actions.githubusercontent.com
 tar -xzf workcell-vX.Y.Z.tar.gz
 cd workcell-vX.Y.Z
@@ -94,7 +94,7 @@ curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/SHA256SUMS
 curl -LO https://github.com/omkhar/workcell/releases/download/vX.Y.Z/SHA256SUMS.sigstore.json
 cosign verify-blob SHA256SUMS \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/tags/.+$' \
+  --certificate-identity-regexp '^https://github\.com/omkhar/workcell/\.github/workflows/release\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 shasum -a 256 --ignore-missing -c SHA256SUMS
 brew install --formula ./workcell.rb

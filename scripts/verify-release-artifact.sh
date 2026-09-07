@@ -214,12 +214,12 @@ artifact_path="${ASSETS_DIR}/${ARTIFACT}"
 [[ -f "${sums_path}" ]] || fail "verification material missing: ${sums_path}"
 [[ -f "${bundle_path}" ]] || fail "verification material missing: ${bundle_path} (the release publishes it alongside SHA256SUMS)"
 
-# Anchor (^…$) and escape every fixed segment so only the release tag is a
-# wildcard. release.yml is triggered solely by tag pushes ("on: push: tags:
-# v*"), so the keyless Fulcio identity is always the workflow file at the tag
-# ref: https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/tags/TAG.
+# Anchor (^…$) and escape every fixed segment, leaving no wildcard at all.
+# release.yml is triggered solely by repository_dispatch, which always loads the
+# workflow from the default branch, so the keyless Fulcio identity is exactly
+# https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main.
 repo_escaped="$(regex_escape "${REPO}")"
-identity_regexp="^https://github\.com/${repo_escaped}/\.github/workflows/release\.yml@refs/tags/.+\$"
+identity_regexp="^https://github\.com/${repo_escaped}/\.github/workflows/release\.yml@refs/heads/main\$"
 
 echo "Verifying ${ARTIFACT} against ${REPO} release signing identity..." >&2
 
@@ -250,7 +250,7 @@ if [[ "${REQUIRE_ATTESTATION}" -eq 1 ]]; then
   # exact match (cli/cli#9507), so an unescaped '.' in it would over-match. Pin
   # the signer with the SAME anchored, escaped regex used for the cosign
   # signature above — the attestation SAN is the same keyless
-  # release.yml@refs/tags identity — via --cert-identity-regex, and pin the OIDC
+  # release.yml@refs/heads/main identity — via --cert-identity-regex, and pin the OIDC
   # issuer explicitly. --repo is an exact owner/repo match for attestation
   # lookup. This keeps the attestation identity pin exactly as tight as the
   # cosign one, with no over-match.

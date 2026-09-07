@@ -74,7 +74,8 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
         run: |
           ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
           unset WORKCELL_HOSTED_CONTROLS_TOKEN
-          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+          ./scripts/publish-github-release.sh "${RELEASE_TAG}" \
+            --expected-tag-object "${RELEASE_TAG_OBJECT}" \
             --immutable-releases-preverified-by-hosted-controls \
             dist/workcell.tar.gz
 `
@@ -96,6 +97,9 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "minimal verifier permissions", old: "contents: read\n      packages: read", replacement: "contents: read\n      packages: write", want: "grant only read permissions"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
+		{name: "publisher bound to the verified tag object", old: `--expected-tag-object "${RELEASE_TAG_OBJECT}"`, replacement: `--expected-tag-object "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
+		{name: "publisher bound to the verified tag", old: `publish-github-release.sh "${RELEASE_TAG}"`, replacement: `publish-github-release.sh "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
+		{name: "reviewed hosted-controls policy path", old: "WORKCELL_HOSTED_CONTROLS_REQUIRED", replacement: "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH", want: "reviewed GitHub hosted-controls policy path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
@@ -114,7 +118,7 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	}
 	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
 	requireReleaseAuthorityError(t, mutated, "build-amd64-image")
-	mutated = strings.Replace(string(content), "    steps:\n      - name: Download bound unsigned release artifact", "    steps:\n      - uses: actions/checkout@bad\n      - name: Download bound unsigned release artifact", 1)
+	mutated = strings.Replace(string(content), "    steps:\n      - name: Recheck release tag before signing and image mutation", "    steps:\n      - uses: actions/checkout@bad\n      - name: Recheck release tag before signing and image mutation", 1)
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
@@ -125,7 +129,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 	}{
 		{
 			name:  "assembly command in a comment",
-			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          # oras manifest index create --oci-layout dist/release-image amd64 arm64",
 			want:  "assemble the multi-arch index",
 		},
@@ -143,7 +147,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 		},
 		{
 			name:  "assembly command quoted inside another command",
-			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          echo \"oras manifest index create --oci-layout dist/release-image amd64 arm64\"",
 			want:  "assemble the multi-arch index",
 		},
@@ -170,7 +174,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands replaced by a heredoc body naming them",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<'PLAN' >/dev/null\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -211,7 +215,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
 		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
-		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
+		strings.Replace(workflow, "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz", "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
 		strings.Replace(workflow, "    shell: bash --noprofile --norc -euo pipefail {0}", "    shell: bash {0}", 1),
 	}

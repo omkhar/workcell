@@ -56,7 +56,7 @@ type workflowStep struct {
 // ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
 // rejects unknown fields, reordered steps, changed commands, changed action inputs,
 // a swapped publisher, a redirected registry, and a weakened shell default.
-const releaseSignerContractSHA256 = "59d426ff05378de33e64dc11f715e25f21727eb07e9f33d7cead528856e84982"
+const releaseSignerContractSHA256 = "47fadd56a99c49ce4eec3f291fd94dc507369c7efc2bf00d730c4526c77b9960"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -83,6 +83,9 @@ const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
 func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
+	if strings.Contains(workflowText, "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH") {
+		return errors.New("release workflow must not override the reviewed GitHub hosted-controls policy path")
+	}
 	var document workflowDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
 		return fmt.Errorf("parse release publication gate: %w", err)
@@ -154,8 +157,9 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		}
 		auditIndex := strings.Index(step.Run, `./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`)
 		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
-		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`)
+		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${RELEASE_TAG}"`)
 		if auditIndex < 0 || unsetIndex <= auditIndex || publishIndex <= unsetIndex ||
+			!strings.Contains(step.Run[publishIndex:], `--expected-tag-object "${RELEASE_TAG_OBJECT}"`) ||
 			!strings.Contains(step.Run[publishIndex:], "--immutable-releases-preverified-by-hosted-controls") {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}

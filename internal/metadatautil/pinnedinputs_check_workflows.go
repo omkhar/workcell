@@ -423,8 +423,8 @@ func (check *pinnedInputsCheck) validateReleaseLegacyReferences() error {
 	); err != nil {
 		return err
 	}
-	if count := strings.Count(check.releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 2 {
-		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures in preflight and publish jobs, found %d checks", count)
+	if count := strings.Count(check.releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 5 {
+		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures before every release mutation phase, found %d checks", count)
 	}
 	return nil
 }
