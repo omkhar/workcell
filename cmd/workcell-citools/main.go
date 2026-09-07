@@ -175,6 +175,7 @@ func subcommands() []subcommand {
 		{"workcell-hostgate-entrypoint-sanitize", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckHostGateEntrypointSanitize)},
 		{"workcell-precommit-upstream-pin-gate", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckPrecommitUpstreamPinGate)},
 		{"workcell-trusted-docker-client-rg", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckTrustedDockerClientRg)},
+		{"workcell-check-batch", "ROOT_DIR CHECK[=ARG] [CHECK...]", 2, -1, cmdWorkcellCheckBatch},
 	}
 }
 
@@ -769,4 +770,54 @@ func cmdGitConfigBlocklistParity(args []string) error {
 // die()) with a message identifying the first drifted section/literal.
 func cmdHardeningProfileConformance(args []string) error {
 	return hardeningprofile.Check(args[0])
+}
+
+// cmdWorkcellCheckBatch runs several migrated static checks in one
+// workcell-citools process, in argv order, stopping at the first failure so
+// that failure's exit code (1 via die()) and stderr message are byte-identical
+// to running the failing check's individual subcommand. Batchable checks are
+// exactly the table's single-argument checks: a ROOT_DIR check is named bare
+// (it receives the shared ROOT_DIR), and a SETTINGS_PATH check is spelled
+// CHECK=PATH. An unknown or non-batchable check name is a usage error (exit 2
+// via dieUsage(), matching main's dispatch for a malformed invocation).
+func cmdWorkcellCheckBatch(args []string) error {
+	rootDir := args[0]
+	for _, spec := range args[1:] {
+		name, settingsPath, hasSettingsPath := strings.Cut(spec, "=")
+		handler, argUsage := batchableCheck(name)
+		switch {
+		case handler == nil:
+			dieUsage(fmt.Errorf("usage: %s workcell-check-batch ROOT_DIR CHECK[=ARG] [CHECK...] (unknown check %q)", os.Args[0], name))
+		case hasSettingsPath && argUsage != "SETTINGS_PATH":
+			dieUsage(fmt.Errorf("usage: %s workcell-check-batch ROOT_DIR CHECK[=ARG] [CHECK...] (check %q does not take =ARG)", os.Args[0], name))
+		case !hasSettingsPath && argUsage == "SETTINGS_PATH":
+			dieUsage(fmt.Errorf("usage: %s workcell-check-batch ROOT_DIR CHECK[=ARG] [CHECK...] (check %q requires =SETTINGS_PATH)", os.Args[0], name))
+		}
+		checkArg := rootDir
+		if hasSettingsPath {
+			checkArg = settingsPath
+		}
+		if err := handler([]string{checkArg}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// batchableCheck resolves a check name to its handler when the subcommand
+// table registers it as a single-argument ROOT_DIR or SETTINGS_PATH check —
+// the only shapes workcell-check-batch can supply arguments for. The second
+// return value is the matched entry's usage string ("ROOT_DIR" or
+// "SETTINGS_PATH"); any other subcommand resolves to (nil, "").
+func batchableCheck(name string) (func([]string) error, string) {
+	for _, sub := range subcommands() {
+		if sub.name != name {
+			continue
+		}
+		if sub.minArgs == 1 && sub.maxArgs == 1 && (sub.usage == "ROOT_DIR" || sub.usage == "SETTINGS_PATH") {
+			return sub.handler, sub.usage
+		}
+		return nil, ""
+	}
+	return nil, ""
 }
