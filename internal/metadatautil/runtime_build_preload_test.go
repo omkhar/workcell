@@ -28,6 +28,35 @@ func TestCheckPinnedInputsAcceptsCommentedBuildPreloadMention(t *testing.T) {
 	}
 }
 
+// ENV and export persist every key they list, so an override that hides the
+// guard variable behind another key is still an override.
+func TestCheckPinnedInputsRejectsMultiKeyBuildPreloadOverride(t *testing.T) {
+	const canonicalExport = "  && export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so \\\n"
+	for name, rewrite := range map[string]func(string) string{
+		"multi-key ENV": func(body string) string {
+			return body + "\nENV MARKER=x LD_PRELOAD=/workspace/evil.so\n"
+		},
+		"legacy ENV syntax": func(body string) string {
+			return body + "\nENV LD_PRELOAD /workspace/evil.so\n"
+		},
+		"multi-key export in the builder RUN": func(body string) string {
+			return strings.Replace(body, canonicalExport,
+				canonicalExport+"  && export MARKER=x LD_PRELOAD=/workspace/evil.so \\\n", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, "runtime/container/Dockerfile", func(body string) string {
+				mutated := rewrite(body)
+				if mutated == body {
+					t.Fatalf("override %q did not change the build file", name)
+				}
+				return mutated
+			})
+			requirePinnedInputsErrorContains(t, cfg, "early runtime build preload")
+		})
+	}
+}
+
 func TestCheckPinnedInputsRejectsLateBuildPreload(t *testing.T) {
 	preload := "LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so"
 	for _, index := range []int{0, 1} {

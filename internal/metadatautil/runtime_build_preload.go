@@ -36,5 +36,8 @@ func validateRuntimeBuildPreload(dockerfile, path string) error {
 // preloadAssignment matches an assignment of the guard variable that takes
 // effect: a Dockerfile ENV instruction or a shell export inside a RUN. It is
 // anchored to the start of a line, so a comment or prose that names the
-// variable assigns nothing and does not count.
-var preloadAssignment = regexp.MustCompile(`(?m)^[ \t]*(?:ENV|(?:&&[ \t]+)?export)[ \t]+LD_PRELOAD=`)
+// variable assigns nothing and does not count. The variable may appear in any
+// position of the instruction, because ENV and export both persist every key
+// they list, and it is matched by name alone so that the legacy space-separated
+// ENV form cannot smuggle in a fourth assignment either.
+var preloadAssignment = regexp.MustCompile(`(?m)^[ \t]*(?:ENV|(?:&&[ \t]+)?export)[ \t]+(?:[^\n]*[ \t])?LD_PRELOAD\b`)

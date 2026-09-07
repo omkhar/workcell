@@ -280,3 +280,14 @@ func rewriteAptBrokerDockerfileWith(t testing.TB, rewrite func(string) string) m
 	t.Helper()
 	return rewritePinnedInputsFixtureFile(t, "runtime/container/Dockerfile", rewrite)
 }
+
+// A Dockerfile comment naming a broker binary changes nothing in the image, so
+// the runtime-binary count must not read it as a second reference.
+func TestCheckPinnedInputsAcceptsCommentedAptBrokerBinaryMention(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "runtime/container/Dockerfile", func(body string) string {
+		return body + "\n# workcell-apt-broker-client and workcell-apt-broker-server are installed above.\n"
+	})
+	if err := metadatautil.CheckPinnedInputs(cfg); err != nil {
+		t.Fatal(err)
+	}
+}

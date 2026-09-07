@@ -91,4 +91,17 @@ func TestRuntimePathMutationSourceClassification(t *testing.T) {
 			t.Errorf("non-mutation rejected: %s", body)
 		}
 	}
+	// Deliberate over-eagerness, recorded so it is a reviewed property rather
+	// than a surprise. An inline comment or a quoted payload that reads as an
+	// assignment is reported. Resolving either one needs the scan to decide
+	// where a # or a quote begins, and a # inside a quoted word is not a
+	// comment, so a scan that stripped from the first # would delete the
+	// assignment behind it. These five scripts are maintainer-owned, so the
+	// cost of a report is one edit, and the cost of a missed mutation is a
+	// hijacked runtime PATH.
+	for _, body := range []string{"true # export PATH=/tmp", "printf 'then PATH=/tmp'"} {
+		if !runtimePathMutation(body) {
+			t.Errorf("over-eager classification changed: %s", body)
+		}
+	}
 }
