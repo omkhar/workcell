@@ -325,6 +325,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"one"}},
 		},
 		{
+			name:   "a locale-translated delimiter ends no body this reader can spell",
+			script: ": <<$\"PLAN\"\nPLAN\noras cp one\nPLAN\n",
+			want:   nil,
+		},
+		{
 			name:   "an ANSI-C span keeps its escapes across a line break",
 			script: ": $'x\n\\'; oras cp one'\noras cp two\n",
 			want:   [][]string{{"two"}},

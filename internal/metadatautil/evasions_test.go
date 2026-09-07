@@ -117,6 +117,10 @@ var Evasions = []Evasion{
 		return hide(a, i+`: <<$'\x50LAN'`+"\n"+i+`\x50LAN`, i+"PLAN")
 	})},
 	{"single-quoted line break", replaceAnchor(splitCommandWords)},
+	{"locale-translated heredoc delimiter", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: <<$"PLAN"`+"\n"+i+"PLAN", i+"PLAN")
+	})},
 	{"escaped apostrophe in an ANSI-C word", replaceAnchor(func(a string) string {
 		return prefixCommands(a, `: $'x\'; `)
 	})},

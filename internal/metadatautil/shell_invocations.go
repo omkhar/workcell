@@ -12,12 +12,15 @@ import (
 // ends it, and whether the <<- form lets the terminator line carry leading
 // tabs. Bash ends a <<WORD body only at a line that is the delimiter alone, so
 // an indented copy of the word inside the body is text.
+//
 // unresolved records a delimiter this reader cannot spell. A $'…' delimiter
 // carries the ANSI-C escapes bash decodes before it compares a line, so
-// <<$'\x50LAN' ends at PLAN. Decoding them here would be a second, smaller copy
-// of that table, and a case it got wrong would end the body early and count
-// lines bash still reads as data. The body therefore runs to the end of the
-// script, which loses invocations rather than inventing them.
+// <<$'\x50LAN' ends at PLAN, and a $"…" delimiter is translated through the
+// locale catalog first, so its text here is not the text bash compares at all.
+// Resolving either would put a second copy of bash's own tables in this file,
+// and a case one of them got wrong would end the body early and count lines
+// bash still reads as data. The body therefore runs to the end of the script,
+// which loses invocations rather than inventing them.
 type heredoc struct {
 	delimiter  string
 	stripTabs  bool
@@ -393,7 +396,7 @@ func shellWords(line string, stack []byte) (
 ) {
 	var text strings.Builder
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
-	ansiC, ansiEscape := false, false
+	ansiC, unresolved := false, false
 	arithmetic := 0
 	// A line that carries a quoted command substitution donates no words. Where
 	// the substitution ends is beyond a line reader, and reading syntax over
@@ -408,13 +411,13 @@ func shellWords(line string, stack []byte) (
 			return
 		}
 		if pending {
-			heredocs = append(heredocs, heredoc{text.String(), stripTabs, ansiEscape})
+			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved})
 			pending, stripTabs = false, false
 		} else {
 			words = append(words, word{text.String(), quoted})
 		}
 		text.Reset()
-		inWord, quoted, ansiEscape = false, false, false
+		inWord, quoted, unresolved = false, false, false
 	}
 	for index := 0; index < len(line); index++ {
 		character := line[index]
@@ -430,7 +433,7 @@ func shellWords(line string, stack []byte) (
 				// apostrophe is a literal one and does not close the span. The
 				// span therefore keeps the rest of the line as text, where
 				// closing on it would expose a separator bash never reads.
-				ansiEscape = true
+				unresolved = true
 				text.WriteByte(character)
 				index++
 				text.WriteByte(line[index])
@@ -484,10 +487,14 @@ func shellWords(line string, stack []byte) (
 		case character == '$' && index+1 < len(line) &&
 			(line[index+1] == '\'' || line[index+1] == '"'):
 			// $'…' and $"…" are quoting forms whose $ bash removes with the
-			// quotes, so a body opened as <<$'PLAN' ends at a PLAN line.
+			// quotes, so a body opened as <<$'PLAN' ends at a PLAN line. A
+			// $"…" word is translated through the locale catalog before that,
+			// so what it spells here is not what bash compares, and a
+			// delimiter written that way is unresolved from the start.
 			index++
 			quote = line[index]
 			ansiC = quote == '\''
+			unresolved = unresolved || !ansiC
 			inWord, quoted = true, true
 		case character == ' ' || character == '\t':
 			flush()
