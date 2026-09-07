@@ -24,6 +24,10 @@ import (
 var allowedCopyEntryKeys = mapKeysSet([]string{"source", "target", "classification", "providers", "modes"})
 
 func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[string]string, error) {
+	return renderDocumentsWithBudget(policy, outputRoot, policyDir, newInjectionTreeBudget())
+}
+
+func renderDocumentsWithBudget(policy map[string]any, outputRoot, policyDir Path, budget *injectionTreeBudget) (map[string]string, error) {
 	raw := policy["documents"]
 	if raw == nil {
 		return map[string]string{}, nil
@@ -50,7 +54,7 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 		if err := ensureIsFile(source, fmt.Sprintf("documents.%s", key)); err != nil {
 			return nil, err
 		}
-		if err := stageFile(source, outputRoot, relpath); err != nil {
+		if err := stageFile(source, outputRoot, relpath, budget); err != nil {
 			return nil, err
 		}
 		rendered[key] = relpath
@@ -59,6 +63,15 @@ func renderDocuments(policy map[string]any, outputRoot, policyDir Path) (map[str
 }
 
 func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode string) ([]map[string]any, error) {
+	return renderCopiesWithBudget(policy, outputRoot, policyDir, agent, mode, newInjectionTreeBudget())
+}
+
+func renderCopiesWithBudget(
+	policy map[string]any,
+	outputRoot, policyDir Path,
+	agent, mode string,
+	budget *injectionTreeBudget,
+) ([]map[string]any, error) {
 	raw := policy["copies"]
 	if raw == nil {
 		return []map[string]any{}, nil
@@ -118,7 +131,7 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 
 		var renderedSource any
 		if classification == "secret" {
-			if err := validateSecretTree(sourceValue, "copies.source"); err != nil {
+			if err := validateSecretTreeWithBudget(sourceValue, "copies.source", budget); err != nil {
 				return nil, err
 			}
 			kind = "file"
@@ -127,7 +140,7 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 			}
 			renderedSource = directMountEntry(sourceValue, mountPath)
 		} else {
-			kind, err = copySource(sourceValue, outputRoot.Join(relpath))
+			kind, err = copySourceWithBudget(sourceValue, outputRoot.Join(relpath), budget)
 			if err != nil {
 				return nil, err
 			}
@@ -147,13 +160,20 @@ func renderCopies(policy map[string]any, outputRoot, policyDir Path, agent, mode
 }
 
 func copySource(source, destination Path) (string, error) {
+	return copySourceWithBudget(source, destination, newInjectionTreeBudget())
+}
+
+func copySourceWithBudget(source, destination Path, budget *injectionTreeBudget) (string, error) {
 	sourceFile, _, kind, err := openDirectMountSource(source.String())
 	if err != nil {
 		return "", err
 	}
 	defer sourceFile.Close()
+	if err := budget.addEntries(source.String(), 1); err != nil {
+		return "", err
+	}
 	if kind == directMountSourceDir {
-		if err := validateInjectionDirectoryDescendants(sourceFile); err != nil {
+		if err := validateInjectionDirectoryDescendants(sourceFile, source.String(), budget); err != nil {
 			return "", err
 		}
 		if err := os.MkdirAll(destination.Parent().String(), 0o755); err != nil {
@@ -167,7 +187,10 @@ func copySource(source, destination Path) (string, error) {
 			return "", err
 		}
 		defer destinationRoot.Close()
-		if err := copyOpenDirectoryToRoot(sourceFile, destinationRoot, source.String(), ".", openDirectMountChild); err != nil {
+		if err := copyOpenDirectoryToRootWithState(
+			sourceFile, destinationRoot, source.String(), ".",
+			openDirectMountChild, newInjectionDestinationState(), budget,
+		); err != nil {
 			return "", err
 		}
 		if err := os.Chmod(destination.String(), 0o700); err != nil {
@@ -186,7 +209,7 @@ func copySource(source, destination Path) (string, error) {
 		return "", err
 	}
 	defer parentRoot.Close()
-	data, err := io.ReadAll(sourceFile)
+	data, err := readInjectionFile(sourceFile, source.String(), budget)
 	if err != nil {
 		return "", err
 	}
@@ -199,26 +222,25 @@ func copySource(source, destination Path) (string, error) {
 	return "file", nil
 }
 
-// copyOpenDirectoryToRoot copies an already-open source directory. Each
-// descendant is opened from its parent descriptor without following links.
-func copyOpenDirectoryToRoot(
-	source *os.File,
-	destination *os.Root,
-	sourceDisplay, relative string,
-	openChild func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error),
-) error {
-	return copyOpenDirectoryToRootWithState(source, destination, sourceDisplay, relative, openChild, newInjectionDestinationState())
-}
-
+// copyOpenDirectoryToRootWithState copies an already-open source directory.
+// Each descendant is opened from its parent descriptor without following links,
+// and both the destination reservations and the input budget are shared with
+// every recursive level.
 func copyOpenDirectoryToRootWithState(
 	source *os.File,
 	destination *os.Root,
 	sourceDisplay, relative string,
 	openChild func(*os.File, string, string) (*os.File, os.FileMode, directMountSourceKind, error),
 	state *injectionDestinationState,
+	budget *injectionTreeBudget,
 ) error {
-	entries, err := source.ReadDir(-1)
-	if err != nil {
+	// Read one entry past the remaining allowance so an oversized directory is
+	// refused without materialising its whole listing.
+	entries, err := source.ReadDir(budget.remainingEntries() + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	if err := budget.addEntries(sourceDisplay, len(entries)); err != nil {
 		return err
 	}
 	for _, entry := range entries {
@@ -245,11 +267,11 @@ func copyOpenDirectoryToRootWithState(
 				err = destination.Mkdir(childRelative, 0o700)
 			}
 			if err == nil {
-				err = copyOpenDirectoryToRootWithState(child, destination, displayPath, childRelative, openChild, state)
+				err = copyOpenDirectoryToRootWithState(child, destination, displayPath, childRelative, openChild, state, budget)
 			}
 		case directMountSourceRegular:
 			var data []byte
-			data, err = io.ReadAll(child)
+			data, err = readInjectionFile(child, displayPath, budget)
 			if err == nil {
 				err = state.reserve(childRelative, "regular file")
 			}
@@ -319,7 +341,10 @@ func writeFileExclusive(root *os.Root, path string, data []byte, perm os.FileMod
 	return nil
 }
 
-func stageFile(source, outputRoot Path, relpath string) error {
+func stageFile(source, outputRoot Path, relpath string, budget *injectionTreeBudget) error {
+	if err := budget.addEntries(source.String(), 1); err != nil {
+		return err
+	}
 	root, err := os.OpenRoot(outputRoot.String())
 	if err != nil {
 		return err
@@ -339,7 +364,7 @@ func stageFile(source, outputRoot Path, relpath string) error {
 	if kind != directMountSourceRegular {
 		return fmt.Errorf("injection source must be a file: %s", source)
 	}
-	data, err := io.ReadAll(sourceFile)
+	data, err := readInjectionFile(sourceFile, source.String(), budget)
 	if err != nil {
 		return err
 	}

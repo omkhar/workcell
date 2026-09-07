@@ -4,22 +4,15 @@
 package metadatautil
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
-
-const gitHubAPIVersion = "2026-03-10"
 
 type WorkflowEnvironmentPolicy struct {
 	Variables             map[string]string
@@ -315,82 +308,6 @@ func EnvironmentNames(policyPath string) ([]string, error) {
 
 func EnvironmentArtifactName(environmentName string) string {
 	return strings.ReplaceAll(url.QueryEscape(environmentName), "+", "%20")
-}
-
-func FetchRulesets(tmpDir, repo string) error {
-	summary, err := readRulesetSummary(filepath.Join(tmpDir, "rulesets-summary.json"))
-	if err != nil {
-		return err
-	}
-
-	details := make([]any, 0, len(summary))
-	for _, raw := range summary {
-		detail, err := fetchRuleset(repo, raw)
-		if err != nil {
-			return err
-		}
-		details = append(details, detail)
-	}
-	return writeJSONFile(filepath.Join(tmpDir, "rulesets.json"), details)
-}
-
-func readRulesetSummary(path string) ([]any, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	values, err := decodeHostedControlPages(bytes.NewReader(content))
-	if err != nil {
-		return nil, err
-	}
-	if len(values) != 1 {
-		return nil, errors.New("ruleset summary must contain exactly one JSON value")
-	}
-	summary, ok := values[0].([]any)
-	if !ok {
-		return nil, errors.New("ruleset summary must be an array")
-	}
-	return summary, nil
-}
-
-func fetchRuleset(repo string, raw any) (any, error) {
-	id, err := rulesetSummaryID(raw)
-	if err != nil {
-		return nil, err
-	}
-	rulesetID := strconv.FormatInt(id, 10)
-	endpoint := fmt.Sprintf("repos/%s/rulesets/%s", repo, rulesetID)
-	cmd := exec.Command("gh", "api", "--hostname", "github.com", "-H", "X-GitHub-Api-Version: "+gitHubAPIVersion, endpoint)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gh api %s: %w (stderr: %s)", endpoint, err, strings.TrimSpace(stderr.String()))
-	}
-	var detail any
-	if err := json.Unmarshal(output, &detail); err != nil {
-		return nil, fmt.Errorf("gh api %s: parse JSON: %w", endpoint, err)
-	}
-	return detail, nil
-}
-
-func rulesetSummaryID(raw any) (int64, error) {
-	entry, ok := raw.(map[string]any)
-	if !ok {
-		return 0, fmt.Errorf("unexpected ruleset summary entry: %v", raw)
-	}
-	number, ok := entry["id"].(json.Number)
-	if !ok {
-		return 0, fmt.Errorf("unexpected ruleset summary id: %v", entry)
-	}
-	value, err := number.Int64()
-	if err != nil {
-		return 0, fmt.Errorf("unexpected ruleset summary id: %v", entry)
-	}
-	if value <= 0 {
-		return 0, fmt.Errorf("unexpected ruleset summary id: %v", entry)
-	}
-	return value, nil
 }
 
 func UnexpectedEnvironmentVariableNames(actual map[string]any, expected map[string]string) []string {

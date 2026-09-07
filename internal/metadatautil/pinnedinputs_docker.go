@@ -166,7 +166,8 @@ func (validator *dockerPinnedInputValidator) validateProviderInstallCommands() e
 		{`install -m 0755 /tmp/copilot /usr/local/libexec/workcell/real/copilot`, "executable Copilot runtime artifact install"},
 		{`codex-code-mode-host-\$\{CODEX_ARCH\}\.tar\.gz`, "Codex code-mode host release download URL"},
 		{`echo "\$\{CODEX_CODE_MODE_HOST_SHA256\}  /tmp/codex-code-mode-host\.tar\.gz" \| sha256sum -c -`, "Codex code-mode host archive checksum verification"},
-		{`/usr/local/libexec/workcell/real/codex-code-mode-host`, "Codex code-mode host runtime artifact install"},
+		{`(?m)^[\t ]*&& install -o 0 -g 0 -m 0755 "/tmp/codex-\$\{CODEX_ARCH\}" /usr/local/libexec/workcell/real/codex[\t ]+\\[\t ]*$`, "root-owned Codex runtime artifact install"},
+		{`(?m)^[\t ]*&& install -o 0 -g 0 -m 0755 "/tmp/codex-code-mode-host-\$\{CODEX_ARCH\}" /usr/local/libexec/workcell/real/codex-code-mode-host[\t ]+\\[\t ]*$`, "root-owned Codex code-mode host runtime artifact install"},
 	}
 	for _, requirement := range requirements {
 		if _, _, err := requireRegex(validator.runtimeDockerfile, requirement.pattern, requirement.label, validator.cfg.RuntimeDockerfilePath); err != nil {
