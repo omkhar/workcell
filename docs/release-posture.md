@@ -20,11 +20,12 @@ It does these checks:
 The preflight job records the expected digest for its source archive.
 The release job creates and extracts an independent archive from the checked-out release tag.
 It compares that archive digest with the expected digest.
-It creates source-dependent manifests and the amd64 image from the extracted tree.
+It creates source-dependent manifests from the extracted tree.
 It creates the Homebrew formula from the verified archive digest.
 
-The native arm64 image job builds from the checked-out release tag.
-The workflow compares the published platform digests with the preflight data.
+The native amd64 and arm64 image jobs build from the checked-out release tag.
+Each one has only `contents: read` permission and emits an OCI archive.
+The workflow compares the bound platform digests with the preflight data.
 
 The hosted install jobs prove these properties on Apple Silicon `macos-26` and `macos-15`:
 

@@ -99,8 +99,11 @@ apt_broker_process_request() {
     return 0
   fi
 
+  # env -i clears the environment, so the exec guard preload has to be put back
+  # explicitly: the guard refuses any child environment that does not carry it.
   broker_env=(
     "HOME=/root"
+    "LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so"
     "PATH=${WORKCELL_APT_BROKER_PATH}"
   )
   if [[ -f "${env_file}" ]] && [[ ! -L "${env_file}" ]]; then

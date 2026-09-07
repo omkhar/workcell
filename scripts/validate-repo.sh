@@ -148,7 +148,9 @@ validate_manpage() {
 }
 
 shell_files=(
+  "${ROOT_DIR}/.githooks/commit-msg"
   "${ROOT_DIR}/.githooks/pre-commit"
+  "${ROOT_DIR}/.githooks/pre-push"
   "${ROOT_DIR}/scripts/bootstrap-dev.sh"
   "${ROOT_DIR}/scripts/check-dead-code.sh"
   "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"

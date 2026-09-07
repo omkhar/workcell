@@ -92,9 +92,13 @@ require_workcell_ci_workspace_mount() {
 workcell_ci_workspace_mount_spec() {
   local workspace="$1"
   local readonly="$2"
+  # The target defaults to /workspace. It is CSV encoded with the source, so a
+  # path holding a comma or a quote still forms one --mount record.
+  local target="${3:-/workspace}"
 
   run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools \
     docker-workspace-bind-mount \
     "${workspace}" \
-    "${readonly}"
+    "${readonly}" \
+    "${target}"
 }

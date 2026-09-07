@@ -3209,6 +3209,12 @@ run_container_stdin codex bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3'
   set -Eeuo pipefail
   trap 'failure_status=$?; if [[ $- == *e* ]]; then trap - ERR; echo "Codex smoke block failed at input line ${LINENO}." >&2; exit "${failure_status}"; fi' ERR
   /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+  # `env -u LD_PRELOAD bash -c` hands bash a child environment without the guard
+  # preload, so the guard refuses that first hop and the loader the command
+  # names is never reached. Either refusal proves the launch does not happen.
+  assert_refused_at_or_before_target() {
+    grep -Eq "$1|Workcell blocked child execution without the approved exec guard preload" "$2"
+  }
   codex_user_script=/run/workcell/container-smoke-codex-user.sh
   cat >"${codex_user_script}" <<'CODEX_USER_SCRIPT'
     set -Eeuo pipefail
@@ -3796,7 +3802,7 @@ EOF
     echo "expected fd loader option invocation of the real Copilot payload to fail" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-fd-argv0.out
+  assert_refused_at_or_before_target "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-fd-argv0.out
   cp "$LOADER" "$EXEC_TMP/workcell-loader-copy"
   chmod 0700 "$EXEC_TMP/workcell-loader-copy"
   if env -u LD_PRELOAD "$EXEC_TMP/workcell-loader-copy" --argv0 copilot /usr/local/libexec/workcell/real/copilot --version >/tmp/copilot-loader-copy-argv0.out 2>&1; then
@@ -3808,13 +3814,13 @@ EOF
     echo "expected deleted-fd loader option invocation of the real Copilot payload to fail" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-deleted-fd-argv0.out
+  assert_refused_at_or_before_target "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-deleted-fd-argv0.out
   cp /bin/true "$EXEC_TMP/workcell-state-native"
   chmod 0700 "$EXEC_TMP/workcell-state-native"
   if env -u LD_PRELOAD bash -c 'exec 9<"$1"; /proc/self/fd/9 "$2" --version' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-fd-target.out 2>&1; then echo "expected strict profile to reject fd loader-mediated native executable launches from /state" >&2; exit 1; fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-fd-target.out
+  assert_refused_at_or_before_target "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-fd-target.out
   if env -u LD_PRELOAD bash -c 'cp "$2" "$2.deleted"; exec 8<"$2.deleted"; rm -f "$2.deleted"; exec "$1" /proc/self/fd/8' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-deleted-fd-target.out 2>&1; then echo "expected strict profile to reject deleted-fd loader-mediated native executable launches from /state" >&2; exit 1; fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-deleted-fd-target.out
+  assert_refused_at_or_before_target "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-deleted-fd-target.out
   if "$EXEC_TMP/workcell-state-native" >/tmp/state-native.out 2>&1; then
     echo "expected strict profile to reject direct native executable launches from /state" >&2
     exit 1
@@ -4083,6 +4089,13 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/env-path-node.out
+  # A cleared environment strips the guard preload from the child, which the
+  # guard refuses on its own once no more specific reason applies.
+  if env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/env true >/tmp/env-no-preload.out 2>&1; then
+    echo "expected strict profile to reject a child environment without the approved guard preload" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked child execution without the approved exec guard preload" /tmp/env-no-preload.out
   cat <<'EOF' >"${workspace_exec_scratch}/workcell-child-envp-bypass.js"
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");

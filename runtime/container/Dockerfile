@@ -485,6 +485,11 @@ RUN export \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
   && rm -rf /tmp/workcell-rust-target /workcell-rust
 
+# /etc/ld.so.preload loads the exec guard into every process from here on, and
+# the guard refuses a child environment without its own preload. Declare it
+# before the next RUN, or the build's own commands are the first thing refused.
+ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
+
 # Copy adapters and control-plane scripts AFTER cargo build so that changes to
 # these frequently-modified files do not invalidate the Rust compilation cache.
 COPY adapters /opt/workcell/adapters
@@ -560,6 +565,11 @@ COPY --from=runtime-builder /usr/local/lib/libworkcell_exec_guard.so /usr/local/
 COPY --from=runtime-builder /usr/local/libexec/workcell /usr/local/libexec/workcell
 COPY runtime/container/control-plane-manifest.json /usr/local/libexec/workcell/control-plane-manifest.json
 
+# /etc/ld.so.preload loads the exec guard into every process from here on, and
+# the guard refuses a child environment without its own preload. Declare it
+# before the next RUN, or the build's own commands are the first thing refused.
+ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
+
 RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod 0644 /usr/local/libexec/workcell/real/git \
   && mv /usr/local/bin/node /usr/local/libexec/workcell/real/node \
@@ -617,7 +627,6 @@ WORKDIR /workspace
 
 ENV HOME=/state/agent-home
 ENV CODEX_HOME=/state/agent-home/.codex
-ENV LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 
 # Defense-in-depth: default to the fixed unprivileged workcell UID/GID so that

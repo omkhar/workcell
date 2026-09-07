@@ -76,12 +76,14 @@ Each action uses a full commit SHA.
 The action owner and repository must be in `policy/allowed-actions.toml`.
 
 The release workflow has the main publication authority.
-Its release job can write packages, artifact metadata, and attestations.
-It can also request an OIDC token.
+Its architecture build and assembly jobs have only `contents: read` permission.
+They can write only Actions artifacts, never packages, repository contents, or attestations, and they cannot request an OIDC token.
+A release-approved job validates the artifact handoff before publication and signing.
+That job does not check out or execute repository code.
+A separate read-only job binds every non-image signing subject before approval.
 Its final publisher has `contents: write` for the repository.
 The current publisher script uses this scope to create a release and upload assets.
 
-The native arm64 release job can push an image by digest to GHCR.
 Release scan jobs can upload SARIF data.
 
 Other workflows also have write authority:
@@ -96,16 +98,16 @@ It can also reopen or edit that issue.
 It can also upload a review-only candidate artifact.
 The job has no content-write or release-publication scope.
 
-The release environment protects artifact construction and image publication.
+The release environment protects registry publication, signing, and attestation.
 The environment requires maintainer approval and does not permit administrator bypass.
 
 The final publisher uses the `hosted-controls-audit` environment.
 It refreshes the hosted-control proof before publication.
 
-The release job uploads a current-run Actions artifact.
-The final publisher downloads that current-run artifact and publishes its files.
-The publisher trusts this handoff.
-It does not verify the new signatures or attestations after the handoff.
+The signing job uploads a current-run Actions artifact.
+A read-only verification job downloads that artifact by immutable id.
+It checks the new signatures and attestations before publication.
+The final publisher downloads the same sealed artifact and publishes its files.
 
 The release publisher rejects extended ACLs on source and staging file handles.
 The required Darwin lane checks the native macOS ACL interface on every PR and `main` push.
@@ -216,9 +218,9 @@ GitHub also attaches SBOM predicates to the image and source-bundle subjects.
 The two SBOM files are not attestation subjects.
 Cosign signs both SBOM files as release assets.
 
-The amd64 release job rebuilds from the archived source bundle.
-The native arm64 job builds from the checked-out signed tag.
-The workflow combines both platform digests into one image index.
+The native amd64 and arm64 jobs build from the checked-out signed tag.
+Each job binds its image digest to the matching preflight reproducibility digest.
+The assembly job combines both bound platform digests into one image index.
 
 ### Consumer verification
 
@@ -236,14 +238,13 @@ The verified installer is the documented release-install path.
 However, a user can select a local path that does not verify the release.
 The installer also comes from a repository clone, not a signed standalone asset.
 
-### Pipeline verification gap
+### Pipeline output verification
 
 The release workflow verifies inputs, the release-tag signature, and reproducibility.
-It does not verify the new release signatures after it creates them.
+A read-only job also verifies the new release signatures after the workflow creates them.
 
-The workflow does not run `cosign verify` on the new image or bundles.
-It also does not run `gh attestation verify` on the new attestations.
-This output-verification gap remains open.
+That job runs `cosign verify-blob` on the assets, `cosign verify` on the image, and `gh attestation verify` on the attestations.
+Publication depends on that job, so an unverified output set cannot reach a release.
 
 ### SLSA posture
 
@@ -252,8 +253,8 @@ It does not claim Build L2 for the two SBOM files or nine Sigstore bundles.
 It does not claim Build L3.
 
 GitHub-hosted jobs create authentic platform provenance.
-Build and attestation steps still share one job and its OIDC authority.
-A compromised build step can give a false digest to the attestation step.
+Build and assembly jobs do not share package-write or OIDC authority with the signing job.
+The signing job validates repository, run, tag, commit, platform, configuration, and artifact digests.
 
 The build is reproducible, pinned, and network-dependent.
 It is not hermetic.
@@ -269,7 +270,7 @@ Residual risk describes the risk after the current controls.
 | 3 | Fork code steals a secret. | GitHub makes fork tokens read-only. Fork code cannot use environment secrets. | Low. |
 | 4 | A runner steals authority or changes output. | GitHub-hosted ephemeral jobs, narrow tokens, and disabled checkout credentials reduce exposure. | Medium. Jobs do not restrict network egress. |
 | 5 | An attacker compromises a signing identity. | Cosign is keyless. The maintainer key stays outside CI. Releases are immutable. | Medium. Keyless signing removes stored Cosign keys, but it does not stop workflow-identity or maintainer-key misuse. |
-| 6 | A false artifact gets authentic provenance. | GitHub OIDC binds provenance to the release workflow. Consumers pin that identity. | Medium. Build and provenance authority share a job. |
+| 6 | A false artifact gets authentic provenance. | The privileged job validates immutable artifact handoffs before signing. Builders have no publication authority. | Medium. The workflow still trusts pinned actions and GitHub artifact transport. |
 | 7 | Fork code poisons a trusted cache. | PR runs write only to PR-specific cache scopes. They can read `validator-main`. | Low. Non-PR runs can write `validator-main`. |
 | 8 | A consumer installs an unverified artifact. | The documented release installer verifies Cosign data and the bundle digest before extraction. | Medium. Other installation paths remain available. |
 | 9 | A malicious change reaches a release. | Signed commits, signed tags, required checks, environment approval, and immutable releases protect publication. | Medium. One maintainer signs and approves releases. |
@@ -387,13 +388,12 @@ Run the hosted-control audit again.
    Workcell also does not publish the installer as a signed standalone asset.
 
 2. **Workcell does not meet SLSA Build L3.**
-   Build steps and provenance authority share a job.
-   A trusted builder must separate these authorities.
+   Build, assembly, and provenance authorities are now separate jobs.
+   The workflow still trusts GitHub artifact transport and does not isolate the build platform.
 
 3. **The build is not hermetic.**
    Image builds use network package sources.
-   The amd64 job builds from the archived source bundle.
-   The separate arm64 job builds from the checked-out signed tag.
+   The native amd64 and arm64 jobs both build from the checked-out signed tag.
 
 4. **CI runners do not have egress restrictions.**
    A compromised workflow step can use the runner network.
@@ -411,9 +411,9 @@ Run the hosted-control audit again.
    Hosted policy pins this value to `false` for the canonical repository.
    Cosign signatures remain mandatory.
 
-8. **The release workflow does not verify its new outputs.**
-   It creates signatures and attestations but does not verify them in the same run.
-   Add independent post-production verification to close this gap.
+8. **Output verification shares the release run.**
+   A read-only job verifies the new signatures and attestations before publication.
+   That check still runs inside the release workflow, not from an independent system.
 
 ## References
 

@@ -9,7 +9,9 @@ VALIDATE_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
 WORKSPACE="${WORKCELL_VALIDATOR_WORKSPACE:-${ROOT_DIR}}"
 SKIP_HEAVY_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
 
+validator_passwd=""
 cleanup() {
+  [[ -z "${validator_passwd}" ]] || rm -f "${validator_passwd}"
   cleanup_workcell_ci_docker
 }
 trap cleanup EXIT
@@ -38,6 +40,32 @@ validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
 
 setup_workcell_ci_docker
+
+# The workload runs as the caller's uid to keep the bind-mounted workspace
+# writable, but that uid has no /etc/passwd entry, so glibc getpwuid() fails
+# and anything resolving the invoking user dies with "No user exists for uid
+# <n>".  ssh-keygen is one of those, and git shells out to it for both
+# `gpg.format = ssh` signing and verification, so the pre-push hook tests
+# cannot sign or verify a commit.  Give the container a passwd file carrying
+# an entry for the runtime uid, appended only when the image lacks one so an
+# existing uid keeps its own home.  The home field matches HOME below, so
+# identity- and env-based home discovery agree on one path.
+# The file is created under the workspace because that bind is preflighted
+# below. A host temporary directory is not always visible to the daemon: on
+# the documented macOS Colima path the daemon runs in a VM that does not mount
+# ${TMPDIR}, so the bind source would be missing.
+mkdir -p "${WORKSPACE}/tmp"
+validator_passwd="$(mktemp "${WORKSPACE}/tmp/workcell-validator-passwd.XXXXXX")"
+workcell_ci_docker run --rm --entrypoint /bin/bash "${VALIDATOR_IMAGE}" \
+  -lc 'cat /etc/passwd' >"${validator_passwd}"
+if ! awk -F: -v uid="${validator_uid}" '$3 == uid { found = 1 } END { exit !found }' \
+  "${validator_passwd}"; then
+  printf 'workcell-ci:x:%s:%s:workcell ci:%s:/bin/bash\n' \
+    "${validator_uid}" "${validator_gid}" "${validator_home}" >>"${validator_passwd}"
+fi
+chmod 0444 "${validator_passwd}"
+validator_passwd_mount="$(workcell_ci_workspace_mount_spec "${validator_passwd}" true /etc/passwd)"
+
 require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
 validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" false)"
 
@@ -54,6 +82,7 @@ workcell_ci_docker run --rm \
   -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
   -e TMPDIR="${validator_tmp}" \
   --mount "${validator_workspace_mount}" \
+  --mount "${validator_passwd_mount}" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
   -lc '

@@ -39,10 +39,13 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
   release:
     permissions:
       contents: read
+  sign-release:
+    environment:
+      name: release
   verify-release-outputs:
     needs:
       - tag-policy
-      - release
+      - sign-release
     permissions:
       actions: read
       attestations: read
@@ -53,7 +56,7 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
   publish-github-release:
     needs:
       - tag-policy
-      - release
+      - sign-release
       - verify-release-outputs
     environment:
       name: hosted-controls-audit
@@ -82,6 +85,8 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		name, old, replacement, want string
 	}{
 		{name: "artifact job stays read-only", old: "contents: read", replacement: "contents: write", want: "read-only"},
+		{name: "publisher depends on sealed artifacts", old: "      - sign-release\n      - verify-release-outputs", replacement: "      - preflight\n      - verify-release-outputs", want: "depend directly"},
+		{name: "verifier depends on sealed artifacts", old: "      - sign-release\n    permissions:", replacement: "      - preflight\n    permissions:", want: "depend directly"},
 		{name: "depends on verified artifacts", old: "      - verify-release-outputs\n    environment:", replacement: "      - preflight\n    environment:", want: "depend directly"},
 		{name: "verifies sealed outputs", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: true", want: "must run verify-release-outputs.sh"},
 		{name: "rejects a commented verifier mention", old: "      - run: ./scripts/verify-release-outputs.sh", replacement: "      - run: \"# ./scripts/verify-release-outputs.sh\"", want: "must run verify-release-outputs.sh"},
@@ -99,6 +104,136 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
+	content := readReleaseWorkflow(t)
+	if err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(string(content)); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v", err)
+	}
+	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
+	requireReleaseAuthorityError(t, mutated, "build-amd64-image")
+	mutated = strings.Replace(string(content), "    steps:\n      - name: Download bound unsigned release artifact", "    steps:\n      - uses: actions/checkout@bad\n      - name: Download bound unsigned release artifact", 1)
+	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
+}
+
+func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	decoys := []struct {
+		name, old, decoy, want string
+	}{
+		{
+			name:  "assembly command in a comment",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          # oras manifest index create --oci-layout dist/release-image amd64 arm64",
+			want:  "assemble the multi-arch index",
+		},
+		{
+			name:  "handoff validation renamed to a comment",
+			old:   "      - name: Validate privileged handoff",
+			decoy: "      - name: Unpack downloads # Validate privileged handoff",
+			want:  "validate the privileged handoff",
+		},
+		{
+			name:  "bound subject download dropped",
+			old:   "          artifact-ids: ${{ needs.bind-release-subjects.outputs.artifact_id }}\n          path: trusted-subjects",
+			decoy: "          name: workcell-release-preflight-subjects\n          path: trusted-subjects",
+			want:  "by immutable id",
+		},
+		{
+			name:  "assembly command quoted inside another command",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          echo \"oras manifest index create --oci-layout dist/release-image amd64 arm64\"",
+			want:  "assemble the multi-arch index",
+		},
+		{
+			name:  "assembly flag extended into a different flag",
+			old:   "          oras manifest index create --oci-layout \\",
+			decoy: "          oras manifest index create --oci-layout-disabled \\",
+			want:  "assemble the multi-arch index",
+		},
+		{
+			name: "platform copies left only in the subject binder job",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          # copies now happen in bind-release-subjects",
+			want:  "copy both platform images",
+		},
+		{
+			name:  "one platform copy dropped from the release job",
+			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          true",
+			want:  "copy both platform images",
+		},
+		{
+			name: "real commands replaced by a heredoc body naming them",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          cat <<'PLAN' >/dev/null\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
+				"          oras manifest index create --oci-layout dist/release-image amd64 arm64\n" +
+				"          PLAN",
+			want: "copy both platform images",
+		},
+		{
+			name:  "copies disabled with their destinations moved into inline comments",
+			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
+			decoy: "          oras cp --recursive --from-oci-layout || true # --to-oci-layout dist/release-image:amd64",
+			want:  "copy both platform images",
+		},
+		{
+			name:  "one platform copy commented out but its destination text kept",
+			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64",
+			decoy: "          # oras cp --recursive --from-oci-layout \\\n            # \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            # --to-oci-layout dist/release-image:amd64",
+			want:  "copy both platform images",
+		},
+	}
+	for _, decoy := range decoys {
+		t.Run(decoy.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, decoy.old, decoy.decoy, 1)
+			if mutated == workflow {
+				t.Fatalf("decoy %q did not change the workflow", decoy.name)
+			}
+			requireReleaseAuthorityError(t, mutated, decoy.want)
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
+	content := readReleaseWorkflow(t)
+	workflow := string(content)
+	mutations := []string{
+		strings.Replace(workflow, "  IMAGE_NAME: ghcr.io/${{ github.repository }}", "  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/other", 1),
+		strings.Replace(workflow, "          test \"$(cut -d@ -f2 trusted-subjects/workcell-image.digest)\" = \"${EXPECTED_IMAGE_DIGEST}\"\n", "", 1),
+		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
+		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
+		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
+		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
+		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
+		strings.Replace(workflow, "    shell: bash --noprofile --norc -euo pipefail {0}", "    shell: bash {0}", 1),
+	}
+	for _, mutated := range mutations {
+		requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
+	}
+}
+
+func readReleaseWorkflow(t *testing.T) []byte {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
+}
+
+func requireReleaseAuthorityError(t *testing.T, workflow, want string) {
+	t.Helper()
+	err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(workflow)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("ValidateReleaseWorkflowAuthoritySplit() error = %v, want %q", err, want)
 	}
 }
 
