@@ -20,9 +20,15 @@ if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
   # needs the same authentication state. Without it the query fails, the walk
   # covers the whole ancestry, and an already published base is rejected.
   # GIT_NAMESPACE is here too: without it the query reads the default
-  # namespace and would exclude commits the pushed namespace never held.
+  # namespace and would exclude commits the pushed namespace never held. The
+  # prefix forms carry the HTTPS settings, such as the certificate authority
+  # file, that the same query needs over that transport.
   for transport_name in SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT \
-    GIT_ASKPASS SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY GIT_NAMESPACE; do
+    GIT_ASKPASS SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY GIT_NAMESPACE \
+    GIT_PROXY_COMMAND CURL_CA_BUNDLE \
+    HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY \
+    http_proxy https_proxy all_proxy no_proxy \
+    ${!GIT_SSL@} ${!GIT_HTTP@} ${!GIT_CURL@}; do
     [[ -n "${!transport_name:-}" ]] || continue
     sanitized_env+=("${transport_name}=${!transport_name}")
   done
