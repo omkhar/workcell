@@ -389,13 +389,13 @@ Run the hosted-control audit again.
    Workcell also does not publish the installer as a signed standalone asset.
 
 2. **Workcell does not meet SLSA Build L3.**
-   Build steps and provenance authority share a job.
-   A trusted builder must separate these authorities.
+   Build, assembly, and provenance authorities are now separate jobs.
+   The workflow still trusts GitHub artifact transport between those jobs.
+   A trusted builder must also isolate the build platform itself.
 
 3. **The build is not hermetic.**
    Image builds use network package sources.
-   The amd64 job builds from the archived source bundle.
-   The separate arm64 job builds from the checked-out signed tag.
+   The native amd64 and arm64 jobs both build from the checked-out signed tag.
 
 4. **CI runners do not have egress restrictions.**
    A compromised workflow step can use the runner network.

@@ -1529,7 +1529,7 @@ jobs:
             cmp -s "dist/${subject}" "trusted-subjects/${subject}"
           done
           test "$(cut -d@ -f2 trusted-subjects/workcell-image.digest)" = "${EXPECTED_IMAGE_DIGEST}"
-          sha256sum -c dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
           tar -tvf dist/workcell-release-image.oci.tar | awk '$1 !~ /^[-d]/ {exit 1}'
           test -z "$(tar -tf dist/workcell-release-image.oci.tar | sed 's#^\./##' | LC_ALL=C sort | uniq -d)"
           if tar -tf dist/workcell-release-image.oci.tar | grep -Ev '^(\./)?$|^(\./)?(oci-layout|index.json)$|^(\./)?blobs/?$|^(\./)?blobs/sha256/?$|^(\./)?blobs/sha256/[0-9a-f]{64}$'; then

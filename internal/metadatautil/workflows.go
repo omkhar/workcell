@@ -50,7 +50,7 @@ type workflowStep struct {
 // ORAS pins it installs its publisher from and the registry it publishes to. It
 // rejects unknown fields, reordered steps, changed commands, changed action
 // inputs, a swapped publisher, and a redirected registry destination.
-const releaseSignerContractSHA256 = "94cd7164117b6911996c1c64b1bf271de835bbdd43e04023317fa4e5acdab23a"
+const releaseSignerContractSHA256 = "743c3414664a505d68f799d1db6c0bcfe4e882ea8004a7ea5583630a360795c2"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument

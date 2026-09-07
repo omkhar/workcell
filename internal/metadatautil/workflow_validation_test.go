@@ -186,7 +186,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 		strings.Replace(workflow, "          test \"$(cut -d@ -f2 trusted-subjects/workcell-image.digest)\" = \"${EXPECTED_IMAGE_DIGEST}\"\n", "", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
-		strings.Replace(workflow, "sha256sum -c dist/SHA256SUMS", "source dist/SHA256SUMS", 1),
+		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
 		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
 	}
