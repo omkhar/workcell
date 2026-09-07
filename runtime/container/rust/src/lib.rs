@@ -131,6 +131,17 @@ const APPROVED_NATIVE_LAUNCHERS: &[&str] = &[
 
 const MUTABLE_EXEC_ROOTS: &[&str] = &["/workspace", "/state"];
 const ALLOWED_LD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
+// Bounds on the exec inputs this guard copies out of caller memory before it
+// can classify them. Without these an attacker-sized argv/envp forces the guard
+// to allocate without limit inside the interposed call. MAX_EXEC_ELEMENTS must
+// stay equal to WORKCELL_MAX_EXEC_ELEMENTS in src/exec_variadic.c.
+const MAX_EXEC_STRING_BYTES: usize = 128 * 1024;
+const MAX_EXEC_AGGREGATE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_EXEC_ELEMENTS: usize = 65_536;
+const MAX_EXEC_PATH_SEGMENT_BYTES: usize = MAX_EXEC_STRING_BYTES;
+const MAX_EXEC_PATH_BYTES: usize = MAX_EXEC_AGGREGATE_BYTES;
+const MAX_EXEC_PATH_SEGMENTS: usize = MAX_EXEC_ELEMENTS;
+const DEFAULT_SEARCH_PATH: &str = "/bin:/usr/bin";
 const AT_EMPTY_PATH_FLAG: c_int = 0x1000;
 
 #[cfg(target_os = "linux")]
@@ -296,12 +307,57 @@ fn fd_target_is_mutable_root(fd: c_int) -> bool {
     resolved_path_is_mutable_root(trim_deleted_suffix(&target.to_string_lossy()))
 }
 
-fn collect_cstring_array(ptr: *const *const c_char) -> Vec<String> {
-    let mut values = Vec::new();
-    if ptr.is_null() {
-        return values;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExecInputTooLarge;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExecSearchError {
+    InputTooLarge,
+    PermissionDenied,
+    RelativeSearchPath,
+    LookupFailed(c_int),
+}
+
+// The errors libc records and walks past while searching PATH. Any other error
+// ends its search, so it must end the guard's search too.
+const SEARCH_CONTINUES_ON: &[c_int] = &[
+    libc::ENOENT,
+    libc::ENOTDIR,
+    libc::ESTALE,
+    libc::ENODEV,
+    libc::ETIMEDOUT,
+];
+
+fn bounded_c_string(path: *const c_char) -> Result<String, ExecInputTooLarge> {
+    bounded_c_string_with_limit(path, MAX_EXEC_STRING_BYTES)
+}
+
+fn bounded_c_string_with_limit(
+    path: *const c_char,
+    limit: usize,
+) -> Result<String, ExecInputTooLarge> {
+    if path.is_null() {
+        return Ok(String::new());
     }
 
+    // SAFETY: path is supplied by the exec ABI. strnlen limits the read before
+    // the bytes are copied into an owned string.
+    let length = unsafe { libc::strnlen(path, limit + 1) };
+    if length > limit {
+        return Err(ExecInputTooLarge);
+    }
+    // SAFETY: strnlen found the NUL terminator within the bounded region.
+    let bytes = unsafe { std::slice::from_raw_parts(path.cast::<u8>(), length) };
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn collect_cstring_array(ptr: *const *const c_char) -> Result<Vec<String>, ExecInputTooLarge> {
+    let mut values = Vec::new();
+    if ptr.is_null() {
+        return Ok(values);
+    }
+
+    let mut total_bytes = 0usize;
     let mut index = 0usize;
     loop {
         // SAFETY: ptr is a non-null, NUL-sentinel-terminated char** (exec ABI / libc environ); index walks up to the sentinel checked below.
@@ -309,14 +365,20 @@ fn collect_cstring_array(ptr: *const *const c_char) -> Vec<String> {
         if current.is_null() {
             break;
         }
-        // SAFETY: current is a valid NUL-terminated C string element of the exec argv/envp/environ array.
-        let entry = unsafe { CStr::from_ptr(current) }
-            .to_string_lossy()
-            .into_owned();
+        if index == MAX_EXEC_ELEMENTS {
+            return Err(ExecInputTooLarge);
+        }
+        let entry = bounded_c_string(current)?;
+        total_bytes = total_bytes
+            .checked_add(entry.len().saturating_add(1))
+            .ok_or(ExecInputTooLarge)?;
+        if total_bytes > MAX_EXEC_AGGREGATE_BYTES {
+            return Err(ExecInputTooLarge);
+        }
         values.push(entry);
         index += 1;
     }
-    values
+    Ok(values)
 }
 
 fn effective_env_ptr(envp: *const *const c_char) -> *const *const c_char {
@@ -328,38 +390,150 @@ fn effective_env_ptr(envp: *const *const c_char) -> *const *const c_char {
     }
 }
 
+fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
+    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
+    collect_cstring_array(unsafe { environ.cast() })
+}
+
+// libc consults only PATH from the caller's environment when it searches, so
+// bound that one entry instead of copying the whole environment: an unrelated
+// oversized variable must not turn a searched exec into E2BIG.
+fn current_process_path_value() -> Result<Option<String>, ExecInputTooLarge> {
+    const PREFIX: &str = "PATH=";
+    // clearenv() leaves environ null on glibc, and a bare-name search is still
+    // valid there: libc falls back to its default search path.
+    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
+    let entries = unsafe { environ.cast::<*const c_char>() };
+    if entries.is_null() {
+        return Ok(None);
+    }
+    let mut index = 0usize;
+    loop {
+        // SAFETY: entries is a non-null, NUL-sentinel-terminated char**; index walks up to the sentinel below.
+        let current = unsafe { *entries.add(index) };
+        if current.is_null() {
+            return Ok(None);
+        }
+        // The sentinel is read before the bound is applied, so an environment of
+        // exactly MAX_EXEC_ELEMENTS entries is accepted here as it is by
+        // collect_cstring_array.
+        if index == MAX_EXEC_ELEMENTS {
+            return Err(ExecInputTooLarge);
+        }
+        // SAFETY: current is a valid NUL-terminated C string; strncmp reads at most PREFIX bytes of it.
+        if unsafe { libc::strncmp(current, c"PATH=".as_ptr(), PREFIX.len()) } == 0 {
+            // A PATH value gets the PATH budget, not the per-string one:
+            // validate_path_value below is what enforces MAX_EXEC_PATH_BYTES and
+            // the per-segment limit, and it can only do that if the whole entry
+            // was read.
+            return bounded_c_string_with_limit(current, PREFIX.len() + MAX_EXEC_PATH_BYTES)
+                .map(|entry| Some(entry[PREFIX.len()..].to_owned()));
+        }
+        index += 1;
+    }
+}
+
 fn path_from_env_entries(env_entries: &[String]) -> Option<String> {
     env_entries
         .iter()
         .find_map(|entry| entry.strip_prefix("PATH=").map(ToOwned::to_owned))
         .or_else(|| env::var("PATH").ok())
+        // POSIX libc falls back to a system default search path when PATH is
+        // absent, so the guard must search the same places libc would.
+        .or_else(|| Some(DEFAULT_SEARCH_PATH.to_owned()))
 }
 
-fn resolve_command_via_path_value(command: &str, path_value: Option<&str>) -> Option<String> {
+fn validate_path_value(path_value: &str) -> Result<(), ExecInputTooLarge> {
+    if path_value.len() > MAX_EXEC_PATH_BYTES {
+        return Err(ExecInputTooLarge);
+    }
+    let mut segment_count = 0usize;
+    for segment in path_value.split(':') {
+        segment_count = segment_count.checked_add(1).ok_or(ExecInputTooLarge)?;
+        if segment_count > MAX_EXEC_PATH_SEGMENTS || segment.len() > MAX_EXEC_PATH_SEGMENT_BYTES {
+            return Err(ExecInputTooLarge);
+        }
+    }
+    Ok(())
+}
+
+fn resolve_command_via_path_value(
+    command: &str,
+    path_value: Option<&str>,
+) -> Result<Option<String>, ExecSearchError> {
     if command.is_empty() || command.contains('/') {
-        return None;
+        return Ok(None);
     }
 
-    let path_value = path_value?;
-    for segment in path_value.split(':').filter(|segment| !segment.is_empty()) {
+    let Some(path_value) = path_value else {
+        return Ok(None);
+    };
+    validate_path_value(path_value).map_err(|_| ExecSearchError::InputTooLarge)?;
+    let mut permission_denied = false;
+    let mut relative_segment = false;
+    for segment in path_value.split(':') {
+        // An empty or otherwise relative PATH entry names a working directory
+        // the guard cannot pin: it can change between this resolution and the
+        // exec (posix_spawn chdir file actions do exactly that, and glibc runs
+        // its own search in the child after applying them), and the caller can
+        // write to it. The guard cannot classify a target it cannot name, so a
+        // relative entry never yields a candidate.
+        if !segment.starts_with('/') {
+            relative_segment = true;
+            continue;
+        }
         let candidate = format!("{segment}/{command}");
         let Ok(cstring) = CString::new(candidate.as_str()) else {
             continue;
         };
 
+        // access() answers for the real uid/gid rather than the effective pair.
+        // The loader drops LD_PRELOAD for set-user-ID programs, so this guard is
+        // never loaded where the two differ.
         // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
-        let executable = unsafe { libc::access(cstring.as_ptr(), libc::X_OK) == 0 };
-        if !executable {
+        if unsafe { libc::access(cstring.as_ptr(), libc::X_OK) } != 0 {
+            // Read the error from the lookup that failed: a candidate under an
+            // unsearchable directory answers EACCES to an existence probe too,
+            // so probing for existence would read it as absent.
+            // SAFETY: errno_location() returns the current thread's valid errno slot.
+            let lookup_errno = unsafe { *errno_location() };
+            if lookup_errno == libc::EACCES {
+                // libc remembers EACCES and keeps searching, then reports it
+                // when no later entry holds the command.
+                permission_denied = true;
+            } else if !SEARCH_CONTINUES_ON.contains(&lookup_errno) {
+                // libc stops here and reports this error, so the guard must not
+                // walk on and classify a candidate libc will never reach.
+                return Err(ExecSearchError::LookupFailed(lookup_errno));
+            }
+            continue;
+        }
+        // X_OK also succeeds for a searchable directory, and the kernel refuses
+        // to execute anything that is not a regular file, reporting EACCES.
+        // libc keeps searching on that too, so a directory must not end the
+        // guard's search either -- otherwise the guard classifies the directory
+        // while libc goes on to execute a later, unclassified entry.
+        if !fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file()) {
+            permission_denied = true;
             continue;
         }
 
         if let Ok(canonical) = fs::canonicalize(&candidate) {
-            return Some(canonical.to_string_lossy().into_owned());
+            return Ok(Some(canonical.to_string_lossy().into_owned()));
         }
-        return Some(candidate);
+        return Ok(Some(candidate));
     }
 
-    None
+    if permission_denied {
+        Err(ExecSearchError::PermissionDenied)
+    } else if relative_segment {
+        // No absolute entry held the command, so libc would fall back to the
+        // relative entry the guard skipped. Refuse rather than let it run
+        // unclassified.
+        Err(ExecSearchError::RelativeSearchPath)
+    } else {
+        Ok(None)
+    }
 }
 
 fn file_descriptor_is_native_elf(fd: c_int) -> bool {
@@ -426,13 +600,17 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
             continue;
         }
 
-        let token_path = resolve_command_via_path_value(
+        let token_path = match resolve_command_via_path_value(
             &token,
             path_override
                 .as_deref()
                 .or(path_from_env_entries(env_entries).as_deref()),
-        )
-        .unwrap_or(token.clone());
+        ) {
+            Ok(Some(path)) => path,
+            Ok(None) => token.clone(),
+            // Fail closed: an unclassifiable interpreter is treated as blocked.
+            Err(_) => return true,
+        };
 
         if token_is_shell_interpreter(&token_path)
             && let Some(target) = next_shebang_token(&mut scan)
@@ -1160,9 +1338,20 @@ fn should_block_mutable_native_exec(path: &str, args: &[String]) -> bool {
     path_is_mutable_native_exec(path) || loader_targets_mutable_native_exec(path, args)
 }
 
-fn resolve_exec_search_target(file: &str, env_entries: &[String]) -> String {
-    resolve_command_via_path_value(file, path_from_env_entries(env_entries).as_deref())
-        .unwrap_or_else(|| file.to_owned())
+// execvp, execvpe and posix_spawnp all search PATH from the caller's own
+// environment rather than the envp handed to the child, so the guard reads the
+// same source libc will. A name containing a slash is not searched at all, so
+// nothing is read from the caller environment unless a search happens.
+fn resolve_exec_search_target(file: &str) -> Result<Option<String>, ExecSearchError> {
+    if file.contains('/') {
+        return Ok(Some(file.to_owned()));
+    }
+    let path_value = current_process_path_value()
+        .map_err(|_| ExecSearchError::InputTooLarge)?
+        // POSIX libc falls back to a system default search path when PATH is
+        // absent, so the guard must search the same places libc would.
+        .unwrap_or_else(|| DEFAULT_SEARCH_PATH.to_owned());
+    resolve_command_via_path_value(file, Some(&path_value))
 }
 
 fn stat_matches_protected_git(candidate: &StatSignature) -> bool {
@@ -1190,7 +1379,7 @@ fn is_git_path(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn report(message: &str) {
+fn report_with_errno(message: &str, errno: c_int) {
     // SAFETY: message is a live &str valid for len bytes (write is read-only); errno_location() returns libc's valid errno slot.
     unsafe {
         libc::write(
@@ -1198,8 +1387,17 @@ fn report(message: &str) {
             message.as_ptr().cast::<c_void>(),
             message.len(),
         );
-        *errno_location() = libc::EPERM;
+        *errno_location() = errno;
     }
+}
+
+fn set_errno(errno: c_int) {
+    // SAFETY: errno_location() returns the current thread's valid errno slot.
+    unsafe { *errno_location() = errno };
+}
+
+fn report(message: &str) {
+    report_with_errno(message, libc::EPERM);
 }
 
 #[cfg(target_os = "linux")]
@@ -1234,6 +1432,33 @@ fn report_mutable_native_exec_block() {
 
 fn report_workcell_launcher_loader_env_block() {
     report(WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE);
+}
+
+fn report_exec_input_block() {
+    report_with_errno("Workcell rejected oversized exec arguments.\n", libc::E2BIG);
+}
+
+fn report_relative_search_path_block() {
+    report_with_errno(
+        "Workcell rejected a command found only through a relative PATH entry.\n",
+        libc::EACCES,
+    );
+}
+
+// Fail closed at every interposed entry point: exec inputs the guard refuses to
+// copy are also inputs it cannot classify, so the call is rejected rather than
+// forwarded unchecked. `$failure` is the entry point's own error convention
+// (-1 for the exec family, an errno value for posix_spawn/posix_spawnp).
+macro_rules! bounded_exec_input {
+    ($parse:expr, $failure:expr) => {
+        match $parse {
+            Ok(value) => value,
+            Err(ExecInputTooLarge) => {
+                report_exec_input_block();
+                return $failure;
+            }
+        }
+    };
 }
 
 unsafe fn load_symbol<T: Copy>(name: &CStr) -> T {
@@ -1287,17 +1512,6 @@ fn posix_spawnp_fn() -> PosixSpawnpFn {
 fn real_syscall_fn() -> SyscallFn {
     // SAFETY: c"syscall" is a valid C-string literal and matches the SyscallFn ABI resolved into this OnceLock.
     *REAL_SYSCALL_FN.get_or_init(|| unsafe { load_symbol(c"syscall") })
-}
-
-fn c_path_string(path: *const c_char) -> String {
-    if path.is_null() {
-        String::new()
-    } else {
-        // SAFETY: path is non-null (checked above) and a NUL-terminated C string from the exec ABI.
-        unsafe { CStr::from_ptr(path) }
-            .to_string_lossy()
-            .into_owned()
-    }
 }
 
 fn fd_matches_protected_git(fd: c_int) -> bool {
@@ -1384,9 +1598,9 @@ unsafe extern "C" fn guarded_execve(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let path_string = c_path_string(path);
-    let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(effective_env_ptr(envp));
+    let path_string = bounded_exec_input!(bounded_c_string(path), -1);
+    let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
 
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1415,10 +1629,9 @@ unsafe extern "C" fn guarded_execve(
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_char) -> c_int {
-    let path_string = c_path_string(path);
-    let args = collect_cstring_array(argv);
-    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
-    let env_entries = collect_cstring_array(unsafe { environ.cast() });
+    let path_string = bounded_exec_input!(bounded_c_string(path), -1);
+    let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    let env_entries = bounded_exec_input!(current_process_env_entries(), -1);
 
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1447,11 +1660,32 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
-    let file_string = c_path_string(file);
-    let args = collect_cstring_array(argv);
-    // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
-    let env_entries = collect_cstring_array(unsafe { environ.cast() });
-    let effective_path = resolve_exec_search_target(&file_string, &env_entries);
+    let file_string = bounded_exec_input!(bounded_c_string(file), -1);
+    let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    let env_entries = bounded_exec_input!(current_process_env_entries(), -1);
+    let effective_path = match resolve_exec_search_target(&file_string) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            set_errno(libc::ENOENT);
+            return -1;
+        }
+        Err(ExecSearchError::InputTooLarge) => {
+            report_exec_input_block();
+            return -1;
+        }
+        Err(ExecSearchError::PermissionDenied) => {
+            set_errno(libc::EACCES);
+            return -1;
+        }
+        Err(ExecSearchError::RelativeSearchPath) => {
+            report_relative_search_path_block();
+            return -1;
+        }
+        Err(ExecSearchError::LookupFailed(errno)) => {
+            set_errno(errno);
+            return -1;
+        }
+    };
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1484,10 +1718,32 @@ unsafe extern "C" fn guarded_execvpe(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let file_string = c_path_string(file);
-    let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(effective_env_ptr(envp));
-    let effective_path = resolve_exec_search_target(&file_string, &env_entries);
+    let file_string = bounded_exec_input!(bounded_c_string(file), -1);
+    let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
+    let effective_path = match resolve_exec_search_target(&file_string) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            set_errno(libc::ENOENT);
+            return -1;
+        }
+        Err(ExecSearchError::InputTooLarge) => {
+            report_exec_input_block();
+            return -1;
+        }
+        Err(ExecSearchError::PermissionDenied) => {
+            set_errno(libc::EACCES);
+            return -1;
+        }
+        Err(ExecSearchError::RelativeSearchPath) => {
+            report_relative_search_path_block();
+            return -1;
+        }
+        Err(ExecSearchError::LookupFailed(errno)) => {
+            set_errno(errno);
+            return -1;
+        }
+    };
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1522,9 +1778,9 @@ unsafe extern "C" fn guarded_execveat(
     envp: *const *const c_char,
     flags: c_int,
 ) -> c_int {
-    let pathname_string = c_path_string(pathname);
-    let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(effective_env_ptr(envp));
+    let pathname_string = bounded_exec_input!(bounded_c_string(pathname), -1);
+    let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
     let git_target = is_git_execveat_target(dirfd, &pathname_string, flags);
     let effective_path =
         if git_target && (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
@@ -1649,8 +1905,8 @@ unsafe extern "C" fn guarded_fexecve(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(effective_env_ptr(envp));
+    let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
 
     if should_block_workcell_launcher_fd_loader_env(fd, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1696,9 +1952,10 @@ unsafe extern "C" fn guarded_posix_spawn(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let path_string = c_path_string(path);
-    let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(effective_env_ptr(envp));
+    let path_string = bounded_exec_input!(bounded_c_string(path), libc::E2BIG);
+    let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
+    let env_entries =
+        bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
 
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1734,10 +1991,24 @@ unsafe extern "C" fn guarded_posix_spawnp(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let file_string = c_path_string(file);
-    let args = collect_cstring_array(argv);
-    let env_entries = collect_cstring_array(effective_env_ptr(envp));
-    let effective_path = resolve_exec_search_target(&file_string, &env_entries);
+    let file_string = bounded_exec_input!(bounded_c_string(file), libc::E2BIG);
+    let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
+    let env_entries =
+        bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
+    let effective_path = match resolve_exec_search_target(&file_string) {
+        Ok(Some(path)) => path,
+        Ok(None) => return libc::ENOENT,
+        Err(ExecSearchError::InputTooLarge) => {
+            report_exec_input_block();
+            return libc::E2BIG;
+        }
+        Err(ExecSearchError::PermissionDenied) => return libc::EACCES,
+        Err(ExecSearchError::RelativeSearchPath) => {
+            report_relative_search_path_block();
+            return libc::EACCES;
+        }
+        Err(ExecSearchError::LookupFailed(errno)) => return errno,
+    };
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
@@ -1919,6 +2190,8 @@ pub mod fuzz_api {
         path_value: Option<&str>,
     ) -> Option<String> {
         super::resolve_command_via_path_value(command, path_value)
+            .ok()
+            .flatten()
     }
 
     /// Fuzz `env_has_unsafe_git_override`.
@@ -1946,7 +2219,7 @@ pub mod fuzz_api {
 mod tests {
     use super::*;
     use crate::gitpolicy::*;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::PathBuf;
     use std::process;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2329,5 +2602,228 @@ mod tests {
             assert_eq!(result, -1, "{name} must refuse the blocked target");
             assert_eq!(errno, libc::EPERM, "{name} must be refused by the guard");
         }
+    }
+
+    #[test]
+    fn exec_input_limits_accept_exact_values_and_reject_over_limits() {
+        let exact_string = CString::new(vec![b'x'; MAX_EXEC_STRING_BYTES]).expect("exact string");
+        assert_eq!(
+            bounded_c_string(exact_string.as_ptr())
+                .expect("exact string accepted")
+                .len(),
+            MAX_EXEC_STRING_BYTES
+        );
+        let oversized_string =
+            CString::new(vec![b'x'; MAX_EXEC_STRING_BYTES + 1]).expect("oversized string");
+        assert_eq!(
+            bounded_c_string(oversized_string.as_ptr()),
+            Err(ExecInputTooLarge)
+        );
+
+        let aggregate_item =
+            CString::new(vec![b'a'; MAX_EXEC_STRING_BYTES - 1]).expect("aggregate item");
+        let exact_aggregate_items: Vec<*const c_char> = (0..16)
+            .map(|_| aggregate_item.as_ptr())
+            .chain([std::ptr::null()])
+            .collect();
+        assert_eq!(
+            collect_cstring_array(exact_aggregate_items.as_ptr())
+                .expect("exact aggregate accepted")
+                .len(),
+            16
+        );
+        let aggregate_over_limit: Vec<*const c_char> = (0..17)
+            .map(|_| aggregate_item.as_ptr())
+            .chain([std::ptr::null()])
+            .collect();
+        assert_eq!(
+            collect_cstring_array(aggregate_over_limit.as_ptr()),
+            Err(ExecInputTooLarge)
+        );
+
+        let element = CString::new("x").expect("element");
+        let exact_elements: Vec<*const c_char> = (0..MAX_EXEC_ELEMENTS)
+            .map(|_| element.as_ptr())
+            .chain([std::ptr::null()])
+            .collect();
+        assert_eq!(
+            collect_cstring_array(exact_elements.as_ptr())
+                .expect("exact element count accepted")
+                .len(),
+            MAX_EXEC_ELEMENTS
+        );
+        let element_over_limit: Vec<*const c_char> = (0..=MAX_EXEC_ELEMENTS)
+            .map(|_| element.as_ptr())
+            .chain([std::ptr::null()])
+            .collect();
+        assert_eq!(
+            collect_cstring_array(element_over_limit.as_ptr()),
+            Err(ExecInputTooLarge)
+        );
+    }
+
+    #[test]
+    fn path_limits_accept_exact_values_and_reject_over_limits() {
+        let exact_segment = "x".repeat(MAX_EXEC_PATH_SEGMENT_BYTES);
+        assert!(validate_path_value(&exact_segment).is_ok());
+        assert_eq!(
+            validate_path_value(&"x".repeat(MAX_EXEC_PATH_SEGMENT_BYTES + 1)),
+            Err(ExecInputTooLarge)
+        );
+
+        let exact_segments = std::iter::repeat_n("x", MAX_EXEC_PATH_SEGMENTS)
+            .collect::<Vec<_>>()
+            .join(":");
+        assert!(validate_path_value(&exact_segments).is_ok());
+        let over_segments = std::iter::repeat_n("x", MAX_EXEC_PATH_SEGMENTS + 1)
+            .collect::<Vec<_>>()
+            .join(":");
+        assert_eq!(validate_path_value(&over_segments), Err(ExecInputTooLarge));
+
+        // An oversized PATH is a search failure the caller can distinguish, not
+        // a silent fall-through to an unclassified target.
+        assert_eq!(
+            resolve_command_via_path_value("true", Some(&over_segments)),
+            Err(ExecSearchError::InputTooLarge)
+        );
+
+        // A PATH value is read against the PATH budget, not the per-string one,
+        // so validate_path_value is what decides -- a value between the two
+        // limits must reach it rather than being refused by the reader.
+        let between_limits = CString::new(vec![b'/'; MAX_EXEC_STRING_BYTES + 1])
+            .expect("path value between the string and PATH limits");
+        assert_eq!(
+            bounded_c_string(between_limits.as_ptr()),
+            Err(ExecInputTooLarge)
+        );
+        assert_eq!(
+            bounded_c_string_with_limit(between_limits.as_ptr(), MAX_EXEC_PATH_BYTES)
+                .expect("PATH budget accepts it")
+                .len(),
+            MAX_EXEC_STRING_BYTES + 1
+        );
+    }
+
+    #[test]
+    fn path_search_walks_past_a_directory_that_shadows_the_command() {
+        let dir = create_temp_test_dir("path-search");
+        let shadow = dir.join("shadow");
+        let real = dir.join("real");
+        fs::create_dir(&shadow).expect("shadow dir");
+        fs::create_dir(&real).expect("real dir");
+        // A searchable directory named like the command answers access(X_OK),
+        // but libc keeps searching past it, so the guard must too.
+        fs::create_dir(shadow.join("probe")).expect("shadow probe dir");
+        let target = real.join("probe");
+        fs::write(&target, "#!/bin/sh\nexit 0\n").expect("real probe");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("probe mode");
+
+        let path_value = format!("{}:{}", shadow.display(), real.display());
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&path_value)),
+            Ok(Some(
+                fs::canonicalize(&target)
+                    .expect("canonical probe")
+                    .to_string_lossy()
+                    .into_owned()
+            ))
+        );
+
+        // With only the directory on PATH the search reports the same
+        // permission failure libc reports, never the directory itself.
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&shadow.display().to_string())),
+            Err(ExecSearchError::PermissionDenied)
+        );
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn path_search_reports_permission_denied_like_libc() {
+        let dir = create_temp_test_dir("path-eacces");
+        let plain = dir.join("plain");
+        fs::create_dir(&plain).expect("plain dir");
+        let unreadable = dir.join("unreadable");
+        fs::create_dir(&unreadable).expect("unreadable dir");
+
+        // A present but non-executable file: libc gets EACCES from execve,
+        // remembers it, and reports it when nothing later matches.
+        fs::write(plain.join("probe"), "").expect("plain probe");
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&plain.display().to_string())),
+            Err(ExecSearchError::PermissionDenied)
+        );
+
+        // A candidate under a directory the caller cannot search answers EACCES
+        // to an existence probe as well, so it must be read from the failed
+        // executable lookup rather than mistaken for an absent file.
+        fs::write(unreadable.join("probe"), "").expect("unreadable probe");
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600)).expect("dir mode");
+        // SAFETY: geteuid takes no arguments and cannot fail.
+        if unsafe { libc::geteuid() } != 0 {
+            assert_eq!(
+                resolve_command_via_path_value("probe", Some(&unreadable.display().to_string())),
+                Err(ExecSearchError::PermissionDenied)
+            );
+        }
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o700)).expect("restore mode");
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn path_search_stops_where_libc_stops() {
+        let dir = create_temp_test_dir("path-eloop");
+        let looped = dir.join("looped");
+        fs::create_dir(&looped).expect("looped dir");
+        symlink("probe", looped.join("probe")).expect("self-referential symlink");
+
+        // libc reports ELOOP and stops; walking on would let the guard classify
+        // a later candidate that libc never reaches.
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&looped.display().to_string())),
+            Err(ExecSearchError::LookupFailed(libc::ELOOP))
+        );
+        let with_later_entry = format!("{}:/usr/bin", looped.display());
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&with_later_entry)),
+            Err(ExecSearchError::LookupFailed(libc::ELOOP))
+        );
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn relative_path_entries_never_resolve_a_command() {
+        let dir = create_temp_test_dir("relative-path");
+        let target = dir.join("probe");
+        fs::write(&target, "#!/bin/sh\nexit 0\n").expect("probe");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("probe mode");
+        let absolute = dir.display().to_string();
+
+        // An absolute entry still resolves, so a trailing or leading empty
+        // segment does not break an ordinary PATH.
+        for path_value in [
+            format!(":{absolute}"),
+            format!("{absolute}:"),
+            absolute.clone(),
+        ] {
+            assert!(
+                matches!(
+                    resolve_command_via_path_value("probe", Some(&path_value)),
+                    Ok(Some(_))
+                ),
+                "{path_value} must still resolve the absolute entry"
+            );
+        }
+
+        // A command reachable only through a relative entry is refused rather
+        // than resolved against a working directory the guard cannot pin.
+        for path_value in ["", ".", ":", "relative/bin"] {
+            assert_eq!(
+                resolve_command_via_path_value("probe", Some(path_value)),
+                Err(ExecSearchError::RelativeSearchPath),
+                "{path_value} must not resolve a command"
+            );
+        }
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 }
