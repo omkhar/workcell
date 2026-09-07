@@ -461,17 +461,7 @@ func (check *pinnedInputsCheck) validateHostedControlsWorkflow() error {
 	if err != nil {
 		return err
 	}
-	for _, needle := range []string{
-		`name: hosted-controls-audit`,
-		`run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
-		`WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}`,
-		`WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"`,
-	} {
-		if !strings.Contains(workflow, needle) {
-			return fmt.Errorf(".github/workflows/hosted-controls.yml must contain %q", needle)
-		}
-	}
-	return nil
+	return ValidateHostedControlsWorkflow(workflow)
 }
 
 func (check *pinnedInputsCheck) validateReleaseVerificationJobs() error {
