@@ -69,11 +69,6 @@ The launcher removes these environment values at startup:
 - Linux loader values such as `LD_PRELOAD` and `LD_LIBRARY_PATH`.
 - Each `DYLD_*` value.
 
-The launcher then sets `LD_PRELOAD` to the approved Workcell exec guard. Thus,
-the removal keeps caller-supplied loader values out, but each child process
-keeps the guard. On the strict profile, the exec guard refuses a child
-environment that does not have this exact value.
-
 The launcher resolves the real host home before it sources Go host wrappers. It
 sets a default cache root for Workcell Go tools. The Go environment helper supplies
 `GOPATH`, `GOMODCACHE`, and `GOCACHE` when they have no value.

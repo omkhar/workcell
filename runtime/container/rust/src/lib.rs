@@ -129,18 +129,6 @@ const APPROVED_NATIVE_LAUNCHERS: &[&str] = &[
     "/usr/local/libexec/workcell/core/git",
 ];
 
-// The bash scripts an approved native launcher hands control to. Only this
-// transition may exec without the guard preload already in the child
-// environment, because the scripts themselves are what install it.
-#[cfg(target_os = "linux")]
-const APPROVED_CONTROL_SCRIPTS: &[&str] = &[
-    "/usr/local/libexec/workcell/entrypoint.sh",
-    "/usr/local/libexec/workcell/development-wrapper.sh",
-    "/usr/local/libexec/workcell/git-wrapper.sh",
-    "/usr/local/libexec/workcell/node-wrapper.sh",
-    "/usr/local/libexec/workcell/provider-wrapper.sh",
-];
-
 const MUTABLE_EXEC_ROOTS: &[&str] = &["/workspace", "/state"];
 const ALLOWED_LD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
 // Bounds on the exec inputs this guard copies out of caller memory before it
@@ -416,7 +404,7 @@ fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
 // child never gets; this check has to run on the raw pointer, before that
 // substitution.
 fn should_block_null_explicit_env(envp: *const *const c_char) -> bool {
-    envp.is_null() && should_block_missing_guard_env("", &[], &[])
+    envp.is_null() && should_block_missing_guard_env(&[])
 }
 
 // libc consults only PATH from the caller's environment when it searches, so
@@ -994,45 +982,17 @@ fn env_has_approved_guard_preload(env_entries: &[String]) -> bool {
     preload_entries == 1
 }
 
+// No exemption: an approved launcher would have to be recognised by pathname,
+// and the pathname checked is not the file the kernel later runs. The launcher
+// restores the preload before it execs, so there is nothing left for an
+// exemption to cover.
 #[cfg(target_os = "linux")]
-fn current_process_is_approved_native_launcher() -> bool {
-    fs::read_link("/proc/self/exe")
-        .is_ok_and(|exe| path_matches_any_same_file(&exe, APPROVED_NATIVE_LAUNCHERS))
-}
-
-#[cfg(target_os = "linux")]
-fn path_is_approved_control_script(path: &str) -> bool {
-    path.starts_with('/') && path_matches_any_same_file(Path::new(path), APPROVED_CONTROL_SCRIPTS)
-}
-
-// The one exec that may legitimately precede the preload: an approved native
-// launcher handing control to bash on an approved control script. The launcher
-// restores the preload before it execs, so in the shipped image this is a
-// fallback rather than a normal path; it keeps the container startable if that
-// restore is ever lost, and widens nothing else. Both paths must be absolute,
-// so the same-file check resolves the file the kernel will run rather than a
-// working-directory namesake.
-#[cfg(target_os = "linux")]
-fn is_approved_launcher_control_transition(path: &str, args: &[String]) -> bool {
-    path.starts_with('/')
-        && current_process_is_approved_native_launcher()
-        && path_matches_any_same_file(Path::new(path), APPROVED_WRAPPER_LAUNCHERS)
-        && args
-            .get(1)
-            .is_some_and(|script| path_is_approved_control_script(script))
-}
-
-// `path` is the target being executed; pass "" for descriptor targets, which
-// have no path to match and so can never be the control transition.
-#[cfg(target_os = "linux")]
-fn should_block_missing_guard_env(path: &str, args: &[String], env_entries: &[String]) -> bool {
-    current_mode_blocks_mutable_native_exec()
-        && !env_has_approved_guard_preload(env_entries)
-        && !is_approved_launcher_control_transition(path, args)
+fn should_block_missing_guard_env(env_entries: &[String]) -> bool {
+    current_mode_blocks_mutable_native_exec() && !env_has_approved_guard_preload(env_entries)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn should_block_missing_guard_env(_path: &str, _args: &[String], _env_entries: &[String]) -> bool {
+fn should_block_missing_guard_env(_env_entries: &[String]) -> bool {
     false
 }
 
@@ -1915,9 +1875,7 @@ unsafe extern "C" fn guarded_execve(
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_null_explicit_env(envp)
-        || should_block_missing_guard_env(&path_string, &args, &env_entries)
-    {
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
     }
@@ -1959,7 +1917,7 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
+    if should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
     }
@@ -2024,7 +1982,7 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
+    if should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
     }
@@ -2093,9 +2051,7 @@ unsafe extern "C" fn guarded_execvpe(
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_null_explicit_env(envp)
-        || should_block_missing_guard_env(&effective_path, &args, &env_entries)
-    {
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
     }
@@ -2246,9 +2202,7 @@ unsafe extern "C" fn guarded_execveat(
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_null_explicit_env(envp)
-        || should_block_missing_guard_env(&effective_path, &args, &env_entries)
-    {
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
     }
@@ -2303,11 +2257,7 @@ unsafe extern "C" fn guarded_fexecve(
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    // A descriptor target has no path, so it can never be the approved
-    // launcher control transition; pass an empty path to say so.
-    if should_block_null_explicit_env(envp)
-        || should_block_missing_guard_env("", &args, &env_entries)
-    {
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
     }
@@ -2357,9 +2307,7 @@ unsafe extern "C" fn guarded_posix_spawn(
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_null_explicit_env(envp)
-        || should_block_missing_guard_env(&path_string, &args, &env_entries)
-    {
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return libc::EPERM;
     }
@@ -2423,9 +2371,7 @@ unsafe extern "C" fn guarded_posix_spawnp(
 
     // Last of the refusals: each one above names a more specific reason, and
     // this is the fail-closed default for a child that would run unguarded.
-    if should_block_null_explicit_env(envp)
-        || should_block_missing_guard_env(&effective_path, &args, &env_entries)
-    {
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return libc::EPERM;
     }
@@ -3132,13 +3078,6 @@ mod tests {
             format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
             format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
         ]));
-        // A relative target cannot be same-file checked against the file the
-        // kernel will actually run, so it is never an approved control script.
-        assert!(!path_is_approved_control_script("entrypoint.sh"));
-        assert!(!is_approved_launcher_control_transition(
-            "bin/bash",
-            &["bash".to_string(), APPROVED_CONTROL_SCRIPTS[0].to_string()],
-        ));
     }
 
     #[test]
@@ -3151,7 +3090,7 @@ mod tests {
         // the environment the missing-guard classifier refuses.
         assert_eq!(
             should_block_null_explicit_env(std::ptr::null()),
-            should_block_missing_guard_env("", &[], &[])
+            should_block_missing_guard_env(&[])
         );
         // It cannot be asked of the classifiers, because this substitution
         // would report the caller's own environment as the child's.

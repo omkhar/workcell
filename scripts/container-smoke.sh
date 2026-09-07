@@ -3796,7 +3796,10 @@ EOF
     echo "expected fd loader option invocation of the real Copilot payload to fail" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-fd-argv0.out
+  # `env -u LD_PRELOAD bash -c` hands bash a child environment without the
+  # guard preload, so the guard now refuses the first hop and the loader is
+  # never reached. Either refusal proves the launch does not happen.
+  grep -Eq "Workcell blocked direct protected runtime execution|Workcell blocked child execution without the approved exec guard preload" /tmp/copilot-loader-fd-argv0.out
   cp "$LOADER" "$EXEC_TMP/workcell-loader-copy"
   chmod 0700 "$EXEC_TMP/workcell-loader-copy"
   if env -u LD_PRELOAD "$EXEC_TMP/workcell-loader-copy" --argv0 copilot /usr/local/libexec/workcell/real/copilot --version >/tmp/copilot-loader-copy-argv0.out 2>&1; then
@@ -3808,7 +3811,10 @@ EOF
     echo "expected deleted-fd loader option invocation of the real Copilot payload to fail" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct protected runtime execution" /tmp/copilot-loader-deleted-fd-argv0.out
+  # `env -u LD_PRELOAD bash -c` hands bash a child environment without the
+  # guard preload, so the guard now refuses the first hop and the loader is
+  # never reached. Either refusal proves the launch does not happen.
+  grep -Eq "Workcell blocked direct protected runtime execution|Workcell blocked child execution without the approved exec guard preload" /tmp/copilot-loader-deleted-fd-argv0.out
   cp /bin/true "$EXEC_TMP/workcell-state-native"
   chmod 0700 "$EXEC_TMP/workcell-state-native"
   if env -u LD_PRELOAD bash -c 'exec 9<"$1"; /proc/self/fd/9 "$2" --version' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-fd-target.out 2>&1; then echo "expected strict profile to reject fd loader-mediated native executable launches from /state" >&2; exit 1; fi
