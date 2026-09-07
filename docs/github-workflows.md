@@ -104,10 +104,12 @@ It creates source-dependent manifests and the amd64 image from the extracted tre
 It creates the formula from the verified archive digest.
 The native arm64 image job builds from the checked-out release tag.
 
-The assembly job creates manifests, software bills of materials, checksums, and one OCI layout.
+A separate read-only job creates the nine non-image signing subjects.
+That job creates the software bills of materials, the builder-environment manifest, and the checksums.
+The assembly job creates one OCI layout and the bound handoff manifest.
+It copies the nine subjects from the binding job and does not create them again.
 The architecture build jobs and assembly job have only `contents: read` permission.
 They transfer bound artifacts with GitHub Actions artifact runtime credentials.
-A separate read-only job creates the nine non-image signing subjects.
 The signer downloads those subjects by immutable artifact ID and requires exact byte matches.
 A release-approved signing job validates the handoff and publishes the OCI layout.
 The signing job uses fixed tools and does not check out repository code.
