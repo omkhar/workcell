@@ -3831,6 +3831,48 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader.out
+  # Loader invocation-form matrix, replayed against the real loader. The Rust
+  # table in runtime/container/rust/tests/loader_forms.rs states the same forms
+  # against the exported guard entry points; these rows put the /state native
+  # payload in the exec-target position, which only the runtime image has. The
+  # approved preload stays in the child environment here, so a refused row
+  # reports its own reason rather than the missing-preload default. An exit
+  # status is not the property under test: the loader answers a form it accepts
+  # in its own way, so an unrefused row is proved by the absence of the message.
+  loader_form_refused() {
+    local label="$1"
+    shift
+    if "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1; then
+      echo "expected loader invocation form ${label} to be refused" >&2
+      exit 1
+    fi
+    grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." "/tmp/loader-form-${label}.out"
+  }
+  loader_form_not_refused() {
+    local label="$1"
+    shift
+    "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1 || true
+    if grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." "/tmp/loader-form-${label}.out"; then
+      echo "expected loader invocation form ${label} to locate its exec target past the option" >&2
+      cat "/tmp/loader-form-${label}.out" >&2
+      exit 1
+    fi
+  }
+  # Control row: believe the matrix only after it observes a known refusal.
+  loader_form_refused control "$EXEC_TMP/workcell-state-native"
+  loader_form_refused unknown-arity-option --workcell-not-a-real-option "$EXEC_TMP/workcell-state-native"
+  loader_form_refused option-abbreviation --argv "$EXEC_TMP/workcell-state-native"
+  loader_form_refused valueless-then-target --inhibit-cache "$EXEC_TMP/workcell-state-native"
+  loader_form_refused end-of-options -- "$EXEC_TMP/workcell-state-native"
+  loader_form_refused library-path-semicolons "--library-path=/usr/lib;/state/lib" /bin/true
+  loader_form_refused preload-origin-expansion --preload '$ORIGIN/../evil.so' /bin/true
+  loader_form_not_refused argv0-separate-value --argv0 "$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_not_refused argv0-attached-value "--argv0=$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_not_refused inhibit-rpath-empty-value --inhibit-rpath= /bin/true
+  loader_form_not_refused hwcaps-mask-separate-value --glibc-hwcaps-mask "$EXEC_TMP/workcell-state-native" /bin/true
+  # The split-at-equals defect the Rust table records as pending: the truncated
+  # prefix is a mutable native payload, so only this lane can observe it.
+  loader_form_not_refused target-with-equals-sign "$EXEC_TMP/workcell-state-native=x"
   if WORKCELL_MODE=breakglass "$EXEC_TMP/workcell-state-native" >/tmp/state-native-workcell-mode-bypass.out 2>&1; then
     echo "expected strict profile to ignore caller-supplied WORKCELL_MODE for mutable native execution" >&2
     exit 1
