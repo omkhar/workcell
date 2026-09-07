@@ -129,6 +129,18 @@ const APPROVED_NATIVE_LAUNCHERS: &[&str] = &[
     "/usr/local/libexec/workcell/core/git",
 ];
 
+// The bash scripts an approved native launcher hands control to. Only this
+// transition may exec without the guard preload already in the child
+// environment, because the scripts themselves are what install it.
+#[cfg(target_os = "linux")]
+const APPROVED_CONTROL_SCRIPTS: &[&str] = &[
+    "/usr/local/libexec/workcell/entrypoint.sh",
+    "/usr/local/libexec/workcell/development-wrapper.sh",
+    "/usr/local/libexec/workcell/git-wrapper.sh",
+    "/usr/local/libexec/workcell/node-wrapper.sh",
+    "/usr/local/libexec/workcell/provider-wrapper.sh",
+];
+
 const MUTABLE_EXEC_ROOTS: &[&str] = &["/workspace", "/state"];
 const ALLOWED_LD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
 // Bounds on the exec inputs this guard copies out of caller memory before it
@@ -163,6 +175,7 @@ const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native 
 const WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE: &str =
     "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution.\n";
 const NATIVE_LOADER_ENV_BLOCK_MESSAGE: &str = "Workcell blocked unsafe dynamic-loader environment for native execution on the strict profile.\n";
+const MISSING_GUARD_ENV_BLOCK_MESSAGE: &str = "Workcell blocked child execution without the approved exec guard preload on the strict profile.\n";
 
 type ExecveFn =
     unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
@@ -394,6 +407,15 @@ fn effective_env_ptr(envp: *const *const c_char) -> *const *const c_char {
 fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
     // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
     collect_cstring_array(unsafe { environ.cast() })
+}
+
+// A NULL envp gives the child an empty environment, so it strips the guard
+// preload just as effectively as an explicit environment that omits it. The
+// classifiers read `effective_env_ptr`, which substitutes the caller's own
+// environment for NULL and would therefore see a preload the child never gets;
+// this check has to run on the raw pointer, before that substitution.
+fn should_block_null_explicit_env(envp: *const *const c_char) -> bool {
+    envp.is_null() && current_mode_blocks_mutable_native_exec()
 }
 
 // libc consults only PATH from the caller's environment when it searches, so
@@ -948,6 +970,65 @@ fn should_block_loader_env_for_fd(fd: c_int, env_entries: &[String]) -> bool {
 
 #[cfg(not(target_os = "linux"))]
 fn should_block_loader_env_for_fd(_fd: c_int, _env_entries: &[String]) -> bool {
+    false
+}
+
+// The child environment must carry the guard and nothing else in LD_PRELOAD:
+// a second entry would let an attacker-chosen library load alongside it, and
+// the loader silently drops the whole variable for set-user-ID targets, so
+// "contains the guard" is not the same question as "is exactly the guard".
+#[cfg(target_os = "linux")]
+fn env_has_approved_guard_preload(env_entries: &[String]) -> bool {
+    let mut preload_entries = 0;
+    for entry in env_entries {
+        let Some(value) = env_entry_value(entry, "LD_PRELOAD") else {
+            continue;
+        };
+        preload_entries += 1;
+        if preload_entries > 1 || value != ALLOWED_LD_PRELOAD {
+            return false;
+        }
+    }
+    preload_entries == 1
+}
+
+#[cfg(target_os = "linux")]
+fn current_process_is_approved_native_launcher() -> bool {
+    fs::read_link("/proc/self/exe")
+        .is_ok_and(|exe| path_matches_any_same_file(&exe, APPROVED_NATIVE_LAUNCHERS))
+}
+
+#[cfg(target_os = "linux")]
+fn path_is_approved_control_script(path: &str) -> bool {
+    path.starts_with('/') && path_matches_any_same_file(Path::new(path), APPROVED_CONTROL_SCRIPTS)
+}
+
+// The one exec that legitimately precedes the preload: an approved native
+// launcher handing control to bash running an approved control script, which is
+// the script that sets LD_PRELOAD for everything below it. Both paths must be
+// absolute, so the same-file check resolves the file the kernel will run rather
+// than a working-directory namesake.
+#[cfg(target_os = "linux")]
+fn is_approved_launcher_control_transition(path: &str, args: &[String]) -> bool {
+    path.starts_with('/')
+        && current_process_is_approved_native_launcher()
+        && path_matches_any_same_file(Path::new(path), APPROVED_WRAPPER_LAUNCHERS)
+        && args
+            .get(1)
+            .is_some_and(|script| path_is_approved_control_script(script))
+}
+
+// `path` is the target being executed; pass "" for descriptor targets, which
+// have no path to match and so can never be the control transition.
+#[cfg(target_os = "linux")]
+fn should_block_missing_guard_env(path: &str, args: &[String], env_entries: &[String]) -> bool {
+    current_mode_blocks_mutable_native_exec()
+        && !env_has_approved_guard_preload(env_entries)
+        && !is_approved_launcher_control_transition(path, args)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn should_block_missing_guard_env(_path: &str, _args: &[String], _env_entries: &[String]) -> bool {
     false
 }
 
@@ -1627,6 +1708,10 @@ fn report_native_loader_env_block() {
     report(NATIVE_LOADER_ENV_BLOCK_MESSAGE);
 }
 
+fn report_missing_guard_env_block() {
+    report(MISSING_GUARD_ENV_BLOCK_MESSAGE);
+}
+
 fn report_workcell_launcher_loader_env_block() {
     report(WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE);
 }
@@ -1797,8 +1882,16 @@ unsafe extern "C" fn guarded_execve(
 ) -> c_int {
     let path_string = bounded_exec_input!(bounded_c_string(path), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    if should_block_null_explicit_env(envp) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
 
+    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -1834,6 +1927,10 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
     let env_entries = bounded_exec_input!(current_process_env_entries(), -1);
 
+    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -1892,6 +1989,10 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
         }
     };
 
+    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -1929,6 +2030,10 @@ unsafe extern "C" fn guarded_execvpe(
 ) -> c_int {
     let file_string = bounded_exec_input!(bounded_c_string(file), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    if should_block_null_explicit_env(envp) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
     let effective_path = match resolve_exec_search_target(&file_string) {
         Ok(Some(path)) => path,
@@ -1954,6 +2059,10 @@ unsafe extern "C" fn guarded_execvpe(
         }
     };
 
+    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -1993,6 +2102,10 @@ unsafe extern "C" fn guarded_execveat(
 ) -> c_int {
     let pathname_string = bounded_exec_input!(bounded_c_string(pathname), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    if should_block_null_explicit_env(envp) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
     let git_target = is_git_execveat_target(dirfd, &pathname_string, flags);
     let effective_path =
@@ -2001,6 +2114,10 @@ unsafe extern "C" fn guarded_execveat(
         } else {
             pathname_string.clone()
         };
+    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
 
     let (
         protected_target,
@@ -2134,8 +2251,18 @@ unsafe extern "C" fn guarded_fexecve(
     envp: *const *const c_char,
 ) -> c_int {
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
+    if should_block_null_explicit_env(envp) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
 
+    // A descriptor target has no path, so it can never be the approved
+    // launcher control transition; pass an empty path to say so.
+    if should_block_missing_guard_env("", &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
     if should_block_workcell_launcher_fd_loader_env(fd, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -2186,9 +2313,17 @@ unsafe extern "C" fn guarded_posix_spawn(
 ) -> c_int {
     let path_string = bounded_exec_input!(bounded_c_string(path), libc::E2BIG);
     let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
+    if should_block_null_explicit_env(envp) {
+        report_missing_guard_env_block();
+        return libc::EPERM;
+    }
     let env_entries =
         bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
 
+    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return libc::EPERM;
+    }
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return libc::EPERM;
@@ -2229,6 +2364,10 @@ unsafe extern "C" fn guarded_posix_spawnp(
 ) -> c_int {
     let file_string = bounded_exec_input!(bounded_c_string(file), libc::E2BIG);
     let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
+    if should_block_null_explicit_env(envp) {
+        report_missing_guard_env_block();
+        return libc::EPERM;
+    }
     let env_entries =
         bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
     let effective_path = match resolve_exec_search_target(&file_string) {
@@ -2246,6 +2385,10 @@ unsafe extern "C" fn guarded_posix_spawnp(
         Err(ExecSearchError::LookupFailed(errno)) => return errno,
     };
 
+    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return libc::EPERM;
+    }
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return libc::EPERM;
@@ -2948,6 +3091,53 @@ mod tests {
                 .len(),
             MAX_EXEC_STRING_BYTES + 1
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn guard_environment_requires_the_exact_preload() {
+        assert!(env_has_approved_guard_preload(&[format!(
+            "LD_PRELOAD={ALLOWED_LD_PRELOAD}"
+        )]));
+        assert!(!env_has_approved_guard_preload(&[]));
+        assert!(!env_has_approved_guard_preload(
+            &["LD_PRELOAD=".to_string()]
+        ));
+        assert!(!env_has_approved_guard_preload(&[
+            "LD_PRELOAD=/workspace/guard.so".to_string()
+        ]));
+        // The loader honours every LD_PRELOAD entry it is given, so an extra
+        // one alongside the approved guard is still an attacker-chosen library.
+        assert!(!env_has_approved_guard_preload(&[
+            "LD_PRELOAD=".to_string(),
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+        ]));
+        assert!(!env_has_approved_guard_preload(&[
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+        ]));
+        // A relative target cannot be same-file checked against the file the
+        // kernel will actually run, so it is never an approved control script.
+        assert!(!path_is_approved_control_script("entrypoint.sh"));
+        assert!(!is_approved_launcher_control_transition(
+            "bin/bash",
+            &["bash".to_string(), APPROVED_CONTROL_SCRIPTS[0].to_string()],
+        ));
+    }
+
+    #[test]
+    fn null_child_environment_is_treated_as_a_missing_guard_preload() {
+        let entry = CString::new(format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}")).expect("entry");
+        let envp: [*const c_char; 2] = [entry.as_ptr(), std::ptr::null()];
+
+        assert!(!should_block_null_explicit_env(envp.as_ptr()));
+        // A NULL envp hands the child an empty environment, so it strips the
+        // preload even though `effective_env_ptr` would report the caller's own.
+        assert_eq!(
+            should_block_null_explicit_env(std::ptr::null()),
+            current_mode_blocks_mutable_native_exec()
+        );
+        assert!(!effective_env_ptr(std::ptr::null::<*const c_char>()).is_null());
     }
 
     #[test]

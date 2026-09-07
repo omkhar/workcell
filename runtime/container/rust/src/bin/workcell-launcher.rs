@@ -442,12 +442,17 @@ mod tests {
         launcher_common::sanitize_env();
 
         assert!(env::var_os("BASH_ENV").is_none());
-        assert!(env::var_os("LD_PRELOAD").is_none());
+        assert_eq!(
+            env::var_os("LD_PRELOAD").as_deref(),
+            Some(std::ffi::OsStr::new(launcher_common::GUARD_PRELOAD))
+        );
         assert!(env::var_os("NODE_OPTIONS").is_none());
         assert!(env::var_os("NODE_EXTRA_CA_CERTS").is_none());
         assert!(env::var_os("SSL_CERT_FILE").is_none());
         assert!(env::var_os("SSL_CERT_DIR").is_none());
         assert!(env::var_os("WORKCELL_COPILOT_AUTH_REQUIRED").is_none());
+        // SAFETY: test-only environment cleanup while holding the test environment lock.
+        unsafe { env::remove_var("LD_PRELOAD") };
     }
 
     #[test]
