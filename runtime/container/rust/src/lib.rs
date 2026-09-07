@@ -162,6 +162,7 @@ const PROTECTED_RUNTIME_BLOCK_MESSAGE: &str =
 const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile.\n";
 const WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE: &str =
     "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution.\n";
+const NATIVE_LOADER_ENV_BLOCK_MESSAGE: &str = "Workcell blocked unsafe dynamic-loader environment for native execution on the strict profile.\n";
 
 type ExecveFn =
     unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
@@ -571,6 +572,28 @@ fn token_uses_env_interpreter(token: &str) -> bool {
     token_basename(token) == "env"
 }
 
+fn token_is_loader_environment_assignment(token: &str) -> bool {
+    let Some((name, _value)) = token.split_once('=') else {
+        return false;
+    };
+    token_is_loader_environment_name(name)
+}
+
+fn token_is_loader_environment_name(token: &str) -> bool {
+    matches!(
+        token,
+        "LD_PRELOAD" | "LD_AUDIT" | "LD_LIBRARY_PATH" | "LD_TRACE_LOADED_OBJECTS"
+    )
+}
+
+fn token_is_loader_environment_unset_option(token: &str) -> bool {
+    let name = token
+        .strip_prefix("--unset=")
+        .or_else(|| token.strip_prefix("-u").filter(|suffix| !suffix.is_empty()))
+        .map(|name| name.strip_prefix('=').unwrap_or(name));
+    name.is_some_and(token_is_loader_environment_name)
+}
+
 fn token_is_shell_interpreter(token: &str) -> bool {
     matches!(
         token_basename(token),
@@ -587,9 +610,29 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
     let mut path_override: Option<String> = None;
 
     while let Some(token) = next_shebang_token(&mut scan) {
-        if token == "-u" {
-            let _ = next_shebang_token(&mut scan);
+        // env can rewrite the loader environment before the target runs, so the
+        // options that add, drop or replace it end the scan with a refusal.
+        // -S / --split-string re-splits the rest of the line into tokens this
+        // scan cannot follow, so it is refused whatever it carries.
+        if token.starts_with("-S") || token.starts_with("--split-string") {
+            return true;
+        }
+        if token == "-i" || token == "--ignore-environment" || token == "-" {
+            return true;
+        }
+        if token == "-u" || token == "--unset" {
+            if next_shebang_token(&mut scan)
+                .is_some_and(|name| token_is_loader_environment_name(&name))
+            {
+                return true;
+            }
             continue;
+        }
+        if token_is_loader_environment_unset_option(&token) {
+            return true;
+        }
+        if token_is_loader_environment_assignment(&token) {
+            return true;
         }
 
         if let Some(path) = token.strip_prefix("PATH=") {
@@ -764,7 +807,7 @@ fn env_entry_value<'a>(entry: &'a str, key: &str) -> Option<&'a str> {
     if entry_key == key { Some(value) } else { None }
 }
 
-fn env_has_unsafe_workcell_launcher_loader_override(env_entries: &[String]) -> bool {
+fn env_has_unsafe_loader_override(env_entries: &[String]) -> bool {
     env_entries.iter().any(|entry| {
         env_entry_value(entry, "LD_AUDIT").is_some_and(|value| !value.is_empty())
             || env_entry_value(entry, "LD_LIBRARY_PATH").is_some_and(|value| !value.is_empty())
@@ -807,13 +850,79 @@ fn fd_matches_workcell_native_launcher(fd: c_int) -> bool {
 }
 
 fn should_block_workcell_launcher_loader_env(path: &str, env_entries: &[String]) -> bool {
-    path_is_workcell_native_launcher(path)
-        && env_has_unsafe_workcell_launcher_loader_override(env_entries)
+    path_is_workcell_native_launcher(path) && env_has_unsafe_loader_override(env_entries)
 }
 
 fn should_block_workcell_launcher_fd_loader_env(fd: c_int, env_entries: &[String]) -> bool {
-    fd_matches_workcell_native_launcher(fd)
-        && env_has_unsafe_workcell_launcher_loader_override(env_entries)
+    fd_matches_workcell_native_launcher(fd) && env_has_unsafe_loader_override(env_entries)
+}
+
+/// True when the target is something the dynamic loader interprets, so a
+/// loader environment override would change how it runs.  Regular files whose
+/// first two bytes are an ELF or shebang magic qualify; anything the guard
+/// cannot read is treated as loader sensitive rather than trusted.
+#[cfg(target_os = "linux")]
+fn file_descriptor_is_loader_sensitive(fd: c_int) -> bool {
+    let Some(mut file) = duplicate_fd_file(fd) else {
+        return true;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return true;
+    };
+    if (metadata.mode() & file_type_bits()) != regular_file_mode() {
+        return false;
+    }
+    let mut prefix = [0u8; 2];
+    if file.read_exact(&mut prefix).is_err() {
+        return true;
+    }
+    prefix == [0x7f, b'E'] || prefix == *b"#!"
+}
+
+#[cfg(target_os = "linux")]
+fn path_is_loader_sensitive(path: &str) -> bool {
+    if let Some(proc_fd) = path_is_current_process_fd_path(path) {
+        return file_descriptor_is_loader_sensitive(proc_fd);
+    }
+    // Stat before opening.  A non-regular target is never loader interpreted,
+    // and opening one from inside an interposed exec could block the caller.
+    let Ok(metadata) = fs::metadata(path) else {
+        return true;
+    };
+    if (metadata.mode() & file_type_bits()) != regular_file_mode() {
+        return false;
+    }
+    let Ok(mut file) = File::open(path) else {
+        return true;
+    };
+    let mut prefix = [0u8; 2];
+    if file.read_exact(&mut prefix).is_err() {
+        return true;
+    }
+    prefix == [0x7f, b'E'] || prefix == *b"#!"
+}
+
+#[cfg(not(target_os = "linux"))]
+fn path_is_loader_sensitive(_path: &str) -> bool {
+    false
+}
+
+fn should_block_loader_env_for_path(path: &str, env_entries: &[String]) -> bool {
+    current_mode_blocks_mutable_native_exec()
+        && env_has_unsafe_loader_override(env_entries)
+        && path_is_loader_sensitive(path)
+}
+
+#[cfg(target_os = "linux")]
+fn should_block_loader_env_for_fd(fd: c_int, env_entries: &[String]) -> bool {
+    current_mode_blocks_mutable_native_exec()
+        && env_has_unsafe_loader_override(env_entries)
+        && file_descriptor_is_loader_sensitive(fd)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn should_block_loader_env_for_fd(_fd: c_int, _env_entries: &[String]) -> bool {
+    false
 }
 
 fn path_matches_any_same_file(path: &Path, candidates: &[&str]) -> bool {
@@ -1271,20 +1380,65 @@ fn loader_arg_targets_mutable_native_exec(target: &str) -> bool {
     path_is_mutable_native_exec(target)
 }
 
+/// A loader library search list is refused when it is empty or carries an
+/// empty segment, because the loader then resolves against the working
+/// directory the guard cannot pin.
+fn loader_path_list_targets_mutable_native_exec(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
+    }
+    value
+        .split(':')
+        .any(|target| target.is_empty() || loader_arg_targets_mutable_native_exec(target))
+}
+
+/// Walks a dynamic loader argument vector the way the loader does: the options
+/// that name libraries are checked as search lists, and the scan stops at the
+/// exec target, since everything past it belongs to the target's own argv.
+fn loader_args_target_mutable_native_exec(args: &[String]) -> bool {
+    let mut index = 1usize;
+    while index < args.len() {
+        let argument = &args[index];
+        let (option, inline_value) = argument
+            .split_once('=')
+            .map_or((argument.as_str(), None), |(option, value)| {
+                (option, Some(value))
+            });
+
+        match option {
+            "--preload" | "--audit" | "--library-path" => {
+                let value = inline_value.or_else(|| {
+                    index += 1;
+                    args.get(index).map(String::as_str)
+                });
+                if value.is_none_or(loader_path_list_targets_mutable_native_exec) {
+                    return true;
+                }
+            }
+            "--argv0" => {
+                index += 1;
+            }
+            "--" => {
+                return args
+                    .get(index + 1)
+                    .is_some_and(|target| loader_arg_targets_mutable_native_exec(target));
+            }
+            option if option.starts_with('-') => {}
+            target => {
+                return loader_arg_targets_mutable_native_exec(target);
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
 fn loader_targets_mutable_native_exec(path: &str, args: &[String]) -> bool {
-    path_points_to_dynamic_loader(path)
-        && args
-            .iter()
-            .skip(1)
-            .any(|target| loader_arg_targets_mutable_native_exec(target))
+    path_points_to_dynamic_loader(path) && loader_args_target_mutable_native_exec(args)
 }
 
 fn loader_fd_targets_mutable_native_exec(fd: c_int, args: &[String]) -> bool {
-    fd_is_dynamic_loader(fd)
-        && args
-            .iter()
-            .skip(1)
-            .any(|target| loader_arg_targets_mutable_native_exec(target))
+    fd_is_dynamic_loader(fd) && loader_args_target_mutable_native_exec(args)
 }
 
 fn protected_runtime_exec_blocked(
@@ -1428,6 +1582,10 @@ fn report_protected_runtime_block() {
 
 fn report_mutable_native_exec_block() {
     report(MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE);
+}
+
+fn report_native_loader_env_block() {
+    report(NATIVE_LOADER_ENV_BLOCK_MESSAGE);
 }
 
 fn report_workcell_launcher_loader_env_block() {
@@ -1606,6 +1764,10 @@ unsafe extern "C" fn guarded_execve(
         report_workcell_launcher_loader_env_block();
         return -1;
     }
+    if should_block_loader_env_for_path(&path_string, &env_entries) {
+        report_native_loader_env_block();
+        return -1;
+    }
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
         report_protected_runtime_block();
         return -1;
@@ -1635,6 +1797,10 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
 
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
+        return -1;
+    }
+    if should_block_loader_env_for_path(&path_string, &env_entries) {
+        report_native_loader_env_block();
         return -1;
     }
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
@@ -1689,6 +1855,10 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
+        return -1;
+    }
+    if should_block_loader_env_for_path(&effective_path, &env_entries) {
+        report_native_loader_env_block();
         return -1;
     }
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
@@ -1747,6 +1917,10 @@ unsafe extern "C" fn guarded_execvpe(
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
+        return -1;
+    }
+    if should_block_loader_env_for_path(&effective_path, &env_entries) {
+        report_native_loader_env_block();
         return -1;
     }
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
@@ -1870,16 +2044,25 @@ unsafe extern "C" fn guarded_execveat(
         report_protected_runtime_block();
         return -1;
     }
-    let launcher_loader_env_blocked = if (flags & AT_EMPTY_PATH_FLAG) != 0
-        && pathname_string.is_empty()
-    {
-        should_block_workcell_launcher_fd_loader_env(dirfd, &env_entries)
-    } else {
-        (native_launcher_target && env_has_unsafe_workcell_launcher_loader_override(&env_entries))
-            || should_block_workcell_launcher_loader_env(&pathname_string, &env_entries)
-    };
+    let launcher_loader_env_blocked =
+        if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
+            should_block_workcell_launcher_fd_loader_env(dirfd, &env_entries)
+        } else {
+            (native_launcher_target && env_has_unsafe_loader_override(&env_entries))
+                || should_block_workcell_launcher_loader_env(&pathname_string, &env_entries)
+        };
     if launcher_loader_env_blocked {
         report_workcell_launcher_loader_env_block();
+        return -1;
+    }
+    let native_loader_env_blocked =
+        if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
+            should_block_loader_env_for_fd(dirfd, &env_entries)
+        } else {
+            should_block_loader_env_for_path(&effective_path, &env_entries)
+        };
+    if native_loader_env_blocked {
+        report_native_loader_env_block();
         return -1;
     }
     if mutable_native_target {
@@ -1910,6 +2093,10 @@ unsafe extern "C" fn guarded_fexecve(
 
     if should_block_workcell_launcher_fd_loader_env(fd, &env_entries) {
         report_workcell_launcher_loader_env_block();
+        return -1;
+    }
+    if should_block_loader_env_for_fd(fd, &env_entries) {
+        report_native_loader_env_block();
         return -1;
     }
     if should_block_protected_runtime_kind(classify_protected_runtime_fd(fd))
@@ -1959,6 +2146,10 @@ unsafe extern "C" fn guarded_posix_spawn(
 
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
+        return libc::EPERM;
+    }
+    if should_block_loader_env_for_path(&path_string, &env_entries) {
+        report_native_loader_env_block();
         return libc::EPERM;
     }
     if should_block_protected_runtime_exec(&path_string, &args, &env_entries) {
@@ -2012,6 +2203,10 @@ unsafe extern "C" fn guarded_posix_spawnp(
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
+        return libc::EPERM;
+    }
+    if should_block_loader_env_for_path(&effective_path, &env_entries) {
+        report_native_loader_env_block();
         return libc::EPERM;
     }
     if should_block_protected_runtime_exec(&effective_path, &args, &env_entries) {
@@ -2220,6 +2415,8 @@ mod tests {
     use super::*;
     use crate::gitpolicy::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    #[cfg(target_os = "linux")]
+    use std::os::unix::io::AsRawFd;
     use std::path::PathBuf;
     use std::process;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2496,27 +2693,27 @@ mod tests {
     }
 
     #[test]
-    fn workcell_launcher_loader_env_blocks_unsafe_dynamic_loader_overrides() {
-        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+    fn loader_env_override_detection_allows_only_the_approved_preload() {
+        assert!(env_has_unsafe_loader_override(&[
             "LD_PRELOAD=/workspace/preload.so".to_string()
         ]));
-        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+        assert!(env_has_unsafe_loader_override(&[
             "LD_AUDIT=/workspace/audit.so".to_string()
         ]));
-        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+        assert!(env_has_unsafe_loader_override(&[
             "LD_TRACE_LOADED_OBJECTS=1".to_string()
         ]));
-        assert!(!env_has_unsafe_workcell_launcher_loader_override(&[
-            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}")
-        ]));
-        assert!(!env_has_unsafe_workcell_launcher_loader_override(&[
-            "LD_PRELOAD=".to_string()
-        ]));
-        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+        assert!(!env_has_unsafe_loader_override(&[format!(
+            "LD_PRELOAD={ALLOWED_LD_PRELOAD}"
+        )]));
+        assert!(!env_has_unsafe_loader_override(
+            &["LD_PRELOAD=".to_string()]
+        ));
+        assert!(env_has_unsafe_loader_override(&[
             format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
             "LD_PRELOAD=/workspace/preload.so".to_string()
         ]));
-        assert!(env_has_unsafe_workcell_launcher_loader_override(&[
+        assert!(env_has_unsafe_loader_override(&[
             "LD_AUDIT=".to_string(),
             "LD_AUDIT=/workspace/audit.so".to_string()
         ]));
@@ -2824,6 +3021,170 @@ mod tests {
                 "{path_value} must not resolve a command"
             );
         }
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn env_interpreter_tokens_name_loader_environment_controls() {
+        assert!(token_is_loader_environment_assignment(
+            "LD_PRELOAD=/tmp/x.so"
+        ));
+        assert!(token_is_loader_environment_assignment("LD_AUDIT="));
+        assert!(!token_is_loader_environment_assignment("PATH=/tmp"));
+        assert!(!token_is_loader_environment_assignment("LD_PRELOAD"));
+
+        assert!(token_is_loader_environment_name("LD_LIBRARY_PATH"));
+        assert!(token_is_loader_environment_name("LD_TRACE_LOADED_OBJECTS"));
+        assert!(!token_is_loader_environment_name("PATH"));
+
+        assert!(token_is_loader_environment_unset_option(
+            "--unset=LD_PRELOAD"
+        ));
+        assert!(token_is_loader_environment_unset_option("-uLD_PRELOAD"));
+        assert!(token_is_loader_environment_unset_option("-u=LD_AUDIT"));
+        assert!(!token_is_loader_environment_unset_option("--unset=PATH"));
+        // A bare -u carries its name in the next token, handled by the scanner.
+        assert!(!token_is_loader_environment_unset_option("-u"));
+    }
+
+    #[test]
+    fn env_interpreter_shebangs_reject_loader_environment_control() {
+        // env -S smuggles assignments the plain token scan would skip, and
+        // -i / -u / - drop the guard's own preload before the target runs.
+        for cursor in [
+            " -S LD_PRELOAD=/tmp/x.so /bin/sh",
+            " --split-string=LD_AUDIT=/tmp/a.so /bin/sh",
+            " -u LD_PRELOAD /bin/sh",
+            " --unset=LD_LIBRARY_PATH /bin/sh",
+            " -uLD_PRELOAD /bin/sh",
+            " -i /bin/sh",
+            " --ignore-environment /bin/sh",
+            " - /bin/sh",
+            " LD_PRELOAD=/tmp/x.so /bin/true",
+        ] {
+            assert!(
+                env_command_targets_protected_runtime(cursor, &[]),
+                "env{cursor} must be refused"
+            );
+        }
+
+        // Unrelated variables and unsets stay allowed.
+        for cursor in [" -u FOO /bin/true", " FOO=bar /bin/true"] {
+            assert!(
+                !env_command_targets_protected_runtime(cursor, &[]),
+                "env{cursor} must stay allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn loader_control_options_reject_mutable_values() {
+        // An empty list, or an empty segment, makes the loader search the
+        // working directory the guard cannot pin.
+        assert!(loader_path_list_targets_mutable_native_exec(""));
+        assert!(loader_path_list_targets_mutable_native_exec("/usr/lib:"));
+        assert!(loader_path_list_targets_mutable_native_exec(":/usr/lib"));
+        assert!(!loader_path_list_targets_mutable_native_exec("/usr/lib"));
+        assert!(!loader_path_list_targets_mutable_native_exec(
+            "/usr/lib:/lib"
+        ));
+
+        let loader = "/lib64/ld-linux-x86-64.so.2".to_string();
+        for arguments in [
+            vec![loader.clone(), "--preload".to_string()],
+            vec![loader.clone(), "--preload=".to_string(), "/bin/true".into()],
+            vec![
+                loader.clone(),
+                "--library-path".to_string(),
+                String::new(),
+                "/bin/true".into(),
+            ],
+            vec![loader.clone(), "--audit=/usr/lib:".to_string()],
+        ] {
+            assert!(
+                loader_args_target_mutable_native_exec(&arguments),
+                "{arguments:?} must be refused"
+            );
+        }
+
+        for arguments in [
+            vec![loader.clone(), "/bin/true".to_string()],
+            vec![
+                loader.clone(),
+                "--library-path".to_string(),
+                "/usr/lib".to_string(),
+                "/bin/true".into(),
+            ],
+            // --argv0 takes a value that is not an exec target.
+            vec![
+                loader.clone(),
+                "--argv0".to_string(),
+                "sh".to_string(),
+                "/bin/true".into(),
+            ],
+            vec![loader.clone(), "--".to_string(), "/bin/true".to_string()],
+            // Arguments after the target belong to the target, not the loader.
+            vec![
+                loader.clone(),
+                "/bin/true".to_string(),
+                "/usr/lib:".to_string(),
+            ],
+        ] {
+            assert!(
+                !loader_args_target_mutable_native_exec(&arguments),
+                "{arguments:?} must stay allowed"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn loader_environment_is_refused_for_loader_sensitive_targets() {
+        let dir = create_temp_test_dir("loader-sensitive");
+        let elf = dir.join("elf");
+        fs::write(&elf, [0x7f, b'E', b'L', b'F', 2, 1, 1, 0]).expect("elf");
+        let script = dir.join("script");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("script");
+        let data = dir.join("data");
+        fs::write(&data, "plain text, not an exec target\n").expect("data");
+
+        let elf_path = elf.display().to_string();
+        assert!(path_is_loader_sensitive(&elf_path));
+        assert!(path_is_loader_sensitive(&script.display().to_string()));
+        assert!(!path_is_loader_sensitive(&data.display().to_string()));
+        // Directories and character devices cannot be loaded.
+        assert!(!path_is_loader_sensitive(&dir.display().to_string()));
+        // A target the guard cannot read is refused rather than trusted.
+        assert!(path_is_loader_sensitive(
+            &dir.join("missing").display().to_string()
+        ));
+
+        let unsafe_env = ["LD_AUDIT=/tmp/audit.so".to_string()];
+        assert!(should_block_loader_env_for_path(&elf_path, &unsafe_env));
+        assert!(!should_block_loader_env_for_path(&elf_path, &[]));
+        assert!(!should_block_loader_env_for_path(
+            &elf_path,
+            &[format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}")]
+        ));
+        assert!(!should_block_loader_env_for_path(
+            &data.display().to_string(),
+            &unsafe_env
+        ));
+
+        let file = File::open(&elf).expect("open elf");
+        let elf_fd = file.as_raw_fd();
+        assert!(file_descriptor_is_loader_sensitive(elf_fd));
+        assert!(should_block_loader_env_for_fd(elf_fd, &unsafe_env));
+        assert!(!should_block_loader_env_for_fd(elf_fd, &[]));
+
+        let data_file = File::open(&data).expect("open data");
+        assert!(!should_block_loader_env_for_fd(
+            data_file.as_raw_fd(),
+            &unsafe_env
+        ));
+        // A closed descriptor cannot be inspected, so it is refused.
+        assert!(file_descriptor_is_loader_sensitive(-1));
+
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 }
