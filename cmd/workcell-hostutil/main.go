@@ -261,6 +261,7 @@ func helperSubcommands() []helperSubcommand {
 	return []helperSubcommand{
 		{"session-suffix", 0, 0, cmdHelperSessionSuffix},
 		{"colima-status", 1, 1, cmdHelperColimaStatus},
+		{"colima-profile-process-pids", 1, 1, cmdHelperColimaProfileProcessPIDs},
 		{"reap-colima-profile-processes", 1, 1, cmdHelperReapColimaProfileProcesses},
 		{"validate-colima-status", 1, 1, cmdHelperValidateColimaStatus},
 		{"run-host-colima-with-timeout", 1, -1, cmdHelperRunHostColimaWithTimeout},
@@ -437,6 +438,27 @@ func cmdHelperColimaStatus(args []string) error {
 
 func cmdHelperReapColimaProfileProcesses(args []string) error {
 	return launcher.ReapColimaProfileProcesses(context.Background(), args[0])
+}
+
+func cmdHelperColimaProfileProcessPIDs(args []string) error {
+	input, err := readHelperInput("host process inventory", os.Stdin)
+	if err != nil {
+		return err
+	}
+	return writeColimaProfileProcessPIDs(os.Stdout, input, args[0])
+}
+
+func writeColimaProfileProcessPIDs(output io.Writer, input []byte, profile string) error {
+	pids, err := launcher.ColimaProfileProcessPIDs(input, profile)
+	if err != nil {
+		return err
+	}
+	for _, pid := range pids {
+		if _, err := fmt.Fprintln(output, pid); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func cmdHelperValidateColimaStatus(args []string) error {

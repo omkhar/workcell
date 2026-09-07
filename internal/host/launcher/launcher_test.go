@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -106,6 +107,49 @@ func TestProfileLockIsStaleReportsIncompleteOwnerMetadata(t *testing.T) {
 	}
 	if stale {
 		t.Fatal("ProfileLockIsStale() stale = true, want false on incomplete owner metadata")
+	}
+}
+
+func TestExactProcessGenerationRequiresPlatformPrefix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		generation string
+		want       bool
+	}{
+		{name: "darwin exact minimum", generation: "darwin:1.000000:1", want: true},
+		{name: "darwin exact zero identifier", generation: "darwin:1.000000:0", want: false},
+		{name: "darwin exact leading-zero identifier", generation: "darwin:1.000000:01", want: false},
+		{name: "darwin exact overflow identifier", generation: "darwin:1.000000:18446744073709551616", want: false},
+		{name: "darwin bare identifier", generation: "darwin:1", want: false},
+		{name: "untagged numeric", generation: "123", want: false},
+		{name: "darwin legacy", generation: "darwin:1.000000", want: true},
+		{name: "darwin legacy maximum microseconds", generation: "darwin:1.999999", want: true},
+		{name: "darwin legacy short microseconds", generation: "darwin:1.00000", want: false},
+		{name: "darwin legacy signed microseconds", generation: "darwin:1.+00000", want: false},
+		{name: "darwin legacy malformed microseconds", generation: "darwin:1.00000x", want: false},
+		{name: "linux canonical minimum", generation: "linux:1", want: true},
+		{name: "linux canonical zero", generation: "linux:0", want: false},
+		{name: "linux canonical leading zero", generation: "linux:01", want: false},
+		{name: "linux canonical overflow", generation: "linux:18446744073709551616", want: false},
+	}
+	for _, test := range tests {
+		if got := IsExactProcessGeneration(test.generation); got != test.want {
+			t.Errorf("%s: IsExactProcessGeneration(%q) = %t, want %t", test.name, test.generation, got, test.want)
+		}
+	}
+}
+
+func TestObserveProcessGenerationRejectsCrossHostRecord(t *testing.T) {
+	recorded := "darwin:1.000000:1"
+	want := "darwin process generation does not match " + runtime.GOOS + " host"
+	if runtime.GOOS == "darwin" {
+		recorded = "linux:1"
+		want = "linux process generation does not match darwin host"
+	}
+	_, err := ObserveProcessGeneration(os.Getpid(), recorded)
+	if err == nil || err.Error() != want {
+		t.Fatalf("ObserveProcessGeneration(%q) error = %v, want %q", recorded, err, want)
 	}
 }
 

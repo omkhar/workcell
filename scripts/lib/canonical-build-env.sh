@@ -50,7 +50,7 @@ workcell_require_modern_privileged_bash() {
   ((BASH_VERSINFO[0] >= 4)) && return 0
   for candidate in /opt/homebrew/bin/bash /usr/local/bin/bash; do
     [[ -x "${candidate}" ]] || continue
-    if "${candidate}" -p -c '((BASH_VERSINFO[0] >= 4))'; then
+    if "${candidate}" -p -c '((BASH_VERSINFO[0] >= 4))' </dev/null; then
       exec "${candidate}" -p "$0" "$@"
     fi
   done
