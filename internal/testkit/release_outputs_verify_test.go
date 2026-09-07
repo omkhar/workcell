@@ -124,6 +124,8 @@ cosign() {
 gh() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 98
   [[ "${GH_TOKEN:-}" == "test-token" ]] || return 97
+  [[ "${GH_HOST:-}" == "github.com" ]] || return 95
+  [[ -z "${GH_ENTERPRISE_TOKEN:-}" && -z "${GITHUB_ENTERPRISE_TOKEN:-}" ]] || return 94
   printf '%%s\n' "$*" >>%q
   [[ -n "${gh_fail_glob}" && "$*" == ${gh_fail_glob} ]] && return 1
   return 0
@@ -173,7 +175,15 @@ func runVerifyReleaseOutputs(t *testing.T, driver, assets string, attestations b
 func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDigest, workflowDigest string, attestations bool) (int, string) {
 	t.Helper()
 	args := releaseOutputArgs(assets, releaseOutputTag, releaseOutputImage, sourceDigest, workflowDigest, attestations)
-	return runVerifyDriver(t, driver, args, []string{"GITHUB_TOKEN=test-token"})
+	// The hostile GitHub host and enterprise credentials must never reach gh:
+	// the verifier pins GH_HOST and clears both enterprise aliases per call, and
+	// the stub rejects any invocation where that pinning did not happen.
+	return runVerifyDriver(t, driver, args, []string{
+		"GITHUB_TOKEN=test-token",
+		"GH_HOST=attacker.example.com",
+		"GH_ENTERPRISE_TOKEN=attacker-enterprise-token",
+		"GITHUB_ENTERPRISE_TOKEN=attacker-enterprise-token",
+	})
 }
 
 func TestVerifyReleaseOutputsRejectsDifferentSourceAndWorkflowCommits(t *testing.T) {
@@ -402,7 +412,9 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 	}
 
 	for _, line := range logLines(t, ghLog) {
-		if !strings.Contains(line, "--deny-self-hosted-runners") {
+		// Must be the exact standalone flag: gh also accepts
+		// --deny-self-hosted-runners=false, which a substring match would pass.
+		if !slices.Contains(strings.Fields(line), "--deny-self-hosted-runners") {
 			t.Fatalf("gh attestation call lacks self-hosted runner denial: %s", line)
 		}
 		if got := flagValue(line, "--cert-identity"); got != releaseOutputIdentity {
