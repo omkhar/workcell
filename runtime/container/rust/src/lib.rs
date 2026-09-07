@@ -315,7 +315,18 @@ enum ExecSearchError {
     InputTooLarge,
     PermissionDenied,
     RelativeSearchPath,
+    LookupFailed(c_int),
 }
+
+// The errors libc records and walks past while searching PATH. Any other error
+// ends its search, so it must end the guard's search too.
+const SEARCH_CONTINUES_ON: &[c_int] = &[
+    libc::ENOENT,
+    libc::ENOTDIR,
+    libc::ESTALE,
+    libc::ENODEV,
+    libc::ETIMEDOUT,
+];
 
 fn bounded_c_string(path: *const c_char) -> Result<String, ExecInputTooLarge> {
     bounded_c_string_with_limit(path, MAX_EXEC_STRING_BYTES)
@@ -481,14 +492,19 @@ fn resolve_command_via_path_value(
         // never loaded where the two differ.
         // SAFETY: cstring is a live NUL-terminated CString valid for the call; access only reads the path.
         if unsafe { libc::access(cstring.as_ptr(), libc::X_OK) } != 0 {
-            // libc remembers an EACCES from a candidate and keeps searching,
-            // then reports it when no later entry holds the command. Read the
-            // error from the lookup that failed: a candidate under an
+            // Read the error from the lookup that failed: a candidate under an
             // unsearchable directory answers EACCES to an existence probe too,
             // so probing for existence would read it as absent.
             // SAFETY: errno_location() returns the current thread's valid errno slot.
-            if unsafe { *errno_location() } == libc::EACCES {
+            let lookup_errno = unsafe { *errno_location() };
+            if lookup_errno == libc::EACCES {
+                // libc remembers EACCES and keeps searching, then reports it
+                // when no later entry holds the command.
                 permission_denied = true;
+            } else if !SEARCH_CONTINUES_ON.contains(&lookup_errno) {
+                // libc stops here and reports this error, so the guard must not
+                // walk on and classify a candidate libc will never reach.
+                return Err(ExecSearchError::LookupFailed(lookup_errno));
             }
             continue;
         }
@@ -1665,6 +1681,10 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
             report_relative_search_path_block();
             return -1;
         }
+        Err(ExecSearchError::LookupFailed(errno)) => {
+            set_errno(errno);
+            return -1;
+        }
     };
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
@@ -1717,6 +1737,10 @@ unsafe extern "C" fn guarded_execvpe(
         }
         Err(ExecSearchError::RelativeSearchPath) => {
             report_relative_search_path_block();
+            return -1;
+        }
+        Err(ExecSearchError::LookupFailed(errno)) => {
+            set_errno(errno);
             return -1;
         }
     };
@@ -1983,6 +2007,7 @@ unsafe extern "C" fn guarded_posix_spawnp(
             report_relative_search_path_block();
             return libc::EACCES;
         }
+        Err(ExecSearchError::LookupFailed(errno)) => return errno,
     };
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
@@ -2742,6 +2767,27 @@ mod tests {
             );
         }
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o700)).expect("restore mode");
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn path_search_stops_where_libc_stops() {
+        let dir = create_temp_test_dir("path-eloop");
+        let looped = dir.join("looped");
+        fs::create_dir(&looped).expect("looped dir");
+        symlink("probe", looped.join("probe")).expect("self-referential symlink");
+
+        // libc reports ELOOP and stops; walking on would let the guard classify
+        // a later candidate that libc never reaches.
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&looped.display().to_string())),
+            Err(ExecSearchError::LookupFailed(libc::ELOOP))
+        );
+        let with_later_entry = format!("{}:/usr/bin", looped.display());
+        assert_eq!(
+            resolve_command_via_path_value("probe", Some(&with_later_entry)),
+            Err(ExecSearchError::LookupFailed(libc::ELOOP))
+        );
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 
