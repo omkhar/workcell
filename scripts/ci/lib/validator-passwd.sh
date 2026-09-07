@@ -86,25 +86,20 @@ workcell_ci_validator_passwd_file() {
       return 1
       ;;
   esac
-  # Owner-only whenever the workload runs as the uid that creates the file,
-  # which is every lane except the remapped-uid axis.  There, rootful Docker
-  # keeps the numeric owner across the bind, so an owner-only file would be
-  # unreadable to the workload and the axis would fail on its own harness
-  # rather than on the repository.  Widening to world-readable for that case
-  # discloses nothing: the content is a copy of the image's own /etc/passwd
-  # plus one record naming a uid, gid and home that the container already
-  # reports.  mktemp created the file 0600, so both modes also drop the write
-  # bit the read-only mount does not need.
-  if [[ "${uid}" == "$(id -u)" ]]; then
-    chmod 0400 "${file}" || {
-      rm -f "${file}"
-      return 1
-    }
-  else
-    chmod 0444 "${file}" || {
-      rm -f "${file}"
-      return 1
-    }
-  fi
+  # World-readable, deliberately.  The file is a bind source, and the owner it
+  # presents inside the container depends on the daemon: a rootless or
+  # userns-remapped daemon maps the host owner to some other uid, and the
+  # remapped-uid axis changes the workload uid on purpose, so an owner-only mode
+  # would make /etc/passwd unreadable to the very process that needs it and the
+  # lane would fail on its own harness.  Nothing here is secret: the content is
+  # a copy of the image's own /etc/passwd plus one record naming a uid, gid and
+  # home the container already reports.  internal/host/validatorbind keeps its
+  # non-secret bind challenge readable for the same reason.  mktemp created the
+  # file 0600, so this also drops the write bit the read-only mount does not
+  # need.
+  chmod 0444 "${file}" || {
+    rm -f "${file}"
+    return 1
+  }
   printf '%s\n' "${file}"
 }
