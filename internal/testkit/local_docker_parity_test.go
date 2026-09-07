@@ -651,9 +651,19 @@ source "$2"
 workcell_ci_validator_passwd_file docker fixture-image 1000 1000 /home/fixture "$3"
 `)
 
-	output, err := exec.Command("/bin/bash", probe, binDir, library, t.TempDir()).CombinedOutput()
+	workspace := t.TempDir()
+	output, err := exec.Command("/bin/bash", probe, binDir, library, workspace).CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "Validator passwd lookup failed with status 2") {
 		t.Fatalf("failing lookup accepted: %v\n%s", err, output)
+	}
+	// The caller only learns the pathname from the value the function prints, so
+	// a failure that left the file behind would leave it behind for good.
+	leftovers, err := filepath.Glob(filepath.Join(workspace, "tmp", "workcell-validator-passwd.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("failed synthesis left %v behind", leftovers)
 	}
 }
 

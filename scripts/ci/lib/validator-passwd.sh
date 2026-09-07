@@ -55,9 +55,15 @@ workcell_ci_validator_passwd_file() {
     echo "Validator home is not a usable passwd field: ${home}" >&2
     return 1
   fi
+  # Every failure after this point removes the file itself.  The caller only
+  # learns the pathname from the value this function prints, so a failure that
+  # returned early would leave an artifact its EXIT trap has no name for.
   file="$(mktemp "${directory}/workcell-validator-passwd.XXXXXX")" || return
   "${docker_command}" run --rm --entrypoint /bin/bash "${image}" \
-    -lc 'cat /etc/passwd' >"${file}" || return
+    -lc 'cat /etc/passwd' >"${file}" || {
+    rm -f "${file}"
+    return 1
+  }
   # "absent" gets its own exit status.  Folding every nonzero status into
   # "absent" would let a missing or failing awk append a second record for a uid
   # the image already has, and glibc would then resolve the uid to whichever
@@ -69,10 +75,14 @@ workcell_ci_validator_passwd_file() {
     0) ;;
     10)
       printf 'workcell-ci:x:%s:%s:workcell ci:%s:/bin/bash\n' \
-        "${uid}" "${gid}" "${home}" >>"${file}"
+        "${uid}" "${gid}" "${home}" >>"${file}" || {
+        rm -f "${file}"
+        return 1
+      }
       ;;
     *)
       echo "Validator passwd lookup failed with status ${lookup}" >&2
+      rm -f "${file}"
       return 1
       ;;
   esac
@@ -86,9 +96,15 @@ workcell_ci_validator_passwd_file() {
   # reports.  mktemp created the file 0600, so both modes also drop the write
   # bit the read-only mount does not need.
   if [[ "${uid}" == "$(id -u)" ]]; then
-    chmod 0400 "${file}" || return
+    chmod 0400 "${file}" || {
+      rm -f "${file}"
+      return 1
+    }
   else
-    chmod 0444 "${file}" || return
+    chmod 0444 "${file}" || {
+      rm -f "${file}"
+      return 1
+    }
   fi
   printf '%s\n' "${file}"
 }
