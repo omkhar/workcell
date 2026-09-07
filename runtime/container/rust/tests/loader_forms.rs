@@ -28,7 +28,7 @@ use std::ffi::{CString, OsString};
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::fd::FromRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
@@ -596,11 +596,24 @@ fn loader_invocation_forms_reach_the_stated_classification() {
     fs::remove_dir_all(&fixture).expect("remove the fixture directory");
 }
 
+/// The fixture directory holds files the rows execute, in a directory every
+/// user can write. A name another user can predict is a check/use gap: it can
+/// be pre-created, and the writes below would then land through symlinks that
+/// user planted. The name carries 128 bits from the kernel, and the directory
+/// is created exclusively and owner-only, so it is this process's alone and no
+/// other user can place an entry inside it for a write to follow.
 fn prepare_fixture() -> PathBuf {
-    let fixture =
-        std::env::temp_dir().join(format!("workcell-loader-forms-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&fixture);
-    fs::create_dir_all(&fixture).expect("create the fixture directory");
+    let mut random = [0u8; 16];
+    File::open("/dev/urandom")
+        .expect("open the kernel random source")
+        .read_exact(&mut random)
+        .expect("read the fixture directory name");
+    let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let fixture = std::env::temp_dir().join(format!("workcell-loader-forms-{name}"));
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&fixture)
+        .expect("create the fixture directory exclusively");
     fs::write(fixture.join("ld-linux-form-fixture.so.2"), []).expect("write the loader fixture");
     fs::write(
         fixture.join("not-an-exec-target"),
