@@ -317,40 +317,80 @@ for file in "${shell_files[@]}"; do
   linted_shell_files["${file#"${ROOT_DIR}/"}"]=1
 done
 
-# Accept only an interpreter whose basename is exactly `bash`. A bare `*bash*`
-# test also matches `#!/usr/bin/env bashful`. Both house forms put `bash` in its
-# own token: `#!/bin/bash -p` and `#!/usr/bin/env -S BASH_ENV= ENV= bash`.
-# `env` accepts the split string attached as well as detached: `-S bash`,
-# `-Sbash` and `--split-string=bash` all run Bash. Strip that option prefix,
-# and strip a quote, before the comparison.
+# Accept only the interpreter that the shebang actually selects. Testing every
+# token matches `#!/usr/bin/env -S echo bash`, which runs `echo`. Resolve the
+# command position instead: the first token is the interpreter, and when that
+# interpreter is `env`, skip its options and its `VAR=value` assignments to
+# reach the command. A split string may be attached or detached and its long
+# option may be abbreviated to any unambiguous prefix, so `-S bash`, `-Sbash`,
+# `-iSbash`, `--split-string=bash` and `--spl=bash` all select Bash.
 is_bash_shebang() {
   local line="$1"
   local -a tokens=()
-  local token=""
+  local token="" long_option="" command="" cluster=""
+  local index=0 position=0
 
   [[ "${line}" == '#!'* ]] || return 1
   IFS=$' \t' read -r -a tokens <<<"${line#'#!'}"
-  local long_option=""
-  for token in "${tokens[@]}"; do
-    # A long option can be abbreviated to any unambiguous prefix, so
-    # `--split-string=`, `--spl=` and `--s=` all introduce the split string.
-    if [[ "${token}" == --*=* ]]; then
-      long_option="${token%%=*}"
-      long_option="${long_option#--}"
-      if [[ -n "${long_option}" && "split-string" == "${long_option}"* ]]; then
-        token="${token#*=}"
-      fi
-    fi
-    # A short option cluster can precede the split string, as in `-iSbash`.
-    # Take whatever follows the last `S` in such a cluster.
-    if [[ "${token}" == -* && "${token}" != --* && "${token}" == *S* ]]; then
-      token="${token##*S}"
-    fi
-    token="${token//\"/}"
-    token="${token//\'/}"
-    [[ "${token##*/}" == "bash" ]] && return 0
-  done
-  return 1
+  [[ "${#tokens[@]}" -gt 0 ]] || return 1
+
+  if [[ "${tokens[0]##*/}" != "env" ]]; then
+    command="${tokens[0]}"
+  else
+    for ((index = 1; index < ${#tokens[@]}; index++)); do
+      token="${tokens[index]}"
+      case "${token}" in
+        --)
+          command="${tokens[index + 1]:-}"
+          break
+          ;;
+        --*=*)
+          long_option="${token%%=*}"
+          long_option="${long_option#--}"
+          if [[ -n "${long_option}" && "split-string" == "${long_option}"* ]]; then
+            token="${token#*=}"
+            if [[ -n "${token}" ]]; then
+              command="${token}"
+              break
+            fi
+          fi
+          ;;
+        -*)
+          # Walk the short option cluster one letter at a time. `S` introduces
+          # the split string, and `u` and `C` take a value that may be attached,
+          # so their argument must not be read as further option letters: the
+          # `S` in `-uPOSIXLY_CORRECT` names a variable, not a split string.
+          cluster="${token#-}"
+          for ((position = 0; position < ${#cluster}; position++)); do
+            case "${cluster:position:1}" in
+              S)
+                # Attached, the command is here. Detached, it follows, after
+                # any further assignments.
+                command="${cluster:position+1}"
+                break
+                ;;
+              u | C)
+                [[ -n "${cluster:position+1}" ]] || ((index++))
+                break
+                ;;
+              *) ;;
+            esac
+          done
+          [[ -z "${command}" ]] || break
+          ;;
+        *=*) ;;
+        *)
+          command="${token}"
+          break
+          ;;
+      esac
+    done
+  fi
+
+  [[ -n "${command}" ]] || return 1
+  command="${command//\"/}"
+  command="${command//\'/}"
+  [[ "${command##*/}" == "bash" ]]
 }
 
 # Read every first-line shebang from the index rather than from the worktree.
