@@ -69,6 +69,10 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	return names, nil
 }
 
+// verifyReleaseOutputsScript is the release output verifier the publication
+// gate requires the independent verification job to execute.
+const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
+
 // ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
@@ -84,19 +88,54 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	if releaseJob.Permissions["contents"] != "read" {
 		return errors.New("release artifact job must keep contents permission read-only")
 	}
+	verifyJob, ok := document.Jobs["verify-release-outputs"]
+	if !ok {
+		return errors.New("release workflow must define the independent verify-release-outputs job")
+	}
+	if verifyJob.Needs.Kind != yaml.SequenceNode || len(verifyJob.Needs.Content) != 2 ||
+		verifyJob.Needs.Content[0].Value != "tag-policy" || verifyJob.Needs.Content[1].Value != "sign-release" {
+		return errors.New("release output verification job must depend directly on tag-policy and the signing job")
+	}
+	if len(verifyJob.Permissions) != 4 || verifyJob.Permissions["actions"] != "read" ||
+		verifyJob.Permissions["attestations"] != "read" || verifyJob.Permissions["contents"] != "read" ||
+		verifyJob.Permissions["packages"] != "read" {
+		return errors.New("release output verification job must grant only read permissions for artifacts, attestations, contents, and packages")
+	}
+	verificationFound := false
+	for _, step := range verifyJob.Steps {
+		// Match the script only as the start of a statement, so an inert
+		// mention (a comment, or an argument to echo) cannot satisfy the gate.
+		for _, line := range strings.Split(step.Run, "\n") {
+			statement := strings.TrimLeft(line, " \t")
+			if statement == verifyReleaseOutputsScript ||
+				strings.HasPrefix(statement, verifyReleaseOutputsScript+" ") {
+				verificationFound = true
+				break
+			}
+		}
+		if verificationFound {
+			break
+		}
+	}
+	if !verificationFound {
+		return errors.New("release output verification job must run verify-release-outputs.sh")
+	}
 	publishJob, ok := document.Jobs["publish-github-release"]
 	if !ok {
 		return errors.New("release workflow must define the final publish-github-release job")
 	}
-	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 2 ||
-		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "sign-release" {
-		return errors.New("final GitHub release publication job must depend directly on tag-policy and the signing job")
+	if publishJob.Needs.Kind != yaml.SequenceNode || len(publishJob.Needs.Content) != 3 ||
+		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "sign-release" ||
+		publishJob.Needs.Content[2].Value != "verify-release-outputs" {
+		return errors.New("final GitHub release publication job must depend directly on tag-policy, the signing job, and output verification")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
 	}
-	if len(publishJob.Permissions) != 2 || publishJob.Permissions["actions"] != "read" || publishJob.Permissions["contents"] != "write" {
-		return errors.New("final GitHub release publication job must grant only actions: read and contents: write")
+	if len(publishJob.Permissions) != 4 || publishJob.Permissions["actions"] != "read" ||
+		publishJob.Permissions["attestations"] != "read" || publishJob.Permissions["contents"] != "write" ||
+		publishJob.Permissions["packages"] != "read" {
+		return errors.New("final GitHub release publication job must grant only read verification permissions and contents: write")
 	}
 	for _, step := range publishJob.Steps {
 		if step.Name != "Recheck hosted controls and publish GitHub release assets" {

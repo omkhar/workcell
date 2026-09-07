@@ -225,6 +225,12 @@
       "local_mode": "none",
       "github_only_reason": "release-approved registry publication, signing, and attestation require GitHub credentials and hosted release state"
     },
+    "release.yml/verify-release-outputs": {
+      "profiles": ["release-preflight"],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release output verification reads GitHub artifact attestations and the GHCR image after signing"
+    },
     "release.yml/publish-github-release": {
       "profiles": ["release-preflight"],
       "authority": "release-only",

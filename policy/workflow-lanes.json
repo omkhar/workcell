@@ -800,6 +800,22 @@
       "github_only_reason": "the exact pushed-tag event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
     },
     {
+      "id": "release.yml/verify-release-outputs",
+      "workflow_path": ".github/workflows/release.yml",
+      "workflow_name": "Release",
+      "job_id": "verify-release-outputs",
+      "job_name": "Verify release signatures and attestations",
+      "workflow_events": [
+        "push"
+      ],
+      "profiles": [
+        "release-preflight"
+      ],
+      "authority": "release-only",
+      "local_mode": "none",
+      "github_only_reason": "release output verification reads GitHub artifact attestations and the GHCR image after signing"
+    },
+    {
       "id": "scorecard.yml/analysis",
       "workflow_path": ".github/workflows/scorecard.yml",
       "workflow_name": "Scorecard",
