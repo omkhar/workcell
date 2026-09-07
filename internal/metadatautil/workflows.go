@@ -213,16 +213,30 @@ func overridesHostedControlsPolicyPath(document workflowDocument) bool {
 }
 
 // assignsInRun reports whether a run block assigns name in an executable
-// statement, directly, after export, or as a command prefix. Comments are
-// removed first, so a mention in one does not count.
+// statement, directly, as a command prefix, or through export or env. Comments
+// are removed first, so a mention in one does not count.
 func assignsInRun(script, name string) bool {
 	for line := range strings.Lines(script) {
 		statement := strings.TrimSpace(inlineComment.ReplaceAllString(strings.TrimSpace(line), ""))
-		for _, word := range strings.Fields(strings.TrimPrefix(statement, "export ")) {
+		words := strings.Fields(statement)
+		if len(words) == 0 {
+			continue
+		}
+		// export and env both carry their own options before the assignments
+		// they apply, so neither the leading word nor an option ends the run.
+		// Every word of such a statement is examined rather than only the
+		// leading assignments.
+		if words[0] == "export" || words[0] == "env" {
+			if slices.ContainsFunc(words[1:], func(word string) bool { return strings.HasPrefix(word, name+"=") }) {
+				return true
+			}
+			continue
+		}
+		for _, word := range words {
 			if strings.HasPrefix(word, name+"=") {
 				return true
 			}
-			// Assignment prefixes precede the command word, which has no "=".
+			// A plain assignment prefix precedes the command word, which has no "=".
 			if !strings.Contains(word, "=") {
 				break
 			}

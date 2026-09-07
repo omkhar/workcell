@@ -52,6 +52,12 @@ export PATH="${WORKCELL_INSTALL_TRUSTED_PATH:-/usr/bin:/bin:/usr/sbin:/sbin:/usr
 
 DEFAULT_REPO="omkhar/workcell"
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
+# The closed set of releases published before the release workflow moved to the
+# repository_dispatch trigger, and therefore the only releases whose signing
+# identity is the pushed tag rather than the default branch. Every later release
+# must present the default-branch identity. Extend this list only for a release
+# that was genuinely published under the old tag-push trigger.
+TAG_SIGNED_RELEASES="v1.0.2"
 # Distinct from 0 (verified) and from failure codes: an acknowledged skip is an
 # unverified install, not a verified one.
 EXIT_SKIPPED_UNVERIFIED=10
@@ -73,9 +79,10 @@ Required:
 Options:
   --repo OWNER/REPO  Release repository to pin the signer identity against
                      (default: omkhar/workcell, or $GITHUB_REPOSITORY).
-  --tag vX.Y.Z       Release tag being verified. Releases published before the
-                     dispatch trigger were signed from that tag, so naming it
-                     also accepts that one exact historical identity.
+  --tag vX.Y.Z       Release tag being verified. Naming a release that was
+                     published before the dispatch trigger also accepts that
+                     one exact historical tag identity; every later release
+                     must present the default-branch identity.
   --attestation      Additionally require `gh attestation verify` to pass.
   --skip-verify      Do NOT verify. Requires --i-understand-unverified-install
                      and prints a loud warning. For documented air-gapped use.
@@ -234,15 +241,16 @@ artifact_path="${ASSETS_DIR}/${ARTIFACT}"
 # published under that trigger is exactly
 # https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main.
 #
-# Releases published before that change were signed from the pushed tag. When
-# the caller names the tag it is verifying, that one exact tag identity is
-# accepted as well. Both alternatives stay exact: the tag branch is pinned to
-# the requested tag, so it is no looser than the branch one and cannot match a
-# different release.
+# Releases published before that change were signed from the pushed tag. That
+# identity is accepted only for the closed set of releases below, and only when
+# the caller names one of them. Accepting it for any requested tag would let a
+# credential that can create a tag, but not change the default branch, sign a
+# release from an arbitrary commit and defeat the branch binding entirely.
+# Both alternatives stay exact, so neither can match a different release.
 repo_escaped="$(regex_escape "${REPO}")"
 identity_prefix="https://github\.com/${repo_escaped}/\.github/workflows/release\.yml@"
 identity_refs="refs/heads/main"
-if [[ -n "${TAG}" ]]; then
+if [[ -n "${TAG}" ]] && [[ " ${TAG_SIGNED_RELEASES} " == *" ${TAG} "* ]]; then
   identity_refs="${identity_refs}|refs/tags/$(regex_escape "${TAG}")"
 fi
 identity_regexp="^${identity_prefix}(${identity_refs})\$"

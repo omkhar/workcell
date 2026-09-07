@@ -255,10 +255,17 @@ func TestVerifyReleaseArtifactPinsRequestedIdentities(t *testing.T) {
 			accepts: []string{prefix + "refs/heads/main"},
 			rejects: []string{prefix + "refs/tags/v1.0.2", prefix + "refs/heads/mainx"},
 		},
-		"dispatch and requested tag": {
+		"historical tag-signed release": {
 			extraArgs: []string{"--tag", "v1.0.2"},
 			accepts:   []string{prefix + "refs/heads/main", prefix + "refs/tags/v1.0.2"},
 			rejects:   []string{prefix + "refs/tags/v1.0.3", prefix + "refs/tags/v1a0b2"},
+		},
+		// A tag published after the cutover must not reintroduce tag-push
+		// signing authority, so its own tag identity is not accepted either.
+		"release after the cutover": {
+			extraArgs: []string{"--tag", "v1.0.3"},
+			accepts:   []string{prefix + "refs/heads/main"},
+			rejects:   []string{prefix + "refs/tags/v1.0.3", prefix + "refs/tags/v1.0.2"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

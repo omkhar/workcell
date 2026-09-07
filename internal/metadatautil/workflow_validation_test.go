@@ -139,6 +139,30 @@ func TestValidateReleaseWorkflowPublicationGateAcceptsPolicyPathMention(t *testi
 	}
 }
 
+// An override reaches the audit through any executable assignment, including an
+// env or export command prefix, so each of those forms must fail the gate.
+func TestValidateReleaseWorkflowPublicationGateRejectsPolicyPathOverrides(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
+	for name, override := range map[string]string{
+		"env command prefix":      `          env WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"env with an option":      `          env -i WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"plain assignment prefix": `          WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"export statement":        "          export WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, auditCall, override, 1)
+			if mutated == workflow {
+				t.Fatalf("override %q did not change the workflow", name)
+			}
+			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
+			if err == nil || !strings.Contains(err.Error(), "reviewed GitHub hosted-controls policy path") {
+				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want a policy path override", err)
+			}
+		})
+	}
+}
+
 func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	content := readReleaseWorkflow(t)
 	if err := metadatautil.ValidateReleaseWorkflowAuthoritySplit(string(content)); err != nil {

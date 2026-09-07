@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -425,35 +426,59 @@ func (check *pinnedInputsCheck) validateReleaseLegacyReferences() error {
 	); err != nil {
 		return err
 	}
-	count, err := countReleaseTagRechecks(check.releaseWorkflow)
-	if err != nil {
-		return err
-	}
-	if count != 5 {
-		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures before every release mutation phase, found %d checks", count)
-	}
-	return nil
+	return validateReleaseTagRechecks(check.releaseWorkflow)
 }
 
-// countReleaseTagRechecks counts the tag-signature rechecks that execute. It
-// reads parsed run statements, so a check converted into a comment no longer
-// counts towards the required set.
-func countReleaseTagRechecks(workflowText string) (int, error) {
+// releaseTagRecheckPhases names each job that mutates release state and the
+// number of bound rechecks it must run before doing so. Counting per job, not
+// across the file, keeps a recheck deleted from one phase from being covered by
+// a duplicate added to an unrelated job.
+var releaseTagRecheckPhases = map[string]int{
+	"preflight":              1,
+	"release":                1,
+	"sign-release":           2,
+	"publish-github-release": 1,
+}
+
+// releaseTagRecheckArguments is the complete reviewed argument list. A recheck
+// missing the commit or tag-object binding proves less than its name suggests,
+// so a partial invocation does not count towards a phase.
+var releaseTagRecheckArguments = []string{
+	"--github-repo", `"${GITHUB_REPOSITORY}"`,
+	"--repo-root", `"${GITHUB_WORKSPACE}"`,
+	"--tag", `"${RELEASE_TAG}"`,
+	"--expected-commit", `"${RELEASE_COMMIT}"`,
+	"--expected-tag-object", `"${RELEASE_TAG_OBJECT}"`,
+}
+
+// validateReleaseTagRechecks requires each mutation phase to run its own fully
+// bound tag recheck, and no other job to run one. It reads parsed run
+// statements, so a check converted into a comment does not count.
+func validateReleaseTagRechecks(workflowText string) error {
 	var document workflowDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
-		return 0, fmt.Errorf("parse release tag rechecks: %w", err)
+		return fmt.Errorf("parse release tag rechecks: %w", err)
 	}
-	count := 0
-	for _, job := range document.Jobs {
+	const requirement = ".github/workflows/release.yml must verify release tag signatures before every release mutation phase"
+	for name, job := range document.Jobs {
+		found := 0
 		for _, step := range job.Steps {
 			for _, arguments := range commandArgs(step.Run, "./scripts/check-release-tag-signature.sh") {
-				if len(arguments) > 0 && arguments[0] == "--github-repo" {
-					count++
+				if slices.Equal(arguments, releaseTagRecheckArguments) {
+					found++
 				}
 			}
 		}
+		if want := releaseTagRecheckPhases[name]; found != want {
+			return fmt.Errorf("%s: job %s runs %d bound checks, want %d", requirement, name, found, want)
+		}
 	}
-	return count, nil
+	for name := range releaseTagRecheckPhases {
+		if _, ok := document.Jobs[name]; !ok {
+			return fmt.Errorf("%s: mutation phase %s is missing", requirement, name)
+		}
+	}
+	return nil
 }
 
 func (check *pinnedInputsCheck) validateReleaseHostedControls() error {

@@ -341,7 +341,42 @@ func TestCheckPinnedInputsRejectsCommentedReleaseTagRecheck(t *testing.T) {
 		return strings.Replace(content, recheck,
 			"        run: |\n          #"+strings.TrimPrefix(recheck, "        run:")+"\n          true", 1)
 	})
-	requirePinnedInputsErrorContains(t, cfg, "found 4 checks")
+	requirePinnedInputsErrorContains(t, cfg, "before every release mutation phase")
+}
+
+// Each mutation phase must run its own fully bound recheck: a check moved to
+// another job, or one missing part of its binding, does not cover the phase it
+// left behind.
+func TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks(t *testing.T) {
+	const recheck = `        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"`
+	for name, rewrite := range map[string]func(string) string{
+		"recheck relocated to another job": func(content string) string {
+			// Add a duplicate to the assembly job and drop the first phase's
+			// own check, so the file-wide count is still five while one
+			// mutation phase now runs none.
+			const assemblyStep = "      - name: Recheck release tag before release assembly\n" +
+				"        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" + recheck + "\n"
+			duplicated := strings.Replace(content, assemblyStep, assemblyStep+"\n"+assemblyStep, 1)
+			return strings.Replace(duplicated, recheck+"\n", "        run: 'true'\n", 1)
+		},
+		"recheck missing its tag-object binding": func(content string) string {
+			return strings.Replace(content, ` --expected-tag-object "${RELEASE_TAG_OBJECT}"`, "", 1)
+		},
+		"recheck missing its commit binding": func(content string) string {
+			return strings.Replace(content, ` --expected-commit "${RELEASE_COMMIT}"`, "", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, ".github/workflows/release.yml", func(content string) string {
+				mutated := rewrite(content)
+				if mutated == content {
+					t.Fatalf("mutation %q did not change the workflow", name)
+				}
+				return mutated
+			})
+			requirePinnedInputsErrorContains(t, cfg, "before every release mutation phase")
+		})
+	}
 }
 
 func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, directCollaborators []map[string]any) (string, string) {
