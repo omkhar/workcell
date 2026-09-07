@@ -68,8 +68,9 @@ func TestCopyWorkspaceTreePreservesFileMode(t *testing.T) {
 	file := filepath.Join(src, "run.sh")
 	mustNil(t, os.WriteFile(file, []byte("#!/bin/sh\n"), 0o600))
 	mustNil(t, os.Chmod(file, 0o666))
-	dst := filepath.Join(t.TempDir(), "out")
-	entries, err := copyWorkspaceTree(src, dst, nil)
+	parent, parentFD := workspaceTestParent(t)
+	dst := filepath.Join(parent, "out")
+	entries, err := copyWorkspaceTreeDescriptor(src, parentFD, "out", nil)
 	mustNil(t, err)
 	info, err := os.Stat(filepath.Join(dst, "run.sh"))
 	mustNil(t, err)
@@ -95,7 +96,7 @@ func TestCopyWorkspaceTreeRelativeSourceSymlink(t *testing.T) {
 	mustNil(t, os.WriteFile(filepath.Join(ok, "real.txt"), []byte("x\n"), 0o644))
 	mustNil(t, os.Symlink("real.txt", filepath.Join(ok, "link")))
 	mustNil(t, os.Chdir(ok))
-	if _, err := copyWorkspaceTree(".", filepath.Join(t.TempDir(), "outa"), nil); err != nil {
+	if _, err := copyWorkspaceForTest(t, ".", nil, defaultWorkspaceCopyLimits(), systemWorkspaceOps()); err != nil {
 		t.Fatalf("relative source with internal symlink rejected: %v", err)
 	}
 
@@ -103,7 +104,7 @@ func TestCopyWorkspaceTreeRelativeSourceSymlink(t *testing.T) {
 	bad := t.TempDir()
 	mustNil(t, os.Symlink("../escape", filepath.Join(bad, "esc")))
 	mustNil(t, os.Chdir(bad))
-	if _, err := copyWorkspaceTree(".", filepath.Join(t.TempDir(), "outb"), nil); err == nil {
+	if _, err := copyWorkspaceForTest(t, ".", nil, defaultWorkspaceCopyLimits(), systemWorkspaceOps()); err == nil {
 		t.Fatalf("escaping symlink accepted")
 	}
 }
@@ -197,8 +198,9 @@ func TestCopyWorkspaceTreeExcludesGitCaseInsensitive(t *testing.T) {
 	mustNil(t, os.MkdirAll(filepath.Join(src, ".GIT"), 0o755))
 	mustNil(t, os.WriteFile(filepath.Join(src, ".GIT", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
 	mustNil(t, os.WriteFile(filepath.Join(src, "keep.txt"), []byte("x\n"), 0o644))
-	dst := filepath.Join(t.TempDir(), "out")
-	entries, err := copyWorkspaceTree(src, dst, []string{".git"})
+	parent, parentFD := workspaceTestParent(t)
+	dst := filepath.Join(parent, "out")
+	entries, err := copyWorkspaceTreeDescriptor(src, parentFD, "out", []string{".git"})
 	mustNil(t, err)
 	if _, err := os.Stat(filepath.Join(dst, ".GIT")); !os.IsNotExist(err) {
 		t.Fatalf(".GIT leaked into the materialized workspace")
@@ -213,26 +215,21 @@ func TestCopyWorkspaceTreeExcludesGitCaseInsensitive(t *testing.T) {
 	}
 }
 
-// TestPathAndExclusionCaseInsensitivity unit-tests the case-insensitive,
-// component-aware containment and exclusion comparisons.
-func TestPathAndExclusionCaseInsensitivity(t *testing.T) {
+// TestWorkspaceExclusionCaseInsensitivity checks the active exclusion policy.
+// Shared pathutil tests cover normalized containment and component boundaries.
+func TestWorkspaceExclusionCaseInsensitivity(t *testing.T) {
 	t.Parallel()
 
-	if !pathWithin("/foo/bar", "/FOO/BAR/baz") {
-		t.Fatalf("case-insensitive containment not detected")
-	}
-	if pathWithin("/foo", "/foobar") {
-		t.Fatalf("/foobar wrongly treated as inside /foo (component boundary)")
-	}
-	if pathWithin("/foo", "/foo") {
-		t.Fatalf("equal path wrongly treated as strictly within")
-	}
 	for _, name := range []string{".GIT", ".Git", ".git/config", ".GIT/hooks/pre-commit"} {
-		if !isExcludedPath(name, []string{".git"}) {
+		excluded, err := isExcludedPathSafe(name, []string{".git"})
+		mustNil(t, err)
+		if !excluded {
 			t.Fatalf("%q not excluded case-insensitively", name)
 		}
 	}
-	if isExcludedPath(".gitignore", []string{".git"}) {
+	excluded, err := isExcludedPathSafe(".gitignore", []string{".git"})
+	mustNil(t, err)
+	if excluded {
 		t.Fatalf(".gitignore wrongly excluded (component boundary)")
 	}
 }
