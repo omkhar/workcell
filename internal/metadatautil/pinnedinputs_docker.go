@@ -544,8 +544,7 @@ func (validator *dockerPinnedInputValidator) aptBrokerRuntimeStage() (string, er
 }
 
 func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(runtimeStage string) error {
-	// Count instructions, not text: a Dockerfile comment that names a binary
-	// changes nothing in the image and must not fail a valid build file.
+	// Count instructions, not text: a comment naming a binary changes nothing.
 	instructions := dockerfileInstructions(runtimeStage)
 	for _, binary := range []string{"workcell-apt-broker-client", "workcell-apt-broker-server"} {
 		if err := requireTextCount(instructions, binary, 1, "apt broker runtime binary", validator.cfg.RuntimeDockerfilePath); err != nil {
@@ -555,8 +554,7 @@ func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(ru
 	return nil
 }
 
-// dockerfileInstructions returns text with its comment lines removed. A # is
-// only a comment when it opens a line; elsewhere it is part of the instruction.
+// dockerfileInstructions drops comment lines; a # opens one only at line start.
 func dockerfileInstructions(text string) string {
 	var instructions strings.Builder
 	for line := range strings.Lines(text) {

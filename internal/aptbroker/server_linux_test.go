@@ -73,19 +73,14 @@ const (
 	testBrokerExchangeTimeout = 30 * time.Second
 )
 
-// The returned context is the broker lifetime, cancelled only by cleanup. A
-// caller that dials must derive its own per-exchange deadline from it, so that
-// a slow exchange cannot close the listener out from under itself.
-//
-// Readiness comes from ServerConfig.Ready, which Serve calls once the socket is
-// bound, listening and secured. Polling for the socket file instead would
-// observe the pathname in the window between bind(2) and listen(2), where a
-// dial is refused: on a loaded machine that window is wide enough to fail.
+// The returned context is the broker lifetime, so a dialing caller derives its
+// own per-exchange deadline and a slow exchange cannot close the listener under
+// itself. Readiness comes from ServerConfig.Ready: polling for the socket file
+// would see the pathname between bind(2) and listen(2), where a dial is refused.
 func startTestBroker(t *testing.T) (context.Context, string) {
 	t.Helper()
-	// ServerConfig rejects peer uid 0, so a root process is never an
-	// admissible peer for its own broker and this round trip has no uid to
-	// dial from. The unprivileged lanes cover it.
+	// ServerConfig rejects peer uid 0, so root is never an admissible peer for
+	// its own broker and this round trip has no uid to dial from.
 	if os.Getuid() == 0 {
 		t.Skip("round trip requires a non-root client: peer uid 0 is not admissible")
 	}

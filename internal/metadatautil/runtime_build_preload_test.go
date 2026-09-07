@@ -17,8 +17,7 @@ func TestCheckPinnedInputsRuntimeBuildPreload(t *testing.T) {
 	}
 }
 
-// A comment that names the guard variable assigns nothing, so it must not
-// change the canonical assignment count or fail a valid build file.
+// A comment naming the guard variable assigns nothing, so the count is unchanged.
 func TestCheckPinnedInputsAcceptsInertBuildPreloadMentions(t *testing.T) {
 	const laterStage = "FROM runtime-base AS provider-builder\n"
 	for name, rewrite := range map[string]func(string) string{
@@ -44,8 +43,7 @@ func TestCheckPinnedInputsAcceptsInertBuildPreloadMentions(t *testing.T) {
 	}
 }
 
-// ENV and export persist every key they list, so an override that hides the
-// guard variable behind another key is still an override.
+// ENV and export persist every key, so a key that hides the guard still overrides.
 func TestCheckPinnedInputsRejectsMultiKeyBuildPreloadOverride(t *testing.T) {
 	const canonicalExport = "  && export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so \\\n"
 	for name, rewrite := range map[string]func(string) string{

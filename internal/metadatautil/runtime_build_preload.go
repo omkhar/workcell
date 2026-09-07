@@ -13,8 +13,7 @@ const runtimeGuardPreload = "LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so
 
 // Validate the canonical build fragments, not arbitrary Dockerfile semantics.
 // Keep activation and the next child command together in the builder RUN.
-// Fragments are matched against instructions only: a comment beside a
-// declaration changes nothing Docker does and must not break the pin.
+// Fragments match instructions only: a comment beside one changes nothing.
 func validateRuntimeBuildPreload(dockerfile, path string) error {
 	instructions := dockerfileInstructions(dockerfile)
 	blocks := []string{
@@ -37,11 +36,9 @@ func validateRuntimeBuildPreload(dockerfile, path string) error {
 	return nil
 }
 
-// preloadAssignments counts the guard assignments that take effect. Continuations
-// are joined first, so a split line counts. An ENV persists every key it lists,
-// including the legacy space-separated form; inside a RUN only an assignment
-// that follows an export word counts, so the two words merely appearing in a
-// command's output do not.
+// preloadAssignments counts the guard assignments that take effect, joining
+// continuations first. An ENV persists every key it lists, including the legacy
+// space-separated form; inside a RUN only an export-anchored assignment counts.
 func preloadAssignments(instructions string) int {
 	const guard = "LD_PRELOAD"
 	count := 0

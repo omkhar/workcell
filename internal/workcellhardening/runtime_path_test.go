@@ -13,23 +13,16 @@ import (
 
 const runtimePathPin = "readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'\nexport PATH\n"
 
-// The BASH_ENV/ENV clearing prologue is checked in internal/testkit; it is
-// repeated here so the PATH pin is held to the line right after it.
-const runtimeStartupPin = "#!/usr/bin/env -S BASH_ENV= ENV= bash\n" +
-	"# The shebang clears BASH_ENV/ENV only when the kernel applies it; these scripts\n" +
-	"# also run as plain `/bin/bash <script>`, so clear them for every child bash.\n" +
-	"# A startup file that already ran can pin either one readonly, which makes the\n" +
-	"# unset fail while errexit is still off, so refuse to run while one survives.\n" +
-	"unset BASH_ENV ENV\n" +
+// internal/testkit holds this clearing prologue to the top of each script; the
+// PATH pin is required on the line where it ends.
+const runtimeStartupPin = "unset BASH_ENV ENV\n" +
 	"[[ -z \"${BASH_ENV+set}${ENV+set}\" ]] || {\n" +
 	"  echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2\n" +
-	"  exit 2\n" +
-	"}\n"
+	"  exit 2\n}\n"
 
 func TestRuntimePathPrologues(t *testing.T) {
-	executable := runtimeStartupPin + runtimePathPin + "set -euo pipefail\n"
-	library := runtimeStartupPin +
-		"if [[ \"${PATH}\" != '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ]]; then\n" +
+	executable := runtimePathPin + "set -euo pipefail\n"
+	library := "if [[ \"${PATH}\" != '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ]]; then\n" +
 		"  PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'\n" +
 		"fi\nreadonly PATH\nexport PATH\n"
 	for name, prefix := range map[string]string{
@@ -44,8 +37,9 @@ func TestRuntimePathPrologues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body, ok := strings.CutPrefix(string(content), prefix)
-			if !ok {
+			_, tail, found := strings.Cut(string(content), runtimeStartupPin)
+			body, ok := strings.CutPrefix(tail, prefix)
+			if !found || !ok {
 				t.Fatal("missing ordered trusted PATH prologue")
 			}
 			if runtimePathMutation(body) {
@@ -55,20 +49,17 @@ func TestRuntimePathPrologues(t *testing.T) {
 	}
 }
 
-// runtimePathMutation reports direct shell mutations of PATH, not the meaning
-// of arbitrary shell programs: an assignment at the start of a command, after
-// a declaration builtin, or an unset naming PATH. Command arguments such as
-// env PATH=value do not assign the shell variable and are not mutations.
-// The scan is deliberately over-eager on anything that reads as an
-// assignment, so a missed mutation cannot pass as a parse subtlety.
+// runtimePathMutation reports direct shell mutations of PATH: an assignment at
+// the start of a command, after a declaration builtin, or an unset naming PATH.
+// A command argument such as env PATH=value assigns no shell variable. The scan
+// is over-eager, so a missed mutation cannot pass as a parse subtlety.
 var runtimePathMutationPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?m)(^|[;&|(){}]|\b(then|else|elif|do|export|declare|local|typeset|readonly)\b)[ \t]*PATH=`),
 	regexp.MustCompile(`(?m)\bunset\b[^;&|\n]*\bPATH\b`),
 }
 
 func runtimePathMutation(body string) bool {
-	// Comments first, then continuations: joining a comment into the next
-	// physical line would hide the assignment that follows it.
+	// Comments first: joining one into the next line hides what follows it.
 	var code strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "#") {
@@ -104,10 +95,9 @@ func TestRuntimePathMutationSourceClassification(t *testing.T) {
 			t.Errorf("non-mutation rejected: %s", body)
 		}
 	}
-	// Deliberately over-eager, recorded so it stays a reviewed property. A #
-	// inside a quoted word is not a comment, so a scan that stripped from the
-	// first # would delete the assignment behind it: a false report costs one
-	// edit, a missed mutation costs the runtime PATH.
+	// Over-eager by design, recorded so it stays a reviewed property: a # inside
+	// a quoted word is not a comment, and a scan that stripped from the first #
+	// would delete the assignment behind it.
 	for _, body := range []string{"true # export PATH=/tmp", "printf 'then PATH=/tmp'"} {
 		if !runtimePathMutation(body) {
 			t.Errorf("over-eager classification changed: %s", body)
