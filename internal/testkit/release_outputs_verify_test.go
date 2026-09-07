@@ -240,6 +240,14 @@ reject_unsafe_call() {
 cosign() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${GH_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 96
   reject_unsafe_call "$@" || return $?
+  for arg in "$@"; do
+    # Cosign 3.1.3 spells every verification weakening with "insecure":
+    # --insecure-ignore-tlog drops the Rekor transparency check,
+    # --insecure-ignore-sct drops the certificate timestamp check, and
+    # --allow-insecure-registry drops registry TLS. Match the family rather
+    # than one flag, in both the spaced and the equals form.
+    [[ "${arg}" != *insecure* ]] || return 89
+  done
   log_call %[4]s "$@"
   if [[ "${1:-}" == "verify" ]]; then
     tag_digest=%[5]s
@@ -647,6 +655,12 @@ func TestVerifyReleaseOutputsRejectsDisarmedVerification(t *testing.T) {
 			name:        "Cosign runs in help mode",
 			old:         "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" \\\n",
 			replacement: "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" --help \\\n",
+			want:        "Cosign verification failed for ",
+		},
+		{
+			name:        "Cosign skips the transparency log",
+			old:         "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" \\\n",
+			replacement: "  --certificate-github-workflow-sha \"${WORKFLOW_DIGEST}\" --insecure-ignore-tlog \\\n",
 			want:        "Cosign verification failed for ",
 		},
 		{
