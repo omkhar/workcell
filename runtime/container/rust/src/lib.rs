@@ -898,26 +898,23 @@ fn should_block_workcell_launcher_fd_loader_env(fd: c_int, env_entries: &[String
     fd_matches_workcell_native_launcher(fd) && env_has_unsafe_loader_override(env_entries)
 }
 
-/// True when the target is something the dynamic loader interprets, so a
-/// loader environment override would change how it runs.  Regular files whose
-/// first two bytes are an ELF or shebang magic qualify; anything the guard
-/// cannot read is treated as loader sensitive rather than trusted.
+/// True when a loader environment override would change how the target runs.
+///
+/// Every regular file qualifies, whatever its contents. An ELF is loaded by
+/// ld.so directly and a shebang loads its interpreter the same way. A regular
+/// file that is neither still counts, because execve returns ENOEXEC for it
+/// and glibc's execvp and execvpe answer that by launching /bin/sh with the
+/// caller's environment from inside libc, which does not re-enter this guard.
+/// Nothing else is executable at all, so a target that is not a regular file
+/// cannot reach the loader. A target that cannot be stat'ed stays
+/// unclassified and is treated as sensitive.
 #[cfg(target_os = "linux")]
 fn file_descriptor_is_loader_sensitive(fd: c_int) -> bool {
-    let Some(mut file) = duplicate_fd_file(fd) else {
-        return true;
-    };
-    let Ok(metadata) = file.metadata() else {
-        return true;
-    };
-    if (metadata.mode() & file_type_bits()) != regular_file_mode() {
-        return false;
-    }
-    let mut prefix = [0u8; 2];
-    if file.read_exact(&mut prefix).is_err() {
-        return true;
-    }
-    prefix == [0x7f, b'E'] || prefix == *b"#!"
+    duplicate_fd_file(fd)
+        .and_then(|file| file.metadata().ok())
+        .map_or(true, |metadata| {
+            (metadata.mode() & file_type_bits()) == regular_file_mode()
+        })
 }
 
 #[cfg(target_os = "linux")]
@@ -925,22 +922,9 @@ fn path_is_loader_sensitive(path: &str) -> bool {
     if let Some(proc_fd) = path_is_current_process_fd_path(path) {
         return file_descriptor_is_loader_sensitive(proc_fd);
     }
-    // Stat before opening.  A non-regular target is never loader interpreted,
-    // and opening one from inside an interposed exec could block the caller.
-    let Ok(metadata) = fs::metadata(path) else {
-        return true;
-    };
-    if (metadata.mode() & file_type_bits()) != regular_file_mode() {
-        return false;
-    }
-    let Ok(mut file) = File::open(path) else {
-        return true;
-    };
-    let mut prefix = [0u8; 2];
-    if file.read_exact(&mut prefix).is_err() {
-        return true;
-    }
-    prefix == [0x7f, b'E'] || prefix == *b"#!"
+    fs::metadata(path).map_or(true, |metadata| {
+        (metadata.mode() & file_type_bits()) == regular_file_mode()
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -3277,25 +3261,33 @@ mod tests {
         fs::write(&data, "plain text, not an exec target\n").expect("data");
 
         let elf_path = elf.display().to_string();
+        let data_path = data.display().to_string();
         assert!(path_is_loader_sensitive(&elf_path));
         assert!(path_is_loader_sensitive(&script.display().to_string()));
-        assert!(!path_is_loader_sensitive(&data.display().to_string()));
-        // Directories and character devices cannot be loaded.
+        // A regular file that is neither ELF nor a shebang still counts:
+        // execve answers it with ENOEXEC and glibc's execvp and execvpe then
+        // launch /bin/sh with the caller's environment from inside libc,
+        // without re-entering this guard.
+        assert!(path_is_loader_sensitive(&data_path));
+        // Nothing that is not a regular file is executable at all.
         assert!(!path_is_loader_sensitive(&dir.display().to_string()));
-        // A target the guard cannot read is refused rather than trusted.
+        // A target the guard cannot stat is refused rather than trusted.
         assert!(path_is_loader_sensitive(
             &dir.join("missing").display().to_string()
         ));
 
         let unsafe_env = ["LD_AUDIT=/tmp/audit.so".to_string()];
         assert!(should_block_loader_env_for_path(&elf_path, &unsafe_env));
+        assert!(should_block_loader_env_for_path(&data_path, &unsafe_env));
+        // A clean environment leaves every target alone.
         assert!(!should_block_loader_env_for_path(&elf_path, &[]));
+        assert!(!should_block_loader_env_for_path(&data_path, &[]));
         assert!(!should_block_loader_env_for_path(
             &elf_path,
             &[format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}")]
         ));
         assert!(!should_block_loader_env_for_path(
-            &data.display().to_string(),
+            &dir.display().to_string(),
             &unsafe_env
         ));
 
@@ -3306,7 +3298,7 @@ mod tests {
         assert!(!should_block_loader_env_for_fd(elf_fd, &[]));
 
         let data_file = File::open(&data).expect("open data");
-        assert!(!should_block_loader_env_for_fd(
+        assert!(should_block_loader_env_for_fd(
             data_file.as_raw_fd(),
             &unsafe_env
         ));
