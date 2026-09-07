@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 if [[ "${1:-}" != "install" ]]; then
   echo "Expected only brew install during installer dependency bootstrap" >&2

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env -S BASH_ENV= ENV= bash
 set -euo pipefail
 if [[ "${1:-}" == "-in" ]] && [[ "${2:-}" == "hw.optional.arm64" ]]; then
   printf '1\n'

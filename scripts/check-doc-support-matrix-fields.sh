@@ -28,18 +28,18 @@ done
 
 # Field names emitted by Go MetadataLines(), scoped to that function body.
 go_fields="$(
-  awk '/^func MetadataLines\(/{f=1} f{print} f&&/^}/{exit}' "${GO_FILE}" \
-    | grep -oE '"[a-z0-9_]+=%s"' \
-    | sed -E 's/"([a-z0-9_]+)=%s"/\1/' \
-    | sort -u
+  awk '/^func MetadataLines\(/{f=1} f{print} f&&/^}/{exit}' "${GO_FILE}" |
+    grep -oE '"[a-z0-9_]+=%s"' |
+    sed -E 's/"([a-z0-9_]+)=%s"/\1/' |
+    sort -u
 )"
 
 # Field names printed by the shell print_support_matrix_state(), scoped to it.
 sh_fields="$(
-  awk '/^print_support_matrix_state\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${SH_FILE}" \
-    | grep -oE "'[a-z0-9_]+=%s" \
-    | sed -E "s/'([a-z0-9_]+)=%s/\1/" \
-    | sort -u
+  awk '/^print_support_matrix_state\(\) \{/{f=1} f{print} f&&/^}/{exit}' "${SH_FILE}" |
+    grep -oE "'[a-z0-9_]+=%s" |
+    sed -E "s/'([a-z0-9_]+)=%s/\1/" |
+    sort -u
 )"
 
 # Field names documented between the machine-checked markers in the doc. Only
@@ -48,10 +48,10 @@ sh_fields="$(
 # sourced from a variable so the extraction patterns stay in double quotes.
 bt='`'
 doc_fields="$(
-  awk '/<!-- support-matrix-fields:begin -->/{f=1;next} /<!-- support-matrix-fields:end -->/{f=0} f' "${DOC_FILE}" \
-    | grep -oE "^\\| ${bt}[a-z0-9_]+${bt}" \
-    | sed -E "s/^\\| ${bt}([a-z0-9_]+)${bt}/\\1/" \
-    | sort -u
+  awk '/<!-- support-matrix-fields:begin -->/{f=1;next} /<!-- support-matrix-fields:end -->/{f=0} f' "${DOC_FILE}" |
+    grep -oE "^\\| ${bt}[a-z0-9_]+${bt}" |
+    sed -E "s/^\\| ${bt}([a-z0-9_]+)${bt}/\\1/" |
+    sort -u
 )"
 
 [[ -n "${go_fields}" ]] || fail "extracted no fields from Go MetadataLines()"
@@ -63,8 +63,8 @@ report_diff() {
   local only_a only_b
   only_a="$(comm -23 <(printf '%s\n' "${set_a}") <(printf '%s\n' "${set_b}") | tr '\n' ' ')"
   only_b="$(comm -13 <(printf '%s\n' "${set_a}") <(printf '%s\n' "${set_b}") | tr '\n' ' ')"
-  [[ -n "${only_a// }" ]] && echo "  only in ${label_a}: ${only_a}" >&2
-  [[ -n "${only_b// }" ]] && echo "  only in ${label_b}: ${only_b}" >&2
+  [[ -n "${only_a// /}" ]] && echo "  only in ${label_a}: ${only_a}" >&2
+  [[ -n "${only_b// /}" ]] && echo "  only in ${label_b}: ${only_b}" >&2
 }
 
 if [[ "${go_fields}" != "${sh_fields}" ]]; then
