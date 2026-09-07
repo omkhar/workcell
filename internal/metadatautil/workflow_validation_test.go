@@ -118,6 +118,31 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
+// TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions runs the shared
+// evasion corpus against each command the release assembly step must run. Both
+// anchors of validateReleaseAssembly are covered, so a parser change that
+// stops reading one of them fails here rather than in review.
+func TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	t.Run("platform copies", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          oras cp --recursive --from-oci-layout \\\n"+
+				"            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n"+
+				"            --to-oci-layout dist/release-image:amd64\n"+
+				"          oras cp --recursive --from-oci-layout \\\n"+
+				"            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n"+
+				"            --to-oci-layout dist/release-image:arm64",
+			"copy both platform images", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
+	})
+	t.Run("multi-arch index", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          oras manifest index create --oci-layout \\\n"+
+				"            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n"+
+				"            amd64 arm64 >/dev/null",
+			"assemble the multi-arch index", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
+	})
+}
+
 func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T) {
 	workflow := string(readReleaseWorkflow(t))
 	decoys := []struct {
