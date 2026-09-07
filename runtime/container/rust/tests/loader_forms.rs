@@ -15,10 +15,11 @@
 //! second case: a child environment without the approved preload is refused by
 //! the fail-closed default, which is not a statement about the form under test.
 //!
-//! Rows the guards on this branch cannot answer are recorded as pending with a
-//! reason rather than asserted green. `scripts/container-smoke.sh` replays the
-//! same forms against the real loader inside the runtime image, where the
-//! mutable exec roots and the protected runtime signatures exist.
+//! Rows this lane cannot answer are recorded as pending with a reason rather
+//! than asserted green. `scripts/container-smoke.sh` replays the loader
+//! argument forms against the real loader inside the runtime image, where the
+//! mutable exec roots and the protected runtime signatures exist. Each pending
+//! reason names the lane that holds the form, or states that no lane holds it.
 
 use Call::{Execve, ExecveNullEnv, Execveat, Execvp};
 use Expect::{NotRefused, Pending, Refused};
@@ -75,9 +76,9 @@ const PROBE: &str = "workcell-loader-form-probe";
 /// Bytes past `MAX_EXEC_PATH_SEGMENT_BYTES` in `src/lib.rs`.
 const OVERLONG_SEGMENT_BYTES: usize = 128 * 1024 + 1;
 
-const EQUALS_SIGN_PENDING: &str = "the split-at-equals defect is only observable when the truncated prefix resolves inside a mutable exec root; container smoke covers it";
-const ENV_CLUSTER_PENDING: &str = "the cluster is classified only when the shebang scan reaches a protected runtime, whose stat signatures exist in the runtime image; container smoke covers it";
-const RAW_SYSCALL_PENDING: &str = "the built cdylib exports workcell_syscall_shim, not syscall, so a raw-syscall row observes nothing and would report a false pass";
+const EQUALS_SIGN_PENDING: &str = "the split-at-equals defect is only observable when the truncated prefix resolves inside a mutable exec root; the container smoke row target-with-equals-sign holds it";
+const ENV_CLUSTER_PENDING: &str = "the cluster is classified only when the shebang scan reaches a protected runtime, whose stat signatures exist in the runtime image; the container smoke fixture .workcell-env-cluster-node-shebang holds it";
+const RAW_SYSCALL_PENDING: &str = "no lane holds this form: the built cdylib exports workcell_syscall_shim and does not export syscall, so nothing interposes a raw syscall(SYS_execve, ...) and a row over it would report a false pass; the missing export is pre-existing on main and is recorded for the trampoline unit of the series";
 
 enum Call {
     /// `execve(path, argv, envp)` with an explicit child environment.

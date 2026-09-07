@@ -4105,6 +4105,18 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-node-shebang.out
+  # The short options cluster into one token, so -iS reaches both -i, which
+  # drops the guard preload, and -S, which re-splits the rest of the line.
+  cat >"${workspace_exec_scratch}/.workcell-env-cluster-node-shebang" <<EOF
+#!/usr/bin/env -iS /usr/local/libexec/workcell/real/node
+console.log("workcell env cluster shebang bypass");
+EOF
+  chmod 0700 "${workspace_exec_scratch}/.workcell-env-cluster-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-env-cluster-node-shebang" >/tmp/workspace-env-cluster-node-shebang.out 2>&1; then
+    echo "expected strict profile to reject env -iS shebang execution of the real Node payload" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-cluster-node-shebang.out
   cat >"${workspace_exec_scratch}/.workcell-env-loader-node-shebang" <<EOF
 #!/usr/bin/env -S ${LOADER} /usr/local/libexec/workcell/real/node
 console.log("workcell env loader shebang bypass");
