@@ -26,6 +26,9 @@ const (
 	releaseOutputImage  = "ghcr.io/omkhar/workcell"
 	slsaPredicate       = "https://slsa.dev/provenance/v1"
 	spdxPredicate       = "https://spdx.dev/Document/v2.3"
+
+	releaseOutputIssuer   = "https://token.actions.githubusercontent.com"
+	releaseOutputIdentity = "https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main"
 )
 
 // releaseOutputAssets mirrors DATA_ASSETS in scripts/verify-release-outputs.sh,
@@ -86,15 +89,16 @@ func releaseOutputFixture(t *testing.T) string {
 }
 
 // releaseOutputStubBin builds a driver that sources the real verifier and
-// replaces cosign and gh with logging stubs. cosignFailGlob selects which
-// cosign invocations fail: "" fails none, "*" fails every one, and a narrower
-// glob fails a single call so a negative control cannot be satisfied by an
-// earlier check rejecting first.
-func releaseOutputStubBin(t *testing.T, cosignFailGlob string, ghCode int) (string, string, string) {
-	return releaseOutputStubBinWithNamedTagDigests(t, cosignFailGlob, ghCode, strings.Repeat("a", 64), strings.Repeat("a", 64))
+// replaces cosign and gh with logging stubs. Each fail glob selects which
+// invocations of that tool fail: "" fails none, "*" fails every one, and a
+// narrower glob fails a single call, so a negative control cannot be satisfied
+// by an earlier check rejecting first.
+func releaseOutputStubBin(t *testing.T, cosignFailGlob, ghFailGlob string) (string, string, string) {
+	t.Helper()
+	return releaseOutputStubDriver(t, verifyReleaseOutputsScript(t), cosignFailGlob, ghFailGlob, strings.Repeat("a", 64), strings.Repeat("a", 64))
 }
 
-func releaseOutputStubBinWithNamedTagDigests(t *testing.T, cosignFailGlob string, ghCode int, releaseTagDigest, commitTagDigest string) (string, string, string) {
+func releaseOutputStubDriver(t *testing.T, scriptPath, cosignFailGlob, ghFailGlob, releaseTagDigest, commitTagDigest string) (string, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	cosignLog := filepath.Join(dir, "cosign.log")
@@ -103,6 +107,7 @@ func releaseOutputStubBinWithNamedTagDigests(t *testing.T, cosignFailGlob string
 	script := fmt.Sprintf(`#!/bin/bash
 source %q
 cosign_fail_glob=%q
+gh_fail_glob=%q
 cosign() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${GH_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 96
   printf '%%s\n' "$*" >>%q
@@ -120,39 +125,36 @@ gh() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 98
   [[ "${GH_TOKEN:-}" == "test-token" ]] || return 97
   printf '%%s\n' "$*" >>%q
-  return %d
+  [[ -n "${gh_fail_glob}" && "$*" == ${gh_fail_glob} ]] && return 1
+  return 0
 }
 main "$@"
-`, verifyReleaseOutputsScript(t), cosignFailGlob, cosignLog, releaseTagDigest, strings.Repeat("c", 40), commitTagDigest, ghLog, ghCode)
+`, scriptPath, cosignFailGlob, ghFailGlob, cosignLog, releaseTagDigest, strings.Repeat("c", 40), commitTagDigest, ghLog)
 	if err := os.WriteFile(driver, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return driver, cosignLog, ghLog
 }
 
-func runVerifyReleaseOutputs(t *testing.T, driver, assets string, attestations bool) (int, string) {
-	return runVerifyReleaseOutputsWithDigests(t, driver, assets, strings.Repeat("c", 40), strings.Repeat("c", 40), attestations)
-}
-
-func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDigest, workflowDigest string, attestations bool) (int, string) {
-	t.Helper()
+func releaseOutputArgs(assets, tag, imageRepository, sourceDigest, workflowDigest string, attestations bool) []string {
 	args := []string{
 		"--assets-dir", assets,
 		"--repo", "omkhar/workcell",
-		"--tag", "v1.2.3",
-		"--image-repository", "ghcr.io/omkhar/workcell",
+		"--tag", tag,
+		"--image-repository", imageRepository,
 		"--source-digest", sourceDigest,
 		"--workflow-digest", workflowDigest,
 	}
 	if attestations {
 		args = append(args, "--attestations")
 	}
+	return args
+}
+
+func runVerifyDriver(t *testing.T, driver string, args, env []string) (int, string) {
+	t.Helper()
 	cmd := exec.Command(driver, args...)
-	cmd.Env = []string{
-		"GITHUB_TOKEN=test-token",
-		"BASH_ENV=",
-		"ENV=",
-	}
+	cmd.Env = append([]string{"BASH_ENV=", "ENV="}, env...)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return 0, string(out)
@@ -164,10 +166,20 @@ func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDige
 	return -1, string(out)
 }
 
+func runVerifyReleaseOutputs(t *testing.T, driver, assets string, attestations bool) (int, string) {
+	return runVerifyReleaseOutputsWithDigests(t, driver, assets, strings.Repeat("c", 40), strings.Repeat("c", 40), attestations)
+}
+
+func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDigest, workflowDigest string, attestations bool) (int, string) {
+	t.Helper()
+	args := releaseOutputArgs(assets, releaseOutputTag, releaseOutputImage, sourceDigest, workflowDigest, attestations)
+	return runVerifyDriver(t, driver, args, []string{"GITHUB_TOKEN=test-token"})
+}
+
 func TestVerifyReleaseOutputsRejectsDifferentSourceAndWorkflowCommits(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBin(t, "", 0)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputsWithDigests(
 		t,
 		bin,
@@ -184,40 +196,22 @@ func TestVerifyReleaseOutputsRejectsDifferentSourceAndWorkflowCommits(t *testing
 func TestVerifyReleaseOutputsRejectsUnrelatedImageRepository(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBin(t, "", 0)
-	args := []string{
-		"--assets-dir", assets,
-		"--repo", "omkhar/workcell",
-		"--tag", "v1.2.3",
-		"--image-repository", "ghcr.io/attacker/workcell",
-		"--source-digest", strings.Repeat("c", 40),
-		"--workflow-digest", strings.Repeat("c", 40),
-	}
-	cmd := exec.Command(bin, args...)
-	cmd.Env = []string{"BASH_ENV=", "ENV="}
-	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "image repository must match release repository") {
-		t.Fatalf("expected unrelated image repository rejection, got %v\n%s", err, out)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
+	args := releaseOutputArgs(assets, releaseOutputTag, "ghcr.io/attacker/workcell", strings.Repeat("c", 40), strings.Repeat("c", 40), false)
+	code, out := runVerifyDriver(t, bin, args, nil)
+	if code == 0 || !strings.Contains(out, "image repository must match release repository") {
+		t.Fatalf("expected unrelated image repository rejection, got %d\n%s", code, out)
 	}
 }
 
 func TestVerifyReleaseOutputsRejectsUnreviewedTagClass(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBin(t, "", 0)
-	args := []string{
-		"--assets-dir", assets,
-		"--repo", "omkhar/workcell",
-		"--tag", "v1.2.3-beta.1",
-		"--image-repository", "ghcr.io/omkhar/workcell",
-		"--source-digest", strings.Repeat("c", 40),
-		"--workflow-digest", strings.Repeat("c", 40),
-	}
-	cmd := exec.Command(bin, args...)
-	cmd.Env = []string{"BASH_ENV=", "ENV="}
-	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "invalid release tag") {
-		t.Fatalf("expected unreviewed tag class rejection, got %v\n%s", err, out)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
+	args := releaseOutputArgs(assets, "v1.2.3-beta.1", releaseOutputImage, strings.Repeat("c", 40), strings.Repeat("c", 40), false)
+	code, out := runVerifyDriver(t, bin, args, nil)
+	if code == 0 || !strings.Contains(out, "invalid release tag") {
+		t.Fatalf("expected unreviewed tag class rejection, got %d\n%s", code, out)
 	}
 }
 
@@ -234,18 +228,50 @@ func logLines(t *testing.T, path string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
+// TestVerifyReleaseOutputsPinsToolPath drives the verifier with a caller PATH
+// whose every tool fails. The run must still succeed, which is only possible if
+// the script resolved its tools from its own fixed trusted path. Asserting the
+// behaviour rather than the presence of an `export PATH=` line means moving
+// that line into a comment or a dead branch breaks the test.
 func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	t.Parallel()
 	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(content)
-	if strings.Contains(text, "WORKCELL_RELEASE_VERIFY_TRUSTED_PATH") {
+	if strings.Contains(string(content), "WORKCELL_RELEASE_VERIFY_TRUSTED_PATH") {
 		t.Fatal("release verifier accepts a caller-selected tool path")
 	}
-	if !strings.Contains(text, `export PATH="${TRUSTED_PATH}"`) {
-		t.Fatal("release verifier does not export its fixed trusted tool path")
+
+	poisoned := t.TempDir()
+	for _, tool := range []string{"jq", "sha256sum", "awk", "find", "wc", "cat", "command"} {
+		if err := os.WriteFile(filepath.Join(poisoned, tool), []byte("#!/bin/bash\nexit 3\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assets := releaseOutputFixture(t)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
+	args := releaseOutputArgs(assets, releaseOutputTag, releaseOutputImage, strings.Repeat("c", 40), strings.Repeat("c", 40), false)
+	code, out := runVerifyDriver(t, bin, args, []string{"PATH=" + poisoned})
+	if code != 0 {
+		t.Fatalf("release verifier used the caller PATH instead of its trusted path, got %d\n%s", code, out)
+	}
+
+	// Negative control: the same poisoned tools do break an otherwise identical
+	// verifier that honours the caller PATH, so the success above is evidence
+	// of pinning rather than of harmless stubs.
+	script := strings.Replace(string(content), `export PATH="${TRUSTED_PATH}"`, `export PATH="${PATH}"`, 1)
+	if script == string(content) {
+		t.Fatal("release verifier no longer exports its fixed trusted tool path")
+	}
+	unpinned := filepath.Join(t.TempDir(), "unpinned-verify-release-outputs.sh")
+	if err := os.WriteFile(unpinned, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unpinnedBin, _, _ := releaseOutputStubDriver(t, unpinned, "", "", strings.Repeat("a", 64), strings.Repeat("a", 64))
+	if code, out := runVerifyDriver(t, unpinnedBin, args, []string{"PATH=" + poisoned}); code == 0 {
+		t.Fatalf("poisoned PATH did not break an unpinned verifier, got %d\n%s", code, out)
 	}
 }
 
@@ -290,7 +316,7 @@ func callSubjects(t *testing.T, path string) []string {
 func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
-	bin, cosignLog, ghLog := releaseOutputStubBin(t, "", 0)
+	bin, cosignLog, ghLog := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputs(t, bin, assets, true)
 	if code != 0 {
 		t.Fatalf("expected release output verification success, got %d\n%s", code, out)
@@ -334,22 +360,34 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 		if !strings.Contains(line, "--deny-self-hosted-runners") {
 			t.Fatalf("gh attestation call lacks self-hosted runner denial: %s", line)
 		}
-		if !strings.Contains(line, "--source-digest "+strings.Repeat("c", 40)) {
+		if got := flagValue(line, "--cert-identity"); got != releaseOutputIdentity {
+			t.Fatalf("gh attestation cert identity = %q, want %q: %s", got, releaseOutputIdentity, line)
+		}
+		if got := flagValue(line, "--cert-oidc-issuer"); got != releaseOutputIssuer {
+			t.Fatalf("gh attestation OIDC issuer = %q, want %q: %s", got, releaseOutputIssuer, line)
+		}
+		if got := flagValue(line, "--source-digest"); got != strings.Repeat("c", 40) {
 			t.Fatalf("gh attestation call lacks source digest binding: %s", line)
 		}
-		if !strings.Contains(line, "--signer-digest "+strings.Repeat("c", 40)) {
+		if got := flagValue(line, "--signer-digest"); got != strings.Repeat("c", 40) {
 			t.Fatalf("gh attestation call lacks signer digest binding: %s", line)
 		}
-		if !strings.Contains(line, "--source-ref refs/heads/main") {
+		if got := flagValue(line, "--source-ref"); got != "refs/heads/main" {
 			t.Fatalf("gh attestation call lacks trusted main source ref: %s", line)
+		}
+		if got := flagValue(line, "--repo"); got != "omkhar/workcell" {
+			t.Fatalf("gh attestation call lacks the release repository: %s", line)
 		}
 	}
 	for _, line := range logLines(t, cosignLog) {
-		if !strings.Contains(line, "--certificate-github-workflow-sha "+strings.Repeat("c", 40)) {
+		if got := flagValue(line, "--certificate-github-workflow-sha"); got != strings.Repeat("c", 40) {
 			t.Fatalf("Cosign call lacks source digest binding: %s", line)
 		}
-		if !strings.Contains(line, "release.yml@refs/heads/main") {
-			t.Fatalf("Cosign call lacks trusted main workflow identity: %s", line)
+		if got := flagValue(line, "--certificate-identity"); got != releaseOutputIdentity {
+			t.Fatalf("Cosign certificate identity = %q, want %q: %s", got, releaseOutputIdentity, line)
+		}
+		if got := flagValue(line, "--certificate-oidc-issuer"); got != releaseOutputIssuer {
+			t.Fatalf("Cosign OIDC issuer = %q, want %q: %s", got, releaseOutputIssuer, line)
 		}
 	}
 }
@@ -360,7 +398,7 @@ func TestVerifyReleaseOutputsRejectsMissingSignature(t *testing.T) {
 	if err := os.Remove(filepath.Join(assets, "workcell.rb.sigstore.json")); err != nil {
 		t.Fatal(err)
 	}
-	bin, _, _ := releaseOutputStubBin(t, "", 0)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 	if code == 0 || !strings.Contains(out, "required release file is missing") {
 		t.Fatalf("expected missing signature rejection, got %d\n%s", code, out)
@@ -408,7 +446,7 @@ func TestVerifyReleaseOutputsRejectsCosignFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assets := releaseOutputFixture(t)
-			bin, _, _ := releaseOutputStubBin(t, tc.failGlob, 0)
+			bin, _, _ := releaseOutputStubBin(t, tc.failGlob, "")
 			code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 			if code == 0 || !strings.Contains(out, tc.want) {
 				t.Fatalf("expected Cosign rejection %q, got %d\n%s", tc.want, code, out)
@@ -420,7 +458,7 @@ func TestVerifyReleaseOutputsRejectsCosignFailure(t *testing.T) {
 func TestVerifyReleaseOutputsRejectsMovedNamedImageTag(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBinWithNamedTagDigests(t, "", 0, strings.Repeat("b", 64), strings.Repeat("b", 64))
+	bin, _, _ := releaseOutputStubDriver(t, verifyReleaseOutputsScript(t), "", "", strings.Repeat("b", 64), strings.Repeat("b", 64))
 	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 	if code == 0 || !strings.Contains(out, "named image tag") || !strings.Contains(out, "does not bind") {
 		t.Fatalf("expected moved named-image tag rejection, got %d\n%s", code, out)
@@ -430,20 +468,65 @@ func TestVerifyReleaseOutputsRejectsMovedNamedImageTag(t *testing.T) {
 func TestVerifyReleaseOutputsRejectsMovedCommitImageTag(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBinWithNamedTagDigests(t, "", 0, strings.Repeat("a", 64), strings.Repeat("b", 64))
+	bin, _, _ := releaseOutputStubDriver(t, verifyReleaseOutputsScript(t), "", "", strings.Repeat("a", 64), strings.Repeat("b", 64))
 	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 	if code == 0 || !strings.Contains(out, "ghcr.io/omkhar/workcell:sha-"+strings.Repeat("c", 40)) || !strings.Contains(out, "does not bind") {
 		t.Fatalf("expected moved commit-image tag rejection, got %d\n%s", code, out)
 	}
 }
 
+// TestVerifyReleaseOutputsRejectsAttestationFailure fails one gh attestation
+// call at a time. The verifier makes ten, and only the first is reachable by a
+// blanket failure, so the later OCI SBOM, per-asset provenance and source-bundle
+// SBOM calls each need their own case to prove their result is not swallowed.
 func TestVerifyReleaseOutputsRejectsAttestationFailure(t *testing.T) {
 	t.Parallel()
-	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBin(t, "", 1)
-	code, out := runVerifyReleaseOutputs(t, bin, assets, true)
-	if code == 0 || !strings.Contains(out, "GitHub attestation verification failed") {
-		t.Fatalf("expected GitHub attestation rejection, got %d\n%s", code, out)
+	imageRef := releaseOutputImage + "@sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		name     string
+		failGlob string
+		want     string
+	}{
+		{
+			name:     "every call",
+			failGlob: "*",
+			want:     "GitHub attestation verification failed for oci://" + imageRef,
+		},
+		{
+			name:     "image SBOM",
+			failGlob: "attestation verify oci://* --predicate-type " + spdxPredicate + " *",
+			want:     "GitHub attestation verification failed for oci://" + imageRef,
+		},
+		{
+			name:     "one asset provenance",
+			failGlob: "attestation verify *SHA256SUMS --repo *",
+			want:     "GitHub attestation verification failed for ",
+		},
+		{
+			name:     "source bundle SBOM",
+			failGlob: "attestation verify *" + releaseOutputBundle + " --repo * --predicate-type " + spdxPredicate + " *",
+			want:     "GitHub attestation verification failed for ",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assets := releaseOutputFixture(t)
+			bin, _, ghLog := releaseOutputStubBin(t, "", tc.failGlob)
+			code, out := runVerifyReleaseOutputs(t, bin, assets, true)
+			if code == 0 || !strings.Contains(out, tc.want) {
+				t.Fatalf("expected GitHub attestation rejection %q, got %d\n%s", tc.want, code, out)
+			}
+			// Exactly one call may fail, so the run must stop on the call the
+			// glob selected rather than on an earlier one.
+			calls := logLines(t, ghLog)
+			last := calls[len(calls)-1]
+			if tc.failGlob != "*" && len(calls) < 2 {
+				t.Fatalf("verifier stopped before reaching the selected call: %q", calls)
+			}
+			if !strings.Contains(out, "failed for "+strings.Fields(last)[2]) {
+				t.Fatalf("rejection does not name the failing subject %q\n%s", last, out)
+			}
+		})
 	}
 }
 
@@ -453,7 +536,7 @@ func TestVerifyReleaseOutputsRejectsChecksumMismatch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(assets, "workcell.rb"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	bin, _, _ := releaseOutputStubBin(t, "", 0)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 	if code == 0 || !strings.Contains(out, "SHA256SUMS digest mismatch") {
 		t.Fatalf("expected checksum mismatch rejection, got %d\n%s", code, out)
@@ -475,7 +558,7 @@ func TestVerifyReleaseOutputsRejectsUnexpectedChecksumEntry(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	driver, _, _ := releaseOutputStubBin(t, "", 0)
+	driver, _, _ := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputs(t, driver, assets, false)
 	if code == 0 || !strings.Contains(out, "unexpected asset") {
 		t.Fatalf("expected checksum inventory rejection, got %d\n%s", code, out)
@@ -492,18 +575,19 @@ func TestVerifyReleaseOutputsRejectsSymlinkBundle(t *testing.T) {
 	if err := os.Symlink("/etc/hosts", bundle); err != nil {
 		t.Fatal(err)
 	}
-	bin, _, _ := releaseOutputStubBin(t, "", 0)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
 	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 	if code == 0 || !strings.Contains(out, "unsafe") {
 		t.Fatalf("expected symlink rejection, got %d\n%s", code, out)
 	}
 }
 
-// rewriteImageDigestAsset replaces the image digest file and its SHA256SUMS
-// entry so the checksum inventory still matches the mutated content.
-func rewriteImageDigestAsset(t *testing.T, assets string, content []byte) {
+// rewriteAsset replaces one release asset and its SHA256SUMS entry so the
+// checksum inventory still matches the mutated content. That keeps a negative
+// control aimed at the check under test instead of tripping the checksum gate.
+func rewriteAsset(t *testing.T, assets, name string, content []byte) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(assets, "workcell-image.digest"), content, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(assets, name), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(content)
@@ -513,13 +597,32 @@ func rewriteImageDigestAsset(t *testing.T, assets string, content []byte) {
 		t.Fatal(err)
 	}
 	sumLines := strings.Split(string(sums), "\n")
+	replaced := false
 	for i, line := range sumLines {
-		if strings.HasSuffix(line, "  workcell-image.digest") {
-			sumLines[i] = hex.EncodeToString(digest[:]) + "  workcell-image.digest"
+		if strings.HasSuffix(line, "  "+name) {
+			sumLines[i] = hex.EncodeToString(digest[:]) + "  " + name
+			replaced = true
 		}
+	}
+	if !replaced {
+		t.Fatalf("SHA256SUMS has no entry for %s", name)
 	}
 	if err := os.WriteFile(sumsPath, []byte(strings.Join(sumLines, "\n")), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestVerifyReleaseOutputsRejectsUnboundBuildInputs points the build input
+// manifest at another commit while keeping SHA256SUMS valid, so only the
+// verifier's .build.ref binding can reject it.
+func TestVerifyReleaseOutputsRejectsUnboundBuildInputs(t *testing.T) {
+	t.Parallel()
+	assets := releaseOutputFixture(t)
+	rewriteAsset(t, assets, "workcell-build-inputs.json", []byte(`{"build":{"ref":"`+strings.Repeat("d", 40)+`"}}`))
+	bin, _, _ := releaseOutputStubBin(t, "", "")
+	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
+	if code == 0 || !strings.Contains(out, "build input manifest does not bind to release commit") {
+		t.Fatalf("expected build input binding rejection, got %d\n%s", code, out)
 	}
 }
 
@@ -544,8 +647,8 @@ func TestVerifyReleaseOutputsRejectsMalformedImageDigestFile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			assets := releaseOutputFixture(t)
-			rewriteImageDigestAsset(t, assets, []byte(tc.content))
-			bin, _, _ := releaseOutputStubBin(t, "", 0)
+			rewriteAsset(t, assets, "workcell-image.digest", []byte(tc.content))
+			bin, _, _ := releaseOutputStubBin(t, "", "")
 			code, out := runVerifyReleaseOutputs(t, bin, assets, false)
 			if code == 0 || !strings.Contains(out, tc.want) {
 				t.Fatalf("expected image digest rejection %q, got %d\n%s", tc.want, code, out)
