@@ -55,24 +55,40 @@ func texts(words []word) []string {
 	return plain
 }
 
-// braceDepth returns the change in brace nesting the words make. Only an
-// unquoted brace that stands as its own word or ends one groups commands; a
-// brace inside a word belongs to an expansion such as ${VAR}, and a quoted one
-// is an ordinary command word.
-func braceDepth(words []word) int {
+// braceDepth returns the change in brace nesting the commands make.
+func braceDepth(commands []command) int {
 	change := 0
-	for _, each := range words {
-		if each.quoted {
-			continue
-		}
-		switch {
-		case each.text == "{" || strings.HasSuffix(each.text, "(){"):
-			change++
-		case each.text == "}" || each.text == "};":
-			change--
-		}
+	for _, each := range commands {
+		change += commandBrace(each)
 	}
 	return change
+}
+
+// commandBrace returns the change in brace nesting one command makes. A brace
+// groups commands only in command position and only unquoted: bash reads the }
+// of echo } as an argument, so a group is still open after it. A brace inside a
+// word belongs to an expansion such as ${VAR}. A definition header is not a
+// command, so the brace that opens its body stands in command position after
+// it, wherever on the header line it is written.
+func commandBrace(each command) int {
+	args := each.args
+	if len(args) == 0 || args[0].quoted {
+		return 0
+	}
+	if definedName(args) != "" {
+		if strings.HasSuffix(args[0].text, "(){") || slices.ContainsFunc(args[1:],
+			func(each word) bool { return !each.quoted && each.text == "{" }) {
+			return 1
+		}
+		return 0
+	}
+	switch args[0].text {
+	case "{":
+		return 1
+	case "}":
+		return -1
+	}
+	return 0
 }
 
 // controlWords maps each word that opens or closes a compound command to the
@@ -258,6 +274,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 		// A function definition is not a call. Bash reads the body and runs
 		// nothing, so a required command written inside a function that
 		// nobody calls does not satisfy a rule about what the step runs.
+		commands := splitCommands(words)
 		if !defining {
 			if name := definedName(words); name != "" {
 				if name == prefix[0] {
@@ -267,7 +284,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 				defining, definedAt, bodyOpened = true, depth, false
 			}
 		}
-		depth += braceDepth(words)
+		depth += braceDepth(commands)
 		if defining {
 			// A body may open on a later line, as in never_called ()
 			// followed by { on its own, so wait for it before seeking its end.
@@ -279,7 +296,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			continue
 		}
-		commands := splitCommands(words)
 		nested := control > 0
 		for _, each := range commands {
 			args := each.args
@@ -288,7 +304,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			position++
 			outside := groupDepth
-			groupDepth += braceDepth(args)
+			groupDepth += commandBrace(each)
 			if conditionalGroup >= 0 {
 				// Nothing inside the guarded group is proved to run, however
 				// many lines later the closing brace is. The commands written
@@ -394,9 +410,15 @@ func shellWords(line string, stack []byte) (
 			switch {
 			case character == '\'':
 				quote, ansiC = 0, false
-			case character == '\\' && ansiC:
+			case character == '\\' && ansiC && index+1 < len(line):
+				// A backslash escapes the next byte inside $'…', so an escaped
+				// apostrophe is a literal one and does not close the span. The
+				// span therefore keeps the rest of the line as text, where
+				// closing on it would expose a separator bash never reads.
 				ansiEscape = true
 				text.WriteByte(character)
+				index++
+				text.WriteByte(line[index])
 			default:
 				text.WriteByte(character)
 			}

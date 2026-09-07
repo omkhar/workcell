@@ -299,6 +299,21 @@ func TestShellInvocations(t *testing.T) {
 			script: "false && {\noras cp one\n}; oras cp two\n",
 			want:   [][]string{{"two"}},
 		},
+		{
+			name:   "an escaped apostrophe does not close an ANSI-C word",
+			script: ": $'x\\'; oras cp one'\n",
+			want:   nil,
+		},
+		{
+			name:   "an argument brace closes no guarded group",
+			script: "false && {\necho }\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an argument brace closes no definition body",
+			script: "never_called() {\necho }\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
