@@ -112,7 +112,7 @@ func subcommands() []subcommand {
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
 		{"canonicalize-path", "PATH", 1, 1, cmdCanonicalizePath},
 		{"validate-docker-workspace-bind", "DOCKER_BIN IMAGE WORKSPACE CONTEXT CONTEXT_EXPLICIT", 5, 5, cmdValidateDockerWorkspaceBind},
-		{"docker-workspace-bind-mount", "WORKSPACE READONLY", 2, 2, cmdDockerWorkspaceBindMount},
+		{"docker-workspace-bind-mount", "SOURCE READONLY [TARGET]", 2, 3, cmdDockerWorkspaceBindMount},
 		{"coverage-percent", "REPORT_PATH MINIMUM LABEL", 3, 3, cmdCoveragePercent},
 		{"coverage-executables", "MESSAGE_PATH", 1, 1, cmdCoverageExecutables},
 		{"validate-json", "FILE [FILE...]", 1, -1, cmdValidateJSON},
@@ -577,7 +577,11 @@ func cmdDockerWorkspaceBindMount(args []string) error {
 	if err != nil {
 		return fmt.Errorf("READONLY must be true or false")
 	}
-	mount, err := validatorbind.MountSpec(args[0], readOnly)
+	target := "/workspace"
+	if len(args) > 2 {
+		target = args[2]
+	}
+	mount, err := validatorbind.MountSpec(args[0], target, readOnly)
 	if err != nil {
 		return err
 	}
