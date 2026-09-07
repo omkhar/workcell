@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -60,8 +61,29 @@ func CountFlagOccurrences(argv []string, flag, short string) int {
 	return count
 }
 
-// AssertRejectsLaterOverride fails t unless run rejects base with hostile
-// appended in every spelling FlagForms produces.
+// laterOverrideProblems reports each way run failed the later-override
+// contract, one description per problem and none when run holds the contract.
+//
+// The unmodified base is tried first. A base that is already rejected, because
+// it lacks another required option or because the runner cannot start, makes
+// every augmented invocation fail for that unrelated reason, and a last-wins
+// parser would then look as though it rejected every hostile form.
+func laterOverrideProblems(run func([]string) error, base []string, flag, short, hostile string) []string {
+	if err := run(base); err != nil {
+		return []string{fmt.Sprintf("base argv %q was rejected before any override was added, so no rejection below is evidence: %v", base, err)}
+	}
+	var problems []string
+	for _, form := range FlagForms(flag, short, hostile) {
+		argv := append(append([]string(nil), base...), form...)
+		if err := run(argv); err == nil {
+			problems = append(problems, fmt.Sprintf("argv %q accepted a later %s override; want a rejection", argv, strings.Join(form, " ")))
+		}
+	}
+	return problems
+}
+
+// AssertRejectsLaterOverride fails t unless run accepts base on its own and
+// rejects base with hostile appended in every spelling FlagForms produces.
 //
 // A last-wins parser is the danger. The trusted value in base stays visible to
 // an assertion that reads the first occurrence, while the process being driven
@@ -69,11 +91,8 @@ func CountFlagOccurrences(argv []string, flag, short string) int {
 // behaviour that is safe under both readings.
 func AssertRejectsLaterOverride(t *testing.T, run func([]string) error, base []string, flag, short, hostile string) {
 	t.Helper()
-	for _, form := range FlagForms(flag, short, hostile) {
-		argv := append(append([]string(nil), base...), form...)
-		if err := run(argv); err == nil {
-			t.Errorf("argv %q accepted a later %s override; want a rejection", argv, strings.Join(form, " "))
-		}
+	for _, problem := range laterOverrideProblems(run, base, flag, short, hostile) {
+		t.Error(problem)
 	}
 }
 

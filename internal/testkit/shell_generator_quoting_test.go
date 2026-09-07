@@ -88,8 +88,9 @@ func goQuoteInShellLiteral(goSource string) []int {
 				groupLine, open = fileSet.Position(pos).Line, true
 			}
 			group += decodeGoLiteral(literal)
-		case token.ADD:
-			// A concatenation keeps the fragments of one literal together.
+		case token.ADD, token.LPAREN, token.RPAREN:
+			// A concatenation keeps the fragments of one literal together, and
+			// parentheses only group it: ("a") is the same value as "a".
 		default:
 			flush()
 		}
@@ -174,15 +175,19 @@ func goQuoteFixture() string {
 		`func splitAcrossFragments() {`, // 28
 		`	_ = fmt.Sprintf("#!/bin/bash\nprintf " + "` + pct + `" + "q\n", a)`,         // 29: reported, the joined value is a directive
 		`	_ = fmt.Sprintf("#!/bin/bash\nprintf " + "` + pct + `" + "` + pct + `q\n")`, // 30: the joined value is an escaped percent
-		`}`,                 // 31
-		``,                  // 32
-		`func comments() {`, // 33
-		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 34
-		`	_ = fmt.Sprintf("set -euo pipefail\n") /* ` + pct + `q */`,  // 35: trailing comment
-		`	/*`, // 36
-		`	   #!/bin/bash ` + pct + `q in a block comment`, // 37
-		`	*/`, // 38
-		`}`,   // 39
+		`}`,                      // 31
+		``,                       // 32
+		`func parenthesised() {`, // 33
+		`	_ = fmt.Sprintf("#!/bin/bash\n" + ("echo ` + q + `\n"), a)`, // 34: reported, parentheses only group
+		`}`,                 // 35
+		``,                  // 36
+		`func comments() {`, // 37
+		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 38
+		`	_ = fmt.Sprintf("set -euo pipefail\n") /* ` + pct + `q */`,  // 39: trailing comment
+		`	/*`, // 40
+		`	   #!/bin/bash ` + pct + `q in a block comment`, // 41
+		`	*/`, // 42
+		`}`,   // 43
 	}, "\n")
 }
 
@@ -197,6 +202,7 @@ func TestGoQuoteInShellLiteralFindsEveryGeneratorForm(t *testing.T) {
 		11,                     // a raw literal, reported where its single token starts
 		18, 19, 20, 21, 22, 23, // the directive spellings
 		29, // a directive spelled across fragments
+		34, // a fragment the source only parenthesises
 	)
 }
 

@@ -61,6 +61,22 @@ func readTrackedFile(path string) ([]byte, error) {
 	return io.ReadAll(file)
 }
 
+// shebangQuoteStripper removes the quote characters env -S processes, so a
+// candidate cannot hide its interpreter behind them.
+var shebangQuoteStripper = strings.NewReplacer("'", "", `"`, "", `\`, "")
+
+// isBashCandidate reports whether an interpreter line runs Bash and so must
+// hold the startup-file property.
+//
+// The quotes are stripped before the interpreter is read because env -S
+// processes them first: a line spelled with a quoted interpreter still runs
+// Bash, and a filter over the raw text would skip that file unjudged rather
+// than reject it.
+func isBashCandidate(shebang string) bool {
+	return strings.HasPrefix(shebang, "#!") &&
+		strings.Contains(shebangQuoteStripper.Replace(shebang), "bash")
+}
+
 // hardenedShebangs is the exact set of interpreter lines a tracked Bash script
 // may use. Each one stops Bash from reading a caller-controlled startup file:
 // Bash sources $BASH_ENV, and $ENV in POSIX mode, before the script's first
@@ -105,7 +121,10 @@ func TestTrackedBashScriptsNeutralizeStartupFiles(t *testing.T) {
 			continue
 		}
 		shebang, _, _ := strings.Cut(string(content), "\n")
-		if !strings.HasPrefix(shebang, "#!") || !strings.Contains(shebang, "bash") {
+		// Quotes are removed by env -S before the interpreter is resolved, so
+		// they are removed here too. Otherwise a line spelled ba'sh' would not
+		// look like a Bash candidate and the file would be skipped unjudged.
+		if !isBashCandidate(shebang) {
 			continue
 		}
 		checked++
@@ -155,6 +174,37 @@ func TestReadTrackedFileRefusesASymlinkedPath(t *testing.T) {
 // point of an exact-match set: each of those was empirically shown to run an
 // inherited BASH_ENV, and a predicate that parsed the command line accepted
 // several of them.
+// TestIsBashCandidateSeesThroughQuoting proves the walk cannot be made to skip
+// a Bash script. A quoted interpreter still runs Bash, so it must reach the
+// judgement and be rejected there rather than be filtered out before it.
+func TestIsBashCandidateSeesThroughQuoting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		shebang string
+		want    bool
+	}{
+		{"plain", "#!/bin/bash -p", true},
+		{"env prefix", "#!/usr/bin/env -S BASH_ENV= ENV= bash", true},
+		{"quoted interpreter", "#!/usr/bin/env -S ba'sh'", true},
+		{"double quoted interpreter", `#!/usr/bin/env -S ba"sh"`, true},
+		{"other interpreter", "#!/bin/sh", false},
+		{"not a shebang", "package p", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isBashCandidate(test.shebang); got != test.want {
+				t.Fatalf("isBashCandidate(%q) = %t, want %t", test.shebang, got, test.want)
+			}
+		})
+	}
+	if shebangNeutralizesStartupFiles("#!/usr/bin/env -S ba'sh'") {
+		t.Fatal("a quoted interpreter was accepted as a hardened form")
+	}
+}
+
 func TestShebangNeutralizesStartupFilesRejectsUnhardenedForms(t *testing.T) {
 	t.Parallel()
 

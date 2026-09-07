@@ -75,6 +75,46 @@ func TestAssertRejectsLaterOverrideAcceptsAParserThatRejectsEveryForm(t *testing
 	AssertRejectsLaterOverride(t, run, []string{"--hostname", "trusted.example"}, "hostname", "H", "attacker.example")
 }
 
+// TestLaterOverrideProblemsRequiresAWorkingBaseline is the negative control for
+// a vacuous pass. A runner that fails for its own reasons rejects every hostile
+// form too, so without the baseline check a last-wins parser looks compliant.
+func TestLaterOverrideProblemsRequiresAWorkingBaseline(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"--hostname", "trusted.example"}
+	errSetup := errors.New("runner could not start")
+	alwaysFails := func([]string) error { return errSetup }
+
+	problems := laterOverrideProblems(alwaysFails, base, "hostname", "H", "attacker.example")
+	if len(problems) != 1 || !strings.Contains(problems[0], "before any override") {
+		t.Fatalf("laterOverrideProblems() with a failing baseline = %q, want one baseline problem", problems)
+	}
+
+	// The same runner without the baseline check reports nothing, which is the
+	// vacuous pass this guard removes.
+	silent := 0
+	for _, form := range FlagForms("hostname", "H", "attacker.example") {
+		if alwaysFails(append(append([]string(nil), base...), form...)) == nil {
+			silent++
+		}
+	}
+	if silent != 0 {
+		t.Fatalf("fixture no longer reproduces the vacuous pass: %d forms were accepted", silent)
+	}
+}
+
+// TestLaterOverrideProblemsReportsEveryAcceptedForm covers the other direction:
+// a last-wins parser over a working baseline is reported once per spelling.
+func TestLaterOverrideProblemsReportsEveryAcceptedForm(t *testing.T) {
+	t.Parallel()
+
+	lastWins := func([]string) error { return nil }
+	problems := laterOverrideProblems(lastWins, []string{"--hostname", "trusted.example"}, "hostname", "H", "attacker.example")
+	if len(problems) != 5 {
+		t.Fatalf("laterOverrideProblems() reported %d problems, want one per spelling: %q", len(problems), problems)
+	}
+}
+
 // TestCountFlagOccurrencesIgnoresAValueContainingTheFlag is the negative
 // control for the substring defect: a path holding the flag text must not be
 // counted as an occurrence, while the flattened-string scan the contract bans
