@@ -8,31 +8,61 @@ import (
 	"strings"
 )
 
+// heredoc is one body the shell has still to read: the delimiter word that
+// ends it, and whether the <<- form lets the terminator line carry leading
+// tabs. Bash ends a <<WORD body only at a line that is the delimiter alone, so
+// an indented copy of the word inside the body is text.
+type heredoc struct {
+	delimiter string
+	stripTabs bool
+}
+
+func (h heredoc) endsAt(line string) bool {
+	if h.stripTabs {
+		return strings.TrimLeft(line, "\t") == h.delimiter
+	}
+	return line == h.delimiter
+}
+
 // ShellInvocations returns the arguments of each invocation of command in
 // script. It joins line continuations and drops comments, inline ones
-// included, and heredoc bodies, so that no decoy text counts as a command and
-// one call cannot satisfy a two-call rule. A validator that must anchor on the
-// commands a script really runs uses this in place of a substring search.
+// included, heredoc bodies, and the rest of a quoted word that runs past the
+// end of its line, so that no decoy text counts as a command and one call
+// cannot satisfy a two-call rule. A validator that must anchor on the commands
+// a script really runs uses this in place of a substring search.
 func ShellInvocations(script, command string) [][]string {
 	prefix := strings.Fields(command)
 	var invocations [][]string
 	var current strings.Builder
-	var heredocs []string
+	var heredocs []heredoc
+	var openQuote byte
+	var quotes []byte
 	for line := range strings.Lines(script) {
-		trimmed := strings.TrimSpace(line)
+		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if openQuote != 0 {
+			// Bash reads these lines as text inside one word, as in
+			// : "<newline>oras cp …<newline>", which runs no command. Read
+			// them as text too, up to the line that closes the quote.
+			if strings.IndexByte(text, openQuote) >= 0 {
+				openQuote = 0
+			}
+			continue
+		}
 		if len(heredocs) > 0 {
-			if trimmed == heredocs[0] {
+			if heredocs[0].endsAt(text) {
 				heredocs = heredocs[1:]
 			}
 			continue
 		}
+		trimmed := strings.TrimSpace(text)
 		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
 		if strings.HasSuffix(trimmed, "\\") {
 			current.WriteString(" ")
 			continue
 		}
-		words, opened := shellWords(current.String())
+		words, opened, quote, rest := shellWords(current.String(), quotes)
 		current.Reset()
+		openQuote, quotes = quote, rest
 		heredocs = append(heredocs, opened...)
 		if len(words) >= len(prefix) && slices.Equal(words[:len(prefix)], prefix) {
 			invocations = append(invocations, words[len(prefix):])
@@ -44,22 +74,26 @@ func ShellInvocations(script, command string) [][]string {
 // shellWords splits one logical line the way bash reads it. Quotes and
 // backslash escapes are removed, so a quoted argument stays one word and a
 // separator inside it is text rather than syntax; an unquoted # that starts a
-// word ends the line; and every heredoc the line opens returns as a delimiter,
-// in the order bash reads the bodies.
+// word ends the line; every heredoc the line opens returns as a delimiter, in
+// the order bash reads the bodies; open is the quote character still waiting to
+// be closed, which tells the caller that the word runs on into the next line;
+// and rest is the quote each unclosed command substitution suspended, which the
+// caller gives back on the next line so that the ) which closes the
+// substitution also restores the quote around it.
 //
-// One pass keeps the three answers consistent. A pattern per answer cannot:
+// One pass keeps the four answers consistent. A pattern per answer cannot:
 // each has to rediscover the quoting, and the one that gets it wrong reads
 // syntax where the shell reads text.
-func shellWords(line string) (words, heredocs []string) {
+func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, open byte, rest []byte) {
 	var word strings.Builder
-	inWord, quote, pending := false, byte(0), false
+	inWord, quote, pending, stripTabs := false, byte(0), false, false
 	flush := func() {
 		if !inWord {
 			return
 		}
 		if pending {
-			heredocs = append(heredocs, word.String())
-			pending = false
+			heredocs = append(heredocs, heredoc{word.String(), stripTabs})
+			pending, stripTabs = false, false
 		} else {
 			words = append(words, word.String())
 		}
@@ -88,10 +122,10 @@ func shellWords(line string) (words, heredocs []string) {
 				quote = 0
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
 				// A command substitution resumes shell syntax inside the
-				// quotes. Where it closes is beyond a line reader, so syntax
-				// is read to the end of the line. That reads more heredocs and
-				// comments than bash, never fewer, so it can only drop an
-				// invocation, never invent one.
+				// quotes. Suspend the quote rather than forget it, so that the
+				// ) which closes the substitution restores it, even when that )
+				// is on a later line.
+				stack = append(stack, quote)
 				quote = 0
 				word.WriteByte(character)
 			default:
@@ -109,7 +143,7 @@ func shellWords(line string) (words, heredocs []string) {
 		case character == ' ' || character == '\t':
 			flush()
 		case character == '#' && !inWord:
-			return words, heredocs
+			return words, heredocs, 0, stack
 		case character == '<' && index+1 < len(line) && line[index+1] == '<':
 			flush()
 			index++
@@ -120,17 +154,28 @@ func shellWords(line string) (words, heredocs []string) {
 			}
 			if index+1 < len(line) && line[index+1] == '-' {
 				index++
+				stripTabs = true
 			}
 			pending = true
 		case pending && strings.IndexByte(";&|<>()", character) >= 0:
 			// A delimiter word ends at an operator, as in cat <<EOF; echo
 			// ready, where bash reads the delimiter EOF and runs the echo.
 			flush()
+		case character == ')' && len(stack) > 0:
+			quote = stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			word.WriteByte(character)
+			inWord = true
 		default:
 			word.WriteByte(character)
 			inWord = true
 		}
 	}
 	flush()
-	return words, heredocs
+	if len(stack) > 0 {
+		// A substitution is still open, so the logical line has not ended and
+		// the quote around it is not the caller's to skip.
+		return words, heredocs, 0, stack
+	}
+	return words, heredocs, quote, stack
 }

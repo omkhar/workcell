@@ -54,6 +54,14 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+": <<'PLAN' \\\n"+i+"  >/dev/null", i+"PLAN")
 	})},
+	{"quoted line span", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: "`, i+`"`)
+	})},
+	{"indented heredoc terminator", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+": <<'PLAN'\n"+i+"  PLAN", i+"PLAN")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
