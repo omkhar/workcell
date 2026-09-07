@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -534,22 +535,31 @@ func stringsFromNUL(data []byte) []string {
 // with it git's ssh signing and verification.  The synthesis lives in one
 // library precisely so a lane cannot half-adopt it: this test fails when a lane
 // stops sourcing it, calls it more than once, or drops the read-only mount.
+// Each requirement is an active statement, not a substring, so a commented-out
+// line or the same text quoted inside an echo does not read as coverage.
 func TestValidatorLanesMountSynthesizedPasswd(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	validatorMounts := []string{
-		`workcell_ci_workspace_mount_spec "${validator_passwd}" true /etc/passwd`,
-		`--mount "${validator_passwd_mount}"`,
+	validatorStatements := []string{
+		`source "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"`,
+		`validator_passwd="$(workcell_ci_validator_passwd_file \`,
+		`validator_passwd_mount="$(workcell_ci_workspace_mount_spec "${validator_passwd}" true /etc/passwd)"`,
+		`--mount "${validator_passwd_mount}" \`,
 	}
-	for rel, mounts := range map[string][]string{
-		"scripts/ci/run-docs-in-validator.sh":     validatorMounts,
-		"scripts/ci/run-fuzz-in-validator.sh":     validatorMounts,
-		"scripts/ci/run-mutation-in-validator.sh": validatorMounts,
-		"scripts/ci/run-validate-in-validator.sh": validatorMounts,
-		"scripts/build-and-test.sh":               {`-v "${passwd_file}:/etc/passwd:ro"`},
+	for rel, statements := range map[string][]string{
+		"scripts/ci/run-docs-in-validator.sh":     validatorStatements,
+		"scripts/ci/run-fuzz-in-validator.sh":     validatorStatements,
+		"scripts/ci/run-mutation-in-validator.sh": validatorStatements,
+		"scripts/ci/run-validate-in-validator.sh": validatorStatements,
+		"scripts/build-and-test.sh": {
+			`"WORKCELL_BUILD_AND_TEST_PASSWD_LIB=${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh" \`,
+			`source "${WORKCELL_BUILD_AND_TEST_PASSWD_LIB}"`,
+			`passwd_file="$(workcell_ci_validator_passwd_file docker "$1" \`,
+			`-v "${passwd_file}:/etc/passwd:ro" \`,
+		},
 	} {
-		rel, mounts := rel, mounts
+		rel, statements := rel, statements
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
 
@@ -557,16 +567,10 @@ func TestValidatorLanesMountSynthesizedPasswd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			lane := activeShellLines(string(content))
-			if !strings.Contains(lane, "scripts/ci/lib/validator-passwd.sh") {
-				t.Fatalf("%s must use the shared passwd synthesis library", rel)
-			}
-			if got := strings.Count(lane, "workcell_ci_validator_passwd_file"); got != 1 {
-				t.Fatalf("%s calls the passwd synthesis %d times, want 1", rel, got)
-			}
-			for _, mount := range mounts {
-				if !strings.Contains(lane, mount) {
-					t.Fatalf("%s must mount the synthesized passwd file: %s", rel, mount)
+			lane := string(content)
+			for _, statement := range statements {
+				if countActiveStatements(lane, statement) != 1 {
+					t.Fatalf("%s must carry exactly one active statement: %s", rel, statement)
 				}
 			}
 		})
@@ -704,7 +708,10 @@ func runHostileDerivation(t *testing.T, prefix, preset, variable string) string 
 		t.Fatal(err)
 	}
 	derivation := ""
-	for _, line := range strings.Split(activeShellLines(string(content)), "\n") {
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
 		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
 			derivation = strings.TrimSpace(line)
 			break
@@ -723,32 +730,44 @@ func runHostileDerivation(t *testing.T, prefix, preset, variable string) string 
 	return string(output)
 }
 
-// activeShellLines drops whole-line comments so a lane cannot satisfy a check
-// with the statement it commented out.  A trailing comment is left alone: it
-// cannot carry a statement, and cutting at the first "#" would corrupt a
-// pathname or a parameter expansion that contains one.
-func activeShellLines(script string) string {
-	active := make([]string, 0, strings.Count(script, "\n")+1)
+// countActiveStatements counts the lines whose own statement is the wanted one.
+// Whole-line comments are dropped first, and the comparison is on the trimmed
+// line rather than on a substring of the file, so a commented-out statement, an
+// assignment that merely names it, or the same text quoted inside an echo does
+// not count.  A heredoc body is out of reach without a shell parser; the lanes
+// checked here contain none.
+func countActiveStatements(script, want string) int {
+	count := 0
 	for _, line := range strings.Split(script, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		active = append(active, line)
+		if trimmed == want {
+			count++
+		}
 	}
-	return strings.Join(active, "\n")
+	return count
 }
 
-// The negative fixture for activeShellLines: a commented-out source statement
-// must not read as coverage.
-func TestActiveShellLinesDropsCommentedStatements(t *testing.T) {
+// The negative fixtures for countActiveStatements: inert text that mentions the
+// statement must not read as coverage, and a live statement must still count
+// once whatever its indentation.
+func TestCountActiveStatementsIgnoresInertText(t *testing.T) {
 	t.Parallel()
 
-	commented := "  # source \"${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh\"\n#!/bin/bash\n"
-	if got := activeShellLines(commented); strings.Contains(got, "validator-passwd.sh") {
-		t.Fatalf("commented statement survived comment stripping: %q", got)
+	want := `source "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"`
+	for _, inert := range []string{
+		"  # " + want,
+		"echo " + strconv.Quote(want),
+		"lane_statement=" + strconv.Quote(want),
+		"if grep -Fq " + strconv.Quote(want) + " \"${lane}\"; then",
+	} {
+		if got := countActiveStatements(inert+"\n", want); got != 0 {
+			t.Fatalf("inert line %q counted %d times", inert, got)
+		}
 	}
-	live := "source \"${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh\" # keep the trailing comment\n"
-	if got := activeShellLines(live); !strings.Contains(got, "# keep the trailing comment") {
-		t.Fatalf("live statement lost its trailing comment: %q", got)
+	if got := countActiveStatements("  "+want+"\nunrelated\n", want); got != 1 {
+		t.Fatalf("live statement counted %d times, want 1", got)
 	}
 }
