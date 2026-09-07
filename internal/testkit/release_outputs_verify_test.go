@@ -132,7 +132,9 @@ gh() {
   [[ "${GH_TOKEN:-}" == "test-token" ]] || return 97
   [[ "${GH_HOST:-}" == "github.com" ]] || return 95
   [[ -z "${GH_ENTERPRISE_TOKEN:-}" && -z "${GITHUB_ENTERPRISE_TOKEN:-}" ]] || return 94
-  [[ "$*" != *--hostname* ]] || return 93
+  for arg in "$@"; do
+    [[ "${arg}" != "--hostname" && "${arg}" != --hostname=* ]] || return 93
+  done
   printf '%%s\n' "$*" >>%q
   [[ -n "${gh_fail_glob}" && "$*" == ${gh_fail_glob} ]] && return 1
   return 0
