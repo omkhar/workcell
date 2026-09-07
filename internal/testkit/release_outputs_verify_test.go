@@ -228,50 +228,95 @@ func logLines(t *testing.T, path string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-// TestVerifyReleaseOutputsPinsToolPath drives the verifier with a caller PATH
-// whose every tool fails. The run must still succeed, which is only possible if
-// the script resolved its tools from its own fixed trusted path. Asserting the
-// behaviour rather than the presence of an `export PATH=` line means moving
-// that line into a comment or a dead branch breaks the test.
+// mutatedVerifierDriver stubs a copy of the verifier with one textual change
+// applied, so a negative fixture can show the assertion under test really does
+// fail against the regression it claims to catch.
+func mutatedVerifierDriver(t *testing.T, source, old, replacement string) string {
+	t.Helper()
+	mutated := strings.Replace(source, old, replacement, 1)
+	if mutated == source {
+		t.Fatalf("release verifier no longer contains %q", old)
+	}
+	path := filepath.Join(t.TempDir(), "mutated-verify-release-outputs.sh")
+	if err := os.WriteFile(path, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	driver, _, _ := releaseOutputStubDriver(t, path, "", "", strings.Repeat("a", 64), strings.Repeat("a", 64))
+	return driver
+}
+
+// poisonedToolPath returns a directory whose every tool the verifier shells out
+// to exits non-zero, so any run that resolves a tool from it cannot complete.
+func poisonedToolPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range []string{"jq", "sha256sum", "awk", "find", "wc", "cat", "sort", "sed", "grep"} {
+		if err := os.WriteFile(filepath.Join(dir, tool), []byte("#!/bin/bash\nexit 3\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestVerifyReleaseOutputsPinsToolPath runs the verifier with every plausible
+// caller-supplied tool-path variable aimed at a directory of failing tools. The
+// run must still succeed, which is only possible if the script resolved its
+// tools from its own fixed trusted path and honoured no caller override. The
+// assertion is entirely execution-based: no source scan decides any part of it,
+// so an override read from a differently named variable is caught by the
+// environment below rather than by a name this test would have to know.
 func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	t.Parallel()
 	content, err := os.ReadFile(verifyReleaseOutputsScript(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(content), "WORKCELL_RELEASE_VERIFY_TRUSTED_PATH") {
-		t.Fatal("release verifier accepts a caller-selected tool path")
-	}
+	source := string(content)
 
-	poisoned := t.TempDir()
-	for _, tool := range []string{"jq", "sha256sum", "awk", "find", "wc", "cat", "command"} {
-		if err := os.WriteFile(filepath.Join(poisoned, tool), []byte("#!/bin/bash\nexit 3\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	poisoned := poisonedToolPath(t)
+	env := []string{"GITHUB_TOKEN=test-token"}
+	for _, name := range []string{
+		"PATH",
+		"TRUSTED_PATH",
+		"WORKCELL_TRUSTED_PATH",
+		"WORKCELL_RELEASE_VERIFY_TRUSTED_PATH",
+		"WORKCELL_RELEASE_VERIFY_PATH",
+	} {
+		env = append(env, name+"="+poisoned)
 	}
 
 	assets := releaseOutputFixture(t)
-	bin, _, _ := releaseOutputStubBin(t, "", "")
 	args := releaseOutputArgs(assets, releaseOutputTag, releaseOutputImage, strings.Repeat("c", 40), strings.Repeat("c", 40), false)
-	code, out := runVerifyDriver(t, bin, args, []string{"PATH=" + poisoned})
-	if code != 0 {
-		t.Fatalf("release verifier used the caller PATH instead of its trusted path, got %d\n%s", code, out)
+	bin, _, _ := releaseOutputStubBin(t, "", "")
+	if code, out := runVerifyDriver(t, bin, args, env); code != 0 {
+		t.Fatalf("release verifier honoured a caller-selected tool path, got %d\n%s", code, out)
 	}
 
-	// Negative control: the same poisoned tools do break an otherwise identical
-	// verifier that honours the caller PATH, so the success above is evidence
-	// of pinning rather than of harmless stubs.
-	script := strings.Replace(string(content), `export PATH="${TRUSTED_PATH}"`, `export PATH="${PATH}"`, 1)
-	if script == string(content) {
-		t.Fatal("release verifier no longer exports its fixed trusted tool path")
-	}
-	unpinned := filepath.Join(t.TempDir(), "unpinned-verify-release-outputs.sh")
-	if err := os.WriteFile(unpinned, []byte(script), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	unpinnedBin, _, _ := releaseOutputStubDriver(t, unpinned, "", "", strings.Repeat("a", 64), strings.Repeat("a", 64))
-	if code, out := runVerifyDriver(t, unpinnedBin, args, []string{"PATH=" + poisoned}); code == 0 {
-		t.Fatalf("poisoned PATH did not break an unpinned verifier, got %d\n%s", code, out)
+	// Negative fixtures: both regression shapes this guards against do fail
+	// under exactly the environment above, so the success is not vacuous.
+	for _, tc := range []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{
+			name:        "inherits the caller PATH",
+			old:         `export PATH="${TRUSTED_PATH}"`,
+			replacement: `export PATH="${PATH}"`,
+		},
+		{
+			name:        "honours a caller override variable",
+			old:         `readonly TRUSTED_PATH="`,
+			replacement: `readonly TRUSTED_PATH="${WORKCELL_RELEASE_VERIFY_TRUSTED_PATH:+${WORKCELL_RELEASE_VERIFY_TRUSTED_PATH}:}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			driver := mutatedVerifierDriver(t, source, tc.old, tc.replacement)
+			if code, out := runVerifyDriver(t, driver, args, env); code == 0 {
+				t.Fatalf("a verifier that %s passed under a poisoned tool path, got %d\n%s", tc.name, code, out)
+			}
+		})
 	}
 }
 
