@@ -13,12 +13,10 @@ import (
 
 const runtimePathPin = "readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'\nexport PATH\n"
 
-// Privileged mode keeps the script's own shell from reading BASH_ENV and ENV,
-// but leaves them exported for the plain-bash children these scripts start.
-// The prologue must clear them, which is what the replaced shebang did.
+// -p stops only this shell from reading BASH_ENV and ENV, so the prologue must
+// clear them for the plain-bash children, as the replaced shebang did.
 const runtimeStartupPin = "#!/bin/bash -p\n" +
-	"# -p keeps this shell from reading BASH_ENV/ENV, but leaves them exported.\n" +
-	"# The plain-bash children below would still read them, so clear them here.\n" +
+	"# -p hides these from this shell only; its plain-bash children still read them.\n" +
 	"unset BASH_ENV ENV\n"
 
 func TestRuntimePathPrologues(t *testing.T) {
@@ -99,14 +97,10 @@ func TestRuntimePathMutationSourceClassification(t *testing.T) {
 			t.Errorf("non-mutation rejected: %s", body)
 		}
 	}
-	// Deliberate over-eagerness, recorded so it is a reviewed property rather
-	// than a surprise. An inline comment or a quoted payload that reads as an
-	// assignment is reported. Resolving either one needs the scan to decide
-	// where a # or a quote begins, and a # inside a quoted word is not a
-	// comment, so a scan that stripped from the first # would delete the
-	// assignment behind it. These five scripts are maintainer-owned, so the
-	// cost of a report is one edit, and the cost of a missed mutation is a
-	// hijacked runtime PATH.
+	// Deliberately over-eager, recorded so it stays a reviewed property. A #
+	// inside a quoted word is not a comment, so a scan that stripped from the
+	// first # would delete the assignment behind it: a false report costs one
+	// edit, a missed mutation costs the runtime PATH.
 	for _, body := range []string{"true # export PATH=/tmp", "printf 'then PATH=/tmp'"} {
 		if !runtimePathMutation(body) {
 			t.Errorf("over-eager classification changed: %s", body)

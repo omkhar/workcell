@@ -1,6 +1,5 @@
 #!/bin/bash -p
-# -p keeps this shell from reading BASH_ENV/ENV, but leaves them exported.
-# The plain-bash children below would still read them, so clear them here.
+# -p hides these from this shell only; its plain-bash children still read them.
 unset BASH_ENV ENV
 if [[ "${PATH}" != '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ]]; then
   PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
