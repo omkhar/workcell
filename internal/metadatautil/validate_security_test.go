@@ -80,6 +80,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
+		"scripts/ci/lib/local-docker-parity.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
@@ -808,6 +809,54 @@ func TestCheckPinnedInputsRejectsValidatorImageScriptFallbackDrift(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "build-validator-image.sh") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want validator image fallback drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageTagFormatterDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "build-validator-image.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, "workcell_validator_image_default_tag", "drifted_validator_image_tag", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "workcell_validator_image_default_tag") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want formatter drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageBootstrapIdentityDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "lib", "local-docker-parity.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, `cksum "${root}/runtime/container/debian-bootstrap.env"`, `cksum "${root}/other"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "debian-bootstrap.env") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want bootstrap identity drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageDuplicateChecksumBinding(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "lib", "local-docker-parity.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, `"${dockerfile_cksum}" "${bootstrap_cksum}"`, `"${dockerfile_cksum}" "${dockerfile_cksum}"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "bootstrap_cksum") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want duplicate checksum rejection", err)
 	}
 }
 

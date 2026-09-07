@@ -34,6 +34,7 @@ type pinnedInputsCheck struct {
 	pinHygieneWorkflow          string
 	upstreamRefreshWorkflow     string
 	validatorImageScript        string
+	localDockerParityScript     string
 	codeowners                  string
 	hostedControlsPolicyText    string
 	hostedControlsScript        string
@@ -67,6 +68,7 @@ type pinnedInputPaths struct {
 	debianBootstrap      string
 	upstreamRefresh      string
 	validatorImageScript string
+	localDockerParity    string
 }
 
 type rustPinValues struct {
@@ -122,6 +124,7 @@ func newPinnedInputsCheck(cfg PinnedInputsConfig) *pinnedInputsCheck {
 			debianBootstrap:      filepath.Join(repoRoot, filepath.FromSlash(DebianBootstrapManifestRelPath)),
 			upstreamRefresh:      filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml"),
 			validatorImageScript: filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"),
+			localDockerParity:    filepath.Join(repoRoot, "scripts", "ci", "lib", "local-docker-parity.sh"),
 		},
 	}
 }
@@ -164,6 +167,7 @@ func (check *pinnedInputsCheck) load() error {
 				{check.cfg.PinHygieneWorkflowPath, &check.pinHygieneWorkflow},
 				{check.paths.upstreamRefresh, &check.upstreamRefreshWorkflow},
 				{check.paths.validatorImageScript, &check.validatorImageScript},
+				{check.paths.localDockerParity, &check.localDockerParityScript},
 				{check.cfg.CodeownersPath, &check.codeowners},
 				{check.cfg.HostedControlsPolicyPath, &check.hostedControlsPolicyText},
 				{check.cfg.HostedControlsScriptPath, &check.hostedControlsScript},

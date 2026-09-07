@@ -5245,14 +5245,26 @@ func TestExtractGoFunctionBlock(t *testing.T) {
 
 // --- D3 simple-clusters sweep: buildx-builder-trust ---
 
-// buildxBuilderTrustHappyFiles returns the six-file fixture map that satisfies
-// all eight buildx-builder-trust invariants.
+// buildxBuilderTrustHappyFiles returns the fixture map that satisfies all
+// buildx-builder-trust invariants.
 func buildxBuilderTrustHappyFiles() map[string]string {
+	const ownedJob = `#!/usr/bin/env bash
+VALIDATOR_IMAGE_INPUT="${WORKCELL_VALIDATOR_IMAGE:-}"
+if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
+  claim_workcell_validator_image "${ROOT_DIR}" VALIDATOR_IMAGE VALIDATOR_IMAGE_RESERVATION
+  VALIDATOR_IMAGE_OWNED=1
+  export WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}"
+fi
+  if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then
+    cleanup_workcell_owned_validator_image "${VALIDATOR_IMAGE}" "${VALIDATOR_IMAGE_RESERVATION}"
+  fi
+`
 	return map[string]string{
 		verifyReleaseBundleRelPath:     "#!/usr/bin/env bash\nBUILDX_BUILDER=\"workcell-release-${ctx}\"\n",
 		buildAndTestRelPath:            "#!/usr/bin/env bash\n: \"${WORKCELL_KEEP_VALIDATOR_IMAGE:-}\"\n",
-		jobValidateRelPath:             "#!/usr/bin/env bash\ncleanup_workcell_validator_image\n",
-		jobDocsRelPath:                 "#!/usr/bin/env bash\ncleanup_workcell_validator_image\n",
+		jobValidateRelPath:             ownedJob,
+		jobDocsRelPath:                 ownedJob,
+		localDockerParityRelPath:       "#!/usr/bin/env bash\nprintf -v \"${image_variable}\" '%s-%s' \"${prefix}\" \"${claimed_reservation##*/}\"\n[[ \"${WORKCELL_KEEP_VALIDATOR_IMAGE:-0}\" != \"1\" ]] || return 0\n",
 		verifyReproducibleBuildRelPath: "#!/usr/bin/env bash\n: \"${WORKCELL_REPRO_OWNS_BUILDER:-}\"\n",
 		trustedDockerClientRelPath:     "#!/usr/bin/env bash\nbuildx_expected_endpoints() { :; }\ndocker context inspect \"${DOCKER_CONTEXT_NAME}\" --format '{{.x}}'\n",
 		colimaEgressAllowlistRelPath:   "#!/usr/bin/env bash\nCOLIMA_HOME=\"${colima_home}\"\n",
@@ -5281,18 +5293,74 @@ func TestCheckBuildxBuilderTrust(t *testing.T) {
 			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
 		},
 		{
-			name: "job-validate cleanup needle missing",
+			name: "owned tag suffix missing",
 			mutate: func(f map[string]string) {
-				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "cleanup_workcell_validator_image", "X", 1)
+				f[localDockerParityRelPath] = strings.Replace(f[localDockerParityRelPath], `"${claimed_reservation##*/}"`, `"shared"`, 1)
 			},
-			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+			wantErr: "Expected local validator jobs to give each automatically managed image a reservation-owned tag",
 		},
 		{
-			name: "job-docs cleanup needle missing",
+			name: "owned image retention guard missing",
 			mutate: func(f map[string]string) {
-				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "cleanup_workcell_validator_image", "X", 1)
+				f[localDockerParityRelPath] = strings.Replace(f[localDockerParityRelPath], "WORKCELL_KEEP_VALIDATOR_IMAGE", "X", 1)
 			},
-			wantErr: "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+			wantErr: "Expected owned validator-image cleanup to preserve images when retention is requested",
+		},
+		{
+			name: "job-validate caller input missing",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "VALIDATOR_IMAGE_INPUT", "X", 1)
+			},
+			wantErr: "Expected job-validate.sh to preserve whether the caller supplied a validator image",
+		},
+		{
+			name: "job-validate implicit claim missing",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], "if [[ -z \"${VALIDATOR_IMAGE_INPUT}\" ]]; then", "if false; then", 1)
+			},
+			wantErr: "Expected job-validate.sh to claim a unique validator image only when the caller did not provide one",
+		},
+		{
+			name: "job-validate owned cleanup guard removed",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], `if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then`, "if true; then", 1)
+			},
+			wantErr: "Expected job-validate.sh to clean its exact reservation-owned validator image",
+		},
+		{
+			name: "job-validate owned cleanup guard inverted",
+			mutate: func(f map[string]string) {
+				f[jobValidateRelPath] = strings.Replace(f[jobValidateRelPath], `"${VALIDATOR_IMAGE_OWNED}" -eq 1`, `"${VALIDATOR_IMAGE_OWNED}" -ne 1`, 1)
+			},
+			wantErr: "Expected job-validate.sh to clean its exact reservation-owned validator image",
+		},
+		{
+			name: "job-docs caller input missing",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "VALIDATOR_IMAGE_INPUT", "X", 1)
+			},
+			wantErr: "Expected job-docs.sh to preserve whether the caller supplied a validator image",
+		},
+		{
+			name: "job-docs implicit claim missing",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], "if [[ -z \"${VALIDATOR_IMAGE_INPUT}\" ]]; then", "if false; then", 1)
+			},
+			wantErr: "Expected job-docs.sh to claim a unique validator image only when the caller did not provide one",
+		},
+		{
+			name: "job-docs owned cleanup guard removed",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], `if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then`, "if true; then", 1)
+			},
+			wantErr: "Expected job-docs.sh to clean its exact reservation-owned validator image",
+		},
+		{
+			name: "job-docs owned cleanup guard inverted",
+			mutate: func(f map[string]string) {
+				f[jobDocsRelPath] = strings.Replace(f[jobDocsRelPath], `"${VALIDATOR_IMAGE_OWNED}" -eq 1`, `"${VALIDATOR_IMAGE_OWNED}" -ne 1`, 1)
+			},
+			wantErr: "Expected job-docs.sh to clean its exact reservation-owned validator image",
 		},
 		{
 			name: "repro-owns-builder needle missing",
@@ -5343,7 +5411,7 @@ func TestCheckBuildxBuilderTrust(t *testing.T) {
 }
 
 func TestCheckBuildxBuilderTrustCount(t *testing.T) {
-	if got, want := len(buildxBuilderTrustChecks), 8; got != want {
+	if got, want := len(buildxBuilderTrustChecks), 14; got != want {
 		t.Fatalf("buildxBuilderTrustChecks has %d checks, want %d", got, want)
 	}
 }
