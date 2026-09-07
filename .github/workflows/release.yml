@@ -1528,6 +1528,7 @@ jobs:
             workcell-source.spdx.json workcell-image.spdx.json; do
             cmp -s "dist/${subject}" "trusted-subjects/${subject}"
           done
+          test "$(cut -d@ -f2 trusted-subjects/workcell-image.digest)" = "${EXPECTED_IMAGE_DIGEST}"
           sha256sum -c dist/SHA256SUMS
           tar -tvf dist/workcell-release-image.oci.tar | awk '$1 !~ /^[-d]/ {exit 1}'
           test -z "$(tar -tf dist/workcell-release-image.oci.tar | sed 's#^\./##' | LC_ALL=C sort | uniq -d)"

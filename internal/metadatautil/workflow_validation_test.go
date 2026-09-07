@@ -149,6 +149,8 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 	content := readReleaseWorkflow(t)
 	workflow := string(content)
 	mutations := []string{
+		strings.Replace(workflow, "  IMAGE_NAME: ghcr.io/${{ github.repository }}", "  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/other", 1),
+		strings.Replace(workflow, "          test \"$(cut -d@ -f2 trusted-subjects/workcell-image.digest)\" = \"${EXPECTED_IMAGE_DIGEST}\"\n", "", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
 		strings.Replace(workflow, "sha256sum -c dist/SHA256SUMS", "source dist/SHA256SUMS", 1),

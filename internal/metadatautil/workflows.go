@@ -46,10 +46,11 @@ type workflowStep struct {
 	With map[string]string `yaml:"with"`
 }
 
-// This digest covers the complete parsed sign-release job and the workflow-level
-// ORAS pins it installs its publisher from. It rejects unknown fields, reordered
-// steps, changed commands, changed action inputs, and a swapped publisher.
-const releaseSignerContractSHA256 = "9d9112a005b7519468cea23287d72ce3150760764ce80ccfefb4d57076abd063"
+// This digest covers the complete parsed sign-release job plus the workflow-level
+// ORAS pins it installs its publisher from and the registry it publishes to. It
+// rejects unknown fields, reordered steps, changed commands, changed action
+// inputs, a swapped publisher, and a redirected registry destination.
+const releaseSignerContractSHA256 = "94cd7164117b6911996c1c64b1bf271de835bbdd43e04023317fa4e5acdab23a"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -213,15 +214,18 @@ func validateReleaseSignerContract(workflowText string) error {
 	if !ok {
 		return errors.New("release workflow must define sign-release")
 	}
-	// The signer installs its publisher from the workflow-level ORAS pins, so
-	// the contract covers them too. Swapping the publisher for one the
+	// The signer installs its publisher from the workflow-level ORAS pins and
+	// publishes to the workflow-level IMAGE_NAME, so the contract covers those
+	// too. Swapping the publisher or the registry destination for one the
 	// maintainer did not review must break this digest.
 	content, err := yaml.Marshal(struct {
-		Signer   yaml.Node `yaml:"sign-release"`
-		OrasPins []string  `yaml:"oras-pins"`
+		Signer       yaml.Node `yaml:"sign-release"`
+		OrasPins     []string  `yaml:"oras-pins"`
+		RegistryName string    `yaml:"image-name"`
 	}{
-		Signer:   signer,
-		OrasPins: []string{document.Env["WORKCELL_ORAS_VERSION"], document.Env["WORKCELL_ORAS_LINUX_AMD64_SHA256"]},
+		Signer:       signer,
+		OrasPins:     []string{document.Env["WORKCELL_ORAS_VERSION"], document.Env["WORKCELL_ORAS_LINUX_AMD64_SHA256"]},
+		RegistryName: document.Env["IMAGE_NAME"],
 	})
 	if err != nil {
 		return err

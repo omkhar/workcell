@@ -400,7 +400,9 @@ that self-review publicly with the workflow run URL and timestamp.
 ```
 
 The approval starts the registry and signing job.
-The architecture build jobs and assembly job have no write or OIDC authority.
+The architecture build jobs and assembly job have no package, repository-content,
+attestation, or OIDC authority. They still write GitHub Actions artifacts with
+the artifact runtime credentials.
 The signing job validates the bound handoff before it publishes the image.
 The final publisher uploads the 18 GitHub release assets separately.
 
