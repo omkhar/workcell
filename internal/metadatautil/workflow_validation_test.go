@@ -121,6 +121,12 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			decoy: "          name: workcell-release-preflight-subjects\n          path: trusted-subjects",
 			want:  "by immutable id",
 		},
+		{
+			name:  "assembly command quoted inside another command",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          echo \"oras manifest index create --oci-layout dist/release-image amd64 arm64\"",
+			want:  "assemble the multi-arch index",
+		},
 	}
 	for _, decoy := range decoys {
 		t.Run(decoy.name, func(t *testing.T) {
@@ -137,6 +143,8 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 	content := readReleaseWorkflow(t)
 	workflow := string(content)
 	mutations := []string{
+		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
+		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
 		strings.Replace(workflow, "sha256sum -c dist/SHA256SUMS", "source dist/SHA256SUMS", 1),
 		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),

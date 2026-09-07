@@ -25,6 +25,7 @@ type workflowDocument struct {
 }
 
 type workflowNodeDocument struct {
+	Env  map[string]string    `yaml:"env"`
 	Jobs map[string]yaml.Node `yaml:"jobs"`
 }
 
@@ -45,9 +46,10 @@ type workflowStep struct {
 	With map[string]string `yaml:"with"`
 }
 
-// This digest covers the complete parsed sign-release job. It rejects unknown
-// fields, reordered steps, changed commands, and changed action inputs.
-const releaseSignerContractSHA256 = "de015b893267df308bf6e8904bf00b97e826e6e7183300323110189da8ec0cff"
+// This digest covers the complete parsed sign-release job and the workflow-level
+// ORAS pins it installs its publisher from. It rejects unknown fields, reordered
+// steps, changed commands, changed action inputs, and a swapped publisher.
+const releaseSignerContractSHA256 = "9d9112a005b7519468cea23287d72ce3150760764ce80ccfefb4d57076abd063"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -144,11 +146,11 @@ func validateReleaseAssembly(document workflowDocument) error {
 	return nil
 }
 
-// runsCommand reports whether the script runs command outside a shell comment.
+// runsCommand reports whether the script invokes command as a command, so that
+// a comment line or a quoted argument such as echo "<command>" does not count.
 func runsCommand(script, command string) bool {
 	for line := range strings.Lines(script) {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, command) {
+		if strings.HasPrefix(strings.TrimSpace(line), command) {
 			return true
 		}
 	}
@@ -209,7 +211,16 @@ func validateReleaseSignerContract(workflowText string) error {
 	if !ok {
 		return errors.New("release workflow must define sign-release")
 	}
-	content, err := yaml.Marshal(signer)
+	// The signer installs its publisher from the workflow-level ORAS pins, so
+	// the contract covers them too. Swapping the publisher for one the
+	// maintainer did not review must break this digest.
+	content, err := yaml.Marshal(struct {
+		Signer   yaml.Node `yaml:"sign-release"`
+		OrasPins []string  `yaml:"oras-pins"`
+	}{
+		Signer:   signer,
+		OrasPins: []string{document.Env["WORKCELL_ORAS_VERSION"], document.Env["WORKCELL_ORAS_LINUX_AMD64_SHA256"]},
+	})
 	if err != nil {
 		return err
 	}
