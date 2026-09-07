@@ -1406,36 +1406,19 @@ fn loader_arg_targets_mutable_native_exec(target: &str) -> bool {
     path_is_mutable_native_exec(target)
 }
 
-/// A loader search-list entry names a directory to search or a shared object
-/// to load, never an exec target, so it is judged by where it lives rather
-/// than by its contents. `--library-path /workspace` names no ELF file at all,
-/// yet the loader will still take a dependency from there.
-fn loader_path_list_entry_targets_mutable_root(entry: &str) -> bool {
-    if entry.is_empty() {
-        return true;
-    }
-    canonicalize_existing_path(entry)
-        .is_some_and(|resolved| resolved_path_is_mutable_root(&resolved))
-}
-
-/// A loader search list is refused when it is empty, carries an empty entry,
-/// or names anything under a mutable root. An empty list or entry makes the
-/// loader resolve against the working directory the guard cannot pin. The
-/// loader splits such a list on whitespace as well as on colons, so all three
-/// separators are honoured; splitting more finely than the loader does can
-/// only add entries to check, never hide one.
-fn loader_path_list_targets_mutable_native_exec(value: &str) -> bool {
-    if value.is_empty() {
-        return true;
-    }
-    value
-        .split([':', ' ', '\t'])
-        .any(loader_path_list_entry_targets_mutable_root)
-}
-
-/// Walks a dynamic loader argument vector the way the loader does: the options
-/// that name libraries are checked as search lists, and the scan stops at the
-/// exec target, since everything past it belongs to the target's own argv.
+/// Walks a dynamic loader argument vector the way the loader does, to find the
+/// exec target: everything past that target belongs to the target's own argv.
+///
+/// The options that name libraries are refused outright rather than parsed.
+/// Deciding whether such a value stays out of a mutable root means reproducing
+/// the loader's own reading of it: it accepts colons, semicolons and
+/// whitespace as separators, and expands `$ORIGIN`, `$LIB` and `$PLATFORM`
+/// against the target before use. A guard that reimplements that is a guard
+/// that is wrong in some corner of it, so an explicit loader invocation that
+/// sets a library path is refused on the strict profile instead. Programs are
+/// normally executed directly rather than through ld.so, and a loader
+/// environment reaching a target is covered separately by the environment
+/// check.
 fn loader_args_target_mutable_native_exec(args: &[String]) -> bool {
     let mut index = 1usize;
     while index < args.len() {
@@ -1448,13 +1431,7 @@ fn loader_args_target_mutable_native_exec(args: &[String]) -> bool {
 
         match option {
             "--preload" | "--audit" | "--library-path" => {
-                let value = inline_value.or_else(|| {
-                    index += 1;
-                    args.get(index).map(String::as_str)
-                });
-                if value.is_none_or(loader_path_list_targets_mutable_native_exec) {
-                    return true;
-                }
+                return current_mode_blocks_mutable_native_exec();
             }
             // Options that consume a value which is not a library search list.
             // Missing one here would read its value as the exec target.
@@ -3179,47 +3156,31 @@ mod tests {
 
     #[test]
     fn loader_control_options_reject_mutable_values() {
-        // An empty list, or an empty entry, makes the loader search the
-        // working directory the guard cannot pin.
-        assert!(loader_path_list_targets_mutable_native_exec(""));
-        assert!(loader_path_list_targets_mutable_native_exec("/usr/lib:"));
-        assert!(loader_path_list_targets_mutable_native_exec(":/usr/lib"));
-        assert!(loader_path_list_entry_targets_mutable_root(""));
-        assert!(!loader_path_list_targets_mutable_native_exec("/usr/lib"));
-        assert!(!loader_path_list_targets_mutable_native_exec(
-            "/usr/lib:/lib"
-        ));
-
-        // The loader splits a search list on whitespace as well as on colons.
-        // A doubled separator only yields an empty entry once the list is
-        // split the same way, so this fails if whitespace is not a separator.
-        assert!(loader_path_list_targets_mutable_native_exec(
-            "/usr/lib  /lib"
-        ));
-        assert!(loader_path_list_targets_mutable_native_exec(
-            "/usr/lib \t/lib"
-        ));
-        assert!(!loader_path_list_targets_mutable_native_exec(
-            "/usr/lib /lib"
-        ));
-
-        // A mutable-root entry is refused as a directory, without being an
-        // ELF file itself. MUTABLE_EXEC_ROOTS only exist inside the runtime
-        // image, so the container probe covers the positive case; here the
-        // predicate is pinned to the root check it must use.
-        assert!(MUTABLE_EXEC_ROOTS.iter().all(|root| {
-            canonicalize_existing_path(root)
-                .is_none_or(|resolved| resolved_path_is_mutable_root(&resolved))
-        }));
-
+        // Every library-naming option is refused without reading its value,
+        // because deciding a value means reproducing the loader's separator
+        // set and its $ORIGIN, $LIB and $PLATFORM expansion.
         let loader = "/lib64/ld-linux-x86-64.so.2".to_string();
         for arguments in [
             vec![loader.clone(), "--preload".to_string()],
             vec![loader.clone(), "--preload=".to_string(), "/bin/true".into()],
+            // An immutable-looking value is refused too: the loader would
+            // expand it before use, so its text does not decide where it
+            // resolves.
             vec![
                 loader.clone(),
                 "--library-path".to_string(),
-                String::new(),
+                "/usr/lib".to_string(),
+                "/bin/true".into(),
+            ],
+            vec![
+                loader.clone(),
+                "--library-path=/usr/lib;/workspace/lib".to_string(),
+                "/bin/true".into(),
+            ],
+            vec![
+                loader.clone(),
+                "--preload".to_string(),
+                "$ORIGIN/../../workspace/evil.so".to_string(),
                 "/bin/true".into(),
             ],
             vec![loader.clone(), "--audit=/usr/lib:".to_string()],
@@ -3239,12 +3200,6 @@ mod tests {
 
         for arguments in [
             vec![loader.clone(), "/bin/true".to_string()],
-            vec![
-                loader.clone(),
-                "--library-path".to_string(),
-                "/usr/lib".to_string(),
-                "/bin/true".into(),
-            ],
             // --argv0 takes a value that is not an exec target.
             vec![
                 loader.clone(),
