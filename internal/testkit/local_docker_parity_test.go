@@ -755,6 +755,67 @@ func hasOptionToken(path string) bool {
 	return false
 }
 
+// activeShellLines drops whole-line comments, so a commented-out statement
+// cannot satisfy a check that the live one no longer does.  A trailing comment
+// is left alone: it cannot carry a statement, and cutting at the first "#"
+// would corrupt a pathname or a parameter expansion that contains one.
+func activeShellLines(script string) string {
+	active := make([]string, 0, strings.Count(script, "\n")+1)
+	for _, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		active = append(active, line)
+	}
+	return strings.Join(active, "\n")
+}
+
+// hostileDerivation returns the one active assignment that derives an axis.
+// It refuses a script carrying a heredoc or here-string, because the same text
+// inside one would read as live code to a line matcher, and it refuses anything
+// other than exactly one match, so a copy left behind by an edit cannot stand in
+// for the statement the lane runs.  The `<<` guard is deliberately blunt: if a
+// lane ever needs one, this matcher needs a shell parser rather than a
+// loosened check.
+func hostileDerivation(script, prefix string) (string, error) {
+	active := activeShellLines(script)
+	if strings.Contains(active, "<<") {
+		return "", fmt.Errorf("script carries a heredoc, here-string or shift; the matcher needs a shell parser")
+	}
+	matches := []string{}
+	for _, line := range strings.Split(active, "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, prefix) {
+			matches = append(matches, trimmed)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("want exactly one active %q assignment, got %d", prefix, len(matches))
+	}
+	return matches[0], nil
+}
+
+// The negative fixtures for hostileDerivation: the assignment inside a heredoc
+// is inert, and a duplicate leaves the matcher no single statement to run.
+func TestHostileDerivationRejectsInertAndAmbiguousText(t *testing.T) {
+	t.Parallel()
+
+	prefix := `validator_tmp="${validator_tmp}/`
+	live := prefix + `hostile"` + "\n"
+	for name, script := range map[string]string{
+		"heredoc":   "cat <<'EOF'\n" + live + "EOF\n",
+		"duplicate": live + live,
+		"absent":    "validator_tmp=\"/tmp\"\n",
+	} {
+		if _, err := hostileDerivation(script, prefix); err == nil {
+			t.Fatalf("%s script accepted as a derivation", name)
+		}
+	}
+	got, err := hostileDerivation(live, prefix)
+	if err != nil || got != strings.TrimSpace(live) {
+		t.Fatalf("live assignment = %q, %v", got, err)
+	}
+}
+
 // runHostileDerivation executes the single assignment the lane derives an axis
 // with, so the test reads the value bash produces instead of the source text.
 func runHostileDerivation(t *testing.T, prefix, preset, variable string) string {
@@ -765,18 +826,9 @@ func runHostileDerivation(t *testing.T, prefix, preset, variable string) string 
 	if err != nil {
 		t.Fatal(err)
 	}
-	derivation := ""
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-			derivation = strings.TrimSpace(line)
-			break
-		}
-	}
-	if derivation == "" {
-		t.Fatalf("run-validate-in-validator.sh no longer derives %s", variable)
+	derivation, err := hostileDerivation(string(content), prefix)
+	if err != nil {
+		t.Fatalf("run-validate-in-validator.sh no longer derives %s: %v", variable, err)
 	}
 	script := preset + "; " + derivation + `; printf '%s' "${` + variable + `}"`
 	command := exec.Command("/bin/bash", "-c", script)
