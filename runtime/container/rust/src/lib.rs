@@ -1886,16 +1886,8 @@ unsafe extern "C" fn guarded_execve(
 ) -> c_int {
     let path_string = bounded_exec_input!(bounded_c_string(path), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
-    if should_block_null_explicit_env(envp) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
 
-    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -1918,6 +1910,15 @@ unsafe extern "C" fn guarded_execve(
     }
     if let Some(reason) = should_block_reason(&path_string, &args) {
         report_arg_block(reason);
+        return -1;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp)
+        || should_block_missing_guard_env(&path_string, &args, &env_entries)
+    {
+        report_missing_guard_env_block();
         return -1;
     }
 
@@ -1931,10 +1932,6 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
     let env_entries = bounded_exec_input!(current_process_env_entries(), -1);
 
-    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -1957,6 +1954,13 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
     }
     if let Some(reason) = should_block_reason(&path_string, &args) {
         report_arg_block(reason);
+        return -1;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
+        report_missing_guard_env_block();
         return -1;
     }
 
@@ -1993,10 +1997,6 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
         }
     };
 
-    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -2022,6 +2022,13 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execvp arguments to the real libc execvp resolved via RTLD_NEXT.
     unsafe { execvp_fn()(file, argv) }
 }
@@ -2034,10 +2041,6 @@ unsafe extern "C" fn guarded_execvpe(
 ) -> c_int {
     let file_string = bounded_exec_input!(bounded_c_string(file), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
-    if should_block_null_explicit_env(envp) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
     let effective_path = match resolve_exec_search_target(&file_string) {
         Ok(Some(path)) => path,
@@ -2063,10 +2066,6 @@ unsafe extern "C" fn guarded_execvpe(
         }
     };
 
-    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -2092,6 +2091,15 @@ unsafe extern "C" fn guarded_execvpe(
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp)
+        || should_block_missing_guard_env(&effective_path, &args, &env_entries)
+    {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execvpe arguments to the real libc execvpe resolved via RTLD_NEXT.
     unsafe { execvpe_fn()(file, argv, envp) }
 }
@@ -2106,10 +2114,6 @@ unsafe extern "C" fn guarded_execveat(
 ) -> c_int {
     let pathname_string = bounded_exec_input!(bounded_c_string(pathname), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
-    if should_block_null_explicit_env(envp) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
     let git_target = is_git_execveat_target(dirfd, &pathname_string, flags);
     let effective_path =
@@ -2118,10 +2122,6 @@ unsafe extern "C" fn guarded_execveat(
         } else {
             pathname_string.clone()
         };
-    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return -1;
-    }
 
     let (
         protected_target,
@@ -2244,6 +2244,15 @@ unsafe extern "C" fn guarded_execveat(
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp)
+        || should_block_missing_guard_env(&effective_path, &args, &env_entries)
+    {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execveat arguments to the real libc execveat resolved via RTLD_NEXT.
     unsafe { execveat_fn()(dirfd, pathname, argv, envp, flags) }
 }
@@ -2255,18 +2264,8 @@ unsafe extern "C" fn guarded_fexecve(
     envp: *const *const c_char,
 ) -> c_int {
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
-    if should_block_null_explicit_env(envp) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
 
-    // A descriptor target has no path, so it can never be the approved
-    // launcher control transition; pass an empty path to say so.
-    if should_block_missing_guard_env("", &args, &env_entries) {
-        report_missing_guard_env_block();
-        return -1;
-    }
     if should_block_workcell_launcher_fd_loader_env(fd, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return -1;
@@ -2302,6 +2301,17 @@ unsafe extern "C" fn guarded_fexecve(
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    // A descriptor target has no path, so it can never be the approved
+    // launcher control transition; pass an empty path to say so.
+    if should_block_null_explicit_env(envp)
+        || should_block_missing_guard_env("", &args, &env_entries)
+    {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified fexecve arguments to the real libc fexecve resolved via RTLD_NEXT.
     unsafe { fexecve_fn()(fd, argv, envp) }
 }
@@ -2317,17 +2327,9 @@ unsafe extern "C" fn guarded_posix_spawn(
 ) -> c_int {
     let path_string = bounded_exec_input!(bounded_c_string(path), libc::E2BIG);
     let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
-    if should_block_null_explicit_env(envp) {
-        report_missing_guard_env_block();
-        return libc::EPERM;
-    }
     let env_entries =
         bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
 
-    if should_block_missing_guard_env(&path_string, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return libc::EPERM;
-    }
     if should_block_workcell_launcher_loader_env(&path_string, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return libc::EPERM;
@@ -2353,6 +2355,15 @@ unsafe extern "C" fn guarded_posix_spawn(
         return libc::EPERM;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp)
+        || should_block_missing_guard_env(&path_string, &args, &env_entries)
+    {
+        report_missing_guard_env_block();
+        return libc::EPERM;
+    }
+
     // SAFETY: forwards the caller's original, unmodified posix_spawn arguments to the real libc posix_spawn resolved via RTLD_NEXT.
     unsafe { posix_spawn_fn()(pid, path, file_actions, attrp, argv, envp) }
 }
@@ -2368,10 +2379,6 @@ unsafe extern "C" fn guarded_posix_spawnp(
 ) -> c_int {
     let file_string = bounded_exec_input!(bounded_c_string(file), libc::E2BIG);
     let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
-    if should_block_null_explicit_env(envp) {
-        report_missing_guard_env_block();
-        return libc::EPERM;
-    }
     let env_entries =
         bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
     let effective_path = match resolve_exec_search_target(&file_string) {
@@ -2389,10 +2396,6 @@ unsafe extern "C" fn guarded_posix_spawnp(
         Err(ExecSearchError::LookupFailed(errno)) => return errno,
     };
 
-    if should_block_missing_guard_env(&effective_path, &args, &env_entries) {
-        report_missing_guard_env_block();
-        return libc::EPERM;
-    }
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
         report_workcell_launcher_loader_env_block();
         return libc::EPERM;
@@ -2415,6 +2418,15 @@ unsafe extern "C" fn guarded_posix_spawnp(
     }
     if let Some(reason) = should_block_reason(&file_string, &args) {
         report_arg_block(reason);
+        return libc::EPERM;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp)
+        || should_block_missing_guard_env(&effective_path, &args, &env_entries)
+    {
+        report_missing_guard_env_block();
         return libc::EPERM;
     }
 

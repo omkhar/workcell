@@ -4078,19 +4078,18 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-path-node-shebang.out
-  # Keep the guard preload in the cleared environment, so this case still
-  # reaches the protected-runtime classifier rather than stopping at the
-  # missing-preload refusal exercised immediately below.
-  if env -i LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so PATH="${workspace_exec_scratch}" /usr/bin/env node --version >/tmp/env-path-node.out 2>&1; then
+  if env -i PATH="${workspace_exec_scratch}" /usr/bin/env node --version >/tmp/env-path-node.out 2>&1; then
     echo "expected strict profile to reject env basename resolution to a protected Node copy" >&2
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/env-path-node.out
-  if env -i PATH="${workspace_exec_scratch}" /usr/bin/env node --version >/tmp/env-path-node-no-preload.out 2>&1; then
+  # A cleared environment strips the guard preload from the child, which the
+  # guard refuses on its own once no more specific reason applies.
+  if env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/env true >/tmp/env-no-preload.out 2>&1; then
     echo "expected strict profile to reject a child environment without the approved guard preload" >&2
     exit 1
   fi
-  grep -q "Workcell blocked child execution without the approved exec guard preload" /tmp/env-path-node-no-preload.out
+  grep -q "Workcell blocked child execution without the approved exec guard preload" /tmp/env-no-preload.out
   cat <<'EOF' >"${workspace_exec_scratch}/workcell-child-envp-bypass.js"
 const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
