@@ -6,7 +6,6 @@ package metadatautil
 import (
 	"fmt"
 	"regexp"
-	"strings"
 )
 
 const runtimeGuardPreload = "LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so"
@@ -28,8 +27,14 @@ func validateRuntimeBuildPreload(dockerfile, path string) error {
 			return err
 		}
 	}
-	if strings.Count(dockerfile, "LD_PRELOAD") != 3 {
-		return fmt.Errorf("%s must keep exactly the three canonical early runtime build preload assignments", path)
+	if count := len(preloadAssignment.FindAllString(dockerfile, -1)); count != 3 {
+		return fmt.Errorf("%s must keep exactly the three canonical early runtime build preload assignments, found %d", path, count)
 	}
 	return nil
 }
+
+// preloadAssignment matches an assignment of the guard variable that takes
+// effect: a Dockerfile ENV instruction or a shell export inside a RUN. It is
+// anchored to the start of a line, so a comment or prose that names the
+// variable assigns nothing and does not count.
+var preloadAssignment = regexp.MustCompile(`(?m)^[ \t]*(?:ENV|(?:&&[ \t]+)?export)[ \t]+LD_PRELOAD=`)

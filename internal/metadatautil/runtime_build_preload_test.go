@@ -17,6 +17,17 @@ func TestCheckPinnedInputsRuntimeBuildPreload(t *testing.T) {
 	}
 }
 
+// A comment that names the guard variable assigns nothing, so it must not
+// change the canonical assignment count or fail a valid build file.
+func TestCheckPinnedInputsAcceptsCommentedBuildPreloadMention(t *testing.T) {
+	cfg := rewritePinnedInputsFixtureFile(t, "runtime/container/Dockerfile", func(body string) string {
+		return body + "\n# LD_PRELOAD activation is reviewed above; do not add another assignment.\n"
+	})
+	if err := metadatautil.CheckPinnedInputs(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCheckPinnedInputsRejectsLateBuildPreload(t *testing.T) {
 	preload := "LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so"
 	for _, index := range []int{0, 1} {
