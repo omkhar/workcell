@@ -145,6 +145,13 @@ const FORMS: &[Form] = &[
     // where the option's value belongs: if the walk reads that value as the
     // exec target it reaches an option of unknown arity and refuses, so the
     // absence of a refusal is the proof that the value was consumed.
+    //
+    // The opposite error needs the opposite placement. An attached value is
+    // already in its option's token, so a walk that also consumes the next
+    // argument steps over the exec target and refuses nothing. A row for an
+    // attached form therefore puts UNKNOWN_OPTION in the exec-target position
+    // and demands a refusal: the refusal is the proof that the walk stopped
+    // there rather than past it.
     form(
         "bare exec target",
         Execve(LOADER, &["ld", TARGET], GUARDED_ENV),
@@ -194,9 +201,25 @@ const FORMS: &[Form] = &[
         ANY,
     ),
     form(
+        "--argv0=value consumes no further argument",
+        Execve(LOADER, &["ld", "--argv0=x", UNKNOWN_OPTION], GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
+        ANY,
+    ),
+    form(
         "--inhibit-rpath= empty attached value",
         Execve(LOADER, &["ld", "--inhibit-rpath=", TARGET], GUARDED_ENV),
         NotRefused,
+        ANY,
+    ),
+    form(
+        "--inhibit-rpath= empty attached value consumes no further argument",
+        Execve(
+            LOADER,
+            &["ld", "--inhibit-rpath=", UNKNOWN_OPTION],
+            GUARDED_ENV,
+        ),
+        Refused(MUTABLE_NATIVE),
         ANY,
     ),
     form(
