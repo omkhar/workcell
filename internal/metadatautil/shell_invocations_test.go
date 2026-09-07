@@ -40,6 +40,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"one"}},
 		},
 		{
+			name:   "a hash inside single quotes is an argument, not a comment",
+			script: "oras cp 'note: # here' one\n",
+			want:   [][]string{{"'note:", "#", "here'", "one"}},
+		},
+		{
+			name:   "a hash inside double quotes is an argument, not a comment",
+			script: "oras cp \"note: # here\" one\n",
+			want:   [][]string{{"\"note:", "#", "here\"", "one"}},
+		},
+		{
 			name:   "a heredoc body with a quoted delimiter runs nothing",
 			script: "cat <<'PLAN'\noras cp one\nPLAN\noras cp two\n",
 			want:   [][]string{{"two"}},
