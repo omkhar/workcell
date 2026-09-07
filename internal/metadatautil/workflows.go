@@ -4,7 +4,6 @@
 package metadatautil
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -205,10 +204,106 @@ func validateReleaseAssembly(document workflowDocument) error {
 	return nil
 }
 
-// heredocPattern consumes quoted words before it reads a redirection, so that
-// a << inside an argument such as "text <<B" cannot open a delimiter. Only the
-// third alternative captures, and it captures the delimiter it opens.
-var heredocPattern = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
+// heredocDelimiters returns the delimiters that line opens, in the order bash
+// reads their bodies. It scans the line instead of matching a pattern, so that
+// an escape, a quoted word, a here-string and an arithmetic shift are each read
+// the way bash reads them and none of them can hide or invent a redirection.
+func heredocDelimiters(line string) []string {
+	var delimiters []string
+	arithmetic := 0
+	for index := 0; index < len(line); {
+		rest := line[index:]
+		switch {
+		case rest[0] == '\\':
+			index += 2
+		case rest[0] == '\'' || rest[0] == '"':
+			index += quotedWidth(rest)
+		case strings.HasPrefix(rest, "$(("):
+			arithmetic++
+			index += 3
+		case strings.HasPrefix(rest, "(("):
+			arithmetic++
+			index += 2
+		case strings.HasPrefix(rest, "))") && arithmetic > 0:
+			arithmetic--
+			index += 2
+		case strings.HasPrefix(rest, "<<<"):
+			index += 3
+		case strings.HasPrefix(rest, "<<") && arithmetic > 0:
+			// A << inside an arithmetic expansion is a shift, not a redirection.
+			index += 2
+		case strings.HasPrefix(rest, "<<"):
+			delimiter, width := heredocDelimiter(rest)
+			if delimiter != "" {
+				delimiters = append(delimiters, delimiter)
+			}
+			index += width
+		default:
+			index++
+		}
+	}
+	return delimiters
+}
+
+// quotedWidth returns the length of the quoted word that opens text, or the
+// length of text when that word is unterminated. A backslash escapes the next
+// byte inside a double-quoted word and is literal inside a single-quoted one.
+func quotedWidth(text string) int {
+	quote := text[0]
+	for index := 1; index < len(text); index++ {
+		if quote == '"' && text[index] == '\\' {
+			index++
+			continue
+		}
+		if text[index] == quote {
+			return index + 1
+		}
+	}
+	return len(text)
+}
+
+// heredocDelimiter reads the delimiter of the heredoc redirection that opens
+// text, and returns it with the width of the redirection. The delimiter is
+// empty when the redirection names none, and the width always passes the
+// operator so that the scan makes progress.
+func heredocDelimiter(text string) (string, int) {
+	index := len("<<")
+	if index < len(text) && text[index] == '-' {
+		index++
+	}
+	for index < len(text) && (text[index] == ' ' || text[index] == '\t') {
+		index++
+	}
+	if index >= len(text) {
+		return "", index
+	}
+	if quote := text[index]; quote == '\'' || quote == '"' {
+		word := text[index : index+quotedWidth(text[index:])]
+		if len(word) < 2 || word[len(word)-1] != quote {
+			return "", index + len(word)
+		}
+		return word[1 : len(word)-1], index + len(word)
+	}
+	// A backslash before the delimiter quotes it, as in <<\EOF.
+	if text[index] == '\\' {
+		index++
+	}
+	end := index
+	for end < len(text) && isDelimiterByte(text[end]) {
+		end++
+	}
+	if end == index || (text[index] >= '0' && text[index] <= '9') {
+		return "", max(end, len("<<"))
+	}
+	return text[index:end], end
+}
+
+func isDelimiterByte(character byte) bool {
+	return character == '_' ||
+		character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
+}
 
 var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
 
@@ -236,16 +331,9 @@ func commandArgs(script, command string) [][]string {
 		}
 		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
 		current.Reset()
-		// Here-strings are blanked first so that a redirection such as
-		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
 		// Every delimiter on the line opens a body, and bash reads them in the
-		// order they appear, so they are queued rather than overwritten. A match
-		// with no capture is a consumed quoted word, not a redirection.
-		for _, match := range heredocPattern.FindAllStringSubmatch(strings.ReplaceAll(logical, "<<<", " "), -1) {
-			if delimiter := cmp.Or(match[1], match[2], match[3]); delimiter != "" {
-				heredocs = append(heredocs, delimiter)
-			}
-		}
+		// order they appear, so they are queued rather than overwritten.
+		heredocs = append(heredocs, heredocDelimiters(logical)...)
 		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
 			invocations = append(invocations, strings.Fields(rest))
 		}
