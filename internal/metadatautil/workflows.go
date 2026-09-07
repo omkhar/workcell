@@ -157,7 +157,11 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		unset := ShellInvocations(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
 		publish := ShellInvocations(step.Run, publishGitHubReleaseScript)
 		if len(audit) == 0 || len(unset) == 0 || len(publish) == 0 ||
-			!slices.Contains(audit[0].Args, "${GITHUB_REPOSITORY}") ||
+			// The audit takes the repository and nothing else. It rejects a
+			// second argument before it audits anything, and a || true after
+			// it would let the step publish on that refusal, so a membership
+			// test over its arguments is not enough.
+			len(audit[0].Args) != 1 || audit[0].Args[0] != "${GITHUB_REPOSITORY}" ||
 			!slices.Contains(publish[0].Args, "${GITHUB_REF_NAME}") ||
 			!slices.Contains(publish[0].Args, "--immutable-releases-preverified-by-hosted-controls") {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")

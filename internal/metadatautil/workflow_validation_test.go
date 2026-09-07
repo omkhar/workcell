@@ -95,6 +95,7 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "minimal publisher permissions", old: "contents: write\n      packages: read", replacement: "contents: write\n      packages: write", want: "grant only read verification permissions"},
 		{name: "minimal verifier permissions", old: "contents: read\n      packages: read", replacement: "contents: read\n      packages: write", want: "grant only read permissions"},
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
+		{name: "audits the repository and nothing else", old: "run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"", replacement: "run-hosted-controls-audit.sh wrong \"${GITHUB_REPOSITORY}\" || true", want: "recheck hosted controls"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

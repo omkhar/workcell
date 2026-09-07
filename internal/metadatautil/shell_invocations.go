@@ -377,9 +377,12 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 			// ready, where bash reads the delimiter EOF and runs the echo.
 			flush()
 		case strings.IndexByte(";&|", character) >= 0 &&
-			!(character == '&' && index > 0 && strings.IndexByte("<>", line[index-1]) >= 0):
-			// An operator ends the command before it. The guard keeps the & of
-			// a redirection such as 2>&1 as part of that word.
+			!(strings.IndexByte("&|", character) >= 0 && index > 0 &&
+				strings.IndexByte("<>", line[index-1]) >= 0):
+			// An operator ends the command before it. The guard keeps a
+			// redirection whole where its second byte would otherwise read as
+			// an operator: the & of 2>&1, and the | of the noclobber override
+			// >|, which redirects rather than starting a pipeline.
 			flush()
 			operator := string(character)
 			if index+1 < len(line) && line[index+1] == character {

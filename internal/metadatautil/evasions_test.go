@@ -87,6 +87,9 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+`: "`+"\n"+i+"x\n"+i+`" <<PLAN`, i+"PLAN")
 	})},
+	{"noclobber redirection", replaceAnchor(func(a string) string {
+		return indentOf(a) + ": >| " + flatten(a)
+	})},
 	{"quoted span closing into arguments", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + `: "` + "\n" + i + "x\n" + i + `" ` + flatten(a)

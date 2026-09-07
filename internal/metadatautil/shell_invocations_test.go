@@ -220,6 +220,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
 		},
 		{
+			name:   "a noclobber redirection keeps its own bar",
+			script: ": >| oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
 			name:   "a hashed path over the command proves no invocation of it",
 			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,
