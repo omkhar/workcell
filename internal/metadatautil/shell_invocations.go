@@ -160,13 +160,17 @@ func ShellInvocations(script, commandName string) [][]string {
 			}
 			continue
 		}
-		trimmed := strings.TrimSpace(text)
-		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
-		if strings.HasSuffix(trimmed, "\\") {
-			current.WriteString(" ")
+		// A backslash continues the line only when it is not itself escaped,
+		// and bash then joins the two halves with nothing between them. A
+		// space after the backslash escapes the space instead, which ends the
+		// line and makes the next one a separate command.
+		if backslashes := len(text) - len(strings.TrimRight(text, `\`)); backslashes%2 == 1 {
+			current.WriteString(text[:len(text)-1])
 			continue
 		}
-		if strings.HasSuffix(trimmed, "&&") || strings.HasSuffix(trimmed, "|") {
+		current.WriteString(text)
+		if trimmed := strings.TrimRight(text, " \t"); strings.HasSuffix(trimmed, "&&") ||
+			strings.HasSuffix(trimmed, "|") {
 			// A list operator at the end of a line continues onto the next,
 			// so false && <newline> oras cp … is one logical line.
 			current.WriteString(" ")
@@ -247,6 +251,14 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 	var word strings.Builder
 	inWord, quote, pending, stripTabs := false, byte(0), false, false
 	arithmetic := 0
+	// A line that carries a quoted command substitution donates no words. Where
+	// the substitution ends is beyond a line reader, and reading syntax over
+	// text invents words: bash keeps the rest of the quoted argument in one
+	// word, while this reader can split it on an escaped space and hand the
+	// validator an option and value that no command received. The line can
+	// lose an invocation, never invent one. A stack that is already open says
+	// the line is the tail of such a substitution, so it donates none either.
+	substituted := len(stack) > 0
 	flush := func() {
 		if !inWord {
 			return
@@ -284,7 +296,10 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 				// A command substitution resumes shell syntax inside the
 				// quotes. Suspend the quote rather than forget it, so that the
 				// ) which closes the substitution restores it, even when that )
-				// is on a later line.
+				// is on a later line. The line's words are dropped, so a
+				// separator this reader finds inside the quoted argument
+				// cannot become an option the command never received.
+				substituted = true
 				stack = append(stack, quote)
 				quote = 0
 				word.WriteByte(character)
@@ -303,6 +318,9 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 		case character == ' ' || character == '\t':
 			flush()
 		case character == '#' && !inWord:
+			if substituted {
+				return nil, heredocs, 0, stack
+			}
 			return words, heredocs, 0, stack
 		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
 			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
@@ -356,6 +374,9 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 		}
 	}
 	flush()
+	if substituted {
+		words = nil
+	}
 	if len(stack) > 0 {
 		// A substitution is still open, so the logical line has not ended and
 		// the quote around it is not the caller's to skip.

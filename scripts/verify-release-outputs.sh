@@ -115,6 +115,7 @@ verify_checksum_binding() {
   local actual=""
 
   expected="$(awk -v name="${asset}" '$2 == name {print $1}' "${ASSETS_DIR}/SHA256SUMS")"
+  # shellcheck disable=SC2312 # wc counts an already-captured string; the digest regexp is the gate
   [[ "$(wc -l <<<"${expected}")" -eq 1 && "${expected}" =~ ^[0-9a-f]{64}$ ]] ||
     fail "SHA256SUMS has no unique digest for ${asset}"
   actual="$(sha256_of "${ASSETS_DIR}/${asset}")"
@@ -277,6 +278,7 @@ main() {
   # expect, to report success over an inventory that was never read.
   listed_count=0
   walk_completed=0
+  # shellcheck disable=SC2312 # the NUL sentinel and listed_count assertion below are the compensating control
   while IFS= read -r -d '' path; do
     if [[ -z "${path}" ]]; then
       walk_completed=1

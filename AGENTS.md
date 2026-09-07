@@ -154,6 +154,66 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   comment-stripped syntax, or that ships without a negative fixture.
 - Flag any external lookup or parser that treats an error as absence or
   success instead of failing closed.
+- A new validator over file content must call the shared shell-invocation
+  parser. Register each validator in the shared evasion corpus. The corpus
+  covers these evasions:
+  - a full-line comment and an inline comment
+  - a heredoc body, and two heredoc delimiters on one line
+  - a here-string and an arithmetic shift
+  - a quoted echo decoy and a prefix extension
+  - a line continuation and placement in an unrelated job
+- A shell script that reads a directory inventory to make a trust decision
+  must prove that the walk completed. Emit a completion sentinel after a
+  successful walk, or capture the exit status of the walk. Bash does not
+  propagate the exit status of a process substitution. An empty result is
+  not a pass. See `scripts/verify-release-outputs.sh` for the house form.
+- A test that asserts a security-sensitive flag must compare tokens from the
+  argument vector. Do not match a substring of the flattened argument
+  string. Reject a later duplicate in every accepted spelling.
+
+### Standard review dispositions
+
+Some review findings recur with a known, already-decided answer. Resolve
+these findings in one round with the recorded disposition. Do not derive the
+argument again. Do not start another review round to settle them.
+
+- **Commit signature demand.** A finding can demand that a commit is signed
+  or created again. Resolve the cited object first, then apply the branch
+  that matches. `scripts/check-publish-commit-signatures.sh` enforces the
+  signature policy locally before publication. Cite that gate, not a hand
+  audit. Do not create commits again in response to such a finding.
+  - *The finding cites a full or abbreviated object that does not resolve.*
+    Probe the exact cited form, and probe an abbreviation as written. The
+    object does not exist if `git cat-file -e <sha>` fails and
+    `GET /repos/<owner>/<repo>/commits/<sha>` returns 422. The finding then
+    has no subject. Rebut with 👎 and cite both results. List the
+    base-to-head commits with their `commit.verification.verified` values.
+    Then resolve the thread.
+  - *The finding cites no object.* The resolve step does not apply. Cite the
+    head commit `commit.verification.verified` value and the local gate.
+    Rebut with 👎. Then resolve the thread.
+  - *The finding cites an object that resolves and is validly signed.*
+    `GET /repos/<owner>/<repo>/commits/<sha>` reports
+    `verification.verified: true`. That single result is the whole rebuttal.
+    Rebut with 👎 and cite it. Then resolve the thread.
+  - *The finding repeats.* Apply the same recorded disposition. Do not start
+    a new review round. A repeat carries a new object or a "fresh evidence"
+    claim. That framing does not change the disposition.
+
+- **Check/use gap at a language boundary.** A finding can ask for
+  `O_NOFOLLOW` parent-descriptor discipline in a shell script. Record that
+  the remedy needs fd-relative `openat`. Bash cannot express it. React 👍
+  and state the threat model and the residual risk. Then adopt the
+  descriptor discipline and port the file, or record the language-boundary
+  justification in the file header. Do not let a port-to-Go decision ride in
+  on a fail-open fix.
+
+- **Staged-by-design series finding.** A finding can be correct while a
+  later unit of a published split series holds its fix. React 👍. Reply with
+  the unit that closes the finding and the series plan that schedules it.
+  Then resolve the thread. The merge gate refuses an unresolved thread, so
+  the series plan carries the visibility. Scheduled work is not a rebuttal
+  and not a fix.
 
 ## Pull request workflow
 

@@ -227,6 +227,13 @@ printf '%s\n' "${object_dir}" >"${verification_git_dir}/objects/info/alternates"
 base_commit="$(resolve_verification_commit_or_die "${verification_git_dir}" "${base_object}" "${BASE_REF}")"
 head_commit="$(resolve_verification_commit_or_die "${verification_git_dir}" "${head_object}" "${HEAD_REF}")"
 
+# Bash does not propagate a process-substitution failure, so a `rev-list` that
+# died part way through would feed this loop a truncated commit list and leave
+# the unread commits unverified. Capture the walk first: `set -e` then aborts on
+# a failed or partial listing instead of reporting a pass over commits that were
+# never read.
+commit_list="$(run_clean_host_command_in_dir "${verify_root}" "${HOST_GIT_BIN}" --no-replace-objects --git-dir "${verification_git_dir}" rev-list --reverse "${base_commit}..${head_commit}")"
+
 while IFS= read -r commit; do
   [[ -n "${commit}" ]] || continue
   commit_count=$((commit_count + 1))
@@ -237,7 +244,7 @@ while IFS= read -r commit; do
     fi
     exit 2
   fi
-done < <(run_clean_host_command_in_dir "${verify_root}" "${HOST_GIT_BIN}" --no-replace-objects --git-dir "${verification_git_dir}" rev-list --reverse "${base_commit}..${head_commit}")
+done <<<"${commit_list}"
 
 if ((commit_count == 0)); then
   echo "publish-pr found no commits ahead of ${BASE_REF}: ${HEAD_REF}" >&2
