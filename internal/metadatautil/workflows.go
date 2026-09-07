@@ -46,6 +46,8 @@ type workflowJob struct {
 
 type workflowStep struct {
 	Name string            `yaml:"name"`
+	If   yaml.Node         `yaml:"if"`
+	Uses string            `yaml:"uses"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
 	With map[string]string `yaml:"with"`
@@ -55,7 +57,7 @@ type workflowStep struct {
 // ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
 // rejects unknown fields, reordered steps, changed commands, changed action inputs,
 // a swapped publisher, a redirected registry, and a weakened shell default.
-const releaseSignerContractSHA256 = "59d426ff05378de33e64dc11f715e25f21727eb07e9f33d7cead528856e84982"
+const releaseSignerContractSHA256 = "cf3446f349da655bf92d702b53708397797b73040c810d6830bfe7cb4f311692"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -493,31 +495,34 @@ func ValidateReleaseWorkflowControlPlaneFlow(releaseWorkflow string) error {
 	return nil
 }
 
+// ValidateReleaseWorkflowGitHubAttestationFlow requires every reviewed release
+// attestation to run unconditionally. A repository variable is mutable without
+// review, so a workflow that reads one can be made to publish a release with no
+// attestations at all; the only supported way to release without them is to
+// review the change that removes them.
 func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error {
-	if !strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}") {
-		return errors.New(".github/workflows/release.yml must gate GitHub attestations on public visibility or an explicit private-repo capability flag")
+	if strings.Contains(releaseWorkflow, "RELEASE_NO_ATTEST") || strings.Contains(releaseWorkflow, "WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS") ||
+		strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED") {
+		return errors.New(".github/workflows/release.yml must not use mutable repository variables to skip GitHub attestations")
 	}
-	if !strings.Contains(releaseWorkflow, "RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}") {
-		return errors.New(".github/workflows/release.yml must expose RELEASE_NO_ATTEST as an explicit opt-out env var sourced from vars.WORKCELL_RELEASE_NO_ATTEST")
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(releaseWorkflow), &document); err != nil {
+		return fmt.Errorf("parse release attestation flow: %w", err)
 	}
-	if !strings.Contains(releaseWorkflow, "name: Confirm attestation environment policy") {
-		return errors.New(".github/workflows/release.yml must include the fail-closed attestation preflight step")
+	if err := validateReleaseAttestationGuard(document); err != nil {
+		return err
 	}
-	attestationPolicyStep := namedWorkflowStep(releaseWorkflow, "Confirm attestation environment policy")
-	if !strings.Contains(attestationPolicyStep, `ENABLE_GITHUB_ATTESTATIONS_SUPPORTED`) ||
-		!strings.Contains(attestationPolicyStep, `!= "true"`) ||
-		!strings.Contains(attestationPolicyStep, `exit 1`) {
-		return errors.New(".github/workflows/release.yml must keep the fail-closed attestation preflight script body (must `exit 1` when ENABLE_GITHUB_ATTESTATIONS_SUPPORTED is not 'true' and RELEASE_NO_ATTEST is not 'true')")
+	if err := validateReleaseAttestationSteps(document); err != nil {
+		return err
 	}
-	const attestGuard = "if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'"
-	attestStepRE := regexp.MustCompile(`(?m)^\s*-\s+uses:\s+actions/attest@`)
-	guardedAttestStepRE := regexp.MustCompile(`(?ms)^\s*-\s+uses:\s+actions/attest@[^\n]+\n\s+if:\s+env\.RELEASE_NO_ATTEST != 'true' && env\.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'\n`)
-	totalAttestSteps := len(attestStepRE.FindAllString(releaseWorkflow, -1))
-	if totalAttestSteps != 10 {
-		return errors.New(".github/workflows/release.yml must keep exactly ten reviewed GitHub attestation steps")
-	}
-	if len(guardedAttestStepRE.FindAllString(releaseWorkflow, -1)) != totalAttestSteps {
-		return fmt.Errorf(".github/workflows/release.yml must guard every actions/attest step with %q", attestGuard)
+	for _, jobName := range []string{"verify-release-outputs", "publish-github-release"} {
+		job, ok := document.Jobs[jobName]
+		if !ok {
+			return fmt.Errorf("release workflow must define the %s job", jobName)
+		}
+		if err := validateReleaseAttestationVerifier(job, jobName); err != nil {
+			return err
+		}
 	}
 	for _, needle := range []string{
 		"subject-name: ${{ env.IMAGE_NAME }}",
@@ -538,25 +543,120 @@ func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 	return nil
 }
 
-func namedWorkflowStep(workflow, name string) string {
-	lines := strings.Split(workflow, "\n")
-	stepPrefix := regexp.MustCompile(`^(\s*)-\s+name:\s+` + regexp.QuoteMeta(name) + `\s*$`)
-	for i, line := range lines {
-		match := stepPrefix.FindStringSubmatch(line)
-		if match == nil {
+// releaseAttestationEnvironmentPolicyScript is the whole body the attestation
+// environment policy step must run. Comparing the script rather than a set of
+// substrings rejects an extra branch that exits 0 on an unsupported repository.
+const releaseAttestationEnvironmentPolicyScript = `if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+  echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
+  echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
+  exit 1
+fi`
+
+// releaseAttestationVerificationScript is the whole body both release-output
+// verification steps must run, including the --attestations argument that makes
+// them check the attestations this flow requires the signer to publish.
+const releaseAttestationVerificationScript = `set -euo pipefail
+docker_config="$(mktemp -d "${RUNNER_TEMP}/workcell-docker-config.XXXXXX")"
+chmod 0700 "${docker_config}"
+trap 'rm -rf -- "${docker_config}"' EXIT
+export DOCKER_CONFIG="${docker_config}"
+printf '%s' "${GITHUB_TOKEN}" | docker login ghcr.io \
+  --username "${GITHUB_REPOSITORY_OWNER}" \
+  --password-stdin
+verify_args=(
+  --assets-dir dist
+  --repo "${GITHUB_REPOSITORY}"
+  --tag "${RELEASE_TAG}"
+  --image-repository "${IMAGE_NAME}"
+  --source-digest "${RELEASE_COMMIT}"
+  --workflow-digest "${GITHUB_WORKFLOW_SHA}"
+  --attestations
+)
+./scripts/verify-release-outputs.sh "${verify_args[@]}"`
+
+// validateReleaseAttestationGuard requires the unprivileged release artifact job
+// to refuse an environment that cannot attest, before it produces anything the
+// signer would attest.
+func validateReleaseAttestationGuard(document workflowDocument) error {
+	guards := 0
+	for _, step := range document.Jobs["release"].Steps {
+		if step.Name != "Confirm attestation environment policy" {
 			continue
 		}
-		stepIndent := match[1]
-		end := len(lines)
-		for j := i + 1; j < len(lines); j++ {
-			if strings.HasPrefix(lines[j], stepIndent+"- ") {
-				end = j
-				break
-			}
+		guards++
+		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "" {
+			return errors.New("release artifact job must run the attestation environment policy step unconditionally")
 		}
-		return strings.Join(lines[i:end], "\n")
+		if len(step.Env) != 1 || step.Env["REPOSITORY_VISIBILITY"] != "${{ github.event.repository.visibility }}" {
+			return errors.New("release artifact job must bind repository visibility from the GitHub event in the attestation environment policy step")
+		}
+		if strings.TrimSpace(step.Run) != releaseAttestationEnvironmentPolicyScript {
+			return errors.New("release artifact job must use the exact fail-closed public repository visibility check")
+		}
 	}
-	return ""
+	if guards != 1 {
+		return errors.New("release artifact job must contain exactly one attestation environment policy step")
+	}
+	return nil
+}
+
+// validateReleaseAttestationSteps keeps every attestation in the one privileged
+// signing job, and keeps that job downstream of the guard above: sign-release
+// runs only after the release artifact job it needs has confirmed the
+// environment can attest.
+func validateReleaseAttestationSteps(document workflowDocument) error {
+	signer, ok := document.Jobs["sign-release"]
+	if !ok {
+		return errors.New("release workflow must define sign-release")
+	}
+	attestSteps := 0
+	for _, step := range signer.Steps {
+		if !strings.HasPrefix(step.Uses, "actions/attest@") {
+			continue
+		}
+		attestSteps++
+		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "" {
+			return errors.New(".github/workflows/release.yml must run every reviewed actions/attest step without a mutable condition")
+		}
+	}
+	if attestSteps != 10 {
+		return errors.New(".github/workflows/release.yml must keep exactly ten reviewed GitHub attestation steps")
+	}
+	for jobName, job := range document.Jobs {
+		if jobName == "sign-release" {
+			continue
+		}
+		if slices.ContainsFunc(job.Steps, func(step workflowStep) bool { return strings.HasPrefix(step.Uses, "actions/attest@") }) {
+			return fmt.Errorf("release workflow must keep every actions/attest step in the signing job, found one in %q", jobName)
+		}
+	}
+	if !slices.ContainsFunc(signer.Needs.Content, func(need *yaml.Node) bool { return need.Value == "release" }) {
+		return errors.New("release workflow must check attestation support before its first attestation step: sign-release must need the release artifact job")
+	}
+	return nil
+}
+
+// validateReleaseAttestationVerifier requires the exact verification body, so a
+// release cannot be published after a check that dropped --attestations or that
+// only ran on some condition.
+func validateReleaseAttestationVerifier(job workflowJob, jobName string) error {
+	verificationSteps := 0
+	for _, step := range job.Steps {
+		if !strings.Contains(step.Run, "./scripts/verify-release-outputs.sh") {
+			continue
+		}
+		verificationSteps++
+		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "" {
+			return fmt.Errorf("%s job must run release-output attestation verification unconditionally", jobName)
+		}
+		if strings.TrimSpace(step.Run) != releaseAttestationVerificationScript {
+			return fmt.Errorf("%s job must run the exact unconditional release-output attestation verification", jobName)
+		}
+	}
+	if verificationSteps != 1 {
+		return fmt.Errorf("%s job must contain exactly one release-output attestation verification step", jobName)
+	}
+	return nil
 }
 
 func ValidateMacOSInstallVerificationFlow(workflowText, workflowPath, artifactName, jobName string) error {
