@@ -284,9 +284,22 @@ non_executable_shell_files=(
   "${ROOT_DIR}/verify/invariants/harnesses/git-probes/snapshot-probe.sh"
 )
 
+# Capture the scenario-test walk before the loop reads it. This inventory
+# decides which scenario tests get linted at all, so a masked `find` failure
+# would quietly shrink the lint set that the completeness check below then
+# reports as complete. `set -e` with `pipefail` aborts on a failed walk, and an
+# empty result is rejected rather than treated as "no scenario tests".
+scenario_test_listing="$(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)"
+
+if [[ -z "${scenario_test_listing}" ]]; then
+  echo "No scenario tests found under tests/scenarios; refusing a vacuous lint set" >&2
+  exit 1
+fi
+
 while IFS= read -r file; do
+  [[ -n "${file}" ]] || continue
   shell_files+=("${file}")
-done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
+done <<<"${scenario_test_listing}"
 
 # The list above is hand-maintained, so a new script can enter the tree
 # unlinted. Assert that the list covers every tracked bash script. Match on the
@@ -323,6 +336,7 @@ is_bash_shebang() {
 # skipped before any path is opened.
 unlinted_shell_files=()
 lint_inventory_completed=0
+# shellcheck disable=SC2312 # the NUL sentinel and lint_inventory_completed assertion below are the compensating control
 while IFS= read -r -d '' index_entry; do
   if [[ -z "${index_entry}" ]]; then
     lint_inventory_completed=1

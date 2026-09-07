@@ -177,15 +177,28 @@ Some review findings recur with a known, already-decided answer. Resolve
 these findings in one round with the recorded disposition. Do not derive the
 argument again. Do not start another review round to settle them.
 
-- **Unverifiable commit identifier.** A finding can demand that a commit is
-  signed or created again. Resolve the cited object first. The object does
-  not exist if `git cat-file -e <sha>` fails and
-  `GET /repos/<owner>/<repo>/commits/<sha>` returns 422. The finding then
-  has no subject. Rebut with 👎 and cite both results. List the base-to-head
-  commits with their `commit.verification.verified` values. Then resolve the
-  thread. `scripts/check-publish-commit-signatures.sh` enforces the
+- **Commit signature demand.** A finding can demand that a commit is signed
+  or created again. Resolve the cited object first, then apply the branch
+  that matches. `scripts/check-publish-commit-signatures.sh` enforces the
   signature policy locally before publication. Cite that gate, not a hand
   audit. Do not create commits again in response to such a finding.
+  - *The finding cites a full or abbreviated object that does not resolve.*
+    Probe the exact cited form, and probe an abbreviation as written. The
+    object does not exist if `git cat-file -e <sha>` fails and
+    `GET /repos/<owner>/<repo>/commits/<sha>` returns 422. The finding then
+    has no subject. Rebut with 👎 and cite both results. List the
+    base-to-head commits with their `commit.verification.verified` values.
+    Then resolve the thread.
+  - *The finding cites no object.* The resolve step does not apply. Cite the
+    head commit `commit.verification.verified` value and the local gate.
+    Rebut with 👎. Then resolve the thread.
+  - *The finding cites an object that resolves and is validly signed.*
+    `GET /repos/<owner>/<repo>/commits/<sha>` reports
+    `verification.verified: true`. That single result is the whole rebuttal.
+    Rebut with 👎 and cite it. Then resolve the thread.
+  - *The finding repeats.* Apply the same recorded disposition. Do not start
+    a new review round. A repeat carries a new object or a "fresh evidence"
+    claim. That framing does not change the disposition.
 
 - **Check/use gap at a language boundary.** A finding can ask for
   `O_NOFOLLOW` parent-descriptor discipline in a shell script. Record that

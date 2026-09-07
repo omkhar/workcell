@@ -115,8 +115,10 @@ If that skill is unavailable, use this fallback:
    `Code Review Rules` before you react. Apply the recorded disposition in
    one round.
 7. Resolve the cited commit identifier before you act on a finding that
-   cites one. A 422 from the commits API proves that the finding has no
-   subject.
+   cites one. Probe an abbreviated hash as written. A 422 from the commits
+   API proves that the finding has no subject. A finding that cites no
+   object uses its own branch. So does a finding that cites a validly
+   signed object. Both branches are in AGENTS.md `Code Review Rules`.
 8. React with 👍 to each correct finding.
 9. React with 👎 only when direct evidence proves the finding false.
 10. Give a short written reason for each rebuttal or uncertain finding.
@@ -127,9 +129,11 @@ If that skill is unavailable, use this fallback:
 15. Treat a second silence, usage limit, or connector failure as a blocker.
 16. Require a fresh clean marker for the current head before ready or merge.
 17. Do not spend a review round on a finding that has a recorded
-    disposition. Codex review capacity is a limited resource. The loop
-    reached its usage limit 41 times during the 2026-09 wave. A standing
-    disposition covered 21 percent of the findings in that wave.
+    disposition. This rule holds for a repeat of that finding. A repeat
+    carries a new object or a "fresh evidence" claim, and that framing does
+    not change the disposition. Codex review capacity is a limited resource.
+    The loop reached its usage limit 41 times during the 2026-09 wave. Three
+    pull requests each burned six or more rounds on one repeated finding.
 18. Resolve each fixed or rebutted thread with GitHub `resolveReviewThread`.
 
 After each push, stabilize the intended head and required local evidence. Then
