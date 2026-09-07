@@ -330,8 +330,17 @@ is_bash_shebang() {
 
   [[ "${line}" == '#!'* ]] || return 1
   IFS=$' \t' read -r -a tokens <<<"${line#'#!'}"
+  local long_option=""
   for token in "${tokens[@]}"; do
-    token="${token#--split-string=}"
+    # A long option can be abbreviated to any unambiguous prefix, so
+    # `--split-string=`, `--spl=` and `--s=` all introduce the split string.
+    if [[ "${token}" == --*=* ]]; then
+      long_option="${token%%=*}"
+      long_option="${long_option#--}"
+      if [[ -n "${long_option}" && "split-string" == "${long_option}"* ]]; then
+        token="${token#*=}"
+      fi
+    fi
     # A short option cluster can precede the split string, as in `-iSbash`.
     # Take whatever follows the last `S` in such a cluster.
     if [[ "${token}" == -* && "${token}" != --* && "${token}" == *S* ]]; then
