@@ -22,6 +22,7 @@ import (
 )
 
 type workflowDocument struct {
+	Env  map[string]string      `yaml:"env"`
 	Jobs map[string]workflowJob `yaml:"jobs"`
 }
 
@@ -36,8 +37,9 @@ type workflowNodeDocument struct {
 }
 
 type workflowJob struct {
-	Name        string    `yaml:"name"`
-	Needs       yaml.Node `yaml:"needs"`
+	Name        string            `yaml:"name"`
+	Env         map[string]string `yaml:"env"`
+	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
 		Name string `yaml:"name"`
 	} `yaml:"environment"`
@@ -56,7 +58,7 @@ type workflowStep struct {
 // ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
 // rejects unknown fields, reordered steps, changed commands, changed action inputs,
 // a swapped publisher, a redirected registry, and a weakened shell default.
-const releaseSignerContractSHA256 = "47fadd56a99c49ce4eec3f291fd94dc507369c7efc2bf00d730c4526c77b9960"
+const releaseSignerContractSHA256 = "9427544fdcb574fd8ac5d906d425979822778230190a837bbf94fbc3d40cc575"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -83,12 +85,12 @@ const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
 func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
-	if strings.Contains(workflowText, "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH") {
-		return errors.New("release workflow must not override the reviewed GitHub hosted-controls policy path")
-	}
 	var document workflowDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
 		return fmt.Errorf("parse release publication gate: %w", err)
+	}
+	if overridesHostedControlsPolicyPath(document) {
+		return errors.New("release workflow must not override the reviewed GitHub hosted-controls policy path")
 	}
 	releaseJob, ok := document.Jobs["release"]
 	if !ok {
@@ -158,14 +160,75 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		auditIndex := strings.Index(step.Run, `./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`)
 		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
 		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${RELEASE_TAG}"`)
+		// The binding flags are read from the parsed publisher statement rather
+		// than the text after it, so the same flag inside a comment or an echoed
+		// string later in the block cannot stand in for the real argument.
+		invocations := commandArgs(step.Run, "./scripts/publish-github-release.sh")
 		if auditIndex < 0 || unsetIndex <= auditIndex || publishIndex <= unsetIndex ||
-			!strings.Contains(step.Run[publishIndex:], `--expected-tag-object "${RELEASE_TAG_OBJECT}"`) ||
-			!strings.Contains(step.Run[publishIndex:], "--immutable-releases-preverified-by-hosted-controls") {
+			len(invocations) != 1 || !publisherBindsVerifiedTag(invocations[0]) {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
 		return nil
 	}
 	return errors.New("release workflow must combine the fresh hosted-controls check and GitHub release publication in one reviewed step")
+}
+
+// publisherBindsVerifiedTag reports whether the parsed publisher arguments name
+// the verified tag, bind the annotated tag object it resolved to, and assert the
+// preverified publication path.
+func publisherBindsVerifiedTag(arguments []string) bool {
+	boundObject := slices.Index(arguments, "--expected-tag-object")
+	return len(arguments) > 0 && arguments[0] == `"${RELEASE_TAG}"` &&
+		boundObject >= 0 && boundObject+1 < len(arguments) &&
+		arguments[boundObject+1] == `"${RELEASE_TAG_OBJECT}"` &&
+		slices.Contains(arguments, "--immutable-releases-preverified-by-hosted-controls")
+}
+
+// hostedControlsPolicyPathVariable names the reviewed hosted-controls policy
+// path. The release workflow must never redirect it.
+const hostedControlsPolicyPathVariable = "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH"
+
+// overridesHostedControlsPolicyPath reports whether the parsed workflow sets the
+// policy path where it would take effect: a workflow, job, or step environment,
+// or an executable assignment in a run block. A mention in a comment changes
+// nothing and must not fail the gate.
+func overridesHostedControlsPolicyPath(document workflowDocument) bool {
+	if _, ok := document.Env[hostedControlsPolicyPathVariable]; ok {
+		return true
+	}
+	for _, job := range document.Jobs {
+		if _, ok := job.Env[hostedControlsPolicyPathVariable]; ok {
+			return true
+		}
+		for _, step := range job.Steps {
+			if _, ok := step.Env[hostedControlsPolicyPathVariable]; ok {
+				return true
+			}
+			if assignsInRun(step.Run, hostedControlsPolicyPathVariable) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// assignsInRun reports whether a run block assigns name in an executable
+// statement, directly, after export, or as a command prefix. Comments are
+// removed first, so a mention in one does not count.
+func assignsInRun(script, name string) bool {
+	for line := range strings.Lines(script) {
+		statement := strings.TrimSpace(inlineComment.ReplaceAllString(strings.TrimSpace(line), ""))
+		for _, word := range strings.Fields(strings.TrimPrefix(statement, "export ")) {
+			if strings.HasPrefix(word, name+"=") {
+				return true
+			}
+			// Assignment prefixes precede the command word, which has no "=".
+			if !strings.Contains(word, "=") {
+				break
+			}
+		}
+	}
+	return false
 }
 
 func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {

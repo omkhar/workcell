@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type workflowText struct{ text, path string }
@@ -423,10 +425,35 @@ func (check *pinnedInputsCheck) validateReleaseLegacyReferences() error {
 	); err != nil {
 		return err
 	}
-	if count := strings.Count(check.releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 5 {
+	count, err := countReleaseTagRechecks(check.releaseWorkflow)
+	if err != nil {
+		return err
+	}
+	if count != 5 {
 		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures before every release mutation phase, found %d checks", count)
 	}
 	return nil
+}
+
+// countReleaseTagRechecks counts the tag-signature rechecks that execute. It
+// reads parsed run statements, so a check converted into a comment no longer
+// counts towards the required set.
+func countReleaseTagRechecks(workflowText string) (int, error) {
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return 0, fmt.Errorf("parse release tag rechecks: %w", err)
+	}
+	count := 0
+	for _, job := range document.Jobs {
+		for _, step := range job.Steps {
+			for _, arguments := range commandArgs(step.Run, "./scripts/check-release-tag-signature.sh") {
+				if len(arguments) > 0 && arguments[0] == "--github-repo" {
+					count++
+				}
+			}
+		}
+	}
+	return count, nil
 }
 
 func (check *pinnedInputsCheck) validateReleaseHostedControls() error {

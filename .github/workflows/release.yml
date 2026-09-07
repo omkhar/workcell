@@ -1563,6 +1563,13 @@ jobs:
       artifact_id: ${{ steps.upload_signed.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload_signed.outputs.artifact-digest }}
     steps:
+      # The reviewed rechecks below run from the repository, so the signer needs
+      # the verified release commit in its workspace before the first one.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
+          persist-credentials: false
+
       - name: Recheck release tag before signing and image mutation
         env:
           GITHUB_TOKEN: ${{ github.token }}

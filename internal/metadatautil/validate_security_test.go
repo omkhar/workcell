@@ -334,6 +334,16 @@ func TestCheckPinnedInputsRejectsCommentedDebianBootstrapGuard(t *testing.T) {
 	requirePinnedInputsErrorContains(t, cfg, "must use reviewed Debian bootstrap pin")
 }
 
+func TestCheckPinnedInputsRejectsCommentedReleaseTagRecheck(t *testing.T) {
+	const recheck = `        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"`
+	cfg := rewritePinnedInputsFixtureFile(t, ".github/workflows/release.yml", func(content string) string {
+		// Keep the check text in the run block, but as a comment that never runs.
+		return strings.Replace(content, recheck,
+			"        run: |\n          #"+strings.TrimPrefix(recheck, "        run:")+"\n          true", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "found 4 checks")
+}
+
 func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, directCollaborators []map[string]any) (string, string) {
 	tb.Helper()
 

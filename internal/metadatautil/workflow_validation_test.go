@@ -100,14 +100,42 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "publisher bound to the verified tag object", old: `--expected-tag-object "${RELEASE_TAG_OBJECT}"`, replacement: `--expected-tag-object "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
 		{name: "publisher bound to the verified tag", old: `publish-github-release.sh "${RELEASE_TAG}"`, replacement: `publish-github-release.sh "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
 		{name: "reviewed hosted-controls policy path", old: "WORKCELL_HOSTED_CONTROLS_REQUIRED", replacement: "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH", want: "reviewed GitHub hosted-controls policy path"},
+		{
+			name: "tag-object binding moved from the publisher command into a comment",
+			old: "            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n" +
+				"            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz\n",
+			replacement: "            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz # --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
+			want: "explicit preverified publisher",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("mutation %q did not change the workflow", tc.name)
+			}
 			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// A comment that names the reviewed policy path overrides nothing, so the gate
+// must not reject the workflow for mentioning it.
+func TestValidateReleaseWorkflowPublicationGateAcceptsPolicyPathMention(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
+	mutated := strings.Replace(workflow,
+		auditCall,
+		"          # WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH must stay unset in this job.\n"+auditCall, 1)
+	if mutated == workflow {
+		t.Fatal("policy path mention did not change the workflow")
+	}
+	if err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want nil", err)
 	}
 }
 
@@ -118,7 +146,11 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	}
 	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
 	requireReleaseAuthorityError(t, mutated, "build-amd64-image")
-	mutated = strings.Replace(string(content), "    steps:\n      - name: Recheck release tag before signing and image mutation", "    steps:\n      - uses: actions/checkout@bad\n      - name: Recheck release tag before signing and image mutation", 1)
+	const signerRecheck = "      - name: Recheck release tag before signing and image mutation"
+	mutated = strings.Replace(string(content), signerRecheck, "      - uses: actions/checkout@bad\n"+signerRecheck, 1)
+	if mutated == string(content) {
+		t.Fatal("signer contract mutation did not change the workflow")
+	}
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
