@@ -491,11 +491,20 @@ var runtimeStartupPrologueScripts = []string{
 	"runtime-user.sh",
 }
 
-const runtimeStartupClearLine = "unset BASH_ENV ENV"
+const (
+	runtimeStartupClearLine = "unset BASH_ENV ENV"
+	// runtimeStartupGuardBlock must follow runtimeStartupClearLine immediately:
+	// unset fails on a variable a planted startup file already marked readonly,
+	// and errexit is not on yet, so the survival check is what stops the script.
+	runtimeStartupGuardBlock = "[[ -z \"${BASH_ENV+set}${ENV+set}\" ]] || {\n" +
+		"  echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2\n" +
+		"  exit 2\n" +
+		"}\n"
+)
 
 // runtimeStartupPrologue returns the prologue of the named runtime script up to
-// and including its runtimeStartupClearLine, and fails when the script runs any
-// command before that line.
+// and including its runtimeStartupGuardBlock, and fails when the script runs any
+// command before the clearing pair or separates the two.
 func runtimeStartupPrologue(tb testing.TB, name string) string {
 	tb.Helper()
 
@@ -505,10 +514,15 @@ func runtimeStartupPrologue(tb testing.TB, name string) string {
 		tb.Fatalf("read %s: %v", path, err)
 	}
 	lines := strings.Split(string(body), "\n")
+	guardLines := strings.Count(runtimeStartupGuardBlock, "\n")
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == runtimeStartupClearLine {
-			return strings.Join(lines[:i+1], "\n") + "\n"
+			end := i + 1 + guardLines
+			if end > len(lines) || strings.Join(lines[i+1:end], "\n")+"\n" != runtimeStartupGuardBlock {
+				tb.Fatalf("%s does not follow %q with the survival guard", name, runtimeStartupClearLine)
+			}
+			return strings.Join(lines[:end], "\n") + "\n"
 		}
 		if i > 0 && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
 			tb.Fatalf("%s runs %q before clearing BASH_ENV/ENV", name, trimmed)
@@ -521,16 +535,23 @@ func runtimeStartupPrologue(tb testing.TB, name string) string {
 // runChildStartupProbe runs prologue as `bash <file>` — the way entrypoint.sh
 // and runtime-user.sh start their bash children — with BASH_ENV and ENV both
 // pointing at a planted startup file, and reports how many times that file was
-// sourced. The script's own shell always sources it once, because bypassing the
-// shebang means the file is read before the script's first line; a second
-// sourcing means the child bash read it too.
-func runChildStartupProbe(tb testing.TB, prologue string) int {
+// sourced and how the script exited. The script's own shell always sources it
+// once, because bypassing the shebang means the file is read before the script's
+// first line; a second sourcing means the child bash read it too. When pin is
+// set the planted file also marks both variables readonly, which is what an
+// attacker who already reached that first sourcing would do to survive the
+// unset.
+func runChildStartupProbe(tb testing.TB, prologue string, pin bool) (sourced, exitCode int) {
 	tb.Helper()
 
 	dir := tb.TempDir()
 	log := filepath.Join(dir, "sourced.log")
 	planted := filepath.Join(dir, "planted.sh")
-	if err := os.WriteFile(planted, []byte("echo sourced >>'"+log+"'\n"), 0o600); err != nil {
+	plantedBody := "echo sourced >>'" + log + "'\n"
+	if pin {
+		plantedBody += "readonly BASH_ENV ENV\n"
+	}
+	if err := os.WriteFile(planted, []byte(plantedBody), 0o600); err != nil {
 		tb.Fatalf("write planted startup file: %v", err)
 	}
 	script := filepath.Join(dir, "prologue.sh")
@@ -540,20 +561,26 @@ func runChildStartupProbe(tb testing.TB, prologue string) int {
 
 	cmd := exec.Command("bash", script)
 	cmd.Env = append(os.Environ(), "BASH_ENV="+planted, "ENV="+planted)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		tb.Fatalf("prologue probe failed: %v (%s)", err, output)
-	}
-	body, err := os.ReadFile(log)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		tb.Fatalf("read sourcing log: %v", err)
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			tb.Fatalf("prologue probe failed: %v (%s)", err, output)
+		}
+		exitCode = exitErr.ExitCode()
 	}
-	return strings.Count(string(body), "sourced\n")
+	body, readErr := os.ReadFile(log)
+	if readErr != nil {
+		tb.Fatalf("read sourcing log: %v", readErr)
+	}
+	return strings.Count(string(body), "sourced\n"), exitCode
 }
 
 // TestRuntimeScriptProloguesClearBashStartupFilesForChildren pins the prologue
 // that keeps a plain-bash child of a runtime script from sourcing an
-// attacker-supplied BASH_ENV/ENV startup file, and carries its own negative
-// control: with the clearing line removed, the child sources the planted file.
+// attacker-supplied BASH_ENV/ENV startup file. Each case carries its own
+// negative control: drop the line under test and the child sources the planted
+// file.
 func TestRuntimeScriptProloguesClearBashStartupFilesForChildren(t *testing.T) {
 	t.Parallel()
 
@@ -562,12 +589,25 @@ func TestRuntimeScriptProloguesClearBashStartupFilesForChildren(t *testing.T) {
 			t.Parallel()
 
 			prologue := runtimeStartupPrologue(t, name)
-			if got := runChildStartupProbe(t, prologue); got != 1 {
-				t.Fatalf("%s: planted startup file sourced %d times, want 1 (the script's own shell only)", name, got)
+			if got, code := runChildStartupProbe(t, prologue, false); got != 1 || code != 0 {
+				t.Fatalf("%s: planted startup file sourced %d times (exit %d), want 1 and exit 0 (the script's own shell only)", name, got, code)
 			}
-			without := strings.Replace(prologue, runtimeStartupClearLine+"\n", "", 1)
-			if got := runChildStartupProbe(t, without); got != 2 {
-				t.Fatalf("%s: control without %q sourced the planted file %d times, want 2 (script and child)", name, runtimeStartupClearLine, got)
+			// The pre-change prologue: neither line present.
+			bare := strings.Replace(prologue, runtimeStartupGuardBlock, "", 1)
+			bare = strings.Replace(bare, runtimeStartupClearLine+"\n", "", 1)
+			if got, _ := runChildStartupProbe(t, bare, false); got != 2 {
+				t.Fatalf("%s: control without the clearing pair sourced the planted file %d times, want 2 (script and child)", name, got)
+			}
+
+			// A planted file that pins both variables readonly makes the unset
+			// fail while errexit is still off, so the guard has to stop the
+			// script before it starts a child.
+			if got, code := runChildStartupProbe(t, prologue, true); got != 1 || code != 2 {
+				t.Fatalf("%s: pinned startup file sourced %d times (exit %d), want 1 and exit 2 (refused before the child)", name, got, code)
+			}
+			withoutGuard := strings.Replace(prologue, runtimeStartupGuardBlock, "", 1)
+			if got, _ := runChildStartupProbe(t, withoutGuard, true); got != 2 {
+				t.Fatalf("%s: control without the survival guard sourced the pinned file %d times, want 2 (script and child)", name, got)
 			}
 		})
 	}
