@@ -14,7 +14,10 @@ import (
 // third alternative captures, and it captures the delimiter it opens.
 var heredocPattern = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
 
-var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
+// inlineComment consumes quoted words before it reads a comment, so that a #
+// inside an argument such as 'note: # here' cannot truncate the line. As in
+// bash, only an unquoted # at the start of a word opens a comment.
+var inlineComment = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|(?:^|\s)#.*$`)
 
 // ShellInvocations returns the arguments of each invocation of command in
 // script. It joins line continuations and drops comments, inline ones
@@ -40,7 +43,7 @@ func ShellInvocations(script, command string) [][]string {
 		if strings.HasSuffix(trimmed, "\\") {
 			continue
 		}
-		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
+		logical := strings.TrimSpace(stripComment(current.String()))
 		current.Reset()
 		// Here-strings are blanked first so that a redirection such as
 		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
@@ -57,4 +60,15 @@ func ShellInvocations(script, command string) [][]string {
 		}
 	}
 	return invocations
+}
+
+// stripComment removes an unquoted comment from one logical line. The pattern
+// keeps the quoted words it consumed and deletes only the comment.
+func stripComment(logical string) string {
+	return inlineComment.ReplaceAllStringFunc(logical, func(match string) string {
+		if strings.HasPrefix(match, "'") || strings.HasPrefix(match, `"`) {
+			return match
+		}
+		return ""
+	})
 }
