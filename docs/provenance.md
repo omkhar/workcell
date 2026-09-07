@@ -142,6 +142,13 @@ The `v1.0.2` GHCR package denied anonymous access during the 2026-08-05 check.
 Authenticate to GHCR with `read:packages` access before you verify that image.
 See [GitHub container registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
 
+The release workflow now starts from a `repository_dispatch` event.
+GitHub always loads that workflow from the default branch.
+For each release after `v1.0.2`, set `identity` to
+`https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main`
+and set `--source-ref` to `refs/heads/main`.
+The `v1.0.2` values below stay as the historical example.
+
 Run the complete procedure in one Bash subshell.
 The subshell does not replace the current Docker configuration or exit trap.
 When the prompt appears, enter a token that has package access.
@@ -200,6 +207,11 @@ Download the asset and these two files from that release:
 
 - `SHA256SUMS`
 - `SHA256SUMS.sigstore.json`
+
+For each release after `v1.0.2`, set `identity` to
+`https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main`
+and set `--source-ref` to `refs/heads/main`.
+The dispatched release workflow always runs from the default branch.
 
 Verify the checksum signature first:
 

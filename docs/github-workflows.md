@@ -97,12 +97,15 @@ The release install matrix runs the same ACL script before it uses release artif
 
 ## Release workflow
 
+The tag-policy job resolves the signed tag to one commit before any checkout.
+Every later job checks out that commit, so a moved tag cannot change the release source.
+
 The preflight job records the expected digest for its source archive.
-The release job independently creates and extracts its own archive from the checked-out release tag.
+The release job independently creates and extracts its own archive from the checked-out release commit.
 It then compares the archive digest with the expected digest.
 It creates source-dependent manifests from the extracted tree.
 It creates the formula from the verified archive digest.
-The native amd64 and arm64 image jobs build from the checked-out release tag.
+The native amd64 and arm64 image jobs build from the checked-out release commit.
 Each one binds its image digest to the matching preflight reproducibility digest.
 
 A separate read-only job creates the nine non-image signing subjects.
