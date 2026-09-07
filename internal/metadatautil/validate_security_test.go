@@ -365,6 +365,28 @@ func TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks(t *testing.T) {
 		"recheck missing its commit binding": func(content string) string {
 			return strings.Replace(content, ` --expected-commit "${RELEASE_COMMIT}"`, "", 1)
 		},
+		"publication recheck moved inside the publication step": func(content string) string {
+			// Same step as the mutation, and after its publisher command, so a
+			// no-later comparison would accept it.
+			const check = "      - name: Verify release tag signature\n" +
+				"        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" + recheck + "\n\n"
+			const publisher = "          ./scripts/publish-github-release.sh \"${RELEASE_TAG}\" \\"
+			const lastAsset = "            dist/workcell-image.spdx.sigstore.json\n"
+			at := strings.Index(content, publisher)
+			if at < 0 {
+				return content
+			}
+			// The publishing job's own check step is the last one before the
+			// publisher; the earlier phases keep theirs.
+			head, tail := content[:at], content[at:]
+			last := strings.LastIndex(head, check)
+			if last < 0 {
+				return content
+			}
+			head = head[:last] + head[last+len(check):]
+			return head + strings.Replace(tail, lastAsset,
+				lastAsset+"          "+strings.TrimPrefix(recheck, "        run: ")+"\n", 1)
+		},
 		"publication recheck moved below the publication step": func(content string) string {
 			// Swap the two steps so the check still exists, and still runs in
 			// the publishing job, but no longer runs before the mutation.

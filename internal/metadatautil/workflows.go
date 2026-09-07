@@ -326,10 +326,30 @@ func commandArgs(script, command string) [][]string {
 			heredoc = cmp.Or(match[1], match[2], match[3])
 		}
 		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-			invocations = append(invocations, strings.Fields(rest))
+			invocations = append(invocations, commandWords(rest))
 		}
 	}
 	return invocations
+}
+
+// commandWords returns the words bash passes to one command: the fields of rest
+// up to the first shell separator. A word carrying a separator ends the command
+// there, so text after a ; or a && belongs to the next command and must not be
+// read as this one's argument.
+func commandWords(rest string) []string {
+	fields := strings.Fields(rest)
+	if at := slices.IndexFunc(fields, endsCommand); at >= 0 {
+		return fields[:at]
+	}
+	return fields
+}
+
+// endsCommand reports whether a word carries a shell separator and therefore
+// ends the command it belongs to. A separator inside a quoted word does not
+// separate, but stopping early only shortens an argument list, which can make a
+// requirement fail and never makes one pass.
+func endsCommand(word string) bool {
+	return strings.ContainsAny(word, ";&|")
 }
 
 func validateUnprivilegedReleaseJobs(document workflowDocument) error {

@@ -109,6 +109,15 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 				"            dist/workcell.tar.gz # --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
 			want: "explicit preverified publisher",
 		},
+		{
+			name: "tag-object binding moved past a shell separator",
+			old: "            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n" +
+				"            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz\n",
+			replacement: "            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz ; : --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
+			want: "explicit preverified publisher",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)

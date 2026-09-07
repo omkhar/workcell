@@ -487,8 +487,10 @@ func validateReleaseTagRechecks(workflowText string) error {
 		if mutationAt < 0 {
 			return fmt.Errorf("%s: job %s must keep its %q step", requirement, name, phase.before)
 		}
-		if lastAt > mutationAt {
-			return fmt.Errorf("%s: job %s runs a check after its %q step", requirement, name, phase.before)
+		// The check must run in an earlier step, not merely no later: a check
+		// moved inside the mutation step can sit after the mutation itself.
+		if lastAt >= mutationAt {
+			return fmt.Errorf("%s: job %s does not run a check before its %q step", requirement, name, phase.before)
 		}
 	}
 	for name := range releaseTagRecheckPhases {
