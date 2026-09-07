@@ -23,7 +23,29 @@ const (
 	responseMagic    = "WCRS"
 	frameHeaderSize  = 9
 	responseBaseSize = 10
+
+	// AF_UNIX copies the pathname into the fixed sun_path field of struct
+	// sockaddr_un: 108 bytes on Linux and 104 on macOS, both counting the NUL
+	// terminator.  Past that, bind() and connect() fail with a bare EINVAL that
+	// reads as a kernel fault rather than as an over-long state root, which is
+	// how a long TMPDIR reaches this package.  The bound is the smaller of the
+	// two limits so the diagnostic is identical on every platform Workcell
+	// builds on; the 104..107-byte window that Linux alone would accept is
+	// rejected with the same actionable message instead of binding on one host
+	// and failing on another.
+	maxSocketPathLength = 103
 )
+
+// checkSocketPathLength rejects a pathname that cannot fit in sun_path before
+// it reaches bind() or connect(), so the caller is told which path was too long
+// and by how much.
+func checkSocketPathLength(path string) error {
+	if len(path) > maxSocketPathLength {
+		return fmt.Errorf("apt broker socket path is %d bytes, over the %d-byte AF_UNIX limit: %s",
+			len(path), maxSocketPathLength, path)
+	}
+	return nil
+}
 
 var allowedEnvironmentValues = map[string]map[string]struct{}{
 	"APT_LISTCHANGES_FRONTEND": {

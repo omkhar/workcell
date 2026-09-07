@@ -1,5 +1,6 @@
 #!/bin/bash -p
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
+# shellcheck disable=SC2312 # repo-wide bootstrap; the path is the running script's own directory
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
 
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then

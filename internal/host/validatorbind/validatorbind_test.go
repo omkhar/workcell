@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omkhar/workcell/internal/testkit"
 )
 
 var errInvalidCleanupContext = errors.New("cleanup context is canceled or unbounded")
@@ -449,16 +451,16 @@ func blockingDockerFixture(t *testing.T) (string, string) {
 	path := filepath.Join(t.TempDir(), "docker")
 	commandLog := path + ".log"
 	script := fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$@" >> %q
+printf '%%s\n' "$@" >> %s
 if [ "$1" = "--context" ]; then
 	shift 2
 fi
 if [ "$1" = "rm" ]; then
 	exit 0
 fi
-printf '%%s\n' %q >> %q
+printf '%%s\n' %s >> %s
 exec /bin/sleep 60
-`, commandLog, completedProbeLogMarker, commandLog)
+`, testkit.ShellQuote(commandLog), testkit.ShellQuote(completedProbeLogMarker), testkit.ShellQuote(commandLog))
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

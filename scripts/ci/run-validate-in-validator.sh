@@ -4,17 +4,33 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
+source "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-}"
 VALIDATE_PROFILE="${WORKCELL_VALIDATE_REPO_PROFILE:-release-preflight}"
 WORKSPACE="${WORKCELL_VALIDATOR_WORKSPACE:-${ROOT_DIR}}"
 SKIP_HEAVY_SHELLCHECK="${WORKCELL_SKIP_HEAVY_HOST_SHELLCHECK:-0}"
+# WORKCELL_HOSTILE_ENV names one hostile axis for the advisory lane in
+# .github/workflows/ci.yml.  Each axis is a shape that review has already
+# caught defects with, and each one runs the ordinary validation underneath, so
+# a failure is a defect in the repository rather than in the lane.
+HOSTILE_ENV="${WORKCELL_HOSTILE_ENV:-none}"
 
 validator_passwd=""
+hostile_root=""
 cleanup() {
   [[ -z "${validator_passwd}" ]] || rm -f "${validator_passwd}"
+  [[ -z "${hostile_root}" ]] || rm -rf "${hostile_root}"
   cleanup_workcell_ci_docker
 }
 trap cleanup EXIT
+
+case "${HOSTILE_ENV}" in
+  none | tmpdir | workspace | root | uidmap) ;;
+  *)
+    echo "Unsupported WORKCELL_HOSTILE_ENV: ${HOSTILE_ENV}" >&2
+    exit 2
+    ;;
+esac
 
 if [[ -z "${VALIDATOR_IMAGE}" ]]; then
   echo "WORKCELL_VALIDATOR_IMAGE is required" >&2
@@ -26,8 +42,35 @@ if [[ ! -d "${WORKSPACE}" ]]; then
 fi
 WORKSPACE="$(cd "${WORKSPACE}" && pwd -P)"
 
+if [[ "${HOSTILE_ENV}" == "workspace" ]]; then
+  # A bind source holding a space, a comma and a --prefixed token.  The comma
+  # is the one that matters most: the --mount record is CSV, so a source that
+  # carries one has to survive the encoder rather than split the record.  The
+  # copy is required because the checkout itself lives at a plain path.
+  hostile_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-hostile.XXXXXX")"
+  hostile_workspace="${hostile_root}/hostile ws,dir --workspace"
+  mkdir -p "${hostile_workspace}"
+  cp -a "${WORKSPACE}/." "${hostile_workspace}/"
+  WORKSPACE="$(cd "${hostile_workspace}" && pwd -P)"
+fi
+
 validator_uid="$(id -u)"
 validator_gid="$(id -g)"
+case "${HOSTILE_ENV}" in
+  root)
+    # The suite behaves differently as root, and review has already found
+    # assertions that only hold for an unprivileged uid: a chmod that root
+    # ignores, and a write-only file root can still read.
+    validator_uid=0
+    validator_gid=0
+    ;;
+  uidmap)
+    # A uid that owns none of the bind-mounted files and that the image has no
+    # passwd record for.  That is what a remapped-uid container looks like from
+    # inside, and it is where a readability assumption breaks.
+    validator_uid=$((validator_uid + 1))
+    ;;
+esac
 # GitHub-hosted runners are exclusive per-job, so the /tmp/workcell-home-<uid>
 # planted-symlink TOCTOU surface is not reachable here.  Keep the
 # predictable path for CI to preserve test-fixture stability across
@@ -38,32 +81,21 @@ validator_gid="$(id -g)"
 validator_home="/tmp/workcell-home-${validator_uid}"
 validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
+# The tmpdir axis points TMPDIR at a directory whose name carries the shapes
+# that have broken this repository under review: a space, a literal `$` that a
+# re-expanding generator would substitute, a `--`-prefixed component that a
+# substring flag check mistakes for an option, and ~80 characters of padding
+# that pushes any AF_UNIX path derived from TMPDIR past sun_path.  Three review
+# findings were first reproduced by hand this way.
+if [[ "${HOSTILE_ENV}" == "tmpdir" ]]; then
+  validator_tmp="${validator_tmp}/hostile \$HOME --hostname/$(printf 'p%.0s' {1..80})"
+fi
 
 setup_workcell_ci_docker
 
-# The workload runs as the caller's uid to keep the bind-mounted workspace
-# writable, but that uid has no /etc/passwd entry, so glibc getpwuid() fails
-# and anything resolving the invoking user dies with "No user exists for uid
-# <n>".  ssh-keygen is one of those, and git shells out to it for both
-# `gpg.format = ssh` signing and verification, so the pre-push hook tests
-# cannot sign or verify a commit.  Give the container a passwd file carrying
-# an entry for the runtime uid, appended only when the image lacks one so an
-# existing uid keeps its own home.  The home field matches HOME below, so
-# identity- and env-based home discovery agree on one path.
-# The file is created under the workspace because that bind is preflighted
-# below. A host temporary directory is not always visible to the daemon: on
-# the documented macOS Colima path the daemon runs in a VM that does not mount
-# ${TMPDIR}, so the bind source would be missing.
-mkdir -p "${WORKSPACE}/tmp"
-validator_passwd="$(mktemp "${WORKSPACE}/tmp/workcell-validator-passwd.XXXXXX")"
-workcell_ci_docker run --rm --entrypoint /bin/bash "${VALIDATOR_IMAGE}" \
-  -lc 'cat /etc/passwd' >"${validator_passwd}"
-if ! awk -F: -v uid="${validator_uid}" '$3 == uid { found = 1 } END { exit !found }' \
-  "${validator_passwd}"; then
-  printf 'workcell-ci:x:%s:%s:workcell ci:%s:/bin/bash\n' \
-    "${validator_uid}" "${validator_gid}" "${validator_home}" >>"${validator_passwd}"
-fi
-chmod 0444 "${validator_passwd}"
+validator_passwd="$(workcell_ci_validator_passwd_file \
+  workcell_ci_docker "${VALIDATOR_IMAGE}" \
+  "${validator_uid}" "${validator_gid}" "${validator_home}" "${WORKSPACE}")"
 validator_passwd_mount="$(workcell_ci_workspace_mount_spec "${validator_passwd}" true /etc/passwd)"
 
 require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
