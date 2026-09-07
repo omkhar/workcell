@@ -251,8 +251,8 @@ func TestRunExtractDirectMountsAtomicallyReplacesMountSpecSymlink(t *testing.T) 
 	if info, err := os.Lstat(mountSpecPath); err != nil || info.Mode()&os.ModeSymlink != 0 {
 		t.Fatalf("mount-spec leaf was not atomically replaced: %v, %v", info, err)
 	}
-	if got := readFile(t, mountSpecPath); !bytes.Equal(bytes.TrimSpace(got), []byte("null")) {
-		t.Fatalf("mount specification = %q, want preserved JSON null", got)
+	if got := readFile(t, mountSpecPath); !bytes.Equal(bytes.TrimSpace(got), []byte("[]")) {
+		t.Fatalf("mount specification = %q, want empty JSON array", got)
 	}
 	assertFileMode(t, mountSpecPath, 0o600)
 }
@@ -378,6 +378,35 @@ func TestRunExtractDirectMountsLeavesPlainCopySourcesInline(t *testing.T) {
 	}
 }
 
+func TestRunExtractDirectMountsWritesEmptyArrayWithoutDirectMounts(t *testing.T) {
+	tests := map[string]map[string]any{
+		"empty": {},
+		"null optional sections": {
+			"credentials": nil,
+			"copies":      nil,
+			"ssh":         nil,
+		},
+		"null optional ssh fields": {
+			"ssh": map[string]any{"config": nil, "known_hosts": nil, "identities": nil},
+		},
+		"plain copy only": {
+			"copies": []any{map[string]any{
+				"source": "copies/0",
+				"target": "/state/injected/public.txt",
+			}},
+		},
+	}
+
+	for name, manifest := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, mountSpec := runGoExtractDirectMounts(t, manifest)
+			if string(mountSpec) != "[]\n" {
+				t.Fatalf("mount specification = %q, want empty JSON array", mountSpec)
+			}
+		})
+	}
+}
+
 func TestRunExtractDirectMountsRejectsUnsafeManifestPaths(t *testing.T) {
 	root := t.TempDir()
 	original := []byte(`{"copies":[]}` + "\n")
@@ -425,8 +454,8 @@ func TestRunExtractDirectMountsManifestByteLimit(t *testing.T) {
 	if err := RunExtractDirectMounts(manifestPath, mountSpecPath); err != nil {
 		t.Fatalf("RunExtractDirectMounts exact limit: %v", err)
 	}
-	if got := readFile(t, mountSpecPath); string(got) != "null\n" {
-		t.Fatalf("exact-limit mount specification = %q, want null", got)
+	if got := readFile(t, mountSpecPath); string(got) != "[]\n" {
+		t.Fatalf("exact-limit mount specification = %q, want empty JSON array", got)
 	}
 
 	overLimit := append(exact, ' ')
