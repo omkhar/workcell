@@ -1593,6 +1593,7 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 		`git -C "${ROOT_DIR}" status --short`,
 		`git -C "${ROOT_DIR}" fetch origin "${BASE_BRANCH}"`,
 		`refs/remotes/origin/${BASE_BRANCH}`,
+		`if [[ "${run_path}" != ".github/workflows/upstream-refresh.yml" ]]; then`,
 		`gh run download "${RUN_ID}" --repo "${REPO}" --name upstream-refresh-candidate`,
 		`Candidate patch digest mismatch`,
 		`Candidate tree OID mismatch`,
@@ -1611,9 +1612,41 @@ func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 	}
 
 	const commitTemplateStart = `cat >"${commit_file}" <<'EOF'
-^F Refresh pinned upstreams (pr-parity passed; runtime/provider maintenance)`
+^F Refresh pinned upstreams (pr-parity passed; upstream maintenance)`
 	if !strings.Contains(script, commitTemplateStart) {
 		t.Fatalf("%s must generate the reviewed Risk-Aware upstream-refresh commit subject", scriptPath)
+	}
+}
+
+func TestPublishUpstreamRefreshPRMetadataSupportsTimestampOnlyCandidate(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh")
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataStart := strings.Index(string(content), `title="Refresh pinned upstreams"`)
+	if metadataStart < 0 {
+		t.Fatalf("%s does not contain refresh metadata", scriptPath)
+	}
+	metadata := string(content[metadataStart:])
+	for _, want := range []string{
+		"apply the exact upstream refresh candidate from the reviewed workflow",
+		"apply the exact reviewed upstream refresh candidate",
+		"preserve the candidate patch, tree, and changed-file bindings",
+	} {
+		if !strings.Contains(metadata, want) {
+			t.Fatalf("%s refresh metadata does not contain %q", scriptPath, want)
+		}
+	}
+	for _, unwanted := range []string{
+		"provider pins", "toolchain inputs", "helper versions",
+		"image digests", "install tools", "provider maintenance",
+	} {
+		if strings.Contains(metadata, unwanted) {
+			t.Fatalf("%s refresh metadata still claims %q, which a timestamp-only candidate does not change", scriptPath, unwanted)
+		}
 	}
 }
 

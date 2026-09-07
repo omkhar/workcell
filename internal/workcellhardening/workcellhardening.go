@@ -3740,13 +3740,17 @@ func CheckFnBlockGoBlockGitEnv(rootDir string) error {
 // ${ROOT_DIR}/scripts/ci/job-docs.sh.
 const jobDocsRelPath = "scripts/ci/job-docs.sh"
 
+// localDockerParityRelPath is the repo-relative path to the shared local
+// validator-image ownership and cleanup helpers.
+const localDockerParityRelPath = "scripts/ci/lib/local-docker-parity.sh"
+
 // goRunEnvRelPath is the repo-relative path to the Go run-env helper.  Only the
 // doc-scan-go-vcs Go-VCS-stamping invariant reads this file (via the per-check
 // targetFile field), mirroring the shell `grep -Fq` that ran against
 // ${ROOT_DIR}/scripts/lib/go-run-env.sh.
 const goRunEnvRelPath = "scripts/lib/go-run-env.sh"
 
-// buildxBuilderTrustChecks lists the eight buildx-builder-trust invariants in
+// buildxBuilderTrustChecks lists the buildx-builder-trust invariants in
 // the same order as the former inline block in scripts/verify-invariants.sh
 // (the block between the buildx_cmd trusted-plugin loop and the
 // colima-egress-allowlist COLIMA_HOME pin check that immediately precedes the
@@ -3757,14 +3761,6 @@ const goRunEnvRelPath = "scripts/lib/go-run-env.sh"
 // metacharacter-free after unescaping (the trusted-docker-client probes escape
 // `\( \)` and `\$ \{ \}`; the others carry no active metacharacters), so each
 // reduces to fixed-string containment (kindPresent).
-//
-// The validator-image-cleanup guard was one shell `if` joining three `rg -q`
-// probes with `||` under a single message (WORKCELL_KEEP_VALIDATOR_IMAGE in
-// build-and-test.sh, cleanup_workcell_validator_image in job-validate.sh and
-// job-docs.sh); it is expressed here as three ordered kindPresent checks sharing
-// that message, which is behaviourally identical (any missing probe yields the
-// same stderr and exit 1).  Each check reads its own target file via the
-// per-check targetFile field.
 var buildxBuilderTrustChecks = []check{
 	{
 		kind:       kindPresent,
@@ -3773,24 +3769,57 @@ var buildxBuilderTrustChecks = []check{
 		targetFile: verifyReleaseBundleRelPath,
 	},
 	{
-		// kindPresent (first probe of the validator-image-cleanup guard).
 		kind:       kindPresent,
 		pattern:    "WORKCELL_KEEP_VALIDATOR_IMAGE",
 		message:    "Expected local validator lanes to remove disposable validator images unless explicitly retained",
 		targetFile: buildAndTestRelPath,
 	},
 	{
-		// kindPresent (second probe): shares the guard's message.
 		kind:       kindPresent,
-		pattern:    "cleanup_workcell_validator_image",
-		message:    "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		pattern:    `printf -v "${image_variable}" '%s-%s' "${prefix}" "${claimed_reservation##*/}"`,
+		message:    "Expected local validator jobs to give each automatically managed image a reservation-owned tag",
+		targetFile: localDockerParityRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `[[ "${WORKCELL_KEEP_VALIDATOR_IMAGE:-0}" != "1" ]] || return 0`,
+		message:    "Expected owned validator-image cleanup to preserve images when retention is requested",
+		targetFile: localDockerParityRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `VALIDATOR_IMAGE_INPUT="${WORKCELL_VALIDATOR_IMAGE:-}"`,
+		message:    "Expected job-validate.sh to preserve whether the caller supplied a validator image",
 		targetFile: jobValidateRelPath,
 	},
 	{
-		// kindPresent (third probe): shares the guard's message.
 		kind:       kindPresent,
-		pattern:    "cleanup_workcell_validator_image",
-		message:    "Expected local validator lanes to remove disposable validator images unless explicitly retained",
+		pattern:    "if [[ -z \"${VALIDATOR_IMAGE_INPUT}\" ]]; then\n  claim_workcell_validator_image \"${ROOT_DIR}\" VALIDATOR_IMAGE VALIDATOR_IMAGE_RESERVATION\n  VALIDATOR_IMAGE_OWNED=1\n  export WORKCELL_VALIDATOR_IMAGE=\"${VALIDATOR_IMAGE}\"\nfi",
+		message:    "Expected job-validate.sh to claim a unique validator image only when the caller did not provide one",
+		targetFile: jobValidateRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "if [[ \"${VALIDATOR_IMAGE_OWNED}\" -eq 1 ]]; then\n    cleanup_workcell_owned_validator_image \"${VALIDATOR_IMAGE}\" \"${VALIDATOR_IMAGE_RESERVATION}\"\n  fi",
+		message:    "Expected job-validate.sh to clean its exact reservation-owned validator image",
+		targetFile: jobValidateRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    `VALIDATOR_IMAGE_INPUT="${WORKCELL_VALIDATOR_IMAGE:-}"`,
+		message:    "Expected job-docs.sh to preserve whether the caller supplied a validator image",
+		targetFile: jobDocsRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "if [[ -z \"${VALIDATOR_IMAGE_INPUT}\" ]]; then\n  claim_workcell_validator_image \"${ROOT_DIR}\" VALIDATOR_IMAGE VALIDATOR_IMAGE_RESERVATION\n  VALIDATOR_IMAGE_OWNED=1\n  export WORKCELL_VALIDATOR_IMAGE=\"${VALIDATOR_IMAGE}\"\nfi",
+		message:    "Expected job-docs.sh to claim a unique validator image only when the caller did not provide one",
+		targetFile: jobDocsRelPath,
+	},
+	{
+		kind:       kindPresent,
+		pattern:    "if [[ \"${VALIDATOR_IMAGE_OWNED}\" -eq 1 ]]; then\n    cleanup_workcell_owned_validator_image \"${VALIDATOR_IMAGE}\" \"${VALIDATOR_IMAGE_RESERVATION}\"\n  fi",
+		message:    "Expected job-docs.sh to clean its exact reservation-owned validator image",
 		targetFile: jobDocsRelPath,
 	},
 	{
@@ -3829,7 +3858,7 @@ var buildxBuilderTrustChecks = []check{
 	},
 }
 
-// CheckBuildxBuilderTrust runs the eight buildx-builder-trust invariants against
+// CheckBuildxBuilderTrust runs the buildx-builder-trust invariants against
 // the repo rooted at rootDir, in the shell's original order.  It returns nil when
 // every invariant holds (the shell's exit 0), or an error whose message equals
 // the shell's stderr for the first violated invariant (the shell's exit 1).
