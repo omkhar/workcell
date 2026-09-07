@@ -518,7 +518,10 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/development-wrapper.sh \
     /usr/local/libexec/workcell/entrypoint.sh \
     /usr/local/libexec/workcell/git-wrapper.sh \
+    /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/node-wrapper.sh \
+    /usr/local/libexec/workcell/public-node-guard.mjs \
+    /usr/local/libexec/workcell/provider-policy.sh \
     /usr/local/libexec/workcell/provider-wrapper.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /usr/local/libexec/workcell/runtime-user.sh \
