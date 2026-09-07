@@ -381,7 +381,7 @@ func writeValidatorFixtureFiles(t *testing.T, root string) {
 	t.Helper()
 	writeExecutable(t, filepath.Join(root, "scripts", "lib"), "trusted-docker-client.sh", "#!/bin/bash\nsetup_workcell_trusted_docker_client() { :; }\ncleanup_workcell_trusted_docker_client() { :; }\nselect_workcell_docker_context() { DOCKER_CONTEXT_NAME=fixture; }\n")
 	writeExecutable(t, filepath.Join(root, "scripts", "lib"), "go-run-env.sh", "#!/bin/bash\nrun_go_in_repo() { :; }\n")
-	for _, name := range []string{"check-pinned-inputs.sh", "check-doc-support-matrix-fields.sh", "check-public-contract.sh", "check-doc-links.sh"} {
+	for _, name := range []string{"check-pinned-inputs.sh", "check-validator-anchoring.sh", "check-doc-support-matrix-fields.sh", "check-public-contract.sh", "check-doc-links.sh"} {
 		writeExecutable(t, filepath.Join(root, "scripts"), name, "#!/bin/bash\nexit 0\n")
 	}
 	writeExecutable(t, filepath.Join(root, "scripts", "ci"), "build-validator-image.sh", "#!/bin/bash\nprintf '%s\\n' \"${WORKCELL_VALIDATOR_IMAGE}\" >\"${WORKCELL_TEST_BUILDER_INPUT_LOG}\"\n[[ \"${WORKCELL_TEST_BUILD_STATUS}\" -eq 0 ]] || exit \"${WORKCELL_TEST_BUILD_STATUS}\"\nif [[ \"${WORKCELL_TEST_WRONG_REFERENCE}\" == true ]]; then echo wrong/reference:latest; else printf '%s\\n' \"${WORKCELL_VALIDATOR_IMAGE}\"; fi\n")

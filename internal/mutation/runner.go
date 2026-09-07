@@ -177,6 +177,27 @@ var goHelperMutations = []mutationCase{
 		label:        "alias probe canonical parity",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "Test(ValidateOperatorContract|LoadOperatorContract|StripManpageFormatting)", "-count=1"),
 	},
+	{
+		relativePath: "internal/metadatautil/shell_invocations.go",
+		original:     `			pending = true`,
+		replacement:  `			pending = false`,
+		label:        "heredoc body exclusion for anchored validators",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions", "-count=1"),
+	},
+	{
+		relativePath: "internal/metadatautil/validator_anchoring.go",
+		original:     `	if anchors != corpus {`,
+		replacement:  `	if false && anchors != corpus {`,
+		label:        "validator evasion corpus registration parity",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestCheckValidatorAnchoring", "-count=1"),
+	},
+	{
+		relativePath: "internal/metadatautil/workflows.go",
+		original:     `			publish[0].Args[1] != "--immutable-releases-preverified-by-hosted-controls" {`,
+		replacement:  `			!strings.Contains(step.Run, "--immutable-releases-preverified-by-hosted-controls") {`,
+		label:        "publication gate whole-word publisher contract",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowPublicationGateRejectsEvasions", "-count=1"),
+	},
 }
 
 var rustMutations = []mutationCase{

@@ -110,9 +110,69 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "a list operator at the end of a line carries to the next",
+			script: "false &&\noras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "an arithmetic shift is not a heredoc operator",
+			script: ": $((1 << 2))\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "a closing backtick restores the quote its substitution suspended",
+			script: ": \"`true`\noras cp --recursive --from-oci-layout one\n\"\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "nothing after an unconditional exit is an invocation",
+			script: "oras cp --recursive --from-oci-layout one\nexit 0\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "an exit inside a branch does not end the scan",
+			script: "if false; then\nexit 0\nfi\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "an alias over the command proves no invocation of it",
+			script: "shopt -s expand_aliases\nalias oras=':'\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a step that redefines the command proves no invocation of it",
+			script: "oras() { :; }\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a definition whose brace opens on the next line still hides its body",
+			script: "never_called ()\n{\noras cp --recursive --from-oci-layout one\n}\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "a heredoc opened as a quoted span closes still hides its body",
+			script: ": \"\nx\n\" <<PLAN\noras cp --recursive --from-oci-layout one\nPLAN\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "arguments end at a control operator",
+			script: "oras cp --recursive --from-oci-layout missing || true; : --to-oci-layout dist/release-image:amd64\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "missing"}},
+		},
+		{
+			name:   "a command in a branch bash never runs is not an invocation",
+			script: "if false; then\noras cp --recursive --from-oci-layout one\nfi\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "a redirection keeps its own ampersand",
+			script: "oras cp --recursive --from-oci-layout one >/dev/null 2>&1\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one", ">/dev/null", "2>&1"}},
+		},
+		{
 			name:   "a quoted argument stays one word, so an option inside it is text",
 			script: "oras cp 'ignored --to-oci-layout dist/release-image:amd64 ignored' || true\n",
-			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored", "||", "true"}},
+			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored"}},
 		},
 		{
 			name:   "an escaped quote does not open a span that hides a delimiter",
@@ -149,11 +209,44 @@ func TestShellInvocations(t *testing.T) {
 			script: "cat <<<\"${PLAN}\"\noras cp one\n",
 			want:   [][]string{{"one"}},
 		},
+		{
+			name:   "words after a closing quote are arguments of the command that opened it",
+			script: ": \"\nx\n\" oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "an operator after a closing quote still starts a command",
+			script: ": \"\nx\n\"; oras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "an exec that names a program ends the scan",
+			script: "exec true\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "an exec of redirections alone leaves the script running",
+			script: "exec 2>&1\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "a noclobber redirection keeps its own bar",
+			script: ": >| oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "a hashed path over the command proves no invocation of it",
+			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			got := metadatautil.ShellInvocations(testCase.script, "oras cp")
+			var got [][]string
+			for _, invocation := range metadatautil.ShellInvocations(testCase.script, "oras cp") {
+				got = append(got, invocation.Args)
+			}
 			if !slices.EqualFunc(got, testCase.want, slices.Equal) {
 				t.Fatalf("ShellInvocations() = %q, want %q", got, testCase.want)
 			}
