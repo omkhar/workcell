@@ -150,14 +150,24 @@ func flatten(anchor string) string {
 }
 
 // extendFirstOption lengthens the first long option of the anchored command,
-// the bypass that turns --oci-layout into --oci-layout-disabled.
+// the bypass that turns --oci-layout into --oci-layout-disabled. Most anchored
+// commands carry no long option, so the command word itself is lengthened
+// instead: either spelling keeps the anchored text in the file while bash runs
+// something else. Without the second spelling the row rewrites nothing and the
+// driver stops, which keeps the corpus off every such validator.
 func extendFirstOption(anchor string) string {
-	for _, word := range strings.Fields(anchor) {
+	words := strings.Fields(anchor)
+	if len(words) == 0 {
+		return anchor
+	}
+	target := words[0]
+	for _, word := range words {
 		if strings.HasPrefix(word, "--") {
-			return strings.Replace(anchor, word, word+"-disabled", 1)
+			target = word
+			break
 		}
 	}
-	return anchor
+	return strings.Replace(anchor, target, target+"-disabled", 1)
 }
 
 // indentOf returns the leading whitespace of the first line of text.
