@@ -16,6 +16,14 @@ if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}"
     WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1
   )
+  # The destination query below uses the same transport as the push, so it
+  # needs the same authentication state. Without it the query fails, the walk
+  # covers the whole ancestry, and an already published base is rejected.
+  for transport_name in SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT \
+    GIT_ASKPASS SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY; do
+    [[ -n "${!transport_name:-}" ]] || continue
+    sanitized_env+=("${transport_name}=${!transport_name}")
+  done
   for git_config_name in ${!GIT_CONFIG@}; do
     sanitized_env+=("${git_config_name}=${!git_config_name}")
   done

@@ -645,6 +645,27 @@ func TestPrePushHookRejectsUnsignedBaseBehindStaleTrackingRefs(t *testing.T) {
 	}
 }
 
+func TestPrePushHookForwardsTransportAuthentication(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("base.txt", "base\n", "^F Add unsigned base (tests pass; fixture seed)")
+	fixture.tryGit([]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"}, "push", "--quiet", "origin", "main")
+	fixture.commitFile("child.txt", "child\n", "^F Add signed child (tests pass; fixture seed)", "-S")
+	// The destination is reachable only through GIT_SSH_COMMAND, so the hook
+	// cannot read the advertisement without it. The walk then reaches the
+	// published unsigned base and refuses an otherwise valid new-ref push.
+	sshCommand := filepath.Join(fixture.homeDir, "fake-ssh")
+	script := "#!/bin/bash\nexec /bin/sh -c \"${@: -1}\"\n"
+	if err := os.WriteFile(sshCommand, []byte(script), 0o755); err != nil {
+		t.Fatalf("write ssh command failed: %v", err)
+	}
+	fixture.run("remote", "set-url", "origin", "ssh://host"+fixture.remote)
+	env := []string{"GIT_SSH_COMMAND=" + sshCommand}
+	if output, err := fixture.tryGit(env, "push", "--quiet", "origin", "main:refs/heads/published"); err != nil {
+		t.Fatalf("push over a transport needing GIT_SSH_COMMAND failed: %v\n%s", err, output)
+	}
+}
+
 func TestPrePushHookHonorsGlobalConfigSelector(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.configureSSHSigning()

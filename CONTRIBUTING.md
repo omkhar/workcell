@@ -40,8 +40,10 @@ dependency to the gate that guards the bootstrap.
 
 Each hook stays small. Each hook re-execs itself through `env -i` and
 `/bin/bash` onto a trusted PATH. Each hook then calls `dirname` to find the
-repository root. After that the `pre-push` hook calls only `git`. The
-`commit-msg` hook calls `git` and `awk`. The `pre-commit` hook calls
+repository root.
+
+After that the `pre-push` hook calls only `git`. The `commit-msg` hook calls
+`git` and `awk`. The `pre-commit` hook calls
 `scripts/update-upstream-pins.sh`, which is repository code. Put policy that
 does not run before the build in Go.
 
