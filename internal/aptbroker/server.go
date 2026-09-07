@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -252,13 +253,37 @@ func listenSocket(path string, requireRoot bool) (*net.UnixListener, error) {
 	if err := prepareSocketPath(path); err != nil {
 		return nil, err
 	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	listener, err := bindSocket(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := secureSocket(path, listener, requireRoot); err != nil {
+	if err := validateSocket(path, requireRoot); err != nil {
+		_ = listener.Close()
 		return nil, err
 	}
+	return listener, nil
+}
+
+// The socket carries its final mode out of the bind itself. Applying the mode
+// to the pathname afterwards lets anyone who can write the parent directory
+// swap in a symlink between the two steps and redirect a privileged chmod onto
+// a file of their choosing. The bind also already owns the socket as the server
+// uid, so an explicit chown would reopen that same window for an ownership the
+// kernel has given us anyway; validateSocket confirms it instead. Close must
+// not unlink either, or it would delete whatever holds the pathname at shutdown
+// before removeSocket can check that it is still our socket.
+//
+// ponytail: umask is process-global, which is safe here only because Serve
+// binds once during startup. Bind through a parent directory descriptor if this
+// ever has to run beside other file creation.
+func bindSocket(path string) (*net.UnixListener, error) {
+	previous := syscall.Umask(0o111)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	syscall.Umask(previous)
+	if err != nil {
+		return nil, err
+	}
+	listener.SetUnlinkOnClose(false)
 	return listener, nil
 }
 
@@ -292,30 +317,6 @@ func prepareSocketPath(path string) error {
 		return err
 	}
 	return fmt.Errorf("apt broker socket already exists")
-}
-
-func secureSocket(path string, listener *net.UnixListener, requireRoot bool) error {
-	fail := func(err error) error {
-		_ = listener.Close()
-		return err
-	}
-	if err := setSocketAccess(path, requireRoot); err != nil {
-		return fail(err)
-	}
-	if err := validateSocket(path, requireRoot); err != nil {
-		return fail(err)
-	}
-	return nil
-}
-
-func setSocketAccess(path string, requireRoot bool) error {
-	if err := os.Chmod(path, 0o666); err != nil {
-		return err
-	}
-	if requireRoot {
-		return os.Chown(path, 0, 0)
-	}
-	return nil
 }
 
 func validateSocket(path string, requireRoot bool) error {

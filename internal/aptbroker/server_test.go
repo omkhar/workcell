@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -103,25 +104,42 @@ func TestValidatePeerUIDRejectsUntrustedPeers(t *testing.T) {
 	}
 }
 
-func TestListenSocketSetsModeAndPreservesReplacement(t *testing.T) {
+// Shutdown must not delete whatever holds the pathname, only a socket that is
+// still ours. net.ListenUnix unlinks the pathname from Close by default, which
+// would run before the guard below ever sees it.
+func TestRemoveSocketPreservesReplacementWhileListenerIsOpen(t *testing.T) {
 	path := filepath.Join(shortSocketDir(t), "broker.sock")
 	listener, err := listenSocket(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode().Perm() != 0o666 || info.Mode()&os.ModeSocket == 0 {
-		t.Fatalf("socket info = (%v, %v)", info, err)
-	}
-	if err := listener.Close(); err != nil {
+	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	removeSocket(path, listener)
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("replacement was removed: %v", err)
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "replacement" {
+		t.Fatalf("replacement was removed at shutdown: (%q, %v)", body, err)
+	}
+}
+
+// The socket mode must come from the bind itself, not from a chmod applied to a
+// pathname afterwards, so a restrictive ambient umask must not leak into it.
+func TestListenSocketBindsSocketWithFinalMode(t *testing.T) {
+	previous := syscall.Umask(0o077)
+	defer syscall.Umask(previous)
+	path := filepath.Join(shortSocketDir(t), "broker.sock")
+	listener, err := listenSocket(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeSocket(path, listener)
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode().Perm() != 0o666 || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("socket info = (%v, %v), want a socket with mode 0666", info, err)
 	}
 }
 
