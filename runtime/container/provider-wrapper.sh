@@ -1,4 +1,7 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
+# The shebang clears BASH_ENV/ENV only when the kernel applies it; these scripts
+# also run as plain `/bin/bash <script>`, so clear them for every child bash.
+unset BASH_ENV ENV
 set -euo pipefail
 
 AGENT_NAME="${WORKCELL_LAUNCH_TARGET:-${0##*/}}"

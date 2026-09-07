@@ -218,13 +218,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/development-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
-      "sha256": "2e6c4c65b86a166f7a963e390e85e3d43d963d90a0bf5a73d0f8456a36641a4a"
+      "sha256": "4bf01197880c128eeee84e3e6afbf8a6ed108ffe81e54b2c0a0f77511f352ca3"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "49a33dc4b43c0d87090c2dcc0be78ffe8d9af14cd7832e7ad72c19c69dd386ef"
+      "sha256": "21683cbcaa6f7bbf3ea566d0dbe9fbc6ca53498f08e23d815853a3423203e251"
     },
     {
       "kind": "runtime-control-plane",
@@ -236,7 +236,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "f699292966cf737b9700008c090750319b23ab7dac617a4e236e82f2952e2b35"
+      "sha256": "a9eb5b0b7c7262301420610b02295e1a62b5cfe1890e439a5d3bfa2d8f9c1d7d"
     },
     {
       "kind": "runtime-control-plane",
@@ -254,7 +254,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "fdf553db0f799ec09d9e4e02a359f5f97bada6e3b0d18a94e9d191ecc6a3392b"
+      "sha256": "8d9cbd196006345c2d7ffa7d5be15b1faa5669d1ff96305865915afc43b454bb"
     },
     {
       "kind": "runtime-control-plane",
@@ -266,7 +266,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "b9a4bd99fd90f322f4f07dab9dae43b2f2787a27ad6dc65e11c2818e4c28193e"
+      "sha256": "24bdd17c4b6b1131277f4fa7baa82f3c66a561baead493af6538fbd1be770ae5"
     },
     {
       "kind": "runtime-control-plane",

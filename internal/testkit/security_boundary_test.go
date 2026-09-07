@@ -478,3 +478,97 @@ func TestCheckPRShapeCountsRenameDestinationArea(t *testing.T) {
 		t.Fatalf("check-pr-shape did not count both rename areas: %q", output)
 	}
 }
+
+// runtimeStartupPrologueScripts lists the runtime scripts whose prologue must
+// clear BASH_ENV and ENV. Callers start several of them as plain
+// `/bin/bash <script>`, which bypasses the shebang that would otherwise clear
+// the two variables, so each script has to clear them for its own children.
+var runtimeStartupPrologueScripts = []string{
+	"development-wrapper.sh",
+	"entrypoint.sh",
+	"home-control-plane.sh",
+	"provider-wrapper.sh",
+	"runtime-user.sh",
+}
+
+const runtimeStartupClearLine = "unset BASH_ENV ENV"
+
+// runtimeStartupPrologue returns the prologue of the named runtime script up to
+// and including its runtimeStartupClearLine, and fails when the script runs any
+// command before that line.
+func runtimeStartupPrologue(tb testing.TB, name string) string {
+	tb.Helper()
+
+	path := filepath.Join(repoRoot(tb), "runtime", "container", name)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		tb.Fatalf("read %s: %v", path, err)
+	}
+	lines := strings.Split(string(body), "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == runtimeStartupClearLine {
+			return strings.Join(lines[:i+1], "\n") + "\n"
+		}
+		if i > 0 && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			tb.Fatalf("%s runs %q before clearing BASH_ENV/ENV", name, trimmed)
+		}
+	}
+	tb.Fatalf("%s prologue does not contain %q", name, runtimeStartupClearLine)
+	return ""
+}
+
+// runChildStartupProbe runs prologue as `bash <file>` — the way entrypoint.sh
+// and runtime-user.sh start their bash children — with BASH_ENV and ENV both
+// pointing at a planted startup file, and reports how many times that file was
+// sourced. The script's own shell always sources it once, because bypassing the
+// shebang means the file is read before the script's first line; a second
+// sourcing means the child bash read it too.
+func runChildStartupProbe(tb testing.TB, prologue string) int {
+	tb.Helper()
+
+	dir := tb.TempDir()
+	log := filepath.Join(dir, "sourced.log")
+	planted := filepath.Join(dir, "planted.sh")
+	if err := os.WriteFile(planted, []byte("echo sourced >>'"+log+"'\n"), 0o600); err != nil {
+		tb.Fatalf("write planted startup file: %v", err)
+	}
+	script := filepath.Join(dir, "prologue.sh")
+	if err := os.WriteFile(script, []byte(prologue+"/bin/bash -c ':'\n"), 0o600); err != nil {
+		tb.Fatalf("write prologue script: %v", err)
+	}
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(), "BASH_ENV="+planted, "ENV="+planted)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		tb.Fatalf("prologue probe failed: %v (%s)", err, output)
+	}
+	body, err := os.ReadFile(log)
+	if err != nil {
+		tb.Fatalf("read sourcing log: %v", err)
+	}
+	return strings.Count(string(body), "sourced\n")
+}
+
+// TestRuntimeScriptProloguesClearBashStartupFilesForChildren pins the prologue
+// that keeps a plain-bash child of a runtime script from sourcing an
+// attacker-supplied BASH_ENV/ENV startup file, and carries its own negative
+// control: with the clearing line removed, the child sources the planted file.
+func TestRuntimeScriptProloguesClearBashStartupFilesForChildren(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range runtimeStartupPrologueScripts {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			prologue := runtimeStartupPrologue(t, name)
+			if got := runChildStartupProbe(t, prologue); got != 1 {
+				t.Fatalf("%s: planted startup file sourced %d times, want 1 (the script's own shell only)", name, got)
+			}
+			without := strings.Replace(prologue, runtimeStartupClearLine+"\n", "", 1)
+			if got := runChildStartupProbe(t, without); got != 2 {
+				t.Fatalf("%s: control without %q sourced the planted file %d times, want 2 (script and child)", name, runtimeStartupClearLine, got)
+			}
+		})
+	}
+}
