@@ -231,6 +231,9 @@ func TestHelperConfigurationPreservesExecutionAndDiagnostics(t *testing.T) {
 // that bind a real path need a short directory instead.
 func shortSocketDir(t *testing.T) string {
 	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("a root server requires a root-writable-only ancestry, which no directory under /tmp has")
+	}
 	directory, err := os.MkdirTemp("/tmp", "aptbroker-")
 	if err != nil {
 		t.Fatal(err)

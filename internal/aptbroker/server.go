@@ -32,8 +32,10 @@ type ServerConfig struct {
 	MaxConcurrent     int
 	ExpectedPeerUID   uint32
 	RequireRootSocket bool
-	ErrorWriter       io.Writer
-	Ready             func() error
+	// ErrorWriter receives diagnostics from concurrent connection handlers, so
+	// it must be safe for concurrent use. The os.Stderr default is.
+	ErrorWriter io.Writer
+	Ready       func() error
 }
 
 func (c *ServerConfig) normalize() error {
@@ -276,12 +278,12 @@ func bindSocket(path string) (*net.UnixListener, error) {
 // No chown is made: the bind already created the socket owned by the server
 // uid, so the kernel has given us the ownership validateSocket goes on to
 // confirm, and asking for it again by pathname would only add a way to be
-// pointed somewhere else. The mode does have to be set after the bind. That is
-// safe because a privileged deployment sets RequireRootSocket, and
-// validateSocketParent then proves no unprivileged uid can write any ancestor,
-// so none can substitute a symlink for the socket in between; without the flag
-// the server holds no privilege the mode change could abuse. validateSocket
-// re-checks the result with Lstat and fails closed if it is not our socket.
+// pointed somewhere else. The mode does have to be set after the bind, which is
+// safe because validateSocketParent refuses to let a root server reach this
+// point unless every ancestor is root-writable only, so no unprivileged uid can
+// substitute a symlink for the socket in between. A non-root server holds no
+// privilege the mode change could abuse. validateSocket re-checks the result
+// with Lstat and fails closed if it is not our socket.
 func secureSocket(path string, listener *net.UnixListener, requireRoot bool) error {
 	fail := func(err error) error {
 		removeSocket(path, listener)
@@ -304,16 +306,22 @@ func validateSocketParent(path string, requireRoot bool) error {
 	if !isTrustedSocketDirectory(parent) {
 		return fmt.Errorf("apt broker socket parent is not trusted")
 	}
-	if !requireRoot {
-		return nil
+	if requireRoot {
+		if fileUID(parent) != 0 {
+			return fmt.Errorf("apt broker socket parent is not root-owned")
+		}
+		if parent.Mode().Perm() != 0o755 {
+			return fmt.Errorf("apt broker socket parent mode is not 0755")
+		}
 	}
-	if fileUID(parent) != 0 {
-		return fmt.Errorf("apt broker socket parent is not root-owned")
+	// A root server must never operate on a pathname inside a directory an
+	// unprivileged uid can write, whether or not the caller remembered to ask
+	// for it. Deciding this from the running euid rather than the flag keeps the
+	// guarantee from depending on the configuration being correct.
+	if requireRoot || os.Geteuid() == 0 {
+		return validateSocketAncestry(path)
 	}
-	if parent.Mode().Perm() != 0o755 {
-		return fmt.Errorf("apt broker socket parent mode is not 0755")
-	}
-	return validateSocketAncestry(path)
+	return nil
 }
 
 // Checking the immediate parent alone trusts a pathname the bind resolves for
