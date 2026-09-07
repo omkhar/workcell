@@ -5,13 +5,10 @@ package applecontainer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"unicode"
 )
@@ -253,155 +250,6 @@ func validateAuditToken(label, value string) error {
 		}
 	}
 	return nil
-}
-
-// pathWithin reports whether child is inside parent (component-aware via
-// filepath.Rel, so /foobar is not inside /foo). Comparison is case-insensitive
-// because on a case-insensitive volume (APFS default) /Foo and /foo are the same
-// path; this is also the safe direction for the isolation/overlap boundary.
-func pathWithin(parent, child string) bool {
-	rel, err := filepath.Rel(strings.ToLower(parent), strings.ToLower(child))
-	if err != nil || rel == "." {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// copyWorkspaceTree copies sourceRoot into destRoot, excluding the configured
-// paths, and returns a sorted manifest of the copied entries. Symlinks that are
-// absolute or escape the workspace (lexically or after kernel resolution) fail
-// closed so materialization cannot smuggle non-workspace content into the VM.
-func copyWorkspaceTree(sourceRoot, destRoot string, excluded []string) ([]WorkspaceEntry, error) {
-	entries := make([]WorkspaceEntry, 0)
-	// Dir chmods deferred to after the walk (deepest-first) so a read-only source dir stays writable while children copy.
-	var dirDests []string
-	var dirPerms []fs.FileMode
-	// Resolve the root first so a symlinked source-workspace root is walked as its real dir (WalkDir does not follow it).
-	resolvedRoot, err := filepath.EvalSymlinks(sourceRoot)
-	if err != nil {
-		return nil, err
-	}
-	// A non-directory source workspace (file, or symlink to one) is invalid: WalkDir would visit only the root.
-	if rootInfo, err := os.Stat(resolvedRoot); err != nil {
-		return nil, err
-	} else if !rootInfo.IsDir() {
-		return nil, fmt.Errorf("source workspace is not a directory: %s", sourceRoot)
-	}
-	// Absolute root for symlink-containment checks: a relative sourceRoot (e.g. ".")
-	// makes EvalSymlinks return relative paths, so compare resolved absolutes.
-	rootAbs, err := filepath.Abs(resolvedRoot)
-	if err != nil {
-		return nil, err
-	}
-	err = filepath.WalkDir(resolvedRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == resolvedRoot {
-			return nil
-		}
-		rel, err := filepath.Rel(resolvedRoot, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if isExcludedPath(rel, excluded) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		destPath := filepath.Join(destRoot, filepath.FromSlash(rel))
-		switch {
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			if filepath.IsAbs(target) {
-				return fmt.Errorf("workspace symlink %s targets an absolute path: %s", rel, target)
-			}
-			resolved := filepath.ToSlash(filepath.Clean(filepath.Join(filepath.Dir(filepath.FromSlash(rel)), target)))
-			if resolved == ".." || strings.HasPrefix(resolved, "../") {
-				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
-			}
-			physical, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return fmt.Errorf("workspace symlink %s does not resolve inside the workspace: %v", rel, err)
-			}
-			physicalAbs, err := filepath.Abs(physical)
-			if err != nil {
-				return err
-			}
-			if !strings.EqualFold(physicalAbs, rootAbs) && !pathWithin(rootAbs, physicalAbs) {
-				return fmt.Errorf("workspace symlink %s escapes the workspace: %s", rel, target)
-			}
-			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-				return err
-			}
-			if err := os.Symlink(target, destPath); err != nil {
-				return err
-			}
-			entries = append(entries, WorkspaceEntry{Path: rel, Kind: "symlink", Mode: info.Mode(), LinkTarget: target})
-		case info.IsDir():
-			if err := os.MkdirAll(destPath, 0o700); err != nil {
-				return err
-			}
-			dirDests = append(dirDests, destPath)
-			dirPerms = append(dirPerms, info.Mode().Perm())
-			entries = append(entries, WorkspaceEntry{Path: rel, Kind: "dir", Mode: info.Mode()})
-		case info.Mode().IsRegular():
-			if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-				return err
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if err := os.WriteFile(destPath, content, info.Mode().Perm()); err != nil {
-				return err
-			}
-			if err := os.Chmod(destPath, info.Mode().Perm()); err != nil {
-				return err
-			}
-			sum := sha256.Sum256(content)
-			entries = append(entries, WorkspaceEntry{Path: rel, Kind: "file", Mode: info.Mode(), SHA256: hex.EncodeToString(sum[:])})
-		default:
-			return fmt.Errorf("unsupported workspace entry kind for %s", rel)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	// Restore directory modes deepest-first so a read-only parent can't block a child.
-	for i := len(dirDests) - 1; i >= 0; i-- {
-		if err := os.Chmod(dirDests[i], dirPerms[i]); err != nil {
-			return nil, err
-		}
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Path < entries[j].Path
-	})
-	return entries, nil
-}
-
-// isExcludedPath matches exclusions case-insensitively (component-boundary), so
-// on a case-insensitive volume (APFS default) `.GIT`/`.Git` are excluded just
-// like `.git` — git control state must never leak into the isolated workspace.
-func isExcludedPath(rel string, excluded []string) bool {
-	lower := strings.ToLower(rel)
-	for _, item := range excluded {
-		item = strings.ToLower(item)
-		if lower == item || strings.HasPrefix(lower, item+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func writeJSON(path string, value any) error {

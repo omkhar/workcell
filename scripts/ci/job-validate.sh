@@ -18,6 +18,8 @@ source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 PROFILE="${WORKCELL_CI_VALIDATE_PROFILE:-pr-parity}"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-}"
 VALIDATOR_IMAGE_INPUT="${WORKCELL_VALIDATOR_IMAGE:-}"
+VALIDATOR_IMAGE_OWNED=0
+VALIDATOR_IMAGE_RESERVATION=""
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 ARCHIVE_REF="${WORKCELL_CI_ARCHIVE_REF:-$(git -C "${ROOT_DIR}" rev-parse HEAD 2>/dev/null || printf 'HEAD')}"
 REPOSITORY_NAME="${GITHUB_REPOSITORY:-workcell/local}"
@@ -73,16 +75,24 @@ else
 fi
 
 cleanup() {
+  local status=$?
   [[ -z "${workcell_validate_token_file_created}" || "${workcell_validate_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_validate_token_file_created}"
-  if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
-    cleanup_workcell_validator_image "${VALIDATOR_IMAGE:-}"
+  if [[ "${VALIDATOR_IMAGE_OWNED}" -eq 1 ]]; then
+    cleanup_workcell_owned_validator_image "${VALIDATOR_IMAGE}" "${VALIDATOR_IMAGE_RESERVATION}"
   fi
   cleanup_workcell_ci_docker
   if [[ "${KEEP_ARTIFACT_DIR}" -eq 0 ]]; then
     rm -rf "${ARTIFACT_DIR}"
   fi
+  return "${status}"
 }
 trap cleanup EXIT
+
+if [[ -z "${VALIDATOR_IMAGE_INPUT}" ]]; then
+  claim_workcell_validator_image "${ROOT_DIR}" VALIDATOR_IMAGE VALIDATOR_IMAGE_RESERVATION
+  VALIDATOR_IMAGE_OWNED=1
+  export WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}"
+fi
 
 echo "[ci/validate] pinned input policy"
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
@@ -115,7 +125,11 @@ if [[ "${PROFILE}" == "release-preflight" ]]; then
 fi
 
 echo "[ci/validate] validator image build"
-VALIDATOR_IMAGE="$("${ROOT_DIR}/scripts/ci/build-validator-image.sh")"
+BUILT_VALIDATOR_IMAGE="$("${ROOT_DIR}/scripts/ci/build-validator-image.sh")"
+if [[ "${BUILT_VALIDATOR_IMAGE}" != "${VALIDATOR_IMAGE}" ]]; then
+  echo "Validator image builder returned an unexpected reference" >&2
+  exit 1
+fi
 export WORKCELL_VALIDATOR_IMAGE="${VALIDATOR_IMAGE}"
 
 echo "[ci/validate] repository validation in validator"

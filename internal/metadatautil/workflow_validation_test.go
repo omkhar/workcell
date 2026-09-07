@@ -912,6 +912,7 @@ env:
 
 jobs:
   refresh:
+    if: github.ref == 'refs/heads/main'
     environment:
       name: upstream-refresh
     permissions:
@@ -958,6 +959,91 @@ jobs:
 
 	if err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow); err != nil {
 		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v", err)
+	}
+	assertManualWorkflowMainRefGuard(t, workflow, metadatautil.ValidateUpstreamRefreshWorkflow)
+}
+
+func TestValidateHostedControlsWorkflowRequiresMainRef(t *testing.T) {
+	t.Parallel()
+	workflow := `name: Hosted controls
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-hosted-controls:
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: hosted-controls-audit
+    steps:
+      - name: Verify GitHub-hosted controls
+        env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
+`
+
+	if err := metadatautil.ValidateHostedControlsWorkflow(workflow); err != nil {
+		t.Fatalf("metadatautil.ValidateHostedControlsWorkflow() error = %v", err)
+	}
+	assertManualWorkflowMainRefGuard(t, workflow, metadatautil.ValidateHostedControlsWorkflow)
+}
+
+func TestValidateHostedControlsWorkflowRejectsAmbiguousJobMappings(t *testing.T) {
+	t.Parallel()
+	const workflow = `name: Hosted controls
+jobs:
+  verify-hosted-controls:
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: hosted-controls-audit
+    steps:
+      - env:
+          WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
+          WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
+        run: ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
+`
+	mutations := []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{name: "duplicate jobs", old: "jobs:\n", replacement: "jobs: {}\njobs:\n"},
+		{name: "duplicate target job", old: "  verify-hosted-controls:\n", replacement: "  verify-hosted-controls: {}\n  verify-hosted-controls:\n"},
+		{name: "target job is not a mapping", old: "  verify-hosted-controls:\n", replacement: "  verify-hosted-controls: true\n  unrelated:\n"},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, mutation.old, mutation.replacement, 1)
+			if err := metadatautil.ValidateHostedControlsWorkflow(mutated); err == nil {
+				t.Fatal("metadatautil.ValidateHostedControlsWorkflow() unexpectedly succeeded")
+			}
+		})
+	}
+}
+
+func assertManualWorkflowMainRefGuard(t *testing.T, workflow string, validate func(string) error) {
+	t.Helper()
+	const guard = "    if: github.ref == 'refs/heads/main'"
+	mutations := []struct {
+		name        string
+		replacement string
+	}{
+		{name: "missing", replacement: ""},
+		{name: "wrong ref", replacement: "    if: github.ref == 'refs/heads/release'"},
+		{name: "fail open", replacement: "    if: always()"},
+		{name: "duplicate", replacement: guard + "\n" + guard},
+		{name: "boolean", replacement: "    if: true"},
+		{name: "mapping", replacement: "    if: {ref: main}"},
+		{name: "sibling text", replacement: "    note: \"github.ref == 'refs/heads/main'\""},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, guard, mutation.replacement, 1)
+			if err := validate(mutated); err == nil || !strings.Contains(err.Error(), guard[8:]) {
+				t.Fatalf("validator error = %v, want main-ref guard rejection", err)
+			}
+		})
 	}
 }
 

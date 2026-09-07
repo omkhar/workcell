@@ -16,6 +16,15 @@ import (
 var allowedSSHKeys = mapKeysSet([]string{"enabled", "config", "known_hosts", "identities", "providers", "modes", "allow_unsafe_config"})
 
 func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode string) (map[string]any, error) {
+	return renderSSHWithBudget(policy, outputRoot, policyDir, agent, mode, newInjectionTreeBudget())
+}
+
+func renderSSHWithBudget(
+	policy map[string]any,
+	outputRoot, policyDir Path,
+	agent, mode string,
+	budget *injectionTreeBudget,
+) (map[string]any, error) {
 	raw := policy["ssh"]
 	if raw == nil {
 		return map[string]any{}, nil
@@ -88,6 +97,9 @@ func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode st
 		if _, err := validateSecretFile(source, "ssh.config"); err != nil {
 			return nil, err
 		}
+		if err := accountInjectionSourceSize(source, budget); err != nil {
+			return nil, err
+		}
 		if err := validateSSHConfigSafety(source, allowUnsafeConfig); err != nil {
 			return nil, err
 		}
@@ -100,6 +112,9 @@ func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode st
 			return nil, err
 		}
 		if _, err := validateKnownHostsFile(source, "ssh.known_hosts"); err != nil {
+			return nil, err
+		}
+		if err := accountInjectionSourceSize(source, budget); err != nil {
 			return nil, err
 		}
 		rendered["known_hosts"] = directMountEntry(source, directMountRoot+"/ssh/known_hosts")
@@ -125,6 +140,9 @@ func renderSSH(policy map[string]any, outputRoot, policyDir Path, agent, mode st
 			return nil, err
 		}
 		if _, err := validateSecretFile(source, fmt.Sprintf("ssh.identities[%d]", index)); err != nil {
+			return nil, err
+		}
+		if err := accountInjectionSourceSize(source, budget); err != nil {
 			return nil, err
 		}
 		if _, reserved := reservedSSHFilnames[source.Base()]; reserved {
@@ -182,7 +200,7 @@ func validateSSHConfigSafety(source Path, allowUnsafe bool) error {
 	if allowUnsafe {
 		return nil
 	}
-	data, err := os.ReadFile(source.String())
+	data, err := readInjectionPath(source, nil)
 	if err != nil {
 		return err
 	}

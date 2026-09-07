@@ -33,25 +33,27 @@ default_subagent_reasoning_effort = "medium"
 
 [shell_environment_policy]
 inherit = "core"
-exclude = [
-  "*_TOKEN",
-  "*_TOKEN_*",
-  "*_SECRET",
-  "*_SECRET_*",
-  "*_KEY",
-  "*_KEY_*",
-  "AWS_*",
-  "AZURE_*",
-  "GCP_*",
-  "GOOGLE_*",
-  "KUBECONFIG",
-  "SSH_AUTH_SOCK",
-  "SSH_AGENT_PID",
-  "DOCKER_HOST",
-  "DOCKER_TLS_VERIFY",
-  "DOCKER_CERT_PATH",
-]
 set = { WORKCELL_RUNTIME = "1" }
+
+# Canonical filters form. The legacy `exclude` array is deprecated and the
+# requirements layer accepts only this keyed form.
+[shell_environment_policy.filters]
+"*_TOKEN" = "exclude"
+"*_TOKEN_*" = "exclude"
+"*_SECRET" = "exclude"
+"*_SECRET_*" = "exclude"
+"*_KEY" = "exclude"
+"*_KEY_*" = "exclude"
+"AWS_*" = "exclude"
+"AZURE_*" = "exclude"
+"GCP_*" = "exclude"
+"GOOGLE_*" = "exclude"
+"KUBECONFIG" = "exclude"
+"SSH_AUTH_SOCK" = "exclude"
+"SSH_AGENT_PID" = "exclude"
+"DOCKER_HOST" = "exclude"
+"DOCKER_TLS_VERIFY" = "exclude"
+"DOCKER_CERT_PATH" = "exclude"
 
 [sandbox_workspace_write]
 exclude_slash_tmp = true
