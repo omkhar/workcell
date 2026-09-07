@@ -162,8 +162,11 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 			// it would let the step publish on that refusal, so a membership
 			// test over its arguments is not enough.
 			len(audit[0].Args) != 1 || audit[0].Args[0] != "${GITHUB_REPOSITORY}" ||
-			!slices.Contains(publish[0].Args, "${GITHUB_REF_NAME}") ||
-			!slices.Contains(publish[0].Args, "--immutable-releases-preverified-by-hosted-controls") {
+			// The publisher reads the preverification flag only as the word
+			// straight after the tag. Later it is an asset name instead, and
+			// the publisher is told the release was not preverified.
+			len(publish[0].Args) < 2 || publish[0].Args[0] != "${GITHUB_REF_NAME}" ||
+			publish[0].Args[1] != "--immutable-releases-preverified-by-hosted-controls" {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
 		// All three run, so compare the positions the parser proves rather

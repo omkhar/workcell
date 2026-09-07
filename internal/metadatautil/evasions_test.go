@@ -87,6 +87,9 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+`: "`+"\n"+i+"x\n"+i+`" <<PLAN`, i+"PLAN")
 	})},
+	{"exec before the command", replaceAnchor(func(a string) string {
+		return indentOf(a) + "exec true\n" + a
+	})},
 	{"noclobber redirection", replaceAnchor(func(a string) string {
 		return indentOf(a) + ": >| " + flatten(a)
 	})},

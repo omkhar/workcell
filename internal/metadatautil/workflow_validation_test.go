@@ -97,6 +97,7 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
 		{name: "audits the repository and nothing else", old: "run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"", replacement: "run-hosted-controls-audit.sh wrong \"${GITHUB_REPOSITORY}\" || true", want: "recheck hosted controls"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
+		{name: "preverified flag in the position the publisher reads", old: "\"${GITHUB_REF_NAME}\" \\\n            --immutable-releases-preverified-by-hosted-controls \\\n            dist/workcell.tar.gz", replacement: "\"${GITHUB_REF_NAME}\" \\\n            dist/workcell.tar.gz \\\n            --immutable-releases-preverified-by-hosted-controls", want: "explicit preverified publisher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)

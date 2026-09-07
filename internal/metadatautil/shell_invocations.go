@@ -239,7 +239,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			if nested || control > 0 || each.conditional {
 				continue
 			}
-			if args[0] == "exit" || args[0] == "return" {
+			if args[0] == "exit" || args[0] == "return" || replacesShell(args) {
 				// The step ends here; nothing written after it runs.
 				return invocations
 			}
@@ -412,6 +412,20 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 		return words, heredocs, 0, stack
 	}
 	return words, heredocs, quote, stack
+}
+
+// replacesShell reports whether the words are an exec that names a program,
+// which replaces the shell so that nothing written after it runs. An exec
+// carrying only redirections, as in exec 2>&1, changes the shell's own
+// descriptors and the script continues, so it must not stop the scan.
+func replacesShell(args []string) bool {
+	if args[0] != "exec" {
+		return false
+	}
+	return slices.ContainsFunc(args[1:], func(word string) bool {
+		operand := strings.TrimLeft(word, "0123456789")
+		return !strings.HasPrefix(operand, ">") && !strings.HasPrefix(operand, "<")
+	})
 }
 
 // shadowsByAlias reports whether an alias command rebinds name, as in

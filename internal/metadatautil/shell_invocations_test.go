@@ -220,6 +220,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
 		},
 		{
+			name:   "an exec that names a program ends the scan",
+			script: "exec true\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "an exec of redirections alone leaves the script running",
+			script: "exec 2>&1\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
 			name:   "a noclobber redirection keeps its own bar",
 			script: ": >| oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
 			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},

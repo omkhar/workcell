@@ -193,7 +193,7 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/metadatautil/workflows.go",
-		original:     `			!slices.Contains(publish[0], "--immutable-releases-preverified-by-hosted-controls") {`,
+		original:     `			publish[0].Args[1] != "--immutable-releases-preverified-by-hosted-controls" {`,
 		replacement:  `			!strings.Contains(step.Run, "--immutable-releases-preverified-by-hosted-controls") {`,
 		label:        "publication gate whole-word publisher contract",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowPublicationGateRejectsEvasions", "-count=1"),
