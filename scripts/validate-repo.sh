@@ -312,6 +312,8 @@ done
 # Accept only an interpreter whose basename is exactly `bash`. A bare `*bash*`
 # test also matches `#!/usr/bin/env bashful`. Both house forms put `bash` in its
 # own token: `#!/bin/bash -p` and `#!/usr/bin/env -S BASH_ENV= ENV= bash`.
+# `env -S` splits its argument and removes quotes, so `-S "bash" -e` runs Bash.
+# Strip a surrounding quote from each token before the comparison.
 is_bash_shebang() {
   local line="$1"
   local -a tokens=()
@@ -320,10 +322,34 @@ is_bash_shebang() {
   [[ "${line}" == '#!'* ]] || return 1
   IFS=$' \t' read -r -a tokens <<<"${line#'#!'}"
   for token in "${tokens[@]}"; do
+    token="${token//\"/}"
+    token="${token//\'/}"
     [[ "${token##*/}" == "bash" ]] && return 0
   done
   return 1
 }
+
+# Read every first-line shebang from the index rather than from the worktree.
+# A filesystem read trusts the whole path: a symlink at the leaf or at any
+# parent directory redirects it outside the checkout, and no Bash test closes
+# that gap because Bash cannot express fd-relative `openat`. Git resolves a
+# tracked path against the index instead, so no directory component is
+# followed and there is no window between the check and the read. It also
+# removes the end-of-file case, because Git yields the line rather than a
+# `read` status.
+declare -A tracked_shebangs=()
+# shellcheck disable=SC2312 # the non-empty assertion below is the compensating control
+while IFS= read -r -d '' shebang_path &&
+  IFS= read -r -d '' shebang_lineno &&
+  IFS= read -r shebang_line; do
+  [[ "${shebang_lineno}" == "1" ]] || continue
+  tracked_shebangs["${shebang_path}"]="${shebang_line}"
+done < <(git -C "${ROOT_DIR}" grep --cached -z -I -n -E '^#!')
+
+if [[ "${#tracked_shebangs[@]}" -eq 0 ]]; then
+  echo "Tracked shebang inventory is empty; shell lint coverage is unverified" >&2
+  exit 1
+fi
 
 # Bash does not propagate a process-substitution failure, so a `git ls-files`
 # error would leave this check reading an empty inventory and passing. Emit a
@@ -331,9 +357,8 @@ is_bash_shebang() {
 # fails closed instead of reporting complete coverage over a partial tree.
 #
 # `ls-files -s` reports the index mode, so the file type comes from Git rather
-# than from a filesystem probe that a symlink could redirect. Only a regular
-# blob can be a script, so a symlink (120000) and a submodule (160000) are
-# skipped before any path is opened.
+# than from a filesystem probe. Only a regular blob can be a script, so a
+# symlink (120000) and a submodule (160000) are skipped.
 unlinted_shell_files=()
 lint_inventory_completed=0
 # shellcheck disable=SC2312 # the NUL sentinel and lint_inventory_completed assertion below are the compensating control
@@ -346,20 +371,7 @@ while IFS= read -r -d '' index_entry; do
   tracked_path="${index_entry#*$'\t'}"
   [[ "${tracked_mode}" == "100644" || "${tracked_mode}" == "100755" ]] || continue
   [[ -n "${linted_shell_files[${tracked_path}]:-}" ]] && continue
-  # The index says this path is a regular file. A symlink in the worktree
-  # therefore means a replaced path, and reading it would leave the checkout.
-  # Refuse the run rather than read across the boundary or skip the file.
-  if [[ -L "${ROOT_DIR}/${tracked_path}" ]]; then
-    echo "Tracked regular file is a symlink in the worktree: ${tracked_path}" >&2
-    exit 1
-  fi
-  [[ -f "${ROOT_DIR}/${tracked_path}" ]] || continue
-  # `read` reports failure at end of file, but it still populates the variable
-  # when the final line carries no newline. Test the content, not the status,
-  # so a one-line script without a trailing newline is not skipped.
-  shebang=""
-  IFS= read -r shebang <"${ROOT_DIR}/${tracked_path}" || true
-  is_bash_shebang "${shebang}" || continue
+  is_bash_shebang "${tracked_shebangs[${tracked_path}]:-}" || continue
   unlinted_shell_files+=("${tracked_path}")
 done < <(git -C "${ROOT_DIR}" ls-files -sz && printf '\0')
 
