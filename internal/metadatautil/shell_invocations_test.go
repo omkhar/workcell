@@ -42,12 +42,27 @@ func TestShellInvocations(t *testing.T) {
 		{
 			name:   "a hash inside single quotes is an argument, not a comment",
 			script: "oras cp 'note: # here' one\n",
-			want:   [][]string{{"'note:", "#", "here'", "one"}},
+			want:   [][]string{{"note: # here", "one"}},
 		},
 		{
 			name:   "a hash inside double quotes is an argument, not a comment",
 			script: "oras cp \"note: # here\" one\n",
-			want:   [][]string{{"\"note:", "#", "here\"", "one"}},
+			want:   [][]string{{"note: # here", "one"}},
+		},
+		{
+			name:   "a hash inside a word is an argument, not a comment",
+			script: "oras cp a#b one\n",
+			want:   [][]string{{"a#b", "one"}},
+		},
+		{
+			name:   "a quoted argument stays one word, so an option inside it is text",
+			script: "oras cp 'ignored --to-oci-layout dist/release-image:amd64 ignored' || true\n",
+			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored", "||", "true"}},
+		},
+		{
+			name:   "an escaped quote does not open a span that hides a delimiter",
+			script: ": \\' <<PLAN ''\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
 		},
 		{
 			name:   "a heredoc body with a quoted delimiter runs nothing",

@@ -4,20 +4,9 @@
 package metadatautil
 
 import (
-	"cmp"
-	"regexp"
+	"slices"
 	"strings"
 )
-
-// heredocPattern consumes quoted words before it reads a redirection, so that
-// a << inside an argument such as "text <<B" cannot open a delimiter. Only the
-// third alternative captures, and it captures the delimiter it opens.
-var heredocPattern = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
-
-// inlineComment consumes quoted words before it reads a comment, so that a #
-// inside an argument such as 'note: # here' cannot truncate the line. As in
-// bash, only an unquoted # at the start of a word opens a comment.
-var inlineComment = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|(?:^|\s)#.*$`)
 
 // ShellInvocations returns the arguments of each invocation of command in
 // script. It joins line continuations and drops comments, inline ones
@@ -25,6 +14,7 @@ var inlineComment = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|(?:^|\s)#.*$`)
 // one call cannot satisfy a two-call rule. A validator that must anchor on the
 // commands a script really runs uses this in place of a substring search.
 func ShellInvocations(script, command string) [][]string {
+	prefix := strings.Fields(command)
 	var invocations [][]string
 	var current strings.Builder
 	var heredocs []string
@@ -36,39 +26,95 @@ func ShellInvocations(script, command string) [][]string {
 			}
 			continue
 		}
-		if current.Len() > 0 {
-			current.WriteString(" ")
-		}
 		current.WriteString(strings.TrimSpace(strings.TrimSuffix(trimmed, "\\")))
 		if strings.HasSuffix(trimmed, "\\") {
+			current.WriteString(" ")
 			continue
 		}
-		logical := strings.TrimSpace(stripComment(current.String()))
+		words, opened := shellWords(current.String())
 		current.Reset()
-		// Here-strings are blanked first so that a redirection such as
-		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
-		// Every delimiter on the line opens a body, and bash reads them in the
-		// order they appear, so they are queued rather than overwritten. A match
-		// with no capture is a consumed quoted word, not a redirection.
-		for _, match := range heredocPattern.FindAllStringSubmatch(strings.ReplaceAll(logical, "<<<", " "), -1) {
-			if delimiter := cmp.Or(match[1], match[2], match[3]); delimiter != "" {
-				heredocs = append(heredocs, delimiter)
-			}
-		}
-		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
-			invocations = append(invocations, strings.Fields(rest))
+		heredocs = append(heredocs, opened...)
+		if len(words) >= len(prefix) && slices.Equal(words[:len(prefix)], prefix) {
+			invocations = append(invocations, words[len(prefix):])
 		}
 	}
 	return invocations
 }
 
-// stripComment removes an unquoted comment from one logical line. The pattern
-// keeps the quoted words it consumed and deletes only the comment.
-func stripComment(logical string) string {
-	return inlineComment.ReplaceAllStringFunc(logical, func(match string) string {
-		if strings.HasPrefix(match, "'") || strings.HasPrefix(match, `"`) {
-			return match
+// shellWords splits one logical line the way bash reads it. Quotes and
+// backslash escapes are removed, so a quoted argument stays one word and a
+// separator inside it is text rather than syntax; an unquoted # that starts a
+// word ends the line; and every heredoc the line opens returns as a delimiter,
+// in the order bash reads the bodies.
+//
+// One pass keeps the three answers consistent. A pattern per answer cannot:
+// each has to rediscover the quoting, and the one that gets it wrong reads
+// syntax where the shell reads text.
+func shellWords(line string) (words, heredocs []string) {
+	var word strings.Builder
+	inWord, quote, pending := false, byte(0), false
+	flush := func() {
+		if !inWord {
+			return
 		}
-		return ""
-	})
+		if pending {
+			heredocs = append(heredocs, word.String())
+			pending = false
+		} else {
+			words = append(words, word.String())
+		}
+		word.Reset()
+		inWord = false
+	}
+	for index := 0; index < len(line); index++ {
+		character := line[index]
+		switch {
+		case quote == '\'':
+			// A backslash is literal inside single quotes.
+			if character == '\'' {
+				quote = 0
+			} else {
+				word.WriteByte(character)
+			}
+		case quote == '"':
+			if character == '\\' && index+1 < len(line) {
+				index++
+				word.WriteByte(line[index])
+			} else if character == '"' {
+				quote = 0
+			} else {
+				word.WriteByte(character)
+			}
+		case character == '\\' && index+1 < len(line):
+			// An escaped quote is a literal character, not the start of a
+			// quoted span, so it cannot hide the syntax that follows it.
+			index++
+			word.WriteByte(line[index])
+			inWord = true
+		case character == '\'' || character == '"':
+			quote = character
+			inWord = true
+		case character == ' ' || character == '\t':
+			flush()
+		case character == '#' && !inWord:
+			return words, heredocs
+		case character == '<' && index+1 < len(line) && line[index+1] == '<':
+			flush()
+			index++
+			if index+1 < len(line) && line[index+1] == '<' {
+				// A here-string takes its text from the line, not from a body.
+				index++
+				break
+			}
+			if index+1 < len(line) && line[index+1] == '-' {
+				index++
+			}
+			pending = true
+		default:
+			word.WriteByte(character)
+			inWord = true
+		}
+	}
+	flush()
+	return words, heredocs
 }
