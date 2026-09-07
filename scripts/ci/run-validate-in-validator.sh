@@ -64,6 +64,7 @@ if ! awk -F: -v uid="${validator_uid}" '$3 == uid { found = 1 } END { exit !foun
     "${validator_uid}" "${validator_gid}" "${validator_home}" >>"${validator_passwd}"
 fi
 chmod 0444 "${validator_passwd}"
+validator_passwd_mount="$(workcell_ci_workspace_mount_spec "${validator_passwd}" true /etc/passwd)"
 
 require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
 validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" false)"
@@ -81,7 +82,7 @@ workcell_ci_docker run --rm \
   -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
   -e TMPDIR="${validator_tmp}" \
   --mount "${validator_workspace_mount}" \
-  --mount "type=bind,source=${validator_passwd},target=/etc/passwd,readonly" \
+  --mount "${validator_passwd_mount}" \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
   -lc '

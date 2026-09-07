@@ -105,7 +105,8 @@ Confirm your own key with a disposable commit. The existing `HEAD` proves
 nothing here, because a maintainer signed it with a different key:
 
 ```bash
-WORKCELL_SKIP_COMMIT_NOTATION=1 git commit --allow-empty -S -m 'signing check'
+WORKCELL_SKIP_COMMIT_NOTATION=1 WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 \
+  git commit --allow-empty -S -m 'signing check'
 git log -1 --format='%G?'   # must print G
 git reset --soft HEAD~1
 ```

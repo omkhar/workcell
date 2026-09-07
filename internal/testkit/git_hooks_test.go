@@ -666,6 +666,24 @@ func TestPrePushHookForwardsTransportAuthentication(t *testing.T) {
 	}
 }
 
+func TestPrePushHookRejectsUnsignedBaseOutsidePushedNamespace(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("base.txt", "base\n", "^F Add unsigned base (tests pass; fixture seed)")
+	fixture.tryGit([]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"}, "push", "--quiet", "origin", "main")
+	fixture.commitFile("child.txt", "child\n", "^F Add signed child (tests pass; fixture seed)", "-S")
+	// The tenant namespace holds nothing, so the unsigned base is not
+	// published there. A query against the default namespace would excuse it.
+	env := []string{"GIT_NAMESPACE=tenant"}
+	output, err := fixture.tryGit(env, "push", "--quiet", "origin", "main:refs/heads/published")
+	if err == nil {
+		t.Fatalf("another namespace excused an unsigned commit:\n%s", output)
+	}
+	if !strings.Contains(output, "unable to verify commit") {
+		t.Fatalf("rejection lacks signature guidance:\n%s", output)
+	}
+}
+
 func TestPrePushHookHonorsGlobalConfigSelector(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	fixture.configureSSHSigning()
