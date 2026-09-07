@@ -205,7 +205,10 @@ func validateReleaseAssembly(document workflowDocument) error {
 	return nil
 }
 
-var heredocPattern = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
+// heredocPattern consumes quoted words before it reads a redirection, so that
+// a << inside an argument such as "text <<B" cannot open a delimiter. Only the
+// third alternative captures, and it captures the delimiter it opens.
+var heredocPattern = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"|<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
 
 var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
 
@@ -236,9 +239,12 @@ func commandArgs(script, command string) [][]string {
 		// Here-strings are blanked first so that a redirection such as
 		// <<<"${value}" is not read as a heredoc opening the delimiter ${value}.
 		// Every delimiter on the line opens a body, and bash reads them in the
-		// order they appear, so they are queued rather than overwritten.
+		// order they appear, so they are queued rather than overwritten. A match
+		// with no capture is a consumed quoted word, not a redirection.
 		for _, match := range heredocPattern.FindAllStringSubmatch(strings.ReplaceAll(logical, "<<<", " "), -1) {
-			heredocs = append(heredocs, cmp.Or(match[1], match[2], match[3]))
+			if delimiter := cmp.Or(match[1], match[2], match[3]); delimiter != "" {
+				heredocs = append(heredocs, delimiter)
+			}
 		}
 		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
 			invocations = append(invocations, strings.Fields(rest))
