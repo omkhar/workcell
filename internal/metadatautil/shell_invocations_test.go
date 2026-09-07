@@ -55,6 +55,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"a#b", "one"}},
 		},
 		{
+			name:   "a backslash before an ordinary character stays literal in double quotes",
+			script: "\"or\\as\" cp one\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a command substitution inside double quotes opens its heredoc",
+			script: "printf '%s' \"$(cat <<PLAN\noras cp one\nPLAN\n)\"\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "a quoted argument stays one word, so an option inside it is text",
 			script: "oras cp 'ignored --to-oci-layout dist/release-image:amd64 ignored' || true\n",
 			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored", "||", "true"}},
