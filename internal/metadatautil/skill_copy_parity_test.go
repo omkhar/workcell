@@ -49,6 +49,13 @@ func skillTreeFiles(root string) (map[string][]byte, []string, error) {
 	return files, irregular, err
 }
 
+// requiredSkillCopies are the copies that must be present under
+// `.claude/skills`.  Without this list an empty or truncated copy tree would
+// satisfy every other check by having nothing left to compare, so deleting a
+// copy would pass while a harness that only reads `.claude` silently loses the
+// skill.
+var requiredSkillCopies = []string{filepath.Join("commit", "SKILL.md")}
+
 // irregularAncestors reports the first component of root/components... that is
 // not a real directory, walking one component at a time so each os.Lstat runs
 // with every ancestor above it already proven to be a real directory.
@@ -108,6 +115,11 @@ func skillCopyMismatches(root string) ([]string, error) {
 	for tree, irregular := range map[string][]string{claudeRoot: irregularCopies, agentsRoot: irregularSources} {
 		for _, entry := range irregular {
 			mismatches = append(mismatches, filepath.Join(tree, entry)+" is not a regular file")
+		}
+	}
+	for _, required := range requiredSkillCopies {
+		if _, exists := copies[required]; !exists {
+			mismatches = append(mismatches, filepath.Join(claudeRoot, required)+" is missing or is not a regular file")
 		}
 	}
 	for relative, copied := range copies {
@@ -176,6 +188,13 @@ func TestSkillCopyMismatchesDetectsDrift(t *testing.T) {
 			}
 			if err := os.Symlink(elsewhere, twinParent); err != nil {
 				t.Fatalf("symlink twin parent: %v", err)
+			}
+		},
+		"deleted copy": func(t *testing.T, fixture string) {
+			// An empty copy tree leaves nothing to compare, so without the
+			// required-copy list every other check would pass vacuously.
+			if err := os.Remove(filepath.Join(fixture, copyRelPath)); err != nil {
+				t.Fatalf("remove copy: %v", err)
 			}
 		},
 		"symlinked .claude ancestor": func(t *testing.T, fixture string) {
