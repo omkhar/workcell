@@ -586,12 +586,25 @@ fn token_is_loader_environment_name(token: &str) -> bool {
     )
 }
 
+/// The short `-uNAME` form, which carries its variable name in the same token.
+/// The long forms are matched by prefix in the scanner, since env accepts
+/// abbreviations of them.
 fn token_is_loader_environment_unset_option(token: &str) -> bool {
-    let name = token
-        .strip_prefix("--unset=")
-        .or_else(|| token.strip_prefix("-u").filter(|suffix| !suffix.is_empty()))
-        .map(|name| name.strip_prefix('=').unwrap_or(name));
-    name.is_some_and(token_is_loader_environment_name)
+    token
+        .strip_prefix("-u")
+        .filter(|suffix| !suffix.is_empty())
+        .map(|name| name.strip_prefix('=').unwrap_or(name))
+        .is_some_and(token_is_loader_environment_name)
+}
+
+/// env(1) accepts any unambiguous abbreviation of a long option, so a long
+/// option is matched by prefix rather than by its full name.  An abbreviation
+/// that is ambiguous makes env exit without running anything, so treating
+/// every prefix as the option it names never lets a target through.
+fn env_long_option_name(token: &str) -> Option<&str> {
+    let name = token.strip_prefix("--")?;
+    let name = name.split('=').next().unwrap_or(name);
+    (!name.is_empty()).then_some(name)
 }
 
 /// env(1) short options cluster into one token, so a bare `-S` match is not
@@ -630,14 +643,25 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
     while let Some(token) = next_shebang_token(&mut scan) {
         // env can rewrite the loader environment before the target runs, so the
         // options that add, drop or replace it end the scan with a refusal.
-        if token == "--ignore-environment"
-            || token == "-"
-            || token.starts_with("--split-string")
-            || token_clusters_loader_environment_control(&token)
-        {
+        if let Some(name) = env_long_option_name(&token) {
+            if "split-string".starts_with(name) || "ignore-environment".starts_with(name) {
+                return true;
+            }
+            if "unset".starts_with(name) {
+                let unset = token
+                    .split_once('=')
+                    .map(|(_, value)| value.to_owned())
+                    .or_else(|| next_shebang_token(&mut scan));
+                if unset.is_some_and(|name| token_is_loader_environment_name(&name)) {
+                    return true;
+                }
+                continue;
+            }
+        }
+        if token == "-" || token_clusters_loader_environment_control(&token) {
             return true;
         }
-        if token == "-u" || token == "--unset" {
+        if token == "-u" {
             if next_shebang_token(&mut scan)
                 .is_some_and(|name| token_is_loader_environment_name(&name))
             {
@@ -1432,15 +1456,29 @@ fn loader_args_target_mutable_native_exec(args: &[String]) -> bool {
                     return true;
                 }
             }
-            "--argv0" => {
-                index += 1;
+            // Options that consume a value which is not a library search list.
+            // Missing one here would read its value as the exec target.
+            "--argv0"
+            | "--inhibit-rpath"
+            | "--glibc-hwcaps-mask"
+            | "--glibc-hwcaps-prepend"
+            | "--hwcap-mask" => {
+                if inline_value.is_none() {
+                    index += 1;
+                }
             }
+            // Options that consume no value.
+            "--list" | "--list-tunables" | "--list-diagnostics" | "--verify"
+            | "--inhibit-cache" | "--help" | "--version" => {}
             "--" => {
                 return args
                     .get(index + 1)
                     .is_some_and(|target| loader_arg_targets_mutable_native_exec(target));
             }
-            option if option.starts_with('-') => {}
+            // An option this parser does not know may or may not consume the
+            // next argument, so the exec target cannot be located. Refuse
+            // rather than guess and skip past it.
+            option if option.starts_with('-') => return true,
             target => {
                 return loader_arg_targets_mutable_native_exec(target);
             }
@@ -1985,6 +2023,7 @@ unsafe extern "C" fn guarded_execveat(
         mutable_native_target,
         mutable_shebang_protected_target,
         native_launcher_target,
+        native_loader_env_blocked,
     ) = if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
         let mut protected_target = classify_protected_runtime_fd(dirfd);
         if protected_target == ProtectedRuntime::None {
@@ -1996,11 +2035,19 @@ unsafe extern "C" fn guarded_execveat(
                 || loader_fd_targets_mutable_native_exec(dirfd, &args),
             file_descriptor_is_mutable_shebang_to_protected_runtime(dirfd, &env_entries),
             fd_matches_workcell_native_launcher(dirfd),
+            should_block_loader_env_for_fd(dirfd, &env_entries),
         )
     } else {
         let mut protected_target = ProtectedRuntime::None;
         let mut mutable_native_target = false;
         let mut mutable_shebang_target = false;
+        // A relative pathname resolves against dirfd, not the working
+        // directory, so loader sensitivity is read from the descriptor the
+        // kernel will execute. When that descriptor cannot be opened the
+        // target stays unclassified, so refuse it whenever the environment
+        // carries a loader override at all.
+        let mut native_loader_env_blocked = current_mode_blocks_mutable_native_exec()
+            && env_has_unsafe_loader_override(&env_entries);
         let mut native_launcher_target = false;
 
         if let Ok(c_path) = CString::new(pathname_string.as_bytes()) {
@@ -2037,6 +2084,8 @@ unsafe extern "C" fn guarded_execveat(
                                 &env_entries,
                             );
                     }
+                    native_loader_env_blocked =
+                        should_block_loader_env_for_fd(candidate_fd, &env_entries);
                     libc::close(candidate_fd);
                 }
             }
@@ -2054,6 +2103,7 @@ unsafe extern "C" fn guarded_execveat(
             mutable_native_target,
             mutable_shebang_target,
             native_launcher_target,
+            native_loader_env_blocked,
         )
     };
 
@@ -2072,12 +2122,6 @@ unsafe extern "C" fn guarded_execveat(
         report_workcell_launcher_loader_env_block();
         return -1;
     }
-    let native_loader_env_blocked =
-        if (flags & AT_EMPTY_PATH_FLAG) != 0 && pathname_string.is_empty() {
-            should_block_loader_env_for_fd(dirfd, &env_entries)
-        } else {
-            should_block_loader_env_for_path(&effective_path, &env_entries)
-        };
     if native_loader_env_blocked {
         report_native_loader_env_block();
         return -1;
@@ -3054,14 +3098,26 @@ mod tests {
         assert!(token_is_loader_environment_name("LD_TRACE_LOADED_OBJECTS"));
         assert!(!token_is_loader_environment_name("PATH"));
 
-        assert!(token_is_loader_environment_unset_option(
-            "--unset=LD_PRELOAD"
-        ));
         assert!(token_is_loader_environment_unset_option("-uLD_PRELOAD"));
         assert!(token_is_loader_environment_unset_option("-u=LD_AUDIT"));
-        assert!(!token_is_loader_environment_unset_option("--unset=PATH"));
+        assert!(!token_is_loader_environment_unset_option("-uPATH"));
         // A bare -u carries its name in the next token, handled by the scanner.
         assert!(!token_is_loader_environment_unset_option("-u"));
+        // The long forms are matched by prefix in the scanner instead.
+        assert!(!token_is_loader_environment_unset_option(
+            "--unset=LD_PRELOAD"
+        ));
+
+        // env accepts any unambiguous abbreviation of a long option.
+        assert_eq!(
+            env_long_option_name("--split-string=X"),
+            Some("split-string")
+        );
+        assert_eq!(env_long_option_name("--spl"), Some("spl"));
+        assert_eq!(env_long_option_name("--unset=LD_PRELOAD"), Some("unset"));
+        assert_eq!(env_long_option_name("--"), None);
+        assert_eq!(env_long_option_name("-u"), None);
+        assert_eq!(env_long_option_name("PATH=/bin"), None);
 
         // Short options cluster, so -S and -i must be found anywhere in the
         // cluster, not only at its head.
@@ -3088,6 +3144,12 @@ mod tests {
             " -S LD_PRELOAD=/tmp/x.so /bin/sh",
             " -iS LD_PRELOAD=/tmp/x.so /bin/sh",
             " --split-string=LD_AUDIT=/tmp/a.so /bin/sh",
+            // env accepts unambiguous long-option abbreviations.
+            " --split=-u LD_PRELOAD /bin/sh",
+            " --s=LD_PRELOAD=/tmp/x.so /bin/sh",
+            " --ignore-env /bin/sh",
+            " --un=LD_PRELOAD /bin/sh",
+            " --unset LD_AUDIT /bin/sh",
             " -u LD_PRELOAD /bin/sh",
             " --unset=LD_LIBRARY_PATH /bin/sh",
             " -uLD_PRELOAD /bin/sh",
@@ -3134,6 +3196,13 @@ mod tests {
                 "/bin/true".into(),
             ],
             vec![loader.clone(), "--audit=/usr/lib:".to_string()],
+            // An option this parser does not know may consume the next
+            // argument, so the exec target cannot be located.
+            vec![
+                loader.clone(),
+                "--not-a-real-option".to_string(),
+                "/bin/true".into(),
+            ],
         ] {
             assert!(
                 loader_args_target_mutable_native_exec(&arguments),
@@ -3155,6 +3224,31 @@ mod tests {
                 "--argv0".to_string(),
                 "sh".to_string(),
                 "/bin/true".into(),
+            ],
+            vec![
+                loader.clone(),
+                "--argv0=sh".to_string(),
+                "/bin/true".to_string(),
+            ],
+            // The other value-taking loader options must not have their value
+            // read as the exec target.
+            vec![
+                loader.clone(),
+                "--inhibit-rpath".to_string(),
+                "/usr/lib".to_string(),
+                "/bin/true".into(),
+            ],
+            vec![
+                loader.clone(),
+                "--glibc-hwcaps-mask".to_string(),
+                "x86-64-v3".to_string(),
+                "/bin/true".into(),
+            ],
+            // A valueless option leaves the next argument as the target.
+            vec![
+                loader.clone(),
+                "--inhibit-cache".to_string(),
+                "/bin/true".to_string(),
             ],
             vec![loader.clone(), "--".to_string(), "/bin/true".to_string()],
             // Arguments after the target belong to the target, not the loader.
