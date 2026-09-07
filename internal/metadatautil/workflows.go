@@ -78,6 +78,14 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 // gate requires the independent verification job to execute.
 const verifyReleaseOutputsScript = "./scripts/verify-release-outputs.sh"
 
+// auditHostedControlsScript and publishGitHubReleaseScript are the two commands
+// the final publication step must run, in that order, around the credential
+// unset that separates them.
+const (
+	auditHostedControlsScript  = "./scripts/run-hosted-controls-audit.sh"
+	publishGitHubReleaseScript = "./scripts/publish-github-release.sh"
+)
+
 // ValidateReleaseWorkflowPublicationGate keeps the privileged hosted-controls
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
@@ -106,22 +114,12 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		verifyJob.Permissions["packages"] != "read" {
 		return errors.New("release output verification job must grant only read permissions for artifacts, attestations, contents, and packages")
 	}
-	verificationFound := false
-	for _, step := range verifyJob.Steps {
-		// Match the script only as the start of a statement, so an inert
-		// mention (a comment, or an argument to echo) cannot satisfy the gate.
-		for _, line := range strings.Split(step.Run, "\n") {
-			statement := strings.TrimLeft(line, " \t")
-			if statement == verifyReleaseOutputsScript ||
-				strings.HasPrefix(statement, verifyReleaseOutputsScript+" ") {
-				verificationFound = true
-				break
-			}
-		}
-		if verificationFound {
-			break
-		}
-	}
+	// Read the invocation the shell really runs. A statement-start scan still
+	// accepts the script inside a heredoc body, an unrun branch or a function
+	// body, because each of those keeps the line that starts with it.
+	verificationFound := slices.ContainsFunc(verifyJob.Steps, func(step workflowStep) bool {
+		return len(ShellInvocations(step.Run, verifyReleaseOutputsScript)) > 0
+	})
 	if !verificationFound {
 		return errors.New("release output verification job must run verify-release-outputs.sh")
 	}
@@ -151,11 +149,24 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 			step.Env["GITHUB_TOKEN"] != "${{ github.token }}" {
 			return errors.New("final GitHub release publication step must receive the required hosted-controls token and separate default mutation token")
 		}
-		auditIndex := strings.Index(step.Run, `./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`)
+		// Each of the three must be an invocation the shell runs, not text that
+		// names it: a heredoc body, an unrun branch or a longer option leaves
+		// the text in place while the credential stays live. The argument
+		// checks compare whole words, so a longer name is a different command.
+		audit := ShellInvocations(step.Run, auditHostedControlsScript)
+		unset := ShellInvocations(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
+		publish := ShellInvocations(step.Run, publishGitHubReleaseScript)
+		if len(audit) == 0 || len(unset) == 0 || len(publish) == 0 ||
+			!slices.Contains(audit[0], "${GITHUB_REPOSITORY}") ||
+			!slices.Contains(publish[0], "${GITHUB_REF_NAME}") ||
+			!slices.Contains(publish[0], "--immutable-releases-preverified-by-hosted-controls") {
+			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
+		}
+		// All three run, so their written order is the order bash reaches them.
+		auditIndex := strings.Index(step.Run, auditHostedControlsScript)
 		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
-		publishIndex := strings.Index(step.Run, `./scripts/publish-github-release.sh "${GITHUB_REF_NAME}"`)
-		if auditIndex < 0 || unsetIndex <= auditIndex || publishIndex <= unsetIndex ||
-			!strings.Contains(step.Run[publishIndex:], "--immutable-releases-preverified-by-hosted-controls") {
+		publishIndex := strings.Index(step.Run, publishGitHubReleaseScript)
+		if unsetIndex <= auditIndex || publishIndex <= unsetIndex {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
 		return nil

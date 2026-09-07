@@ -191,6 +191,13 @@ var goHelperMutations = []mutationCase{
 		label:        "validator evasion corpus registration parity",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestCheckValidatorAnchoring", "-count=1"),
 	},
+	{
+		relativePath: "internal/metadatautil/workflows.go",
+		original:     `			!slices.Contains(publish[0], "--immutable-releases-preverified-by-hosted-controls") {`,
+		replacement:  `			!strings.Contains(step.Run, "--immutable-releases-preverified-by-hosted-controls") {`,
+		label:        "publication gate whole-word publisher contract",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowPublicationGateRejectsEvasions", "-count=1"),
+	},
 }
 
 var rustMutations = []mutationCase{

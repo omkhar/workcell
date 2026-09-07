@@ -143,6 +143,36 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions(t *testing.T) {
 	})
 }
 
+// TestValidateReleaseWorkflowPublicationGateRejectsEvasions runs the shared
+// evasion corpus against each command the publication gate must find running.
+// The gate guards the credential that publishes a release, so a comment, a
+// heredoc body, an unrun branch or a longer command name must never satisfy it.
+func TestValidateReleaseWorkflowPublicationGateRejectsEvasions(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const recheck = "recheck hosted controls"
+	t.Run("release output verification", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/verify-release-outputs.sh \"${verify_args[@]}\"",
+			"must run verify-release-outputs.sh", metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+	t.Run("hosted controls audit", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"",
+			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+	t.Run("credential unset", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          unset WORKCELL_HOSTED_CONTROLS_TOKEN",
+			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+	t.Run("preverified publisher", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/publish-github-release.sh \"${GITHUB_REF_NAME}\" \\\n"+
+				"            --immutable-releases-preverified-by-hosted-controls",
+			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
+	})
+}
+
 func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T) {
 	workflow := string(readReleaseWorkflow(t))
 	decoys := []struct {
