@@ -141,6 +141,7 @@ const MAX_EXEC_ELEMENTS: usize = 65_536;
 const MAX_EXEC_PATH_SEGMENT_BYTES: usize = MAX_EXEC_STRING_BYTES;
 const MAX_EXEC_PATH_BYTES: usize = MAX_EXEC_AGGREGATE_BYTES;
 const MAX_EXEC_PATH_SEGMENTS: usize = MAX_EXEC_ELEMENTS;
+const DEFAULT_SEARCH_PATH: &str = "/bin:/usr/bin";
 const AT_EMPTY_PATH_FLAG: c_int = 0x1000;
 
 #[cfg(target_os = "linux")]
@@ -376,6 +377,30 @@ fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
     collect_cstring_array(unsafe { environ.cast() })
 }
 
+// libc consults only PATH from the caller's environment when it searches, so
+// bound that one entry instead of copying the whole environment: an unrelated
+// oversized variable must not turn a searched exec into E2BIG.
+fn current_process_path_value() -> Result<Option<String>, ExecInputTooLarge> {
+    const PREFIX: &str = "PATH=";
+    let mut index = 0usize;
+    loop {
+        if index == MAX_EXEC_ELEMENTS {
+            return Err(ExecInputTooLarge);
+        }
+        // SAFETY: environ is a libc-initialized, NUL-sentinel-terminated char**, read in the
+        // calling thread with no concurrent setenv/putenv; index walks up to the sentinel below.
+        let current = unsafe { *environ.cast::<*const c_char>().add(index) };
+        if current.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: current is a valid NUL-terminated C string; strncmp reads at most PREFIX bytes of it.
+        if unsafe { libc::strncmp(current, c"PATH=".as_ptr(), PREFIX.len()) } == 0 {
+            return bounded_c_string(current).map(|entry| Some(entry[PREFIX.len()..].to_owned()));
+        }
+        index += 1;
+    }
+}
+
 fn path_from_env_entries(env_entries: &[String]) -> Option<String> {
     env_entries
         .iter()
@@ -383,7 +408,7 @@ fn path_from_env_entries(env_entries: &[String]) -> Option<String> {
         .or_else(|| env::var("PATH").ok())
         // POSIX libc falls back to a system default search path when PATH is
         // absent, so the guard must search the same places libc would.
-        .or_else(|| Some("/bin:/usr/bin".to_owned()))
+        .or_else(|| Some(DEFAULT_SEARCH_PATH.to_owned()))
 }
 
 fn validate_path_value(path_value: &str) -> Result<(), ExecInputTooLarge> {
@@ -1273,13 +1298,17 @@ fn should_block_mutable_native_exec(path: &str, args: &[String]) -> bool {
 // execvp, execvpe and posix_spawnp all search PATH from the caller's own
 // environment rather than the envp handed to the child, so the guard reads the
 // same source libc will. A name containing a slash is not searched at all, so
-// the caller environment is only parsed when a search actually happens.
+// nothing is read from the caller environment unless a search happens.
 fn resolve_exec_search_target(file: &str) -> Result<Option<String>, ExecSearchError> {
     if file.contains('/') {
         return Ok(Some(file.to_owned()));
     }
-    let env_entries = current_process_env_entries().map_err(|_| ExecSearchError::InputTooLarge)?;
-    resolve_command_via_path_value(file, path_from_env_entries(&env_entries).as_deref())
+    let path_value = current_process_path_value()
+        .map_err(|_| ExecSearchError::InputTooLarge)?
+        // POSIX libc falls back to a system default search path when PATH is
+        // absent, so the guard must search the same places libc would.
+        .unwrap_or_else(|| DEFAULT_SEARCH_PATH.to_owned());
+    resolve_command_via_path_value(file, Some(&path_value))
 }
 
 fn stat_matches_protected_git(candidate: &StatSignature) -> bool {
