@@ -36,8 +36,8 @@ func TestReleaseWorkflowVerifiesOutputsBeforePublication(t *testing.T) {
 	if !ok {
 		t.Fatal("release workflow is missing verify-release-outputs")
 	}
-	if !workflowNeedsJob(verify.Needs, "tag-policy") || !workflowNeedsJob(verify.Needs, "release") {
-		t.Fatal("verify-release-outputs must depend on tag-policy and release")
+	if !workflowNeedsJob(verify.Needs, "tag-policy") || !workflowNeedsJob(verify.Needs, "sign-release") {
+		t.Fatal("verify-release-outputs must depend on tag-policy and sign-release")
 	}
 	if len(verify.Permissions) != 4 ||
 		verify.Permissions["actions"] != "read" ||
@@ -67,7 +67,7 @@ func TestReleaseWorkflowVerifiesOutputsBeforePublication(t *testing.T) {
 	if strings.Count(workflow, `--workflow-digest "${GITHUB_WORKFLOW_SHA}"`) != 2 {
 		t.Fatal("both release-output checks must bind proofs to the trusted workflow commit")
 	}
-	if strings.Count(workflow, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6") != 4 {
+	if strings.Count(workflow, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6") != 5 {
 		t.Fatalf("Cosign installer count = %d, want signing, independent verification, and pre-publication verification coverage", strings.Count(workflow, "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"))
 	}
 }

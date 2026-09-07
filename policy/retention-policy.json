@@ -14,6 +14,10 @@
     },
     "release.yml": {
       "workcell-release-preflight": 90,
+      "workcell-release-preflight-subjects": 90,
+      "workcell-release-image-amd64": 7,
+      "workcell-release-image-arm64": 7,
+      "workcell-release-unsigned": 7,
       "workcell-release-install-candidate": 90,
       "workcell-release-artifacts": 7
     },
