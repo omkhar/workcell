@@ -68,13 +68,21 @@ var shebangQuoteStripper = strings.NewReplacer("'", "", `"`, "", `\`, "")
 // isBashCandidate reports whether an interpreter line runs Bash and so must
 // hold the startup-file property.
 //
-// The quotes are stripped before the interpreter is read because env -S
-// processes them first: a line spelled with a quoted interpreter still runs
-// Bash, and a filter over the raw text would skip that file unjudged rather
-// than reject it.
+// A filter that misreads a line makes the walk skip a file rather than reject
+// it, which no later check can recover. It is therefore deliberately
+// over-inclusive: quotes are removed first because env -S removes them, and a
+// line carrying a substitution is treated as a candidate because its
+// interpreter is only decided at run time. Anything wrongly included is
+// rejected by the reviewed-form set, which is the safe direction.
 func isBashCandidate(shebang string) bool {
-	return strings.HasPrefix(shebang, "#!") &&
-		strings.Contains(shebangQuoteStripper.Replace(shebang), "bash")
+	if !strings.HasPrefix(shebang, "#!") {
+		return false
+	}
+	stripped := shebangQuoteStripper.Replace(shebang)
+	// A dollar sign means env -S will substitute from the environment, so the
+	// interpreter is not decidable from the source text. Such a line is judged
+	// rather than skipped, and the reviewed-form set then rejects it.
+	return strings.Contains(stripped, "bash") || strings.Contains(stripped, "$")
 }
 
 // hardenedShebangs is the exact set of interpreter lines a tracked Bash script
@@ -188,6 +196,7 @@ func TestIsBashCandidateSeesThroughQuoting(t *testing.T) {
 		{"plain", "#!/bin/bash -p", true},
 		{"env prefix", "#!/usr/bin/env -S BASH_ENV= ENV= bash", true},
 		{"quoted interpreter", "#!/usr/bin/env -S ba'sh'", true},
+		{"dynamic interpreter", "#!/usr/bin/env -S ${SHELL}", true},
 		{"double quoted interpreter", `#!/usr/bin/env -S ba"sh"`, true},
 		{"other interpreter", "#!/bin/sh", false},
 		{"not a shebang", "package p", false},
@@ -200,8 +209,10 @@ func TestIsBashCandidateSeesThroughQuoting(t *testing.T) {
 			}
 		})
 	}
-	if shebangNeutralizesStartupFiles("#!/usr/bin/env -S ba'sh'") {
-		t.Fatal("a quoted interpreter was accepted as a hardened form")
+	for _, hidden := range []string{"#!/usr/bin/env -S ba'sh'", "#!/usr/bin/env -S ${SHELL}"} {
+		if shebangNeutralizesStartupFiles(hidden) {
+			t.Fatalf("%q was accepted as a hardened form", hidden)
+		}
 	}
 }
 

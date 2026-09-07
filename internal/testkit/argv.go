@@ -68,6 +68,13 @@ func CountFlagOccurrences(argv []string, flag, short string) int {
 // it lacks another required option or because the runner cannot start, makes
 // every augmented invocation fail for that unrelated reason, and a last-wins
 // parser would then look as though it rejected every hostile form.
+//
+// The caller owns one precondition that this helper cannot check: hostile must
+// be a value the parser would accept were it not a duplicate. A value that is
+// independently invalid, an unresolvable host or a path that does not exist,
+// makes every augmented invocation fail on its own merits and restores the
+// same vacuous pass one level up. Pass a well-formed value of the same shape
+// as the one in base.
 func laterOverrideProblems(run func([]string) error, base []string, flag, short, hostile string) []string {
 	if err := run(base); err != nil {
 		return []string{fmt.Sprintf("base argv %q was rejected before any override was added, so no rejection below is evidence: %v", base, err)}
