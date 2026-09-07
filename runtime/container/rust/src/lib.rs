@@ -163,6 +163,7 @@ const MUTABLE_NATIVE_EXEC_BLOCK_MESSAGE: &str = "Workcell blocked direct native 
 const WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE: &str =
     "Workcell blocked unsafe dynamic-loader environment for Workcell launcher execution.\n";
 const NATIVE_LOADER_ENV_BLOCK_MESSAGE: &str = "Workcell blocked unsafe dynamic-loader environment for native execution on the strict profile.\n";
+const MISSING_GUARD_ENV_BLOCK_MESSAGE: &str = "Workcell blocked child execution without the approved exec guard preload on the strict profile.\n";
 
 type ExecveFn =
     unsafe extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int;
@@ -394,6 +395,16 @@ fn effective_env_ptr(envp: *const *const c_char) -> *const *const c_char {
 fn current_process_env_entries() -> Result<Vec<String>, ExecInputTooLarge> {
     // SAFETY: environ is libc-initialized; read in the calling thread with no concurrent setenv/putenv.
     collect_cstring_array(unsafe { environ.cast() })
+}
+
+// A NULL envp gives the child an empty environment, so it asks exactly the
+// question the missing-guard classifier answers about an empty environment.
+// The other classifiers read `effective_env_ptr`, which substitutes the
+// caller's own environment for NULL and would therefore see a preload the
+// child never gets; this check has to run on the raw pointer, before that
+// substitution.
+fn should_block_null_explicit_env(envp: *const *const c_char) -> bool {
+    envp.is_null() && should_block_missing_guard_env(&[])
 }
 
 // libc consults only PATH from the caller's environment when it searches, so
@@ -948,6 +959,40 @@ fn should_block_loader_env_for_fd(fd: c_int, env_entries: &[String]) -> bool {
 
 #[cfg(not(target_os = "linux"))]
 fn should_block_loader_env_for_fd(_fd: c_int, _env_entries: &[String]) -> bool {
+    false
+}
+
+// The child environment must carry the guard and nothing else in LD_PRELOAD.
+// The loader honours every entry it is given, so a second one loads an
+// attacker-chosen library alongside the guard: "contains the guard" is not the
+// same question as "is exactly the guard", and only the second one is safe to
+// answer yes to.
+#[cfg(target_os = "linux")]
+fn env_has_approved_guard_preload(env_entries: &[String]) -> bool {
+    let mut preload_entries = 0;
+    for entry in env_entries {
+        let Some(value) = env_entry_value(entry, "LD_PRELOAD") else {
+            continue;
+        };
+        preload_entries += 1;
+        if preload_entries > 1 || value != ALLOWED_LD_PRELOAD {
+            return false;
+        }
+    }
+    preload_entries == 1
+}
+
+// No exemption: an approved launcher would have to be recognised by pathname,
+// and the pathname checked is not the file the kernel later runs. The launcher
+// restores the preload before it execs, so there is nothing left for an
+// exemption to cover.
+#[cfg(target_os = "linux")]
+fn should_block_missing_guard_env(env_entries: &[String]) -> bool {
+    current_mode_blocks_mutable_native_exec() && !env_has_approved_guard_preload(env_entries)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn should_block_missing_guard_env(_env_entries: &[String]) -> bool {
     false
 }
 
@@ -1627,6 +1672,10 @@ fn report_native_loader_env_block() {
     report(NATIVE_LOADER_ENV_BLOCK_MESSAGE);
 }
 
+fn report_missing_guard_env_block() {
+    report(MISSING_GUARD_ENV_BLOCK_MESSAGE);
+}
+
 fn report_workcell_launcher_loader_env_block() {
     report(WORKCELL_LAUNCHER_LOADER_ENV_BLOCK_MESSAGE);
 }
@@ -1824,6 +1873,13 @@ unsafe extern "C" fn guarded_execve(
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execve arguments to the real libc execve resolved via RTLD_NEXT.
     unsafe { execve_fn()(path, argv, envp) }
 }
@@ -1856,6 +1912,13 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
     }
     if let Some(reason) = should_block_reason(&path_string, &args) {
         report_arg_block(reason);
+        return -1;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
         return -1;
     }
 
@@ -1914,6 +1977,13 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
     }
     if let Some(reason) = should_block_reason(&file_string, &args) {
         report_arg_block(reason);
+        return -1;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
         return -1;
     }
 
@@ -1976,6 +2046,13 @@ unsafe extern "C" fn guarded_execvpe(
     }
     if let Some(reason) = should_block_reason(&file_string, &args) {
         report_arg_block(reason);
+        return -1;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
         return -1;
     }
 
@@ -2123,6 +2200,13 @@ unsafe extern "C" fn guarded_execveat(
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execveat arguments to the real libc execveat resolved via RTLD_NEXT.
     unsafe { execveat_fn()(dirfd, pathname, argv, envp, flags) }
 }
@@ -2171,6 +2255,13 @@ unsafe extern "C" fn guarded_fexecve(
         return -1;
     }
 
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
+        return -1;
+    }
+
     // SAFETY: forwards the caller's original, unmodified fexecve arguments to the real libc fexecve resolved via RTLD_NEXT.
     unsafe { fexecve_fn()(fd, argv, envp) }
 }
@@ -2211,6 +2302,13 @@ unsafe extern "C" fn guarded_posix_spawn(
     }
     if let Some(reason) = should_block_reason(&path_string, &args) {
         report_arg_block(reason);
+        return libc::EPERM;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
         return libc::EPERM;
     }
 
@@ -2268,6 +2366,13 @@ unsafe extern "C" fn guarded_posix_spawnp(
     }
     if let Some(reason) = should_block_reason(&file_string, &args) {
         report_arg_block(reason);
+        return libc::EPERM;
+    }
+
+    // Last of the refusals: each one above names a more specific reason, and
+    // this is the fail-closed default for a child that would run unguarded.
+    if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
+        report_missing_guard_env_block();
         return libc::EPERM;
     }
 
@@ -2948,6 +3053,48 @@ mod tests {
                 .len(),
             MAX_EXEC_STRING_BYTES + 1
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn guard_environment_requires_the_exact_preload() {
+        assert!(env_has_approved_guard_preload(&[format!(
+            "LD_PRELOAD={ALLOWED_LD_PRELOAD}"
+        )]));
+        assert!(!env_has_approved_guard_preload(&[]));
+        assert!(!env_has_approved_guard_preload(
+            &["LD_PRELOAD=".to_string()]
+        ));
+        assert!(!env_has_approved_guard_preload(&[
+            "LD_PRELOAD=/workspace/guard.so".to_string()
+        ]));
+        // The loader honours every LD_PRELOAD entry it is given, so an extra
+        // one alongside the approved guard is still an attacker-chosen library.
+        assert!(!env_has_approved_guard_preload(&[
+            "LD_PRELOAD=".to_string(),
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+        ]));
+        assert!(!env_has_approved_guard_preload(&[
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+            format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}"),
+        ]));
+    }
+
+    #[test]
+    fn null_child_environment_is_treated_as_a_missing_guard_preload() {
+        let entry = CString::new(format!("LD_PRELOAD={ALLOWED_LD_PRELOAD}")).expect("entry");
+        let envp: [*const c_char; 2] = [entry.as_ptr(), std::ptr::null()];
+
+        assert!(!should_block_null_explicit_env(envp.as_ptr()));
+        // A NULL envp hands the child an empty environment, which is exactly
+        // the environment the missing-guard classifier refuses.
+        assert_eq!(
+            should_block_null_explicit_env(std::ptr::null()),
+            should_block_missing_guard_env(&[])
+        );
+        // It cannot be asked of the classifiers, because this substitution
+        // would report the caller's own environment as the child's.
+        assert!(!effective_env_ptr(std::ptr::null::<*const c_char>()).is_null());
     }
 
     #[test]

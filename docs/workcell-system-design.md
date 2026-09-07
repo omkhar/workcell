@@ -213,6 +213,11 @@ strict path, it blocks direct native ELF files from mutable paths. It also
 blocks mutable shebang scripts that select a protected runtime. Workcell
 supplies guarded wrappers for tools such as Git and Node.
 
+The in-container Workcell launcher removes caller-supplied loader values at
+startup. It then sets `LD_PRELOAD` to the approved guard. On the strict path,
+the guard refuses a child environment that does not have this exact value.
+Thus, each child process keeps the interposer.
+
 The guard is defense in depth. A fully static process does not load the
 interposer for its own later `exec` call. `/workspace` does not have a kernel
 `noexec` mount. Thus, a fully static caller can make a direct `exec` call that
