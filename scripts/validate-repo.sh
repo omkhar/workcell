@@ -332,7 +332,11 @@ is_bash_shebang() {
   IFS=$' \t' read -r -a tokens <<<"${line#'#!'}"
   for token in "${tokens[@]}"; do
     token="${token#--split-string=}"
-    token="${token#-S}"
+    # A short option cluster can precede the split string, as in `-iSbash`.
+    # Take whatever follows the last `S` in such a cluster.
+    if [[ "${token}" == -* && "${token}" != --* && "${token}" == *S* ]]; then
+      token="${token##*S}"
+    fi
     token="${token//\"/}"
     token="${token//\'/}"
     [[ "${token##*/}" == "bash" ]] && return 0
@@ -358,7 +362,10 @@ is_bash_shebang() {
 SHEBANG_STDOUT="$(mktemp "${TMPDIR:-/tmp}/workcell-shebangs.XXXXXX")"
 SHEBANG_STDERR="$(mktemp "${TMPDIR:-/tmp}/workcell-shebang-errors.XXXXXX")"
 shebang_read_status=0
-git -C "${ROOT_DIR}" grep --cached -z -I -n -E '^#!' \
+# `-a` rather than `-I`: Bash runs a script that carries a NUL byte, but `-I`
+# treats that blob as binary and omits it from the listing without an error.
+# The omitted path would then be classified as "not Bash" and left unlinted.
+git -C "${ROOT_DIR}" grep --cached -z -a -n -E '^#!' \
   >"${SHEBANG_STDOUT}" 2>"${SHEBANG_STDERR}" || shebang_read_status=$?
 
 if [[ "${shebang_read_status}" -gt 1 || -s "${SHEBANG_STDERR}" ]]; then
