@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -148,35 +149,55 @@ func hasTrustedStartupMode(info os.FileInfo) bool {
 	return fileUID(info) == 0 && info.Mode().Perm()&0o022 == 0
 }
 
-// A pathname that passes a check and a pathname that exec resolves a moment
-// later are not the same guarantee. Any uid that can repoint a parent directory
-// could substitute another file between the two lookups, and the starter runs
-// as root. The binary is opened once, validated through that descriptor, and
-// later executed through that same descriptor, so exec cannot reach a file the
-// check did not see. O_NOFOLLOW refuses a symlink at the leaf; a swap higher up
-// only changes which file is opened, and the checks below reject it.
+const startupDirectoryFlags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+
+// Checking a pathname and then letting exec resolve it again are two lookups,
+// and the starter runs as root. O_NOFOLLOW covers only one component, so every
+// directory is opened from its parent and must be root-owned and root-writable
+// only, and the leaf descriptor fstat accepts is the one exec receives.
 func openServerBinary(path string) (*os.File, error) {
-	binary, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	directory, err := unix.Open("/", startupDirectoryFlags, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open server binary root: %w", err)
+	}
+	defer func() { _ = unix.Close(directory) }()
+	names := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for _, name := range names[:len(names)-1] {
+		if err := validateStartupDescriptor(directory, unix.S_IFDIR); err != nil {
+			return nil, err
+		}
+		next, err := unix.Openat(directory, name, startupDirectoryFlags, 0)
+		if err != nil {
+			return nil, fmt.Errorf("open server binary ancestor %s: %w", name, err)
+		}
+		_ = unix.Close(directory)
+		directory = next
+	}
+	if err := validateStartupDescriptor(directory, unix.S_IFDIR); err != nil {
+		return nil, err
+	}
+	leaf, err := unix.Openat(directory, names[len(names)-1], unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open server binary: %w", err)
 	}
-	if err := validateServerBinary(binary); err != nil {
+	binary := os.NewFile(uintptr(leaf), path)
+	if err := validateStartupDescriptor(leaf, unix.S_IFREG); err != nil {
 		binary.Close()
 		return nil, err
 	}
 	return binary, nil
 }
 
-func validateServerBinary(binary *os.File) error {
+func validateStartupDescriptor(descriptor int, kind uint32) error {
 	var info unix.Stat_t
-	if err := unix.Fstat(int(binary.Fd()), &info); err != nil {
-		return fmt.Errorf("inspect server binary: %w", err)
+	if err := unix.Fstat(descriptor, &info); err != nil {
+		return fmt.Errorf("inspect server binary path: %w", err)
 	}
-	if info.Mode&unix.S_IFMT != unix.S_IFREG || info.Mode&0o022 != 0 {
-		return errors.New("server binary is not trusted")
+	if info.Mode&unix.S_IFMT != kind {
+		return errors.New("server binary path component has the wrong type")
 	}
-	if info.Uid != 0 {
-		return errors.New("server binary is not root-owned")
+	if info.Uid != 0 || info.Mode&0o022 != 0 {
+		return errors.New("server binary path is writable outside root")
 	}
 	return nil
 }
@@ -217,11 +238,10 @@ func launchServer(binary *os.File, peerUID uint32) error {
 	})
 }
 
-// exec.Cmd gives the child descriptor 3 upward to ExtraFiles in order, so the
-// entries below decide these numbers. The child then executes itself through
-// the validated descriptor rather than through a pathname exec would resolve a
-// second time. The descriptor stays open in the server: it is read-only on the
-// server's own root-owned binary, and exec.Cmd gives it to no helper process.
+// exec.Cmd hands ExtraFiles to the child from descriptor 3 upward, so the order
+// below fixes these numbers and the child execs the validated descriptor rather
+// than a pathname. That descriptor stays open in the server: it is read-only on
+// the server's own binary, and exec.Cmd passes it to no helper process.
 const (
 	startupReadyFD  = 3
 	startupAckFD    = 4
@@ -237,8 +257,6 @@ func serverCommand(binary, ready, acknowledge *os.File, peerUID uint32) *exec.Cm
 		"--ack-fd", strconv.Itoa(startupAckFD),
 	)
 	command.Env = fixedServerEnvironment()
-	command.Stdin = nil
-	command.Stdout = nil
 	command.Stderr = os.Stderr
 	command.ExtraFiles = []*os.File{ready, acknowledge, binary}
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

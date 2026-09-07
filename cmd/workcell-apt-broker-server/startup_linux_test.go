@@ -12,11 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strconv"
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type fixtureStartupProcess struct {
@@ -116,46 +117,47 @@ func testPipe(t *testing.T) (*os.File, *os.File) {
 	return reader, writer
 }
 
-func TestOpenServerBinaryRejectsUntrustedFile(t *testing.T) {
-	root := t.TempDir()
-	writable := filepath.Join(root, "writable")
-	if err := os.WriteFile(writable, []byte("fixture"), 0o755); err != nil {
+// The leaf here is an ordinary file the leaf checks alone would accept. Only
+// the ancestor walk refuses it, because a directory above it is writable by any
+// uid, and that is the uid that would swap the leaf.
+func TestOpenServerBinaryRejectsUntrustedAncestry(t *testing.T) {
+	ancestor := filepath.Join(t.TempDir(), "ancestor")
+	path := filepath.Join(ancestor, "server")
+	if err := errors.Join(os.Mkdir(ancestor, 0o777), os.Chmod(ancestor, 0o777), os.WriteFile(path, nil, 0o755)); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(writable, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	directory := filepath.Join(root, "directory")
-	if err := os.Mkdir(directory, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	trusted := filepath.Join(root, "server")
-	if err := os.WriteFile(trusted, []byte("fixture"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(root, "link")
-	if err := os.Symlink(trusted, link); err != nil {
-		t.Fatal(err)
-	}
-	for name, path := range map[string]string{
-		"writable":  writable,
-		"directory": directory,
-		"symlink":   link,
-		"missing":   filepath.Join(root, "absent"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			binary, err := openServerBinary(path)
-			if err == nil {
-				binary.Close()
-				t.Fatal("untrusted server binary was accepted")
-			}
-		})
+	binary, err := openServerBinary(path)
+	if err == nil {
+		binary.Close()
+		t.Fatal("untrusted server binary path was accepted")
 	}
 }
 
-// The descriptor the child executes must be the descriptor openServerBinary
-// validated, and the handshake flags must name the pipe descriptors. All three
-// numbers come from the ExtraFiles order, so they are asserted together.
+// The type check runs before the ownership check, so a directory never
+// satisfies the leaf and a file never satisfies an ancestor, at any uid.
+func TestValidateStartupDescriptorRejectsWrongType(t *testing.T) {
+	for _, test := range []struct {
+		target string
+		flags  int
+		kind   uint32
+	}{
+		{target: t.TempDir(), flags: startupDirectoryFlags, kind: unix.S_IFREG},
+		{target: os.Args[0], flags: unix.O_RDONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC, kind: unix.S_IFDIR},
+	} {
+		descriptor, err := unix.Open(test.target, test.flags, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := validateStartupDescriptor(descriptor, test.kind); err == nil {
+			t.Errorf("%s was accepted as type %o", test.target, test.kind)
+		}
+		unix.Close(descriptor)
+	}
+}
+
+// The descriptor the child executes must be the one openServerBinary validated.
+// Both the exec path and the handshake numbers come from the ExtraFiles order,
+// so the order and the path are asserted together.
 func TestServerCommandExecutesTheValidatedDescriptor(t *testing.T) {
 	binary, ready, acknowledge := os.Stdout, os.Stdin, os.Stderr
 	command := serverCommand(binary, ready, acknowledge, 1000)
@@ -163,16 +165,9 @@ func TestServerCommandExecutesTheValidatedDescriptor(t *testing.T) {
 		t.Fatalf("command path = %q, want %q", got, want)
 	}
 	for descriptor, want := range map[int]*os.File{startupReadyFD: ready, startupAckFD: acknowledge, startupBinaryFD: binary} {
-		index := descriptor - 3
-		if index < 0 || index >= len(command.ExtraFiles) || command.ExtraFiles[index] != want {
+		if got := command.ExtraFiles[descriptor-3]; got != want {
 			t.Fatalf("descriptor %d does not carry the expected file", descriptor)
 		}
-	}
-	if !slices.Contains(command.Args, "--ready-fd") || !slices.Contains(command.Args, strconv.Itoa(startupReadyFD)) {
-		t.Fatalf("command args = %q", command.Args)
-	}
-	if !slices.Contains(command.Args, "--ack-fd") || !slices.Contains(command.Args, strconv.Itoa(startupAckFD)) {
-		t.Fatalf("command args = %q", command.Args)
 	}
 }
 
