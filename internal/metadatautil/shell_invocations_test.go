@@ -100,6 +100,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "a command substitution inside double quotes drops the line's words",
+			script: "oras cp --recursive --from-oci-layout \"$(printf x)\\ # --to-oci-layout dist/release-image:amd64 ignored\" || true\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "a delimiter word ends at an operator on the same line",
 			script: "cat <<EOF; oras cp one\nbody\nEOF\noras cp two\n",
 			want:   [][]string{{"two"}},

@@ -71,7 +71,7 @@ func ShellInvocations(script, command string) [][]string {
 // syntax where the shell reads text.
 func shellWords(line string) (words []string, heredocs []heredoc) {
 	var word strings.Builder
-	inWord, quote, pending, dashForm := false, byte(0), false, false
+	inWord, quote, pending, dashForm, substituted := false, byte(0), false, false, false
 	flush := func() {
 		if !inWord {
 			return
@@ -108,9 +108,16 @@ func shellWords(line string) (words []string, heredocs []heredoc) {
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
 				// A command substitution resumes shell syntax inside the
 				// quotes. Where it closes is beyond a line reader, so syntax
-				// is read to the end of the line. That reads more heredocs and
-				// comments than bash, never fewer, so it can only drop an
-				// invocation, never invent one.
+				// is read to the end of the line. That finds every heredoc the
+				// line opens, and more, so a body is never read as commands.
+				//
+				// The words are a different answer, and reading syntax over
+				// text invents them: bash keeps the rest of the quoted
+				// argument in one word, while this reader splits it on an
+				// escaped space and hands the validator an option and value
+				// that no command received. The line's words are dropped
+				// instead, so it can lose an invocation, never invent one.
+				substituted = true
 				quote = 0
 				word.WriteByte(character)
 			default:
@@ -152,5 +159,8 @@ func shellWords(line string) (words []string, heredocs []heredoc) {
 		}
 	}
 	flush()
+	if substituted {
+		return nil, heredocs
+	}
 	return words, heredocs
 }
