@@ -205,29 +205,39 @@ func validateReleaseAssembly(document workflowDocument) error {
 }
 
 // heredocDelimiters returns the delimiters that line opens, in the order bash
-// reads their bodies. It scans the line instead of matching a pattern, so that
-// an escape, a quoted word, a here-string, an arithmetic shift and a parameter
-// expansion are each read the way bash reads them, and none of them can hide or
-// invent a redirection.
-func heredocDelimiters(line string) []string {
+// reads their bodies, and reports whether the line could be resolved at all. It
+// scans the line instead of matching a pattern, so that an escape, a quoted
+// word, a here-string and a parameter expansion are each read the way bash
+// reads them and none of them can hide or invent a redirection.
+//
+// A parenthesised group is the one construct this scanner does not resolve:
+// bash re-enters command parsing inside a command substitution, and it decides
+// between arithmetic and a nested subshell by re-parsing the group. Rather than
+// guess, the scan skips a group that cannot open a heredoc at all and fails
+// closed on one that could. A group opens no heredoc when the only << it
+// contains is a here-string, which is what the reviewed workflow uses.
+func heredocDelimiters(line string) ([]string, bool) {
 	var delimiters []string
-	arithmetic, expansion := 0, 0
+	quoted := false
+	expansion := 0
 	for index := 0; index < len(line); {
 		rest := line[index:]
 		switch {
 		case rest[0] == '\\':
 			index += 2
-		case rest[0] == '\'' || rest[0] == '"':
+		case rest[0] == '\'' && !quoted:
 			index += quotedWidth(rest)
-		case strings.HasPrefix(rest, "$(("):
-			arithmetic++
-			index += 3
-		case strings.HasPrefix(rest, "(("):
-			arithmetic++
-			index += 2
-		case strings.HasPrefix(rest, "))") && arithmetic > 0:
-			arithmetic--
-			index += 2
+		case rest[0] == '"':
+			// A double-quoted word is not skipped whole: bash still expands a
+			// command substitution inside it, and that reopens command parsing.
+			quoted = !quoted
+			index++
+		case strings.HasPrefix(rest, "$("), strings.HasPrefix(rest, "(("):
+			group := rest[:parenGroupWidth(rest)]
+			if groupCanOpenHeredoc(group) {
+				return nil, false
+			}
+			index += len(group)
 		case strings.HasPrefix(rest, "${"):
 			expansion++
 			index += 2
@@ -236,9 +246,9 @@ func heredocDelimiters(line string) []string {
 			index++
 		case strings.HasPrefix(rest, "<<<"):
 			index += 3
-		case strings.HasPrefix(rest, "<<") && (arithmetic > 0 || expansion > 0):
-			// Bash reads a << inside an arithmetic expansion as a shift, and one
-			// inside a parameter expansion as expanded text. Neither redirects.
+		case strings.HasPrefix(rest, "<<") && (quoted || expansion > 0):
+			// Bash reads a << inside a double-quoted word or a parameter
+			// expansion as literal text, not as a redirection.
 			index += 2
 		case strings.HasPrefix(rest, "<<"):
 			delimiter, width := heredocDelimiter(rest)
@@ -250,7 +260,42 @@ func heredocDelimiters(line string) []string {
 			index++
 		}
 	}
-	return delimiters
+	return delimiters, true
+}
+
+// parenGroupWidth returns the length of the parenthesised group that opens text,
+// or the length of text when the group does not close on this line.
+func parenGroupWidth(text string) int {
+	depth := 0
+	for index := strings.IndexByte(text, '('); index >= 0 && index < len(text); index++ {
+		switch text[index] {
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return index + 1
+			}
+		}
+	}
+	return len(text)
+}
+
+// groupCanOpenHeredoc reports whether a parenthesised group contains a
+// redirection that could open a heredoc body. A here-string consumes its word
+// on the same line and opens nothing.
+func groupCanOpenHeredoc(group string) bool {
+	for index := 0; ; {
+		at := strings.Index(group[index:], "<<")
+		if at < 0 {
+			return false
+		}
+		index += at
+		if strings.HasPrefix(group[index:], "<<<") {
+			index += 3
+			continue
+		}
+		return true
+	}
 }
 
 // quotedWidth returns the length of the quoted word that opens text, or the
@@ -340,8 +385,14 @@ func commandArgs(script, command string) [][]string {
 		logical := strings.TrimSpace(inlineComment.ReplaceAllString(current.String(), ""))
 		current.Reset()
 		// Every delimiter on the line opens a body, and bash reads them in the
-		// order they appear, so they are queued rather than overwritten.
-		heredocs = append(heredocs, heredocDelimiters(logical)...)
+		// order they appear, so they are queued rather than overwritten. A line
+		// the scanner cannot resolve fails the whole script closed: no
+		// invocation is reported, so no requirement can be satisfied by it.
+		opened, resolved := heredocDelimiters(logical)
+		if !resolved {
+			return nil
+		}
+		heredocs = append(heredocs, opened...)
 		if rest, found := strings.CutPrefix(logical, command); found && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
 			invocations = append(invocations, strings.Fields(rest))
 		}
