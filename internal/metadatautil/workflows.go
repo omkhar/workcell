@@ -206,11 +206,12 @@ func validateReleaseAssembly(document workflowDocument) error {
 
 // heredocDelimiters returns the delimiters that line opens, in the order bash
 // reads their bodies. It scans the line instead of matching a pattern, so that
-// an escape, a quoted word, a here-string and an arithmetic shift are each read
-// the way bash reads them and none of them can hide or invent a redirection.
+// an escape, a quoted word, a here-string, an arithmetic shift and a parameter
+// expansion are each read the way bash reads them, and none of them can hide or
+// invent a redirection.
 func heredocDelimiters(line string) []string {
 	var delimiters []string
-	arithmetic := 0
+	arithmetic, expansion := 0, 0
 	for index := 0; index < len(line); {
 		rest := line[index:]
 		switch {
@@ -227,10 +228,17 @@ func heredocDelimiters(line string) []string {
 		case strings.HasPrefix(rest, "))") && arithmetic > 0:
 			arithmetic--
 			index += 2
+		case strings.HasPrefix(rest, "${"):
+			expansion++
+			index += 2
+		case rest[0] == '}' && expansion > 0:
+			expansion--
+			index++
 		case strings.HasPrefix(rest, "<<<"):
 			index += 3
-		case strings.HasPrefix(rest, "<<") && arithmetic > 0:
-			// A << inside an arithmetic expansion is a shift, not a redirection.
+		case strings.HasPrefix(rest, "<<") && (arithmetic > 0 || expansion > 0):
+			// Bash reads a << inside an arithmetic expansion as a shift, and one
+			// inside a parameter expansion as expanded text. Neither redirects.
 			index += 2
 		case strings.HasPrefix(rest, "<<"):
 			delimiter, width := heredocDelimiter(rest)
