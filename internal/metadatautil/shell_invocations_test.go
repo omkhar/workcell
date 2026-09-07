@@ -239,6 +239,46 @@ func TestShellInvocations(t *testing.T) {
 			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,
 		},
+		{
+			name:   "a quoted separator is an argument, not the end of a command",
+			script: ": \";\" oras cp one\n",
+			want:   nil,
+		},
+		{
+			name:   "an escaped separator is an argument, not the end of a command",
+			script: ": \\; oras cp one\n",
+			want:   nil,
+		},
+		{
+			name:   "a quoted reserved word closes no compound command",
+			script: "if false; then\n\"fi\"\noras cp one\nfi\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a quoted brace closes no definition body",
+			script: "never_called() {\n\"}\"\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an ANSI-C delimiter ends its body at the word the quotes hold",
+			script: ": <<$'PLAN'\n$PLAN\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a backslash inside single quotes does not continue the line",
+			script: "'or\\\nas' cp one\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "conditional status survives a command group",
+			script: "false && {\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an unconditional command group runs its body",
+			script: "{\noras cp one\n}\n",
+			want:   [][]string{{"one"}},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
