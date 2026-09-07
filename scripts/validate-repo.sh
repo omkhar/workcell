@@ -390,6 +390,11 @@ is_bash_shebang() {
   [[ -n "${command}" ]] || return 1
   command="${command//\"/}"
   command="${command//\'/}"
+  # `env -S` expands a variable reference and substitutes an empty string for an
+  # unset one, so `#!/usr/bin/env -S /bin/ba${UNSET}sh` runs Bash. That value
+  # cannot be resolved here. Report an unresolvable command as a candidate so
+  # the completeness gate demands the script instead of skipping it silently.
+  [[ "${command}" != *'$'* ]] || return 0
   [[ "${command##*/}" == "bash" ]]
 }
 
