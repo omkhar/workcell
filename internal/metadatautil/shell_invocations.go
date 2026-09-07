@@ -56,12 +56,65 @@ func braceDepth(words []string) int {
 	return change
 }
 
+// controlWords maps each word that opens or closes a compound command to the
+// change it makes to nesting. A command inside one of these is not proved to
+// run: bash never runs the body of if false, so a required command written
+// there does not satisfy a rule about what the step runs.
+var controlWords = map[string]int{
+	"if": 1, "while": 1, "until": 1, "for": 1, "case": 1, "select": 1,
+	"fi": -1, "done": -1, "esac": -1,
+}
+
+// isOperator reports whether the word is a control operator that ends one
+// command and starts the next.
+func isOperator(word string) bool {
+	switch word {
+	case ";", ";;", "&&", "||", "|", "|&", "&":
+		return true
+	}
+	return false
+}
+
+// splitCommands cuts one logical line into the separate commands bash runs,
+// at every control operator. Without this, a decoy after ; or || donates its
+// words to the invocation before it, as in
+// oras cp --from-oci-layout missing || true; : --to-oci-layout <target>.
+func splitCommands(words []string) [][]string {
+	commands := make([][]string, 1)
+	for _, word := range words {
+		if isOperator(word) {
+			commands = append(commands, nil)
+			continue
+		}
+		commands[len(commands)-1] = append(commands[len(commands)-1], word)
+	}
+	return commands
+}
+
+// closesQuote reports whether the line closes an open quote. A backslash
+// escapes the next byte inside a double-quoted span, so an escaped quote is a
+// literal character and not the closer. A single-quoted span has no escapes.
+func closesQuote(line string, quote byte) bool {
+	for index := 0; index < len(line); index++ {
+		if quote == '"' && line[index] == '\\' {
+			index++
+			continue
+		}
+		if line[index] == quote {
+			return true
+		}
+	}
+	return false
+}
+
 // ShellInvocations returns the arguments of each invocation of command in
-// script. It joins line continuations and drops comments, inline ones
-// included, heredoc bodies, the body of a function definition, and the rest of
-// a quoted word that runs past the end of its line, so that no decoy text
-// counts as a command and one call cannot satisfy a two-call rule. A validator that must anchor on the commands
-// a script really runs uses this in place of a substring search.
+// script. It joins line continuations, splits each line at the operators that
+// end one command, and drops comments, inline ones included, heredoc bodies,
+// the body of a function definition, the body of a compound command, and the
+// rest of a quoted word that runs past the end of its line, so that no decoy
+// text counts as a command and one call cannot satisfy a two-call rule. A
+// validator that must anchor on the commands a script really runs uses this in
+// place of a substring search.
 func ShellInvocations(script, command string) [][]string {
 	prefix := strings.Fields(command)
 	var invocations [][]string
@@ -69,7 +122,7 @@ func ShellInvocations(script, command string) [][]string {
 	var heredocs []heredoc
 	var openQuote byte
 	var quotes []byte
-	var depth, definedAt int
+	var depth, definedAt, control int
 	var defining bool
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
@@ -77,7 +130,7 @@ func ShellInvocations(script, command string) [][]string {
 			// Bash reads these lines as text inside one word, as in
 			// : "<newline>oras cp …<newline>", which runs no command. Read
 			// them as text too, up to the line that closes the quote.
-			if strings.IndexByte(text, openQuote) >= 0 {
+			if closesQuote(text, openQuote) {
 				openQuote = 0
 			}
 			continue
@@ -111,8 +164,23 @@ func ShellInvocations(script, command string) [][]string {
 			}
 			continue
 		}
-		if len(words) >= len(prefix) && slices.Equal(words[:len(prefix)], prefix) {
-			invocations = append(invocations, words[len(prefix):])
+		commands := splitCommands(words)
+		nested := control > 0
+		for _, args := range commands {
+			if len(args) == 0 {
+				continue
+			}
+			if change, found := controlWords[args[0]]; found {
+				control = max(control+change, 0)
+				nested = true
+				continue
+			}
+			if nested || control > 0 {
+				continue
+			}
+			if len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix) {
+				invocations = append(invocations, args[len(prefix):])
+			}
 		}
 	}
 	return invocations
@@ -208,6 +276,17 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 			// A delimiter word ends at an operator, as in cat <<EOF; echo
 			// ready, where bash reads the delimiter EOF and runs the echo.
 			flush()
+		case strings.IndexByte(";&|", character) >= 0 &&
+			!(character == '&' && index > 0 && strings.IndexByte("<>", line[index-1]) >= 0):
+			// An operator ends the command before it. The guard keeps the & of
+			// a redirection such as 2>&1 as part of that word.
+			flush()
+			operator := string(character)
+			if index+1 < len(line) && line[index+1] == character {
+				index++
+				operator += string(character)
+			}
+			words = append(words, operator)
 		case character == ')' && len(stack) > 0:
 			quote = stack[len(stack)-1]
 			stack = stack[:len(stack)-1]

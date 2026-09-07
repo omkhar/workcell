@@ -70,9 +70,24 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "arguments end at a control operator",
+			script: "oras cp --recursive --from-oci-layout missing || true; : --to-oci-layout dist/release-image:amd64\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "missing"}},
+		},
+		{
+			name:   "a command in a branch bash never runs is not an invocation",
+			script: "if false; then\noras cp --recursive --from-oci-layout one\nfi\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "a redirection keeps its own ampersand",
+			script: "oras cp --recursive --from-oci-layout one >/dev/null 2>&1\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one", ">/dev/null", "2>&1"}},
+		},
+		{
 			name:   "a quoted argument stays one word, so an option inside it is text",
 			script: "oras cp 'ignored --to-oci-layout dist/release-image:amd64 ignored' || true\n",
-			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored", "||", "true"}},
+			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored"}},
 		},
 		{
 			name:   "an escaped quote does not open a span that hides a delimiter",

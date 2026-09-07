@@ -66,6 +66,14 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+"never_called() {", i+"}")
 	})},
+	{"unreachable branch", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"if false; then", i+"fi")
+	})},
+	{"escaped closer in a quoted span", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: "`+"\n"+i+`\"`, i+`"`)
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
