@@ -226,8 +226,7 @@ func assignsInRun(script, name string) bool {
 		// they apply, so neither the leading word nor an option ends the run.
 		// Every word of such a statement is examined rather than only the
 		// leading assignments.
-		// Every builtin that can carry an assignment, so none of them ends the
-		// scan at its own name.
+		// Every builtin that can carry an assignment past its own name.
 		if slices.Contains([]string{"export", "env", "declare", "typeset", "readonly", "local"}, words[0]) {
 			if slices.ContainsFunc(words[1:], func(word string) bool { return assignsWord(word, name) }) {
 				return true
@@ -336,11 +335,9 @@ func commandArgs(script, command string) [][]string {
 	return invocations
 }
 
-// commandWords returns the words bash passes to one command, the fields of rest
-// up to the first shell separator, and whether the command's result is acted on.
-// Text after a ; or a && belongs to the next command and is not this one's
-// argument, and a command whose failure is swallowed by || proves nothing, so it
-// does not count as an invocation at all.
+// commandWords returns the words bash passes to one command, up to the first
+// shell separator, and whether its result is acted on. Text after a ; or a &&
+// is the next command's, and a failure swallowed by || proves nothing.
 func commandWords(rest string) ([]string, bool) {
 	fields := strings.Fields(rest)
 	at := slices.IndexFunc(fields, endsCommand)
