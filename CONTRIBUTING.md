@@ -27,6 +27,26 @@ Use the bootstrap helper:
 That script installs the common local toolchain, configures `.githooks` as the
 repo hook path, and runs `./scripts/dev-quick-check.sh` to verify the setup.
 
+The repo hooks enforce three local gates. The `pre-commit` hook checks for
+pending pinned upstream updates. The `commit-msg` hook checks the Risk-Aware
+Commit Notation subject format. The `pre-push` hook verifies the signature of
+each outgoing commit.
+
+These three hooks are shell, not Go. This is the documented exception to the
+Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before
+any build. The `pre-push` hook must also work when the Go toolchain and the
+`workcell-*` binaries are absent. A built Go tool would add a bootstrap
+dependency to the gate that guards the bootstrap.
+
+Each hook stays small. Each hook re-execs itself through `env -i` and
+`/bin/bash` onto a trusted PATH. Each hook then calls `dirname` to find the
+repository root.
+
+After that the `pre-push` hook calls only `git`. The `commit-msg` hook calls
+`git` and `awk`. The `pre-commit` hook calls
+`scripts/update-upstream-pins.sh`, which is repository code. Put policy that
+does not run before the build in Go.
+
 ## Prerequisites
 
 Local development expects:
@@ -67,6 +87,28 @@ first contribution:
 ```bash
 git config --global commit.gpgsign true
 git config --global user.signingkey <your-key>
+```
+
+If you sign with SSH rather than GPG, also configure a local allowed-signers
+file. Without it `git verify-commit` cannot verify your own commits and the
+`pre-push` hook rejects every push:
+
+```bash
+git config --global gpg.format ssh
+mkdir -p ~/.config/git
+printf '%s %s\n' "your@email" "$(cat ~/.ssh/id_ed25519.pub)" \
+  >> ~/.config/git/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+```
+
+Confirm your own key with a disposable commit. The existing `HEAD` proves
+nothing here, because a maintainer signed it with a different key:
+
+```bash
+WORKCELL_SKIP_COMMIT_NOTATION=1 WORKCELL_SKIP_UPSTREAM_REFRESH_PRECOMMIT=1 \
+  git commit --allow-empty -S -m 'signing check'
+git log -1 --format='%G?'   # must print G
+git reset --soft HEAD~1
 ```
 
 See [GitHub's docs on signing commits][sign-docs] for setup details.
