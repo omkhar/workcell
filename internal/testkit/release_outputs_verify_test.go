@@ -110,9 +110,14 @@ func releaseOutputStubDriver(t *testing.T, scriptPath, cosignFailGlob, ghFailGlo
 source %q
 cosign_fail_glob=%q
 gh_fail_glob=%q
+log_call() {
+  local log="$1"
+  shift
+  { printf '%%s\x1f' "$@"; printf '\n'; } >>"${log}"
+}
 cosign() {
   [[ -z "${GITHUB_TOKEN+x}" && -z "${GH_TOKEN+x}" && -z "${ATTESTATION_TOKEN+x}" ]] || return 96
-  printf '%%s\n' "$*" >>%q
+  log_call %q "$@"
   if [[ "${1:-}" == "verify" ]]; then
     tag_digest=%q
     if [[ "$*" == *":sha-%s"* ]]; then
@@ -135,7 +140,7 @@ gh() {
   for arg in "$@"; do
     [[ "${arg}" != "--hostname" && "${arg}" != --hostname=* ]] || return 93
   done
-  printf '%%s\n' "$*" >>%q
+  log_call %q "$@"
   [[ -n "${gh_fail_glob}" && "$*" == ${gh_fail_glob} ]] && return 1
   return 0
 }
@@ -231,7 +236,7 @@ func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "startup-ran")
 	startup := filepath.Join(dir, "startup.sh")
-	if err := os.WriteFile(startup, []byte("printf ran >"+marker+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(startup, []byte("printf ran >\""+marker+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	hostile := []string{"BASH_ENV=" + startup, "ENV=" + startup}
@@ -463,32 +468,38 @@ func TestVerifyReleaseOutputsPinsToolPath(t *testing.T) {
 	}
 }
 
-// flagOccurrences counts every appearance of flag in a logged call, in both the
-// space-separated and the --flag=value forms that gh and cosign accept.
-func flagOccurrences(line, flag string) int {
+// callArgs splits one logged stub call back into its argument vector. The stub
+// separates arguments with a unit separator rather than logging "$*", so a path
+// containing whitespace stays one argument.
+func callArgs(line string) []string {
+	return strings.Split(strings.TrimSuffix(line, "\x1f"), "\x1f")
+}
+
+// flagOccurrences counts every appearance of flag, in both the separate-argument
+// and the --flag=value forms that gh and cosign accept.
+func flagOccurrences(args []string, flag string) int {
 	seen := 0
-	for _, field := range strings.Fields(line) {
-		if field == flag || strings.HasPrefix(field, flag+"=") {
+	for _, arg := range args {
+		if arg == flag || strings.HasPrefix(arg, flag+"=") {
 			seen++
 		}
 	}
 	return seen
 }
 
-// flagValue returns the argument bound to flag in a logged stub call, and only
-// when the flag appears exactly once in either accepted form. Both tools take
-// the last occurrence of a repeated flag, so a weaker second --cert-identity or
-// --predicate-type would otherwise pass an assertion made against the first.
-func flagValue(line, flag string) string {
-	if flagOccurrences(line, flag) != 1 {
+// flagValue returns the argument bound to flag, and only when the flag appears
+// exactly once in either accepted form. Both tools take the last occurrence of a
+// repeated flag, so a weaker second --cert-identity or --predicate-type would
+// otherwise pass an assertion made against the first.
+func flagValue(args []string, flag string) string {
+	if flagOccurrences(args, flag) != 1 {
 		return ""
 	}
-	fields := strings.Fields(line)
-	for i, field := range fields {
-		if field == flag && i+1 < len(fields) {
-			return fields[i+1]
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
 		}
-		if value, ok := strings.CutPrefix(field, flag+"="); ok {
+		if value, ok := strings.CutPrefix(arg, flag+"="); ok {
 			return value
 		}
 	}
@@ -503,17 +514,18 @@ func callSubjects(t *testing.T, path string) []string {
 	t.Helper()
 	subjects := make([]string, 0)
 	for _, line := range logLines(t, path) {
+		args := callArgs(line)
 		subject := ""
-		for _, field := range strings.Fields(line) {
-			if strings.HasPrefix(field, "--") {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "--") {
 				break
 			}
-			subject += field + " "
+			subject += arg + " "
 		}
-		if bundle := flagValue(line, "--bundle"); bundle != "" {
+		if bundle := flagValue(args, "--bundle"); bundle != "" {
 			subject += "bundle=" + bundle + " "
 		}
-		if predicate := flagValue(line, "--predicate-type"); predicate != "" {
+		if predicate := flagValue(args, "--predicate-type"); predicate != "" {
 			subject += "predicate=" + predicate + " "
 		}
 		subjects = append(subjects, strings.TrimSpace(subject))
@@ -566,40 +578,42 @@ func TestVerifyReleaseOutputsChecksSignaturesAndAttestations(t *testing.T) {
 	}
 
 	for _, line := range logLines(t, ghLog) {
+		args := callArgs(line)
 		// Exactly one occurrence, in the bare form: gh also accepts
 		// --deny-self-hosted-runners=false and uses the last occurrence, so
 		// neither an appended equals form nor a repeat may be tolerated.
-		if flagOccurrences(line, "--deny-self-hosted-runners") != 1 ||
-			!slices.Contains(strings.Fields(line), "--deny-self-hosted-runners") {
+		if flagOccurrences(args, "--deny-self-hosted-runners") != 1 ||
+			!slices.Contains(args, "--deny-self-hosted-runners") {
 			t.Fatalf("gh attestation call lacks an unconditional self-hosted runner denial: %s", line)
 		}
-		if got := flagValue(line, "--cert-identity"); got != releaseOutputIdentity {
+		if got := flagValue(args, "--cert-identity"); got != releaseOutputIdentity {
 			t.Fatalf("gh attestation cert identity = %q, want %q: %s", got, releaseOutputIdentity, line)
 		}
-		if got := flagValue(line, "--cert-oidc-issuer"); got != releaseOutputIssuer {
+		if got := flagValue(args, "--cert-oidc-issuer"); got != releaseOutputIssuer {
 			t.Fatalf("gh attestation OIDC issuer = %q, want %q: %s", got, releaseOutputIssuer, line)
 		}
-		if got := flagValue(line, "--source-digest"); got != strings.Repeat("c", 40) {
+		if got := flagValue(args, "--source-digest"); got != strings.Repeat("c", 40) {
 			t.Fatalf("gh attestation call lacks source digest binding: %s", line)
 		}
-		if got := flagValue(line, "--signer-digest"); got != strings.Repeat("c", 40) {
+		if got := flagValue(args, "--signer-digest"); got != strings.Repeat("c", 40) {
 			t.Fatalf("gh attestation call lacks signer digest binding: %s", line)
 		}
-		if got := flagValue(line, "--source-ref"); got != "refs/heads/main" {
+		if got := flagValue(args, "--source-ref"); got != "refs/heads/main" {
 			t.Fatalf("gh attestation call lacks trusted main source ref: %s", line)
 		}
-		if got := flagValue(line, "--repo"); got != "omkhar/workcell" {
+		if got := flagValue(args, "--repo"); got != "omkhar/workcell" {
 			t.Fatalf("gh attestation call lacks the release repository: %s", line)
 		}
 	}
 	for _, line := range logLines(t, cosignLog) {
-		if got := flagValue(line, "--certificate-github-workflow-sha"); got != strings.Repeat("c", 40) {
+		args := callArgs(line)
+		if got := flagValue(args, "--certificate-github-workflow-sha"); got != strings.Repeat("c", 40) {
 			t.Fatalf("Cosign call lacks source digest binding: %s", line)
 		}
-		if got := flagValue(line, "--certificate-identity"); got != releaseOutputIdentity {
+		if got := flagValue(args, "--certificate-identity"); got != releaseOutputIdentity {
 			t.Fatalf("Cosign certificate identity = %q, want %q: %s", got, releaseOutputIdentity, line)
 		}
-		if got := flagValue(line, "--certificate-oidc-issuer"); got != releaseOutputIssuer {
+		if got := flagValue(args, "--certificate-oidc-issuer"); got != releaseOutputIssuer {
 			t.Fatalf("Cosign OIDC issuer = %q, want %q: %s", got, releaseOutputIssuer, line)
 		}
 	}
@@ -770,7 +784,7 @@ func TestVerifyReleaseOutputsRejectsAttestationFailure(t *testing.T) {
 			if tc.failGlob != "*" && len(calls) < 2 {
 				t.Fatalf("verifier stopped before reaching the selected call: %q", calls)
 			}
-			if !strings.Contains(out, "failed for "+strings.Fields(last)[2]) {
+			if !strings.Contains(out, "failed for "+callArgs(last)[2]) {
 				t.Fatalf("rejection does not name the failing subject %q\n%s", last, out)
 			}
 		})
