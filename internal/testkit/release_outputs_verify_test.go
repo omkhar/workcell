@@ -186,6 +186,52 @@ func runVerifyReleaseOutputsWithDigests(t *testing.T, driver, assets, sourceDige
 	})
 }
 
+// TestVerifyReleaseOutputsRunsFromItsEntryPoint executes the shipped script
+// directly rather than through the sourcing driver every other test uses. With
+// no arguments it must run main and fail closed; a script whose entry-point
+// guard no longer calls main would exit 0 having verified nothing, which is how
+// the release workflow invokes it.
+func TestVerifyReleaseOutputsRunsFromItsEntryPoint(t *testing.T) {
+	t.Parallel()
+	code, out := runVerifyDriver(t, verifyReleaseOutputsScript(t), nil, nil)
+	if code == 0 || !strings.Contains(out, "assets directory is required") {
+		t.Fatalf("release verifier did not run from its entry point, got %d\n%s", code, out)
+	}
+}
+
+// TestVerifyReleaseOutputsIsolatesTokensFromCosign supplies GH_TOKEN, which the
+// attestation runs never exercise because they pass GITHUB_TOKEN. The stub
+// cosign refuses any invocation that can still see a token, so the run only
+// succeeds if run_cosign cleared this alias too.
+func TestVerifyReleaseOutputsIsolatesTokensFromCosign(t *testing.T) {
+	t.Parallel()
+	assets := releaseOutputFixture(t)
+	bin, cosignLog, _ := releaseOutputStubBin(t, "", "")
+	args := releaseOutputArgs(assets, releaseOutputTag, releaseOutputImage, strings.Repeat("c", 40), strings.Repeat("c", 40), false)
+	code, out := runVerifyDriver(t, bin, args, []string{"GH_TOKEN=test-token"})
+	if code != 0 {
+		t.Fatalf("Cosign saw a caller-supplied GH_TOKEN, got %d\n%s", code, out)
+	}
+	if got := len(logLines(t, cosignLog)); got != 12 {
+		t.Fatalf("Cosign calls = %d, want the full signature set to have run", got)
+	}
+}
+
+// TestVerifyReleaseOutputsRejectsUnexpectedReleaseFile leaves SHA256SUMS intact
+// so only the directory inventory walk can reject the extra file.
+func TestVerifyReleaseOutputsRejectsUnexpectedReleaseFile(t *testing.T) {
+	t.Parallel()
+	assets := releaseOutputFixture(t)
+	if err := os.WriteFile(filepath.Join(assets, "attacker.bin"), []byte("payload\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin, _, _ := releaseOutputStubBin(t, "", "")
+	code, out := runVerifyReleaseOutputs(t, bin, assets, false)
+	if code == 0 || !strings.Contains(out, "unexpected release file: attacker.bin") {
+		t.Fatalf("expected unexpected release file rejection, got %d\n%s", code, out)
+	}
+}
+
 func TestVerifyReleaseOutputsRejectsDifferentSourceAndWorkflowCommits(t *testing.T) {
 	t.Parallel()
 	assets := releaseOutputFixture(t)
