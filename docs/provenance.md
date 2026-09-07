@@ -286,11 +286,11 @@ SLSA v1.0 adds two build-platform controls at L3.
 | Requirement | Status | Workcell evidence or gap |
 | --- | --- | --- |
 | One run cannot influence another run | Not established | GitHub documents a new virtual machine for each standard hosted job. This fact does not prove every SLSA isolation condition. |
-| Build steps cannot access provenance signature material | Not met | Build and attestation steps share one job and its OIDC authority. |
+| Build steps cannot access provenance signature material | Not established | The build and assembly jobs have only `contents: read`. The separate `sign-release` job holds the OIDC and attestation permissions. The same repository still defines both jobs, so this separation is not a build-platform guarantee. |
 
 These gaps prevent a Build L3 claim.
-Move provenance authority outside user-defined build steps to close this gap.
-Use a trusted builder that enforces this separation.
+The workflow keeps provenance authority out of the build and assembly jobs.
+A trusted builder that enforces this separation outside the repository would close the remaining gap.
 
 ### Hermeticity
 

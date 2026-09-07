@@ -98,6 +98,41 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
+func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	decoys := []struct {
+		name, old, decoy, want string
+	}{
+		{
+			name:  "assembly command in a comment",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			decoy: "          # oras manifest index create --oci-layout dist/release-image amd64 arm64",
+			want:  "assemble the multi-arch index",
+		},
+		{
+			name:  "handoff validation renamed to a comment",
+			old:   "      - name: Validate privileged handoff",
+			decoy: "      - name: Unpack downloads # Validate privileged handoff",
+			want:  "validate the privileged handoff",
+		},
+		{
+			name:  "bound subject download dropped",
+			old:   "          artifact-ids: ${{ needs.bind-release-subjects.outputs.artifact_id }}\n          path: trusted-subjects",
+			decoy: "          name: workcell-release-preflight-subjects\n          path: trusted-subjects",
+			want:  "by immutable id",
+		},
+	}
+	for _, decoy := range decoys {
+		t.Run(decoy.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, decoy.old, decoy.decoy, 1)
+			if mutated == workflow {
+				t.Fatalf("decoy %q did not change the workflow", decoy.name)
+			}
+			requireReleaseAuthorityError(t, mutated, decoy.want)
+		})
+	}
+}
+
 func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 	content := readReleaseWorkflow(t)
 	workflow := string(content)

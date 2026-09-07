@@ -42,6 +42,7 @@ type workflowStep struct {
 	Name string            `yaml:"name"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
+	With map[string]string `yaml:"with"`
 }
 
 // This digest covers the complete parsed sign-release job. It rejects unknown
@@ -126,19 +127,32 @@ func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
 	if err := validateReleaseSigner(document); err != nil {
 		return err
 	}
-	if err := validateReleaseSignerContract(workflowText); err != nil {
+	if err := validateReleaseAssembly(document); err != nil {
 		return err
 	}
-	return requireReleaseAuthorityText(workflowText)
+	return validateReleaseSignerContract(workflowText)
 }
 
-func requireReleaseAuthorityText(workflowText string) error {
-	for _, required := range []string{"artifact-ids: ${{ needs.release.outputs.artifact_id }}", "artifact-ids: ${{ needs.bind-release-subjects.outputs.artifact_id }}", "Validate privileged handoff"} {
-		if !strings.Contains(workflowText, required) {
-			return fmt.Errorf("release authority split must contain %q", required)
-		}
+// validateReleaseAssembly reads the parsed release job so that a comment or an
+// unrelated job naming the command cannot satisfy the assembly requirement.
+func validateReleaseAssembly(document workflowDocument) error {
+	if !slices.ContainsFunc(document.Jobs["release"].Steps, func(step workflowStep) bool {
+		return runsCommand(step.Run, "oras manifest index create --oci-layout")
+	}) {
+		return errors.New("release job must assemble the multi-arch index in an OCI layout")
 	}
 	return nil
+}
+
+// runsCommand reports whether the script runs command outside a shell comment.
+func runsCommand(script, command string) bool {
+	for line := range strings.Lines(script) {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, command) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateUnprivilegedReleaseJobs(document workflowDocument) error {
@@ -162,6 +176,26 @@ func validateReleaseSigner(document workflowDocument) error {
 	}
 	if !needsExactly(signer.Needs, []string{"tag-policy", "preflight", "bind-release-subjects", "preflight-amd64-repro", "preflight-arm64-repro", "release"}) {
 		return errors.New("sign-release must depend directly on policy, both platform preflights, and assembly")
+	}
+	return validateReleaseSignerInputs(signer)
+}
+
+// validateReleaseSignerInputs reads the parsed signer steps so that a comment or
+// an unrelated job cannot satisfy the bound-input requirement.
+func validateReleaseSignerInputs(signer workflowJob) error {
+	var downloaded []string
+	validates := false
+	for _, step := range signer.Steps {
+		if id, ok := step.With["artifact-ids"]; ok {
+			downloaded = append(downloaded, id)
+		}
+		validates = validates || step.Name == "Validate privileged handoff"
+	}
+	if !slices.Equal(downloaded, []string{"${{ needs.release.outputs.artifact_id }}", "${{ needs.bind-release-subjects.outputs.artifact_id }}"}) {
+		return errors.New("sign-release must download exactly the bound release and subject artifacts by immutable id")
+	}
+	if !validates {
+		return errors.New("sign-release must validate the privileged handoff before it publishes")
 	}
 	return nil
 }
