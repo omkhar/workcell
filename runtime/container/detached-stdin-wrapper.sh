@@ -54,7 +54,7 @@ cleanup() {
   rm -f "${stdin_path}" "${exec_path}"
 }
 
-# shellcheck disable=SC2329 # reached only through handle_signal, a trap handler
+# shellcheck disable=SC2317,SC2329 # reached only through handle_signal, a trap handler
 forward_child_signal() {
   local signal="$1"
 
@@ -122,7 +122,7 @@ sync_terminal_size() {
   fi
 }
 
-# shellcheck disable=SC2329 # installed as the WINCH trap handler
+# shellcheck disable=SC2317,SC2329 # installed as the WINCH trap handler
 handle_terminal_resize() {
   # Docker Desktop can emit a burst of SIGWINCH events while the container
   # terminal settles. Let the burst coalesce before copying its final size to
@@ -148,7 +148,7 @@ wait_for_child() {
   done
 }
 
-# shellcheck disable=SC2329 # installed as the INT and TERM trap handler
+# shellcheck disable=SC2317,SC2329 # installed as the INT and TERM trap handler
 handle_signal() {
   local signal="$1"
   local status=0

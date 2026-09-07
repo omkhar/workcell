@@ -156,9 +156,12 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   success instead of failing closed.
 - A new validator over file content must call the shared shell-invocation
   parser. Register each validator in the shared evasion corpus. The corpus
-  covers comments, inline comments, heredoc bodies, multiple heredoc
-  delimiters on one line, here-strings, arithmetic shifts, quoted echo
-  decoys, prefix extension, line continuations, and unrelated job placement.
+  covers these evasions:
+  - a full-line comment and an inline comment
+  - a heredoc body, and two heredoc delimiters on one line
+  - a here-string and an arithmetic shift
+  - a quoted echo decoy and a prefix extension
+  - a line continuation and placement in an unrelated job
 - A shell script that reads a directory inventory to make a trust decision
   must prove that the walk completed. Emit a completion sentinel after a
   successful walk, or capture the exit status of the walk. Bash does not

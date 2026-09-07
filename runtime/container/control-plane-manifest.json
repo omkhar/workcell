@@ -206,13 +206,13 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/sudo-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
-      "sha256": "e2492c0f7691c2af73d6e6c7c192486b5845a9927e4462b5e97c0988b17bbcc7"
+      "sha256": "df1d09211d67504250fa006fbdbca1d09caf03a12c3746ff8855bbf67373174d"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/detached-stdin-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
-      "sha256": "7e60e90cfdfb9c0a45ee24c1b74562ccba0fda7abdff09c7c8d79dfa3081433c"
+      "sha256": "72960634238283bfb47deaa5638f9a4d8d17db1491209f8e51f6734b082abfc4"
     },
     {
       "kind": "runtime-control-plane",

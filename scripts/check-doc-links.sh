@@ -39,10 +39,23 @@ trap 'rm -f "${link_records}"' EXIT
 # excluded: they simulate external content, not documentation.
 excluded='^(runtime/container/rust/vendor|runtime/container/providers/node_modules|runtime/container/rust/target|dist|tmp)/|(^|/)testdata/'
 
+# Capture the listing before the exclusion filter runs. `git ls-files | grep
+# || true` erases Git's exit status twice over, so a failed or truncated
+# listing would silently shrink this inventory and every check below would
+# pass over the files it never read. `set -e` aborts on the capture instead.
+# The `|| true` stays on the filter alone, where an empty result is a real
+# outcome, and the inventory assertion rejects a vacuously empty result.
+md_listing="$(git ls-files '*.md')"
+
 md_files=()
 while IFS= read -r mf; do
   [[ -n "${mf}" ]] && md_files+=("${mf}")
-done < <(git ls-files '*.md' | grep -vE "${excluded}" || true)
+done < <(printf '%s\n' "${md_listing}" | grep -vE "${excluded}" || true)
+
+if [[ "${#md_files[@]}" -eq 0 ]]; then
+  echo "check-doc-links: markdown inventory is empty; refusing a vacuous pass" >&2
+  exit 1
+fi
 
 # --- Broken relative-link check + referrer index ----------------------------
 for f in "${md_files[@]}"; do

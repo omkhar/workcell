@@ -296,23 +296,58 @@ for file in "${shell_files[@]}"; do
   linted_shell_files["${file#"${ROOT_DIR}/"}"]=1
 done
 
+# Accept only an interpreter whose basename is exactly `bash`. A bare `*bash*`
+# test also matches `#!/usr/bin/env bashful`. Both house forms put `bash` in its
+# own token: `#!/bin/bash -p` and `#!/usr/bin/env -S BASH_ENV= ENV= bash`.
+is_bash_shebang() {
+  local line="$1"
+  local -a tokens=()
+  local token=""
+
+  [[ "${line}" == '#!'* ]] || return 1
+  IFS=$' \t' read -r -a tokens <<<"${line#'#!'}"
+  for token in "${tokens[@]}"; do
+    [[ "${token##*/}" == "bash" ]] && return 0
+  done
+  return 1
+}
+
 # Bash does not propagate a process-substitution failure, so a `git ls-files`
 # error would leave this check reading an empty inventory and passing. Emit a
 # lone NUL after a successful listing and require it: a truncated listing then
 # fails closed instead of reporting complete coverage over a partial tree.
+#
+# `ls-files -s` reports the index mode, so the file type comes from Git rather
+# than from a filesystem probe that a symlink could redirect. Only a regular
+# blob can be a script, so a symlink (120000) and a submodule (160000) are
+# skipped before any path is opened.
 unlinted_shell_files=()
 lint_inventory_completed=0
-while IFS= read -r -d '' tracked_path; do
-  if [[ -z "${tracked_path}" ]]; then
+while IFS= read -r -d '' index_entry; do
+  if [[ -z "${index_entry}" ]]; then
     lint_inventory_completed=1
     continue
   fi
+  tracked_mode="${index_entry%% *}"
+  tracked_path="${index_entry#*$'\t'}"
+  [[ "${tracked_mode}" == "100644" || "${tracked_mode}" == "100755" ]] || continue
   [[ -n "${linted_shell_files[${tracked_path}]:-}" ]] && continue
+  # The index says this path is a regular file. A symlink in the worktree
+  # therefore means a replaced path, and reading it would leave the checkout.
+  # Refuse the run rather than read across the boundary or skip the file.
+  if [[ -L "${ROOT_DIR}/${tracked_path}" ]]; then
+    echo "Tracked regular file is a symlink in the worktree: ${tracked_path}" >&2
+    exit 1
+  fi
   [[ -f "${ROOT_DIR}/${tracked_path}" ]] || continue
-  IFS= read -r shebang <"${ROOT_DIR}/${tracked_path}" || continue
-  [[ "${shebang}" == '#!'*bash* ]] || continue
+  # `read` reports failure at end of file, but it still populates the variable
+  # when the final line carries no newline. Test the content, not the status,
+  # so a one-line script without a trailing newline is not skipped.
+  shebang=""
+  IFS= read -r shebang <"${ROOT_DIR}/${tracked_path}" || true
+  is_bash_shebang "${shebang}" || continue
   unlinted_shell_files+=("${tracked_path}")
-done < <(git -C "${ROOT_DIR}" ls-files -z && printf '\0')
+done < <(git -C "${ROOT_DIR}" ls-files -sz && printf '\0')
 
 if [[ "${lint_inventory_completed}" -ne 1 ]]; then
   echo "Tracked file listing failed; shell lint coverage is unverified" >&2

@@ -46,7 +46,7 @@ sudo_wrapper_broker_available() {
   [[ "${broker_cmdline}" == *"/usr/local/libexec/workcell/apt-broker.sh"* ]]
 }
 
-# shellcheck disable=SC2329 # reached only through the INT and TERM trap handlers
+# shellcheck disable=SC2317,SC2329 # reached only through the INT and TERM trap handlers
 sudo_wrapper_request_cancel() {
   local reason="$1"
   local cancel_path=""
@@ -68,7 +68,7 @@ sudo_wrapper_request_cleanup() {
   rm -f "${stdout_path}" "${stderr_path}" >/dev/null 2>&1 || true
 }
 
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329 # reached only through the INT and TERM trap handlers
 sudo_wrapper_request_signal_exit() {
   local reason="$1"
   local signal_status="$2"
