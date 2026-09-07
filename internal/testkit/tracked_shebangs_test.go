@@ -70,11 +70,13 @@ func readTrackedFile(path string) ([]byte, error) {
 // (-p), under which Bash ignores both variables outright, and an env(1) prefix
 // that clears both names for the interpreter.
 //
-// Position decides which spelling a token belongs to. env(1) takes its
-// assignments before the command name and passes everything after it to that
-// command, so "env -S bash BASH_ENV= ENV=" hands Bash two arguments and leaves
-// an inherited BASH_ENV in force. Assignments are therefore read only before
-// the interpreter, and -p only after it.
+// Position decides which spelling a token belongs to. env(1) takes assignments
+// before the command name and passes everything after it to that command, so
+// "env -S bash BASH_ENV= ENV=" hands Bash two arguments and leaves an inherited
+// BASH_ENV in force. Bash in turn reads options only until -- or until its
+// script operand, so "bash -- -p" and "bash /dev/null -p" are not privileged.
+// A later assignment of the same name also wins, so the final value of each
+// name decides, not whether a cleared spelling appeared anywhere.
 func shebangNeutralizesStartupFiles(shebang string) bool {
 	fields := strings.Fields(shebang)
 	command := -1
@@ -88,12 +90,13 @@ func shebangNeutralizesStartupFiles(shebang string) bool {
 		return false
 	}
 	for _, arg := range fields[command+1:] {
-		if arg == "--" {
-			// Bash stops reading options here; anything after is the operand.
-			break
-		}
 		if arg == "-p" {
 			return true
+		}
+		if arg == "--" || !strings.HasPrefix(arg, "-") {
+			// The option terminator, or the script operand: Bash reads no
+			// further options after either.
+			break
 		}
 	}
 	if command == 0 {
@@ -101,16 +104,20 @@ func shebangNeutralizesStartupFiles(shebang string) bool {
 		// is no room before it for an assignment.
 		return false
 	}
-	clearedBashEnv, clearedEnv := false, false
+	bashEnv, env := "unset", "unset"
 	for _, assignment := range fields[1:command] {
-		switch assignment {
-		case "BASH_ENV=":
-			clearedBashEnv = true
-		case "ENV=":
-			clearedEnv = true
+		name, value, isAssignment := strings.Cut(assignment, "=")
+		if !isAssignment {
+			continue
+		}
+		switch name {
+		case "BASH_ENV":
+			bashEnv = value
+		case "ENV":
+			env = value
 		}
 	}
-	return clearedBashEnv && clearedEnv
+	return bashEnv == "" && env == ""
 }
 
 // TestTrackedBashScriptsNeutralizeStartupFiles extends the single-script
@@ -200,6 +207,11 @@ func TestShebangNeutralizesStartupFilesRejectsUnhardenedForms(t *testing.T) {
 		{"privileged before the command", "#!/usr/bin/env -S -p bash", false},
 		{"privileged after the option terminator", "#!/usr/bin/env -S bash -- -p", false},
 		{"privileged before the option terminator", "#!/usr/bin/env -S bash -p --", true},
+		// Bash reads no further options once its script operand appears.
+		{"privileged after the script operand", "#!/usr/bin/env -S bash /dev/null -p", false},
+		// A later assignment of the same name wins, so the final value decides.
+		{"cleared then reassigned", "#!/usr/bin/env -S BASH_ENV= ENV= BASH_ENV=/tmp/rc bash", false},
+		{"assigned then cleared", "#!/usr/bin/env -S BASH_ENV=/tmp/rc ENV= BASH_ENV= bash", true},
 		{"absolute interpreter after assignments", "#!/usr/bin/env -S BASH_ENV= ENV= /bin/bash", true},
 	}
 	for _, test := range tests {

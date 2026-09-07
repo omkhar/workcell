@@ -4,8 +4,11 @@
 package testkit
 
 import (
+	"go/scanner"
+	"go/token"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -14,76 +17,90 @@ import (
 // that returns nothing cannot pass the ban vacuously.
 const minTrackedGoFiles = 100
 
-// shellSourceMarker matches a Go string fragment that is Bash source text
+// shellSourceMarker matches a decoded string literal that is shell source text
 // rather than prose: an interpreter line, the house prologue, or a source
 // command at the start of a script line.
-var shellSourceMarker = regexp.MustCompile(`#!/|set -euo|\\n(builtin )?source |"(builtin )?source `)
+var shellSourceMarker = regexp.MustCompile(`#!/|set -euo|(^|\n)(builtin )?source `)
 
-// goQuoteDirective matches a complete fmt directive whose conversion is q, so
-// the indexed and flagged spellings are caught as well as the plain one:
-// %q, %#q, %+q and %[1]q all apply the same shell-unsafe conversion.
-var goQuoteDirective = regexp.MustCompile(`%[-+# 0]*(\[\d+\])?\d*(\.\d+)?q`)
+// goQuoteDirective matches a complete fmt directive whose conversion is q. All
+// of the spellings fmt accepts reach the same shell-unsafe conversion: flags
+// (%#q), a literal or starred width and precision (%-8q, %*q, %.2q), an
+// argument index on either (%[2]*[1]q), and a plain %q.
+var goQuoteDirective = regexp.MustCompile(`%[-+# 0]*(\d+|\*|\[\d+\]\*)?(\.(\d+|\*|\[\d+\]\*)?)?(\[\d+\])?q`)
 
-// hasGoQuoteDirective reports whether line applies the q conversion.
+// hasGoQuoteDirective reports whether text applies the q conversion.
 //
 // A doubled percent sign is a literal percent, so whether a match opens a real
 // directive is decided by the parity of the percent run that precedes it. An
 // even run is a sequence of complete escaped pairs and the match is a
 // directive; an odd run means this match's own percent closes the last pair.
-// %%q is therefore a literal, while %%%q is an escaped percent followed by a
-// real conversion.
-func hasGoQuoteDirective(line string) bool {
-	for _, match := range goQuoteDirective.FindAllStringIndex(line, -1) {
+// %%q is therefore a literal, while %%%q is an escaped percent then a real
+// conversion.
+func hasGoQuoteDirective(text string) bool {
+	for _, match := range goQuoteDirective.FindAllStringIndex(text, -1) {
 		run := 0
-		for i := match[0] - 1; i >= 0 && line[i] == '%'; i-- {
+		for i := match[0] - 1; i >= 0 && text[i] == '%'; i-- {
 			run++
 		}
-		if run%2 == 1 {
-			continue
+		if run%2 == 0 {
+			return true
 		}
-		return true
 	}
 	return false
 }
 
 // goQuoteInShellLiteral reports the 1-based lines of goSource where a shell
-// script literal interpolates a value with Go's %q verb. A marker opens the
-// block and the following fragments of the same literal stay inside it, so a
-// %q on a later line is reported too.
+// script literal interpolates a value with Go's q conversion.
 //
-// Both Go literal forms carry script text and both are tracked. Concatenated
-// interpreted fragments continue the block while each line opens with a double
-// quote. A raw literal has no such fragments: its body lines are plain script
-// text, so the block instead stays open until the closing backquote. A line
-// holding an odd number of backquotes opens or closes one.
-//
-// The scan is deliberately a line scan rather than a Go parse: the generator
-// sites are few, and a greppable rule stays readable to the shell reviewers it
-// serves.
+// The scan tokenises rather than reading lines. A generated script is written
+// as string literals joined by +, so the marker that identifies the text as
+// shell and the directive that spoils it are usually in different fragments of
+// one expression; the fragments are therefore grouped and judged together.
+// Taking them from the tokeniser also means comments never reach the scan and
+// both literal forms decode the same way, which reading lines cannot do: a
+// trailing or block comment about shell syntax is not script text, and a raw
+// literal's body lines are.
 func goQuoteInShellLiteral(goSource string) []int {
+	fileSet := token.NewFileSet()
+	file := fileSet.AddFile("", fileSet.Base(), len(goSource))
+	var lexer scanner.Scanner
+	lexer.Init(file, []byte(goSource), nil, 0)
+
 	var found []int
-	inShell, inRawLiteral := false, false
-	for i, line := range strings.Split(goSource, "\n") {
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case inRawLiteral:
-			// The raw literal body continues; only its closing backquote ends it.
-		case strings.HasPrefix(trimmed, "//"):
-			// A comment discussing shell syntax is prose, not script text.
-			inShell = false
-		case shellSourceMarker.MatchString(line):
-			inShell = true
-		case !strings.HasPrefix(trimmed, `"`):
-			inShell = false
+	group, directiveLines := "", []int(nil)
+	flush := func() {
+		if shellSourceMarker.MatchString(group) {
+			found = append(found, directiveLines...)
 		}
-		if inShell && strings.Count(line, "`")%2 == 1 {
-			inRawLiteral = !inRawLiteral
-		}
-		if inShell && hasGoQuoteDirective(line) {
-			found = append(found, i+1)
+		group, directiveLines = "", nil
+	}
+	for {
+		pos, tok, literal := lexer.Scan()
+		switch tok {
+		case token.EOF:
+			flush()
+			return found
+		case token.STRING:
+			text := decodeGoLiteral(literal)
+			group += text
+			if hasGoQuoteDirective(text) {
+				directiveLines = append(directiveLines, fileSet.Position(pos).Line)
+			}
+		case token.ADD:
+			// A concatenation keeps the fragments of one literal together.
+		default:
+			flush()
 		}
 	}
-	return found
+}
+
+// decodeGoLiteral returns the text a Go string literal denotes. An unparsable
+// literal is returned as written, which can only over-report.
+func decodeGoLiteral(literal string) string {
+	if text, err := strconv.Unquote(literal); err == nil {
+		return text
+	}
+	return literal
 }
 
 // TestGeneratedShellScriptsDoNotUseGoQuoting bans %q from the literals that
@@ -116,69 +133,63 @@ func TestGeneratedShellScriptsDoNotUseGoQuoting(t *testing.T) {
 	}
 }
 
-func TestGoQuoteInShellLiteralFindsTheGeneratorForms(t *testing.T) {
-	t.Parallel()
-
-	// The verb is assembled so that this fixture does not report its own file.
-	const verb = "%" + "q"
-	source := strings.Join([]string{
-		`package p`, // 1
-		`func a() { _ = fmt.Sprintf("#!/bin/bash\nx ` + verb + `\n") }`, // 2: marker and verb on one line
-		`func b() {`, // 3
-		`	_ = fmt.Sprintf("set -euo pipefail\n"+`, // 4: marker opens the block
-		`		"builtin source ` + verb + `\n"+`,      // 5: inside the block
-		`		"cmd ` + verb + `\n", one, two)`,       // 6: still inside the block
-		`	t.Fatalf("output ` + verb + `", got)`,   // 7: prose, block already closed
+// goQuoteFixture is Go source that carries every form the scan must judge.
+// The q conversions are assembled from pieces so this file does not report
+// itself, and every line is numbered against the fixture, not this file.
+func goQuoteFixture() string {
+	q := "%" + "q"
+	pct := "%"
+	tick := "`"
+	return strings.Join([]string{
+		`package p`,             // 1
+		``,                      // 2
+		`func concatenated() {`, // 3
+		`	_ = fmt.Sprintf("set -euo pipefail\n"+`, // 4: the marker fragment
+		`		"builtin source ` + q + `\n"+`,         // 5: reported
+		`		"cmd ` + q + `\n", one, two)`,          // 6: reported
+		`	t.Fatalf("output ` + q + `", got)`,      // 7: prose, a separate expression
 		`}`,                                       // 8
+		``,                                        // 9
+		`func rawLiteral() {`,                     // 10
+		`	_ = fmt.Sprintf(` + tick + `#!/bin/sh`,  // 11: a raw literal opens on the marker
+		`printf 'x' >> ` + q,                      // 12: reported, same literal
+		`exec /bin/sleep 60`,                      // 13
+		tick + `, commandLog)`,                    // 14
+		`}`,                                       // 15
+		``,                                        // 16
+		`func directiveForms() {`,                 // 17
+		`	_ = fmt.Sprintf("#!/bin/bash\n"+`,       // 18: the marker fragment
+		`		"indexed ` + pct + `[1]q\n"+`,          // 19: reported
+		`		"flagged ` + pct + `#q\n"+`,            // 20: reported
+		`		"padded ` + pct + `-8q\n"+`,            // 21: reported
+		`		"star ` + pct + `*q\n"+`,               // 22: reported
+		`		"star indexed ` + pct + `[2]*[1]q\n"+`, // 23: reported
+		`		"escaped then real ` + pct + pct + pct + `q\n"+`, // 24: reported
+		`		"literal ` + pct + pct + `q\n"+`,                 // 25: an escaped percent only
+		`		"safe ` + pct + `s\n", a, b, c)`,                 // 26: a different conversion
+		`}`,                                                 // 27
+		``,                                                  // 28
+		`func comments() {`,                                 // 29
+		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 30
+		`	_ = fmt.Sprintf("set -euo pipefail\n") /* ` + pct + `q */`,  // 31: inline comment
+		`	/*`, // 32
+		`	   #!/bin/bash ` + pct + `q in a block comment`, // 33
+		`	*/`, // 34
+		`}`,   // 35
 	}, "\n")
-
-	requireLines(t, goQuoteInShellLiteral(source), 2, 5, 6)
 }
 
-// TestGoQuoteInShellLiteralTracksRawLiterals covers the second Go literal form.
-// A raw literal's body lines are plain script text, so the double-quote rule
-// that continues a concatenated literal does not apply to them and the block
-// must stay open until the closing backquote instead.
-func TestGoQuoteInShellLiteralTracksRawLiterals(t *testing.T) {
+// TestGoQuoteInShellLiteralFindsEveryGeneratorForm drives the whole fixture at
+// once. Every reported line is a real defect and every unreported line is a
+// form that only resembles one.
+func TestGoQuoteInShellLiteralFindsEveryGeneratorForm(t *testing.T) {
 	t.Parallel()
 
-	const verb = "%" + "q"
-	const tick = "`"
-	source := strings.Join([]string{
-		`package p`,  // 1
-		`func c() {`, // 2
-		`	script := fmt.Sprintf(` + tick + `#!/bin/sh`, // 3: the marker opens a raw literal
-		`printf 'x' >> ` + verb,                        // 4: raw body, reported
-		`exec /bin/sleep 60`,                           // 5: raw body, no verb
-		tick + `, commandLog)`,                         // 6: the raw literal closes
-		`	t.Fatalf("output ` + verb + `", got)`,        // 7: prose, block already closed
-		`}`,                                            // 8
-	}, "\n")
-
-	requireLines(t, goQuoteInShellLiteral(source), 4)
-}
-
-// TestGoQuoteInShellLiteralReadsWholeFormatDirectives covers the directive
-// spellings fmt accepts for the same q conversion, and the two forms that only
-// look like one: a doubled percent sign, and a comment about shell syntax.
-func TestGoQuoteInShellLiteralReadsWholeFormatDirectives(t *testing.T) {
-	t.Parallel()
-
-	const pct = "%"
-	source := strings.Join([]string{
-		`func d() {`,                                                  // 1
-		`	_ = fmt.Sprintf("#!/bin/bash\n"+`,                           // 2: marker opens the block
-		`		"indexed ` + pct + `[1]q\n"+`,                              // 3: reported
-		`		"flagged ` + pct + `#q\n"+`,                                // 4: reported
-		`		"padded ` + pct + `-8q\n"+`,                                // 5: reported
-		`		"literal ` + pct + pct + `q\n"+`,                           // 6: an escaped percent, not a directive
-		`		"escaped then real ` + pct + pct + pct + `q\n"+`,           // 7: a pair, then a directive
-		`		"safe ` + pct + `s\n", a, b, c, d)`,                        // 8: a different conversion
-		`	// A comment naming #!/bin/bash and ` + pct + `q is prose.`, // 9: not script text
-		`}`, // 10
-	}, "\n")
-
-	requireLines(t, goQuoteInShellLiteral(source), 3, 4, 5, 7)
+	requireLines(t, goQuoteInShellLiteral(goQuoteFixture()),
+		5, 6, // concatenated fragments after a marker fragment
+		11,                     // a raw literal, reported at the line its single token starts on
+		19, 20, 21, 22, 23, 24, // the directive spellings
+	)
 }
 
 func requireLines(t *testing.T, got []int, want ...int) {
