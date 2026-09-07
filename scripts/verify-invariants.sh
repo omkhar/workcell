@@ -7182,6 +7182,39 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
         exit 1
       fi
     done
+    LIVE_DEBUG_COLIMA_BIN="/usr/local/bin/colima"
+    if [[ -x /opt/homebrew/bin/colima ]]; then
+      LIVE_DEBUG_COLIMA_BIN="/opt/homebrew/bin/colima"
+    fi
+    if ! go_verify_hostutil helper run-host-colima-with-timeout 60 \
+      "--colima-bin=${LIVE_DEBUG_COLIMA_BIN}" \
+      "--real-home=${REAL_HOME}" \
+      "--colima-home=${REAL_HOME}/.colima" \
+      -- start --profile "${LIVE_DEBUG_PROFILE_NAME}" >/dev/null; then
+      echo "Expected managed profile to start before exact reaper certification" >&2
+      exit 1
+    fi
+    LIVE_DEBUG_OLD_PROFILE_PIDS=""
+    for _ in {1..20}; do
+      LIVE_DEBUG_OLD_PROFILE_PIDS="$(
+        ps -axo pid=,command= | go_verify_hostutil helper colima-profile-process-pids "${LIVE_DEBUG_PROFILE_NAME}"
+      )"
+      [[ -z "${LIVE_DEBUG_OLD_PROFILE_PIDS}" ]] || break
+      sleep 0.25
+    done
+    if [[ -z "${LIVE_DEBUG_OLD_PROFILE_PIDS}" ]]; then
+      echo "Expected a managed profile process before exact reaper certification" >&2
+      exit 1
+    fi
+    LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE="${BARRIER_VERIFY_ROOT}/debug/live-debug.pre-refresh-processes.out"
+    : >"${LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE}"
+    while IFS= read -r old_profile_pid; do
+      if ! ps -p "${old_profile_pid}" -o pid=,command= >>"${LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE}"; then
+        echo "Expected managed profile process ${old_profile_pid} to remain observable before exact reaper certification" >&2
+        exit 1
+      fi
+    done <<<"${LIVE_DEBUG_OLD_PROFILE_PIDS}"
+    sed 's/^/exact_reaper_pre_refresh_process=/' "${LIVE_DEBUG_PROFILE_PROCESS_EVIDENCE}"
     if ! run_workcell_verify GIT_PAGER=cat PAGER=cat \
       --agent codex \
       --mode development \
@@ -7198,6 +7231,16 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     fi
     grep -q '^WORKCELL_DEVELOPMENT_REFRESH_OK$' "${LIVE_DEBUG_REFRESH_OUT}"
     grep -q "Refreshing managed Colima profile ${LIVE_DEBUG_PROFILE_NAME} to apply the requested reviewed VM resources." "${LIVE_DEBUG_REFRESH_OUT}"
+    if ! LIVE_DEBUG_POST_REFRESH_PS="$(ps -axo pid=,command=)"; then
+      echo "Expected to read the host process inventory after exact reaper certification" >&2
+      exit 1
+    fi
+    while IFS= read -r old_profile_pid; do
+      if ! awk -v pid="${old_profile_pid}" '$1 == pid { found = 1 } END { exit found }' <<<"${LIVE_DEBUG_POST_REFRESH_PS}"; then
+        echo "Expected refreshed profile process ${old_profile_pid} to be absent after exact reaper certification" >&2
+        exit 1
+      fi
+    done <<<"${LIVE_DEBUG_OLD_PROFILE_PIDS}"
     if grep -Eq 'Preparing the runtime image for profile|runtime-build|429 Too Many Requests' "${LIVE_DEBUG_REFRESH_OUT}" &&
       ! grep -q 'Workcell timed out waiting for managed Colima profile' "${LIVE_DEBUG_REFRESH_OUT}"; then
       echo "Expected refreshed managed development shell to reuse or restore the prepared runtime image without rebuilding" >&2
@@ -7675,6 +7718,20 @@ EOF
       exit 1
     fi
     delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
+    if ! LIVE_DEBUG_POST_CLEANUP_PS="$(ps -axo pid=,command=)"; then
+      echo "Expected to read the host process inventory after exact reaper certification cleanup" >&2
+      exit 1
+    fi
+    if ! LIVE_DEBUG_REMAINING_PROFILE_PIDS="$(
+      go_verify_hostutil helper colima-profile-process-pids "${LIVE_DEBUG_PROFILE_NAME}" <<<"${LIVE_DEBUG_POST_CLEANUP_PS}"
+    )"; then
+      echo "Expected to classify managed profile processes after exact reaper certification cleanup" >&2
+      exit 1
+    fi
+    if [[ -n "${LIVE_DEBUG_REMAINING_PROFILE_PIDS}" ]]; then
+      echo "Expected no managed profile processes after exact reaper certification cleanup" >&2
+      exit 1
+    fi
     delete_verify_colima_profile "${LIVE_DETACHED_PROFILE_NAME}"
     AUDIT_RESTORE_PROFILE_NAME="workcell-audit-restore-$$"
     AUDIT_RESTORE_DIR="${REAL_HOME}/.colima/${AUDIT_RESTORE_PROFILE_NAME}"

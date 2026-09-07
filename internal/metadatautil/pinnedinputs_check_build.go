@@ -231,12 +231,24 @@ func (check *pinnedInputsCheck) validateValidatorBuildkit() error {
 		return err
 	}
 	for _, needle := range []string{
-		`DEBIAN_BOOTSTRAP_MANIFEST="${ROOT_DIR}/runtime/container/debian-bootstrap.env"`,
-		`DEBIAN_BOOTSTRAP_CKSUM="$(cksum "${DEBIAN_BOOTSTRAP_MANIFEST}" | awk '{print $1}')"`,
-		`VALIDATOR_IMAGE_DEFAULT_TAG="workcell-validator:local-${VALIDATOR_DOCKERFILE_CKSUM}-${DEBIAN_BOOTSTRAP_CKSUM}"`,
+		`source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"`,
+		`VALIDATOR_IMAGE_DEFAULT_TAG="$(workcell_validator_image_default_tag "${ROOT_DIR}")"`,
 	} {
 		if !strings.Contains(check.validatorImageScript, needle) {
 			return fmt.Errorf("scripts/ci/build-validator-image.sh must include the Debian bootstrap manifest in validator image identity: missing %s", needle)
+		}
+	}
+	return validateValidatorImageIdentityScript(check.localDockerParityScript)
+}
+
+func validateValidatorImageIdentityScript(script string) error {
+	for _, needle := range []string{
+		`cksum "${root}/tools/validator/Dockerfile"`,
+		`cksum "${root}/runtime/container/debian-bootstrap.env"`,
+		`printf 'workcell-validator:local-%s-%s\n' "${dockerfile_cksum}" "${bootstrap_cksum}"`,
+	} {
+		if !strings.Contains(script, needle) {
+			return fmt.Errorf("scripts/ci/lib/local-docker-parity.sh must bind the validator image identity: missing %s", needle)
 		}
 	}
 	return nil

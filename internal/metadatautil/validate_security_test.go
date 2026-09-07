@@ -80,6 +80,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		"runtime/container/rust/Cargo.toml",
 		"runtime/container/rust/rust-toolchain.toml",
 		"scripts/ci/build-validator-image.sh",
+		"scripts/ci/lib/local-docker-parity.sh",
 		"scripts/ci/job-pin-hygiene.sh",
 		"scripts/ci/job-validate.sh",
 		"scripts/install-dev-tools.sh",
@@ -152,6 +153,20 @@ func requirePinnedInputsErrorContains(tb testing.TB, cfg metadatautil.PinnedInpu
 	}
 }
 
+func TestCheckPinnedInputsRejectsManualPrivilegedWorkflowWithoutMainGuard(t *testing.T) {
+	for _, workflowPath := range []string{
+		".github/workflows/hosted-controls.yml",
+		".github/workflows/upstream-refresh.yml",
+	} {
+		t.Run(workflowPath, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, workflowPath, func(content string) string {
+				return strings.Replace(content, "    if: github.ref == 'refs/heads/main'\n", "", 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "github.ref == 'refs/heads/main'")
+		})
+	}
+}
+
 func TestCheckPinnedInputsRejectsHostedControlAPIVersionDrift(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(content, `readonly GITHUB_API_VERSION="2026-03-10"`, `readonly GITHUB_API_VERSION="2022-11-28"`, 1)
@@ -189,9 +204,9 @@ func TestCheckPinnedInputsRejectsDirectHostedControlAPICall(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
-				return strings.Replace(content, "require_tool jq", "require_tool jq\n"+test.call, 1)
+				return strings.Replace(content, "readonly GO_BIN GH_BIN JQ_BIN", "readonly GO_BIN GH_BIN JQ_BIN\n"+test.call, 1)
 			})
-			requirePinnedInputsErrorContains(t, cfg, "must use the exact reviewed command graph and versioned github_api wrapper")
+			requirePinnedInputsErrorContains(t, cfg, "scripts/verify-github-hosted-controls.sh")
 		})
 	}
 }
@@ -216,19 +231,20 @@ func TestCheckPinnedInputsRejectsHostedControlFunctionShadowing(t *testing.T) {
 }
 
 func TestCheckPinnedInputsRejectsHostedControlCallCountDrift(t *testing.T) {
+	const normalizeCall = `"${CITOOLS_BIN}" normalize-hosted-control-ruleset "${ruleset_id}"`
 	tests := []struct {
 		name    string
 		rewrite func(string) string
 	}{
-		{"missing", func(content string) string { return strings.Replace(content, "require_tool jq\n", "", 1) }},
+		{"missing", func(content string) string { return strings.Replace(content, normalizeCall, ":", 1) }},
 		{"duplicate", func(content string) string {
-			return strings.Replace(content, "require_tool jq\n", "require_tool jq\nrequire_tool jq\n", 1)
+			return strings.Replace(content, normalizeCall, normalizeCall+"\n  "+normalizeCall, 1)
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", test.rewrite)
-			requirePinnedInputsErrorContains(t, cfg, "must use the exact reviewed command graph and versioned github_api wrapper")
+			requirePinnedInputsErrorContains(t, cfg, "scripts/verify-github-hosted-controls.sh")
 		})
 	}
 }
@@ -263,6 +279,28 @@ func TestCheckPinnedInputsRejectsHostedControlStructureDrift(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsHostedControlCredentialRoutingDrift(t *testing.T) {
+	tests := []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{"token alias survives", "unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN", ":"},
+		{"API token unscoped", `GH_TOKEN="${AUDIT_TOKEN}" "${GH_BIN}" api`, `"${GH_BIN}" api`},
+		{"repository token unscoped", `GH_TOKEN="${AUDIT_TOKEN}" "${GH_BIN}" repo view`, `"${GH_BIN}" repo view`},
+		{"detail bypasses normalizer", `"${CITOOLS_BIN}" normalize-hosted-control-ruleset "${ruleset_id}"`, `"${JQ_BIN}" -c .`},
+		{"IDs use process substitution", `done <"${TMP_DIR}/ruleset-ids"`, `done < <("${CITOOLS_BIN}" list-hosted-control-ruleset-ids "${TMP_DIR}/rulesets-summary.json")`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
+				return strings.Replace(content, test.old, test.replacement, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "scripts/verify-github-hosted-controls.sh")
+		})
+	}
+}
+
 func TestCheckPinnedInputsRejectsUnpaginatedHostedRulesets(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
 		return strings.Replace(content, `github_api --paginate "repos/${REPO}/rulesets?per_page=100"`, `github_api "repos/${REPO}/rulesets"`, 1)
@@ -272,7 +310,7 @@ func TestCheckPinnedInputsRejectsUnpaginatedHostedRulesets(t *testing.T) {
 
 func TestCheckPinnedInputsRejectsFailOpenHostedRulesetAggregation(t *testing.T) {
 	cfg := rewritePinnedInputsFixtureFile(t, "scripts/verify-github-hosted-controls.sh", func(content string) string {
-		return strings.Replace(content, `"${CITOOLS_BIN}" merge-hosted-control-array-pages`, `jq -s 'add'`, 1)
+		return strings.Replace(content, `"${CITOOLS_BIN}" merge-hosted-control-array-pages`, `"${JQ_BIN}" -s 'add'`, 1)
 	})
 	requirePinnedInputsErrorContains(t, cfg, "unexpected shell structure")
 }
@@ -771,6 +809,54 @@ func TestCheckPinnedInputsRejectsValidatorImageScriptFallbackDrift(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "build-validator-image.sh") {
 		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want validator image fallback drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageTagFormatterDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "build-validator-image.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, "workcell_validator_image_default_tag", "drifted_validator_image_tag", 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "workcell_validator_image_default_tag") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want formatter drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageBootstrapIdentityDrift(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "lib", "local-docker-parity.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, `cksum "${root}/runtime/container/debian-bootstrap.env"`, `cksum "${root}/other"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "debian-bootstrap.env") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want bootstrap identity drift rejection", err)
+	}
+}
+
+func TestCheckPinnedInputsRejectsValidatorImageDuplicateChecksumBinding(t *testing.T) {
+	t.Parallel()
+
+	cfg := writePinnedInputsFixture(t)
+	fixtureRoot := filepath.Clean(filepath.Join(filepath.Dir(cfg.RuntimeDockerfilePath), "..", ".."))
+	scriptPath := filepath.Join(fixtureRoot, "scripts", "ci", "lib", "local-docker-parity.sh")
+	rewriteFile(t, scriptPath, func(content string) string {
+		return strings.Replace(content, `"${dockerfile_cksum}" "${bootstrap_cksum}"`, `"${dockerfile_cksum}" "${dockerfile_cksum}"`, 1)
+	})
+
+	err := metadatautil.CheckPinnedInputs(cfg)
+	if err == nil || !strings.Contains(err.Error(), "bootstrap_cksum") {
+		t.Fatalf("metadatautil.CheckPinnedInputs() error = %v, want duplicate checksum rejection", err)
 	}
 }
 
