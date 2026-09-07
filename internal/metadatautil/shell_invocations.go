@@ -122,6 +122,10 @@ func shellWords(line string) (words, heredocs []string) {
 				index++
 			}
 			pending = true
+		case pending && strings.IndexByte(";&|<>()", character) >= 0:
+			// A delimiter word ends at an operator, as in cat <<EOF; echo
+			// ready, where bash reads the delimiter EOF and runs the echo.
+			flush()
 		default:
 			word.WriteByte(character)
 			inWord = true

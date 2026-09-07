@@ -65,6 +65,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "a delimiter word ends at an operator on the same line",
+			script: "cat <<EOF; oras cp one\nbody\nEOF\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "a quoted argument stays one word, so an option inside it is text",
 			script: "oras cp 'ignored --to-oci-layout dist/release-image:amd64 ignored' || true\n",
 			want:   [][]string{{"ignored --to-oci-layout dist/release-image:amd64 ignored", "||", "true"}},
