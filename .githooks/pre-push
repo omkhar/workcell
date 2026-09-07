@@ -1,39 +1,39 @@
 #!/bin/bash -p
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
 if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
-  # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
-  # Git reads. They are forwarded rather than scrubbed so verify-commit uses
-  # the same verification settings as the push that invoked it. Whoever runs
-  # that command already has the documented WORKCELL_SKIP_PUSH_SIGNATURES
-  # bypass, so forwarding them adds no trust. The prefix form covers the
-  # numbered GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs as well.
   sanitized_env=(
     PATH="${TRUSTED_HOST_PATH}"
-    HOME="${HOME:-/tmp}"
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
     TMPDIR="${TMPDIR:-/tmp}"
-    GNUPGHOME="${GNUPGHOME:-}"
     WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}"
     WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1
   )
+  # HOME is forwarded only when the caller has one. Replacing an absent HOME
+  # with /tmp would point Git at /tmp/.gitconfig, which any user can write on
+  # a shared temporary directory, and verify-commit would run a gpg.program
+  # named there. The invoking Git never read that file.
+  #
   # The destination query below uses the same transport as the push, so it
   # needs the same authentication state. Without it the query fails, the walk
   # covers the whole ancestry, and an already published base is rejected.
   # GIT_NAMESPACE is here too: without it the query reads the default
-  # namespace and would exclude commits the pushed namespace never held. The
-  # prefix forms carry the HTTPS settings, such as the certificate authority
-  # file, that the same query needs over that transport.
-  for transport_name in SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT \
+  # namespace and would exclude commits the pushed namespace never held.
+  #
+  # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
+  # Git reads, and the GIT_SSL, GIT_HTTP, and GIT_CURL prefixes carry the HTTPS
+  # settings the query needs. All of them are forwarded rather than scrubbed so
+  # verify-commit uses the same settings as the push that invoked it. Whoever
+  # runs that command already has the documented bypass, so forwarding them
+  # adds no trust. The prefix forms also cover the numbered GIT_CONFIG_KEY_n
+  # and GIT_CONFIG_VALUE_n pairs.
+  for forwarded_name in HOME XDG_CONFIG_HOME GNUPGHOME \
+    SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND GIT_SSH_VARIANT \
     GIT_ASKPASS SSH_ASKPASS SSH_ASKPASS_REQUIRE DISPLAY GIT_NAMESPACE \
     GIT_PROXY_COMMAND CURL_CA_BUNDLE \
     HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY \
     http_proxy https_proxy all_proxy no_proxy \
-    ${!GIT_SSL@} ${!GIT_HTTP@} ${!GIT_CURL@}; do
-    [[ -n "${!transport_name:-}" ]] || continue
-    sanitized_env+=("${transport_name}=${!transport_name}")
-  done
-  for git_config_name in ${!GIT_CONFIG@}; do
-    sanitized_env+=("${git_config_name}=${!git_config_name}")
+    ${!GIT_CONFIG@} ${!GIT_SSL@} ${!GIT_HTTP@} ${!GIT_CURL@}; do
+    [[ -n "${!forwarded_name:-}" ]] || continue
+    sanitized_env+=("${forwarded_name}=${!forwarded_name}")
   done
   exec /usr/bin/env -i "${sanitized_env[@]}" /bin/bash -p "$0" "$@"
 fi

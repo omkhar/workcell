@@ -1,22 +1,25 @@
 #!/bin/bash -p
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
 if [[ "${WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  sanitized_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    TMPDIR="${TMPDIR:-/tmp}"
+    WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}"
+    WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1
+  )
+  # HOME is forwarded only when the caller has one. Replacing an absent HOME
+  # with /tmp would point Git at /tmp/.gitconfig, which any user can write on
+  # a shared temporary directory. The invoking Git never read that file.
+  #
   # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
   # Git reads. They are forwarded rather than scrubbed so stripspace resolves
   # the same comment character the outer command will. The person running that
   # command already controls both the message and the documented bypass
   # variable, so forwarding them adds no trust. The prefix form covers the
   # numbered GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs as well.
-  sanitized_env=(
-    PATH="${TRUSTED_HOST_PATH}"
-    HOME="${HOME:-/tmp}"
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
-    TMPDIR="${TMPDIR:-/tmp}"
-    WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}"
-    WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1
-  )
-  for git_config_name in ${!GIT_CONFIG@}; do
-    sanitized_env+=("${git_config_name}=${!git_config_name}")
+  for forwarded_name in HOME XDG_CONFIG_HOME ${!GIT_CONFIG@}; do
+    [[ -n "${!forwarded_name:-}" ]] || continue
+    sanitized_env+=("${forwarded_name}=${!forwarded_name}")
   done
   exec /usr/bin/env -i "${sanitized_env[@]}" /bin/bash -p "$0" "$@"
 fi
