@@ -72,6 +72,11 @@ func braceDepth(commands []command) int {
 // it, wherever on the header line it is written.
 func commandBrace(each command) int {
 	args := each.args
+	// ! negates the status of the command after it and is not a command of its
+	// own, so the brace behind it still stands in command position.
+	for len(args) > 0 && !args[0].quoted && args[0].text == "!" {
+		args = args[1:]
+	}
 	if len(args) == 0 || args[0].quoted {
 		return 0
 	}
@@ -170,16 +175,26 @@ func definedName(words []word) string {
 	return ""
 }
 
+// ansiCQuote names an open $'…' span in the one byte the reader carries between
+// physical lines. A shell quote is only ' or ", so $ is free to stand for the
+// third case: an apostrophe closes the span, and a backslash escapes the byte
+// after it, which a plain single-quoted span does not.
+const ansiCQuote = '$'
+
 // quoteCloseIndex returns the index of the byte that closes an open quote, or
 // -1 when the line does not close it. A backslash escapes the next byte inside
-// a double-quoted span; a single-quoted span has no escapes.
+// a double-quoted or an ANSI-C span; a plain single-quoted span has no escapes.
 func quoteCloseIndex(line string, quote byte) int {
+	closer := quote
+	if quote == ansiCQuote {
+		closer = '\''
+	}
 	for index := 0; index < len(line); index++ {
-		if quote == '"' && line[index] == '\\' {
+		if quote != '\'' && line[index] == '\\' {
 			index++
 			continue
 		}
-		if line[index] == quote {
+		if line[index] == closer {
 			return index
 		}
 	}
@@ -538,6 +553,11 @@ func shellWords(line string, stack []byte) (
 	flush()
 	if substituted {
 		words = nil
+	}
+	if quote == '\'' && ansiC {
+		// The span runs on into the next line with its escapes still live, so
+		// the caller must skip it by the ANSI-C rules, not the plain ones.
+		quote = ansiCQuote
 	}
 	if len(stack) > 0 {
 		// A substitution is still open, so the logical line has not ended and

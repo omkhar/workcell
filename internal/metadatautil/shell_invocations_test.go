@@ -314,6 +314,21 @@ func TestShellInvocations(t *testing.T) {
 			script: "never_called() {\necho }\noras cp one\n}\noras cp two\n",
 			want:   [][]string{{"two"}},
 		},
+		{
+			name:   "a negation does not move a guarded group out of command position",
+			script: "false && ! {\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an unguarded negated group runs its body",
+			script: "! {\noras cp one\n}\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "an ANSI-C span keeps its escapes across a line break",
+			script: ": $'x\n\\'; oras cp one'\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

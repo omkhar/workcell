@@ -120,6 +120,14 @@ var Evasions = []Evasion{
 	{"escaped apostrophe in an ANSI-C word", replaceAnchor(func(a string) string {
 		return prefixCommands(a, `: $'x\'; `)
 	})},
+	{"ANSI-C span across a line break", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + `: $'x` + "\n" + prefixCommands(a, `\'; `) + "\n" + i + `'`
+	})},
+	{"negated guarded group", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && ! {", i+"}")
+	})},
 	{"conditional command group", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return hide(a, i+"false && {", i+"}")
