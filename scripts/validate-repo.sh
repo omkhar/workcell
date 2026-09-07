@@ -187,6 +187,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/ci/job-pr-shape.sh"
   "${ROOT_DIR}/scripts/ci/job-release-asset-acl.sh"
   "${ROOT_DIR}/scripts/ci/job-validate.sh"
+  "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"
   "${ROOT_DIR}/scripts/ci/run-docs-in-validator.sh"
   "${ROOT_DIR}/scripts/ci/run-fuzz-in-validator.sh"
   "${ROOT_DIR}/scripts/ci/run-mutation-in-validator.sh"
