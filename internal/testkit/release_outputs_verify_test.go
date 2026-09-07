@@ -72,10 +72,14 @@ func TestVerifyReleaseOutputsRejectsSymlinkedAssetsDir(t *testing.T) {
 	}
 
 	// Negative control: the same directory reached by its real path must clear
-	// the symlink gate, so the check above rejects the symlink rather than
-	// anything else about the fixture.
-	if _, out := runReleaseOutputsInventoryGuard(t, assets); strings.Contains(out, rejection) {
-		t.Fatalf("non-symlinked assets directory was rejected as a symlink\n%s", out)
+	// the symlink gate and reach the walk, so the check above rejects the
+	// symlink rather than anything else about the fixture. Reaching the walk on
+	// an empty directory also exercises the count assertion, which is what
+	// catches a walk that completed successfully having seen nothing -- the
+	// state a symlinked directory produces once the gate above is removed.
+	if code, out := runReleaseOutputsInventoryGuard(t, assets); code == 0 ||
+		!strings.Contains(out, "release directory listing is incomplete: read 0 of") {
+		t.Fatalf("expected the real path to reach the inventory count check, got %d\n%s", code, out)
 	}
 }
 
@@ -84,8 +88,8 @@ func TestVerifyReleaseOutputsRejectsSymlinkedAssetsDir(t *testing.T) {
 // Bash does not propagate, so a directory that permits traversal but not
 // listing left the inventory loop with nothing to read while every per-asset
 // check still opened the names it already expected. The verifier exited 0 with
-// an unexpected file present but unseen. The walk must now assert it observed
-// the whole inventory rather than trusting that it ran.
+// an unexpected file present but unseen. The walk must now observe `find`
+// running to completion rather than inferring success from what it emitted.
 func TestVerifyReleaseOutputsRejectsUnlistableAssetsDir(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
@@ -111,7 +115,9 @@ func TestVerifyReleaseOutputsRejectsUnlistableAssetsDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(assets, 0o755) })
 
-	const rejection = "release directory listing is incomplete"
+	// The walk must reject because `find` did not run to completion, not because
+	// of what it managed to emit before failing.
+	const rejection = "release directory listing failed"
 	code, out := runReleaseOutputsInventoryGuard(t, assets)
 	if code == 0 || !strings.Contains(out, rejection) {
 		t.Fatalf("expected an unlistable assets directory to fail closed, got %d\n%s", code, out)
