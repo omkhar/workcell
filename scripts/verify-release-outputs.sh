@@ -226,6 +226,10 @@ main() {
   done
 
   [[ -n "${ASSETS_DIR}" && -d "${ASSETS_DIR}" ]] || fail "assets directory is required"
+  # A symlinked assets directory makes the inventory walk below emit nothing --
+  # `find` does not descend a command-line symlink -- while the per-asset checks
+  # still resolve through it, so an unexpected file would pass unseen.
+  [[ ! -L "${ASSETS_DIR}" ]] || fail "assets directory must not be a symlink: ${ASSETS_DIR}"
   validate_repository "${REPOSITORY}" || fail "invalid repository: ${REPOSITORY}"
   validate_release_tag "${TAG}" || fail "invalid release tag: ${TAG}"
   [[ "${IMAGE_REPOSITORY}" == "ghcr.io/${REPOSITORY}" ]] ||
