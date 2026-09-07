@@ -33,6 +33,8 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 		{"line comment names a corpus run", anchor, corpus + "\t// " + corpus, ""},
 		{"block comment names a corpus run", anchor, corpus + "\t/* text\n" + corpus + "\t*/\n", ""},
 		{"raw literal names a corpus run", anchor, corpus + "\t_ = `text\n" + corpus + "`\n", ""},
+		{"call in a one-line function body", "func validate() {" + strings.TrimSuffix(anchor, "\n") + " }\n", corpus, ""},
+		{"declaration is not a call", "func ShellInvocations(script, command string) [][]string {\n" + anchor, corpus, ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -42,7 +44,7 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 				t.Fatal(err)
 			}
 			write := func(name, body string) {
-				if err := os.WriteFile(filepath.Join(dir, name), []byte("package example\n\nfunc f() {\n"+body+"}\n"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte("package example\n\n"+body), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

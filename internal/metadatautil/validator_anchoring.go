@@ -42,8 +42,9 @@ func CheckValidatorAnchoring(rootDir string) error {
 // countCallSites returns the number of lines under internal/ that call needle.
 // It reads test sources when inTests is set and non-test sources otherwise, it
 // removes comments and string literals first so that text about a call is not
-// counted as one, and it skips declaration lines so that a function is never
-// counted as its own caller.
+// counted as one, and it reads a declaration line from its body onwards so that
+// a function is never counted as its own caller while a call written in a
+// one-line body still is.
 func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 	count := 0
 	root := filepath.Join(rootDir, "internal")
@@ -63,7 +64,7 @@ func countCallSites(rootDir, needle string, inTests bool) (int, error) {
 			return err
 		}
 		for line := range strings.Lines(dropCommentsAndLiterals(string(content))) {
-			if strings.Contains(line, needle) && !strings.HasPrefix(line, "func ") {
+			if strings.Contains(afterDeclaration(line), needle) {
 				count++
 			}
 		}
@@ -140,4 +141,20 @@ func dropCommentsAndLiterals(source string) string {
 		}
 	}
 	return out.String()
+}
+
+// afterDeclaration returns the part of a line that can hold a call. On a
+// declaration line that is the body after the opening brace, so that
+// func ShellInvocations(...) is not a call of itself while a one-line body such
+// as func validate() { ShellInvocations(...) } still is. Every other line is
+// returned whole.
+func afterDeclaration(line string) string {
+	if !strings.HasPrefix(line, "func ") {
+		return line
+	}
+	_, body, found := strings.Cut(line, "{")
+	if !found {
+		return ""
+	}
+	return body
 }
