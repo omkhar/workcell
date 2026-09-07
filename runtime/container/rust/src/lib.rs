@@ -313,6 +313,7 @@ struct ExecInputTooLarge;
 enum ExecSearchError {
     InputTooLarge,
     PermissionDenied,
+    RelativeSearchPath,
 }
 
 fn bounded_c_string(path: *const c_char) -> Result<String, ExecInputTooLarge> {
@@ -412,13 +413,19 @@ fn resolve_command_via_path_value(
     };
     validate_path_value(path_value).map_err(|_| ExecSearchError::InputTooLarge)?;
     let mut permission_denied = false;
+    let mut relative_segment = false;
     for segment in path_value.split(':') {
-        // POSIX: an empty PATH segment names the current directory.
-        let candidate = if segment.is_empty() {
-            format!("./{command}")
-        } else {
-            format!("{segment}/{command}")
-        };
+        // An empty or otherwise relative PATH entry names a working directory
+        // the guard cannot pin: it can change between this resolution and the
+        // exec (posix_spawn chdir file actions do exactly that, and glibc runs
+        // its own search in the child after applying them), and the caller can
+        // write to it. The guard cannot classify a target it cannot name, so a
+        // relative entry never yields a candidate.
+        if !segment.starts_with('/') {
+            relative_segment = true;
+            continue;
+        }
+        let candidate = format!("{segment}/{command}");
         let Ok(cstring) = CString::new(candidate.as_str()) else {
             continue;
         };
@@ -451,6 +458,11 @@ fn resolve_command_via_path_value(
 
     if permission_denied {
         Err(ExecSearchError::PermissionDenied)
+    } else if relative_segment {
+        // No absolute entry held the command, so libc would fall back to the
+        // relative entry the guard skipped. Refuse rather than let it run
+        // unclassified.
+        Err(ExecSearchError::RelativeSearchPath)
     } else {
         Ok(None)
     }
@@ -1258,14 +1270,16 @@ fn should_block_mutable_native_exec(path: &str, args: &[String]) -> bool {
     path_is_mutable_native_exec(path) || loader_targets_mutable_native_exec(path, args)
 }
 
-fn resolve_exec_search_target(
-    file: &str,
-    env_entries: &[String],
-) -> Result<Option<String>, ExecSearchError> {
+// execvp, execvpe and posix_spawnp all search PATH from the caller's own
+// environment rather than the envp handed to the child, so the guard reads the
+// same source libc will. A name containing a slash is not searched at all, so
+// the caller environment is only parsed when a search actually happens.
+fn resolve_exec_search_target(file: &str) -> Result<Option<String>, ExecSearchError> {
     if file.contains('/') {
         return Ok(Some(file.to_owned()));
     }
-    resolve_command_via_path_value(file, path_from_env_entries(env_entries).as_deref())
+    let env_entries = current_process_env_entries().map_err(|_| ExecSearchError::InputTooLarge)?;
+    resolve_command_via_path_value(file, path_from_env_entries(&env_entries).as_deref())
 }
 
 fn stat_matches_protected_git(candidate: &StatSignature) -> bool {
@@ -1350,6 +1364,13 @@ fn report_workcell_launcher_loader_env_block() {
 
 fn report_exec_input_block() {
     report_with_errno("Workcell rejected oversized exec arguments.\n", libc::E2BIG);
+}
+
+fn report_relative_search_path_block() {
+    report_with_errno(
+        "Workcell rejected a command found only through a relative PATH entry.\n",
+        libc::EACCES,
+    );
 }
 
 // Fail closed at every interposed entry point: exec inputs the guard refuses to
@@ -1570,7 +1591,7 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
     let file_string = bounded_exec_input!(bounded_c_string(file), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
     let env_entries = bounded_exec_input!(current_process_env_entries(), -1);
-    let effective_path = match resolve_exec_search_target(&file_string, &env_entries) {
+    let effective_path = match resolve_exec_search_target(&file_string) {
         Ok(Some(path)) => path,
         Ok(None) => {
             set_errno(libc::ENOENT);
@@ -1582,6 +1603,10 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
         }
         Err(ExecSearchError::PermissionDenied) => {
             set_errno(libc::EACCES);
+            return -1;
+        }
+        Err(ExecSearchError::RelativeSearchPath) => {
+            report_relative_search_path_block();
             return -1;
         }
     };
@@ -1620,10 +1645,7 @@ unsafe extern "C" fn guarded_execvpe(
     let file_string = bounded_exec_input!(bounded_c_string(file), -1);
     let args = bounded_exec_input!(collect_cstring_array(argv), -1);
     let env_entries = bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), -1);
-    // glibc execvpe searches PATH from the caller's own environment, not from
-    // the envp handed to the child, so the guard must classify the same target.
-    let caller_env_entries = bounded_exec_input!(current_process_env_entries(), -1);
-    let effective_path = match resolve_exec_search_target(&file_string, &caller_env_entries) {
+    let effective_path = match resolve_exec_search_target(&file_string) {
         Ok(Some(path)) => path,
         Ok(None) => {
             set_errno(libc::ENOENT);
@@ -1635,6 +1657,10 @@ unsafe extern "C" fn guarded_execvpe(
         }
         Err(ExecSearchError::PermissionDenied) => {
             set_errno(libc::EACCES);
+            return -1;
+        }
+        Err(ExecSearchError::RelativeSearchPath) => {
+            report_relative_search_path_block();
             return -1;
         }
     };
@@ -1889,10 +1915,7 @@ unsafe extern "C" fn guarded_posix_spawnp(
     let args = bounded_exec_input!(collect_cstring_array(argv), libc::E2BIG);
     let env_entries =
         bounded_exec_input!(collect_cstring_array(effective_env_ptr(envp)), libc::E2BIG);
-    // posix_spawnp searches PATH from the caller's own environment, not from the
-    // envp handed to the child, so the guard must classify the same target.
-    let caller_env_entries = bounded_exec_input!(current_process_env_entries(), libc::E2BIG);
-    let effective_path = match resolve_exec_search_target(&file_string, &caller_env_entries) {
+    let effective_path = match resolve_exec_search_target(&file_string) {
         Ok(Some(path)) => path,
         Ok(None) => return libc::ENOENT,
         Err(ExecSearchError::InputTooLarge) => {
@@ -1900,6 +1923,10 @@ unsafe extern "C" fn guarded_posix_spawnp(
             return libc::E2BIG;
         }
         Err(ExecSearchError::PermissionDenied) => return libc::EACCES,
+        Err(ExecSearchError::RelativeSearchPath) => {
+            report_relative_search_path_block();
+            return libc::EACCES;
+        }
     };
 
     if should_block_workcell_launcher_loader_env(&effective_path, &env_entries) {
@@ -2611,6 +2638,42 @@ mod tests {
             resolve_command_via_path_value("probe", Some(&shadow.display().to_string())),
             Err(ExecSearchError::PermissionDenied)
         );
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[test]
+    fn relative_path_entries_never_resolve_a_command() {
+        let dir = create_temp_test_dir("relative-path");
+        let target = dir.join("probe");
+        fs::write(&target, "#!/bin/sh\nexit 0\n").expect("probe");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("probe mode");
+        let absolute = dir.display().to_string();
+
+        // An absolute entry still resolves, so a trailing or leading empty
+        // segment does not break an ordinary PATH.
+        for path_value in [
+            format!(":{absolute}"),
+            format!("{absolute}:"),
+            absolute.clone(),
+        ] {
+            assert!(
+                matches!(
+                    resolve_command_via_path_value("probe", Some(&path_value)),
+                    Ok(Some(_))
+                ),
+                "{path_value} must still resolve the absolute entry"
+            );
+        }
+
+        // A command reachable only through a relative entry is refused rather
+        // than resolved against a working directory the guard cannot pin.
+        for path_value in ["", ".", ":", "relative/bin"] {
+            assert_eq!(
+                resolve_command_via_path_value("probe", Some(path_value)),
+                Err(ExecSearchError::RelativeSearchPath),
+                "{path_value} must not resolve a command"
+            );
+        }
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 }
