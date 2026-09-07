@@ -49,6 +49,29 @@ func skillTreeFiles(root string) (map[string][]byte, []string, error) {
 	return files, irregular, err
 }
 
+// irregularAncestors reports the first component of root/components... that is
+// not a real directory, walking one component at a time so each os.Lstat runs
+// with every ancestor above it already proven to be a real directory.
+//
+// filepath.WalkDir lstats only its own root, so a symlink above that root is
+// followed before the walk begins: with `.claude` replaced by a link to
+// `.agents`, both walks would land on one physical tree and compare it with
+// itself.  The walk cannot see that, so the roots are checked before walking.
+func irregularAncestors(root string, components ...string) []string {
+	path := root
+	for _, component := range components {
+		path = filepath.Join(path, component)
+		info, err := os.Lstat(path)
+		if err != nil {
+			return []string{path + " is missing"}
+		}
+		if !info.Mode().IsDir() {
+			return []string{path + " is not a real directory (" + info.Mode().Type().String() + ")"}
+		}
+	}
+	return nil
+}
+
 // skillCopyMismatches reports every way the `.claude/skills` tree under root
 // fails to be a verbatim regular-file copy of the matching part of
 // `.agents/skills`.  The `.claude` tree exists for harnesses that only read
@@ -64,6 +87,13 @@ func skillTreeFiles(root string) (map[string][]byte, []string, error) {
 func skillCopyMismatches(root string) ([]string, error) {
 	claudeRoot := filepath.Join(root, ".claude", "skills")
 	agentsRoot := filepath.Join(root, ".agents", "skills")
+
+	// Both roots must be real directories reached through real directories
+	// before either walk starts, otherwise the two walks can share a tree.
+	if bad := append(irregularAncestors(root, ".claude", "skills"), irregularAncestors(root, ".agents", "skills")...); len(bad) > 0 {
+		sort.Strings(bad)
+		return bad, nil
+	}
 
 	copies, irregularCopies, err := skillTreeFiles(claudeRoot)
 	if err != nil {
@@ -146,6 +176,26 @@ func TestSkillCopyMismatchesDetectsDrift(t *testing.T) {
 			}
 			if err := os.Symlink(elsewhere, twinParent); err != nil {
 				t.Fatalf("symlink twin parent: %v", err)
+			}
+		},
+		"symlinked .claude ancestor": func(t *testing.T, fixture string) {
+			// The walk roots' own ancestors are above what WalkDir inspects.
+			// Linking `.claude` at `.agents` points both walks at one tree,
+			// which would compare identical to itself.
+			if err := os.RemoveAll(filepath.Join(fixture, ".claude")); err != nil {
+				t.Fatalf("remove .claude: %v", err)
+			}
+			if err := os.Symlink(filepath.Join(fixture, ".agents"), filepath.Join(fixture, ".claude")); err != nil {
+				t.Fatalf("symlink .claude: %v", err)
+			}
+		},
+		"symlinked skills root": func(t *testing.T, fixture string) {
+			claudeSkills := filepath.Join(fixture, ".claude", "skills")
+			if err := os.RemoveAll(claudeSkills); err != nil {
+				t.Fatalf("remove skills root: %v", err)
+			}
+			if err := os.Symlink(filepath.Join(fixture, ".agents", "skills"), claudeSkills); err != nil {
+				t.Fatalf("symlink skills root: %v", err)
 			}
 		},
 		"symlinked copy parent": func(t *testing.T, fixture string) {
