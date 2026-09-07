@@ -771,27 +771,53 @@ func activeShellLines(script string) string {
 }
 
 // hostileDerivation returns the one active assignment that derives an axis.
-// It refuses a script carrying a heredoc or here-string, because the same text
-// inside one would read as live code to a line matcher, and it refuses anything
-// other than exactly one match, so a copy left behind by an edit cannot stand in
-// for the statement the lane runs.  The `<<` guard is deliberately blunt: if a
-// lane ever needs one, this matcher needs a shell parser rather than a
-// loosened check.
+// A line only counts when the script text before it leaves no quote open and
+// carries no heredoc, so the same text inside a multiline string or a heredoc
+// body is inert here as it is to bash.  Exactly one match is required as well,
+// so a copy left behind by an edit cannot stand in for the statement the lane
+// runs.  The `<<` guard is deliberately blunt: if a lane ever needs a heredoc,
+// this matcher needs a real shell parser rather than a loosened check.
 func hostileDerivation(script, prefix string) (string, error) {
 	active := activeShellLines(script)
 	if strings.Contains(active, "<<") {
 		return "", fmt.Errorf("script carries a heredoc, here-string or shift; the matcher needs a shell parser")
 	}
 	matches := []string{}
+	offset := 0
 	for _, line := range strings.Split(active, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, prefix) {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, prefix) && !insideQuotedString(active[:offset]) {
 			matches = append(matches, trimmed)
 		}
+		offset += len(line) + 1
 	}
 	if len(matches) != 1 {
 		return "", fmt.Errorf("want exactly one active %q assignment, got %d", prefix, len(matches))
 	}
 	return matches[0], nil
+}
+
+// insideQuotedString reports whether the text leaves a single- or double-quoted
+// string open.  Bash takes a backslash literally inside single quotes, so the
+// escape only applies outside them.
+func insideQuotedString(text string) bool {
+	single, double := false, false
+	for index := 0; index < len(text); index++ {
+		switch text[index] {
+		case '\\':
+			if !single {
+				index++
+			}
+		case '\'':
+			if !double {
+				single = !single
+			}
+		case '"':
+			if !single {
+				double = !double
+			}
+		}
+	}
+	return single || double
 }
 
 // The negative fixtures for hostileDerivation: the assignment inside a heredoc
@@ -802,9 +828,10 @@ func TestHostileDerivationRejectsInertAndAmbiguousText(t *testing.T) {
 	prefix := `validator_tmp="${validator_tmp}/`
 	live := prefix + `hostile"` + "\n"
 	for name, script := range map[string]string{
-		"heredoc":   "cat <<'EOF'\n" + live + "EOF\n",
-		"duplicate": live + live,
-		"absent":    "validator_tmp=\"/tmp\"\n",
+		"heredoc":          "cat <<'EOF'\n" + live + "EOF\n",
+		"quoted multiline": "printf '%s' '\n" + live + "'\n",
+		"duplicate":        live + live,
+		"absent":           "validator_tmp=\"/tmp\"\n",
 	} {
 		if _, err := hostileDerivation(script, prefix); err == nil {
 			t.Fatalf("%s script accepted as a derivation", name)
