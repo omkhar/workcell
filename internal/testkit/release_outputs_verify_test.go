@@ -11,6 +11,35 @@ import (
 	"testing"
 )
 
+// runReleaseOutputsInventoryGuard runs the shipped release-output verifier
+// against one assets directory and reports its exit status and combined output.
+// The guards under test here reject before any signature check, so these runs
+// need no cosign or gh stub.
+func runReleaseOutputsInventoryGuard(t *testing.T, dir string) (int, string) {
+	t.Helper()
+	digest := strings.Repeat("c", 40)
+	cmd := exec.Command(
+		filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh"),
+		"--assets-dir", dir,
+		"--repo", "omkhar/workcell",
+		"--tag", "v1.2.3",
+		"--image-repository", "ghcr.io/omkhar/workcell",
+		"--source-digest", digest,
+		"--workflow-digest", digest,
+	)
+	// Bash startup files are cleared so caller state cannot reach the verifier.
+	cmd.Env = []string{"BASH_ENV=", "ENV="}
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return 0, string(out)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("running release-output verifier: %v\n%s", err, out)
+	}
+	return exitErr.ExitCode(), string(out)
+}
+
 // TestVerifyReleaseOutputsRejectsSymlinkedAssetsDir covers a fail-open path in
 // scripts/verify-release-outputs.sh. `find` emits no children for a
 // command-line symlink, so a symlinked --assets-dir skipped the directory
@@ -20,45 +49,60 @@ import (
 // symlink itself, before any signature check.
 func TestVerifyReleaseOutputsRejectsSymlinkedAssetsDir(t *testing.T) {
 	t.Parallel()
-	script := filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh")
-	digest := strings.Repeat("c", 40)
 	assets := t.TempDir()
 	link := filepath.Join(t.TempDir(), "assets-link")
 	if err := os.Symlink(assets, link); err != nil {
 		t.Fatal(err)
 	}
 
-	run := func(dir string) (int, string) {
-		t.Helper()
-		cmd := exec.Command(script,
-			"--assets-dir", dir,
-			"--repo", "omkhar/workcell",
-			"--tag", "v1.2.3",
-			"--image-repository", "ghcr.io/omkhar/workcell",
-			"--source-digest", digest,
-			"--workflow-digest", digest,
-		)
-		cmd.Env = []string{"BASH_ENV=", "ENV="}
-		out, err := cmd.CombinedOutput()
-		if err == nil {
-			return 0, string(out)
-		}
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("running release-output verifier: %v\n%s", err, out)
-		}
-		return exitErr.ExitCode(), string(out)
-	}
-
 	const rejection = "assets directory must not be a symlink"
-	if code, out := run(link); code == 0 || !strings.Contains(out, rejection) {
+	if code, out := runReleaseOutputsInventoryGuard(t, link); code == 0 || !strings.Contains(out, rejection) {
 		t.Fatalf("expected symlinked assets directory rejection, got %d\n%s", code, out)
 	}
 
 	// Negative control: the same directory reached by its real path must clear
 	// the symlink gate, so the check above rejects the symlink rather than
 	// anything else about the fixture.
-	if _, out := run(assets); strings.Contains(out, rejection) {
+	if _, out := runReleaseOutputsInventoryGuard(t, assets); strings.Contains(out, rejection) {
 		t.Fatalf("non-symlinked assets directory was rejected as a symlink\n%s", out)
+	}
+}
+
+// TestVerifyReleaseOutputsRejectsUnlistableAssetsDir covers a second fail-open
+// in the same walk. `find` runs in a process substitution, whose nonzero exit
+// Bash does not propagate, so a directory that permits traversal but not
+// listing left the inventory loop with nothing to read while every per-asset
+// check still opened the names it already expected. The verifier exited 0 with
+// an unexpected file present but unseen. The walk must now assert it observed
+// the whole inventory rather than trusting that it ran.
+func TestVerifyReleaseOutputsRejectsUnlistableAssetsDir(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission bits, so enumeration cannot be denied")
+	}
+	assets := t.TempDir()
+	// One decoy file: enumerable, the walk rejects it by name; unenumerable, it
+	// is exactly what the fail-open used to hide.
+	if err := os.WriteFile(filepath.Join(assets, "attacker.bin"), []byte("payload\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Negative control first, while the directory is still readable: the walk
+	// sees the decoy and rejects it by name, proving the fixture is enumerable
+	// and the assertion below is not passing on an inert path.
+	if code, out := runReleaseOutputsInventoryGuard(t, assets); code == 0 || !strings.Contains(out, "unexpected release file: attacker.bin") {
+		t.Fatalf("expected the readable fixture to be rejected by name, got %d\n%s", code, out)
+	}
+
+	// Execute-only: traversal succeeds, enumeration is denied.
+	if err := os.Chmod(assets, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(assets, 0o755) })
+
+	const rejection = "release directory listing is incomplete"
+	code, out := runReleaseOutputsInventoryGuard(t, assets)
+	if code == 0 || !strings.Contains(out, rejection) {
+		t.Fatalf("expected an unlistable assets directory to fail closed, got %d\n%s", code, out)
 	}
 }

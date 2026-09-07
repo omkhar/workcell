@@ -269,11 +269,21 @@ main() {
   done
 
   EXPECTED_ASSETS=("${DATA_ASSETS[@]}" "${SIGNATURE_ASSETS[@]}")
+  listed_count=0
   while IFS= read -r -d '' path; do
     require_regular_file "${path}"
     asset="${path##*/}"
     contains_asset "${asset}" "${EXPECTED_ASSETS[@]}" || fail "unexpected release file: ${asset}"
+    listed_count=$((listed_count + 1))
   done < <(find "${ASSETS_DIR}" -mindepth 1 -maxdepth 1 -print0)
+
+  # Bash does not propagate a process-substitution failure, so a `find` that
+  # cannot enumerate the directory -- traversable but not listable, for one --
+  # leaves the loop above with nothing to read and every unexpected file unseen.
+  # Assert the walk actually observed the whole inventory instead of trusting
+  # that it ran: the per-asset checks below only open names they already expect.
+  [[ "${listed_count}" -eq "${#EXPECTED_ASSETS[@]}" ]] ||
+    fail "release directory listing is incomplete: read ${listed_count} of ${#EXPECTED_ASSETS[@]} expected entries"
 
   for asset in "${DATA_ASSETS[@]}" "${SIGNATURE_ASSETS[@]}"; do
     require_regular_file "${ASSETS_DIR}/${asset}"
