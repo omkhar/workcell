@@ -28,6 +28,7 @@ use std::ffi::{CString, OsString};
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::fd::FromRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 
@@ -73,6 +74,10 @@ const TARGET: &str = "{fixture}/not-an-exec-target";
 const TARGET_ARGV: &[&str] = &["target"];
 /// A bare name for the PATH-search rows. No search root holds it.
 const PROBE: &str = "workcell-loader-form-probe";
+/// An executable regular file that is neither an ELF nor a shebang. execve
+/// answers ENOEXEC for it, and glibc's execvp runs /bin/sh from inside libc,
+/// which does not re-enter the guard, so the guard must classify it first.
+const ENOEXEC_TARGET: &str = "enoexec-fallback-target";
 /// Bytes past `MAX_EXEC_PATH_SEGMENT_BYTES` in `src/lib.rs`.
 const OVERLONG_SEGMENT_BYTES: usize = 128 * 1024 + 1;
 
@@ -97,9 +102,11 @@ enum Call {
         &'static [&'static str],
         &'static [&'static str],
     ),
-    /// `execvp(file, argv)` with `PATH` set to this value. The search reads the
-    /// caller's own `PATH`, never the child environment.
-    Execvp(&'static str, &'static str),
+    /// `execvp(file, argv)` with `PATH` and one more variable set on the
+    /// caller. `execvp` reads the caller's own environment for both the search
+    /// and the loader-override check, never the child environment. An empty
+    /// third field sets no extra variable.
+    Execvp(&'static str, &'static str, &'static str),
 }
 
 enum Expect {
@@ -332,11 +339,21 @@ const FORMS: &[Form] = &[
         LINUX,
     ),
     form(
-        "ENOEXEC fallback target: every regular file is loader interpreted",
+        "a non-ELF regular file target is loader interpreted",
         Execve(
             TARGET,
             TARGET_ARGV,
             &[GUARD_PRELOAD, "LD_AUDIT=/state/evil.so"],
+        ),
+        Refused(LOADER_ENV),
+        LINUX,
+    ),
+    form(
+        "ENOEXEC fallback target found through the execvp search",
+        Execvp(
+            ENOEXEC_TARGET,
+            FIXTURE,
+            "LD_LIBRARY_PATH=/usr/lib:/state/lib",
         ),
         Refused(LOADER_ENV),
         LINUX,
@@ -377,25 +394,25 @@ const FORMS: &[Form] = &[
     // PATH resolution, read from the caller's own environment.
     form(
         "relative PATH entry is refused rather than searched",
-        Execvp(PROBE, "relative/dir:/nonexistent-workcell-search-root"),
+        Execvp(PROBE, "relative/dir:/nonexistent-workcell-search-root", ""),
         Refused(RELATIVE_SEARCH_PATH),
         ANY,
     ),
     form(
         "chdir before PATH resolution: a dot entry is relative too",
-        Execvp(PROBE, ".:/nonexistent-workcell-search-root"),
+        Execvp(PROBE, ".:/nonexistent-workcell-search-root", ""),
         Refused(RELATIVE_SEARCH_PATH),
         ANY,
     ),
     form(
         "overlong PATH component",
-        Execvp(PROBE, "{overlong}"),
+        Execvp(PROBE, "{overlong}", ""),
         Refused(OVERSIZED_INPUT),
         ANY,
     ),
     form(
         "empty name is not searched",
-        Execvp("", "/nonexistent-workcell-search-root"),
+        Execvp("", "/nonexistent-workcell-search-root", ""),
         NotRefused,
         ANY,
     ),
@@ -483,6 +500,11 @@ fn prepare_fixture() -> PathBuf {
         "neither an ELF nor a shebang\n",
     )
     .expect("write the exec target fixture");
+    let enoexec = fixture.join(ENOEXEC_TARGET);
+    fs::write(&enoexec, "neither an ELF nor a shebang\n").expect("write the ENOEXEC fixture");
+    // The PATH search only yields a candidate that answers X_OK.
+    fs::set_permissions(&enoexec, fs::Permissions::from_mode(0o755))
+        .expect("make the ENOEXEC fixture executable");
     fixture
 }
 
@@ -574,9 +596,14 @@ fn run(call: &Call, fixture: &Path) -> String {
             unsafe { libc::close(dirfd) };
             stderr
         }
-        Execvp(file, path_value) => {
-            let previous = std::env::var_os("PATH");
-            set_path(Some(expand(path_value, fixture).into()));
+        Execvp(file, path_value, extra_env) => {
+            let (extra_key, extra_value) = extra_env.split_once('=').unwrap_or(("", ""));
+            let restore = [
+                ("PATH", std::env::var_os("PATH")),
+                (extra_key, std::env::var_os(extra_key)),
+            ];
+            set_env("PATH", Some(expand(path_value, fixture).into()));
+            set_env(extra_key, Some(extra_value.into()));
             let file = c_string(file, fixture);
             let argv = c_strings(&["probe"], fixture);
             let argv = c_pointers(&argv);
@@ -586,20 +613,26 @@ fn run(call: &Call, fixture: &Path) -> String {
                     workcell_exec_guard::execvp(file.as_ptr(), argv.as_ptr());
                 }
             });
-            set_path(previous);
+            for (key, value) in restore {
+                set_env(key, value);
+            }
             stderr
         }
     }
 }
 
-/// The PATH-search rows have to change the caller's own `PATH`: `execvp`
-/// searches the caller environment, never the child one.
-fn set_path(value: Option<OsString>) {
+/// The search rows have to change the caller's own environment: `execvp` reads
+/// the caller's `PATH` and the caller's loader variables, never the child ones.
+/// An empty key is the no-extra-variable case and is ignored.
+fn set_env(key: &str, value: Option<OsString>) {
+    if key.is_empty() {
+        return;
+    }
     // SAFETY: .cargo/config.toml forces RUST_TEST_THREADS=1 for this crate, so no other thread reads or writes the environment while this runs.
     unsafe {
         match value {
-            Some(value) => std::env::set_var("PATH", value),
-            None => std::env::remove_var("PATH"),
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
         }
     }
 }

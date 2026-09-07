@@ -3836,9 +3836,11 @@ EOF
   # against the exported guard entry points; these rows put the /state native
   # payload in the exec-target position, which only the runtime image has. The
   # approved preload stays in the child environment here, so a refused row
-  # reports its own reason rather than the missing-preload default. An exit
-  # status is not the property under test: the loader answers a form it accepts
-  # in its own way, so an unrefused row is proved by the absence of the message.
+  # reports its own reason rather than the missing-preload default. Every row
+  # states its own result: a refused row wants the block message, a row the
+  # loader accepts wants status 0 from /bin/true, and a row the loader itself
+  # rejects wants the loader's own text and no block message.
+  loader_form_block_message="Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile."
   loader_form_refused() {
     local label="$1"
     shift
@@ -3846,17 +3848,33 @@ EOF
       echo "expected loader invocation form ${label} to be refused" >&2
       exit 1
     fi
-    grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." "/tmp/loader-form-${label}.out"
+    grep -q "${loader_form_block_message}" "/tmp/loader-form-${label}.out"
   }
-  loader_form_not_refused() {
+  loader_form_reaches_target() {
     local label="$1"
     shift
-    "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1 || true
-    if grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." "/tmp/loader-form-${label}.out"; then
-      echo "expected loader invocation form ${label} to locate its exec target past the option" >&2
+    if ! "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1; then
+      echo "expected loader invocation form ${label} to run its exec target" >&2
       cat "/tmp/loader-form-${label}.out" >&2
       exit 1
     fi
+  }
+  # The loader rejects some spellings the guard must still pass through. The
+  # loader's own text proves the guard let the form reach it.
+  loader_form_loader_rejects() {
+    local label="$1"
+    local pattern="$2"
+    shift 2
+    if "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1; then
+      echo "expected the loader to reject invocation form ${label}" >&2
+      exit 1
+    fi
+    if grep -q "${loader_form_block_message}" "/tmp/loader-form-${label}.out"; then
+      echo "expected loader invocation form ${label} to reach the loader unrefused" >&2
+      cat "/tmp/loader-form-${label}.out" >&2
+      exit 1
+    fi
+    grep -q "${pattern}" "/tmp/loader-form-${label}.out"
   }
   # Control row: believe the matrix only after it observes a known refusal.
   loader_form_refused control "$EXEC_TMP/workcell-state-native"
@@ -3866,13 +3884,15 @@ EOF
   loader_form_refused end-of-options -- "$EXEC_TMP/workcell-state-native"
   loader_form_refused library-path-semicolons "--library-path=/usr/lib;/state/lib" /bin/true
   loader_form_refused preload-origin-expansion --preload '$ORIGIN/../evil.so' /bin/true
-  loader_form_not_refused argv0-separate-value --argv0 "$EXEC_TMP/workcell-state-native" /bin/true
-  loader_form_not_refused argv0-attached-value "--argv0=$EXEC_TMP/workcell-state-native" /bin/true
-  loader_form_not_refused inhibit-rpath-empty-value --inhibit-rpath= /bin/true
-  loader_form_not_refused hwcaps-mask-separate-value --glibc-hwcaps-mask "$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_reaches_target argv0-separate-value --argv0 "$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_reaches_target hwcaps-mask-separate-value --glibc-hwcaps-mask "$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_reaches_target valueless-option-then-target --inhibit-cache /bin/true
+  loader_form_loader_rejects argv0-attached-value "unrecognized option" "--argv0=$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_loader_rejects inhibit-rpath-empty-value "unrecognized option" --inhibit-rpath= /bin/true
   # The split-at-equals defect the Rust table records as pending: the truncated
-  # prefix is a mutable native payload, so only this lane can observe it.
-  loader_form_not_refused target-with-equals-sign "$EXEC_TMP/workcell-state-native=x"
+  # prefix is a mutable native payload, so only this lane can observe it. The
+  # loader reports the whole name, which proves it was not truncated either.
+  loader_form_loader_rejects target-with-equals-sign "workcell-state-native=x" "$EXEC_TMP/workcell-state-native=x"
   if WORKCELL_MODE=breakglass "$EXEC_TMP/workcell-state-native" >/tmp/state-native-workcell-mode-bypass.out 2>&1; then
     echo "expected strict profile to ignore caller-supplied WORKCELL_MODE for mutable native execution" >&2
     exit 1
