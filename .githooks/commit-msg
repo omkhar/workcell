@@ -1,0 +1,101 @@
+#!/bin/bash -p
+readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
+if [[ "${WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
+  sanitized_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    TMPDIR="${TMPDIR:-/tmp}"
+    WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}"
+    WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1
+  )
+  # HOME is forwarded only when the caller has one. Replacing an absent HOME
+  # with /tmp would point Git at /tmp/.gitconfig, which any user can write on
+  # a shared temporary directory. The invoking Git never read that file.
+  #
+  # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
+  # Git reads. They are forwarded rather than scrubbed so stripspace resolves
+  # the same comment character the outer command will. The person running that
+  # command already controls both the message and the documented bypass
+  # variable, so forwarding them adds no trust. The prefix form covers the
+  # numbered GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs as well.
+  for forwarded_name in HOME XDG_CONFIG_HOME ${!GIT_CONFIG@}; do
+    [[ -n "${!forwarded_name:-}" ]] || continue
+    sanitized_env+=("${forwarded_name}=${!forwarded_name}")
+  done
+  exec /usr/bin/env -i "${sanitized_env[@]}" /bin/bash -p "$0" "$@"
+fi
+set -euo pipefail
+export PATH="${TRUSTED_HOST_PATH}"
+
+if [[ "${WORKCELL_SKIP_COMMIT_NOTATION:-0}" == "1" ]]; then
+  exit 0
+fi
+
+message_file="${1:-}"
+if [[ -z "${message_file}" || ! -f "${message_file}" ]]; then
+  echo "commit-msg hook requires the commit message file argument." >&2
+  exit 2
+fi
+
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
+
+notation_ok() {
+  case "$1" in
+    "Merge "* | "Revert "* | "fixup! "* | "squash! "* | "amend! "*)
+      return 0
+      ;;
+  esac
+  [[ "$1" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]
+}
+
+# Git applies --cleanup after this hook returns, so the subject Git keeps is
+# the one that survives comment stripping. stripspace honours core.commentChar,
+# so a configured comment character is handled here too.
+retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
+body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
+retained_subject="${retained%%$'\n'*}"
+subject="${body%%$'\n'*}"
+
+if [[ "${retained_subject}" != "${subject}" ]] && notation_ok "${retained_subject}"; then
+  # core.commentChar is a risk symbol, so comment stripping deletes the
+  # subject this gate would accept. Whether Git strips it depends on the
+  # cleanup mode, which the hook cannot read, so refuse instead of accepting
+  # a subject Git may replace with the next line.
+  echo "core.commentChar deletes the Risk-Aware Commit Notation subject." >&2
+  echo "Set core.commentChar to a character that is not . ^ ! or @." >&2
+  echo "Set WORKCELL_SKIP_COMMIT_NOTATION=1 only for an intentional bypass." >&2
+  exit 1
+fi
+
+if notation_ok "${subject}"; then
+  # Git only cleans the message for an editor session, so -m, -F, and
+  # --cleanup=verbatim keep leading comment lines and trailing whitespace that
+  # stripspace removed before the check. Drop the lines ahead of the checked
+  # subject and store that subject as it was checked, so Git retains the
+  # subject this hook validated. Every later line stays as written.
+  # ENVIRON, not -v: awk applies escape processing to a -v assignment, so a
+  # backslash in the subject would stop it matching its own line.
+  # The carriage return is trimmed with the spaces and tabs, because
+  # stripspace removes it too and a CRLF message must still match.
+  normalized="$(SUBJECT="${subject}" awk 'found { print; next } { line = $0; sub(/[ \t\r]+$/, "", line) } line == ENVIRON["SUBJECT"] { found = 1; print line }' "${message_file}")"
+  if [[ -z "${normalized}" ]]; then
+    # Writing an empty message here would discard the message and let Git
+    # commit an empty subject past this gate.
+    echo "commit-msg could not find the checked subject in the message file." >&2
+    echo "Set WORKCELL_SKIP_COMMIT_NOTATION=1 only for an intentional bypass." >&2
+    exit 1
+  fi
+  # Both sides drop trailing newlines, so a message that needs no change is
+  # left byte for byte as the contributor wrote it.
+  if [[ "${normalized}" != "$(<"${message_file}")" ]]; then
+    printf '%s\n' "${normalized}" >"${message_file}"
+  fi
+  exit 0
+fi
+
+echo "Commit subject does not follow Risk-Aware Commit Notation." >&2
+echo "Required format: <risk><intent> <description> (risk reason; case reason)" >&2
+echo "Risk symbols: . ^ ! @  Intent letters: F B R D (or lowercase)." >&2
+echo "See .claude/skills/commit/SKILL.md for the full rules." >&2
+echo "Set WORKCELL_SKIP_COMMIT_NOTATION=1 only for an intentional bypass." >&2
+exit 1

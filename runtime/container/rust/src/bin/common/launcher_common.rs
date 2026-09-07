@@ -15,6 +15,10 @@ unsafe extern "C" {
 }
 
 pub const BASH_PATH: &str = "/bin/bash";
+// Kept in sync by hand with ALLOWED_LD_PRELOAD in src/lib.rs. The guard is a
+// cdylib of interposed exec symbols, so the launcher cannot link it to share
+// the constant without also defining execve/execv/... in its own binary.
+pub const GUARD_PRELOAD: &str = "/usr/local/lib/libworkcell_exec_guard.so";
 
 #[cfg(not(test))]
 static MANAGED_CHILD_PID: AtomicI32 = AtomicI32::new(0);
@@ -53,6 +57,11 @@ pub fn sanitize_env() {
         // SAFETY: called during single-threaded launcher startup before any thread or child is spawned; no concurrent env access.
         unsafe { env::remove_var(key) };
     }
+    // Restore only the immutable Workcell guard after removing caller-controlled
+    // loader state, so every descendant exec inherits the interposer the guard
+    // itself now requires.
+    // SAFETY: called during single-threaded launcher startup before any thread or child is spawned; no concurrent env access.
+    unsafe { env::set_var("LD_PRELOAD", GUARD_PRELOAD) };
 }
 
 pub fn set_env_var(key: &str, value: &str) {
