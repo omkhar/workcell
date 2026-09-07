@@ -594,6 +594,24 @@ fn token_is_loader_environment_unset_option(token: &str) -> bool {
     name.is_some_and(token_is_loader_environment_name)
 }
 
+/// env(1) short options cluster into one token, so a bare `-S` match is not
+/// enough: `-iS` reaches both of the options that defeat the guard.  `-S`
+/// re-splits the rest of the line into tokens this scan cannot follow, and
+/// `-i` drops the guard's own preload.  Scanning stops at an option that
+/// consumes the rest of the token as its value.
+fn token_clusters_loader_environment_control(token: &str) -> bool {
+    let Some(cluster) = token.strip_prefix('-') else {
+        return false;
+    };
+    if cluster.starts_with('-') {
+        return false;
+    }
+    cluster
+        .chars()
+        .take_while(|option| !matches!(option, 'u' | 'C'))
+        .any(|option| matches!(option, 'S' | 'i'))
+}
+
 fn token_is_shell_interpreter(token: &str) -> bool {
     matches!(
         token_basename(token),
@@ -612,12 +630,11 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
     while let Some(token) = next_shebang_token(&mut scan) {
         // env can rewrite the loader environment before the target runs, so the
         // options that add, drop or replace it end the scan with a refusal.
-        // -S / --split-string re-splits the rest of the line into tokens this
-        // scan cannot follow, so it is refused whatever it carries.
-        if token.starts_with("-S") || token.starts_with("--split-string") {
-            return true;
-        }
-        if token == "-i" || token == "--ignore-environment" || token == "-" {
+        if token == "--ignore-environment"
+            || token == "-"
+            || token.starts_with("--split-string")
+            || token_clusters_loader_environment_control(&token)
+        {
             return true;
         }
         if token == "-u" || token == "--unset" {
@@ -3045,6 +3062,22 @@ mod tests {
         assert!(!token_is_loader_environment_unset_option("--unset=PATH"));
         // A bare -u carries its name in the next token, handled by the scanner.
         assert!(!token_is_loader_environment_unset_option("-u"));
+
+        // Short options cluster, so -S and -i must be found anywhere in the
+        // cluster, not only at its head.
+        assert!(token_clusters_loader_environment_control("-S"));
+        assert!(token_clusters_loader_environment_control("-i"));
+        assert!(token_clusters_loader_environment_control("-iS"));
+        assert!(token_clusters_loader_environment_control("-0i"));
+        assert!(token_clusters_loader_environment_control("-vS"));
+        // -u and -C consume the rest of the token as a value, so a variable
+        // name or a directory containing i or S is not an option.
+        assert!(!token_clusters_loader_environment_control("-uSHELL"));
+        assert!(!token_clusters_loader_environment_control("-C/tmp/dir"));
+        assert!(!token_clusters_loader_environment_control("-0"));
+        assert!(!token_clusters_loader_environment_control("-"));
+        assert!(!token_clusters_loader_environment_control("--split-string"));
+        assert!(!token_clusters_loader_environment_control("PATH=/bin"));
     }
 
     #[test]
@@ -3053,6 +3086,7 @@ mod tests {
         // -i / -u / - drop the guard's own preload before the target runs.
         for cursor in [
             " -S LD_PRELOAD=/tmp/x.so /bin/sh",
+            " -iS LD_PRELOAD=/tmp/x.so /bin/sh",
             " --split-string=LD_AUDIT=/tmp/a.so /bin/sh",
             " -u LD_PRELOAD /bin/sh",
             " --unset=LD_LIBRARY_PATH /bin/sh",
