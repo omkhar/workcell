@@ -23,7 +23,10 @@ cd "${ROOT_DIR}"
 
 bt='`'
 failures=0
-note() { echo "check-doc-links: $*" >&2; failures=$((failures + 1)); }
+note() {
+  echo "check-doc-links: $*" >&2
+  failures=$((failures + 1))
+}
 
 # Referrer index: one "linker<TAB>canonical-target" line per navigable link,
 # keyed by resolved absolute path so distinct files that share a basename are
@@ -47,7 +50,7 @@ for f in "${md_files[@]}"; do
   while IFS= read -r target; do
     [[ -n "${target}" ]] || continue
     case "${target}" in
-      http://*|https://*|mailto:*|tel:*|'#'*) continue ;;
+      http://* | https://* | mailto:* | tel:* | '#'*) continue ;;
     esac
     # Drop any #fragment; only the path portion is validated.
     path="${target%%#*}"
@@ -61,23 +64,27 @@ for f in "${md_files[@]}"; do
     # Canonicalize fully (resolving any trailing ..) and require the target to
     # stay within the repository checkout so a traversal such as ../../etc/passwd
     # or ../../.. cannot pass by matching a host path.
+    # shellcheck disable=SC2312 # a failed cd yields a path outside ROOT_DIR, which the containment case below rejects
     if [[ -d "${resolved}" ]]; then
       canon="$(cd "${resolved}" && pwd -P)"
     else
       canon="$(cd "$(dirname "${resolved}")" && pwd -P)/$(basename "${resolved}")"
     fi
     case "${canon}" in
-      "${ROOT_DIR}"|"${ROOT_DIR}"/*) : ;;
-      *) note "link escapes repository: ${f} -> ${target}"; continue ;;
+      "${ROOT_DIR}" | "${ROOT_DIR}"/*) : ;;
+      *)
+        note "link escapes repository: ${f} -> ${target}"
+        continue
+        ;;
     esac
-    printf '%s\t%s\n' "${f}" "${canon}" >> "${link_records}"
+    printf '%s\t%s\n' "${f}" "${canon}" >>"${link_records}"
   done < <(
     # Strip fenced code blocks, then inline code spans, so example markdown
     # (fenced or `inline`) is not treated as a navigable link.
-    awk '/^[[:space:]]*```/{fence=!fence; next} !fence' "${f}" \
-      | sed -E "s/${bt}[^${bt}]*${bt}//g" \
-      | grep -oE '\]\([^) ]+\)' \
-      | sed -E 's/^\]\(//; s/\)$//' || true
+    awk '/^[[:space:]]*```/{fence=!fence; next} !fence' "${f}" |
+      sed -E "s/${bt}[^${bt}]*${bt}//g" |
+      grep -oE '\]\([^) ]+\)' |
+      sed -E 's/^\]\(//; s/\)$//' || true
   )
 done
 
@@ -85,15 +92,21 @@ done
 # A docs/*.md page is an orphan when no other tracked markdown file navigably
 # links to it. Matching is by canonical path, so a page is not treated as
 # referenced merely because some unrelated file shares its basename.
+# Capture the listing before the loop reads it. A process substitution hides a
+# `git ls-files` failure, which would leave this orphan check iterating nothing
+# and reporting a clean result over a docs tree it never enumerated.
+docs_listing="$(git ls-files 'docs/*.md')"
+
 while IFS= read -r doc; do
+  [[ -n "${doc}" ]] || continue
   doc_canon="${ROOT_DIR}/${doc}"
   if awk -F'\t' -v t="${doc_canon}" -v self="${doc}" \
-      '$2==t && $1!=self {found=1} END{exit found?0:1}' "${link_records}"; then
+    '$2==t && $1!=self {found=1} END{exit found?0:1}' "${link_records}"; then
     : # navigably linked from another markdown file
   else
     note "orphan doc: ${doc} is linked from no other tracked markdown file"
   fi
-done < <(git ls-files 'docs/*.md')
+done <<<"${docs_listing}"
 
 if [[ "${failures}" -gt 0 ]]; then
   echo "check-doc-links: FAILED with ${failures} issue(s)" >&2

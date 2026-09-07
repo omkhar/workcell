@@ -46,6 +46,7 @@ sudo_wrapper_broker_available() {
   [[ "${broker_cmdline}" == *"/usr/local/libexec/workcell/apt-broker.sh"* ]]
 }
 
+# shellcheck disable=SC2329 # reached only through the INT and TERM trap handlers
 sudo_wrapper_request_cancel() {
   local reason="$1"
   local cancel_path=""

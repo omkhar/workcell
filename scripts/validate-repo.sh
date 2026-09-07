@@ -153,8 +153,11 @@ shell_files=(
   "${ROOT_DIR}/.githooks/pre-push"
   "${ROOT_DIR}/scripts/bootstrap-dev.sh"
   "${ROOT_DIR}/scripts/check-dead-code.sh"
+  "${ROOT_DIR}/scripts/check-doc-links.sh"
+  "${ROOT_DIR}/scripts/check-doc-support-matrix-fields.sh"
   "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
   "${ROOT_DIR}/scripts/check-pr-shape.sh"
+  "${ROOT_DIR}/scripts/check-publish-commit-signatures.sh"
   "${ROOT_DIR}/scripts/check-repo-readiness.sh"
   "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
   "${ROOT_DIR}/scripts/check-public-contract.sh"
@@ -166,6 +169,9 @@ shell_files=(
   "${ROOT_DIR}/scripts/workcell"
   "${ROOT_DIR}/scripts/check-workflows.sh"
   "${ROOT_DIR}/scripts/ci/build-validator-image.sh"
+  "${ROOT_DIR}/scripts/ci/cost-report.sh"
+  "${ROOT_DIR}/scripts/ci/flaky-report.sh"
+  "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
   "${ROOT_DIR}/scripts/ci/job-docs.sh"
   "${ROOT_DIR}/scripts/ci/job-fuzz.sh"
   "${ROOT_DIR}/scripts/ci/job-mutation.sh"
@@ -204,12 +210,15 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-release-checksums.sh"
   "${ROOT_DIR}/scripts/generate-homebrew-formula.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
+  "${ROOT_DIR}/scripts/generate-workflow-lane-manifest.sh"
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/install-release.sh"
   "${ROOT_DIR}/scripts/install-workcell.sh"
   "${ROOT_DIR}/scripts/uninstall.sh"
   "${ROOT_DIR}/scripts/pre-merge.sh"
   "${ROOT_DIR}/scripts/provider-e2e.sh"
+  "${ROOT_DIR}/scripts/repo-publish-pr.sh"
+  "${ROOT_DIR}/scripts/retry.sh"
   "${ROOT_DIR}/scripts/publish-github-release.sh"
   "${ROOT_DIR}/scripts/check-release-tag-signature.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
@@ -228,6 +237,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh"
   "${ROOT_DIR}/scripts/verify-release-artifact.sh"
   "${ROOT_DIR}/scripts/verify-release-bundle.sh"
+  "${ROOT_DIR}/scripts/verify-release-outputs.sh"
   "${ROOT_DIR}/scripts/verify-invariants.sh"
   "${ROOT_DIR}/scripts/verify-operator-contract.sh"
   "${ROOT_DIR}/scripts/verify-workflow-lanes.sh"
@@ -239,8 +249,11 @@ shell_files=(
   "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
+  "${ROOT_DIR}/runtime/container/apt-broker.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/detached-stdin-wrapper.sh"
   "${ROOT_DIR}/runtime/container/assurance.sh"
   "${ROOT_DIR}/runtime/container/development-wrapper.sh"
   "${ROOT_DIR}/runtime/container/bin/git"
@@ -252,11 +265,66 @@ shell_files=(
   "${ROOT_DIR}/scripts/run-scenario-tests.sh"
   "${ROOT_DIR}/scripts/verify-scenario-coverage.sh"
   "${ROOT_DIR}/scripts/verify-control-plane-parity.sh"
+  "${ROOT_DIR}/verify/invariants/control-plane-lockstep.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/git-probes/snapshot-kind-probe.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/git-probes/snapshot-probe.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/install-deps/brew.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/install-deps/sysctl.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/install-deps/uname.sh"
+)
+
+# These scripts are linted but are not executable in the tree. The container
+# image sets the mode on copy, and the parity library is sourced, not run.
+non_executable_shell_files=(
+  "${ROOT_DIR}/runtime/container/apt-broker.sh"
+  "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
+  "${ROOT_DIR}/runtime/container/detached-stdin-wrapper.sh"
+  "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/git-probes/snapshot-kind-probe.sh"
+  "${ROOT_DIR}/verify/invariants/harnesses/git-probes/snapshot-probe.sh"
 )
 
 while IFS= read -r file; do
   shell_files+=("${file}")
 done < <(find "${ROOT_DIR}/tests/scenarios" -type f -name 'test-*.sh' -print | sort)
+
+# The list above is hand-maintained, so a new script can enter the tree
+# unlinted. Assert that the list covers every tracked bash script. Match on the
+# shebang, not on the file suffix: several linted scripts have no `.sh` name.
+declare -A linted_shell_files=()
+for file in "${shell_files[@]}"; do
+  linted_shell_files["${file#"${ROOT_DIR}/"}"]=1
+done
+
+# Bash does not propagate a process-substitution failure, so a `git ls-files`
+# error would leave this check reading an empty inventory and passing. Emit a
+# lone NUL after a successful listing and require it: a truncated listing then
+# fails closed instead of reporting complete coverage over a partial tree.
+unlinted_shell_files=()
+lint_inventory_completed=0
+while IFS= read -r -d '' tracked_path; do
+  if [[ -z "${tracked_path}" ]]; then
+    lint_inventory_completed=1
+    continue
+  fi
+  [[ -n "${linted_shell_files[${tracked_path}]:-}" ]] && continue
+  [[ -f "${ROOT_DIR}/${tracked_path}" ]] || continue
+  IFS= read -r shebang <"${ROOT_DIR}/${tracked_path}" || continue
+  [[ "${shebang}" == '#!'*bash* ]] || continue
+  unlinted_shell_files+=("${tracked_path}")
+done < <(git -C "${ROOT_DIR}" ls-files -z && printf '\0')
+
+if [[ "${lint_inventory_completed}" -ne 1 ]]; then
+  echo "Tracked file listing failed; shell lint coverage is unverified" >&2
+  exit 1
+fi
+
+if [[ "${#unlinted_shell_files[@]}" -gt 0 ]]; then
+  echo "Tracked bash scripts are missing from the validate-repo.sh lint list:" >&2
+  printf '  %s\n' "${unlinted_shell_files[@]}" >&2
+  echo "Add each script to shell_files so it is linted." >&2
+  exit 1
+fi
 
 should_skip_shellcheck_file() {
   local file="$1"
@@ -276,10 +344,34 @@ for file in "${shell_files[@]}"; do
   fi
   shellcheck -x "${file}"
 done
+
+# A lost exit status turns a trust decision into a vacuous pass: an unread
+# inventory looks the same as a clean one. SC2311 and SC2312 detect it, but they
+# are optional checks and stay off by default. Enable them on the scripts where
+# a masked return would admit an unverified release, commit, or public surface.
+# Ratchet: add files as they are cleaned, never remove one.
+fail_open_critical_shell_files=(
+  "${ROOT_DIR}/scripts/verify-release-outputs.sh"
+  "${ROOT_DIR}/scripts/verify-release-artifact.sh"
+  "${ROOT_DIR}"/scripts/check-*.sh
+  "${ROOT_DIR}"/.githooks/*
+)
+for file in "${fail_open_critical_shell_files[@]}"; do
+  shellcheck -x -o check-extra-masked-returns "${file}"
+done
+
 shfmt -ln=bash -i 2 -ci -d "${shell_files[@]}"
 "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
 
+declare -A shell_files_without_exec_bit=()
+for file in "${non_executable_shell_files[@]}"; do
+  shell_files_without_exec_bit["${file}"]=1
+done
+
 for file in "${shell_files[@]}"; do
+  if [[ -n "${shell_files_without_exec_bit[${file}]:-}" ]]; then
+    continue
+  fi
   if [[ ! -x "${file}" ]]; then
     echo "Expected executable script: ${file}" >&2
     exit 1

@@ -111,16 +111,26 @@ If that skill is unavailable, use this fallback:
 4. Inspect later issue comments, inline comments, formal reviews, and trigger
    reactions.
 5. Inspect all earlier unresolved Codex findings on the pull request.
-6. React with 👍 to each correct finding.
-7. React with 👎 only when direct evidence proves the finding false.
-8. Give a short written reason for each rebuttal or uncertain finding.
-9. Fix or rebut each actionable finding.
-10. Revalidate and push each signed fix before another review round.
-11. Repeat this fallback after every push.
-12. If no response appears in 15 minutes, post one more standalone trigger.
-13. Treat a second silence, usage limit, or connector failure as a blocker.
-14. Require a fresh clean marker for the current head before ready or merge.
-15. Resolve each fixed or rebutted thread with GitHub `resolveReviewThread`.
+6. Classify each finding against the standard dispositions in AGENTS.md
+   `Code Review Rules` before you react. Apply the recorded disposition in
+   one round.
+7. Resolve the cited commit identifier before you act on a finding that
+   cites one. A 422 from the commits API proves that the finding has no
+   subject.
+8. React with 👍 to each correct finding.
+9. React with 👎 only when direct evidence proves the finding false.
+10. Give a short written reason for each rebuttal or uncertain finding.
+11. Fix or rebut each actionable finding.
+12. Revalidate and push each signed fix before another review round.
+13. Repeat this fallback after every push.
+14. If no response appears in 15 minutes, post one more standalone trigger.
+15. Treat a second silence, usage limit, or connector failure as a blocker.
+16. Require a fresh clean marker for the current head before ready or merge.
+17. Do not spend a review round on a finding that has a recorded
+    disposition. Codex review capacity is a limited resource. The loop
+    reached its usage limit 41 times during the 2026-09 wave. A standing
+    disposition covered 21 percent of the findings in that wave.
+18. Resolve each fixed or rebutted thread with GitHub `resolveReviewThread`.
 
 After each push, stabilize the intended head and required local evidence. Then
 run the loop. Use only the selected loop's bounded retry. Do not add manual
