@@ -70,6 +70,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"two"}},
 		},
 		{
+			name:   "a list operator at the end of a line carries to the next",
+			script: "false &&\noras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "an arithmetic shift is not a heredoc operator",
+			script: ": $((1 << 2))\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
 			name:   "a step that redefines the command proves no invocation of it",
 			script: "oras() { :; }\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

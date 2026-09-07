@@ -171,6 +171,13 @@ func ShellInvocations(script, commandName string) [][]string {
 			current.WriteString(" ")
 			continue
 		}
+		if strings.HasSuffix(trimmed, "&&") || strings.HasSuffix(trimmed, "|") {
+			// A list operator at the end of a line continues the command list
+			// onto the next one, so false && <newline> oras cp … is one
+			// logical line whose right side bash decides on the left.
+			current.WriteString(" ")
+			continue
+		}
 		words, opened, quote, rest := shellWords(current.String(), quotes)
 		current.Reset()
 		openQuote, quotes = quote, rest
@@ -241,6 +248,7 @@ func ShellInvocations(script, commandName string) [][]string {
 func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, open byte, rest []byte) {
 	var word strings.Builder
 	inWord, quote, pending, stripTabs := false, byte(0), false, false
+	arithmetic := 0
 	flush := func() {
 		if !inWord {
 			return
@@ -298,7 +306,19 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 			flush()
 		case character == '#' && !inWord:
 			return words, heredocs, 0, stack
-		case character == '<' && index+1 < len(line) && line[index+1] == '<':
+		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
+			// An arithmetic expansion is not shell syntax: the << inside
+			// $((1 << 2)) is a shift, not a heredoc operator.
+			arithmetic++
+			word.WriteString(line[index : index+3])
+			index += 2
+			inWord = true
+		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
+			arithmetic--
+			word.WriteString("))")
+			index++
+			inWord = true
+		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
 			flush()
 			index++
 			if index+1 < len(line) && line[index+1] == '<' {

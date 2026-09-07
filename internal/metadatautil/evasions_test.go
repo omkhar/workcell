@@ -77,6 +77,9 @@ var Evasions = []Evasion{
 	{"conditional right-hand side", replaceAnchor(func(a string) string {
 		return prefixCommands(a, "false && ")
 	})},
+	{"conditional across a line break", replaceAnchor(func(a string) string {
+		return prefixCommands(a, "false &&\n"+indentOf(a))
+	})},
 	{"definition brace on the next line", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return hide(a, i+"never_called ()\n"+i+"{", i+"}")
