@@ -157,16 +157,15 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		unset := ShellInvocations(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
 		publish := ShellInvocations(step.Run, publishGitHubReleaseScript)
 		if len(audit) == 0 || len(unset) == 0 || len(publish) == 0 ||
-			!slices.Contains(audit[0], "${GITHUB_REPOSITORY}") ||
-			!slices.Contains(publish[0], "${GITHUB_REF_NAME}") ||
-			!slices.Contains(publish[0], "--immutable-releases-preverified-by-hosted-controls") {
+			!slices.Contains(audit[0].Args, "${GITHUB_REPOSITORY}") ||
+			!slices.Contains(publish[0].Args, "${GITHUB_REF_NAME}") ||
+			!slices.Contains(publish[0].Args, "--immutable-releases-preverified-by-hosted-controls") {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
-		// All three run, so their written order is the order bash reaches them.
-		auditIndex := strings.Index(step.Run, auditHostedControlsScript)
-		unsetIndex := strings.Index(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
-		publishIndex := strings.Index(step.Run, publishGitHubReleaseScript)
-		if unsetIndex <= auditIndex || publishIndex <= unsetIndex {
+		// All three run, so compare the positions the parser proves rather
+		// than where the three names first appear in the text: a comment can
+		// name them in this order while the step mutates the release first.
+		if unset[0].Position <= audit[0].Position || publish[0].Position <= unset[0].Position {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
 		return nil
@@ -197,9 +196,9 @@ func validateReleaseAssembly(document workflowDocument) error {
 	steps := document.Jobs["release"].Steps
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
 		var targets []string
-		for _, args := range ShellInvocations(step.Run, "oras cp --recursive --from-oci-layout") {
-			if at := slices.Index(args, "--to-oci-layout"); at >= 0 && at+1 < len(args) {
-				targets = append(targets, args[at+1])
+		for _, invocation := range ShellInvocations(step.Run, "oras cp --recursive --from-oci-layout") {
+			if at := slices.Index(invocation.Args, "--to-oci-layout"); at >= 0 && at+1 < len(invocation.Args) {
+				targets = append(targets, invocation.Args[at+1])
 			}
 		}
 		return slices.Contains(targets, "dist/release-image:amd64") &&

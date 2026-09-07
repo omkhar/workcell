@@ -209,11 +209,29 @@ func TestShellInvocations(t *testing.T) {
 			script: "cat <<<\"${PLAN}\"\noras cp one\n",
 			want:   [][]string{{"one"}},
 		},
+		{
+			name:   "words after a closing quote are arguments of the command that opened it",
+			script: ": \"\nx\n\" oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
+		},
+		{
+			name:   "an operator after a closing quote still starts a command",
+			script: ": \"\nx\n\"; oras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "a hashed path over the command proves no invocation of it",
+			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			got := metadatautil.ShellInvocations(testCase.script, "oras cp")
+			var got [][]string
+			for _, invocation := range metadatautil.ShellInvocations(testCase.script, "oras cp") {
+				got = append(got, invocation.Args)
+			}
 			if !slices.EqualFunc(got, testCase.want, slices.Equal) {
 				t.Fatalf("ShellInvocations() = %q, want %q", got, testCase.want)
 			}

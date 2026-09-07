@@ -121,7 +121,19 @@ func quoteCloseIndex(line string, quote byte) int {
 	return -1
 }
 
-// ShellInvocations returns the arguments of each invocation of command in
+// Invocation is one invocation the script proves it runs: the arguments after
+// the command name, and the ordinal of the command word in the stream of
+// commands the parser proves the script reaches. Position does not depend on
+// the command being searched for, so two invocations parsed from the same
+// script compare directly, and a validator that requires one command to run
+// before another compares those positions rather than where the two names
+// first appear as text.
+type Invocation struct {
+	Args     []string
+	Position int
+}
+
+// ShellInvocations returns each invocation of command in
 // script. It joins line continuations, splits each line at the operators that
 // end one command, and drops comments, inline ones included, heredoc bodies,
 // the body of a function definition, the body of a compound command, and the
@@ -129,16 +141,17 @@ func quoteCloseIndex(line string, quote byte) int {
 // text counts as a command and one call cannot satisfy a two-call rule. A
 // validator that must anchor on the commands a script really runs uses this in
 // place of a substring search.
-func ShellInvocations(script, commandName string) [][]string {
+func ShellInvocations(script, commandName string) []Invocation {
 	prefix := strings.Fields(commandName)
 	if len(prefix) == 0 {
 		return nil
 	}
-	var invocations [][]string
+	var invocations []Invocation
 	var current strings.Builder
 	var heredocs []heredoc
 	var openQuote byte
 	var quotes []byte
+	var position int
 	var depth, definedAt, control int
 	var defining, bodyOpened bool
 	for line := range strings.Lines(script) {
@@ -152,7 +165,13 @@ func ShellInvocations(script, commandName string) [][]string {
 				continue
 			}
 			openQuote = 0
-			text = text[at+1:]
+			// The words after the closer still belong to the command the
+			// quoted word is an argument of, and that command word was read
+			// before the span opened. A null command carries them, so
+			// : " … " oras cp … stays one run of : rather than becoming an
+			// oras invocation. A control operator in the rest still ends it
+			// and starts a command of its own.
+			text = ": " + text[at+1:]
 		}
 		if len(heredocs) > 0 {
 			if heredocs[0].endsAt(text) {
@@ -211,6 +230,7 @@ func ShellInvocations(script, commandName string) [][]string {
 			if len(args) == 0 {
 				continue
 			}
+			position++
 			if change, found := controlWords[args[0]]; found {
 				control = max(control+change, 0)
 				nested = true
@@ -226,8 +246,14 @@ func ShellInvocations(script, commandName string) [][]string {
 			if args[0] == "alias" && shadowsByAlias(args, prefix[0]) {
 				return nil // Every later use expands to the alias.
 			}
+			if args[0] == "hash" && slices.Contains(args[1:], "-p") &&
+				slices.Contains(args[1:], prefix[0]) {
+				// hash -p pathname name makes pathname the full filename for
+				// name, so every later line runs that path, not the program.
+				return nil
+			}
 			if len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix) {
-				invocations = append(invocations, args[len(prefix):])
+				invocations = append(invocations, Invocation{args[len(prefix):], position})
 			}
 		}
 	}

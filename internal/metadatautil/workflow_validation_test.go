@@ -173,6 +173,29 @@ func TestValidateReleaseWorkflowPublicationGateRejectsEvasions(t *testing.T) {
 	})
 }
 
+// TestValidateReleaseWorkflowPublicationGateComparesParsedOrder proves the gate
+// reads the order bash reaches the three commands, not the order their names
+// first appear as text. A comment naming them in the required order must not
+// cover a step that mutates the release before the hosted-controls recheck.
+func TestValidateReleaseWorkflowPublicationGateComparesParsedOrder(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const ordered = "          ./scripts/run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"\n" +
+		"          unset WORKCELL_HOSTED_CONTROLS_TOKEN\n"
+	swapped := "          # order: ./scripts/run-hosted-controls-audit.sh\n" +
+		"          # then: unset WORKCELL_HOSTED_CONTROLS_TOKEN\n" +
+		"          # then: ./scripts/publish-github-release.sh\n" +
+		"          unset WORKCELL_HOSTED_CONTROLS_TOKEN\n" +
+		"          ./scripts/run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"\n"
+	mutated := strings.Replace(workflow, ordered, swapped, 1)
+	if mutated == workflow {
+		t.Fatal("the publication step no longer carries the audit and unset lines this test rewrites")
+	}
+	err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
+	if err == nil || !strings.Contains(err.Error(), "recheck hosted controls") {
+		t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want a recheck order failure", err)
+	}
+}
+
 func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T) {
 	workflow := string(readReleaseWorkflow(t))
 	decoys := []struct {
