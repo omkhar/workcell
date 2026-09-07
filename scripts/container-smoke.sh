@@ -3831,6 +3831,68 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader.out
+  # Loader invocation-form matrix, replayed against the real loader. The Rust
+  # table in runtime/container/rust/tests/loader_forms.rs states the same forms
+  # against the exported guard entry points; these rows put the /state native
+  # payload in the exec-target position, which only the runtime image has. The
+  # approved preload stays in the child environment here, so a refused row
+  # reports its own reason rather than the missing-preload default. Every row
+  # states its own result: a refused row wants the block message, a row the
+  # loader accepts wants status 0 from /bin/true, and a row the loader itself
+  # rejects wants the loader's own text and no block message.
+  loader_form_block_message="Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile."
+  loader_form_refused() {
+    local label="$1"
+    shift
+    if "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1; then
+      echo "expected loader invocation form ${label} to be refused" >&2
+      exit 1
+    fi
+    grep -q "${loader_form_block_message}" "/tmp/loader-form-${label}.out"
+  }
+  loader_form_reaches_target() {
+    local label="$1"
+    shift
+    if ! "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1; then
+      echo "expected loader invocation form ${label} to run its exec target" >&2
+      cat "/tmp/loader-form-${label}.out" >&2
+      exit 1
+    fi
+  }
+  # The loader rejects some spellings the guard must still pass through. The
+  # loader's own text proves the guard let the form reach it.
+  loader_form_loader_rejects() {
+    local label="$1"
+    local pattern="$2"
+    shift 2
+    if "$LOADER" "$@" >"/tmp/loader-form-${label}.out" 2>&1; then
+      echo "expected the loader to reject invocation form ${label}" >&2
+      exit 1
+    fi
+    if grep -q "${loader_form_block_message}" "/tmp/loader-form-${label}.out"; then
+      echo "expected loader invocation form ${label} to reach the loader unrefused" >&2
+      cat "/tmp/loader-form-${label}.out" >&2
+      exit 1
+    fi
+    grep -q "${pattern}" "/tmp/loader-form-${label}.out"
+  }
+  # Control row: believe the matrix only after it observes a known refusal.
+  loader_form_refused control "$EXEC_TMP/workcell-state-native"
+  loader_form_refused unknown-arity-option --workcell-not-a-real-option "$EXEC_TMP/workcell-state-native"
+  loader_form_refused option-abbreviation --argv "$EXEC_TMP/workcell-state-native"
+  loader_form_refused valueless-then-target --inhibit-cache "$EXEC_TMP/workcell-state-native"
+  loader_form_refused end-of-options -- "$EXEC_TMP/workcell-state-native"
+  loader_form_refused library-path-semicolons "--library-path=/usr/lib;/state/lib" /bin/true
+  loader_form_refused preload-origin-expansion --preload '$ORIGIN/../evil.so' /bin/true
+  loader_form_reaches_target argv0-separate-value --argv0 "$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_reaches_target hwcaps-mask-separate-value --glibc-hwcaps-mask "$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_reaches_target valueless-option-then-target --inhibit-cache /bin/true
+  loader_form_loader_rejects argv0-attached-value "unrecognized option" "--argv0=$EXEC_TMP/workcell-state-native" /bin/true
+  loader_form_loader_rejects inhibit-rpath-empty-value "unrecognized option" --inhibit-rpath= /bin/true
+  # The split-at-equals defect the Rust table records as pending: the truncated
+  # prefix is a mutable native payload, so only this lane can observe it. The
+  # loader reports the whole name, which proves it was not truncated either.
+  loader_form_loader_rejects target-with-equals-sign "workcell-state-native=x" "$EXEC_TMP/workcell-state-native=x"
   if WORKCELL_MODE=breakglass "$EXEC_TMP/workcell-state-native" >/tmp/state-native-workcell-mode-bypass.out 2>&1; then
     echo "expected strict profile to ignore caller-supplied WORKCELL_MODE for mutable native execution" >&2
     exit 1
@@ -4063,6 +4125,18 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-node-shebang.out
+  # The short options cluster into one token, so -iS reaches both -i, which
+  # drops the guard preload, and -S, which re-splits the rest of the line.
+  cat >"${workspace_exec_scratch}/.workcell-env-cluster-node-shebang" <<EOF
+#!/usr/bin/env -iS /usr/local/libexec/workcell/real/node
+console.log("workcell env cluster shebang bypass");
+EOF
+  chmod 0700 "${workspace_exec_scratch}/.workcell-env-cluster-node-shebang"
+  if "${workspace_exec_scratch}/.workcell-env-cluster-node-shebang" >/tmp/workspace-env-cluster-node-shebang.out 2>&1; then
+    echo "expected strict profile to reject env -iS shebang execution of the real Node payload" >&2
+    exit 1
+  fi
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-cluster-node-shebang.out
   cat >"${workspace_exec_scratch}/.workcell-env-loader-node-shebang" <<EOF
 #!/usr/bin/env -S ${LOADER} /usr/local/libexec/workcell/real/node
 console.log("workcell env loader shebang bypass");
