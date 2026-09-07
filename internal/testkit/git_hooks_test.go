@@ -255,6 +255,55 @@ func TestCommitMsgHookNormalizesSubjectWithTrailingSpace(t *testing.T) {
 	}
 }
 
+func TestCommitMsgHookNormalizesRetainedSubjectWithTrailingSpace(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	valid := "^F Add branch filter flag (tests pass; user-visible CLI flag)"
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	// stripspace drops the trailing space before the check, so the stored
+	// subject has to be the checked one and not the raw line. %s trims the
+	// difference away, so the raw message is the assertion.
+	if err := os.WriteFile(messageFile, []byte(valid+"   \n\nDetail line.\n"), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	fixture.run("commit", "--quiet", "--cleanup=verbatim", "-F", messageFile)
+	raw := fixture.run("log", "-1", "--format=%B")
+	rawSubject := strings.SplitN(raw, "\n", 2)[0]
+	if rawSubject != valid {
+		t.Fatalf("stored subject %q is not the checked subject %q", rawSubject, valid)
+	}
+	if !strings.Contains(raw, "Detail line.") {
+		t.Fatalf("normalization discarded the body:\n%s", raw)
+	}
+}
+
+func TestCommitMsgHookHonorsNumberedGitConfigEnvironment(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	messageFile := filepath.Join(fixture.root, "message.txt")
+	message := "; Please enter the commit message for your changes.\n" +
+		"^F Add branch filter flag (tests pass; user-visible CLI flag)\n"
+	if err := os.WriteFile(messageFile, []byte(message), 0o644); err != nil {
+		t.Fatalf("write message file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture.root, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed failed: %v", err)
+	}
+	fixture.run("add", "seed.txt")
+	// GIT_CONFIG_COUNT and its numbered pairs also select configuration, so
+	// the sanitized re-exec has to forward every GIT_CONFIG variable.
+	env := []string{
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=core.commentChar",
+		"GIT_CONFIG_VALUE_0=;",
+	}
+	if output, err := fixture.tryGit(env, "commit", "--quiet", "--cleanup=strip", "-F", messageFile); err != nil {
+		t.Fatalf("commit with numbered configuration failed: %v\n%s", err, output)
+	}
+}
+
 func TestCommitMsgHookHonorsXDGCommentChar(t *testing.T) {
 	fixture := newGitHooksFixture(t)
 	xdgDir := filepath.Join(fixture.homeDir, "xdg")
@@ -543,6 +592,25 @@ func TestPrePushHookHonorsXDGVerificationConfig(t *testing.T) {
 	env := []string{"XDG_CONFIG_HOME=" + xdgDir}
 	if output, err := fixture.tryGit(env, "push", "--quiet", "origin", "main"); err != nil {
 		t.Fatalf("push with XDG signing configuration failed: %v\n%s", err, output)
+	}
+}
+
+func TestPrePushHookHonorsGlobalConfigSelector(t *testing.T) {
+	fixture := newGitHooksFixture(t)
+	fixture.configureSSHSigning()
+	fixture.commitFile("file.txt", "one\n", "^F Add fixture file (tests pass; fixture seed)", "-S")
+	signers := filepath.Join(fixture.homeDir, "allowed_signers")
+	fixture.run("config", "--unset", "gpg.ssh.allowedSignersFile")
+	globalConfig := filepath.Join(fixture.homeDir, "selected_config")
+	config := "[gpg \"ssh\"]\n\tallowedSignersFile = " + signers + "\n"
+	if err := os.WriteFile(globalConfig, []byte(config), 0o644); err != nil {
+		t.Fatalf("write selected config failed: %v", err)
+	}
+	// GIT_CONFIG_GLOBAL selects the global configuration file, so the
+	// sanitized re-exec has to forward it for verify-commit to read it.
+	env := []string{"GIT_CONFIG_GLOBAL=" + globalConfig}
+	if output, err := fixture.tryGit(env, "push", "--quiet", "origin", "main"); err != nil {
+		t.Fatalf("push with a selected global configuration failed: %v\n%s", err, output)
 	}
 }
 

@@ -1,15 +1,24 @@
 #!/bin/bash -p
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
 if [[ "${WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
-  exec /usr/bin/env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    HOME="${HOME:-/tmp}" \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}" \
-    TMPDIR="${TMPDIR:-/tmp}" \
-    GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:-}" \
-    WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}" \
-    WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1 \
-    /bin/bash -p "$0" "$@"
+  # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
+  # Git reads. They are forwarded rather than scrubbed so stripspace resolves
+  # the same comment character the outer command will. The person running that
+  # command already controls both the message and the documented bypass
+  # variable, so forwarding them adds no trust. The prefix form covers the
+  # numbered GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs as well.
+  sanitized_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    HOME="${HOME:-/tmp}"
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
+    TMPDIR="${TMPDIR:-/tmp}"
+    WORKCELL_SKIP_COMMIT_NOTATION="${WORKCELL_SKIP_COMMIT_NOTATION:-}"
+    WORKCELL_COMMITMSG_SANITIZED_ENTRYPOINT=1
+  )
+  for git_config_name in ${!GIT_CONFIG@}; do
+    sanitized_env+=("${git_config_name}=${!git_config_name}")
+  done
+  exec /usr/bin/env -i "${sanitized_env[@]}" /bin/bash -p "$0" "$@"
 fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
@@ -36,41 +45,40 @@ notation_ok() {
   [[ "$1" =~ ^[.^!@][FfBbRrDd]\ .+\ \(.+\;\ .+\)$ ]]
 }
 
-# GIT_CONFIG_PARAMETERS carries the outer `git -c name=value` settings, so
-# stripspace here resolves the same comment character the outer command will.
-# It is forwarded rather than scrubbed because the person running that command
-# already controls both the message and the documented bypass variable.
-#
 # Check the subject Git would retain first. A repository can configure
 # core.commentChar to a risk symbol such as ^, and comment stripping would
 # then delete a valid subject.
 retained="$(git -C "${ROOT_DIR}" stripspace <"${message_file}" || true)"
-if notation_ok "${retained%%$'\n'*}"; then
-  exit 0
+subject="${retained%%$'\n'*}"
+
+if ! notation_ok "${subject}"; then
+  # Otherwise fall back to the comment-stripped view. stripspace honours
+  # core.commentChar, so a configured comment character is handled here too.
+  body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
+  subject="${body%%$'\n'*}"
 fi
 
-# Otherwise fall back to the comment-stripped view. stripspace honours
-# core.commentChar, so a configured comment character is handled here too.
-body="$(git -C "${ROOT_DIR}" stripspace --strip-comments <"${message_file}" || true)"
-subject="${body%%$'\n'*}"
-
 if notation_ok "${subject}"; then
-  # Git only strips comments for editor-cleaned messages, so -m and -F keep
-  # them. Drop just the comment lines ahead of the subject, so Git retains the
-  # subject that was checked and the body keeps every line as written.
+  # Git only cleans the message for an editor session, so -m, -F, and
+  # --cleanup=verbatim keep leading comment lines and trailing whitespace that
+  # stripspace removed before the check. Drop the lines ahead of the checked
+  # subject and store that subject as it was checked, so Git retains the
+  # subject this hook validated. Every later line stays as written.
   # ENVIRON, not -v: awk applies escape processing to a -v assignment, so a
   # backslash in the subject would stop it matching its own line.
-  # stripspace also removes trailing whitespace, so the checked subject can
-  # differ from its own line here; compare without that whitespace.
-  trimmed="$(SUBJECT="${subject}" awk 'found { print; next } { line = $0; sub(/[ \t]+$/, "", line) } line == ENVIRON["SUBJECT"] { found = 1; print }' "${message_file}")"
-  if [[ -z "${trimmed}" ]]; then
+  normalized="$(SUBJECT="${subject}" awk 'found { print; next } { line = $0; sub(/[ \t]+$/, "", line) } line == ENVIRON["SUBJECT"] { found = 1; print line }' "${message_file}")"
+  if [[ -z "${normalized}" ]]; then
     # Writing an empty message here would discard the message and let Git
     # commit an empty subject past this gate.
     echo "commit-msg could not find the checked subject in the message file." >&2
     echo "Set WORKCELL_SKIP_COMMIT_NOTATION=1 only for an intentional bypass." >&2
     exit 1
   fi
-  printf '%s\n' "${trimmed}" >"${message_file}"
+  # Both sides drop trailing newlines, so a message that needs no change is
+  # left byte for byte as the contributor wrote it.
+  if [[ "${normalized}" != "$(<"${message_file}")" ]]; then
+    printf '%s\n' "${normalized}" >"${message_file}"
+  fi
   exit 0
 fi
 

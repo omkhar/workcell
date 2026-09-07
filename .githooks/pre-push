@@ -1,16 +1,25 @@
 #!/bin/bash -p
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin"
 if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
-  exec /usr/bin/env -i \
-    PATH="${TRUSTED_HOST_PATH}" \
-    HOME="${HOME:-/tmp}" \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}" \
-    TMPDIR="${TMPDIR:-/tmp}" \
-    GNUPGHOME="${GNUPGHOME:-}" \
-    GIT_CONFIG_PARAMETERS="${GIT_CONFIG_PARAMETERS:-}" \
-    WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}" \
-    WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1 \
-    /bin/bash -p "$0" "$@"
+  # Every GIT_CONFIG* variable, and XDG_CONFIG_HOME, selects the configuration
+  # Git reads. They are forwarded rather than scrubbed so verify-commit uses
+  # the same verification settings as the push that invoked it. Whoever runs
+  # that command already has the documented WORKCELL_SKIP_PUSH_SIGNATURES
+  # bypass, so forwarding them adds no trust. The prefix form covers the
+  # numbered GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n pairs as well.
+  sanitized_env=(
+    PATH="${TRUSTED_HOST_PATH}"
+    HOME="${HOME:-/tmp}"
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}"
+    TMPDIR="${TMPDIR:-/tmp}"
+    GNUPGHOME="${GNUPGHOME:-}"
+    WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}"
+    WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1
+  )
+  for git_config_name in ${!GIT_CONFIG@}; do
+    sanitized_env+=("${git_config_name}=${!git_config_name}")
+  done
+  exec /usr/bin/env -i "${sanitized_env[@]}" /bin/bash -p "$0" "$@"
 fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
@@ -19,10 +28,6 @@ if [[ "${WORKCELL_SKIP_PUSH_SIGNATURES:-0}" == "1" ]]; then
   exit 0
 fi
 
-# GIT_CONFIG_PARAMETERS carries the outer `git -c name=value` settings, so
-# verify-commit here uses the same verification configuration as the push that
-# invoked it. It is forwarded rather than scrubbed because whoever runs that
-# command already has the documented WORKCELL_SKIP_PUSH_SIGNATURES bypass.
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
 readonly ZERO_OID_PATTERN='^0+$'
