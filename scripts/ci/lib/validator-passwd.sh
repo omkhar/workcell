@@ -31,10 +31,23 @@ workcell_ci_validator_passwd_file() {
   local gid="$4"
   local home="$5"
   local workspace="$6"
+  local directory=""
   local file=""
 
-  mkdir -p "${workspace}/tmp" || return
-  file="$(mktemp "${workspace}/tmp/workcell-validator-passwd.XXXXXX")" || return
+  # Containment is decided on canonical paths.  A symlinked `tmp`, or a
+  # symlinked ancestor of it, would place the artifact, its mode change and its
+  # removal outside the workspace the caller preflighted, while `mkdir -p` and
+  # `mktemp` both follow it without complaint.  Bash cannot open and hold a
+  # parent descriptor, so the gate compares the resolved directory with the
+  # resolved workspace and refuses anything else.
+  workspace="$(cd "${workspace}" && pwd -P)" || return
+  directory="${workspace}/tmp"
+  mkdir -p "${directory}" || return
+  if [[ "$(cd "${directory}" && pwd -P)" != "${directory}" ]]; then
+    echo "Validator passwd directory is not the canonical ${directory}" >&2
+    return 1
+  fi
+  file="$(mktemp "${directory}/workcell-validator-passwd.XXXXXX")" || return
   "${docker_command}" run --rm --entrypoint /bin/bash "${image}" \
     -lc 'cat /etc/passwd' >"${file}" || return
   if ! awk -F: -v uid="${uid}" '$3 == uid { found = 1 } END { exit !found }' \
@@ -42,6 +55,10 @@ workcell_ci_validator_passwd_file() {
     printf 'workcell-ci:x:%s:%s:workcell ci:%s:/bin/bash\n' \
       "${uid}" "${gid}" "${home}" >>"${file}"
   fi
-  chmod 0444 "${file}" || return
+  # Owner-only: the container runs as the same uid the caller passes here, so
+  # glibc reads the bind-mounted copy as its owner and nothing else on the host
+  # needs it.  mktemp already created it 0600; 0400 also drops the write bit
+  # for the read-only mount.
+  chmod 0400 "${file}" || return
   printf '%s\n' "${file}"
 }

@@ -557,7 +557,7 @@ func TestValidatorLanesMountSynthesizedPasswd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			lane := string(content)
+			lane := activeShellLines(string(content))
 			if !strings.Contains(lane, "scripts/ci/lib/validator-passwd.sh") {
 				t.Fatalf("%s must use the shared passwd synthesis library", rel)
 			}
@@ -573,56 +573,87 @@ func TestValidatorLanesMountSynthesizedPasswd(t *testing.T) {
 	}
 }
 
-// The hostile lane earns its runtime only while TMPDIR keeps every shape that
-// reproduced a finding by hand, so the derivation is executed here rather than
-// pattern-matched: a dropped backslash that lets bash expand $HOME, or a
-// shortened padding component, leaves the lane green for the wrong reason.
-func TestHostileTMPDIRKeepsTheShapesThatReproducedFindings(t *testing.T) {
+// The passwd artifact has to land inside the workspace the caller preflighted.
+// mkdir -p and mktemp both follow a symlinked tmp without complaint, which
+// would move the create, the mode change and the removal somewhere else, so the
+// library gates on the canonical path.  The symlinked case is its negative
+// fixture.
+func TestValidatorPasswdRefusesSymlinkedWorkspaceTmp(t *testing.T) {
 	t.Parallel()
 
-	root := repoRoot(t)
-	lane := filepath.Join(root, "scripts", "ci", "run-validate-in-validator.sh")
-	content, err := os.ReadFile(lane)
-	if err != nil {
-		t.Fatal(err)
-	}
-	derivation := ""
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), `validator_tmp="${validator_tmp}/`) {
-			derivation = strings.TrimSpace(line)
-			break
+	library := filepath.Join(repoRoot(t), "scripts", "ci", "lib", "validator-passwd.sh")
+	binDir := t.TempDir()
+	writeExecutable(t, binDir, "docker", "#!/bin/bash\nprintf 'root:x:0:0:root:/root:/bin/bash\\n'\n")
+	probe := writeExecutable(t, t.TempDir(), "probe", `#!/bin/bash
+set -euo pipefail
+PATH="$1:${PATH}"
+export PATH
+source "$2"
+workcell_ci_validator_passwd_file docker fixture-image 1000 1000 /home/fixture "$3"
+`)
+
+	for _, symlinked := range []bool{false, true} {
+		symlinked := symlinked
+		name := "plain tmp"
+		if symlinked {
+			name = "symlinked tmp"
 		}
-	}
-	if derivation == "" {
-		t.Fatal("run-validate-in-validator.sh no longer derives a hostile TMPDIR")
-	}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	script := `validator_tmp="/tmp/workcell-home-1000/.tmp"; ` + derivation + `; printf '%s' "${validator_tmp}"`
-	command := exec.Command("/bin/bash", "-c", script)
-	command.Env = append(os.Environ(), "HOME=/hostile-home-must-not-expand")
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("hostile TMPDIR derivation failed: %v", err)
+			workspace := t.TempDir()
+			if symlinked {
+				if err := os.Symlink(t.TempDir(), filepath.Join(workspace, "tmp")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output, err := exec.Command("/bin/bash", probe, binDir, library, workspace).CombinedOutput()
+			if symlinked {
+				if err == nil || !strings.Contains(string(output), "is not the canonical") {
+					t.Fatalf("symlinked tmp accepted: %v\n%s", err, output)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("plain tmp refused: %v\n%s", err, output)
+			}
+			canonical, err := filepath.EvalSymlinks(workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(string(output)); !strings.HasPrefix(got, filepath.Join(canonical, "tmp")+"/") {
+				t.Fatalf("passwd artifact = %q, want a file under %q", got, canonical)
+			}
+		})
 	}
-	hostile := string(output)
+}
 
-	if !strings.Contains(hostile, " ") {
-		t.Fatalf("hostile TMPDIR %q has no whitespace component", hostile)
+// activeShellLines drops whole-line comments so a lane cannot satisfy a check
+// with the statement it commented out.  A trailing comment is left alone: it
+// cannot carry a statement, and cutting at the first "#" would corrupt a
+// pathname or a parameter expansion that contains one.
+func activeShellLines(script string) string {
+	active := make([]string, 0, strings.Count(script, "\n")+1)
+	for _, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		active = append(active, line)
 	}
-	if !strings.Contains(hostile, "$") {
-		t.Fatalf("hostile TMPDIR %q has no unexpanded dollar sign", hostile)
+	return strings.Join(active, "\n")
+}
+
+// The negative fixture for activeShellLines: a commented-out source statement
+// must not read as coverage.
+func TestActiveShellLinesDropsCommentedStatements(t *testing.T) {
+	t.Parallel()
+
+	commented := "  # source \"${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh\"\n#!/bin/bash\n"
+	if got := activeShellLines(commented); strings.Contains(got, "validator-passwd.sh") {
+		t.Fatalf("commented statement survived comment stripping: %q", got)
 	}
-	option, padded := false, false
-	for _, word := range strings.Fields(hostile) {
-		option = option || strings.HasPrefix(word, "--")
-	}
-	for _, component := range strings.Split(hostile, "/") {
-		padded = padded || len(component) >= 80
-	}
-	if !option {
-		t.Fatalf("hostile TMPDIR %q has no --prefixed token", hostile)
-	}
-	if !padded {
-		t.Fatalf("hostile TMPDIR %q has no ~80-character padding component", hostile)
+	live := "source \"${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh\" # keep the trailing comment\n"
+	if got := activeShellLines(live); !strings.Contains(got, "# keep the trailing comment") {
+		t.Fatalf("live statement lost its trailing comment: %q", got)
 	}
 }

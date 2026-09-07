@@ -116,7 +116,7 @@ run_validate_repo_in_validator_snapshot() {
         "${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}" \
         "${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}" \
         "${WORKCELL_BUILD_AND_TEST_VALIDATOR_HOME}" \
-        "${workspace}")"
+        "${workspace}")" || exit 1
       docker run --rm \
         --user "${WORKCELL_BUILD_AND_TEST_VALIDATOR_UID}:${WORKCELL_BUILD_AND_TEST_VALIDATOR_GID}" \
         --entrypoint /bin/bash \

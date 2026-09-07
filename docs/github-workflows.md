@@ -60,6 +60,7 @@ For an approved large adapter PR, use both required options:
 Normal PRs run the required deterministic lanes.
 The `Release asset ACL (Darwin)` lane runs on every PR and `main` push.
 It uses `macos-15` and checks the exact Go toolchain.
+
 The `approved-heavy-ci` label enables these expensive PR lanes:
 
 - native amd64 and arm64 reproducible builds
@@ -188,6 +189,9 @@ A new publisher requires a reviewed policy change.
 `ci.yml` and `docs.yml` run the validator as the caller UID and GID.
 They use separate writable home, cache, and temporary roots.
 The launcher creates an isolated home if the caller has no passwd entry.
+Each validator lane also mounts a synthesized `/etc/passwd` record for that UID.
+`scripts/ci/lib/validator-passwd.sh` writes the record.
+A UID with no record breaks each tool that resolves the invoking user, such as `ssh-keygen`.
 
 The mirrored local jobs are under `scripts/ci/`.
 Workflow YAML controls events, permissions, runners, and hosted-only steps.
