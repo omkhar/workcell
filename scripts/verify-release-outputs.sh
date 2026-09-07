@@ -226,6 +226,10 @@ main() {
   done
 
   [[ -n "${ASSETS_DIR}" && -d "${ASSETS_DIR}" ]] || fail "assets directory is required"
+  # A symlinked assets directory makes the inventory walk below emit nothing --
+  # `find` does not descend a command-line symlink -- while the per-asset checks
+  # still resolve through it, so an unexpected file would pass unseen.
+  [[ ! -L "${ASSETS_DIR}" ]] || fail "assets directory must not be a symlink: ${ASSETS_DIR}"
   validate_repository "${REPOSITORY}" || fail "invalid repository: ${REPOSITORY}"
   validate_release_tag "${TAG}" || fail "invalid release tag: ${TAG}"
   [[ "${IMAGE_REPOSITORY}" == "ghcr.io/${REPOSITORY}" ]] ||
@@ -265,11 +269,31 @@ main() {
   done
 
   EXPECTED_ASSETS=("${DATA_ASSETS[@]}" "${SIGNATURE_ASSETS[@]}")
+  # Bash does not propagate a process-substitution failure, so `find` errors are
+  # invisible to the loop below. Emit a lone NUL after a successful `find` and
+  # treat it as a completion sentinel: the loop reads it as an empty path, which
+  # `find` itself can never produce. A truncated walk therefore fails closed
+  # instead of leaving the per-asset checks, which only open names they already
+  # expect, to report success over an inventory that was never read.
+  listed_count=0
+  walk_completed=0
   while IFS= read -r -d '' path; do
+    if [[ -z "${path}" ]]; then
+      walk_completed=1
+      continue
+    fi
     require_regular_file "${path}"
     asset="${path##*/}"
     contains_asset "${asset}" "${EXPECTED_ASSETS[@]}" || fail "unexpected release file: ${asset}"
-  done < <(find "${ASSETS_DIR}" -mindepth 1 -maxdepth 1 -print0)
+    listed_count=$((listed_count + 1))
+  done < <(find "${ASSETS_DIR}" -mindepth 1 -maxdepth 1 -print0 && printf '\0')
+
+  [[ "${walk_completed}" -eq 1 ]] || fail "release directory listing failed"
+  # A completed walk can still observe nothing: `find` exits 0 without descending
+  # a command-line symlink. Assert it saw the whole inventory, not just that it
+  # ran to completion.
+  [[ "${listed_count}" -eq "${#EXPECTED_ASSETS[@]}" ]] ||
+    fail "release directory listing is incomplete: read ${listed_count} of ${#EXPECTED_ASSETS[@]} expected entries"
 
   for asset in "${DATA_ASSETS[@]}" "${SIGNATURE_ASSETS[@]}"; do
     require_regular_file "${ASSETS_DIR}/${asset}"
