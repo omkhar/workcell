@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,13 +14,23 @@ import (
 
 // runReleaseOutputsInventoryGuard runs the shipped release-output verifier
 // against one assets directory and reports its exit status and combined output.
-// The guards under test here reject before any signature check, so these runs
-// need no cosign or gh stub.
+//
+// The run goes through a driver that sources the verifier and defines cosign as
+// a shell function. The verifier pins PATH to a fixed trusted list, so a stub
+// cannot be placed on PATH, but a function satisfies its `command -v cosign`
+// precondition on a machine without cosign installed. The stub is never called:
+// both guards under test reject before any signature verification.
 func runReleaseOutputsInventoryGuard(t *testing.T, dir string) (int, string) {
 	t.Helper()
+	driver := filepath.Join(t.TempDir(), "release-outputs-inventory-driver.sh")
+	script := fmt.Sprintf("#!/bin/bash\nsource %q\ncosign() { return 0; }\nmain \"$@\"\n",
+		filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh"))
+	if err := os.WriteFile(driver, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	digest := strings.Repeat("c", 40)
-	cmd := exec.Command(
-		filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh"),
+	cmd := exec.Command(driver,
 		"--assets-dir", dir,
 		"--repo", "omkhar/workcell",
 		"--tag", "v1.2.3",
