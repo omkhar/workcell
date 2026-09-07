@@ -411,12 +411,25 @@ done
 # are optional checks and stay off by default. Enable them on the scripts where
 # a masked return would admit an unverified release, commit, or public surface.
 # Ratchet: add files as they are cleaned, never remove one.
-fail_open_critical_shell_files=(
-  "${ROOT_DIR}/scripts/verify-release-outputs.sh"
-  "${ROOT_DIR}/scripts/verify-release-artifact.sh"
-  "${ROOT_DIR}"/scripts/check-*.sh
-  "${ROOT_DIR}"/.githooks/*
-)
+# Select the subset from the verified inventory above, not from a filesystem
+# glob. A glob matches whatever the checkout holds, so an untracked or
+# symlinked `scripts/check-evil.sh` would enter the subset and ShellCheck would
+# open its target outside the repository. Selecting from `shell_files` keeps
+# this subset inside the list the completeness check has already verified.
+fail_open_critical_shell_files=()
+for file in "${shell_files[@]}"; do
+  case "${file#"${ROOT_DIR}/"}" in
+    scripts/verify-release-outputs.sh | scripts/verify-release-artifact.sh | scripts/check-*.sh | .githooks/*)
+      fail_open_critical_shell_files+=("${file}")
+      ;;
+  esac
+done
+
+if [[ "${#fail_open_critical_shell_files[@]}" -eq 0 ]]; then
+  echo "Fail-open-critical subset is empty; masked-return coverage is unverified" >&2
+  exit 1
+fi
+
 for file in "${fail_open_critical_shell_files[@]}"; do
   shellcheck -x -o check-extra-masked-returns "${file}"
 done
