@@ -153,6 +153,19 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			decoy: "          oras manifest index create --oci-layout-disabled \\",
 			want:  "assemble the multi-arch index",
 		},
+		{
+			name: "platform copies left only in the subject binder job",
+			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
+				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          # copies now happen in bind-release-subjects",
+			want:  "copy both platform images",
+		},
+		{
+			name:  "one platform copy dropped from the release job",
+			old:   "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64",
+			decoy: "          true",
+			want:  "copy both platform images",
+		},
 	}
 	for _, decoy := range decoys {
 		t.Run(decoy.name, func(t *testing.T) {

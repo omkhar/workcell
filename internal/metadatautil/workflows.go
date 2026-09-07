@@ -176,9 +176,17 @@ func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
 }
 
 // validateReleaseAssembly reads the parsed release job so that a comment or an
-// unrelated job naming the command cannot satisfy the assembly requirement.
+// unrelated job naming the commands cannot satisfy the assembly requirements.
 func validateReleaseAssembly(document workflowDocument) error {
-	if !slices.ContainsFunc(document.Jobs["release"].Steps, func(step workflowStep) bool {
+	steps := document.Jobs["release"].Steps
+	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
+		return runsCommand(step.Run, "oras cp --recursive --from-oci-layout") &&
+			strings.Contains(step.Run, "--to-oci-layout dist/release-image:amd64") &&
+			strings.Contains(step.Run, "--to-oci-layout dist/release-image:arm64")
+	}) {
+		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
+	}
+	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
 		return runsCommand(step.Run, "oras manifest index create --oci-layout")
 	}) {
 		return errors.New("release job must assemble the multi-arch index in an OCI layout")
