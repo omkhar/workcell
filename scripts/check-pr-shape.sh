@@ -113,6 +113,7 @@ run_workspace_safe_git_command_in_dir() {
   local -a git_command=()
   local override=""
 
+  # shellcheck disable=SC2312 # the helper ends in `|| true`; an empty override set is its designed result
   while IFS= read -r -d '' override; do
     filter_overrides+=("${override}")
   done < <(workspace_git_filter_override_args "${workspace}")
@@ -296,6 +297,12 @@ changed_lines=0
 binary_files=0
 changed_areas_text=""
 
+# Capture both diffs before the loops read them. A process substitution hides a
+# `git diff` failure, and an unread diff would present as a zero-file, zero-line
+# change that satisfies every shape budget below. `set -e` now aborts instead.
+numstat_diff="$(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --numstat --find-renames "${merge_base}..${head_commit}")"
+name_status_diff="$(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --name-status --find-renames "${merge_base}..${head_commit}")"
+
 while IFS=$'\t' read -r additions deletions path; do
   [[ -n "${path:-}" ]] || continue
   changed_files=$((changed_files + 1))
@@ -304,7 +311,7 @@ while IFS=$'\t' read -r additions deletions path; do
   else
     changed_lines=$((changed_lines + additions + deletions))
   fi
-done < <(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --numstat --find-renames "${merge_base}..${head_commit}")
+done <<<"${numstat_diff}"
 
 while IFS=$'\t' read -r status first_path second_path; do
   [[ -n "${status:-}" ]] || continue
@@ -317,7 +324,7 @@ while IFS=$'\t' read -r status first_path second_path; do
       record_changed_area "${first_path:-}"
       ;;
   esac
-done < <(run_workspace_safe_git_command_in_dir "${REPO_ROOT}" diff --name-status --find-renames "${merge_base}..${head_commit}")
+done <<<"${name_status_diff}"
 
 changed_area_count="$(printf '%s' "${changed_areas_text}" | grep -c . || true)"
 
@@ -359,6 +366,7 @@ fail_pr_shape() {
       "${binary_files}" \
       "${CERTIFIED_ADAPTER_MAX_BINARY_FILES}" >&2
   fi
+  # shellcheck disable=SC2312 # diagnostic text on the failure path; the exit status below is already decided
   printf '  areas=%s\n' "$(printf '%s' "${changed_areas_text}" | sort | paste -sd, -)" >&2
   echo "Split unrelated fixes, opportunistic cleanup, or separate reviewer-sized concerns before publishing." >&2
   exit 2

@@ -6,19 +6,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 public_files=(
 )
 
-while IFS= read -r path; do
-  [[ -n "${path}" ]] || continue
-  public_files+=("${path}")
-done < <(
+# Capture each inventory before the loop reads it. A process substitution hides
+# a `find` failure, and this script only reports on the files it collects: an
+# unread inventory would present as a clean public surface. `set -e` with
+# `pipefail` now aborts on a failed or partial walk instead.
+root_public_listing="$(
   find "${ROOT_DIR}" -maxdepth 1 -type f \
     \( -name '*.md' -o -name '*.toml' -o -name '*.cff' -o -name 'LICENSE' -o -name 'NOTICE' \) \
     -print | sort
-)
+)"
 
-while IFS= read -r path; do
-  [[ -n "${path}" ]] || continue
-  public_files+=("${path}")
-done < <(
+tree_public_listing="$(
   find \
     "${ROOT_DIR}/.agents" \
     "${ROOT_DIR}/docs" \
@@ -27,7 +25,17 @@ done < <(
     -type f \
     \( -name '*.md' -o -name '*.toml' -o -name '*.1' \) \
     -print | sort
-)
+)"
+
+while IFS= read -r path; do
+  [[ -n "${path}" ]] || continue
+  public_files+=("${path}")
+done <<<"${root_public_listing}"
+
+while IFS= read -r path; do
+  [[ -n "${path}" ]] || continue
+  public_files+=("${path}")
+done <<<"${tree_public_listing}"
 
 check_public_surfaces() {
   local findings
