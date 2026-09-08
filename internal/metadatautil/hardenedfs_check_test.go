@@ -95,6 +95,28 @@ func TestHardenedFSFindings(t *testing.T) {
 			want:   1,
 		},
 		{
+			name:   "a parenthesized qualifier is still the os package",
+			source: header + "func f() { (os).Open(path) }\n",
+			want:   1,
+		},
+		{
+			// The block comment carries its closing delimiter in its text, and
+			// that is not a reason.
+			name:   "a bare block comment states nothing",
+			source: header + "func f() { os.Open(path) } /* hardened-fs-exempt: */\n",
+			want:   1,
+		},
+		{
+			name:   "a block comment with a reason clears the call",
+			source: header + "func f() { os.Open(path) } /* hardened-fs-exempt: a build constant */\n",
+			want:   0,
+		},
+		{
+			name:   "the tag has to open the comment body",
+			source: header + "func f() { os.Open(path) } // see hardened-fs-exempt: a build constant\n",
+			want:   1,
+		},
+		{
 			name:   "the temporary-path calls resolve a parent by name",
 			source: header + "func f() {\nos.CreateTemp(dir, pattern)\nos.MkdirTemp(dir, pattern)\n}\n",
 			want:   2,
@@ -179,7 +201,7 @@ func TestCheckHardenedFSRatchet(t *testing.T) {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", "host", "doc.go"), "package host\n")
 			}
 			writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), testCase.baseline)
-			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "runtimeutil"} {
+			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "runtimeutil", "sessionctl"} {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", pkg, "doc.go"), "package "+pkg+"\n")
 			}
 			err := metadatautil.CheckHardenedFS(root)

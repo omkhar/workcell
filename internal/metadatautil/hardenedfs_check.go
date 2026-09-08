@@ -9,7 +9,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -145,6 +144,7 @@ var hardenedFSPackages = []string{
 	"internal/host",
 	"internal/injection",
 	"internal/runtimeutil",
+	"internal/sessionctl",
 }
 
 // hardenedFSSymbols lists the raw calls the hardened primitives replace. Each
@@ -217,7 +217,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok {
 			return true
 		}
-		qualifier, ok := selector.X.(*ast.Ident)
+		qualifier, ok := ast.Unparen(selector.X).(*ast.Ident)
 		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
 			return true
 		}
@@ -272,12 +272,23 @@ func hardenedFSOSImportName(file *ast.File) (string, error) {
 
 // hardenedFSExemptLines returns the lines that carry a reasoned exemption
 // comment. The reason is required: a bare tag states nothing.
+// hardenedFSExemptionReason reports a comment whose body opens with the tag
+// and then states a reason. The delimiters are removed first: a block comment
+// carries its closing "*/" in the text, and that is not a reason.
+func hardenedFSExemptionReason(text string) bool {
+	body := strings.TrimPrefix(text, "//")
+	if trimmed, found := strings.CutPrefix(text, "/*"); found {
+		body = strings.TrimSuffix(trimmed, "*/")
+	}
+	reason, found := strings.CutPrefix(strings.TrimSpace(body), hardenedFSExemptTag)
+	return found && strings.TrimSpace(reason) != ""
+}
+
 func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int]bool {
 	lines := map[int]bool{}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
-			_, reason, found := strings.Cut(comment.Text, hardenedFSExemptTag)
-			if !found || strings.TrimSpace(reason) == "" {
+			if !hardenedFSExemptionReason(comment.Text) {
 				continue
 			}
 			lines[fileSet.Position(comment.Pos()).Line] = true
@@ -287,7 +298,7 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int]bool 
 }
 
 func loadHardenedFSBaseline(path string) (map[hardenedFSKey]int, error) {
-	content, err := os.ReadFile(path)
+	content, err := rootio.ReadFileNoFollow(path, hardenedFSBaselinePath, hardenedFSMaxSourceBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", hardenedFSBaselinePath, err)
 	}

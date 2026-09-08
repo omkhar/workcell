@@ -105,3 +105,6 @@ internal/injection/stage_direct_mounts.go	os.OpenFile	1
 internal/injection/stage_direct_mounts.go	os.Remove	1
 internal/injection/stage_direct_mounts.go	os.Stat	1
 internal/injection/symlink_walk.go	os.Readlink	1
+internal/sessionctl/logs.go	os.Open	1
+internal/sessionctl/monitor.go	os.Open	1
+internal/sessionctl/monitor.go	os.Stat	1
