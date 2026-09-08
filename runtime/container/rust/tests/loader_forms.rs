@@ -32,7 +32,7 @@ use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-const MUTABLE_NATIVE: &str = "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile.\n";
+const MUTABLE_NATIVE: &str = "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile.\n";
 const LOADER_ENV: &str = "Workcell blocked unsafe dynamic-loader environment for native execution on the strict profile.\n";
 const PROTECTED_RUNTIME: &str =
     "Workcell blocked direct protected runtime execution outside approved wrappers.\n";
@@ -68,9 +68,14 @@ const LOADER: &str = "{fixture}/ld-linux-form-fixture.so.2";
 /// so reaching it must refuse. Placing it where a value belongs turns "the
 /// option's value was read as the exec target" into an observable refusal.
 const UNKNOWN_OPTION: &str = "--workcell-not-a-real-option";
-/// A regular file that is not an ELF and carries no shebang: the ENOEXEC
-/// fallback target, and an exec target outside every mutable root.
-const TARGET: &str = "{fixture}/not-an-exec-target";
+/// The exec target for the loader-argument rows. It has to be trusted
+/// immutable, because the guard refuses a loader argument this process could
+/// rewrite before the loader looks it up, and a fixture file is one this
+/// process owns. `/bin/true` is root-owned under root-owned directories in
+/// every image these rows run in, so a row that refuses refuses for the option
+/// under test rather than for where its target lives. It is never the exec path
+/// of a row, only an argument, so no row can execute it.
+const TARGET: &str = "/bin/true";
 const TARGET_ARGV: &[&str] = &["target"];
 /// A bare name for the PATH-search rows. No search root holds it.
 const PROBE: &str = "workcell-loader-form-probe";
@@ -614,12 +619,15 @@ fn prepare_fixture() -> PathBuf {
         .mode(0o700)
         .create(&fixture)
         .expect("create the fixture directory exclusively");
-    fs::write(fixture.join("ld-linux-form-fixture.so.2"), []).expect("write the loader fixture");
+    // Not an ELF, and long enough to read as one: a file too short to hold ELF
+    // magic cannot be classified, and the guard fails closed on a target it
+    // cannot read. The rows are about the argument walk, so the loader fixture
+    // itself must reach it.
     fs::write(
-        fixture.join("not-an-exec-target"),
+        fixture.join("ld-linux-form-fixture.so.2"),
         "neither an ELF nor a shebang\n",
     )
-    .expect("write the exec target fixture");
+    .expect("write the loader fixture");
     let enoexec = fixture.join(ENOEXEC_TARGET);
     fs::write(&enoexec, "neither an ELF nor a shebang\n").expect("write the ENOEXEC fixture");
     // The PATH search only yields a candidate that answers X_OK.
