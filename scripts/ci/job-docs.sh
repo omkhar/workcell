@@ -34,6 +34,9 @@ echo "[ci/docs] support-matrix field parity"
 echo "[ci/docs] public contract drift check"
 "${ROOT_DIR}/scripts/check-public-contract.sh"
 
+echo "[ci/docs] documentation language rules"
+"${ROOT_DIR}/scripts/check-doc-language.sh"
+
 echo "[ci/docs] markdown link and orphan check"
 "${ROOT_DIR}/scripts/check-doc-links.sh"
 

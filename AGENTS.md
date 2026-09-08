@@ -77,6 +77,8 @@ the runtime boundary or explicit security guarantees in the name of convenience.
 - Use the approved project technical nouns and technical verbs.
 - Review each new project term before use.
 - Check changed documents for current support and release facts.
+- Run `scripts/check-doc-language.sh` before publication. It enforces the
+  sentence, instruction, verb-form, and noun-cluster limits.
 
 ## Mandatory rules
 

@@ -192,6 +192,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions", "-count=1"),
 	},
 	{
+		relativePath: "internal/metadatautil/doclanguage_check.go",
+		original:     `		if len(words) > limit {`,
+		replacement:  `		if false && len(words) > limit {`,
+		label:        "documentation instruction and sentence word limits",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestScanDocLanguageFlagsReviewedProse", "-count=1"),
+	},
+	{
 		relativePath: "internal/metadatautil/validator_anchoring.go",
 		original:     `	if anchors != corpus {`,
 		replacement:  `	if false && anchors != corpus {`,

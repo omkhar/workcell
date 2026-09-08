@@ -57,6 +57,17 @@ Before you use a new project term, search this page and the applicable
 contract document. Define one meaning for the term. Add only a project-specific
 term that has a controlled meaning in more than one document.
 
+## Check
+
+`scripts/check-doc-language.sh` counts the sentences in each paragraph and the
+words in each sentence. It also reports a prohibited `-ing` verb form and a
+long multi-word noun. Run it before publication.
+
+The documents do not satisfy these rules yet.
+`policy/doc-language-baseline.tsv` records the count that each document carries
+today. A count above its baseline fails the check. Lower a count when you repair
+a document. Delete the row when the count reaches zero.
+
 ## Review
 
 Read each changed document before a commit. Compare each support claim with
