@@ -705,6 +705,9 @@ func TestHostileAxesKeepTheShapesThatReproducedFindings(t *testing.T) {
 	if !strings.Contains(tmpdir, "$") {
 		t.Fatalf("hostile TMPDIR %q has no unexpanded dollar sign", tmpdir)
 	}
+	if !strings.Contains(tmpdir, "`") {
+		t.Fatalf("hostile TMPDIR %q has no backtick component", tmpdir)
+	}
 	if !hasOptionToken(tmpdir) {
 		t.Fatalf("hostile TMPDIR %q has no --prefixed token", tmpdir)
 	}

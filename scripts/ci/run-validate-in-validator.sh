@@ -83,12 +83,16 @@ validator_cache="${validator_home}/.cache"
 validator_tmp="${validator_home}/.tmp"
 # The tmpdir axis points TMPDIR at a directory whose name carries the shapes
 # that have broken this repository under review: a space, a literal `$` that a
-# re-expanding generator would substitute, a `--`-prefixed component that a
-# substring flag check mistakes for an option, and ~80 characters of padding
-# that pushes any AF_UNIX path derived from TMPDIR past sun_path.  Three review
-# findings were first reproduced by hand this way.
+# re-expanding generator would substitute, a backtick that an unquoted
+# re-interpolation would run as a command substitution, a `--`-prefixed
+# component that a substring flag check mistakes for an option, and ~80
+# characters of padding that pushes any AF_UNIX path derived from TMPDIR past
+# sun_path.  Three review findings were first reproduced by hand this way; the
+# backtick adds a fourth shape without changing any of the others.  A
+# backtick is a legal filename character, so mkdir -p below still creates the
+# path; it is only hostile to code that re-interpolates the path unquoted.
 if [[ "${HOSTILE_ENV}" == "tmpdir" ]]; then
-  validator_tmp="${validator_tmp}/hostile \$HOME --hostname/$(printf 'p%.0s' {1..80})"
+  validator_tmp="${validator_tmp}/hostile \$HOME \`id\` --hostname/$(printf 'p%.0s' {1..80})"
 fi
 # The root and uidmap axes run as a uid that owns nothing in the bind mount,
 # and git refuses a repository owned by another uid: "detected dubious
