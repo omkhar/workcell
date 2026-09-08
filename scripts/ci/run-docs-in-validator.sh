@@ -65,7 +65,7 @@ workcell_ci_docker run --rm \
   -lc '
     set -euo pipefail
     mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
-    mapfile -d "" doc_files < <(
+    mapfile -d "" doc_files < <( # portability-exempt: the validator image runs this command string
       find /workspace \
         -path /workspace/.git -prune -o \
         -path /workspace/dist -prune -o \

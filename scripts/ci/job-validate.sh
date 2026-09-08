@@ -103,6 +103,9 @@ echo "[ci/validate] validator evasion corpus registration"
 echo "[ci/validate] GitHub macOS release test runners"
 "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15
 
+echo "[ci/validate] shell portability banlist"
+"${ROOT_DIR}/scripts/check-shell-portability.sh"
+
 echo "[ci/validate] generated artifact freshness"
 "${ROOT_DIR}/scripts/check-generated-artifacts.sh"
 
@@ -197,7 +200,7 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
         --prefix="${BUNDLE_PREFIX}" \
         "${ARCHIVE_REF}" | gzip -n -9
     ' >"${bundle_path}"
-  bundle_sha="$(sha256sum "${bundle_path}" | awk '{print $1}')"
+  bundle_sha="$(sha256sum "${bundle_path}" | awk '{print $1}')" # portability-exempt: runs only in the Linux CI lane
   "${ROOT_DIR}/scripts/generate-homebrew-formula.sh" \
     "ci-${ARCHIVE_REF}" \
     "${bundle_sha}" \
@@ -211,7 +214,7 @@ if [[ "${PROFILE}" != "repo-core" ]]; then
   # check rather than as a silent install over a different bundle.
   (
     cd "${ARTIFACT_DIR}"
-    sha256sum "${bundle_name}" >SHA256SUMS
+    sha256sum "${bundle_name}" >SHA256SUMS # portability-exempt: runs only in the Linux CI lane
   )
 fi
 

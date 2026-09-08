@@ -550,7 +550,7 @@ file_mode_octal() {
   if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
     stat -f '%Lp' "${path}"
   else
-    stat -c '%a' "${path}"
+    stat -c '%a' "${path}" # portability-exempt: the BSD stat form is tried first
   fi
 }
 

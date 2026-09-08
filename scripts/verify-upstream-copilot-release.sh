@@ -354,7 +354,7 @@ verify_asset() {
     exit 1
   fi
   github_asset_get "${asset_url}" "${work_dir}/${tarball_name}"
-  echo "${expected_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
+  echo "${expected_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null # portability-exempt: require_tool sha256sum fails closed when it is absent
   tar -tzf "${work_dir}/${tarball_name}" copilot >/dev/null
   [[ "${COPILOT_HELP_MODE}" == "checksum" ]] && return 0
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}" copilot

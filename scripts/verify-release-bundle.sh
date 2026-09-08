@@ -186,7 +186,7 @@ build_bundle_locally() {
   gzip -n -9 <"${tar_path}" >"${destination}"
   rm -f "${tar_path}"
   rm -rf "${clone_dir}"
-  (cd "${destination_dir}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
+  (cd "${destination_dir}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS) # portability-exempt: runs only in the Linux CI and release lanes
 }
 
 build_bundle_in_validator() {
@@ -256,7 +256,7 @@ git -C "${clone_dir}" archive \
   --prefix="${BUNDLE_PREFIX}" \
   "${ARCHIVE_REF}" | gzip -n -9
 SCRIPT
-  (cd "${destination_dir}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS)
+  (cd "${destination_dir}" && sha256sum "${BUNDLE_NAME}" >SHA256SUMS) # portability-exempt: runs only in the Linux CI and release lanes
 }
 
 if [[ -n "${BUNDLE_MANIFEST_PATH}" ]]; then

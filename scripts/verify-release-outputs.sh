@@ -87,7 +87,7 @@ require_regular_file() {
 }
 
 sha256_of() {
-  sha256sum "$1" | awk '{print $1}'
+  sha256sum "$1" | awk '{print $1}' # portability-exempt: runs only in the Linux release lane
 }
 
 run_cosign() {

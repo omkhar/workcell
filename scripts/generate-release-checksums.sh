@@ -51,7 +51,7 @@ trap cleanup EXIT
 
 printf '%s\n' "$@" | LC_ALL=C sort | while IFS= read -r path; do
   base_name="$(basename "${path}")"
-  digest="$(sha256sum "${path}" | awk '{print $1}')"
+  digest="$(sha256sum "${path}" | awk '{print $1}')" # portability-exempt: runs only in the Linux release lane
   printf '%s  %s\n' "${digest}" "${base_name}"
 done >"${tmp_output}"
 
