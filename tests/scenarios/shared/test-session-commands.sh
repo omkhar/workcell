@@ -606,7 +606,7 @@ awk '
   index($0, "test ! -e \"${DETACHED_SESSION_AUDIT_DIR}\"") { audit_line = NR }
   index($0, "test ! -e \"${DETACHED_SESSION_MONITOR_STATE_FILE}\"") { state_line = NR }
   END { exit !(wait_line && wait_line < audit_line && audit_line < state_line) }
-' "${ROOT_DIR}/scripts/verify-invariants.sh"
+' "${ROOT_DIR}/scripts/verify-invariants-live.sh"
 state_path_output="$(
   bash -lc '
     set -euo pipefail
