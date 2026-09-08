@@ -1130,11 +1130,17 @@ fn buffer_targets_untrusted_native_via_shebang(buffer: &str, env_entries: &[Stri
     shebang_path_is_untrusted_native_exec(&interpreter)
 }
 
-/// A descriptor the guard cannot read is not judged here: the native classifier
-/// beside this one already refuses an untrusted descriptor it cannot read, and
-/// a trusted one must not be refused for a shebang line nobody could see.
+/// Only a script this process could have written names an interpreter it chose.
+/// A trusted-immutable script's shebang line is the image's, and the runtime's
+/// own wrappers are written that way, so scanning them would refuse the image's
+/// own choices rather than the caller's. This is the same precondition
+/// `file_descriptor_is_mutable_shebang_to_protected_runtime` carries.
+///
+/// A descriptor the guard cannot read is not judged here either: the native
+/// classifier beside this one already refuses an untrusted descriptor it cannot
+/// read, and a trusted one must not be refused for a line nobody could see.
 fn file_descriptor_is_untrusted_shebang_native_exec(fd: c_int, env_entries: &[String]) -> bool {
-    if fd < 0 {
+    if fd < 0 || !fd_target_is_untrusted_exec(fd) {
         return false;
     }
     let Some(mut file) = duplicate_fd_file(fd) else {
@@ -1158,6 +1164,12 @@ fn path_is_untrusted_shebang_native_exec(path: &str, env_entries: &[String]) -> 
     }
     if let Some(proc_fd) = path_is_current_process_fd_path(path) {
         return file_descriptor_is_untrusted_shebang_native_exec(proc_fd, env_entries);
+    }
+    // See the descriptor form: only a script this process could have written
+    // names an interpreter it chose.
+    #[cfg(target_os = "linux")]
+    if !path_has_untrusted_provenance(path, libc::AT_FDCWD) {
+        return false;
     }
     let Ok(mut file) = File::open(path) else {
         return false;
@@ -4038,6 +4050,15 @@ mod tests {
         assert!(!path_is_mutable_native_exec(&script_path));
         assert!(path_is_untrusted_shebang_native_exec(&script_path, &[]));
         assert!(should_block_mutable_native_exec(&script_path, &[], &[]));
+
+        // The image's own wrappers are trusted-immutable scripts written with
+        // `#!/usr/bin/env -S ...`, which the scan cannot follow past. Their
+        // shebang line is the image's rather than the caller's, so a trusted
+        // script is not scanned at all.
+        let trusted_script = "/usr/local/libexec/workcell/development-wrapper.sh";
+        if Path::new(trusted_script).exists() {
+            assert!(!path_is_untrusted_shebang_native_exec(trusted_script, &[]));
+        }
 
         // A trusted interpreter is left alone, so an ordinary script still
         // runs and the refusal is about the interpreter rather than the script.
