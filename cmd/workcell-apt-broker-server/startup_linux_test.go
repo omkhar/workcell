@@ -460,6 +460,35 @@ func TestClaimSocketPathFailsClosedOnAnInconclusiveProbe(t *testing.T) {
 	}
 }
 
+// The probe that proves a socket dead and the unlink that acts on it are two
+// pathname lookups. The startup turn is what makes them one decision, so a
+// second starter cannot bind between them and have its socket removed.
+func TestHoldStartupTurnExcludesASecondStarter(t *testing.T) {
+	parent := t.TempDir()
+	release, err := holdStartupTurn(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// flock is per open file description, so the exclusion is asserted against a
+	// second one rather than by calling holdStartupTurn again.
+	file, err := os.OpenFile(filepath.Join(parent, startupLockName),
+		os.O_CREATE|os.O_RDWR|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); !errors.Is(err, unix.EWOULDBLOCK) {
+		t.Fatalf("a second startup turn was granted while the first was held: %v", err)
+	}
+
+	release()
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatalf("the startup turn was not released: %v", err)
+	}
+	_ = unix.Flock(int(file.Fd()), unix.LOCK_UN)
+}
+
 func TestCreateSocketParentRemovesTheDirectoryItCannotNormalize(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("normalization only fails for a non-root owner")
