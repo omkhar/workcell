@@ -150,6 +150,13 @@ The `v1.0.2` GHCR package denied anonymous access during the 2026-08-05 check.
 Authenticate to GHCR with `read:packages` access before you verify that image.
 See [GitHub container registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
 
+The release workflow now starts from a `repository_dispatch` event.
+GitHub always loads that workflow from the default branch.
+For each release after `v1.0.2`, set `identity` to
+`https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main`
+and set `--source-ref` to `refs/heads/main`.
+The `v1.0.2` values below stay as the historical example.
+
 Run the complete procedure in one Bash subshell.
 The subshell does not replace the current Docker configuration or exit trap.
 When the prompt appears, enter a token that has package access.
@@ -209,6 +216,11 @@ Download the asset and these two files from that release:
 - `SHA256SUMS`
 - `SHA256SUMS.sigstore.json`
 
+For each release after `v1.0.2`, set `identity` to
+`https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main`
+and set `--source-ref` to `refs/heads/main`.
+The dispatched release workflow always runs from the default branch.
+
 Verify the checksum signature first:
 
 ```bash
@@ -254,8 +266,9 @@ gh attestation verify "${asset}" \
 The verified installer runs the Cosign and digest checks before extraction.
 Add `--attestation` to require the GitHub check.
 
-The shipped installer pins the repository workflow but accepts any release tag identity.
-Use the manual procedure above when you require exact-tag certificate binding.
+The shipped installer pins one exact identity, not any release tag: `refs/heads/main`
+for a release published after `v1.0.2`, or that release's own exact tag identity for
+the closed set of earlier tag-signed releases.
 
 ## SLSA v1.0 Build-track gap analysis
 

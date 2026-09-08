@@ -162,6 +162,9 @@ the runtime boundary or explicit security guarantees in the name of convenience.
   - a here-string and an arithmetic shift
   - a quoted echo decoy and a prefix extension
   - a line continuation and placement in an unrelated job
+  - quoted syntax: a separator, a reserved word, a brace, an ANSI-C heredoc
+    delimiter, and a command word split across a single-quoted newline
+  - a conditional command group
 - A shell script that reads a directory inventory to make a trust decision
   must prove that the walk completed. Emit a completion sentinel after a
   successful walk, or capture the exit status of the walk. Bash does not

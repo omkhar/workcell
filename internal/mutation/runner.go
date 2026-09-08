@@ -185,6 +185,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions", "-count=1"),
 	},
 	{
+		relativePath: "internal/metadatautil/shell_invocations.go",
+		original:     `		if !each.quoted && isOperator(each.text) {`,
+		replacement:  `		if isOperator(each.text) {`,
+		label:        "quoted syntax stays text for anchored validators",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions", "-count=1"),
+	},
+	{
 		relativePath: "internal/metadatautil/validator_anchoring.go",
 		original:     `	if anchors != corpus {`,
 		replacement:  `	if false && anchors != corpus {`,

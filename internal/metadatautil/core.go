@@ -903,15 +903,7 @@ func GenerateBuildInputManifest(
 		}
 	}
 
-	adapterContextPaths, err := walkFiles(rootDir, "adapters", "node_modules", "target")
-	if err != nil {
-		return err
-	}
-	runtimeContainerContextPaths, err := walkFiles(rootDir, filepath.Join("runtime", "container"), "node_modules", "target")
-	if err != nil {
-		return err
-	}
-	runtimeContextPaths, err := gitTrackedSubset(rootDir, append(append([]string{".dockerignore"}, adapterContextPaths...), runtimeContainerContextPaths...), requireTracked)
+	runtimeContextPaths, err := runtimeBuildContextPaths(rootDir, requireTracked)
 	if err != nil {
 		return err
 	}
@@ -993,6 +985,21 @@ func GenerateBuildInputManifest(
 		},
 	}
 	return writeJSONFile(outputPath, manifest)
+}
+
+func runtimeBuildContextPaths(rootDir string, requireTracked bool) ([]string, error) {
+	paths := []string{".dockerignore", "go.mod", "go.sum"}
+	for _, directory := range []string{
+		"adapters", "runtime/container", "internal/aptbroker",
+		"cmd/workcell-apt-broker-client", "cmd/workcell-apt-broker-server",
+	} {
+		files, err := walkFiles(rootDir, filepath.FromSlash(directory), "node_modules", "target")
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, files...)
+	}
+	return gitTrackedSubset(rootDir, paths, requireTracked)
 }
 
 func sha256HexString(text string) string {
