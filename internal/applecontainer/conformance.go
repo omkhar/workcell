@@ -24,9 +24,11 @@ import (
 // requireSingleLinkedRegular verifies path (under stateRoot) is reached without traversing any
 // symlink and is a single-linked regular file, via the production no-follow stat (statPathSafe:
 // parents O_NOFOLLOW, leaf Fstatat AT_SYMLINK_NOFOLLOW). The type and link-count rule itself is
-// rootio.RequireSingleLinkedRegular, which the hardened readers apply to every leaf they open, so
-// a symlink, a FIFO or a hardlink to a decoy outside StateRoot is rejected by one rule rather than
-// by a copy of it.
+// rootio.RequireSingleLinkedRegular, so a symlink, a FIFO or a hardlink to a decoy outside
+// StateRoot is rejected by one rule rather than by a copy of it. The rule is not applied by the
+// hardened readers: ReadFileAtNoFollow checks the file type only, because a hard-linked bundle
+// manifest is read on purpose elsewhere and protected by the atomic replace instead. A caller that
+// needs the link-count guarantee calls this rule itself.
 func requireSingleLinkedRegular(stateRoot, path, label string) error {
 	st, err := statPathSafe(stateRoot, path)
 	if err != nil {
