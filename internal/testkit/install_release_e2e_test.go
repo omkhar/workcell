@@ -140,7 +140,10 @@ func installReleaseStubBin(t *testing.T, cosignExit int, fixtureDir string) stri
 	// Fake curl: ignore every real download flag, find the -o output path and the
 	// trailing URL, and copy fixtureDir/<basename-of-URL> to the output path. A
 	// missing fixture asset exits non-zero, mimicking a failed download.
-	curl := "#!/bin/bash\nset -euo pipefail\nout=\"\"\nurl=\"\"\nwhile [[ $# -gt 0 ]]; do\n  case \"$1\" in\n    -o) out=\"$2\"; shift 2;;\n    http://*|https://*) url=\"$1\"; shift;;\n    *) shift;;\n  esac\ndone\n[[ -n \"${out}\" && -n \"${url}\" ]] || exit 2\nsrc=\"" + fixtureDir + "/${url##*/}\"\n[[ -f \"${src}\" ]] || exit 22\ncp \"${src}\" \"${out}\"\n"
+	// fixtureDir is shell-quoted rather than dropped inside the double-quoted
+	// src="..." literal: a hostile TMPDIR's literal $HOME would otherwise be
+	// re-expanded by bash when this stub runs, pointing src at the wrong file.
+	curl := "#!/bin/bash\nset -euo pipefail\nout=\"\"\nurl=\"\"\nwhile [[ $# -gt 0 ]]; do\n  case \"$1\" in\n    -o) out=\"$2\"; shift 2;;\n    http://*|https://*) url=\"$1\"; shift;;\n    *) shift;;\n  esac\ndone\n[[ -n \"${out}\" && -n \"${url}\" ]] || exit 2\nsrc=" + ShellQuote(fixtureDir) + "\"/${url##*/}\"\n[[ -f \"${src}\" ]] || exit 22\ncp \"${src}\" \"${out}\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "curl"), []byte(curl), 0o755); err != nil {
 		t.Fatal(err)
 	}

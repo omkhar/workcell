@@ -489,7 +489,14 @@ func runProbe(ctx context.Context, args []string, mountedWorkspace string) error
 	if script == "" {
 		return errors.New("Docker args omit probe script")
 	}
-	script = strings.ReplaceAll(script, "/workspace", "${WORKCELL_TEST_MOUNT}")
+	// probeScript already double-quotes one "/workspace" occurrence (the
+	// challenge path) and leaves the other two bare. A single blind replace
+	// would drop ${WORKCELL_TEST_MOUNT} outside quotes for the bare ones,
+	// which a mountedWorkspace holding a hostile TMPDIR (space, $) then
+	// word-splits or re-expands. Substitute the already-quoted occurrence in
+	// place, then quote the bare ones explicitly.
+	script = strings.ReplaceAll(script, `"/workspace`, `"${WORKCELL_TEST_MOUNT}`)
+	script = strings.ReplaceAll(script, " /workspace/", ` "${WORKCELL_TEST_MOUNT}"/`)
 	command := exec.CommandContext(ctx, "/bin/bash", "-c", script)
 	command.Env = append(
 		os.Environ(),

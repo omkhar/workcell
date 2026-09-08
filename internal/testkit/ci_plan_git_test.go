@@ -37,6 +37,16 @@ func ciPlanMust(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// ciPlanShortDir gives a fixture a path with no space or hostile-TMPDIR
+// content, for the rare case (like git-remote-ext's own naive
+// space-splitting) that no quoting scheme can protect against. The ext::
+// remote it backs is executed directly, so this needs to be exec-capable
+// too — see ExecFixtureDir.
+func ciPlanShortDir(t *testing.T) string {
+	t.Helper()
+	return ExecFixtureDir(t)
+}
 func ciPlanFileState(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -131,8 +141,11 @@ func (f *ciPlanFixture) configureFilter(name string, driver string) string {
 	f.t.Helper()
 	marker := filepath.Join(f.t.TempDir(), "filter-ran")
 	filter := filepath.Join(f.t.TempDir(), "filter")
-	f.writeExecutable(filter, "#!/bin/bash\n: >"+strconv.Quote(marker)+"\n"+map[string]string{"clean": "exec /bin/cat\n", "process": "exit 1\n"}[driver])
-	f.git("config", "filter."+name+"."+driver, filter)
+	f.writeExecutable(filter, "#!/bin/bash\n: >"+ShellQuote(marker)+"\n"+map[string]string{"clean": "exec /bin/cat\n", "process": "exit 1\n"}[driver])
+	// Git runs a filter driver's config value through the shell, so a value
+	// carrying a hostile TMPDIR's space or literal $HOME needs the same
+	// protection as the script content above.
+	f.git("config", "filter."+name+"."+driver, ShellQuote(filter))
 	f.git("config", "filter."+name+".required", "true")
 	return marker
 }
@@ -193,11 +206,11 @@ func (f *ciPlanFixture) requireMutantPaths(original, replacement string, env []s
 }
 func (f *ciPlanFixture) installGitWrapper(body string) {
 	f.t.Helper()
-	f.writeExecutable(filepath.Join(f.binDir, "git"), "#!/bin/bash\nset -euo pipefail\nreal_git="+strconv.Quote(f.realGit)+"\n"+body)
+	f.writeExecutable(filepath.Join(f.binDir, "git"), "#!/bin/bash\nset -euo pipefail\nreal_git="+ShellQuote(f.realGit)+"\n"+body)
 }
 func (f *ciPlanFixture) stubGit(command string, output string, status int) {
 	f.t.Helper()
-	f.installGitWrapper("case \" $* \" in *" + strconv.Quote(command) + "*) printf '%b' " + strconv.Quote(output) + "; exit " + strconv.Itoa(status) + ";; esac\nexec \"${real_git}\" \"$@\"\n")
+	f.installGitWrapper("case \" $* \" in *" + ShellQuote(command) + "*) printf '%b' " + ShellQuote(output) + "; exit " + strconv.Itoa(status) + ";; esac\nexec \"${real_git}\" \"$@\"\n")
 }
 func (f *ciPlanFixture) replaceScript(original string, replacement string) {
 	f.t.Helper()
@@ -341,7 +354,7 @@ func TestCIPlanSystemBashDefaultLabelsAndExplicitPaths(t *testing.T) {
 	ciPlanMust(t, os.Symlink("/bin/bash", filepath.Join(fixture.binDir, "bash")))
 	result := fixture.runCommand("/usr/bin/env", "SHELLOPTS=braceexpand:noclobber:onecmd", "BASHOPTS=nocasematch",
 		"BASH_COMPAT=foo", "BASH_XTRACEFD=foo", "FUNCNEST=2", "LC_ALL=bogus.invalid", "POSIXLY_CORRECT=y", "POSIX_PEDANTIC=y",
-		"BASH_FUNC_mktemp%%=() { : > "+strconv.Quote(marker)+"; }", script, "--base", "main")
+		"BASH_FUNC_mktemp%%=() { : > "+ShellQuote(marker)+"; }", script, "--base", "main")
 	if result.stderr != "" {
 		t.Fatalf("privileged shebang failed: code=%d stderr=%q", result.code, result.stderr)
 	}
@@ -463,7 +476,7 @@ func TestCIPlanRejectsSymlinkedTrackedAncestryBeforeRawRead(t *testing.T) {
 	ciPlanMust(t, os.WriteFile(filepath.Join(external, "file"), []byte("base\n"), 0o644))
 	ciPlanMust(t, os.RemoveAll(filepath.Join(fixture.root, "tracked")))
 	ciPlanMust(t, os.Symlink(external, filepath.Join(fixture.root, "tracked")))
-	fixture.installGitWrapper(`case " $* " in *" hash-object --no-filters -- "*) : >` + strconv.Quote(marker) + `;; esac
+	fixture.installGitWrapper(`case " $* " in *" hash-object --no-filters -- "*) : >` + ShellQuote(marker) + `;; esac
 	exec "${real_git}" "$@"`)
 	requireCIPlanError(t, fixture.run("--base", "main"), -1, "tracked-file ancestry is not a regular directory")
 	ciPlanMust(t, os.Remove(filepath.Join(fixture.root, "tracked")))
@@ -696,9 +709,9 @@ func TestCIPlanBaseRefRemoteAppearanceWinsLocalFallbackRace(t *testing.T) {
 	fixture.commit("local main advance")
 	fixture.git("checkout", "--quiet", "-b", "topic")
 	counter := filepath.Join(t.TempDir(), "remote-created")
-	fixture.installGitWrapper(`case " $* " in *" show-ref --exists refs/remotes/origin/main "*) if [[ ! -e ` + strconv.Quote(counter) + ` ]]; then
-: >` + strconv.Quote(counter) + `
-"${real_git}" --git-dir=` + strconv.Quote(filepath.Join(fixture.root, ".git")) + ` update-ref refs/remotes/origin/main ` + strconv.Quote(remoteOID) + `
+	fixture.installGitWrapper(`case " $* " in *" show-ref --exists refs/remotes/origin/main "*) if [[ ! -e ` + ShellQuote(counter) + ` ]]; then
+: >` + ShellQuote(counter) + `
+"${real_git}" --git-dir=` + ShellQuote(filepath.Join(fixture.root, ".git")) + ` update-ref refs/remotes/origin/main ` + ShellQuote(remoteOID) + `
 exit 2; fi;; esac
 exec "${real_git}" "$@"`)
 	requireCIPlanPaths(t, fixture.runConfig("--base", "main").ChangedFiles, "local-main-only.txt")
@@ -730,9 +743,13 @@ func TestCIPlanRejectsMalformedGitMetadata(t *testing.T) {
 }
 func TestCIPlanGitDiscoveryNeverFetches(t *testing.T) {
 	fixture := newCIPlanTopicFixture(t)
-	marker := filepath.Join(t.TempDir(), "remote-ran")
-	remote := filepath.Join(t.TempDir(), "remote")
-	fixture.writeExecutable(remote, "#!/bin/bash\n: >"+strconv.Quote(marker)+"\nexit 1\n")
+	// git-remote-ext splits its command on unescaped spaces itself (no
+	// shell involved), so the path just needs no space or hostile TMPDIR
+	// content rather than shell quoting.
+	dir := ciPlanShortDir(t)
+	marker := filepath.Join(dir, "remote-ran")
+	remote := filepath.Join(dir, "remote")
+	fixture.writeExecutable(remote, "#!/bin/bash\n: >"+ShellQuote(marker)+"\nexit 1\n")
 	fixture.git("remote", "add", "origin", "ext::"+remote)
 	fixture.git("config", "protocol.ext.allow", "always")
 	fixture.installGitWrapper(`case " $* " in *" rev-parse --absolute-git-dir "*) exec "${real_git}" "$@";; esac
