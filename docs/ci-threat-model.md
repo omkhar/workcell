@@ -406,9 +406,9 @@ Run the hosted-control audit again.
    The same maintainer can sign a tag and approve the release environment.
    Workcell does not claim independent approval or separation of duties.
 
-7. **The code can omit attestations.**
-   `WORKCELL_RELEASE_NO_ATTEST=true` disables GitHub attestations.
-   Hosted policy pins this value to `false` for the canonical repository.
+7. **A reviewed code change can omit attestations.**
+   No repository variable disables GitHub attestations.
+   A fork must change and review the workflow and its validator.
    Cosign signatures remain mandatory.
 
 8. **Output verification shares the release run.**

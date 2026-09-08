@@ -8,6 +8,11 @@ unset BASH_ENV ENV
   echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2
   exit 2
 }
+if [[ "${PATH}" != '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' ]]; then
+  PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+fi
+readonly PATH
+export PATH
 
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh

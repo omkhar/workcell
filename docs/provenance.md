@@ -33,7 +33,7 @@ Nine assets contain release data:
 The other nine assets contain one Sigstore bundle for each release-data asset.
 The release also signs the runtime image in the container registry.
 
-By default, the release creates GitHub build-provenance attestations for these subjects:
+The release creates GitHub build-provenance attestations for these subjects:
 
 - the runtime image
 - the source bundle
@@ -45,6 +45,15 @@ By default, the release creates GitHub build-provenance attestations for these s
 The release also attaches an SBOM predicate to the image and source-bundle subjects.
 The SBOM files are not attestation subjects.
 Cosign signs each SBOM file as a release asset.
+
+After the signing job completes, an independent read-only job verifies the release outputs.
+It verifies all nine Sigstore bundles and the runtime image signature.
+It verifies the release image tag and the `sha-<commit>` image tag against the signed digest.
+It verifies eight provenance attestations and two SBOM attestations.
+The final publisher repeats these checks before it uploads the release assets.
+
+GitHub release immutability does not make GHCR tags immutable.
+Consumers must use `workcell-image.digest` as the image trust anchor.
 
 ## Published v1.0.2 evidence
 
@@ -101,6 +110,7 @@ The Sigstore path uses these parts:
 - short-lived Fulcio certificates
 - keyless Cosign signatures
 - Rekor transparency data in Sigstore bundles
+- post-signature verification of the release outputs
 
 This check does not need the GitHub attestation service.
 It still trusts the named GitHub release workflow identity.
@@ -108,21 +118,19 @@ It still trusts the named GitHub release workflow identity.
 ## GitHub attestation path
 
 The canonical public repository creates GitHub attestations.
-Its hosted-control policy requires both repository variables below to be `false`:
+The release workflow attests each reviewed subject without a condition.
+A guard before the build stops the release if the repository is not public.
 
-- `WORKCELL_RELEASE_NO_ATTEST`
-- `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS`
-
-Do not set either variable to `true` in the canonical repository.
-The hosted-control check fails if a variable has a different value.
+The release workflow does not read a repository variable for this decision.
 Thus, a variable change alone cannot create an upstream release without attestations.
+The hosted-control policy still audits both variables at `false`.
 
 Do not use the old `WORKCELL_ENABLE_GITHUB_ATTESTATIONS` variable.
 The release workflow no longer uses that opt-in variable.
 
-A fork cannot enable an exception with a variable or policy-file change alone.
-It must first change and review both the hosted-control policy and its validator.
-This is a code-and-policy change, not an operator exception.
+A fork cannot enable an exception with a variable or policy-file change.
+It must first change and review the workflow and its validator.
+This is a code change, not an operator exception.
 A fork release without GitHub attestations has lower assurance.
 It must still create all Sigstore signatures.
 
@@ -141,6 +149,13 @@ Download these three files from that release:
 The `v1.0.2` GHCR package denied anonymous access during the 2026-08-05 check.
 Authenticate to GHCR with `read:packages` access before you verify that image.
 See [GitHub container registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
+
+The release workflow now starts from a `repository_dispatch` event.
+GitHub always loads that workflow from the default branch.
+For each release after `v1.0.2`, set `identity` to
+`https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main`
+and set `--source-ref` to `refs/heads/main`.
+The `v1.0.2` values below stay as the historical example.
 
 Run the complete procedure in one Bash subshell.
 The subshell does not replace the current Docker configuration or exit trap.
@@ -201,6 +216,11 @@ Download the asset and these two files from that release:
 - `SHA256SUMS`
 - `SHA256SUMS.sigstore.json`
 
+For each release after `v1.0.2`, set `identity` to
+`https://github.com/omkhar/workcell/.github/workflows/release.yml@refs/heads/main`
+and set `--source-ref` to `refs/heads/main`.
+The dispatched release workflow always runs from the default branch.
+
 Verify the checksum signature first:
 
 ```bash
@@ -246,8 +266,9 @@ gh attestation verify "${asset}" \
 The verified installer runs the Cosign and digest checks before extraction.
 Add `--attestation` to require the GitHub check.
 
-The shipped installer pins the repository workflow but accepts any release tag identity.
-Use the manual procedure above when you require exact-tag certificate binding.
+The shipped installer pins one exact identity, not any release tag: `refs/heads/main`
+for a release published after `v1.0.2`, or that release's own exact tag identity for
+the closed set of earlier tag-signed releases.
 
 ## SLSA v1.0 Build-track gap analysis
 

@@ -12,32 +12,91 @@ import (
 // ends it, and whether the <<- form lets the terminator line carry leading
 // tabs. Bash ends a <<WORD body only at a line that is the delimiter alone, so
 // an indented copy of the word inside the body is text.
+//
+// unresolved records a delimiter this reader cannot spell. A $'…' delimiter
+// carries the ANSI-C escapes bash decodes before it compares a line, so
+// <<$'\x50LAN' ends at PLAN, and a $"…" delimiter is translated through the
+// locale catalog first, so its text here is not the text bash compares at all.
+// Resolving either would put a second copy of bash's own tables in this file,
+// and a case one of them got wrong would end the body early and count lines
+// bash still reads as data. The body therefore runs to the end of the script,
+// which loses invocations rather than inventing them.
 type heredoc struct {
-	delimiter string
-	stripTabs bool
+	delimiter  string
+	stripTabs  bool
+	unresolved bool
 }
 
 func (h heredoc) endsAt(line string) bool {
+	if h.unresolved {
+		return false
+	}
 	if h.stripTabs {
 		return strings.TrimLeft(line, "\t") == h.delimiter
 	}
 	return line == h.delimiter
 }
 
-// braceDepth returns the change in brace nesting the words make. Only a brace
-// that stands as its own word or ends one groups commands; a brace inside a
-// word belongs to an expansion such as ${VAR}.
-func braceDepth(words []string) int {
+// word is one word of a logical line, and whether any part of it was quoted.
+// Quoting takes a word's meaning as syntax away without changing its meaning as
+// a name: bash runs "oras" cp, while a quoted ; is an argument, a quoted fi is
+// an ordinary command, and a quoted } closes no group. A reader that returns
+// plain strings cannot tell the two apart, so every caller that asks whether a
+// word is syntax reads text as syntax.
+type word struct {
+	text   string
+	quoted bool
+}
+
+// texts returns the words' text, for the tests that read a word as a name. A
+// name keeps its meaning through quotes, so those tests ignore provenance.
+func texts(words []word) []string {
+	plain := make([]string, len(words))
+	for index, each := range words {
+		plain[index] = each.text
+	}
+	return plain
+}
+
+// braceDepth returns the change in brace nesting the commands make.
+func braceDepth(commands []command) int {
 	change := 0
-	for _, word := range words {
-		switch {
-		case word == "{" || strings.HasSuffix(word, "(){"):
-			change++
-		case word == "}" || word == "};":
-			change--
-		}
+	for _, each := range commands {
+		change += commandBrace(each)
 	}
 	return change
+}
+
+// commandBrace returns the change in brace nesting one command makes. A brace
+// groups commands only in command position and only unquoted: bash reads the }
+// of echo } as an argument, so a group is still open after it. A brace inside a
+// word belongs to an expansion such as ${VAR}. A definition header is not a
+// command, so the brace that opens its body stands in command position after
+// it, wherever on the header line it is written.
+func commandBrace(each command) int {
+	args := each.args
+	// ! negates the status of the command after it and is not a command of its
+	// own, so the brace behind it still stands in command position.
+	for len(args) > 0 && !args[0].quoted && args[0].text == "!" {
+		args = args[1:]
+	}
+	if len(args) == 0 || args[0].quoted {
+		return 0
+	}
+	if definedName(args) != "" {
+		if strings.HasSuffix(args[0].text, "(){") || slices.ContainsFunc(args[1:],
+			func(each word) bool { return !each.quoted && each.text == "{" }) {
+			return 1
+		}
+		return 0
+	}
+	switch args[0].text {
+	case "{":
+		return 1
+	case "}":
+		return -1
+	}
+	return 0
 }
 
 // controlWords maps each word that opens or closes a compound command to the
@@ -58,63 +117,87 @@ func isOperator(word string) bool {
 	return false
 }
 
+// continuesLine reports whether an operator at the end of a line carries its
+// command onto the next one, so that false && <newline> oras cp … is one
+// logical line. A ; or an & ends the command instead.
+func continuesLine(word string) bool {
+	switch word {
+	case "&&", "||", "|":
+		return true
+	}
+	return false
+}
+
 // command is one command of a logical line, and whether an earlier command on
 // that line decides if it runs. Bash runs the right side of && or || only on
 // the exit status of the left, so a command written there is not proved to run.
 type command struct {
-	args        []string
+	args        []word
 	conditional bool
 }
 
 // splitCommands cuts one logical line into the separate commands bash runs, at
-// every control operator. Without this a decoy after ; or || donates its words
-// to the invocation before it.
-func splitCommands(words []string) []command {
+// every unquoted control operator. Without this a decoy after ; or || donates
+// its words to the invocation before it, and without the quote test a quoted
+// separator such as : ";" oras cp … starts a command bash never runs.
+func splitCommands(words []word) []command {
 	commands := make([]command, 1)
-	for _, word := range words {
-		if isOperator(word) {
-			commands = append(commands, command{conditional: word == "&&" || word == "||"})
+	for _, each := range words {
+		if !each.quoted && isOperator(each.text) {
+			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||"})
 			continue
 		}
 		last := &commands[len(commands)-1]
-		last.args = append(last.args, word)
+		last.args = append(last.args, each)
 	}
 	return commands
 }
 
 // definedName returns the name a function definition binds, in either the
 // name() or the function name spelling, or the empty string when the words do
-// not define one.
-func definedName(words []string) string {
-	if len(words) == 0 {
+// not define one. A quoted first word defines nothing: bash reads "never_called()"
+// as a command name, so the lines after it are commands rather than a body.
+func definedName(words []word) string {
+	if len(words) == 0 || words[0].quoted {
 		return ""
 	}
-	if words[0] == "function" {
+	first := words[0].text
+	if first == "function" {
 		if len(words) < 2 {
 			return ""
 		}
-		return strings.TrimSuffix(words[1], "()")
+		return strings.TrimSuffix(words[1].text, "()")
 	}
-	if name, _, found := strings.Cut(words[0], "("); found && name != "" &&
-		strings.HasPrefix(words[0][len(name):], "()") {
+	if name, _, found := strings.Cut(first, "("); found && name != "" &&
+		strings.HasPrefix(first[len(name):], "()") {
 		return name
 	}
-	if len(words) > 1 && words[1] == "()" {
-		return words[0]
+	if len(words) > 1 && !words[1].quoted && words[1].text == "()" {
+		return first
 	}
 	return ""
 }
 
+// ansiCQuote names an open $'…' span in the one byte the reader carries between
+// physical lines. A shell quote is only ' or ", so $ is free to stand for the
+// third case: an apostrophe closes the span, and a backslash escapes the byte
+// after it, which a plain single-quoted span does not.
+const ansiCQuote = '$'
+
 // quoteCloseIndex returns the index of the byte that closes an open quote, or
 // -1 when the line does not close it. A backslash escapes the next byte inside
-// a double-quoted span; a single-quoted span has no escapes.
+// a double-quoted or an ANSI-C span; a plain single-quoted span has no escapes.
 func quoteCloseIndex(line string, quote byte) int {
+	closer := quote
+	if quote == ansiCQuote {
+		closer = '\''
+	}
 	for index := 0; index < len(line); index++ {
-		if quote == '"' && line[index] == '\\' {
+		if quote != '\'' && line[index] == '\\' {
 			index++
 			continue
 		}
-		if line[index] == quote {
+		if line[index] == closer {
 			return index
 		}
 	}
@@ -154,6 +237,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 	var position int
 	var depth, definedAt, control int
 	var defining, bodyOpened bool
+	// conditionalGroup is the brace depth outside a command group that a && or
+	// a || guards, or -1 when no such group is open, and groupDepth is the
+	// nesting the commands read so far have opened. Bash decides the whole
+	// group on one exit status, so nothing written inside false && { … } is
+	// proved to run.
+	conditionalGroup, groupDepth := -1, 0
 	for line := range strings.Lines(script) {
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 		if openQuote != 0 {
@@ -179,29 +268,31 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			continue
 		}
-		// A backslash continues the line only when it is not itself escaped,
-		// and bash then joins the two halves with nothing between them. A
-		// space after the backslash escapes the space instead, which ends the
-		// line and makes the next one a separate command.
-		if backslashes := len(text) - len(strings.TrimRight(text, `\`)); backslashes%2 == 1 {
-			current.WriteString(text[:len(text)-1])
+		current.WriteString(text)
+		words, opened, quote, rest, continues := shellWords(current.String(), quotes)
+		if continues {
+			// The line ends with a backslash the quoting leaves as syntax, and
+			// bash joins the two halves with nothing between them. Counting
+			// backslashes in the text before any quote state exists reads the
+			// literal one of 'or\ <newline> as' as a continuation and joins a
+			// command word bash keeps apart, in the fail-open direction.
+			joined := current.String()
+			current.Reset()
+			current.WriteString(joined[:len(joined)-1])
 			continue
 		}
-		current.WriteString(text)
-		if trimmed := strings.TrimRight(text, " \t"); strings.HasSuffix(trimmed, "&&") ||
-			strings.HasSuffix(trimmed, "|") {
-			// A list operator at the end of a line continues onto the next,
-			// so false && <newline> oras cp … is one logical line.
+		if last := len(words) - 1; last >= 0 && !words[last].quoted &&
+			continuesLine(words[last].text) {
 			current.WriteString(" ")
 			continue
 		}
-		words, opened, quote, rest := shellWords(current.String(), quotes)
 		current.Reset()
 		openQuote, quotes = quote, rest
 		heredocs = append(heredocs, opened...)
 		// A function definition is not a call. Bash reads the body and runs
 		// nothing, so a required command written inside a function that
 		// nobody calls does not satisfy a rule about what the step runs.
+		commands := splitCommands(words)
 		if !defining {
 			if name := definedName(words); name != "" {
 				if name == prefix[0] {
@@ -211,7 +302,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 				defining, definedAt, bodyOpened = true, depth, false
 			}
 		}
-		depth += braceDepth(words)
+		depth += braceDepth(commands)
 		if defining {
 			// A body may open on a later line, as in never_called ()
 			// followed by { on its own, so wait for it before seeking its end.
@@ -223,7 +314,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			continue
 		}
-		commands := splitCommands(words)
 		nested := control > 0
 		for _, each := range commands {
 			args := each.args
@@ -231,29 +321,54 @@ func ShellInvocations(script, commandName string) []Invocation {
 				continue
 			}
 			position++
-			if change, found := controlWords[args[0]]; found {
-				control = max(control+change, 0)
-				nested = true
+			outside := groupDepth
+			groupDepth += commandBrace(each)
+			if conditionalGroup >= 0 {
+				// Nothing inside the guarded group is proved to run, however
+				// many lines later the closing brace is. The commands written
+				// after that brace on its own line are outside the group and
+				// are read.
+				if groupDepth <= conditionalGroup {
+					conditionalGroup = -1
+				}
 				continue
+			}
+			if each.conditional && groupDepth > outside {
+				// The group this command opens is the one the && or the || in
+				// front of it guards. A conditional command elsewhere on the
+				// line guards no group of its own, so false && true; { runs
+				// its group whatever the status of true.
+				conditionalGroup = outside
+			}
+			if !args[0].quoted {
+				// A quoted reserved word is an ordinary command, so a "fi"
+				// inside if false; then closes no branch and the lines after
+				// it stay inside the branch bash never runs.
+				if change, found := controlWords[args[0].text]; found {
+					control = max(control+change, 0)
+					nested = true
+					continue
+				}
 			}
 			if nested || control > 0 || each.conditional {
 				continue
 			}
-			if args[0] == "exit" || args[0] == "return" || replacesShell(args) {
+			names := texts(args)
+			if names[0] == "exit" || names[0] == "return" || replacesShell(names) {
 				// The step ends here; nothing written after it runs.
 				return invocations
 			}
-			if args[0] == "alias" && shadowsByAlias(args, prefix[0]) {
+			if names[0] == "alias" && shadowsByAlias(names, prefix[0]) {
 				return nil // Every later use expands to the alias.
 			}
-			if args[0] == "hash" && slices.Contains(args[1:], "-p") &&
-				slices.Contains(args[1:], prefix[0]) {
+			if names[0] == "hash" && slices.Contains(names[1:], "-p") &&
+				slices.Contains(names[1:], prefix[0]) {
 				// hash -p pathname name makes pathname the full filename for
 				// name, so every later line runs that path, not the program.
 				return nil
 			}
-			if len(args) >= len(prefix) && slices.Equal(args[:len(prefix)], prefix) {
-				invocations = append(invocations, Invocation{args[len(prefix):], position})
+			if len(names) >= len(prefix) && slices.Equal(names[:len(prefix)], prefix) {
+				invocations = append(invocations, Invocation{names[len(prefix):], position})
 			}
 		}
 	}
@@ -261,21 +376,27 @@ func ShellInvocations(script, commandName string) []Invocation {
 }
 
 // shellWords splits one logical line the way bash reads it. Quotes and
-// backslash escapes are removed, so a quoted argument stays one word and a
-// separator inside it is text rather than syntax; an unquoted # that starts a
-// word ends the line; every heredoc the line opens returns as a delimiter, in
-// the order bash reads the bodies; open is the quote character still waiting to
-// be closed, which tells the caller that the word runs on into the next line;
-// and rest is the quote each unclosed command substitution suspended, which the
-// caller gives back on the next line so that the ) which closes the
-// substitution also restores the quote around it.
+// backslash escapes are removed but recorded, so a quoted argument stays one
+// word, a separator inside it is text rather than syntax, and the caller can
+// still tell a word that was quoted from one that was not; an unquoted # that
+// starts a word ends the line; every heredoc the line opens returns as a
+// delimiter, in the order bash reads the bodies; open is the quote character
+// still waiting to be closed, which tells the caller that the word runs on into
+// the next line; rest is the quote each unclosed command substitution
+// suspended, which the caller gives back on the next line so that the ) which
+// closes the substitution also restores the quote around it; and continues says
+// the line ended on a backslash that the quoting leaves as syntax, so bash
+// reads the next physical line as the rest of this one.
 //
-// One pass keeps the four answers consistent. A pattern per answer cannot:
+// One pass keeps the five answers consistent. A pattern per answer cannot:
 // each has to rediscover the quoting, and the one that gets it wrong reads
 // syntax where the shell reads text.
-func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, open byte, rest []byte) {
-	var word strings.Builder
-	inWord, quote, pending, stripTabs := false, byte(0), false, false
+func shellWords(line string, stack []byte) (
+	words []word, heredocs []heredoc, open byte, rest []byte, continues bool,
+) {
+	var text strings.Builder
+	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
+	ansiC, unresolved := false, false
 	arithmetic := 0
 	// A line that carries a quoted command substitution donates no words. Where
 	// the substitution ends is beyond a line reader, and reading syntax over
@@ -290,32 +411,47 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 			return
 		}
 		if pending {
-			heredocs = append(heredocs, heredoc{word.String(), stripTabs})
+			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word.String())
+			words = append(words, word{text.String(), quoted})
 		}
-		word.Reset()
-		inWord = false
+		text.Reset()
+		inWord, quoted, unresolved = false, false, false
 	}
 	for index := 0; index < len(line); index++ {
 		character := line[index]
 		switch {
 		case quote == '\'':
-			// A backslash is literal inside single quotes.
-			if character == '\'' {
-				quote = 0
-			} else {
-				word.WriteByte(character)
+			// A backslash is literal inside single quotes, and an escape bash
+			// would decode inside $'…' makes the word unspellable here.
+			switch {
+			case character == '\'':
+				quote, ansiC = 0, false
+			case character == '\\' && ansiC && index+1 < len(line):
+				// A backslash escapes the next byte inside $'…', so an escaped
+				// apostrophe is a literal one and does not close the span. The
+				// span therefore keeps the rest of the line as text, where
+				// closing on it would expose a separator bash never reads.
+				unresolved = true
+				text.WriteByte(character)
+				index++
+				text.WriteByte(line[index])
+			default:
+				text.WriteByte(character)
 			}
 		case quote == '"':
 			switch {
+			case character == '\\' && index+1 == len(line):
+				// Bash removes a backslash-newline pair inside double quotes,
+				// so the line continues here as it does outside them.
+				continues = true
 			case character == '\\' && index+1 < len(line) && strings.IndexByte("$`\"\\", line[index+1]) >= 0:
 				// A backslash escapes only these characters here. Before any
 				// other one it is a literal byte of the word, so a name such
 				// as "or\as" is not the command it resembles.
 				index++
-				word.WriteByte(line[index])
+				text.WriteByte(line[index])
 			case character == '"':
 				quote = 0
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
@@ -328,35 +464,54 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 				substituted = true
 				stack = append(stack, quote)
 				quote = 0
-				word.WriteByte(character)
+				text.WriteByte(character)
 			default:
-				word.WriteByte(character)
+				text.WriteByte(character)
 			}
-		case character == '\\' && index+1 < len(line):
-			// An escaped quote is a literal character, not the start of a
-			// quoted span, so it cannot hide the syntax that follows it.
+		case character == '\\' && index+1 == len(line):
+			// The line ends on a backslash no quote made literal, so bash
+			// reads the next physical line as the rest of this one. Only the
+			// reader that knows the quoting can say so.
+			continues = true
+		case character == '\\':
+			// An escaped character is a literal one, not the start of a quoted
+			// span, so it cannot hide the syntax that follows it. It is also
+			// no longer syntax itself, so \; is an argument rather than a
+			// separator, which is why the escape records provenance.
 			index++
-			word.WriteByte(line[index])
-			inWord = true
+			text.WriteByte(line[index])
+			inWord, quoted = true, true
 		case character == '\'' || character == '"':
 			quote = character
-			inWord = true
+			inWord, quoted = true, true
+		case character == '$' && index+1 < len(line) &&
+			(line[index+1] == '\'' || line[index+1] == '"'):
+			// $'…' and $"…" are quoting forms whose $ bash removes with the
+			// quotes, so a body opened as <<$'PLAN' ends at a PLAN line. A
+			// $"…" word is translated through the locale catalog before that,
+			// so what it spells here is not what bash compares, and a
+			// delimiter written that way is unresolved from the start.
+			index++
+			quote = line[index]
+			ansiC = quote == '\''
+			unresolved = unresolved || !ansiC
+			inWord, quoted = true, true
 		case character == ' ' || character == '\t':
 			flush()
 		case character == '#' && !inWord:
 			if substituted {
-				return nil, heredocs, 0, stack
+				return nil, heredocs, 0, stack, false
 			}
-			return words, heredocs, 0, stack
+			return words, heredocs, 0, stack, false
 		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
 			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
 			arithmetic++
-			word.WriteString(line[index : index+3])
+			text.WriteString(line[index : index+3])
 			index += 2
 			inWord = true
 		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
 			arithmetic--
-			word.WriteString("))")
+			text.WriteString("))")
 			index++
 			inWord = true
 		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
@@ -389,16 +544,16 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 				index++
 				operator += string(character)
 			}
-			words = append(words, operator)
+			words = append(words, word{text: operator})
 		case len(stack) > 0 && (character == ')' || character == '`'):
 			// A substitution ends at ) or at its backtick, and the quote it
 			// suspended comes back with it.
 			quote = stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			word.WriteByte(character)
+			text.WriteByte(character)
 			inWord = true
 		default:
-			word.WriteByte(character)
+			text.WriteByte(character)
 			inWord = true
 		}
 	}
@@ -406,12 +561,17 @@ func shellWords(line string, stack []byte) (words []string, heredocs []heredoc, 
 	if substituted {
 		words = nil
 	}
+	if quote == '\'' && ansiC {
+		// The span runs on into the next line with its escapes still live, so
+		// the caller must skip it by the ANSI-C rules, not the plain ones.
+		quote = ansiCQuote
+	}
 	if len(stack) > 0 {
 		// A substitution is still open, so the logical line has not ended and
 		// the quote around it is not the caller's to skip.
-		return words, heredocs, 0, stack
+		return words, heredocs, 0, stack, continues
 	}
-	return words, heredocs, quote, stack
+	return words, heredocs, quote, stack, continues
 }
 
 // replacesShell reports whether the words are an exec that names a program,

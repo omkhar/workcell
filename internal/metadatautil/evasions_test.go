@@ -97,6 +97,53 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return i + `: "` + "\n" + i + "x\n" + i + `" ` + flatten(a)
 	})},
+	{"quoted separator", replaceAnchor(func(a string) string {
+		return prefixCommands(a, `: ";" `)
+	})},
+	{"quoted compound-command closer", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"if false; then\n"+i+`"fi"`, i+"fi")
+	})},
+	{"quoted brace in a definition", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"never_called() {\n"+i+`"}"`, i+"}")
+	})},
+	{"ANSI-C heredoc delimiter", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+": <<$'PLAN'\n"+i+"$PLAN", i+"PLAN")
+	})},
+	{"ANSI-C escape in a heredoc delimiter", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: <<$'\x50LAN'`+"\n"+i+`\x50LAN`, i+"PLAN")
+	})},
+	{"single-quoted line break", replaceAnchor(splitCommandWords)},
+	{"locale-translated heredoc delimiter", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`: <<$"PLAN"`+"\n"+i+"PLAN", i+"PLAN")
+	})},
+	{"escaped apostrophe in an ANSI-C word", replaceAnchor(func(a string) string {
+		return prefixCommands(a, `: $'x\'; `)
+	})},
+	{"ANSI-C span across a line break", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + `: $'x` + "\n" + prefixCommands(a, `\'; `) + "\n" + i + `'`
+	})},
+	{"negated guarded group", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && ! {", i+"}")
+	})},
+	{"conditional command group", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && {", i+"}")
+	})},
+	{"argument brace in a guarded group", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && {\n"+i+"echo }", i+"}")
+	})},
+	{"argument brace in a definition body", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"never_called() {\n"+i+"echo }", i+"}")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
@@ -178,6 +225,25 @@ func extendFirstOption(anchor string) string {
 		}
 	}
 	return strings.Replace(anchor, target, target+"-disabled", 1)
+}
+
+// splitCommandWords breaks the command word of every command line of the anchor
+// across a single-quoted newline. Inside single quotes bash keeps both the
+// backslash and the newline, so the word names no program and the command does
+// not run, while a reader that joins the halves before it knows the quoting
+// sees the anchored command with the arguments it expects.
+func splitCommandWords(anchor string) string {
+	lines := strings.Split(anchor, "\n")
+	continues := false
+	for index, line := range lines {
+		name, rest, found := strings.Cut(strings.TrimLeft(line, " \t"), " ")
+		if !continues && found && len(name) > 1 {
+			lines[index] = indentOf(line) + "'" + name[:1] + "\\\n" +
+				indentOf(anchor) + name[1:] + "' " + rest
+		}
+		continues = strings.HasSuffix(strings.TrimSpace(line), "\\")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // indentOf returns the leading whitespace of the first line of text.

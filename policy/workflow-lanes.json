@@ -586,7 +586,7 @@
       "job_id": "bind-release-subjects",
       "job_name": "Bind independent release subjects",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -602,7 +602,7 @@
       "job_id": "build-amd64-image",
       "job_name": "Build native amd64 release image artifact",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -618,7 +618,7 @@
       "job_id": "build-arm64-image",
       "job_name": "Build native arm64 release image artifact",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -638,7 +638,7 @@
         "language": "go"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -658,7 +658,7 @@
         "language": "javascript-typescript"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -678,7 +678,7 @@
         "language": "rust"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -698,7 +698,7 @@
         "runner_label": "macos-15"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -718,7 +718,7 @@
         "runner_label": "macos-26"
       },
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -734,7 +734,7 @@
       "job_id": "preflight",
       "job_name": "Release preflight",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -750,7 +750,7 @@
       "job_id": "preflight-amd64-repro",
       "job_name": "Release reproducible image (amd64)",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -766,7 +766,7 @@
       "job_id": "preflight-arm64-copilot-runtime",
       "job_name": "Release Copilot runtime image probe (arm64)",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -782,7 +782,7 @@
       "job_id": "preflight-arm64-repro",
       "job_name": "Release reproducible image (arm64)",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -798,7 +798,7 @@
       "job_id": "preflight-container-smoke",
       "job_name": "Release container smoke",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -814,7 +814,7 @@
       "job_id": "publish-github-release",
       "job_name": "Publish GitHub release",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -830,7 +830,7 @@
       "job_id": "release",
       "job_name": "Assemble release artifacts",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -846,7 +846,7 @@
       "job_id": "sign-release",
       "job_name": "Publish and sign bound release artifacts",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
@@ -862,14 +862,14 @@
       "job_id": "tag-policy",
       "job_name": "Release tag policy",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"
       ],
       "authority": "release-only",
       "local_mode": "none",
-      "github_only_reason": "the exact pushed-tag event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
+      "github_only_reason": "the exact repository_dispatch event binding exists only in GitHub Actions; the shared tag classifier and negative controls run in local Go tests"
     },
     {
       "id": "release.yml/verify-release-outputs",
@@ -878,7 +878,7 @@
       "job_id": "verify-release-outputs",
       "job_name": "Verify release signatures and attestations",
       "workflow_events": [
-        "push"
+        "repository_dispatch"
       ],
       "profiles": [
         "release-preflight"

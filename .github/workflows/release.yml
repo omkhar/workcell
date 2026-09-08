@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  repository_dispatch:
+    types: [release]
 
 permissions: {}
 
@@ -18,16 +17,10 @@ defaults:
     shell: bash --noprofile --norc -euo pipefail {0}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.client_payload.tag }}
   cancel-in-progress: false
 
 env:
-  # Attestations are now opt-out (fail-closed): every release attests its
-  # artifacts unless vars.WORKCELL_RELEASE_NO_ATTEST is set to "true".
-  # The previous opt-in vars.WORKCELL_ENABLE_GITHUB_ATTESTATIONS was removed
-  # because a missing toggle silently produced unattested releases.
-  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
-  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
   WORKCELL_BUILDX_VERSION: v0.37.0
@@ -43,14 +36,121 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
+      actions: read # Verify the required workflow runs for the release commit.
+      contents: read # Verify the annotated release tag and its target commit.
+    outputs:
+      release_commit: ${{ steps.binding.outputs.release_commit }}
+      release_tag: ${{ steps.binding.outputs.release_tag }}
+      tag_object: ${{ steps.binding.outputs.tag_object }}
     steps:
+      - name: Verify signed tag binding before checkout
+        id: binding
+        env:
+          GH_HOST: github.com
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PAYLOAD_JSON: ${{ toJSON(github.event.client_payload) }}
+          RELEASE_TAG: ${{ github.event.client_payload.tag }}
+          EXPECTED_RELEASE_COMMIT: ${{ github.event.client_payload.commit }}
+        run: |
+          # repository_dispatch loads this workflow from the default branch.
+          # This gate uses only fixed runner tools before repository checkout.
+          export PATH="/usr/bin:/bin"
+          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main"
+          if [[ "${GITHUB_REF}" != "refs/heads/main" || "${GITHUB_WORKFLOW_REF}" != "${expected_workflow_ref}" ||
+            "${GITHUB_WORKFLOW_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "Release must use the workflow from the current main commit." >&2
+            exit 2
+          fi
+          payload_keys="$(jq -c 'keys | sort' <<<"${PAYLOAD_JSON}")"
+          if [[ "${payload_keys}" != '["commit","tag"]' ]]; then
+            echo "Release dispatch accepts only tag and commit payload fields." >&2
+            exit 2
+          fi
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9A-Za-z.-]{1,63}$ ]]; then
+            echo "Release dispatch requires one bounded release tag." >&2
+            exit 2
+          fi
+          if [[ "${#EXPECTED_RELEASE_COMMIT}" -ne 40 || "${EXPECTED_RELEASE_COMMIT}" == *[!0-9a-f]* ]]; then
+            echo "Release dispatch requires client_payload.commit as 40 lowercase hexadecimal characters." >&2
+            exit 2
+          fi
+          encoded_tag="$(jq -rn --arg value "${RELEASE_TAG}" '$value | @uri')"
+          ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${encoded_tag}")"
+          observed_ref="$(jq -r '.ref // empty' <<<"${ref_json}")"
+          object_type="$(jq -r '.object.type // empty' <<<"${ref_json}")"
+          object_sha="$(jq -r '.object.sha // empty' <<<"${ref_json}")"
+          if [[ "${observed_ref}" != "refs/tags/${RELEASE_TAG}" || "${object_type}" != "tag" ]]; then
+            echo "Release requires an annotated tag object." >&2
+            exit 2
+          fi
+          if [[ "${#object_sha}" -ne 40 || "${object_sha}" == *[!0-9a-f]* ]]; then
+            echo "Release tag object has an invalid object ID." >&2
+            exit 2
+          fi
+          tag_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")"
+          returned_object_sha="$(jq -r '.sha // empty' <<<"${tag_json}")"
+          returned_tag_name="$(jq -r '.tag // empty' <<<"${tag_json}")"
+          target_type="$(jq -r '.object.type // empty' <<<"${tag_json}")"
+          target_sha="$(jq -r '.object.sha // empty' <<<"${tag_json}")"
+          verified="$(jq -r '.verification.verified // false' <<<"${tag_json}")"
+          reason="$(jq -r '.verification.reason // "unknown"' <<<"${tag_json}")"
+          if [[ "${verified}" != "true" || "${reason}" != "valid" ]]; then
+            echo "Release requires a GitHub-verified signed tag." >&2
+            exit 2
+          fi
+          if [[ "${returned_object_sha}" != "${object_sha}" || "${returned_tag_name}" != "${RELEASE_TAG}" ||
+            "${target_type}" != "commit" || "${target_sha}" != "${EXPECTED_RELEASE_COMMIT}" ]]; then
+            echo "Release tag does not target the requested release commit." >&2
+            exit 2
+          fi
+          if [[ "${target_sha}" != "${GITHUB_WORKFLOW_SHA}" ]]; then
+            echo "Release tag must target the current main workflow commit." >&2
+            exit 2
+          fi
+          runs_response="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?branch=main&event=push&head_sha=${target_sha}&per_page=100")"
+          run_count="$(jq -r '.total_count // -1' <<<"${runs_response}")"
+          if [[ ! "${run_count}" =~ ^[0-9]+$ || "${run_count}" -gt 100 ]]; then
+            echo "Release commit workflow-run inventory is invalid or exceeds 100 entries." >&2
+            exit 2
+          fi
+          main_runs="$(jq --arg target "${target_sha}" \
+            '[.workflow_runs[]
+              | select(.event == "push" and .head_branch == "main" and .head_sha == $target)]
+              | group_by(.path)
+              | map(max_by([.id, .run_attempt]))' \
+            <<<"${runs_response}")"
+          expected_paths='[".github/workflows/ci.yml",".github/workflows/codeql.yml",".github/workflows/docs.yml",".github/workflows/hosted-controls.yml",".github/workflows/scorecard.yml",".github/workflows/security.yml"]'
+          observed_paths="$(jq -c '[.[].path] | sort' <<<"${main_runs}")"
+          if [[ "${observed_paths}" != "${expected_paths}" ]]; then
+            echo "Release commit does not have the exact required main workflow set." >&2
+            printf 'Expected: %s\nObserved: %s\n' "${expected_paths}" "${observed_paths}" >&2
+            exit 2
+          fi
+          unready_runs="$(jq -r \
+            '.[] | select(.status != "completed" or .conclusion != "success") | "\(.name) (\(.status), \(.conclusion))"' \
+            <<<"${main_runs}")"
+          if [[ -n "${unready_runs}" ]]; then
+            echo "Release commit has incomplete or unsuccessful main workflows:" >&2
+            printf '%s\n' "${unready_runs}" >&2
+            exit 2
+          fi
+          {
+            echo "release_commit=${target_sha}"
+            echo "release_tag=${RELEASE_TAG}"
+            echo "tag_object=${object_sha}"
+          } >>"${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
 
       - name: Classify release tag
-        run: go run ./cmd/workcell-hostutil release classify-tag "${GITHUB_REF_NAME}" >/dev/null
+        env:
+          RELEASE_TAG: ${{ steps.binding.outputs.release_tag }}
+        run: go run ./cmd/workcell-hostutil release classify-tag "${RELEASE_TAG}" >/dev/null
 
   codeql-preflight:
     name: Release CodeQL (${{ matrix.language }})
@@ -74,6 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           persist-credentials: false
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
@@ -99,6 +200,8 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     needs: tag-policy
+    env:
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     outputs:
@@ -107,12 +210,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -157,6 +261,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: tag-policy
+    env:
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     outputs:
@@ -165,12 +271,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -208,6 +315,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           persist-credentials: false
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -235,16 +343,19 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     needs: tag-policy
+    env:
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           persist-credentials: false
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -288,6 +399,10 @@ jobs:
       - tag-policy
       - preflight-amd64-repro
       - preflight-arm64-repro
+    env:
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
+      RELEASE_TAG_OBJECT: ${{ needs.tag-policy.outputs.tag_object }}
     environment:
       name: hosted-controls-audit
     permissions:
@@ -300,89 +415,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
-
-      - name: Require tag commit on main
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          # Use the GitHub compare API (via gh, which is pre-authenticated) to
-          # verify that the tagged commit is an ancestor of main.  The git-fetch
-          # approach requires re-authenticating against a private repo and has
-          # proven unreliable with the actions/checkout credential cleanup.
-          if ! cmp_status="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...main" \
-            --jq '.status')"; then
-            echo "Could not verify whether tagged commit ${GITHUB_SHA} is on main." >&2
-            exit 1
-          fi
-          case "${cmp_status}" in
-            ahead|identical) ;;
-            *)
-              echo "Tagged commit ${GITHUB_SHA} is not an ancestor of main (compare status: ${cmp_status:-error})" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Require main checks green for tagged commit
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          # Per AGENTS.md ("Wait for the merged main commit to finish required
-          # GitHub Actions workflows successfully before pushing the signed
-          # release tag"), block release publication if check-runs on the
-          # tagged commit show failures or unfinished work.  Tag-ancestry
-          # alone is not enough: a tag pushed before main CI completes, or
-          # against a red main, must not produce a release.
-          # Fail closed when nothing has registered yet: a tag pushed inside
-          # the registration window would otherwise see zero check-runs and
-          # sail through both filters below. GitHub Actions check suites for
-          # main-push workflows register at event delivery, so an empty set
-          # means main CI has not started for this commit. Scope to the
-          # github-actions app on main: third-party app suites (for example
-          # kusari-inspector) can sit queued forever on main commits.
-          suites="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-suites" \
-            --paginate \
-            --jq '[.check_suites[] | select(.app.slug == "github-actions" and .head_branch == "main")]')"
-          if [[ "$(jq 'length' <<<"${suites}")" -eq 0 ]]; then
-            echo "Tagged commit ${GITHUB_SHA} has no registered main workflow check suites yet." >&2
-            echo "Wait for main checks to register and finish before re-running this release." >&2
-            exit 1
-          fi
-          incomplete_suites="$(jq -r '.[] | select(.status != "completed") | "check suite \(.id) (\(.status))"' <<<"${suites}")"
-          if [[ -n "${incomplete_suites}" ]]; then
-            echo "Tagged commit ${GITHUB_SHA} has main workflow check suites not yet completed:" >&2
-            printf '%s\n' "${incomplete_suites}" >&2
-            echo "Wait for main checks to finish before re-running this release." >&2
-            exit 1
-          fi
-          failed="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
-            --paginate \
-            --jq '.check_runs[] | select(.status == "completed" and (.conclusion | IN("failure","cancelled","timed_out","action_required","stale"))) | "\(.name) (\(.conclusion))"')"
-          if [[ -n "${failed}" ]]; then
-            echo "Tagged commit ${GITHUB_SHA} has failed required checks:" >&2
-            printf '%s\n' "${failed}" >&2
-            exit 1
-          fi
-          pending="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
-            --paginate \
-            --jq '.check_runs[] | select(.status != "completed" and (.name | startswith("Release ") | not)) | .name')"
-          if [[ -n "${pending}" ]]; then
-            echo "Tagged commit ${GITHUB_SHA} has check-runs not yet completed:" >&2
-            printf '%s\n' "${pending}" >&2
-            echo "Wait for main checks to finish before re-running this release." >&2
-            exit 1
-          fi
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - name: Verify release tag signature
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${GITHUB_REF_NAME}"
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
 
       - name: Verify GitHub-hosted controls
         env:
@@ -399,7 +443,7 @@ jobs:
       - name: Verify build input manifest
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
-          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+          WORKCELL_BUILD_INPUT_REF: ${{ needs.tag-policy.outputs.release_commit }}
         run: ./scripts/verify-build-input-manifest.sh
 
       - name: Verify control-plane manifest
@@ -408,7 +452,7 @@ jobs:
       - name: Generate preflight build input manifest
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
-          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+          WORKCELL_BUILD_INPUT_REF: ${{ needs.tag-policy.outputs.release_commit }}
         run: |
           mkdir -p dist
           ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs-preflight.json
@@ -480,7 +524,7 @@ jobs:
         run: |
           docker build \
             -f tools/validator/Dockerfile \
-            -t "workcell-validator:${GITHUB_SHA}" \
+            -t "workcell-validator:${RELEASE_COMMIT}" \
             .
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -508,7 +552,7 @@ jobs:
             -e GOMODCACHE="${validator_cache}/go-mod" \
             -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
             -e TMPDIR="${validator_tmp}" \
-            "workcell-validator:${GITHUB_SHA}" \
+            "workcell-validator:${RELEASE_COMMIT}" \
             -lc '
               set -euo pipefail
               mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
@@ -522,10 +566,10 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
           WORKCELL_RELEASE_BUNDLE_MANIFEST_PATH: dist/workcell-release-bundle-preflight.json
-          WORKCELL_RELEASE_BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz
-          WORKCELL_RELEASE_BUNDLE_PREFIX: workcell-${{ github.ref_name }}
-          WORKCELL_RELEASE_BUNDLE_REF: ${{ github.sha }}
-          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+          WORKCELL_RELEASE_BUNDLE_NAME: workcell-${{ env.RELEASE_TAG }}.tar.gz
+          WORKCELL_RELEASE_BUNDLE_PREFIX: workcell-${{ env.RELEASE_TAG }}
+          WORKCELL_RELEASE_BUNDLE_REF: ${{ needs.tag-policy.outputs.release_commit }}
+          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ needs.tag-policy.outputs.release_commit }}
         run: ./scripts/verify-release-bundle.sh
 
       - name: Build preflight release install artifacts
@@ -540,7 +584,7 @@ jobs:
           validator_cache="${validator_home}/.cache"
           validator_tmp="${validator_home}/.tmp"
           mkdir -p dist/release-install
-          bundle="workcell-${GITHUB_REF_NAME}.tar.gz"
+          bundle="workcell-${RELEASE_TAG}.tar.gz"
           docker run --rm \
             --user "${validator_uid}:${validator_gid}" \
             --entrypoint /bin/bash \
@@ -551,10 +595,10 @@ jobs:
             -e XDG_CACHE_HOME="${validator_cache}" \
             -e TMPDIR="${validator_tmp}" \
             -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-            -e ARCHIVE_REF="${GITHUB_SHA}" \
+            -e ARCHIVE_REF="${RELEASE_COMMIT}" \
             -e BUNDLE_NAME="${bundle}" \
-            -e BUNDLE_PREFIX="workcell-${GITHUB_REF_NAME}/" \
-            "workcell-validator:${GITHUB_SHA}" \
+            -e BUNDLE_PREFIX="workcell-${RELEASE_TAG}/" \
+            "workcell-validator:${RELEASE_COMMIT}" \
             -lc '
               set -euo pipefail
               mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
@@ -570,7 +614,7 @@ jobs:
             '
           bundle_sha="$(sha256sum "dist/release-install/${bundle}" | awk '{print $1}')"
           ./scripts/generate-homebrew-formula.sh \
-            "${GITHUB_REF_NAME}" \
+            "${RELEASE_TAG}" \
             "${bundle_sha}" \
             dist/release-install/workcell.rb \
             --repository "${GITHUB_REPOSITORY}"
@@ -658,7 +702,7 @@ jobs:
         with:
           name: workcell-release-install-candidate
           path: |
-            dist/release-install/workcell-${{ github.ref_name }}.tar.gz
+            dist/release-install/workcell-${{ env.RELEASE_TAG }}.tar.gz
             dist/release-install/workcell.rb
           retention-days: 90
 
@@ -669,6 +713,8 @@ jobs:
     needs:
       - tag-policy
       - preflight
+    env:
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
     permissions:
       contents: read
     strategy:
@@ -682,6 +728,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           persist-credentials: false
 
       - name: Verify release asset ACL handling
@@ -750,7 +797,7 @@ jobs:
           mkdir -p "${tap_dir}/Formula"
           cp dist/install/workcell.rb "${tap_dir}/Formula/workcell.rb"
           formula_path="${tap_dir}/Formula/workcell.rb"
-          expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$(basename "${bundle_path}")"
+          expected_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/$(basename "${bundle_path}")"
           grep -F "url \"${expected_url}\"" "${formula_path}" >/dev/null
           BUNDLE_FILE_URL="file://${bundle_path}" perl -0pi -e 's{^  url ".*"$}{"  url \"" . $ENV{BUNDLE_FILE_URL} . "\""}me' "${formula_path}"
           brew install "${tap_name}/workcell"
@@ -775,6 +822,9 @@ jobs:
       - preflight-arm64-copilot-runtime
       - preflight-container-smoke
       - install-verification
+    env:
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     outputs:
@@ -784,12 +834,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -822,7 +873,7 @@ jobs:
           go run ./cmd/workcell-citools create-release-image-handoff \
             "${RUNNER_TEMP}/workcell-amd64.oci.tar" \
             "${RUNNER_TEMP}/workcell-amd64-handoff.json" \
-            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${GITHUB_REF_NAME}" "${GITHUB_SHA}" \
+            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${RELEASE_TAG}" "${RELEASE_COMMIT}" \
             linux/amd64 "${IMAGE_DIGEST}" "${PREFLIGHT_DIGEST}" "${PREFLIGHT_CONFIG_DIGEST}"
 
       - id: upload_amd64
@@ -848,6 +899,9 @@ jobs:
       - preflight-arm64-copilot-runtime
       - preflight-container-smoke
       - install-verification
+    env:
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     outputs:
@@ -857,12 +911,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -898,7 +953,7 @@ jobs:
           go run ./cmd/workcell-citools create-release-image-handoff \
             "${RUNNER_TEMP}/workcell-arm64.oci.tar" \
             "${RUNNER_TEMP}/workcell-arm64-handoff.json" \
-            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${GITHUB_REF_NAME}" "${GITHUB_SHA}" \
+            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${RELEASE_TAG}" "${RELEASE_COMMIT}" \
             linux/arm64 "${IMAGE_DIGEST}" "${PREFLIGHT_DIGEST}" "${PREFLIGHT_CONFIG_DIGEST}"
 
       - id: upload_arm64
@@ -920,6 +975,9 @@ jobs:
       - install-verification
       - build-amd64-image
       - build-arm64-image
+    env:
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       contents: read
     outputs:
@@ -928,6 +986,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -957,7 +1016,7 @@ jobs:
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -995,7 +1054,7 @@ jobs:
         run: |
           set -euo pipefail
           bound="dist/preflight-subjects"
-          bundle="workcell-${GITHUB_REF_NAME}.tar.gz"
+          bundle="workcell-${RELEASE_TAG}.tar.gz"
           amd64_digest="$(jq -r '.platforms["linux/amd64"].image_manifest_digest' dist/preflight/workcell-runtime-preflight.json)"
           amd64_config="$(jq -r '.platforms["linux/amd64"].config_digest' dist/preflight/workcell-runtime-preflight.json)"
           arm64_digest="$(jq -r '.platforms["linux/arm64"].image_manifest_digest' dist/preflight/workcell-runtime-preflight.json)"
@@ -1007,25 +1066,25 @@ jobs:
           mkdir -p "${amd64_layout}" "${arm64_layout}" "${source_root}"
           go run ./cmd/workcell-citools create-release-image-handoff \
             dist/image-amd64/workcell-amd64.oci.tar "${RUNNER_TEMP}/validated-amd64.json" \
-            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${GITHUB_REF_NAME}" "${GITHUB_SHA}" \
+            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${RELEASE_TAG}" "${RELEASE_COMMIT}" \
             linux/amd64 "${AMD64_IMAGE_DIGEST}" "${amd64_digest}" "${amd64_config}"
           go run ./cmd/workcell-citools create-release-image-handoff \
             dist/image-arm64/workcell-arm64.oci.tar "${RUNNER_TEMP}/validated-arm64.json" \
-            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${GITHUB_REF_NAME}" "${GITHUB_SHA}" \
+            "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "${RELEASE_TAG}" "${RELEASE_COMMIT}" \
             linux/arm64 "${ARM64_IMAGE_DIGEST}" "${arm64_digest}" "${arm64_config}"
           tar -xf dist/image-amd64/workcell-amd64.oci.tar -C "${amd64_layout}"
           tar -xf dist/image-arm64/workcell-arm64.oci.tar -C "${arm64_layout}"
           oras cp --recursive --from-oci-layout "${amd64_layout}@${amd64_digest}" --to-oci-layout "${release_layout}:amd64"
           oras cp --recursive --from-oci-layout "${arm64_layout}@${arm64_digest}" --to-oci-layout "${release_layout}:arm64"
-          oras manifest index create --oci-layout "${release_layout}:${GITHUB_REF_NAME}" amd64 arm64 >/dev/null
+          oras manifest index create --oci-layout "${release_layout}:${RELEASE_TAG}" amd64 arm64 >/dev/null
           mkdir -p "${bound}"
           cp "dist/preflight-install/${bundle}" "${bound}/${bundle}"
           cp dist/preflight-install/workcell.rb "${bound}/workcell.rb"
           cp dist/preflight/workcell-build-inputs-preflight.json "${bound}/workcell-build-inputs.json"
           cp dist/preflight/workcell-control-plane-preflight.json "${bound}/workcell-control-plane.json"
-          printf '%s@%s\n' "${IMAGE_NAME}" "$(oras resolve --oci-layout "${release_layout}:${GITHUB_REF_NAME}")" > "${bound}/workcell-image.digest"
+          printf '%s@%s\n' "${IMAGE_NAME}" "$(oras resolve --oci-layout "${release_layout}:${RELEASE_TAG}")" > "${bound}/workcell-image.digest"
           tar -xzf "${bound}/${bundle}" -C "${source_root}"
-          syft scan "dir:${source_root}/workcell-${GITHUB_REF_NAME}" -o "spdx-json=${bound}/workcell-source.spdx.json"
+          syft scan "dir:${source_root}/workcell-${RELEASE_TAG}" -o "spdx-json=${bound}/workcell-source.spdx.json"
           syft scan "oci-dir:${release_layout}" -o "spdx-json=${bound}/workcell-image.spdx.json"
           ./scripts/generate-builder-environment-manifest.sh "${bound}/workcell-builder-environment.json"
           ./scripts/generate-release-checksums.sh "${bound}/SHA256SUMS" \
@@ -1058,6 +1117,10 @@ jobs:
       - build-amd64-image
       - build-arm64-image
       - bind-release-subjects
+    env:
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
+      RELEASE_TAG_OBJECT: ${{ needs.tag-policy.outputs.tag_object }}
     permissions:
       contents: read
     outputs:
@@ -1067,8 +1130,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Recheck release tag before release assembly
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
 
       - name: Download preflight binding manifests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1096,7 +1165,7 @@ jobs:
 
       - id: source_date
         name: Compute source date epoch
-        run: echo "epoch=$(git log -1 --pretty=%ct "${GITHUB_SHA}")" >> "${GITHUB_OUTPUT}"
+        run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
@@ -1106,16 +1175,11 @@ jobs:
 
       - name: Confirm attestation environment policy
         env:
-          RELEASE_NO_ATTEST: ${{ env.RELEASE_NO_ATTEST }}
-          ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
-          if [[ "${RELEASE_NO_ATTEST}" == "true" ]]; then
-            echo "::warning::vars.WORKCELL_RELEASE_NO_ATTEST=true — release will skip GitHub attestations."
-            exit 0
-          fi
-          if [[ "${ENABLE_GITHUB_ATTESTATIONS_SUPPORTED}" != "true" ]]; then
+          if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
             echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
-            echo "::error::Either publish the repository, set vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=true for the private flow, or explicitly opt out with vars.WORKCELL_RELEASE_NO_ATTEST=true (each release will then ship without attestations)." >&2
+            echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
             exit 1
           fi
 
@@ -1123,7 +1187,7 @@ jobs:
         run: |
           docker build \
             -f tools/validator/Dockerfile \
-            -t "workcell-validator:${GITHUB_SHA}" \
+            -t "workcell-validator:${RELEASE_COMMIT}" \
             .
 
       - name: Prepare release bundle
@@ -1131,7 +1195,7 @@ jobs:
           WORKCELL_BUILDKIT_IMAGE: ${{ env.WORKCELL_BUILDKIT_IMAGE }}
           WORKCELL_BUILDX_VERSION: ${{ env.WORKCELL_BUILDX_VERSION }}
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
-          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+          WORKCELL_BUILD_INPUT_REF: ${{ needs.tag-policy.outputs.release_commit }}
           WORKCELL_COSIGN_VERSION: ${{ env.WORKCELL_COSIGN_VERSION }}
           WORKCELL_QEMU_IMAGE: ${{ env.WORKCELL_QEMU_IMAGE }}
           WORKCELL_SYFT_VERSION: ${{ env.WORKCELL_SYFT_VERSION }}
@@ -1143,7 +1207,7 @@ jobs:
           validator_home="/tmp/workcell-home-${validator_uid}"
           validator_cache="${validator_home}/.cache"
           validator_tmp="${validator_home}/.tmp"
-          bundle="workcell-${GITHUB_REF_NAME}.tar.gz"
+          bundle="workcell-${RELEASE_TAG}.tar.gz"
           echo "BUNDLE_NAME=${bundle}" >> "${GITHUB_ENV}"
           docker run --rm \
             --user "${validator_uid}:${validator_gid}" \
@@ -1155,10 +1219,10 @@ jobs:
             -e XDG_CACHE_HOME="${validator_cache}" \
             -e TMPDIR="${validator_tmp}" \
             -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-            -e ARCHIVE_REF="${GITHUB_SHA}" \
+            -e ARCHIVE_REF="${RELEASE_COMMIT}" \
             -e BUNDLE_NAME="${bundle}" \
-            -e BUNDLE_PREFIX="workcell-${GITHUB_REF_NAME}/" \
-            "workcell-validator:${GITHUB_SHA}" \
+            -e BUNDLE_PREFIX="workcell-${RELEASE_TAG}/" \
+            "workcell-validator:${RELEASE_COMMIT}" \
             -lc '
               set -euo pipefail
               mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
@@ -1174,7 +1238,7 @@ jobs:
             '
           mkdir -p dist/source-tree
           tar -xzf "dist/${bundle}" -C dist/source-tree
-          ln -sfn "source-tree/workcell-${GITHUB_REF_NAME}" dist/release-source
+          ln -sfn "source-tree/workcell-${RELEASE_TAG}" dist/release-source
           echo "RELEASE_SOURCE_ROOT=dist/release-source" >> "${GITHUB_ENV}"
           ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs.json
 
@@ -1208,7 +1272,7 @@ jobs:
       - name: Regenerate build input manifest from archived source tree
         env:
           WORKCELL_BUILD_INPUT_ROOT: ${{ github.workspace }}/dist/release-source
-          WORKCELL_BUILD_INPUT_REF: ${{ github.sha }}
+          WORKCELL_BUILD_INPUT_REF: ${{ needs.tag-policy.outputs.release_commit }}
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
         run: ./scripts/generate-build-input-manifest.sh dist/workcell-build-inputs-archived.json
 
@@ -1223,7 +1287,7 @@ jobs:
         run: |
           bundle_sha="$(sha256sum "dist/${BUNDLE_NAME}" | awk '{print $1}')"
           ./scripts/generate-homebrew-formula.sh \
-            "${GITHUB_REF_NAME}" \
+            "${RELEASE_TAG}" \
             "${bundle_sha}" \
             dist/workcell.rb \
             --repository "${GITHUB_REPOSITORY}"
@@ -1274,8 +1338,8 @@ jobs:
             jq -e \
               --arg repository "${GITHUB_REPOSITORY}" \
               --arg run_id "${GITHUB_RUN_ID}" \
-              --arg tag "${GITHUB_REF_NAME}" \
-              --arg commit "${GITHUB_SHA}" \
+              --arg tag "${RELEASE_TAG}" \
+              --arg commit "${RELEASE_COMMIT}" \
               --arg platform "linux/${arch}" \
               '.repository == $repository and .run_id == $run_id and .tag == $tag and .commit == $commit and .platform == $platform' \
               "${handoff}" >/dev/null
@@ -1390,9 +1454,9 @@ jobs:
             "dist/image-arm64/layout@${ARM64_DIGEST}" \
             --to-oci-layout dist/release-image:arm64
           oras manifest index create --oci-layout \
-            "dist/release-image:${GITHUB_REF_NAME}" \
+            "dist/release-image:${RELEASE_TAG}" \
             amd64 arm64 >/dev/null
-          manifest_json="$(oras manifest fetch --oci-layout "dist/release-image:${GITHUB_REF_NAME}")"
+          manifest_json="$(oras manifest fetch --oci-layout "dist/release-image:${RELEASE_TAG}")"
           image_manifests_json="$(jq -c '.manifests' <<<"${manifest_json}")"
           platform_arches="$(jq -r '[.[].platform.architecture] | @json' <<<"${image_manifests_json}")"
           if [[ "${platform_arches}" != '["amd64","arm64"]' ]]; then
@@ -1400,7 +1464,7 @@ jobs:
             exit 1
           fi
 
-          digest="$(oras resolve --oci-layout "dist/release-image:${GITHUB_REF_NAME}")"
+          digest="$(oras resolve --oci-layout "dist/release-image:${RELEASE_TAG}")"
           test "${digest}" = "sha256:$(printf '%s' "${manifest_json}" | sha256sum | awk '{print $1}')"
 
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
@@ -1429,8 +1493,8 @@ jobs:
           jq -n \
             --arg repository "${GITHUB_REPOSITORY}" \
             --arg run_id "${GITHUB_RUN_ID}" \
-            --arg tag "${GITHUB_REF_NAME}" \
-            --arg commit "${GITHUB_SHA}" \
+            --arg tag "${RELEASE_TAG}" \
+            --arg commit "${RELEASE_COMMIT}" \
             --arg image_digest "${IMAGE_DIGEST}" \
             --arg amd64_manifest "$(jq -r '.platforms["linux/amd64"].image_manifest_digest' dist/preflight/workcell-runtime-preflight.json)" \
             --arg amd64_config "$(jq -r '.platforms["linux/amd64"].config_digest' dist/preflight/workcell-runtime-preflight.json)" \
@@ -1472,7 +1536,7 @@ jobs:
       - release
     environment:
       name: release
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ env.RELEASE_TAG }}
     permissions:
       artifact-metadata: write # Publish GitHub artifact attestations.
       attestations: write # Create GitHub attestations for reviewed subjects.
@@ -1480,11 +1544,26 @@ jobs:
       id-token: write # Request the keyless signing identity.
       packages: write # Upload the validated OCI layout and its signatures.
     env:
-      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
+      RELEASE_TAG_OBJECT: ${{ needs.tag-policy.outputs.tag_object }}
+      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz
     outputs:
       artifact_id: ${{ steps.upload_signed.outputs.artifact-id }}
       artifact_digest: ${{ steps.upload_signed.outputs.artifact-digest }}
     steps:
+      # The reviewed rechecks below run from the repository, so the signer needs
+      # the verified release commit in its workspace before the first one.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
+          persist-credentials: false
+
+      - name: Recheck release tag before signing and image mutation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
+
       - name: Download bound unsigned release artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1515,8 +1594,8 @@ jobs:
           jq -e \
             --arg repository "${GITHUB_REPOSITORY}" \
             --arg run_id "${GITHUB_RUN_ID}" \
-            --arg tag "${GITHUB_REF_NAME}" \
-            --arg commit "${GITHUB_SHA}" \
+            --arg tag "${RELEASE_TAG}" \
+            --arg commit "${RELEASE_COMMIT}" \
             --arg image_digest "${EXPECTED_IMAGE_DIGEST}" \
             '.repository == $repository and .run_id == $run_id and .tag == $tag and .commit == $commit and .image_digest == $image_digest' \
             dist/workcell-release-handoff.json >/dev/null
@@ -1564,6 +1643,11 @@ jobs:
           install -m 0755 "${RUNNER_TEMP}/oras" "${RUNNER_TEMP}/bin/oras"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
 
+      - name: Recheck release tag before named image publication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
+
       - name: Publish bound OCI layout
         env:
           IMAGE_DIGEST: ${{ needs.release.outputs.image_digest }}
@@ -1573,8 +1657,8 @@ jobs:
           while IFS= read -r blob; do
             test "$(sha256sum "${blob}" | awk '{print $1}')" = "$(basename "${blob}")"
           done < <(find "${RUNNER_TEMP}/release-image/blobs/sha256" -type f -print)
-          test "$(oras resolve --oci-layout "${RUNNER_TEMP}/release-image:${GITHUB_REF_NAME}")" = "${IMAGE_DIGEST}"
-          manifest_json="$(oras manifest fetch --oci-layout "${RUNNER_TEMP}/release-image:${GITHUB_REF_NAME}")"
+          test "$(oras resolve --oci-layout "${RUNNER_TEMP}/release-image:${RELEASE_TAG}")" = "${IMAGE_DIGEST}"
+          manifest_json="$(oras manifest fetch --oci-layout "${RUNNER_TEMP}/release-image:${RELEASE_TAG}")"
           test "$(jq -c '[.manifests[] | {digest,platform}]' <<<"${manifest_json}")" = \
             "$(jq -c '[{digest:.platforms["linux/amd64"].manifest_digest,platform:{architecture:"amd64",os:"linux"}},{digest:.platforms["linux/arm64"].manifest_digest,platform:{architecture:"arm64",os:"linux"}}]' dist/workcell-release-handoff.json)"
           for arch in amd64 arm64; do
@@ -1583,9 +1667,9 @@ jobs:
             test "$(jq -r '.config.digest' "${RUNNER_TEMP}/release-image/blobs/sha256/${manifest_digest#sha256:}")" = "${config_digest}"
           done
           oras cp --recursive --from-oci-layout \
-            "${RUNNER_TEMP}/release-image:${GITHUB_REF_NAME}" \
-            "${IMAGE_NAME}:${GITHUB_REF_NAME},sha-${GITHUB_SHA}"
-          test "$(oras resolve "${IMAGE_NAME}:${GITHUB_REF_NAME}")" = "${IMAGE_DIGEST}"
+            "${RUNNER_TEMP}/release-image:${RELEASE_TAG}" \
+            "${IMAGE_NAME}:${RELEASE_TAG},sha-${RELEASE_COMMIT}"
+          test "$(oras resolve "${IMAGE_NAME}:${RELEASE_TAG}")" = "${IMAGE_DIGEST}"
 
       - name: Sign release image
         env:
@@ -1667,14 +1751,12 @@ jobs:
             dist/workcell-image.spdx.json
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ needs.release.outputs.image_digest }}
           push-to-registry: true
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-image.spdx.json
           subject-name: ${{ env.IMAGE_NAME }}
@@ -1682,43 +1764,35 @@ jobs:
           push-to-registry: true
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           sbom-path: dist/workcell-source.spdx.json
           subject-path: dist/${{ env.BUNDLE_NAME }}
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell.rb
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-image.digest
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-build-inputs.json
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-control-plane.json
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/workcell-builder-environment.json
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
         with:
           subject-path: dist/SHA256SUMS
 
@@ -1756,8 +1830,8 @@ jobs:
       - tag-policy
       - sign-release
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
     permissions:
       actions: read # Download the sealed artifact from the signing job.
       attestations: read # Read GitHub artifact attestations.
@@ -1766,6 +1840,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -1814,8 +1889,9 @@ jobs:
       - sign-release
       - verify-release-outputs
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
-      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_TAG: ${{ needs.tag-policy.outputs.release_tag }}
+      RELEASE_COMMIT: ${{ needs.tag-policy.outputs.release_commit }}
+      RELEASE_TAG_OBJECT: ${{ needs.tag-policy.outputs.tag_object }}
     environment:
       name: hosted-controls-audit
     permissions:
@@ -1826,6 +1902,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.tag-policy.outputs.release_commit }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -1868,11 +1945,11 @@ jobs:
       - name: Verify release tag signature
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${GITHUB_REF_NAME}"
+        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
 
       - name: Recheck hosted controls and publish GitHub release assets
         env:
-          BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz
+          BUNDLE_NAME: workcell-${{ env.RELEASE_TAG }}.tar.gz
           GITHUB_TOKEN: ${{ github.token }}
           WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
           WORKCELL_HOSTED_CONTROLS_TOKEN: ${{ secrets.WORKCELL_HOSTED_CONTROLS_TOKEN }}
@@ -1882,7 +1959,8 @@ jobs:
           # the default Actions token for release mutations.
           ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
           unset WORKCELL_HOSTED_CONTROLS_TOKEN
-          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+          ./scripts/publish-github-release.sh "${RELEASE_TAG}" \
+            --expected-tag-object "${RELEASE_TAG_OBJECT}" \
             --immutable-releases-preverified-by-hosted-controls \
             "dist/${BUNDLE_NAME}" \
             "dist/${BUNDLE_NAME}.sigstore.json" \
