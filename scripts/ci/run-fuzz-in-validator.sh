@@ -79,6 +79,7 @@ workcell_ci_docker run --rm \
       "./internal/tomlsubset/ FuzzParse"
       "./internal/injection/ FuzzIsAllowedSystemSymlink"
       "./internal/injection/ FuzzParseSSHDirective"
+      "./internal/applecontainer/ FuzzAuditPathValueRoundTrip"
     )
     for entry in "${targets[@]}"; do
       pkg="${entry%% *}"
