@@ -3707,7 +3707,13 @@ EOF
 	    echo "expected workspace symlink launcher invocation to fail" >&2
 	    exit 1
 	  fi
-	  grep -q "Unsupported Workcell launcher invocation for copilot: /workspace/tmp/copilot" /tmp/provider-launcher-workspace-symlink.out
+	  # Two reviewed refusals answer this alias, and which one fires depends on the
+  # profile. On the strict profile the exec guard reads the pathname the caller
+  # wrote, sees a workspace component, and refuses before the launcher starts.
+  # Where the guard does not run that check the launcher refuses its own
+  # unexpected invocation path. The failed launch above is asserted separately,
+  # so this line only requires the failure to be one of the two.
+  grep -Eq "Unsupported Workcell launcher invocation for copilot: /workspace/tmp/copilot|Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\." /tmp/provider-launcher-workspace-symlink.out
 	  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups rm -f /workspace/tmp/copilot
 	  cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
 unset BASH_ENV
