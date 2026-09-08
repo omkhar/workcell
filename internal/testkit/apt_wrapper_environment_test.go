@@ -26,7 +26,39 @@ import (
 // A line anchor cannot see a heredoc body either, so the wrapper is required to
 // have no heredoc. That keeps the anchors below the only way its text can
 // appear, and it fails loudly if anyone adds one.
+//
+// Nor can a line anchor see reachability: the same line parked inside
+// `if false; then ... fi` satisfies it while nothing runs it. The delegation is
+// therefore required to be the wrapper's final command, which is what an exec
+// that replaces the shell has to be anyway.
+// sudoWrapperDelegationLine is the delegation exactly as the wrapper's final
+// command must be written, unindented.
+const sudoWrapperDelegationLine = `exec "${broker_client}" --sudo-compat "$@"`
+
+// lastShellCommand returns the last line of a script that carries a command:
+// blank lines and whole-line comments are skipped, and a trailing comment is
+// cut. It is not a parser -- it answers only "what runs last", which is what an
+// exec has to be.
+func lastShellCommand(source string) string {
+	lines := strings.Split(source, "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := lines[index]
+		if cut := trailingComment.FindStringIndex(line); cut != nil {
+			line = line[:cut[0]]
+		}
+		line = strings.TrimRight(line, " \t")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
 var (
+	// trailingComment matches a comment opened after whitespace, which is the
+	// only spelling the wrapper could grow on its final line.
+	trailingComment       = regexp.MustCompile(`[ \t]#.*$`)
 	sudoWrapperHeredoc    = regexp.MustCompile(`<<-?`)
 	sudoWrapperDelegation = regexp.MustCompile(
 		`(?m)^exec "\$\{broker_client\}" --sudo-compat "\$@"$`,
@@ -98,6 +130,13 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 	// runs it, which a line anchor cannot tell apart.
 	if sudoWrapperHeredoc.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh gained a heredoc; the line-anchored checks below cannot see into one")
+	}
+	// exec replaces the shell, so the delegation is the wrapper's last command.
+	// A copy parked inside `if false; then ... fi` satisfies a line anchor while
+	// nothing reaches it; being the final command is the reachability a line
+	// anchor can check.
+	if got := lastShellCommand(source); got != sudoWrapperDelegationLine {
+		t.Fatalf("sudo-wrapper.sh no longer ends by delegating to the broker client: last command is %q", got)
 	}
 	if !sudoWrapperDelegation.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer delegates to the broker client")

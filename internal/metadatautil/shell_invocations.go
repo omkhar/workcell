@@ -104,42 +104,37 @@ func commandBrace(each command) int {
 		return -1
 	case args[0].text == ")":
 		return -1
-	case openParen(args[0].text):
-		return 1
 	}
-	if opened := attachedParens(args[0].text); opened > 0 {
-		// Bash reads ( as an operator, so false && (echo one opens a subshell
-		// with the ( attached to the command after it. The group closes on this
-		// same command when its last word ends in ), as in ( … one ).
-		last := args[len(args)-1]
-		if !last.quoted && strings.HasSuffix(last.text, ")") && !strings.HasSuffix(last.text, "))") {
-			return 0
-		}
-		return opened
+	if carriesParen(args[0]) {
+		return parenBalance(args)
 	}
 	return 0
 }
 
-// openParen reports whether the word opens a parenthesised region that a later
-// ) closes. A bare ( opens a subshell, and a word ending in ( opens one the
-// shell is still reading -- a multi-line array assignment x=( or a command
-// substitution foo=$(. Both have to count, because their closing ) is a bare
-// word on its own line and would otherwise close a group nothing opened.
-//
-// (( opens an arithmetic command instead, which ends at )) rather than at a
-// bare ), so counting it would leave a region that never closes.
-func openParen(text string) bool {
-	return text == "(" || (strings.HasSuffix(text, "(") && !strings.HasSuffix(text, "(("))
+// carriesParen reports whether the word puts a parenthesis where it can open a
+// subshell: a bare (, one attached to the command after it, or one the shell is
+// still reading at the end of a word (x=( , foo=$(). (( is arithmetic, which
+// ends at )) rather than at a bare ), so it opens nothing here.
+func carriesParen(first word) bool {
+	if first.quoted || strings.HasPrefix(first.text, "((") {
+		return false
+	}
+	return strings.HasPrefix(first.text, "(") || strings.HasSuffix(first.text, "(")
 }
 
-// attachedParens returns 1 for a word that carries a subshell opener attached
-// to the command after it, and 0 otherwise. (( is arithmetic, which ends at ))
-// rather than at a bare ), and a case pattern such as -n) opens nothing.
-func attachedParens(text string) int {
-	if strings.HasPrefix(text, "((") || !strings.HasPrefix(text, "(") {
-		return 0
+// parenBalance sums the unquoted parentheses of one command. Counting rather
+// than testing the last word for a trailing ) is what keeps a substitution from
+// closing the group it did not open: `(echo $(date)` ends in ) and still leaves
+// a subshell open, because the ( of $( is on the same word.
+func parenBalance(args []word) int {
+	balance := 0
+	for _, each := range args {
+		if each.quoted {
+			continue
+		}
+		balance += strings.Count(each.text, "(") - strings.Count(each.text, ")")
 	}
-	return 1
+	return balance
 }
 
 // controlWords maps each word that opens or closes a compound command to the
