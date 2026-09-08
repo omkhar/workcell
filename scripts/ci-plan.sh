@@ -50,10 +50,50 @@ git_plan_error() {
   printf '%b' "$1" >&2
   exit 1
 }
+worktree_gitfile_shape_ok() {
+  local gitfile="$1" target=""
+  local -a lines=()
+  mapfile -t lines <"${gitfile}" 2>/dev/null || return 1
+  (( ${#lines[@]} == 1 )) || return 1
+  case "${lines[0]}" in
+    "gitdir: /"*) ;;
+    *) return 1 ;;
+  esac
+  target="${lines[0]#gitdir: }"
+  [[ ! -L "${target}" && -d "${target}" ]]
+}
+# A linked worktree's gitfile must resolve to a git directory nested at
+# <commondir>/worktrees/<name>, so a crafted gitdir reference cannot borrow an
+# unrelated repository's identity.
+reject_unanchored_worktree_gitdir() {
+  local git_dir="$1" commondir_raw="" commondir_path="" commondir_resolved="" parent_dir=""
+  [[ ! -L "${git_dir}/commondir" && -f "${git_dir}/commondir" ]] ||
+    git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+  commondir_raw="$(cat -- "${git_dir}/commondir" 2>/dev/null)" ||
+    git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+  case "${commondir_raw}" in
+    *$'\n'*) git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n' ;;
+  esac
+  case "${commondir_raw}" in
+    /*) commondir_path="${commondir_raw}" ;;
+    *) commondir_path="${git_dir}/${commondir_raw}" ;;
+  esac
+  commondir_resolved="$(cd -P -- "${commondir_path}" 2>/dev/null && pwd -P)" ||
+    git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+  parent_dir="${git_dir%/*}"
+  [[ "${parent_dir##*/}" == worktrees && "${parent_dir%/*}" == "${commondir_resolved}" ]] ||
+    git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+}
 bootstrap_git_dir() {
-  local work_tree="${ROOT_DIR}" git_dir="" status=0
-  [[ ! -L "${work_tree}/.git" && -d "${work_tree}/.git" ]] || git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
-  [[ ! -e "${work_tree}/.git/commondir" && ! -L "${work_tree}/.git/commondir" ]] || git_plan_error 'Planner repository metadata must not redirect the common Git directory.\n'
+  local work_tree="${ROOT_DIR}" git_dir="" status=0 worktree_gitfile=0
+  if [[ ! -L "${work_tree}/.git" && -d "${work_tree}/.git" ]]; then
+    [[ ! -e "${work_tree}/.git/commondir" && ! -L "${work_tree}/.git/commondir" ]] ||
+      git_plan_error 'Planner repository metadata must not redirect the common Git directory.\n'
+  elif [[ ! -L "${work_tree}/.git" && -f "${work_tree}/.git" ]] && worktree_gitfile_shape_ok "${work_tree}/.git"; then
+    worktree_gitfile=1
+  else
+    git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+  fi
   git_dir="$(
     /usr/bin/env -i \
       "PATH=${PATH}" "HOME=${HOME:-/tmp}" "TMPDIR=${TMPDIR:-/tmp}" LC_ALL=C \
@@ -72,6 +112,7 @@ bootstrap_git_dir() {
     *) git_plan_error 'Planner repository metadata path is not absolute.\n' ;;
   esac
   [[ -d "${git_dir}" ]] || git_plan_error 'Planner repository metadata path is not a directory.\n'
+  [[ "${worktree_gitfile}" -eq 0 ]] || reject_unanchored_worktree_gitdir "${git_dir}"
   (
     cd -P "${git_dir}" && pwd -P
   )
