@@ -57,8 +57,8 @@ honestly in docs, status reports, and release commentary.
 - Push the tag, then send the release dispatch event and follow the `Release`
   workflow through completion.
 - Before pushing the tag, verify the hosted-controls audit confirms that the
-  `release` environment permits only `v*` deployment tags, with no deployment
-  branches, variables, secrets, or administrator bypass.
+  `release` environment permits only the `main` branch, with no deployment
+  tags, variables, secrets, or administrator bypass.
 - Approve the `release` environment only after release preflight and install
   verification are green.
 - Verify that the repository-level immutable-release control is enabled before

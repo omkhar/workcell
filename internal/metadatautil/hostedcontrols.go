@@ -235,11 +235,11 @@ func ValidateCanonicalWorkflowEnvironments(policy map[string]any, policyPath str
 	if !release.HasAllowAdminBypass || release.AllowAdminBypass {
 		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.release.allow_admin_bypass = false")
 	}
-	if release.HasDeploymentBranches || len(release.DeploymentBranches) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not set workflow_environment.release.deployment_branches")
+	if release.HasDeploymentTags || len(release.DeploymentTags) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not set workflow_environment.release.deployment_tags")
 	}
-	if !release.HasDeploymentTags || len(release.DeploymentTags) != 1 || release.DeploymentTags[0] != "v*" {
-		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.release.deployment_tags = [\"v*\"]")
+	if !release.HasDeploymentBranches || len(release.DeploymentBranches) != 1 || release.DeploymentBranches[0] != "main" {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.release.deployment_branches = [\"main\"]")
 	}
 
 	hostedControlsAudit, ok := environments["hosted-controls-audit"]

@@ -447,7 +447,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		"",
 		"[workflow_environment.release]",
 		"allow_admin_bypass = false",
-		`deployment_tags = ["v*"]`,
+		`deployment_branches = ["main"]`,
 		"",
 		"[workflow_environment.hosted-controls-audit]",
 		`required_secrets = ["WORKCELL_HOSTED_CONTROLS_TOKEN"]`,
@@ -675,7 +675,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 	}
 	releaseDeploymentPolicies := map[string]any{
 		"branch_policies": []map[string]any{
-			{"name": "v*", "type": "tag"},
+			{"name": "main", "type": "branch"},
 		},
 	}
 	upstreamRefreshDeploymentBranches := map[string]any{
@@ -1639,7 +1639,7 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedEnvironmentBranchPolicy(t *t
 	}
 }
 
-func TestVerifyGitHubHostedControlsRejectsUnexpectedReleaseTagPolicy(t *testing.T) {
+func TestVerifyGitHubHostedControlsRejectsUnexpectedReleaseBranchPolicy(t *testing.T) {
 	t.Parallel()
 
 	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
@@ -1652,14 +1652,14 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedReleaseTagPolicy(t *testing.
 	})
 
 	rewriteFile(t, filepath.Join(tmpDir, "environment-release-deployment-branch-policies.json"), func(content string) string {
-		return strings.Replace(content, `"v*"`, `"release/*"`, 1)
+		return strings.Replace(content, `"main"`, `"develop"`, 1)
 	})
 
 	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
 	if err == nil {
-		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted the wrong release tag policy")
+		t.Fatal("metadatautil.VerifyGitHubHostedControls() unexpectedly accepted the wrong release branch policy")
 	}
-	if !strings.Contains(err.Error(), "workflow environment omkhar/workcell/release must restrict deployment tags to v*") {
-		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want release tag-policy rejection", err)
+	if !strings.Contains(err.Error(), "workflow environment omkhar/workcell/release must restrict deployment branches to main") {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want release branch-policy rejection", err)
 	}
 }
