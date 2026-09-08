@@ -2493,6 +2493,182 @@ fn execute_prepared_search_execve(
     }
 }
 
+/// The descriptor twin of `mutable_exec_preparation`.
+///
+/// A descriptor has no name to re-resolve, so a trusted one only needs to be
+/// held: the duplicate is the pin. An untrusted one still needs a snapshot,
+/// because its contents can change between this classification and the exec.
+#[cfg(target_os = "linux")]
+fn mutable_fd_preparation(fd: c_int, env_entries: &[String]) -> MutableExecPreparation {
+    if !current_mode_blocks_mutable_native_exec() || fd < 0 {
+        return MutableExecPreparation::NotMutable;
+    }
+    let untrusted = fd_target_is_untrusted_exec(fd);
+    let Some(pinned) = duplicate_owned_descriptor(fd) else {
+        return MutableExecPreparation::Block;
+    };
+    if !untrusted {
+        return MutableExecPreparation::Pinned(pinned);
+    }
+    let outcome = (|| {
+        let mut source = duplicate_fd_file(fd)?;
+        let metadata = source.metadata().ok()?;
+        if (metadata.mode() & file_type_bits()) != regular_file_mode() {
+            return None;
+        }
+        snapshot_mutable_file(&mut source, metadata.mode(), env_entries)
+    })();
+    close_prepared_fd(pinned);
+    outcome.map_or(
+        MutableExecPreparation::Block,
+        MutableExecPreparation::Execute,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn duplicate_owned_descriptor(fd: c_int) -> Option<c_int> {
+    // SAFETY: fd is only borrowed for fcntl, which returns a new descriptor the caller owns.
+    let duplicate = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
+    (duplicate >= 0).then_some(duplicate)
+}
+
+/// Which half of `execveat` a call names.
+#[cfg(target_os = "linux")]
+enum ExecveatPreparationTarget {
+    /// A flag combination this preparation does not model; the caller's own
+    /// call stands, and every classifier above it has already run.
+    PassThrough,
+    /// The descriptor itself.
+    Descriptor,
+    /// A pathname resolved against the descriptor, with the open flags that
+    /// match the caller's resolution flags.
+    Path(c_int),
+}
+
+#[cfg(target_os = "linux")]
+fn execveat_preparation_target(path: &str, flags: c_int) -> ExecveatPreparationTarget {
+    if flags & !(libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW) != 0 {
+        return ExecveatPreparationTarget::PassThrough;
+    }
+    if path.is_empty() {
+        return if flags & libc::AT_EMPTY_PATH != 0 {
+            ExecveatPreparationTarget::Descriptor
+        } else {
+            ExecveatPreparationTarget::PassThrough
+        };
+    }
+    // Linux accepts AT_EMPTY_PATH beside a non-empty pathname, where it changes
+    // nothing about resolution, so the pathname is still what gets prepared.
+    ExecveatPreparationTarget::Path(if flags & libc::AT_SYMLINK_NOFOLLOW != 0 {
+        libc::O_NOFOLLOW
+    } else {
+        0
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn execute_prepared_execveat(
+    path: &str,
+    dirfd: c_int,
+    flags: c_int,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    env_entries: &[String],
+) -> Option<c_int> {
+    let prepared = match execveat_preparation_target(path, flags) {
+        ExecveatPreparationTarget::PassThrough => return None,
+        ExecveatPreparationTarget::Descriptor => mutable_fd_preparation(dirfd, env_entries),
+        ExecveatPreparationTarget::Path(open_flags) => {
+            mutable_exec_preparation(path, dirfd, open_flags, env_entries)
+        }
+    };
+    match prepared {
+        MutableExecPreparation::NotMutable => None,
+        MutableExecPreparation::Block => {
+            report_mutable_native_exec_block();
+            Some(-1)
+        }
+        MutableExecPreparation::Pinned(fd) | MutableExecPreparation::Execute(fd) => {
+            Some(execute_snapshot_execveat(fd, argv, envp))
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn execute_prepared_fexecve(
+    fd: c_int,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    env_entries: &[String],
+) -> Option<c_int> {
+    match mutable_fd_preparation(fd, env_entries) {
+        MutableExecPreparation::NotMutable => None,
+        MutableExecPreparation::Block => {
+            report_mutable_native_exec_block();
+            Some(-1)
+        }
+        MutableExecPreparation::Pinned(prepared) | MutableExecPreparation::Execute(prepared) => {
+            Some(execute_snapshot_execveat(prepared, argv, envp))
+        }
+    }
+}
+
+/// `posix_spawn` reports its failure as a return value rather than through
+/// errno, so this returns the errno to report instead of `-1`.
+///
+/// The spawned child resolves the prepared descriptor after the fork, which is
+/// why the descriptor is named by its `/proc/self/fd` path rather than exec'd
+/// directly: `posix_spawn` has no descriptor-taking form.
+#[cfg(target_os = "linux")]
+fn execute_prepared_spawn(
+    path: &str,
+    pid: *mut pid_t,
+    file_actions: *const libc::posix_spawn_file_actions_t,
+    attrp: *const libc::posix_spawnattr_t,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    env_entries: &[String],
+) -> Option<c_int> {
+    // File actions can change the child's working directory before glibc
+    // resolves a relative pathname, in the child, after this guard has
+    // returned. There is no name the guard can pin against that.
+    if current_mode_blocks_mutable_native_exec()
+        && !file_actions.is_null()
+        && !Path::new(path).is_absolute()
+    {
+        report_mutable_native_exec_block();
+        return Some(libc::EPERM);
+    }
+    match mutable_exec_preparation(path, libc::AT_FDCWD, 0, env_entries) {
+        MutableExecPreparation::NotMutable => None,
+        MutableExecPreparation::Block => {
+            report_mutable_native_exec_block();
+            Some(libc::EPERM)
+        }
+        MutableExecPreparation::Pinned(fd) | MutableExecPreparation::Execute(fd) => {
+            // File actions are opaque here: they can close or replace the very
+            // descriptor that names the prepared target before the child
+            // resolves it, so a prepared target and file actions cannot be
+            // served together.
+            if !file_actions.is_null() || !prepare_descriptor_for_exec(fd) {
+                close_prepared_fd(fd);
+                report_mutable_native_exec_block();
+                return Some(libc::EPERM);
+            }
+            let Some(fd_path) = fd_exec_path(fd) else {
+                close_prepared_fd(fd);
+                report_mutable_native_exec_block();
+                return Some(libc::EPERM);
+            };
+            // SAFETY: fd_path outlives the call and names the prepared descriptor, which stays open until posix_spawn returns; pid, attrp, argv and envp are the caller's own.
+            let result =
+                unsafe { posix_spawn_fn()(pid, fd_path.as_ptr(), file_actions, attrp, argv, envp) };
+            close_prepared_fd(fd);
+            Some(result)
+        }
+    }
+}
+
 // execvp, execvpe and posix_spawnp all search PATH from the caller's own
 // environment rather than the envp handed to the child, so the guard reads the
 // same source libc will. A name containing a slash is not searched at all, so
@@ -3168,6 +3344,13 @@ unsafe extern "C" fn guarded_execveat(
         return -1;
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(result) =
+        execute_prepared_execveat(&pathname_string, dirfd, flags, argv, envp, &env_entries)
+    {
+        return result;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execveat arguments to the real libc execveat resolved via RTLD_NEXT.
     unsafe { execveat_fn()(dirfd, pathname, argv, envp, flags) }
 }
@@ -3224,6 +3407,11 @@ unsafe extern "C" fn guarded_fexecve(
         return -1;
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(result) = execute_prepared_fexecve(fd, argv, envp, &env_entries) {
+        return result;
+    }
+
     // SAFETY: forwards the caller's original, unmodified fexecve arguments to the real libc fexecve resolved via RTLD_NEXT.
     unsafe { fexecve_fn()(fd, argv, envp) }
 }
@@ -3272,6 +3460,19 @@ unsafe extern "C" fn guarded_posix_spawn(
     if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return libc::EPERM;
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(result) = execute_prepared_spawn(
+        &path_string,
+        pid,
+        file_actions,
+        attrp,
+        argv,
+        envp,
+        &env_entries,
+    ) {
+        return result;
     }
 
     // SAFETY: forwards the caller's original, unmodified posix_spawn arguments to the real libc posix_spawn resolved via RTLD_NEXT.
@@ -3336,6 +3537,19 @@ unsafe extern "C" fn guarded_posix_spawnp(
     if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return libc::EPERM;
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(result) = execute_prepared_spawn(
+        &effective_path,
+        pid,
+        file_actions,
+        attrp,
+        argv,
+        envp,
+        &env_entries,
+    ) {
+        return result;
     }
 
     // SAFETY: forwards the caller's original, unmodified posix_spawnp arguments to the real libc posix_spawnp resolved via RTLD_NEXT.
@@ -4583,6 +4797,152 @@ mod tests {
         let mut source = File::open(&allowed).expect("open allowed");
         let snapshot = snapshot_mutable_file(&mut source, 0o755, &[]).expect("snapshot");
         close_prepared_fd(snapshot);
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn descriptor_preparation_pins_or_snapshots_but_never_hands_the_name_back() {
+        let dir = create_temp_test_dir("fd-preparation");
+
+        // A trusted descriptor is held, not copied: the bytes are already
+        // trustworthy and there is no name to resolve a second time.
+        let trusted = File::open("/bin/true").expect("open /bin/true");
+        match mutable_fd_preparation(trusted.as_raw_fd(), &[]) {
+            MutableExecPreparation::Pinned(fd) => {
+                assert_ne!(
+                    fd,
+                    trusted.as_raw_fd(),
+                    "the pin must be its own descriptor"
+                );
+                close_prepared_fd(fd);
+            }
+            _ => panic!("a trusted descriptor must be pinned"),
+        }
+
+        // An untrusted script is served from a sealed copy of itself.
+        let script = dir.join("script");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write script");
+        let script_file = File::open(&script).expect("open script");
+        match mutable_fd_preparation(script_file.as_raw_fd(), &[]) {
+            MutableExecPreparation::Execute(fd) => close_prepared_fd(fd),
+            _ => panic!("an untrusted script descriptor must be snapshotted"),
+        }
+
+        // An untrusted native executable is refused rather than copied.
+        let elf = dir.join("elf");
+        fs::write(&elf, [0x7f, b'E', b'L', b'F', 2, 1, 1, 0]).expect("write elf");
+        let elf_file = File::open(&elf).expect("open elf");
+        assert!(matches!(
+            mutable_fd_preparation(elf_file.as_raw_fd(), &[]),
+            MutableExecPreparation::Block
+        ));
+
+        // A descriptor with no pathname and no regular file behind it cannot
+        // be served at all.
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        assert!(matches!(
+            mutable_fd_preparation(socket.as_raw_fd(), &[]),
+            MutableExecPreparation::Block
+        ));
+
+        assert!(matches!(
+            mutable_fd_preparation(-1, &[]),
+            MutableExecPreparation::NotMutable
+        ));
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn execveat_names_its_target_by_flag_and_pathname() {
+        // The descriptor is the target only when the pathname is empty and the
+        // caller said so.
+        assert!(matches!(
+            execveat_preparation_target("", libc::AT_EMPTY_PATH),
+            ExecveatPreparationTarget::Descriptor
+        ));
+        assert!(matches!(
+            execveat_preparation_target("", 0),
+            ExecveatPreparationTarget::PassThrough
+        ));
+        // Linux accepts AT_EMPTY_PATH beside a pathname, where it changes
+        // nothing about resolution, so the pathname is still the target.
+        assert!(matches!(
+            execveat_preparation_target("tool", libc::AT_EMPTY_PATH),
+            ExecveatPreparationTarget::Path(0)
+        ));
+        assert!(matches!(
+            execveat_preparation_target("tool", libc::AT_SYMLINK_NOFOLLOW),
+            ExecveatPreparationTarget::Path(libc::O_NOFOLLOW)
+        ));
+        // A flag this preparation does not model leaves the call alone; every
+        // classifier above it has already run.
+        assert!(matches!(
+            execveat_preparation_target("tool", libc::AT_SYMLINK_FOLLOW),
+            ExecveatPreparationTarget::PassThrough
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn spawn_file_actions_and_a_prepared_target_cannot_be_served_together() {
+        let dir = create_temp_test_dir("spawn-preparation");
+        let script = dir.join("script");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        // The pointer is only ever tested against NULL here, never read.
+        let actions = MaybeUninit::<libc::posix_spawn_file_actions_t>::zeroed();
+        let actions = actions.as_ptr();
+
+        // A relative pathname plus file actions: the actions can change the
+        // child's working directory before glibc resolves the name, in the
+        // child, after this guard has returned.
+        assert_eq!(
+            execute_prepared_spawn(
+                "relative/tool",
+                std::ptr::null_mut(),
+                actions,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                &[]
+            ),
+            Some(libc::EPERM)
+        );
+
+        // A target that needs preparing cannot be served alongside file
+        // actions either: they can close or replace the descriptor that names
+        // it before the child resolves it.
+        assert_eq!(
+            execute_prepared_spawn(
+                script.to_str().expect("script path"),
+                std::ptr::null_mut(),
+                actions,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                &[]
+            ),
+            Some(libc::EPERM)
+        );
+
+        // A trusted absolute target needs no preparation, with or without them.
+        assert_eq!(
+            execute_prepared_spawn(
+                "/bin/true",
+                std::ptr::null_mut(),
+                actions,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                &[]
+            ),
+            None
+        );
 
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
