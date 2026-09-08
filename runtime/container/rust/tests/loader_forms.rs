@@ -83,6 +83,22 @@ const PROBE: &str = "workcell-loader-form-probe";
 /// answers ENOEXEC for it, and glibc's execvp runs /bin/sh from inside libc,
 /// which does not re-enter the guard, so the guard must classify it first.
 const ENOEXEC_TARGET: &str = "enoexec-fallback-target";
+/// A native interpreter in the fixture directory, and a one-line script naming
+/// it. The kernel resolves a shebang interpreter after the guard returns, so
+/// the script is the only thing an entry point sees and the interpreter is a
+/// second exec target that reaches no entry point at all.
+const SHEBANG_INTERPRETER: &str = "shebang-native-interpreter";
+const SHEBANG_SCRIPT_NAME: &str = "shebang-native-wrapper";
+const SHEBANG_SCRIPT: &str = "{fixture}/shebang-native-wrapper";
+/// The same interpreter reached through `env`, which resolves it after its own
+/// option walk rather than reading it from the shebang line directly. The env
+/// binary the row names is a fixture rather than `/usr/bin/env`: an interpreter
+/// that really runs would replace this test process before any row after it,
+/// and the scanner recognises env by basename, so a fixture reaches the same
+/// walk while staying unexecutable.
+const ENV_NAME: &str = "env";
+const ENV_SHEBANG_SCRIPT_NAME: &str = "env-shebang-native-wrapper";
+const ENV_SHEBANG_SCRIPT: &str = "{fixture}/env-shebang-native-wrapper";
 /// Bytes past `MAX_EXEC_PATH_SEGMENT_BYTES` in `src/lib.rs`.
 const OVERLONG_SEGMENT_BYTES: usize = 128 * 1024 + 1;
 
@@ -509,6 +525,25 @@ const FORMS: &[Form] = &[
         NotRefused,
         LINUX,
     ),
+    // Shebang resolution, which the kernel performs after the guard returns.
+    form(
+        "shebang naming an untrusted native interpreter",
+        Execve(SHEBANG_SCRIPT, TARGET_ARGV, GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
+        LINUX,
+    ),
+    form(
+        "shebang naming an untrusted native interpreter, by descriptor",
+        Execveat(SHEBANG_SCRIPT_NAME, TARGET_ARGV, GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
+        LINUX,
+    ),
+    form(
+        "env(1) shebang naming an untrusted native interpreter",
+        Execve(ENV_SHEBANG_SCRIPT, TARGET_ARGV, GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
+        LINUX,
+    ),
     form(
         "execveat of an anonymous memory descriptor",
         ExecveatMemfd(GUARDED_ENV),
@@ -645,6 +680,44 @@ fn prepare_fixture() -> PathBuf {
     // The PATH search only yields a candidate that answers X_OK.
     fs::set_permissions(&enoexec, fs::Permissions::from_mode(0o755))
         .expect("make the ENOEXEC fixture executable");
+    // A script whose interpreter is a native binary in this directory, which
+    // this process owns. The interpreter carries ELF magic so the shebang scan
+    // reaches its provenance answer, and bytes no kernel will load, so an
+    // unrefused row cannot replace this process.
+    fs::write(
+        fixture.join(SHEBANG_INTERPRETER),
+        [0x7f, b'E', b'L', b'F', 2, 1, 1, 0],
+    )
+    .expect("write the shebang interpreter fixture");
+    fs::set_permissions(
+        fixture.join(SHEBANG_INTERPRETER),
+        fs::Permissions::from_mode(0o755),
+    )
+    .expect("make the shebang interpreter executable");
+    let script = fixture.join(SHEBANG_SCRIPT_NAME);
+    fs::write(
+        &script,
+        format!("#!{}/{SHEBANG_INTERPRETER}\n", fixture.display()),
+    )
+    .expect("write the shebang script fixture");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
+        .expect("make the shebang script executable");
+    fs::write(fixture.join(ENV_NAME), [0x7f, b'E', b'L', b'F', 2, 1, 1, 0])
+        .expect("write the env fixture");
+    fs::set_permissions(fixture.join(ENV_NAME), fs::Permissions::from_mode(0o755))
+        .expect("make the env fixture executable");
+    let env_script = fixture.join(ENV_SHEBANG_SCRIPT_NAME);
+    fs::write(
+        &env_script,
+        format!(
+            "#!{}/{ENV_NAME} {}/{SHEBANG_INTERPRETER}\n",
+            fixture.display(),
+            fixture.display()
+        ),
+    )
+    .expect("write the env shebang script fixture");
+    fs::set_permissions(&env_script, fs::Permissions::from_mode(0o755))
+        .expect("make the env shebang script executable");
     fixture
 }
 

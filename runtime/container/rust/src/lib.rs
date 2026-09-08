@@ -1063,6 +1063,115 @@ fn buffer_targets_protected_runtime_via_shebang(buffer: &str, env_entries: &[Str
     classify_protected_runtime_path(&target) != ProtectedRuntime::None
 }
 
+/// Decides whether a shebang interpreter is one this process could have planted
+/// or could still replace.
+///
+/// The kernel reads the shebang line and resolves the interpreter itself, after
+/// this guard has returned. So the interpreter is a second exec target the
+/// guard never sees an entry point for, and a one-line script is all it takes
+/// to launch a native binary the guard would refuse if it were named directly.
+/// A relative name resolves against a working directory this process can
+/// change, and a magic descriptor path against a table it can rewrite; neither
+/// can be approved for what it names now.
+fn shebang_path_is_untrusted_native_exec(path: &str) -> bool {
+    if !current_mode_blocks_mutable_native_exec() || path.is_empty() {
+        return false;
+    }
+
+    #[cfg(target_os = "linux")]
+    if !Path::new(path).is_absolute() || path_is_magic_exec_target(path) {
+        return true;
+    }
+
+    #[cfg(target_os = "linux")]
+    if path_has_untrusted_provenance(path, libc::AT_FDCWD) {
+        return true;
+    }
+
+    path_is_mutable_native_exec(path)
+}
+
+fn env_command_targets_untrusted_native_exec(cursor: &str, env_entries: &[String]) -> bool {
+    let (command, mut scan) = match scan_env_command(cursor, env_entries) {
+        EnvCommand::Refused => return true,
+        EnvCommand::None => return false,
+        EnvCommand::Command(command, rest) => (command, rest),
+    };
+
+    if is_dynamic_loader_path(&command) {
+        // The loader reads its own target out of the rest of the line, so the
+        // decision belongs to that target rather than to the loader.
+        return next_shebang_token(&mut scan)
+            .is_some_and(|target| loader_arg_targets_mutable_native_exec(&target));
+    }
+
+    shebang_path_is_untrusted_native_exec(&command)
+}
+
+fn buffer_targets_untrusted_native_via_shebang(buffer: &str, env_entries: &[String]) -> bool {
+    if !buffer.starts_with("#!") {
+        return false;
+    }
+
+    let mut cursor = &buffer[2..];
+    let Some(interpreter) = next_shebang_token(&mut cursor) else {
+        return false;
+    };
+
+    if token_uses_env_interpreter(&interpreter) {
+        return env_command_targets_untrusted_native_exec(cursor, env_entries);
+    }
+
+    if is_dynamic_loader_path(&interpreter) {
+        return next_shebang_token(&mut cursor)
+            .is_some_and(|target| loader_arg_targets_mutable_native_exec(&target));
+    }
+
+    shebang_path_is_untrusted_native_exec(&interpreter)
+}
+
+/// A descriptor the guard cannot read is not judged here: the native classifier
+/// beside this one already refuses an untrusted descriptor it cannot read, and
+/// a trusted one must not be refused for a shebang line nobody could see.
+fn file_descriptor_is_untrusted_shebang_native_exec(fd: c_int, env_entries: &[String]) -> bool {
+    if fd < 0 {
+        return false;
+    }
+    let Some(mut file) = duplicate_fd_file(fd) else {
+        return false;
+    };
+    let mut buffer = [0u8; 511];
+    let Ok(bytes) = file.read(&mut buffer) else {
+        return false;
+    };
+    buffer_targets_untrusted_native_via_shebang(
+        &String::from_utf8_lossy(&buffer[..bytes]),
+        env_entries,
+    )
+}
+
+/// A name that does not open is left to the native classifier beside this one,
+/// which already refuses an untrusted target whether or not it exists.
+fn path_is_untrusted_shebang_native_exec(path: &str, env_entries: &[String]) -> bool {
+    if !current_mode_blocks_mutable_native_exec() || path.is_empty() {
+        return false;
+    }
+    if let Some(proc_fd) = path_is_current_process_fd_path(path) {
+        return file_descriptor_is_untrusted_shebang_native_exec(proc_fd, env_entries);
+    }
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut buffer = [0u8; 511];
+    let Ok(bytes) = file.read(&mut buffer) else {
+        return false;
+    };
+    buffer_targets_untrusted_native_via_shebang(
+        &String::from_utf8_lossy(&buffer[..bytes]),
+        env_entries,
+    )
+}
+
 fn file_descriptor_targets_protected_runtime_via_shebang(
     fd: c_int,
     env_entries: &[String],
@@ -1948,13 +2057,16 @@ fn should_block_protected_runtime_exec(
     path_is_mutable_shebang_to_protected_runtime(path, env_entries)
 }
 
-fn should_block_mutable_native_exec(path: &str, args: &[String]) -> bool {
+fn should_block_mutable_native_exec(path: &str, args: &[String], env_entries: &[String]) -> bool {
     if let Some(proc_fd) = path_is_current_process_fd_path(path) {
         return file_descriptor_is_mutable_native_exec(proc_fd)
-            || loader_fd_targets_mutable_native_exec(proc_fd, args);
+            || loader_fd_targets_mutable_native_exec(proc_fd, args)
+            || file_descriptor_is_untrusted_shebang_native_exec(proc_fd, env_entries);
     }
 
-    path_is_mutable_native_exec(path) || loader_targets_mutable_native_exec(path, args)
+    path_is_mutable_native_exec(path)
+        || loader_targets_mutable_native_exec(path, args)
+        || path_is_untrusted_shebang_native_exec(path, env_entries)
 }
 
 // execvp, execvpe and posix_spawnp all search PATH from the caller's own
@@ -2241,7 +2353,7 @@ unsafe extern "C" fn guarded_execve(
         report_protected_runtime_block();
         return -1;
     }
-    if should_block_mutable_native_exec(&path_string, &args) {
+    if should_block_mutable_native_exec(&path_string, &args, &env_entries) {
         report_mutable_native_exec_block();
         return -1;
     }
@@ -2283,7 +2395,7 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
         report_protected_runtime_block();
         return -1;
     }
-    if should_block_mutable_native_exec(&path_string, &args) {
+    if should_block_mutable_native_exec(&path_string, &args, &env_entries) {
         report_mutable_native_exec_block();
         return -1;
     }
@@ -2348,7 +2460,7 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
         report_protected_runtime_block();
         return -1;
     }
-    if should_block_mutable_native_exec(&effective_path, &args) {
+    if should_block_mutable_native_exec(&effective_path, &args, &env_entries) {
         report_mutable_native_exec_block();
         return -1;
     }
@@ -2417,7 +2529,7 @@ unsafe extern "C" fn guarded_execvpe(
         report_protected_runtime_block();
         return -1;
     }
-    if should_block_mutable_native_exec(&effective_path, &args) {
+    if should_block_mutable_native_exec(&effective_path, &args, &env_entries) {
         report_mutable_native_exec_block();
         return -1;
     }
@@ -2474,7 +2586,8 @@ unsafe extern "C" fn guarded_execveat(
         (
             protected_target,
             file_descriptor_is_mutable_native_exec(dirfd)
-                || loader_fd_targets_mutable_native_exec(dirfd, &args),
+                || loader_fd_targets_mutable_native_exec(dirfd, &args)
+                || file_descriptor_is_untrusted_shebang_native_exec(dirfd, &env_entries),
             file_descriptor_is_mutable_shebang_to_protected_runtime(dirfd, &env_entries),
             fd_matches_workcell_native_launcher(dirfd),
             should_block_loader_env_for_fd(dirfd, &env_entries),
@@ -2518,6 +2631,12 @@ unsafe extern "C" fn guarded_execveat(
                     if !mutable_native_target {
                         mutable_native_target =
                             loader_fd_targets_mutable_native_exec(candidate_fd, &args);
+                    }
+                    if !mutable_native_target {
+                        mutable_native_target = file_descriptor_is_untrusted_shebang_native_exec(
+                            candidate_fd,
+                            &env_entries,
+                        );
                     }
                     if !mutable_native_target {
                         mutable_shebang_target =
@@ -2621,6 +2740,7 @@ unsafe extern "C" fn guarded_fexecve(
     }
     if file_descriptor_is_mutable_native_exec(fd)
         || loader_fd_targets_mutable_native_exec(fd, &args)
+        || file_descriptor_is_untrusted_shebang_native_exec(fd, &env_entries)
     {
         report_mutable_native_exec_block();
         return -1;
@@ -2673,7 +2793,7 @@ unsafe extern "C" fn guarded_posix_spawn(
         report_protected_runtime_block();
         return libc::EPERM;
     }
-    if should_block_mutable_native_exec(&path_string, &args) {
+    if should_block_mutable_native_exec(&path_string, &args, &env_entries) {
         report_mutable_native_exec_block();
         return libc::EPERM;
     }
@@ -2737,7 +2857,7 @@ unsafe extern "C" fn guarded_posix_spawnp(
         report_protected_runtime_block();
         return libc::EPERM;
     }
-    if should_block_mutable_native_exec(&effective_path, &args) {
+    if should_block_mutable_native_exec(&effective_path, &args, &env_entries) {
         report_mutable_native_exec_block();
         return libc::EPERM;
     }
@@ -3895,6 +4015,76 @@ mod tests {
 
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
             .expect("restore read permission");
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn untrusted_shebang_interpreters_are_refused() {
+        let dir = create_temp_test_dir("shebang-native");
+        // The interpreter is a native binary this process planted. The script
+        // is not an ELF, so the native classifier finds nothing in it; the
+        // shebang line is the only place the interpreter appears.
+        let interpreter = dir.join("tool");
+        fs::write(&interpreter, [0x7f, b'E', b'L', b'F', 2, 1, 1, 0]).expect("write interpreter");
+        fs::set_permissions(&interpreter, fs::Permissions::from_mode(0o755))
+            .expect("make the interpreter executable");
+        let script = dir.join("wrapper");
+        fs::write(&script, format!("#!{}\n", interpreter.display())).expect("write script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))
+            .expect("make the script executable");
+        let script_path = script.display().to_string();
+
+        assert!(!path_is_mutable_native_exec(&script_path));
+        assert!(path_is_untrusted_shebang_native_exec(&script_path, &[]));
+        assert!(should_block_mutable_native_exec(&script_path, &[], &[]));
+
+        // A trusted interpreter is left alone, so an ordinary script still
+        // runs and the refusal is about the interpreter rather than the script.
+        let trusted = dir.join("trusted-shebang");
+        fs::write(&trusted, "#!/bin/sh\nexit 0\n").expect("write trusted shebang");
+        let trusted_path = trusted.display().to_string();
+        assert!(!path_is_untrusted_shebang_native_exec(&trusted_path, &[]));
+        assert!(!should_block_mutable_native_exec(&trusted_path, &[], &[]));
+
+        // The interpreter env would run is judged the same way, through the
+        // shared env(1) walk.
+        assert!(env_command_targets_untrusted_native_exec(
+            &format!(" {}", interpreter.display()),
+            &[]
+        ));
+        assert!(!env_command_targets_untrusted_native_exec(" /bin/sh", &[]));
+        // The loader-environment controls still answer first in that walk.
+        assert!(env_command_targets_untrusted_native_exec(
+            " -S /bin/sh",
+            &[]
+        ));
+
+        // A name the kernel resolves after this guard returns cannot be pinned.
+        assert!(shebang_path_is_untrusted_native_exec("relative-tool"));
+        assert!(shebang_path_is_untrusted_native_exec("/proc/self/fd/9"));
+        assert!(shebang_path_is_untrusted_native_exec("/dev/stdin"));
+        assert!(!shebang_path_is_untrusted_native_exec("/bin/sh"));
+        // No interpreter is not an untrusted one.
+        assert!(!shebang_path_is_untrusted_native_exec(""));
+        assert!(!buffer_targets_untrusted_native_via_shebang(
+            "not a shebang\n",
+            &[]
+        ));
+
+        // The descriptor form reaches the same answers.
+        let script_file = File::open(&script).expect("open script");
+        assert!(file_descriptor_is_untrusted_shebang_native_exec(
+            script_file.as_raw_fd(),
+            &[]
+        ));
+        let trusted_file = File::open(&trusted).expect("open trusted script");
+        assert!(!file_descriptor_is_untrusted_shebang_native_exec(
+            trusted_file.as_raw_fd(),
+            &[]
+        ));
+        assert!(!file_descriptor_is_untrusted_shebang_native_exec(-1, &[]));
+
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 
