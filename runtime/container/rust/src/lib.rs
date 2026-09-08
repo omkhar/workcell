@@ -494,6 +494,32 @@ fn duplicate_fd_file(fd: c_int) -> Option<File> {
     File::open(proc_fd_path(fd)).ok()
 }
 
+/// Opens a target to read the bytes a classifier decides on.
+///
+/// Only a regular file is executable at all, so nothing else is worth reading
+/// -- and reading one is a hazard rather than a wasted call. A pipe or a socket
+/// reopened through `/proc/self/fd` gives a description whose `read` blocks
+/// until a writer moves, so the guard would hang inside the libc call it
+/// interposed on, where the kernel would have refused the exec at once; a read
+/// that did return would take those bytes out of somebody else's stream.
+/// `O_NONBLOCK` keeps the open itself from blocking on a FIFO named by path,
+/// and has no effect on the regular files this does accept.
+fn open_regular_for_classification(path: &str) -> Option<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    file.metadata().ok()?.is_file().then_some(file)
+}
+
+/// The descriptor form of `open_regular_for_classification`.
+fn duplicate_regular_fd_file(fd: c_int) -> Option<File> {
+    open_regular_for_classification(&proc_fd_path(fd))
+}
+
 /// The host build has no `/proc` and never runs the guard, so it keeps the
 /// root-list answer the descriptor classifiers used before provenance.
 #[cfg(not(target_os = "linux"))]
@@ -1116,14 +1142,21 @@ fn env_command_targets_untrusted_native_exec(cursor: &str, env_entries: &[String
         EnvCommand::Command(command, rest) => (command, rest),
     };
 
+    // The command env execs is a native target in its own right, whatever it
+    // is named. Deciding it by its name alone would let `env /tmp/ld-linux-x.so
+    // /bin/sh` hand the loader dispatch a target the caller planted.
+    if shebang_path_is_untrusted_native_exec(&command) {
+        return true;
+    }
+
     if is_dynamic_loader_path(&command) {
         // The loader reads its own target out of the rest of the line, so the
-        // decision belongs to that target rather than to the loader.
+        // decision belongs to that target as well as to the loader.
         return next_shebang_token(&mut scan)
             .is_some_and(|target| loader_arg_targets_mutable_native_exec(&target));
     }
 
-    shebang_path_is_untrusted_native_exec(&command)
+    false
 }
 
 fn buffer_targets_untrusted_native_via_shebang(buffer: &str, env_entries: &[String]) -> bool {
@@ -1136,6 +1169,15 @@ fn buffer_targets_untrusted_native_via_shebang(buffer: &str, env_entries: &[Stri
         return false;
     };
 
+    // The kernel launches this token. `env` and the dynamic loader only decide
+    // which further token the launched program goes on to exec, so recognising
+    // one by its basename says nothing about the file that basename names: a
+    // caller-planted `/tmp/env` reaches the env walk and its own provenance is
+    // never asked for. Classify the interpreter before dispatching on its name.
+    if shebang_path_is_untrusted_native_exec(&interpreter) {
+        return true;
+    }
+
     if token_uses_env_interpreter(&interpreter) {
         return env_command_targets_untrusted_native_exec(cursor, env_entries);
     }
@@ -1145,7 +1187,7 @@ fn buffer_targets_untrusted_native_via_shebang(buffer: &str, env_entries: &[Stri
             .is_some_and(|target| loader_arg_targets_mutable_native_exec(&target));
     }
 
-    shebang_path_is_untrusted_native_exec(&interpreter)
+    false
 }
 
 /// Only a script this process could have written names an interpreter it chose.
@@ -1161,7 +1203,7 @@ fn file_descriptor_is_untrusted_shebang_native_exec(fd: c_int, env_entries: &[St
     if fd < 0 || !fd_target_is_untrusted_exec(fd) {
         return false;
     }
-    let Some(mut file) = duplicate_fd_file(fd) else {
+    let Some(mut file) = duplicate_regular_fd_file(fd) else {
         return false;
     };
     let mut buffer = [0u8; 511];
@@ -1189,7 +1231,7 @@ fn path_is_untrusted_shebang_native_exec(path: &str, env_entries: &[String]) -> 
     if !path_has_untrusted_provenance(path, libc::AT_FDCWD) {
         return false;
     }
-    let Ok(mut file) = File::open(path) else {
+    let Some(mut file) = open_regular_for_classification(path) else {
         return false;
     };
     let mut buffer = [0u8; 511];
@@ -1206,7 +1248,7 @@ fn file_descriptor_targets_protected_runtime_via_shebang(
     fd: c_int,
     env_entries: &[String],
 ) -> bool {
-    let Some(mut file) = duplicate_fd_file(fd) else {
+    let Some(mut file) = duplicate_regular_fd_file(fd) else {
         return false;
     };
 
@@ -1269,13 +1311,20 @@ fn path_is_mutable_native_exec(path: &str) -> bool {
         return (metadata.mode() & file_type_bits()) == regular_file_mode() && untrusted_provenance;
     };
     let trusted = path_is_trusted_immutable(Path::new(&resolved));
-    let Ok(mut file) = File::open(&resolved) else {
+    let Some(mut file) = open_regular_for_classification(&resolved) else {
+        // Only a regular file is executable at all, so a target proven to be
+        // something else keeps the kernel's own errno -- the type test used to
+        // sit after the open, and the open is what must not touch a FIFO. A
+        // regular file the guard cannot read is still refused where its
+        // provenance is untrusted.
+        if matches!(
+            fs::metadata(&resolved).map(|metadata| metadata.is_file()),
+            Ok(false)
+        ) {
+            return false;
+        }
         return !trusted || untrusted_provenance;
     };
-    match file.metadata() {
-        Ok(metadata) if (metadata.mode() & file_type_bits()) == regular_file_mode() => {}
-        _ => return false,
-    }
     let mut header = [0u8; 4];
     if file.read_exact(&mut header).is_err() {
         return !trusted || untrusted_provenance;
@@ -1296,7 +1345,7 @@ fn path_is_mutable_native_exec(path: &str) -> bool {
         return false;
     }
 
-    let Ok(mut file) = File::open(&resolved) else {
+    let Some(mut file) = open_regular_for_classification(&resolved) else {
         return false;
     };
     let mut header = [0u8; 4];
@@ -1311,7 +1360,7 @@ fn path_is_mutable_shebang_to_protected_runtime(path: &str, env_entries: &[Strin
         return false;
     }
 
-    let Ok(mut file) = File::open(&resolved) else {
+    let Some(mut file) = open_regular_for_classification(&resolved) else {
         return false;
     };
     let mut buffer = [0u8; 511];
@@ -2203,11 +2252,28 @@ fn mutable_exec_preparation(
     // is not enough on its own.
     let untrusted = lexical_mutable || name_provenance_untrusted || fd_target_is_untrusted_exec(fd);
     if !untrusted {
-        return if pin_target {
-            MutableExecPreparation::Pinned(path_file.into_raw_fd())
-        } else {
-            MutableExecPreparation::NotMutable
-        };
+        if !pin_target {
+            return MutableExecPreparation::NotMutable;
+        }
+        // Every classifier ahead of this preparation ran against the pathname,
+        // and an unpinnable name need not still resolve to what they read: a
+        // relative name answers to a working directory, and a magic descriptor
+        // path to a table, that another thread can change in between. Trusted
+        // provenance is not the whole question -- a protected runtime is
+        // trusted and still refused -- so ask the descriptor the same
+        // questions before executing it.
+        if should_block_loader_env_for_fd(fd, env_entries)
+            || should_block_protected_runtime_kind(classify_protected_runtime_fd(fd))
+            || file_descriptor_is_mutable_shebang_to_protected_runtime(fd, env_entries)
+            // The loader's own target is named in argv, which this preparation
+            // does not carry. A loader reached through a name the guard cannot
+            // pin is refused rather than executed on an argument nothing here
+            // can re-read; #697 already refuses a loader named that way.
+            || fd_is_dynamic_loader(fd)
+        {
+            return MutableExecPreparation::Block;
+        }
+        return MutableExecPreparation::Pinned(path_file.into_raw_fd());
     }
 
     let Some(mut source) = duplicate_fd_file(fd) else {
@@ -2233,6 +2299,14 @@ fn mutable_exec_preparation(
 /// execution.
 #[cfg(target_os = "linux")]
 fn snapshot_mutable_file(source: &mut File, mode: u32, env_entries: &[String]) -> Option<c_int> {
+    // The snapshot lands on an internal tmpfs that permits execution, so a
+    // copy relocates the target off whatever mount it lives on. A source the
+    // kernel would have refused for that mount must not gain execution by
+    // being copied: the profile mounts `/tmp` `noexec`, and `/tmp` is also a
+    // mutable exec root, so every target there reaches this function.
+    if file_is_on_noexec_mount(source) {
+        return None;
+    }
     if source.metadata().ok()?.len() > MAX_MUTABLE_EXEC_SNAPSHOT_BYTES {
         return None;
     }
@@ -2285,6 +2359,16 @@ fn snapshot_mutable_file(source: &mut File, mode: u32, env_entries: &[String]) -
         snapshot.write_all(&buffer[..read]).ok()?;
     }
 
+    // Seal before classifying, not after. The writable memfd is reachable
+    // through /proc/self/fd for as long as it stays writable, so classifying
+    // first would leave a window in which the bytes that were read are not the
+    // bytes that get executed. F_SEAL_WRITE still permits the read below.
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
+    // SAFETY: snapshot is an owned memfd created with MFD_ALLOW_SEALING and the seal set is valid.
+    if unsafe { libc::fcntl(snapshot.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
+        return None;
+    }
+
     snapshot.seek(SeekFrom::Start(0)).ok()?;
     let mut prefix = [0u8; 511];
     let prefix_bytes = snapshot.read(&mut prefix).ok()?;
@@ -2300,12 +2384,6 @@ fn snapshot_mutable_file(source: &mut File, mode: u32, env_entries: &[String]) -
         // environment would arrive at it unchecked.
         || (env_has_unsafe_loader_override(env_entries) && prefix.starts_with(b"#!"))
     {
-        return None;
-    }
-
-    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
-    // SAFETY: snapshot is an owned memfd created with MFD_ALLOW_SEALING and the seal set is valid.
-    if unsafe { libc::fcntl(snapshot.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
         return None;
     }
 
@@ -2332,6 +2410,13 @@ fn prepare_descriptor_for_exec(fd: c_int) -> bool {
     if !descriptor_is_shebang(fd) {
         return true;
     }
+    clear_descriptor_cloexec(fd)
+}
+
+/// A descriptor the exec'd program has to open by its `/proc/self/fd` name must
+/// survive the exec that hands it that name.
+#[cfg(target_os = "linux")]
+fn clear_descriptor_cloexec(fd: c_int) -> bool {
     // SAFETY: fd is the prepared descriptor owned by the caller and F_GETFD reads its flags.
     let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if descriptor_flags < 0 {
@@ -2434,6 +2519,15 @@ fn execute_snapshot_execveat_with_shell_fallback(
             set_errno(libc::ENOENT);
             return -1;
         };
+        // The shell opens fd_path after this exec succeeds, which is exactly
+        // when a close-on-exec descriptor goes. A non-shebang target never
+        // reached the clearing in prepare_descriptor_for_exec, and this is the
+        // one path that hands such a target's proc name to another program.
+        if !clear_descriptor_cloexec(fd) {
+            close_prepared_fd(fd);
+            set_errno(libc::EPERM);
+            return -1;
+        }
         let shell = c"/bin/sh";
         let mut shell_argv = Vec::with_capacity(arg_count.saturating_add(2));
         shell_argv.push(shell.as_ptr());
@@ -2503,15 +2597,18 @@ fn mutable_fd_preparation(fd: c_int, env_entries: &[String]) -> MutableExecPrepa
     if !current_mode_blocks_mutable_native_exec() || fd < 0 {
         return MutableExecPreparation::NotMutable;
     }
-    let untrusted = fd_target_is_untrusted_exec(fd);
+    // Pin before deciding. The caller's descriptor table is shared with every
+    // thread in the process, so a number classified here need not still name
+    // the same file when it is executed. The owned duplicate is what both the
+    // classification and the exec read, so they cannot disagree.
     let Some(pinned) = duplicate_owned_descriptor(fd) else {
         return MutableExecPreparation::Block;
     };
-    if !untrusted {
+    if !fd_target_is_untrusted_exec(pinned) {
         return MutableExecPreparation::Pinned(pinned);
     }
     let outcome = (|| {
-        let mut source = duplicate_fd_file(fd)?;
+        let mut source = duplicate_fd_file(pinned)?;
         let metadata = source.metadata().ok()?;
         if (metadata.mode() & file_type_bits()) != regular_file_mode() {
             return None;
@@ -2523,6 +2620,22 @@ fn mutable_fd_preparation(fd: c_int, env_entries: &[String]) -> MutableExecPrepa
         MutableExecPreparation::Block,
         MutableExecPreparation::Execute,
     )
+}
+
+/// Whether the mount a descriptor lives on refuses execution.
+///
+/// Fails closed: a mount the guard cannot ask about is not one it can relocate
+/// execution off.
+#[cfg(target_os = "linux")]
+fn file_is_on_noexec_mount(file: &File) -> bool {
+    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: file is an owned open descriptor and stats is a valid statvfs slot for fstatvfs to fill.
+    if unsafe { libc::fstatvfs(file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
+        return true;
+    }
+    // SAFETY: fstatvfs returned 0, so it initialised stats.
+    let stats = unsafe { stats.assume_init() };
+    (stats.f_flag & libc::ST_NOEXEC) != 0
 }
 
 #[cfg(target_os = "linux")]
@@ -3757,6 +3870,38 @@ mod tests {
         dir
     }
 
+    /// Puts `source` at `target` without unlinking `target`'s dentry, which is
+    /// the only deterministic way to make a live pathname resolve to a file
+    /// other than the one an open descriptor holds. Needs `CAP_SYS_ADMIN`.
+    #[cfg(target_os = "linux")]
+    fn bind_mount_file(source: &Path, target: &Path) -> bool {
+        let (Ok(source), Ok(target)) = (
+            CString::new(source.as_os_str().as_bytes()),
+            CString::new(target.as_os_str().as_bytes()),
+        ) else {
+            return false;
+        };
+        // SAFETY: both names are live NUL-terminated CStrings; MS_BIND ignores the filesystem-type and data arguments.
+        unsafe {
+            libc::mount(
+                source.as_ptr(),
+                target.as_ptr(),
+                std::ptr::null(),
+                libc::MS_BIND,
+                std::ptr::null(),
+            ) == 0
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn unmount_file(target: &Path) {
+        let Ok(target) = CString::new(target.as_os_str().as_bytes()) else {
+            return;
+        };
+        // SAFETY: target is a live NUL-terminated CString naming this test's own mount.
+        unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) };
+    }
+
     #[test]
     fn matches_non_strict_recognizes_only_non_empty_non_strict_values() {
         assert!(!matches_non_strict(None));
@@ -4638,6 +4783,37 @@ mod tests {
             // descriptor is still open on the original one.
             assert!(path_is_trusted_immutable(&named));
             assert!(fd_target_is_untrusted_exec(opened.as_raw_fd()));
+
+            // The rename unlinked the descriptor's dentry, so that answer came
+            // from the deleted-suffix branch. The signature comparison is the
+            // other half of the closure, and reaching it needs a *live* name
+            // whose file differs from the descriptor's. A bind mount is the one
+            // way to build that deterministically: the dentry stays hashed, so
+            // the link carries no deletion marker, while the name resolves
+            // through the mount to a different inode.
+            let live = dir.join("live");
+            fs::write(&live, "the file the descriptor is open on").ok()?;
+            let live_file = File::open(&live).ok()?;
+            let live_fd = live_file.as_raw_fd();
+            if !fd_target_is_trusted_immutable(live_fd) {
+                return None;
+            }
+            let other = dir.join("other");
+            fs::write(&other, "a different file entirely").ok()?;
+            if bind_mount_file(&other, &live) {
+                let link = fs::read_link(proc_fd_path(live_fd)).ok()?;
+                assert!(
+                    !link.to_string_lossy().ends_with(" (deleted)"),
+                    "the bind-mounted name must stay live"
+                );
+                assert!(path_is_trusted_immutable(&live));
+                // Nothing above the signature comparison can answer this: the
+                // link is live, absolute, and trusted-immutable.
+                assert!(fd_target_is_untrusted_exec(live_fd));
+                unmount_file(&live);
+            } else {
+                println!("skipping the signature control: this runtime cannot bind mount");
+            }
             Some(())
         };
         let outcome = run();
@@ -4645,6 +4821,100 @@ mod tests {
         if outcome.is_none() {
             println!("skipping: this runtime cannot own a trusted-immutable pathname");
         }
+    }
+
+    /// A classifier must not read anything that is not a regular file. A pipe
+    /// with a live writer and no data, and a FIFO with no writer at all, each
+    /// block forever -- inside the libc call this guard interposed on, where
+    /// the kernel would have refused the non-regular exec target at once. This
+    /// test hangs rather than fails if the gate is taken back out.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_classifier_never_reads_a_pipe_or_a_fifo() {
+        let mut ends = [0 as c_int; 2];
+        // SAFETY: ends is a valid two-element array for pipe to fill with the two descriptors.
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+        let (read_end, write_end) = (ends[0], ends[1]);
+
+        // The write end stays open with nothing written, which is the shape
+        // whose read never returns.
+        assert!(!file_descriptor_is_untrusted_shebang_native_exec(
+            read_end,
+            &[]
+        ));
+        assert!(!file_descriptor_targets_protected_runtime_via_shebang(
+            read_end,
+            &[]
+        ));
+        assert!(!file_descriptor_is_mutable_shebang_to_protected_runtime(
+            read_end,
+            &[]
+        ));
+        // A magic descriptor pathname routes to the same readers, which is how
+        // an ordinary `execve("/dev/stdin", ...)` reaches them.
+        assert!(!path_is_untrusted_shebang_native_exec(
+            &proc_fd_path(read_end),
+            &[]
+        ));
+        // SAFETY: both descriptors were created by this test and are still open.
+        unsafe {
+            libc::close(read_end);
+            libc::close(write_end);
+        }
+
+        // A FIFO named by path blocks in `open` rather than in `read`.
+        let dir = create_temp_test_dir("classify-fifo");
+        let fifo = dir.join("fifo");
+        let name = CString::new(fifo.as_os_str().as_bytes()).expect("fifo path");
+        // SAFETY: name is a live NUL-terminated CString and 0o666 is a valid mode.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o666) }, 0);
+        let fifo_path = fifo.to_string_lossy().into_owned();
+        assert!(!path_is_untrusted_shebang_native_exec(&fifo_path, &[]));
+        assert!(!path_is_mutable_native_exec(&fifo_path));
+        assert!(!path_is_mutable_shebang_to_protected_runtime(
+            &fifo_path,
+            &[]
+        ));
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    /// The snapshot lands on an exec-capable internal tmpfs, so a source the
+    /// kernel would have refused for its own mount must not gain execution by
+    /// being copied. The profile mounts `/tmp` `noexec`, and `/tmp` is also a
+    /// mutable exec root, so every target there reaches the snapshot.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_snapshot_is_refused_for_a_source_on_a_noexec_mount() {
+        let dir = create_temp_test_dir("noexec-snapshot");
+        let target = CString::new(dir.as_os_str().as_bytes()).expect("mount point");
+        let fstype = c"tmpfs";
+        // SAFETY: target and fstype are live NUL-terminated strings, MS_NOEXEC is a valid flag, and tmpfs takes no data.
+        let mounted = unsafe {
+            libc::mount(
+                fstype.as_ptr(),
+                target.as_ptr(),
+                fstype.as_ptr(),
+                libc::MS_NOEXEC,
+                std::ptr::null(),
+            )
+        } == 0;
+        if !mounted {
+            fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+            println!("skipping: this runtime cannot mount a noexec tmpfs");
+            return;
+        }
+
+        let script = dir.join("script");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod script");
+        let mut source = File::open(&script).expect("open script");
+        assert!(file_is_on_noexec_mount(&source));
+        assert!(snapshot_mutable_file(&mut source, 0o755, &[]).is_none());
+        drop(source);
+
+        unmount_file(&dir);
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 
     #[cfg(target_os = "linux")]
@@ -4992,6 +5262,46 @@ mod tests {
             _ => panic!("a magic name for an untrusted target must be snapshotted"),
         }
 
+        // A pinned descriptor is asked the refusal questions again. Every
+        // classifier ahead of this preparation read the pathname, and an
+        // unpinnable name need not still resolve to what they read -- a
+        // protected runtime is trusted-immutable, so provenance alone answers
+        // "pin it" for one. Both cases assert inside the runtime image and skip
+        // where the premise does not hold.
+        for (_, protected) in PROTECTED_RUNTIME_PATHS {
+            if let Ok(file) = File::open(protected) {
+                let prepared = mutable_exec_preparation(
+                    &proc_fd_path(file.as_raw_fd()),
+                    libc::AT_FDCWD,
+                    0,
+                    &[],
+                );
+                assert!(
+                    matches!(prepared, MutableExecPreparation::Block),
+                    "a magic name for {protected} must be refused, not pinned"
+                );
+                break;
+            }
+        }
+        // The loader's own target is named in argv, which this preparation does
+        // not carry, so a loader reached through an unpinnable name is refused
+        // rather than executed on an argument nothing here can re-read.
+        for loader in ["/lib/ld-linux-aarch64.so.1", "/lib64/ld-linux-x86-64.so.2"] {
+            if let Ok(file) = File::open(loader) {
+                let prepared = mutable_exec_preparation(
+                    &proc_fd_path(file.as_raw_fd()),
+                    libc::AT_FDCWD,
+                    0,
+                    &[],
+                );
+                assert!(
+                    matches!(prepared, MutableExecPreparation::Block),
+                    "a magic name for {loader} must be refused, not pinned"
+                );
+                break;
+            }
+        }
+
         // A directory under a name this process can replace is a lookup race,
         // whatever it holds now.
         assert!(matches!(
@@ -5080,6 +5390,57 @@ mod tests {
             "not a shebang\n",
             &[]
         ));
+
+        // The interpreter the kernel launches is the shebang token itself,
+        // whatever it is named. A caller-planted binary whose basename is `env`
+        // or `ld-linux-*` used to reach the argument walk on that basename
+        // alone; the walk then answered for the trusted target it named, and
+        // the planted interpreter was never classified at all.
+        let planted_env = dir.join("env");
+        fs::copy(&interpreter, &planted_env).expect("plant an env-named interpreter");
+        let env_script = dir.join("env-wrapper");
+        fs::write(
+            &env_script,
+            format!("#!{} /bin/sh\n", planted_env.display()),
+        )
+        .expect("write env-named script");
+        let env_script_path = env_script.display().to_string();
+        assert!(token_uses_env_interpreter(
+            &planted_env.display().to_string()
+        ));
+        assert!(path_is_untrusted_shebang_native_exec(&env_script_path, &[]));
+        assert!(should_block_mutable_native_exec(&env_script_path, &[], &[]));
+
+        let planted_loader = dir.join("ld-linux-workcell.so.2");
+        fs::copy(&interpreter, &planted_loader).expect("plant a loader-named interpreter");
+        let loader_script = dir.join("loader-wrapper");
+        fs::write(
+            &loader_script,
+            format!("#!{} /bin/sh\n", planted_loader.display()),
+        )
+        .expect("write loader-named script");
+        let loader_script_path = loader_script.display().to_string();
+        assert!(is_dynamic_loader_path(
+            &planted_loader.display().to_string()
+        ));
+        assert!(path_is_untrusted_shebang_native_exec(
+            &loader_script_path,
+            &[]
+        ));
+        // The env(1) walk decides the command it would exec the same way.
+        assert!(env_command_targets_untrusted_native_exec(
+            &format!(" {} /bin/sh", planted_loader.display()),
+            &[]
+        ));
+
+        // A trusted env and a trusted loader still dispatch to their walks, so
+        // an ordinary `#!/usr/bin/env` line is not refused by this.
+        if Path::new("/usr/bin/env").exists() {
+            assert!(!buffer_targets_untrusted_native_via_shebang(
+                "#!/usr/bin/env /bin/sh\n",
+                &[]
+            ));
+        }
 
         // The descriptor form reaches the same answers.
         let script_file = File::open(&script).expect("open script");

@@ -103,6 +103,9 @@ echo "[ci/validate] validator evasion corpus registration"
 echo "[ci/validate] GitHub macOS release test runners"
 "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15
 
+echo "[ci/validate] hardened filesystem ratchet"
+"${ROOT_DIR}/scripts/check-hardened-fs.sh"
+
 echo "[ci/validate] shell portability banlist"
 "${ROOT_DIR}/scripts/check-shell-portability.sh"
 
