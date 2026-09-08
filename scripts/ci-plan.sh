@@ -51,15 +51,18 @@ git_plan_error() {
   exit 1
 }
 worktree_gitfile_shape_ok() {
-  local gitfile="$1" target=""
-  local -a lines=()
-  mapfile -t lines <"${gitfile}" 2>/dev/null || return 1
-  (( ${#lines[@]} == 1 )) || return 1
-  case "${lines[0]}" in
+  local gitfile="$1" line="" extra="" target="" line_status=0 extra_status=0
+  {
+    if IFS= read -r line; then line_status=0; else line_status=$?; fi
+    if IFS= read -r extra; then extra_status=0; else extra_status=$?; fi
+  } <"${gitfile}" 2>/dev/null || return 1
+  [[ "${line_status}" -eq 0 || -n "${line}" ]] || return 1
+  [[ "${extra_status}" -ne 0 && -z "${extra}" ]] || return 1
+  case "${line}" in
     "gitdir: /"*) ;;
     *) return 1 ;;
   esac
-  target="${lines[0]#gitdir: }"
+  target="${line#gitdir: }"
   [[ ! -L "${target}" && -d "${target}" ]]
 }
 # A linked worktree's gitfile must resolve to a git directory nested at
