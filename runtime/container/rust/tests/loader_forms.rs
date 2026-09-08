@@ -76,6 +76,11 @@ const UNKNOWN_OPTION: &str = "--workcell-not-a-real-option";
 /// under test rather than for where its target lives. It is never the exec path
 /// of a row, only an argument, so no row can execute it.
 const TARGET: &str = "/bin/true";
+/// A directory nothing can execute, reached through a name nothing can replace.
+/// The kernel's own errno answers for it, which is what the row asserts; a
+/// directory under a name this process could swap is a lookup race and gets
+/// the native-exec refusal instead.
+const TRUSTED_DIRECTORY: &str = "/bin";
 const TARGET_ARGV: &[&str] = &["target"];
 /// A bare name for the PATH-search rows. No search root holds it.
 const PROBE: &str = "workcell-loader-form-probe";
@@ -495,7 +500,7 @@ const FORMS: &[Form] = &[
     form(
         "a directory target cannot reach the loader",
         Execve(
-            FIXTURE,
+            TRUSTED_DIRECTORY,
             TARGET_ARGV,
             &[GUARD_PRELOAD, "LD_AUDIT=/state/evil.so"],
         ),
@@ -523,6 +528,12 @@ const FORMS: &[Form] = &[
             GUARDED_ENV,
         ),
         NotRefused,
+        LINUX,
+    ),
+    form(
+        "a directory under a name this process can replace",
+        Execve(FIXTURE, TARGET_ARGV, GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
         LINUX,
     ),
     // Shebang resolution, which the kernel performs after the guard returns.
