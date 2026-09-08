@@ -232,10 +232,20 @@ func startupBody(body string) startupReader {
 // boundStartupSocket stands in for the socket a launched server binds. Close
 // must not unlink it, or the test could not tell the starter's cleanup apart
 // from the listener's own.
+//
+// The directory is not tb.TempDir(): that path is TMPDIR plus the full subtest
+// name, which overruns the AF_UNIX sun_path limit under the TMPDIR CI exports
+// and makes bind() fail with a bare EINVAL. internal/aptbroker keeps its own
+// short-directory helpers for the same reason.
 func boundStartupSocket(tb testing.TB) string {
 	tb.Helper()
 
-	path := filepath.Join(tb.TempDir(), "socket")
+	directory, err := os.MkdirTemp("/tmp", "wcbs-")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "socket")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		tb.Fatal(err)
