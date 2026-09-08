@@ -161,6 +161,7 @@ shell_files=(
   "${ROOT_DIR}/.githooks/pre-push"
   "${ROOT_DIR}/scripts/bootstrap-dev.sh"
   "${ROOT_DIR}/scripts/check-dead-code.sh"
+  "${ROOT_DIR}/scripts/check-doc-language.sh"
   "${ROOT_DIR}/scripts/check-doc-links.sh"
   "${ROOT_DIR}/scripts/check-doc-support-matrix-fields.sh"
   "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"

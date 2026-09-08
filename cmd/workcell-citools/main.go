@@ -108,6 +108,7 @@ func subcommands() []subcommand {
 		{"create-release-image-handoff", "ARCHIVE OUTPUT REPOSITORY RUN_ID TAG COMMIT PLATFORM IMAGE_DIGEST MANIFEST_DIGEST CONFIG_DIGEST", 10, 10, cmdCreateReleaseImageHandoff},
 		{"check-pinned-inputs", "REPO_ROOT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 2, 2, cmdCheckPinnedInputs},
 		{"check-validator-anchoring", "REPO_ROOT", 1, 1, cmdCheckValidatorAnchoring},
+		{"check-doc-language", "REPO_ROOT", 1, 1, cmdCheckDocLanguage},
 		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
@@ -531,6 +532,10 @@ func cmdGenerateBuilderEnvironmentManifest(args []string) error {
 
 func cmdCheckValidatorAnchoring(args []string) error {
 	return metadatautil.CheckValidatorAnchoring(args[0])
+}
+
+func cmdCheckDocLanguage(args []string) error {
+	return metadatautil.CheckDocLanguage(args[0])
 }
 
 func cmdCheckPinnedInputs(args []string) error {
