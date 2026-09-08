@@ -35,14 +35,12 @@ import (
 // command must be written, unindented.
 const sudoWrapperDelegationLine = `exec "${broker_client}" --sudo-compat "$@"`
 
-// lastShellCommand returns the last line of a script that carries a command:
-// blank lines and whole-line comments are skipped, and a trailing comment is
-// cut. It is not a parser -- it answers only "what runs last", which is what an
-// exec has to be.
-func lastShellCommand(source string) string {
-	lines := strings.Split(source, "\n")
-	for index := len(lines) - 1; index >= 0; index-- {
-		line := lines[index]
+// commandLines returns the lines of a script that carry a command, in order:
+// blank lines and whole-line comments are dropped, and a trailing comment is
+// cut. It is not a parser -- it answers only which lines run and in what order.
+func commandLines(source string) []string {
+	var carried []string
+	for _, line := range strings.Split(source, "\n") {
 		if cut := trailingComment.FindStringIndex(line); cut != nil {
 			line = line[:cut[0]]
 		}
@@ -50,7 +48,35 @@ func lastShellCommand(source string) string {
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		return line
+		carried = append(carried, line)
+	}
+	return carried
+}
+
+// lastShellCommand returns the last line of a script that carries a command,
+// which is what an exec that replaces the shell has to be.
+func lastShellCommand(source string) string {
+	carried := commandLines(source)
+	if len(carried) == 0 {
+		return ""
+	}
+	return carried[len(carried)-1]
+}
+
+// continuedGuard returns the operator with which the line before the script's
+// last command carries onto it, or the empty string. A penultimate `false &&`
+// makes the final line conditional: it is still written last and still matches
+// a line anchor, but bash may never reach it.
+func continuedGuard(source string) string {
+	carried := commandLines(source)
+	if len(carried) < 2 {
+		return ""
+	}
+	previous := carried[len(carried)-2]
+	for _, operator := range []string{"&&", "||", "|", "\\"} {
+		if strings.HasSuffix(previous, operator) {
+			return operator
+		}
 	}
 	return ""
 }
@@ -137,6 +163,11 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 	// anchor can check.
 	if got := lastShellCommand(source); got != sudoWrapperDelegationLine {
 		t.Fatalf("sudo-wrapper.sh no longer ends by delegating to the broker client: last command is %q", got)
+	}
+	// Being written last is not the same as being reached: a penultimate
+	// `false &&` carries onto the delegation and bash may skip it.
+	if operator := continuedGuard(source); operator != "" {
+		t.Fatalf("sudo-wrapper.sh guards its final delegation with a trailing %q", operator)
 	}
 	if !sudoWrapperDelegation.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer delegates to the broker client")

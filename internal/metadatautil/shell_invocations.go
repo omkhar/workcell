@@ -85,7 +85,16 @@ func commandBrace(each command) int {
 	for len(args) > 0 && !args[0].quoted && args[0].text == "!" {
 		args = args[1:]
 	}
-	if len(args) == 0 || args[0].quoted {
+	if len(args) == 0 {
+		return 0
+	}
+	// Quoting takes a word's meaning as syntax away, so a quoted } closes no
+	// group and a quoted fi ends no compound command. A word that begins with (
+	// is the exception this test cannot make: quote removal has already run, so
+	// (echo")" arrives as the balanced-looking (echo) with only a whole-word
+	// quoted flag to show for it, while bash opened a subshell on the unquoted
+	// ( it began with. Such a word is therefore still read as an opener.
+	if args[0].quoted && !strings.HasPrefix(args[0].text, "(") {
 		return 0
 	}
 	if definedName(args) != "" {
@@ -106,6 +115,16 @@ func commandBrace(each command) int {
 		return -1
 	}
 	if carriesParen(args[0]) {
+		if args[0].quoted {
+			// Quote removal has already run, so the parentheses left in the
+			// text no longer say which of them were syntax: false && (echo")"
+			// reads as a balanced (echo) while bash opens a subshell on the
+			// unquoted (. A command word that begins with ( is a subshell
+			// opener in every spelling bash accepts, so it opens one here and
+			// the count is not trusted. That loses invocations rather than
+			// inventing them.
+			return 1
+		}
 		return parenBalance(args)
 	}
 	return 0
@@ -116,10 +135,13 @@ func commandBrace(each command) int {
 // still reading at the end of a word (x=( , foo=$(). (( is arithmetic, which
 // ends at )) rather than at a bare ), so it opens nothing here.
 func carriesParen(first word) bool {
-	if first.quoted || strings.HasPrefix(first.text, "((") {
+	if strings.HasPrefix(first.text, "((") {
 		return false
 	}
-	return strings.HasPrefix(first.text, "(") || strings.HasSuffix(first.text, "(")
+	if strings.HasPrefix(first.text, "(") {
+		return true
+	}
+	return !first.quoted && strings.HasSuffix(first.text, "(")
 }
 
 // parenBalance sums the unquoted parentheses of one command. Counting rather
