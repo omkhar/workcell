@@ -78,11 +78,22 @@ func braceDepth(commands []command) int {
 // as it skips a brace group, so it counts the same. Only a bare ( or ) counts:
 // a case pattern ends in a word such as -n), an arithmetic command opens with
 // ((, and a definition header is handled above, so none of them reaches here.
+// isCommandPrefixWord reports whether the word stands before the command rather
+// than being one. bash accepts `time -p` and `time --` as well as a bare time.
+func isCommandPrefixWord(text string) bool {
+	switch text {
+	case "!", "time", "-p", "--":
+		return true
+	}
+	return false
+}
+
 func commandBrace(each command) int {
 	args := each.args
-	// ! negates the status of the command after it and is not a command of its
-	// own, so the brace behind it still stands in command position.
-	for len(args) > 0 && !args[0].quoted && args[0].text == "!" {
+	// ! negates the status of the command after it and time reports how long it
+	// takes; neither is a command of its own, so a brace or a parenthesis behind
+	// one still stands in command position.
+	for len(args) > 0 && !args[0].quoted && isCommandPrefixWord(args[0].text) {
 		args = args[1:]
 	}
 	if len(args) == 0 {

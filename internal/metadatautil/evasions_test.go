@@ -176,6 +176,10 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+"false && (echo ${x%)}", i+")")
 	})},
+	{"subshell behind a reserved prefix", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && time (", i+")")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)

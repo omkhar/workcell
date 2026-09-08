@@ -66,7 +66,8 @@ func lastShellCommand(source string) string {
 // unreachedDelegation reports why the script's last command is not reached, or
 // the empty string. It reads only the command before it, which is where both
 // shapes live that leave the delegation written last and never run: a `false &&`
-// that carries onto it, and an unconditional exit.
+// that carries onto it, and an unconditional exit, return or exec -- the last
+// replaces the shell, so nothing written after it runs either.
 //
 // This is a tripwire over file content, not a reachability proof. What the
 // wrapper actually does end to end is proved by scripts/container-smoke.sh,
@@ -84,7 +85,7 @@ func unreachedDelegation(source string) string {
 	}
 	if field := strings.Fields(previous); len(field) > 0 &&
 		!strings.HasPrefix(previous, " ") && !strings.HasPrefix(previous, "\t") &&
-		(field[0] == "exit" || field[0] == "return") {
+		(field[0] == "exit" || field[0] == "return" || field[0] == "exec") {
 		return "an unconditional " + field[0] + " runs before it"
 	}
 	return ""
