@@ -37,6 +37,7 @@ func ciPlanMust(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
 // ciPlanShortDir gives a fixture a path with no space or hostile-TMPDIR
 // content, for the rare case (like git-remote-ext's own naive
 // space-splitting) that no quoting scheme can protect against.
