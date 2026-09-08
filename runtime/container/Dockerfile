@@ -188,6 +188,45 @@ RUN mapfile -t debian_bootstrap_pins < /usr/local/share/workcell/debian-bootstra
       \( -path '/etc/hostname' -o -path '/etc/hosts' -o -path '/etc/resolv.conf' \) -prune -o \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
 
+FROM --platform=$BUILDPLATFORM ${NODE_BASE_IMAGE} AS apt-broker-builder
+
+ARG GO_VERSION=1.27.1
+ARG GO_LINUX_X86_64_SHA256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
+ARG GO_LINUX_ARM64_SHA256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
+ARG BUILDARCH
+ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Node supplies TLS before the pinned Go toolchain is available.
+RUN case "${BUILDARCH}" in \
+      amd64) GO_SHA256="${GO_LINUX_X86_64_SHA256}" ;; \
+      arm64) GO_SHA256="${GO_LINUX_ARM64_SHA256}" ;; \
+      *) echo "Unsupported Go build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
+    esac \
+  && case "${TARGETARCH}" in amd64|arm64) ;; *) echo "Unsupported Go target architecture: ${TARGETARCH}" >&2; exit 1 ;; esac \
+  && node --dns-result-order=ipv4first -e 'const { createWriteStream } = require("node:fs"); const { Readable } = require("node:stream"); const { pipeline } = require("node:stream/promises"); (async () => { const response = await fetch(process.argv[1]); if (!response.ok) throw new Error("Go download HTTP status " + response.status); await pipeline(Readable.fromWeb(response.body), createWriteStream("/tmp/go.tar.gz")); })().catch((error) => { console.error(error.message); process.exit(1); });' "https://dl.google.com/go/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
+  && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/go.tar.gz -C /usr/local \
+  && rm -f /tmp/go.tar.gz
+
+COPY --from=runtime-base --chmod=0444 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+ENV GOTOOLCHAIN=local
+ENV GOPROXY=https://proxy.golang.org
+ENV GOSUMDB=sum.golang.org
+ENV CGO_ENABLED=0
+
+WORKDIR /workcell-go
+COPY --chmod=0444 go.mod go.sum ./
+COPY --chmod=0555 internal/aptbroker ./internal/aptbroker
+COPY --chmod=0555 cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-client
+COPY --chmod=0555 cmd/workcell-apt-broker-server ./cmd/workcell-apt-broker-server
+
+RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server
+
 FROM runtime-base AS provider-builder
 
 ARG SOURCE_DATE_EPOCH
@@ -483,6 +522,7 @@ RUN export \
   # and survives the layer compression that a symlink would not.
   && ln /usr/local/libexec/workcell/core/launcher /usr/local/libexec/workcell/core/git \
   && printf '/usr/local/lib/libworkcell_exec_guard.so\n' > /etc/ld.so.preload \
+  && export LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so \
   && rm -rf /tmp/workcell-rust-target /workcell-rust
 
 # /etc/ld.so.preload loads the exec guard into every process from here on, and
@@ -622,6 +662,8 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
       /usr/bin/git \
       /usr/bin/sudo \
       -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}"
+
+COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /usr/local/libexec/workcell/
 
 WORKDIR /workspace
 

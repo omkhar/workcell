@@ -81,6 +81,35 @@ HOME="${HOST_HOME}" XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scrip
   --repo-root "${FIXTURE}" \
   --tag v9.9.9 >/dev/null
 
+# The expected binding must accept the verified pair and reject a moved tag.
+HOME="${HOST_HOME}" XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scripts/check-release-tag-signature.sh" \
+  --repo-root "${FIXTURE}" \
+  --tag v9.9.9 \
+  --expected-commit "${commit_sha}" \
+  --expected-tag-object "${tag_sha}" >/dev/null
+
+other_sha="$(printf '%040d' 0)"
+for binding in "--expected-commit ${other_sha}" "--expected-tag-object ${other_sha}"; do
+  set +e
+  # shellcheck disable=SC2086 # Each binding is a fixed flag/value pair.
+  binding_output="$(HOME="${HOST_HOME}" XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scripts/check-release-tag-signature.sh" \
+    --repo-root "${FIXTURE}" \
+    --tag v9.9.9 ${binding} 2>&1)"
+  binding_rc=$?
+  set -e
+  test "${binding_rc}" -eq 2
+  grep -F 'not the expected' <<<"${binding_output}" >/dev/null
+done
+
+set +e
+malformed_output="$(HOME="${HOST_HOME}" XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scripts/check-release-tag-signature.sh" \
+  --repo-root "${FIXTURE}" \
+  --tag v9.9.9 --expected-commit "${commit_sha^^}" 2>&1)"
+malformed_rc=$?
+set -e
+test "${malformed_rc}" -eq 2
+grep -F 'requires a 40-character lowercase object ID' <<<"${malformed_output}" >/dev/null
+
 git_cmd -C "${FIXTURE}" -c tag.gpgSign=false tag v9.9.10
 set +e
 unsigned_tag_output="$(HOME="${HOST_HOME}" XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scripts/check-release-tag-signature.sh" \

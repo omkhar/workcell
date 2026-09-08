@@ -74,7 +74,8 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
         run: |
           ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
           unset WORKCELL_HOSTED_CONTROLS_TOKEN
-          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+          ./scripts/publish-github-release.sh "${RELEASE_TAG}" \
+            --expected-tag-object "${RELEASE_TAG_OBJECT}" \
             --immutable-releases-preverified-by-hosted-controls \
             dist/workcell.tar.gz
 `
@@ -97,13 +98,82 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
 		{name: "audits the repository and nothing else", old: "run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"", replacement: "run-hosted-controls-audit.sh wrong \"${GITHUB_REPOSITORY}\" || true", want: "recheck hosted controls"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
-		{name: "preverified flag in the position the publisher reads", old: "\"${GITHUB_REF_NAME}\" \\\n            --immutable-releases-preverified-by-hosted-controls \\\n            dist/workcell.tar.gz", replacement: "\"${GITHUB_REF_NAME}\" \\\n            dist/workcell.tar.gz \\\n            --immutable-releases-preverified-by-hosted-controls", want: "explicit preverified publisher"},
+		{name: "publisher bound to the verified tag object", old: `--expected-tag-object "${RELEASE_TAG_OBJECT}"`, replacement: `--expected-tag-object "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
+		{name: "publisher bound to the verified tag", old: `publish-github-release.sh "${RELEASE_TAG}"`, replacement: `publish-github-release.sh "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
+		{name: "reviewed hosted-controls policy path", old: "WORKCELL_HOSTED_CONTROLS_REQUIRED", replacement: "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH", want: "reviewed GitHub hosted-controls policy path"},
+		{
+			name: "tag-object binding moved from the publisher command into a comment",
+			old: "            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n" +
+				"            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz\n",
+			replacement: "            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz # --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
+			want: "explicit preverified publisher",
+		},
+		{
+			name: "tag-object binding moved past a shell separator",
+			old: "            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n" +
+				"            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz\n",
+			replacement: "            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz ; : --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
+			want: "explicit preverified publisher",
+		},
+		{name: "preverified flag in the position the publisher reads", old: "--expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n            --immutable-releases-preverified-by-hosted-controls \\\n            dist/workcell.tar.gz", replacement: "--expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n            dist/workcell.tar.gz \\\n            --immutable-releases-preverified-by-hosted-controls", want: "explicit preverified publisher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("mutation %q did not change the workflow", tc.name)
+			}
 			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A comment that names the reviewed policy path overrides nothing, so the gate
+// must not reject the workflow for mentioning it.
+func TestValidateReleaseWorkflowPublicationGateAcceptsPolicyPathMention(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
+	mutated := strings.Replace(workflow,
+		auditCall,
+		"          # WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH must stay unset in this job.\n"+auditCall, 1)
+	if mutated == workflow {
+		t.Fatal("policy path mention did not change the workflow")
+	}
+	if err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want nil", err)
+	}
+}
+
+// An override reaches the audit through any executable assignment, including an
+// env or export command prefix, so each of those forms must fail the gate.
+func TestValidateReleaseWorkflowPublicationGateRejectsPolicyPathOverrides(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
+	for name, override := range map[string]string{
+		"env command prefix":       `          env WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"env with an option":       `          env -i WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"plain assignment prefix":  `          WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"export statement":         "          export WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"single-quoted assignment": `          env 'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"double-quoted assignment": `          env "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml" ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"quoted assignment prefix": `          'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"declare -x export":        "          declare -x WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"readonly export":          "          readonly WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, auditCall, override, 1)
+			if mutated == workflow {
+				t.Fatalf("override %q did not change the workflow", name)
+			}
+			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
+			if err == nil || !strings.Contains(err.Error(), "reviewed GitHub hosted-controls policy path") {
+				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want a policy path override", err)
 			}
 		})
 	}
@@ -116,7 +186,11 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	}
 	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
 	requireReleaseAuthorityError(t, mutated, "build-amd64-image")
-	mutated = strings.Replace(string(content), "    steps:\n      - name: Download bound unsigned release artifact", "    steps:\n      - uses: actions/checkout@bad\n      - name: Download bound unsigned release artifact", 1)
+	const signerRecheck = "      - name: Recheck release tag before signing and image mutation"
+	mutated = strings.Replace(string(content), signerRecheck, "      - uses: actions/checkout@bad\n"+signerRecheck, 1)
+	if mutated == string(content) {
+		t.Fatal("signer contract mutation did not change the workflow")
+	}
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
@@ -139,7 +213,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions(t *testing.T) {
 	t.Run("multi-arch index", func(t *testing.T) {
 		RequireRejectsAllEvasions(t, workflow,
 			"          oras manifest index create --oci-layout \\\n"+
-				"            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n"+
+				"            \"dist/release-image:${RELEASE_TAG}\" \\\n"+
 				"            amd64 arm64 >/dev/null",
 			"assemble the multi-arch index", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
 	})
@@ -169,7 +243,8 @@ func TestValidateReleaseWorkflowPublicationGateRejectsEvasions(t *testing.T) {
 	})
 	t.Run("preverified publisher", func(t *testing.T) {
 		RequireRejectsAllEvasions(t, workflow,
-			"          ./scripts/publish-github-release.sh \"${GITHUB_REF_NAME}\" \\\n"+
+			"          ./scripts/publish-github-release.sh \"${RELEASE_TAG}\" \\\n"+
+				"            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n"+
 				"            --immutable-releases-preverified-by-hosted-controls",
 			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
 	})
@@ -205,7 +280,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 	}{
 		{
 			name:  "assembly command in a comment",
-			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          # oras manifest index create --oci-layout dist/release-image amd64 arm64",
 			want:  "assemble the multi-arch index",
 		},
@@ -223,7 +298,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 		},
 		{
 			name:  "assembly command quoted inside another command",
-			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          echo \"oras manifest index create --oci-layout dist/release-image amd64 arm64\"",
 			want:  "assemble the multi-arch index",
 		},
@@ -250,7 +325,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands replaced by a heredoc body naming them",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<'PLAN' >/dev/null\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -262,7 +337,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands replaced by the second body of two heredocs",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<'NOTE' <<'PLAN' >/dev/null\n" +
 				"          NOTE\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
@@ -275,7 +350,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind a quoted delimiter that desynchronises the queue",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          : <<'A' \"text <<B\"\n" +
 				"          A\n" +
 				"          cat <<'PLAN' >/dev/null\n" +
@@ -298,7 +373,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind a delimiter an escaped quote appears to quote",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          : \\' <<PLAN ''\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -326,7 +401,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands moved into a heredoc a quoted command substitution opens",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          printf '%s' \"$(cat <<PLAN\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -339,7 +414,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind an indented terminator bash never reads as one",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<PLAN >/dev/null\n" +
 				"            PLAN\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
@@ -352,7 +427,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind a space-indented terminator of a tab-stripped body",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<-PLAN >/dev/null\n" +
 				"            PLAN\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
@@ -414,7 +489,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
 		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
-		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
+		strings.Replace(workflow, "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz", "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
 		strings.Replace(workflow, "    shell: bash --noprofile --norc -euo pipefail {0}", "    shell: bash {0}", 1),
 	}

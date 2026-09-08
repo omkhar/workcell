@@ -8,6 +8,8 @@ unset BASH_ENV ENV
   echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2
   exit 2
 }
+readonly PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
 set -euo pipefail
 
 AGENT_NAME="${AGENT_NAME:-}"
