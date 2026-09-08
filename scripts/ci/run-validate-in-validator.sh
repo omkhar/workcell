@@ -90,6 +90,19 @@ validator_tmp="${validator_home}/.tmp"
 if [[ "${HOSTILE_ENV}" == "tmpdir" ]]; then
   validator_tmp="${validator_tmp}/hostile \$HOME --hostname/$(printf 'p%.0s' {1..80})"
 fi
+# The root and uidmap axes run as a uid that owns nothing in the bind mount,
+# and git refuses a repository owned by another uid: "detected dubious
+# ownership in repository at '/workspace'".  scripts/ci-plan.sh runs git with
+# no global and no system configuration on purpose, so safe.directory is not
+# reachable and is not the fix here; align the ownership instead.  The copy is
+# made inside the container by the validator uid itself, so it owns the result
+# with no privileged step on the host and no change to either axis: root still
+# runs as uid 0 and uidmap still runs as a uid the bind mount and the image
+# know nothing about.
+validator_workspace_copy=""
+case "${HOSTILE_ENV}" in
+  root | uidmap) validator_workspace_copy="${validator_home}/workspace" ;;
+esac
 
 setup_workcell_ci_docker
 
@@ -113,6 +126,7 @@ workcell_ci_docker run --rm \
   -e GOMODCACHE="${validator_cache}/go-mod" \
   -e CARGO_TARGET_DIR="${validator_cache}/cargo-target" \
   -e TMPDIR="${validator_tmp}" \
+  -e WORKCELL_VALIDATOR_WORKSPACE_COPY="${validator_workspace_copy}" \
   --mount "${validator_workspace_mount}" \
   --mount "${validator_passwd_mount}" \
   -w /workspace \
@@ -120,5 +134,14 @@ workcell_ci_docker run --rm \
   -lc '
     set -euo pipefail
     mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
+    if [[ -n "${WORKCELL_VALIDATOR_WORKSPACE_COPY}" ]]; then
+      # -d keeps symlinks and hard links as they are, and the mode and
+      # timestamp list omits ownership on purpose: as uid 0 a preserving copy
+      # would reproduce the bind owner and land back on the dubious-ownership
+      # refusal this copy exists to remove.
+      mkdir -p "${WORKCELL_VALIDATOR_WORKSPACE_COPY}"
+      cp -dR --preserve=mode,timestamps /workspace/. "${WORKCELL_VALIDATOR_WORKSPACE_COPY}/"
+      cd "${WORKCELL_VALIDATOR_WORKSPACE_COPY}"
+    fi
     ./scripts/validate-repo.sh
   '
