@@ -12,6 +12,19 @@ import (
 	"testing"
 )
 
+// shortStartupProbeDir gives a fixture a plain path with no space or
+// hostile-TMPDIR content, for the rare case (see runChildStartupProbe) that
+// no shell quoting can protect against.
+func shortStartupProbeDir(tb testing.TB) string {
+	tb.Helper()
+	dir, err := os.MkdirTemp("/tmp", "startupprobe-")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func runBashProbe(tb testing.TB, script string, env map[string]string) (int, string) {
 	tb.Helper()
 
@@ -404,9 +417,16 @@ func TestCheckPRShapeIgnoresAmbientGitConfig(t *testing.T) {
 	}
 	runGit("commit", "-am", "feature change")
 
-	maliciousHome := t.TempDir()
-	maliciousMarker := filepath.Join(t.TempDir(), "diff.marker")
-	maliciousDiff := filepath.Join(t.TempDir(), "malicious-diff.sh")
+	// The malicious fixture's own paths are incidental to what this test
+	// asserts (ambient git config hijacking diff.external, not hostile
+	// paths), and maliciousMarker is embedded in a double-quoted redirect
+	// below: a hostile TMPDIR would make the hook write its marker to a
+	// re-expanded $HOME instead, silently passing regardless of whether the
+	// sandboxing actually held. Keep these three off TMPDIR.
+	maliciousRoot := shortStartupProbeDir(t)
+	maliciousHome := maliciousRoot
+	maliciousMarker := filepath.Join(maliciousRoot, "diff.marker")
+	maliciousDiff := filepath.Join(maliciousRoot, "malicious-diff.sh")
 	if err := os.WriteFile(maliciousDiff, []byte("#!/bin/sh\nprintf 'unexpected diff.external invocation\\n' >\""+maliciousMarker+"\"\nexit 99\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -415,8 +435,11 @@ func TestCheckPRShapeIgnoresAmbientGitConfig(t *testing.T) {
 	}
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-pr-shape.sh")
+	// scriptPath and repo are embedded in a double-quoted shell literal below,
+	// so a hostile TMPDIR's literal "$HOME" would otherwise be re-expanded by
+	// bash before check-pr-shape.sh ever sees its --repo-root argument.
 	code, output := runBashProbe(t, `set -euo pipefail
-"`+scriptPath+`" --repo-root "`+repo+`" --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
+`+ShellQuote(scriptPath)+` --repo-root `+ShellQuote(repo)+` --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0
 `, map[string]string{
 		"HOME": maliciousHome,
 	})
@@ -469,7 +492,7 @@ func TestCheckPRShapeCountsRenameDestinationArea(t *testing.T) {
 
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "check-pr-shape.sh")
 	code, output := runBashProbe(t, `set -euo pipefail
-"`+scriptPath+`" --repo-root "`+repo+`" --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 1 --max-binaries 0
+`+ShellQuote(scriptPath)+` --repo-root `+ShellQuote(repo)+` --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 1 --max-binaries 0
 `, nil)
 	if code == 0 {
 		t.Fatalf("check-pr-shape unexpectedly accepted a rename into a second top-level area: %q", output)
@@ -544,7 +567,11 @@ func runtimeStartupPrologue(tb testing.TB, name string) string {
 func runChildStartupProbe(tb testing.TB, prologue string, pin bool) (sourced, exitCode int) {
 	tb.Helper()
 
-	dir := tb.TempDir()
+	// BASH_ENV/ENV's value is itself parameter-expanded by bash before use as
+	// a filename, so a hostile TMPDIR's literal "$HOME" would re-expand to the
+	// real $HOME and bash would silently source nothing — unrelated to what
+	// this test asserts, so give the fixture a plain, TMPDIR-independent home.
+	dir := shortStartupProbeDir(tb)
 	log := filepath.Join(dir, "sourced.log")
 	planted := filepath.Join(dir, "planted.sh")
 	plantedBody := "echo sourced >>'" + log + "'\n"

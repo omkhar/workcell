@@ -553,7 +553,10 @@ git -C "$2" check-attr export-ignore -- attribute-probe.txt
 func TestCanonicalBuildEnvironmentBlocksCacheProgramExecution(t *testing.T) {
 	t.Parallel()
 
-	fixtureRoot := t.TempDir()
+	// GOCACHEPROG may carry trailing arguments separated by spaces (cmd/go
+	// splits on space itself, no shell involved), so a hostile TMPDIR's space
+	// would break the lookup the same way it does for git-remote-ext.
+	fixtureRoot := shortStartupProbeDir(t)
 	marker := filepath.Join(fixtureRoot, "cache-program-ran")
 	cacheProgram := filepath.Join(fixtureRoot, "cache-program")
 	writeCanonicalFixture(t, cacheProgram, []byte(`#!/bin/sh
@@ -780,9 +783,13 @@ func TestCanonicalBuildEnvironmentDirectEntrypoints(t *testing.T) {
 				t.Fatalf("guard-removal mutant for %s was not killed: code=%d output=%q", tc.relative, code, output)
 			}
 
-			startupMarker := filepath.Join(t.TempDir(), "startup-ran")
-			functionMarker := filepath.Join(t.TempDir(), "function-ran")
-			startupFile := filepath.Join(t.TempDir(), "bash-env")
+			// BASH_ENV's own value is parameter-expanded by bash before use as a
+			// filename (see shortStartupProbeDir), so startupFile needs a plain
+			// path independent of a hostile TMPDIR.
+			descendantDir := shortStartupProbeDir(t)
+			startupMarker := filepath.Join(descendantDir, "startup-ran")
+			functionMarker := filepath.Join(descendantDir, "function-ran")
+			startupFile := filepath.Join(descendantDir, "bash-env")
 			writeCanonicalFixture(t, startupFile, []byte(`: >"${WORKCELL_DESCENDANT_STARTUP_MARKER:?}"
 `), 0o600)
 			descendantEnv := map[string]string{

@@ -6,7 +6,6 @@ package aptbroker
 import (
 	"context"
 	"net"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -56,11 +55,7 @@ func TestRunClientRejectsMalformedRequestBeforeDial(t *testing.T) {
 }
 
 func TestRunClientCancelsWhileTheBrokerNeverReadsTheRequest(t *testing.T) {
-	directory, err := os.MkdirTemp("", "wcbr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(directory)
+	directory := shortSocketDir(t)
 	socketPath := filepath.Join(directory, "s")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
