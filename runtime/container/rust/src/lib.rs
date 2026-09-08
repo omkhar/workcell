@@ -2138,10 +2138,18 @@ fn mutable_exec_preparation(
     }
 
     let lexical_mutable = path_has_mutable_provenance(path, dirfd);
+    // A magic descriptor path has no directory chain worth asking about:
+    // `/proc/<pid>/fd` is owned by the process itself, so a provenance walk
+    // over it answers "this process" for every such name under an ordinary uid
+    // and "trusted" for every one under root. Neither answer is about the
+    // target. What the name resolves to is asked of the descriptor below, and
+    // pinning is what stops the name being resolved a second time.
+    let magic_target = path_is_magic_exec_target(path);
     // A relative name resolves against a working directory this process can
     // change, and a magic descriptor path against a table it can rewrite.
     // Neither survives being handed back to libc, whatever it names now.
-    let pin_target = !Path::new(path).is_absolute() || path_is_magic_exec_target(path);
+    let pin_target = !Path::new(path).is_absolute() || magic_target;
+    let name_provenance_untrusted = !magic_target && path_has_untrusted_provenance(path, dirfd);
 
     let Ok(c_path) = CString::new(path.as_bytes()) else {
         return if lexical_mutable || pin_target {
@@ -2164,7 +2172,7 @@ fn mutable_exec_preparation(
         // fill it in between here and the exec.
         return if lexical_mutable
             || path_resolves_to_mutable_root(path, dirfd)
-            || path_has_untrusted_provenance(path, dirfd)
+            || name_provenance_untrusted
             || pin_target
         {
             MutableExecPreparation::Block
@@ -2183,7 +2191,7 @@ fn mutable_exec_preparation(
         // kernel's own errno is the right answer -- but only where the name
         // cannot be swapped for something that is. An untrusted name is a
         // lookup race whatever it holds now.
-        return if lexical_mutable || path_has_untrusted_provenance(path, dirfd) || pin_target {
+        return if lexical_mutable || name_provenance_untrusted || pin_target {
             MutableExecPreparation::Block
         } else {
             MutableExecPreparation::NotMutable
@@ -2193,9 +2201,7 @@ fn mutable_exec_preparation(
     // The lexical decision stands beside the descriptor one. A mutable
     // directory can alias a trusted inode, so a descriptor that looks trusted
     // is not enough on its own.
-    let untrusted = lexical_mutable
-        || path_has_untrusted_provenance(path, dirfd)
-        || fd_target_is_untrusted_exec(fd);
+    let untrusted = lexical_mutable || name_provenance_untrusted || fd_target_is_untrusted_exec(fd);
     if !untrusted {
         return if pin_target {
             MutableExecPreparation::Pinned(path_file.into_raw_fd())
@@ -4609,11 +4615,21 @@ mod tests {
 
         // A trusted target named through a descriptor table is pinned rather
         // than copied: the bytes are already trustworthy, the name is not.
+        //
+        // Both of these answer from the descriptor, and that is the point:
+        // `/proc/<pid>/fd` is owned by the running process, so a provenance
+        // walk over a magic name would answer "untrusted" for every one of
+        // them under an ordinary uid and "trusted" for every one under root.
+        // The pair fails under one uid or the other if that walk comes back.
         let trusted = File::open("/bin/true").expect("open /bin/true");
-        let magic = proc_fd_path(trusted.as_raw_fd());
-        match mutable_exec_preparation(&magic, libc::AT_FDCWD, 0, &[]) {
+        match mutable_exec_preparation(&proc_fd_path(trusted.as_raw_fd()), libc::AT_FDCWD, 0, &[]) {
             MutableExecPreparation::Pinned(fd) => close_prepared_fd(fd),
             _ => panic!("a magic name for a trusted target must be pinned"),
+        }
+        let planted = File::open(&script).expect("open script");
+        match mutable_exec_preparation(&proc_fd_path(planted.as_raw_fd()), libc::AT_FDCWD, 0, &[]) {
+            MutableExecPreparation::Execute(fd) => close_prepared_fd(fd),
+            _ => panic!("a magic name for an untrusted target must be snapshotted"),
         }
 
         // A directory under a name this process can replace is a lookup race,
