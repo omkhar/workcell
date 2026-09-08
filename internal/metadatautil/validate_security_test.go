@@ -58,6 +58,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 	srcRoot := metadatautilRepoRoot(tb)
 	dstRoot := tb.TempDir()
 	for _, relativePath := range []string{
+		".dockerignore",
 		"go.mod",
 		".github/CODEOWNERS",
 		".github/workflows/ci.yml",
@@ -332,6 +333,85 @@ func TestCheckPinnedInputsRejectsCommentedDebianBootstrapGuard(t *testing.T) {
 		return strings.Replace(content, `  && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, `  # && [[ "${#debian_bootstrap_pins[@]}" -eq 7 ]]`, 1)
 	})
 	requirePinnedInputsErrorContains(t, cfg, "must use reviewed Debian bootstrap pin")
+}
+
+func TestCheckPinnedInputsRejectsCommentedReleaseTagRecheck(t *testing.T) {
+	const recheck = `        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"`
+	cfg := rewritePinnedInputsFixtureFile(t, ".github/workflows/release.yml", func(content string) string {
+		// Keep the check text in the run block, but as a comment that never runs.
+		return strings.Replace(content, recheck,
+			"        run: |\n          #"+strings.TrimPrefix(recheck, "        run:")+"\n          true", 1)
+	})
+	requirePinnedInputsErrorContains(t, cfg, "before every release mutation phase")
+}
+
+// Each mutation phase must run its own fully bound recheck: a check moved to
+// another job, or one missing part of its binding, does not cover the phase it
+// left behind.
+func TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks(t *testing.T) {
+	const recheck = `        run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"`
+	for name, rewrite := range map[string]func(string) string{
+		"recheck relocated to another job": func(content string) string {
+			// Add a duplicate to the assembly job and drop the first phase's
+			// own check, so the file-wide count is still five while one
+			// mutation phase now runs none.
+			const assemblyStep = "      - name: Recheck release tag before release assembly\n" +
+				"        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" + recheck + "\n"
+			duplicated := strings.Replace(content, assemblyStep, assemblyStep+"\n"+assemblyStep, 1)
+			return strings.Replace(duplicated, recheck+"\n", "        run: 'true'\n", 1)
+		},
+		"recheck missing its tag-object binding": func(content string) string {
+			return strings.Replace(content, ` --expected-tag-object "${RELEASE_TAG_OBJECT}"`, "", 1)
+		},
+		"recheck failure ignored with a fallback": func(content string) string {
+			return strings.Replace(content, recheck+"\n", recheck+" || true\n", 1)
+		},
+		"recheck missing its commit binding": func(content string) string {
+			return strings.Replace(content, ` --expected-commit "${RELEASE_COMMIT}"`, "", 1)
+		},
+		"publication recheck moved inside the publication step": func(content string) string {
+			// Same step as the mutation, and after its publisher command, so a
+			// no-later comparison would accept it.
+			const check = "      - name: Verify release tag signature\n" +
+				"        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" + recheck + "\n\n"
+			const publisher = "          ./scripts/publish-github-release.sh \"${RELEASE_TAG}\" \\"
+			const lastAsset = "            dist/workcell-image.spdx.sigstore.json\n"
+			at := strings.Index(content, publisher)
+			if at < 0 {
+				return content
+			}
+			// The publishing job's own check step is the last one before the
+			// publisher; the earlier phases keep theirs.
+			head, tail := content[:at], content[at:]
+			last := strings.LastIndex(head, check)
+			if last < 0 {
+				return content
+			}
+			head = head[:last] + head[last+len(check):]
+			return head + strings.Replace(tail, lastAsset,
+				lastAsset+"          "+strings.TrimPrefix(recheck, "        run: ")+"\n", 1)
+		},
+		"publication recheck moved below the publication step": func(content string) string {
+			// Swap the two steps so the check still exists, and still runs in
+			// the publishing job, but no longer runs before the mutation.
+			const check = "      - name: Verify release tag signature\n" +
+				"        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" + recheck + "\n\n"
+			const mutation = "      - name: Recheck hosted controls and publish GitHub release assets\n"
+			return strings.Replace(content, check+mutation, mutation, 1) +
+				"\n" + strings.TrimSuffix(check, "\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := rewritePinnedInputsFixtureFile(t, ".github/workflows/release.yml", func(content string) string {
+				mutated := rewrite(content)
+				if mutated == content {
+					t.Fatalf("mutation %q did not change the workflow", name)
+				}
+				return mutated
+			})
+			requirePinnedInputsErrorContains(t, cfg, "before every release mutation phase")
+		})
+	}
 }
 
 func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, directCollaborators []map[string]any) (string, string) {

@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type workflowText struct{ text, path string }
@@ -423,8 +426,74 @@ func (check *pinnedInputsCheck) validateReleaseLegacyReferences() error {
 	); err != nil {
 		return err
 	}
-	if count := strings.Count(check.releaseWorkflow, "./scripts/check-release-tag-signature.sh --github-repo"); count != 2 {
-		return fmt.Errorf(".github/workflows/release.yml must verify release tag signatures in preflight and publish jobs, found %d checks", count)
+	return validateReleaseTagRechecks(check.releaseWorkflow)
+}
+
+// releaseTagRecheckPhases names each job that mutates release state, the number
+// of bound rechecks it must run, and the step every one of them must precede.
+// Counting per job, not across the file, keeps a recheck deleted from one phase
+// from being covered by a duplicate added to an unrelated job. Requiring the
+// step order keeps a recheck moved below its mutation from counting either: a
+// check that runs after the mutation proves nothing about the tag the mutation
+// used.
+var releaseTagRecheckPhases = map[string]struct {
+	count  int
+	before string
+}{
+	"preflight":              {1, "Build preflight release install artifacts"},
+	"release":                {1, "Assemble deterministic multi-arch OCI layout"},
+	"sign-release":           {2, "Publish bound OCI layout"},
+	"publish-github-release": {1, "Recheck hosted controls and publish GitHub release assets"},
+}
+
+// releaseTagRecheckCommand is the complete reviewed recheck, and a step whose
+// whole run body is not exactly it does not count towards a phase. Each
+// recheck has a step to itself, so equality is both simpler and stricter than
+// parsing the body: a recheck missing the commit or tag-object binding proves
+// less than its name suggests, and a comment, an extra command or a fallback
+// that discards the exit status all leave a body that is not this one.
+const releaseTagRecheckCommand = `./scripts/check-release-tag-signature.sh ` +
+	`--github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" ` +
+	`--tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" ` +
+	`--expected-tag-object "${RELEASE_TAG_OBJECT}"`
+
+// validateReleaseTagRechecks requires each mutation phase to run its own fully
+// bound tag recheck, and no other job to run one.
+func validateReleaseTagRechecks(workflowText string) error {
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("parse release tag rechecks: %w", err)
+	}
+	const requirement = ".github/workflows/release.yml must verify release tag signatures before every release mutation phase"
+	for name, job := range document.Jobs {
+		phase := releaseTagRecheckPhases[name]
+		found, lastAt := 0, -1
+		for at, step := range job.Steps {
+			if strings.TrimSpace(step.Run) == releaseTagRecheckCommand {
+				found++
+				lastAt = at
+			}
+		}
+		if found != phase.count {
+			return fmt.Errorf("%s: job %s runs %d bound checks, want %d", requirement, name, found, phase.count)
+		}
+		if phase.count == 0 {
+			continue
+		}
+		mutationAt := slices.IndexFunc(job.Steps, func(step workflowStep) bool { return step.Name == phase.before })
+		if mutationAt < 0 {
+			return fmt.Errorf("%s: job %s must keep its %q step", requirement, name, phase.before)
+		}
+		// The check must run in an earlier step, not merely no later: a check
+		// moved inside the mutation step can sit after the mutation itself.
+		if lastAt >= mutationAt {
+			return fmt.Errorf("%s: job %s does not run a check before its %q step", requirement, name, phase.before)
+		}
+	}
+	for name := range releaseTagRecheckPhases {
+		if _, ok := document.Jobs[name]; !ok {
+			return fmt.Errorf("%s: mutation phase %s is missing", requirement, name)
+		}
 	}
 	return nil
 }

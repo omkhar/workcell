@@ -21,6 +21,7 @@ import (
 )
 
 type workflowDocument struct {
+	Env  map[string]string      `yaml:"env"`
 	Jobs map[string]workflowJob `yaml:"jobs"`
 }
 
@@ -35,8 +36,9 @@ type workflowNodeDocument struct {
 }
 
 type workflowJob struct {
-	Name        string    `yaml:"name"`
-	Needs       yaml.Node `yaml:"needs"`
+	Name        string            `yaml:"name"`
+	Env         map[string]string `yaml:"env"`
+	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
 		Name string `yaml:"name"`
 	} `yaml:"environment"`
@@ -55,7 +57,7 @@ type workflowStep struct {
 // ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
 // rejects unknown fields, reordered steps, changed commands, changed action inputs,
 // a swapped publisher, a redirected registry, and a weakened shell default.
-const releaseSignerContractSHA256 = "59d426ff05378de33e64dc11f715e25f21727eb07e9f33d7cead528856e84982"
+const releaseSignerContractSHA256 = "9427544fdcb574fd8ac5d906d425979822778230190a837bbf94fbc3d40cc575"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
 	var document workflowDocument
@@ -93,6 +95,9 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	var document workflowDocument
 	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
 		return fmt.Errorf("parse release publication gate: %w", err)
+	}
+	if overridesHostedControlsPolicyPath(document) {
+		return errors.New("release workflow must not override the reviewed GitHub hosted-controls policy path")
 	}
 	releaseJob, ok := document.Jobs["release"]
 	if !ok {
@@ -156,17 +161,13 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		audit := ShellInvocations(step.Run, auditHostedControlsScript)
 		unset := ShellInvocations(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
 		publish := ShellInvocations(step.Run, publishGitHubReleaseScript)
-		if len(audit) == 0 || len(unset) == 0 || len(publish) == 0 ||
+		if len(audit) == 0 || len(unset) == 0 || len(publish) != 1 ||
 			// The audit takes the repository and nothing else. It rejects a
 			// second argument before it audits anything, and a || true after
 			// it would let the step publish on that refusal, so a membership
 			// test over its arguments is not enough.
 			len(audit[0].Args) != 1 || audit[0].Args[0] != "${GITHUB_REPOSITORY}" ||
-			// The publisher reads the preverification flag only as the word
-			// straight after the tag. Later it is an asset name instead, and
-			// the publisher is told the release was not preverified.
-			len(publish[0].Args) < 2 || publish[0].Args[0] != "${GITHUB_REF_NAME}" ||
-			publish[0].Args[1] != "--immutable-releases-preverified-by-hosted-controls" {
+			!publisherBindsVerifiedTag(publish[0].Args) {
 			return errors.New("final GitHub release publication step must recheck hosted controls, unset its credential, then invoke the explicit preverified publisher")
 		}
 		// All three run, so compare the positions the parser proves rather
@@ -178,6 +179,88 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		return nil
 	}
 	return errors.New("release workflow must combine the fresh hosted-controls check and GitHub release publication in one reviewed step")
+}
+
+// publisherBindsVerifiedTag reports whether the parsed publisher arguments name
+// the verified tag, bind the annotated tag object it resolved to, and assert the
+// preverified publication path. publish-github-release.sh reads all four by
+// position and takes every later word as an asset, so a flag written after the
+// assets is an asset name and the publisher is told the release is unverified.
+func publisherBindsVerifiedTag(arguments []string) bool {
+	return len(arguments) > 3 && arguments[0] == "${RELEASE_TAG}" &&
+		arguments[1] == "--expected-tag-object" &&
+		arguments[2] == "${RELEASE_TAG_OBJECT}" &&
+		arguments[3] == "--immutable-releases-preverified-by-hosted-controls"
+}
+
+// hostedControlsPolicyPathVariable names the reviewed hosted-controls policy
+// path. The release workflow must never redirect it.
+const hostedControlsPolicyPathVariable = "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH"
+
+// overridesHostedControlsPolicyPath reports whether the parsed workflow sets the
+// policy path where it would take effect: a workflow, job, or step environment,
+// or an executable assignment in a run block. A mention in a comment changes
+// nothing and must not fail the gate.
+func overridesHostedControlsPolicyPath(document workflowDocument) bool {
+	if _, ok := document.Env[hostedControlsPolicyPathVariable]; ok {
+		return true
+	}
+	for _, job := range document.Jobs {
+		if _, ok := job.Env[hostedControlsPolicyPathVariable]; ok {
+			return true
+		}
+		for _, step := range job.Steps {
+			if _, ok := step.Env[hostedControlsPolicyPathVariable]; ok {
+				return true
+			}
+			if assignsInRun(step.Run, hostedControlsPolicyPathVariable) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var inlineComment = regexp.MustCompile(`(^|\s)#.*$`)
+
+// assignsInRun reports whether a run block assigns name in an executable
+// statement, directly, as a command prefix, or through export or env. Comments
+// are removed first, so a mention in one does not count.
+func assignsInRun(script, name string) bool {
+	for line := range strings.Lines(script) {
+		statement := strings.TrimSpace(inlineComment.ReplaceAllString(strings.TrimSpace(line), ""))
+		words := strings.Fields(statement)
+		if len(words) == 0 {
+			continue
+		}
+		// export and env both carry their own options before the assignments
+		// they apply, so neither the leading word nor an option ends the run.
+		// Every word of such a statement is examined rather than only the
+		// leading assignments.
+		// Every builtin that can carry an assignment past its own name.
+		if slices.Contains([]string{"export", "env", "declare", "typeset", "readonly", "local"}, words[0]) {
+			if slices.ContainsFunc(words[1:], func(word string) bool { return assignsWord(word, name) }) {
+				return true
+			}
+			continue
+		}
+		for _, word := range words {
+			if assignsWord(word, name) {
+				return true
+			}
+			// A plain assignment prefix precedes the command word, which has no "=".
+			if !strings.Contains(word, "=") {
+				break
+			}
+		}
+	}
+	return false
+}
+
+// assignsWord reports whether one shell word assigns name. Bash strips the
+// quotes before it reads the assignment, so a leading quote must not hide it.
+func assignsWord(word, name string) bool {
+	return strings.HasPrefix(strings.TrimLeft(word, `'"`), name+"=")
 }
 
 func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {

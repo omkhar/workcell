@@ -29,6 +29,9 @@ type updaterFixturePins struct {
 	GoLanguage                   string
 	GoAMD64SHA                   string
 	GoARM64SHA                   string
+	RuntimeGoVersion             string
+	RuntimeGoAMD64SHA            string
+	RuntimeGoARM64SHA            string
 	DeadcodeVersion              string
 	RustVersion                  string
 	RuntimeRustImage             string
@@ -509,6 +512,7 @@ func writeUpdaterFixture(t *testing.T, manifest updaterFixtureManifest, manifest
 
 	root := t.TempDir()
 	for _, rel := range []string{
+		".dockerignore",
 		".github/CODEOWNERS",
 		"adapters/codex/mcp/config.toml",
 		"adapters/codex/requirements.toml",
@@ -982,6 +986,9 @@ func updaterFixtureSummary(pins updaterFixturePins, current, target updaterFixtu
 	writeUpdaterFixtureSummaryLine(&output, "debian-ca-certificates-sha256", current.CACertificatesSHA256, target.CACertificatesSHA256)
 	writeUpdaterFixtureSummaryLine(&output, "go-toolchain", pins.GoToolchain, pins.GoToolchain)
 	writeUpdaterFixtureSummaryLine(&output, "go-language", pins.GoLanguage, pins.GoLanguage)
+	writeUpdaterFixtureSummaryLine(&output, "runtime-go", pins.RuntimeGoVersion, pins.GoToolchain)
+	writeUpdaterFixtureSummaryLine(&output, "runtime-go-amd64-sha256", pins.RuntimeGoAMD64SHA, pins.GoAMD64SHA)
+	writeUpdaterFixtureSummaryLine(&output, "runtime-go-arm64-sha256", pins.RuntimeGoARM64SHA, pins.GoARM64SHA)
 	writeUpdaterFixtureSummaryLine(&output, "deadcode-validator", pins.DeadcodeVersion, pins.DeadcodeVersion)
 	writeUpdaterFixtureSummaryLine(&output, "deadcode-script", pins.DeadcodeVersion, pins.DeadcodeVersion)
 	writeUpdaterFixtureSummaryLine(&output, "rust-toolchain", pins.RustVersion, pins.RustVersion)
@@ -1025,21 +1032,24 @@ func readUpdaterFixturePins(t *testing.T) updaterFixturePins {
 	hadolintARM64SHA := updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_LINUX_ARM64_SHA256=")
 
 	return updaterFixturePins{
-		RuntimeBase:      updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG NODE_BASE_IMAGE="),
-		ValidatorBase:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG VALIDATOR_BASE_IMAGE="),
-		GoToolchain:      updaterFixtureUniqueValue(t, goMod, "toolchain go"),
-		GoLanguage:       updaterFixtureUniqueValue(t, goMod, "go "),
-		GoAMD64SHA:       updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_X86_64_SHA256="),
-		GoARM64SHA:       updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_ARM64_SHA256="),
-		DeadcodeVersion:  updaterFixtureUniqueValue(t, validatorDockerfile, "ARG DEADCODE_VERSION="),
-		RustVersion:      updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_VERSION="),
-		RuntimeRustImage: updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_TOOLCHAIN_IMAGE="),
-		RustupVersion:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_VERSION="),
-		RustupAMD64SHA:   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_X86_64_SHA256="),
-		RustupARM64SHA:   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_ARM64_SHA256="),
-		HadolintVersion:  updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_VERSION="),
-		HadolintAMD64SHA: hadolintAMD64SHA,
-		HadolintARM64SHA: hadolintARM64SHA,
+		RuntimeBase:       updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG NODE_BASE_IMAGE="),
+		ValidatorBase:     updaterFixtureUniqueValue(t, validatorDockerfile, "ARG VALIDATOR_BASE_IMAGE="),
+		GoToolchain:       updaterFixtureUniqueValue(t, goMod, "toolchain go"),
+		GoLanguage:        updaterFixtureUniqueValue(t, goMod, "go "),
+		GoAMD64SHA:        updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_X86_64_SHA256="),
+		GoARM64SHA:        updaterFixtureUniqueValue(t, validatorDockerfile, "ARG GO_LINUX_ARM64_SHA256="),
+		RuntimeGoVersion:  updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG GO_VERSION="),
+		RuntimeGoAMD64SHA: updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG GO_LINUX_X86_64_SHA256="),
+		RuntimeGoARM64SHA: updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG GO_LINUX_ARM64_SHA256="),
+		DeadcodeVersion:   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG DEADCODE_VERSION="),
+		RustVersion:       updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_VERSION="),
+		RuntimeRustImage:  updaterFixtureUniqueValue(t, runtimeDockerfile, "ARG RUST_TOOLCHAIN_IMAGE="),
+		RustupVersion:     updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_VERSION="),
+		RustupAMD64SHA:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_X86_64_SHA256="),
+		RustupARM64SHA:    updaterFixtureUniqueValue(t, validatorDockerfile, "ARG RUSTUP_INIT_LINUX_ARM64_SHA256="),
+		HadolintVersion:   updaterFixtureUniqueValue(t, validatorDockerfile, "ARG HADOLINT_VERSION="),
+		HadolintAMD64SHA:  hadolintAMD64SHA,
+		HadolintARM64SHA:  hadolintARM64SHA,
 		HadolintChecksums: fmt.Sprintf(
 			"%s  *hadolint-linux-x86_64\n%s  *hadolint-linux-arm64\n",
 			hadolintAMD64SHA,
