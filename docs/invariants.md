@@ -49,8 +49,9 @@ A host path that an operator or a provider controls can change between the
 check and the open. `internal/rootio` opens through a verified parent handle
 and refuses to follow a symlink.
 
-`scripts/check-hardened-fs.sh` rejects a raw `os` file call in a
-trust-boundary package. `policy/hardened-fs-baseline.tsv` records the calls
+`scripts/check-hardened-fs.sh` rejects a raw `os` pathname call in a
+trust-boundary package. `os.Lstat` stays permitted, because it does not follow
+the final symlink. `policy/hardened-fs-baseline.tsv` records the calls
 that the tree carries today. A count above its baseline fails the check.
 Replace a call with the matching `internal/rootio` primitive, then lower the
 count. New code states its reason at the call with a

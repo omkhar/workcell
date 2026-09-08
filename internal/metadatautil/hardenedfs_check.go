@@ -5,12 +5,17 @@ package metadatautil
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // CheckHardenedFS rejects a raw os file call in a trust-boundary package.
@@ -29,6 +34,10 @@ import (
 // fails. New code states its case at the call instead:
 //
 //	data, err := os.ReadFile(path) // hardened-fs-exempt: the path is a build constant
+//
+// The reason is required, and the comment has to be a real comment on the
+// call's own line: the scan reads the syntax tree, so the same words inside a
+// string literal exempt nothing.
 func CheckHardenedFS(rootDir string) error {
 	counts := map[hardenedFSKey]int{}
 	details := map[hardenedFSKey][]string{}
@@ -52,12 +61,20 @@ func CheckHardenedFS(rootDir string) error {
 			if relErr != nil {
 				return relErr
 			}
-			content, readErr := os.ReadFile(path)
+			// Read the walked file through a verified parent handle rather
+			// than by name: the entry the walk reported and the bytes a second
+			// resolution returns are not the same file when the name is a
+			// symlink or is swapped in between.
+			content, readErr := rootio.ReadFileNoFollow(path, rel, hardenedFSMaxSourceBytes)
 			if readErr != nil {
 				return readErr
 			}
 			scanned++
-			for _, finding := range HardenedFSFindings(string(content)) {
+			fileFindings, scanErr := HardenedFSFindings(string(content))
+			if scanErr != nil {
+				return fmt.Errorf("%s: %w", rel, scanErr)
+			}
+			for _, finding := range fileFindings {
 				key := hardenedFSKey{path: filepath.ToSlash(rel), symbol: finding.Symbol}
 				counts[key]++
 				details[key] = append(details[key],
@@ -108,6 +125,10 @@ const (
 	hardenedFSBaselinePath = "policy/hardened-fs-baseline.tsv"
 	hardenedFSExemptTag    = "hardened-fs-exempt:"
 	hardenedFSMaxReported  = 5
+
+	// hardenedFSMaxSourceBytes bounds one Go source. The largest source in the
+	// scanned packages is two orders of magnitude below it.
+	hardenedFSMaxSourceBytes = 8 << 20
 )
 
 // hardenedFSPackages lists the packages that read or write a path an operator
@@ -126,17 +147,30 @@ var hardenedFSPackages = []string{
 }
 
 // hardenedFSSymbols lists the raw calls the hardened primitives replace. Each
-// one resolves a path by name, so each one follows a symlink and races a
-// rename between the check and the open.
-var hardenedFSSymbols = []string{
-	"os.Open",
-	"os.OpenFile",
-	"os.ReadFile",
-	"os.WriteFile",
-	"os.Create",
-	"os.MkdirAll",
-	"os.Rename",
-	"os.Stat",
+// one resolves an operator-controlled path by name, so each one follows a
+// symlink and races a rename between the check and the open.
+//
+// os.Lstat is deliberately absent: it does not follow the final symlink, so it
+// is part of the answer rather than part of the defect.
+var hardenedFSSymbols = map[string]bool{
+	"Open":      true,
+	"OpenFile":  true,
+	"ReadFile":  true,
+	"WriteFile": true,
+	"Create":    true,
+	"Mkdir":     true,
+	"MkdirAll":  true,
+	"Rename":    true,
+	"Stat":      true,
+	"ReadDir":   true,
+	"Readlink":  true,
+	"Remove":    true,
+	"RemoveAll": true,
+	"Chmod":     true,
+	"Chown":     true,
+	"Symlink":   true,
+	"Link":      true,
+	"Truncate":  true,
 }
 
 type hardenedFSKey struct {
@@ -152,25 +186,83 @@ type HardenedFSFinding struct {
 
 // HardenedFSFindings reports each raw os file call in one Go source.
 //
-// Comments and string literals are blanked before the scan, so text that
-// names a call is not a call: this validator is itself the class-D target the
-// reviewer taught. The exemption tag is read from the original line, because
-// blanking removes it.
-func HardenedFSFindings(source string) []HardenedFSFinding {
-	stripped := strings.Split(dropCommentsAndLiterals(source), "\n")
-	original := strings.Split(source, "\n")
+// It reads the syntax tree rather than the text. A text scan cannot tell a
+// call from a mention of one, cannot resolve an aliased import such as
+// stdos "os", and cannot tell an exemption comment from the same words inside
+// a string literal. The parser answers all three exactly.
+func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, "source.go", source, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("parse the Go source: %w", err)
+	}
+	name, err := hardenedFSOSImportName(file)
+	if err != nil {
+		return nil, err
+	}
+	if name == "" {
+		return nil, nil // the file does not import os
+	}
+	exempt := hardenedFSExemptLines(fileSet, file)
 	var findings []HardenedFSFinding
-	for index, line := range stripped {
-		if index < len(original) && strings.Contains(original[index], hardenedFSExemptTag) {
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		qualifier, ok := selector.X.(*ast.Ident)
+		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
+			return true
+		}
+		line := fileSet.Position(call.Pos()).Line
+		if exempt[line] {
+			return true
+		}
+		findings = append(findings, HardenedFSFinding{Line: line, Symbol: name + "." + selector.Sel.Name})
+		return true
+	})
+	sort.Slice(findings, func(i, j int) bool { return findings[i].Line < findings[j].Line })
+	return findings, nil
+}
+
+// hardenedFSOSImportName returns the name that qualifies a call of the os
+// package in this file, or the empty string when the file does not import it.
+// A dot import is refused: it removes the qualifier that the scan reads, so
+// the rule would silently stop applying to the file.
+func hardenedFSOSImportName(file *ast.File) (string, error) {
+	for _, spec := range file.Imports {
+		if spec.Path == nil || spec.Path.Value != `"os"` {
 			continue
 		}
-		for _, symbol := range hardenedFSSymbols {
-			for count := countCalls(line, symbol); count > 0; count-- {
-				findings = append(findings, HardenedFSFinding{Line: index + 1, Symbol: symbol})
+		if spec.Name == nil {
+			return "os", nil
+		}
+		if spec.Name.Name == "." || spec.Name.Name == "_" {
+			return "", fmt.Errorf("the os import uses the %q form; write it as a plain import or an alias so the hardened filesystem rule can read its calls", spec.Name.Name)
+		}
+		return spec.Name.Name, nil
+	}
+	return "", nil
+}
+
+// hardenedFSExemptLines returns the lines that carry a reasoned exemption
+// comment. The reason is required: a bare tag states nothing.
+func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int]bool {
+	lines := map[int]bool{}
+	for _, group := range file.Comments {
+		for _, comment := range group.List {
+			_, reason, found := strings.Cut(comment.Text, hardenedFSExemptTag)
+			if !found || strings.TrimSpace(reason) == "" {
+				continue
 			}
+			lines[fileSet.Position(comment.Pos()).Line] = true
 		}
 	}
-	return findings
+	return lines
 }
 
 func loadHardenedFSBaseline(path string) (map[hardenedFSKey]int, error) {

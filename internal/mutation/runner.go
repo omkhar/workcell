@@ -200,9 +200,9 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/metadatautil/hardenedfs_check.go",
-		original:     `		if index < len(original) && strings.Contains(original[index], hardenedFSExemptTag) {`,
-		replacement:  `		if index < len(original) && strings.Contains(line, hardenedFSExemptTag) {`,
-		label:        "hardened filesystem inline exemption source",
+		original:     `			if !found || strings.TrimSpace(reason) == "" {`,
+		replacement:  `			if !found {`,
+		label:        "hardened filesystem exemption reason requirement",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestHardenedFSFindings", "-count=1"),
 	},
 	{
