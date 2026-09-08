@@ -25,12 +25,7 @@ WORKCELL_RUNTIME_AUTONOMY_FILE="${WORKCELL_RUNTIME_STATE_DIR}/autonomy"
 WORKCELL_RUNTIME_ASSURANCE_FILE="${WORKCELL_RUNTIME_STATE_DIR}/session-assurance"
 # shellcheck disable=SC2034
 WORKCELL_RUNTIME_COPILOT_TOKEN_FILE_PATH="${WORKCELL_RUNTIME_STATE_DIR}/copilot-token-file"
-WORKCELL_APT_BROKER_ROOT="${WORKCELL_RUNTIME_STATE_DIR}/apt-broker"
-WORKCELL_APT_BROKER_REQUESTS_DIR="${WORKCELL_APT_BROKER_ROOT}/requests"
-WORKCELL_APT_BROKER_RESULTS_DIR="${WORKCELL_APT_BROKER_ROOT}/results"
-WORKCELL_APT_BROKER_PID_FILE="${WORKCELL_APT_BROKER_ROOT}/pid"
-WORKCELL_APT_BROKER_START_WAIT_SECONDS="${WORKCELL_APT_BROKER_START_WAIT_SECONDS:-5}"
-WORKCELL_APT_BROKER_START_POLL_SECONDS="${WORKCELL_APT_BROKER_START_POLL_SECONDS:-0.1}"
+WORKCELL_APT_BROKER_SERVER="/usr/local/libexec/workcell/workcell-apt-broker-server"
 
 workcell_runtime_user_die() {
   echo "$*" >&2
@@ -256,56 +251,19 @@ workcell_prepare_runtime_identity() {
   user_name="$(getent passwd "${uid}" | cut -d: -f1)"
   workcell_append_shadow_entry "${user_name}"
 
-  mkdir -p /etc/sudoers.d
-  local sudoers_tmp
-  sudoers_tmp="$(mktemp /etc/sudoers.d/workcell-runtime-user.tmp.XXXXXX)"
-  printf '%s ALL=(root) NOPASSWD: /usr/local/libexec/workcell/apt-helper.sh\n' "${user_name}" >"${sudoers_tmp}"
-  chmod 0440 "${sudoers_tmp}"
-  mv "${sudoers_tmp}" /etc/sudoers.d/workcell-runtime-user
-
   printf '%s\n' "${user_name}"
 }
 
-workcell_apt_broker_running() {
-  local broker_pid=""
-  local broker_cmdline=""
-
-  [[ -f "${WORKCELL_APT_BROKER_PID_FILE}" ]] || return 1
-  broker_pid="$(head -n1 "${WORKCELL_APT_BROKER_PID_FILE}" 2>/dev/null || true)"
-  [[ "${broker_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
-  [[ -r "/proc/${broker_pid}/cmdline" ]] || return 1
-  broker_cmdline="$(tr '\0' ' ' <"/proc/${broker_pid}/cmdline" 2>/dev/null || true)"
-  [[ "${broker_cmdline}" == *"/usr/local/libexec/workcell/apt-broker.sh"* ]]
-}
-
-workcell_wait_for_apt_broker() {
-  local deadline=0
-
-  deadline=$((SECONDS + WORKCELL_APT_BROKER_START_WAIT_SECONDS))
-  while ((SECONDS < deadline)); do
-    if workcell_apt_broker_running; then
-      return 0
-    fi
-    sleep "${WORKCELL_APT_BROKER_START_POLL_SECONDS}" || true
-  done
-  workcell_runtime_user_die "Workcell apt broker failed to start."
-}
-
+# The broker server owns its own startup: --start creates the socket directory,
+# launches the detached server, and returns only once that server has answered
+# the readiness handshake and the socket it bound has passed validation. There
+# is nothing left here to poll for, and no state directory for this script to
+# lay out, so a non-zero exit is the whole failure signal.
 workcell_start_apt_broker() {
-  mkdir -p \
-    "${WORKCELL_APT_BROKER_ROOT}" \
-    "${WORKCELL_APT_BROKER_REQUESTS_DIR}" \
-    "${WORKCELL_APT_BROKER_RESULTS_DIR}"
-  chmod 0755 "${WORKCELL_APT_BROKER_ROOT}" "${WORKCELL_APT_BROKER_RESULTS_DIR}"
-  chmod 1733 "${WORKCELL_APT_BROKER_REQUESTS_DIR}"
-  if workcell_apt_broker_running; then
-    export WORKCELL_APT_BROKER_ROOT
-    return 0
-  fi
-  WORKCELL_APT_BROKER_ROOT="${WORKCELL_APT_BROKER_ROOT}" /usr/bin/setsid -f \
-    /bin/bash /usr/local/libexec/workcell/apt-broker.sh </dev/null >/dev/null 2>&1
-  export WORKCELL_APT_BROKER_ROOT
-  workcell_wait_for_apt_broker
+  local uid="$1"
+
+  "${WORKCELL_APT_BROKER_SERVER}" --start --peer-uid "${uid}" ||
+    workcell_runtime_user_die "Workcell apt broker failed to start."
 }
 
 workcell_write_readonly_state_file() {
@@ -395,7 +353,7 @@ workcell_reexec_as_runtime_user() {
   gid="$(workcell_runtime_host_gid)"
   user_name="$(workcell_prepare_runtime_identity)"
   workcell_write_runtime_state
-  workcell_start_apt_broker
+  workcell_start_apt_broker "${uid}"
   export USER="${user_name}"
   export LOGNAME="${user_name}"
 

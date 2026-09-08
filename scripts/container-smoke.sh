@@ -1197,6 +1197,9 @@ run_container_with_injection_bundle_stdin codex "${INJECTION_BUNDLE_ROOT}/codex"
 set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+# The entrypoint runs more than once in one container. A second run has to
+# accept the apt broker the first one started, not fail on its socket.
+/usr/local/bin/workcell-entrypoint codex --version >/dev/null
 setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -s <<'INNER'
 set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
@@ -1232,49 +1235,35 @@ if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get
   echo "expected sudo preserve-env to stay constrained on the apt broker path" >&2
   exit 1
 fi
-grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
-slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh
-slow_apt_broker_root=/tmp/workcell-apt-broker
-cat >"${slow_apt_helper}" <<'SLOW_APT_HELPER'
-#!/usr/bin/env bash
-set -euo pipefail
-sleep 11
-printf 'slow-apt-helper-ok\n'
-SLOW_APT_HELPER
-chmod +x "${slow_apt_helper}"
-rm -rf "${slow_apt_broker_root}"
-WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
-  WORKCELL_APT_HELPER="${slow_apt_helper}" \
-  WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
-  /bin/bash /usr/local/libexec/workcell/apt-broker.sh >/dev/null 2>&1 &
-slow_apt_broker_pid=$!
-trap 'kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true; wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true' EXIT
-for _ in $(seq 1 100); do
-  [[ -f "${slow_apt_broker_root}/pid" ]] && break
-  sleep 0.1
-done
-if [[ ! -f "${slow_apt_broker_root}/pid" ]]; then
-  echo "expected slow apt broker fixture to publish its pid file" >&2
+grep -q "Workcell blocked malformed privileged package request." /tmp/codex-sudo-preserve-path.err
+if [[ -e /usr/local/libexec/workcell/apt-broker.sh ]]; then
+  echo "expected the shell apt broker to be absent from the runtime image" >&2
   exit 1
 fi
-if ! WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
-  WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
-  sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
-  >/tmp/codex-sudo-slow-apt.out 2>/tmp/codex-sudo-slow-apt.err; then
-  echo "expected sudo-wrapper to wait for a slow apt broker request by default" >&2
-  cat /tmp/codex-sudo-slow-apt.out >&2 || true
-  cat /tmp/codex-sudo-slow-apt.err >&2 || true
+if [[ -e /etc/sudoers.d/workcell-runtime-user ]]; then
+  echo "expected no session sudoers grant behind the apt broker" >&2
   exit 1
 fi
-grep -q "slow-apt-helper-ok" /tmp/codex-sudo-slow-apt.out
-if grep -q "Workcell apt broker timed out." /tmp/codex-sudo-slow-apt.err; then
-  echo "expected default apt broker waits to avoid timing out slow requests" >&2
-  cat /tmp/codex-sudo-slow-apt.err >&2
+apt_broker_socket=/run/workcell/apt-broker/socket
+if [[ -L "${apt_broker_socket}" ]] || [[ ! -S "${apt_broker_socket}" ]]; then
+  echo "expected the apt broker to publish a real socket" >&2
   exit 1
 fi
-trap - EXIT
-kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
-wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
+test "$(stat -c "%u:%a" "${apt_broker_socket}")" = "0:666"
+test "$(stat -c "%u:%a" /run/workcell/apt-broker)" = "0:755"
+if ! sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help \
+  >/tmp/codex-sudo-broker-apt.out 2>/tmp/codex-sudo-broker-apt.err; then
+  echo "expected the apt broker socket to serve a privileged package request" >&2
+  cat /tmp/codex-sudo-broker-apt.out >&2 || true
+  cat /tmp/codex-sudo-broker-apt.err >&2 || true
+  exit 1
+fi
+grep -q "apt-get" /tmp/codex-sudo-broker-apt.out
+if sudo -n /bin/sh -c id >/tmp/codex-sudo-broker-other.out 2>&1; then
+  echo "expected the apt broker client to admit only the package helper" >&2
+  exit 1
+fi
+grep -q "Workcell sudo compatibility mode only permits the package helper." /tmp/codex-sudo-broker-other.out
 apt-get --help >/dev/null
 codex --version >/dev/null
 mkdir -p /workspace/exfil
@@ -3707,7 +3696,13 @@ EOF
 	    echo "expected workspace symlink launcher invocation to fail" >&2
 	    exit 1
 	  fi
-	  grep -q "Unsupported Workcell launcher invocation for copilot: /workspace/tmp/copilot" /tmp/provider-launcher-workspace-symlink.out
+	  # Two reviewed refusals answer this alias, and which one fires depends on the
+  # profile. On the strict profile the exec guard reads the pathname the caller
+  # wrote, sees a workspace component, and refuses before the launcher starts.
+  # Where the guard does not run that check the launcher refuses its own
+  # unexpected invocation path. The failed launch above is asserted separately,
+  # so this line only requires the failure to be one of the two.
+  grep -Eq "Unsupported Workcell launcher invocation for copilot: /workspace/tmp/copilot|Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\." /tmp/provider-launcher-workspace-symlink.out
 	  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups rm -f /workspace/tmp/copilot
 	  cat <<'EOF' >/tmp/workcell-development-wrapper-bashenv.sh
 unset BASH_ENV
@@ -3818,19 +3813,19 @@ EOF
   cp /bin/true "$EXEC_TMP/workcell-state-native"
   chmod 0700 "$EXEC_TMP/workcell-state-native"
   if env -u LD_PRELOAD bash -c 'exec 9<"$1"; /proc/self/fd/9 "$2" --version' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-fd-target.out 2>&1; then echo "expected strict profile to reject fd loader-mediated native executable launches from /state" >&2; exit 1; fi
-  assert_refused_at_or_before_target "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-fd-target.out
+  assert_refused_at_or_before_target "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/state-native-loader-fd-target.out
   if env -u LD_PRELOAD bash -c 'cp "$2" "$2.deleted"; exec 8<"$2.deleted"; rm -f "$2.deleted"; exec "$1" /proc/self/fd/8' bash "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader-deleted-fd-target.out 2>&1; then echo "expected strict profile to reject deleted-fd loader-mediated native executable launches from /state" >&2; exit 1; fi
-  assert_refused_at_or_before_target "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader-deleted-fd-target.out
+  assert_refused_at_or_before_target "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/state-native-loader-deleted-fd-target.out
   if "$EXEC_TMP/workcell-state-native" >/tmp/state-native.out 2>&1; then
     echo "expected strict profile to reject direct native executable launches from /state" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/state-native.out
   if env -u LD_PRELOAD "$LOADER" "$EXEC_TMP/workcell-state-native" >/tmp/state-native-loader.out 2>&1; then
     echo "expected strict profile to reject loader-mediated native executable launches from /state" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-loader.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/state-native-loader.out
   # Loader invocation-form matrix, replayed against the real loader. The Rust
   # table in runtime/container/rust/tests/loader_forms.rs states the same forms
   # against the exported guard entry points; these rows put the /state native
@@ -3840,7 +3835,7 @@ EOF
   # states its own result: a refused row wants the block message, a row the
   # loader accepts wants status 0 from /bin/true, and a row the loader itself
   # rejects wants the loader's own text and no block message.
-  loader_form_block_message="Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile."
+  loader_form_block_message="Workcell blocked direct native executable launch from mutable runtime paths on the strict profile."
   loader_form_refused() {
     local label="$1"
     shift
@@ -3889,20 +3884,22 @@ EOF
   loader_form_reaches_target valueless-option-then-target --inhibit-cache /bin/true
   loader_form_loader_rejects argv0-attached-value "unrecognized option" "--argv0=$EXEC_TMP/workcell-state-native" /bin/true
   loader_form_loader_rejects inhibit-rpath-empty-value "unrecognized option" --inhibit-rpath= /bin/true
-  # The split-at-equals defect the Rust table records as pending: the truncated
-  # prefix is a mutable native payload, so only this lane can observe it. The
-  # loader reports the whole name, which proves it was not truncated either.
-  loader_form_loader_rejects target-with-equals-sign "workcell-state-native=x" "$EXEC_TMP/workcell-state-native=x"
+  # A loader target under a mutable root is refused whether or not it exists:
+  # the loader resolves the name after this guard returns, so the name can be
+  # filled in between the two. That covers the split-at-equals case as well,
+  # because the truncated prefix and the whole name share the same mutable
+  # directory and both refuse.
+  loader_form_refused target-with-equals-sign "$EXEC_TMP/workcell-state-native=x"
   if WORKCELL_MODE=breakglass "$EXEC_TMP/workcell-state-native" >/tmp/state-native-workcell-mode-bypass.out 2>&1; then
     echo "expected strict profile to ignore caller-supplied WORKCELL_MODE for mutable native execution" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-workcell-mode-bypass.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/state-native-workcell-mode-bypass.out
   if CODEX_PROFILE=build "$EXEC_TMP/workcell-state-native" >/tmp/state-native-codex-profile-bypass.out 2>&1; then
     echo "expected strict profile to ignore caller-supplied CODEX_PROFILE for mutable native execution" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/state-native-codex-profile-bypass.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/state-native-codex-profile-bypass.out
   if [[ "${WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC:-0}" != "1" ]] && [[ ! -w /workspace ]]; then
     echo "Workcell note: skipping workspace mutable execution smoke because /workspace is not writable for the runtime user." >&2
     WORKCELL_CONTAINER_SMOKE_SKIP_WORKSPACE_MUTABLE_EXEC=1
@@ -3927,7 +3924,7 @@ EOF
     echo "expected strict profile to reject direct native executable launches from /workspace" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/workspace-native.out
   cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
   chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
   exec 3<"${workspace_exec_scratch}/.workcell-native-helper-deleted-fd"
@@ -3963,12 +3960,12 @@ EOF
     exit 1
   fi
   exec 3<&-
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-fd.out
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-devfd.out
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-dotfd.out
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-threadself.out
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-taskfd.out
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdin.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-fd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-devfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-dotfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-threadself.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-taskfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdin.out
   cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-pidfd"
   chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-pidfd"
   if (
@@ -3979,7 +3976,7 @@ EOF
     echo "expected strict profile to reject deleted-fd native executable launches via /proc/\$\$/fd from /workspace" >&2
     exit 1
   fi
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-pidfd.out
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-pidfd.out
   cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-stdout"
   chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-stdout"
   if (
@@ -3991,7 +3988,7 @@ EOF
     echo "expected strict profile to reject deleted-fd native executable launches via /dev/stdout from /workspace" >&2
     exit 1
   fi
-  grep -Eq "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdout.err
+  grep -Eq "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\\.|cannot execute: required file not found|No such file or directory" /tmp/workspace-native-deleted-stdout.err
   cp /bin/true "${workspace_exec_scratch}/.workcell-native-helper-deleted-stderr"
   chmod 0700 "${workspace_exec_scratch}/.workcell-native-helper-deleted-stderr"
   if (
@@ -4007,7 +4004,7 @@ EOF
     echo "expected strict profile to reject loader-mediated native executable launches from /workspace" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/workspace-native-loader.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/workspace-native-loader.out
   cat >"${workspace_exec_scratch}/.workcell-node-shebang" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell shebang bypass");
@@ -4555,7 +4552,12 @@ EOF
     echo "expected Workcell git guard to reject symlinked hidden git execution" >&2
     exit 1
   fi
-  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-symlink.out
+  # The alias sits in a mutable root and points at the trusted git trampoline.
+  # On the strict profile the exec guard reads the pathname the caller wrote and
+  # refuses before the trampoline runs, so the trampoline's own git refusals only
+  # answer where that check does not run. The failed launch above is asserted
+  # separately, so this line requires one of the three reviewed refusals.
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override|Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\." /tmp/git-guard-symlink.out
   if ! cp /usr/local/libexec/workcell/core/git "$EXEC_TMP/git-copy" >/tmp/git-copy.out 2>&1; then
     echo "expected Workcell git trampoline to remain copyable for deterministic debugging" >&2
     exit 1
@@ -4564,7 +4566,7 @@ EOF
     echo "expected copied Workcell git trampoline under mutable state to be blocked before execution" >&2
     exit 1
   fi
-  grep -q "Workcell blocked direct native executable launch from mutable workspace/state paths on the strict profile." /tmp/git-guard-copy.out
+  grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/git-guard-copy.out
   if git -c core.hooksPath=/dev/null commit -m smoke >/tmp/git-guard-hooks.out 2>&1; then
     echo "expected Workcell git guard to reject inline core.hooksPath override" >&2
     exit 1

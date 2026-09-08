@@ -20,7 +20,7 @@ The main local commands have different purposes.
 | `./scripts/dev-quick-check.sh` | Run the fast format, lint, contract, and unit checks. |
 | `./scripts/build-and-test.sh` | Run host-native tests. Use `--docker` for the pinned validator image. |
 | `./scripts/container-smoke.sh` | Build the runtime image and test the container boundary. |
-| `./scripts/verify-invariants.sh` | Test launcher, policy, profile, and host-boundary invariants. |
+| `./scripts/verify-invariants.sh` | Test launcher, policy, profile, and host-boundary invariants. It sources `scripts/verify-invariants-live.sh` for the Darwin live-Colima lane. |
 | `./scripts/verify-reproducible-build.sh` | Compare two runtime builds. |
 | `./scripts/validate-repo.sh` | Run the selected repository validation profile. |
 | `./scripts/pre-merge.sh` | Plan and run a local validation profile. |
