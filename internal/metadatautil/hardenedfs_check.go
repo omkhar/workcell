@@ -144,6 +144,7 @@ var hardenedFSPackages = []string{
 	"internal/host",
 	"internal/injection",
 	"internal/runtimeutil",
+	"internal/publishpr",
 	"internal/sessionctl",
 }
 
@@ -189,10 +190,14 @@ type HardenedFSFinding struct {
 
 // HardenedFSFindings reports each raw os file call in one Go source.
 //
-// It reads the syntax tree rather than the text. A text scan cannot tell a
-// call from a mention of one, cannot resolve an aliased import such as
-// stdos "os", and cannot tell an exemption comment from the same words inside
-// a string literal. The parser answers all three exactly.
+// It reads the syntax tree rather than the text. A text scan cannot resolve an
+// aliased import such as stdos "os", cannot tell an exemption comment from the
+// same words inside a string literal, and cannot see through parentheses. The
+// parser answers all three exactly.
+//
+// It counts every reference to a banned symbol, not only a direct call. A
+// function value carries the same authority: open := os.Open followed by
+// open(path) resolves the path by name exactly as the direct call does.
 func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	fileSet := token.NewFileSet()
 	file, err := parser.ParseFile(fileSet, "source.go", source, parser.ParseComments|parser.SkipObjectResolution)
@@ -209,11 +214,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	exempt := hardenedFSExemptLines(fileSet, file)
 	var findings []HardenedFSFinding
 	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+		selector, ok := node.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
@@ -222,7 +223,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 			return true
 		}
 		findings = append(findings, HardenedFSFinding{
-			Line:   fileSet.Position(call.Pos()).Line,
+			Line:   hardenedFSLine(fileSet, selector.Pos()),
 			Symbol: name + "." + selector.Sel.Name,
 		})
 		return true
@@ -272,6 +273,14 @@ func hardenedFSOSImportName(file *ast.File) (string, error) {
 
 // hardenedFSExemptLines returns the lines that carry a reasoned exemption
 // comment. The reason is required: a bare tag states nothing.
+// hardenedFSLine returns the physical line of a position. A //line directive
+// renames a logical line, so two positions in different parts of the file can
+// report the same logical line and one comment would exempt a call it does not
+// sit beside.
+func hardenedFSLine(fileSet *token.FileSet, pos token.Pos) int {
+	return fileSet.PositionFor(pos, false).Line
+}
+
 // hardenedFSExemptionReason reports a comment whose body opens with the tag
 // and then states a reason. The delimiters are removed first: a block comment
 // carries its closing "*/" in the text, and that is not a reason.
@@ -291,7 +300,7 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int]bool 
 			if !hardenedFSExemptionReason(comment.Text) {
 				continue
 			}
-			lines[fileSet.Position(comment.Pos()).Line] = true
+			lines[hardenedFSLine(fileSet, comment.Pos())] = true
 		}
 	}
 	return lines

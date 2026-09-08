@@ -59,7 +59,18 @@ func TestHardenedFSFindings(t *testing.T) {
 		{name: "interpreted literal", source: header + "var s = \"os.Open(\"\n", want: 0},
 		{name: "raw literal", source: header + "var s = `os.Open(path)`\n", want: 0},
 		{name: "a longer identifier is not the call", source: header + "func f() { workcellos.Open(path) }\n", want: 0},
-		{name: "no argument list", source: header + "var f = os.Open\n", want: 0},
+		{
+			// A function value carries the same authority as the direct call,
+			// so a reference is a finding.
+			name:   "a function value is a reference",
+			source: header + "var open = os.Open\n",
+			want:   1,
+		},
+		{
+			name:   "a function value and its call are two references",
+			source: header + "func f() {\nopen := os.Open\nopen(path)\n_ = os.Open\n}\n",
+			want:   2,
+		},
 		{name: "another package with the same method", source: header + "func f() { rootio.Open(path) }\n", want: 0},
 		{name: "os.Lstat is the answer, not the defect", source: header + "func f() { os.Lstat(path) }\n", want: 0},
 		{
@@ -110,6 +121,14 @@ func TestHardenedFSFindings(t *testing.T) {
 			name:   "a block comment with a reason clears the call",
 			source: header + "func f() { os.Open(path) } /* hardened-fs-exempt: a build constant */\n",
 			want:   0,
+		},
+		{
+			// A //line directive renames a logical line, so a comment and an
+			// unrelated call can report the same one.
+			name: "a line directive does not move an exemption",
+			source: header + "//line fixture.go:99\nfunc f() { os.Open(path) }\n" +
+				"//line fixture.go:99\n// hardened-fs-exempt: a build constant\n",
+			want: 1,
 		},
 		{
 			name:   "the tag has to open the comment body",
@@ -201,7 +220,7 @@ func TestCheckHardenedFSRatchet(t *testing.T) {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", "host", "doc.go"), "package host\n")
 			}
 			writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), testCase.baseline)
-			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "runtimeutil", "sessionctl"} {
+			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "publishpr", "runtimeutil", "sessionctl"} {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", pkg, "doc.go"), "package "+pkg+"\n")
 			}
 			err := metadatautil.CheckHardenedFS(root)
