@@ -37,7 +37,8 @@ import (
 //
 // The reason is required, and the comment has to be a real comment on the
 // call's own line: the scan reads the syntax tree, so the same words inside a
-// string literal exempt nothing.
+// string literal exempt nothing. One comment clears one call, so a line with
+// two raw calls needs two lines and two reasons.
 func CheckHardenedFS(rootDir string) error {
 	counts := map[hardenedFSKey]int{}
 	details := map[hardenedFSKey][]string{}
@@ -153,24 +154,26 @@ var hardenedFSPackages = []string{
 // os.Lstat is deliberately absent: it does not follow the final symlink, so it
 // is part of the answer rather than part of the defect.
 var hardenedFSSymbols = map[string]bool{
-	"Open":      true,
-	"OpenFile":  true,
-	"ReadFile":  true,
-	"WriteFile": true,
-	"Create":    true,
-	"Mkdir":     true,
-	"MkdirAll":  true,
-	"Rename":    true,
-	"Stat":      true,
-	"ReadDir":   true,
-	"Readlink":  true,
-	"Remove":    true,
-	"RemoveAll": true,
-	"Chmod":     true,
-	"Chown":     true,
-	"Symlink":   true,
-	"Link":      true,
-	"Truncate":  true,
+	"Open":       true,
+	"OpenFile":   true,
+	"ReadFile":   true,
+	"WriteFile":  true,
+	"Create":     true,
+	"CreateTemp": true,
+	"MkdirTemp":  true,
+	"Mkdir":      true,
+	"MkdirAll":   true,
+	"Rename":     true,
+	"Stat":       true,
+	"ReadDir":    true,
+	"Readlink":   true,
+	"Remove":     true,
+	"RemoveAll":  true,
+	"Chmod":      true,
+	"Chown":      true,
+	"Symlink":    true,
+	"Link":       true,
+	"Truncate":   true,
 }
 
 type hardenedFSKey struct {
@@ -210,7 +213,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok {
 			return true
 		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
+		selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
@@ -218,15 +221,33 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
 			return true
 		}
-		line := fileSet.Position(call.Pos()).Line
-		if exempt[line] {
-			return true
-		}
-		findings = append(findings, HardenedFSFinding{Line: line, Symbol: name + "." + selector.Sel.Name})
+		findings = append(findings, HardenedFSFinding{
+			Line:   fileSet.Position(call.Pos()).Line,
+			Symbol: name + "." + selector.Sel.Name,
+		})
 		return true
 	})
 	sort.Slice(findings, func(i, j int) bool { return findings[i].Line < findings[j].Line })
-	return findings, nil
+	return applyHardenedFSExemptions(findings, exempt), nil
+}
+
+// applyHardenedFSExemptions clears one call per exempted line.
+//
+// A comment states the reason for the call it sits beside, and one comment
+// cannot state the reason for two. A line that carries an exemption and more
+// than one call keeps every call after the first, so the author splits the
+// line and states a reason for each.
+func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int]bool) []HardenedFSFinding {
+	used := map[int]bool{}
+	kept := findings[:0]
+	for _, finding := range findings {
+		if exempt[finding.Line] && !used[finding.Line] {
+			used[finding.Line] = true
+			continue
+		}
+		kept = append(kept, finding)
+	}
+	return kept
 }
 
 // hardenedFSOSImportName returns the name that qualifies a call of the os

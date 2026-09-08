@@ -14,6 +14,7 @@ internal/applecontainer/target.go	os.MkdirAll	2
 internal/applecontainer/target.go	os.WriteFile	1
 internal/authpolicy/auth_main.go	os.Stat	1
 internal/authpolicy/manage_mutate.go	os.Chmod	1
+internal/authpolicy/manage_mutate.go	os.CreateTemp	1
 internal/authpolicy/manage_mutate.go	os.Remove	2
 internal/authpolicy/manage_mutate.go	os.Rename	1
 internal/authpolicy/manage_mutate.go	os.Stat	1
@@ -29,11 +30,13 @@ internal/authresolve/resolve_path_security.go	os.Stat	1
 internal/authresolve/resolve_policy_load.go	os.Stat	1
 internal/authresolve/resolve_provider_credentials.go	os.Stat	1
 internal/host/auditseal/sealio.go	os.Chmod	1
+internal/host/auditseal/sealio.go	os.CreateTemp	1
 internal/host/auditseal/sealio.go	os.OpenFile	1
 internal/host/auditseal/sealio.go	os.ReadFile	1
 internal/host/auditseal/sealio.go	os.Remove	1
 internal/host/auditseal/sealio.go	os.Rename	1
 internal/host/c3certify/certify.go	os.MkdirAll	1
+internal/host/c3certify/certify.go	os.MkdirTemp	3
 internal/host/c3certify/certify.go	os.ReadDir	1
 internal/host/c3certify/certify.go	os.ReadFile	2
 internal/host/c3certify/certify.go	os.RemoveAll	8
@@ -50,6 +53,7 @@ internal/host/keystore/keystore.go	os.OpenFile	1
 internal/host/launcher/colima.go	os.Stat	1
 internal/host/launcher/launcher.go	os.Chmod	1
 internal/host/launcher/launcher.go	os.MkdirAll	3
+internal/host/launcher/launcher.go	os.MkdirTemp	1
 internal/host/launcher/launcher.go	os.ReadFile	1
 internal/host/launcher/launcher.go	os.RemoveAll	3
 internal/host/launcher/launcher.go	os.Rename	1
@@ -57,13 +61,16 @@ internal/host/launcher/launcher.go	os.Stat	1
 internal/host/launcher/launcher.go	os.WriteFile	1
 internal/host/launcher/process_generation_linux.go	os.ReadFile	1
 internal/host/launcher/runtime.go	os.ReadFile	1
+internal/host/release/asset_content.go	os.MkdirTemp	1
 internal/host/release/asset_content.go	os.Remove	2
 internal/host/release/release.go	os.MkdirAll	1
 internal/host/release/release.go	os.WriteFile	1
+internal/host/runtimebuilder/runtimebuilder.go	os.CreateTemp	1
 internal/host/runtimebuilder/runtimebuilder.go	os.OpenFile	1
 internal/host/runtimebuilder/runtimebuilder.go	os.Remove	3
 internal/host/runtimebuilder/runtimebuilder.go	os.Rename	1
 internal/host/sessions/sessions.go	os.Chmod	1
+internal/host/sessions/sessions.go	os.CreateTemp	1
 internal/host/sessions/sessions.go	os.MkdirAll	1
 internal/host/sessions/sessions.go	os.ReadDir	5
 internal/host/sessions/sessions.go	os.Remove	1
@@ -71,6 +78,7 @@ internal/host/sessions/sessions.go	os.Rename	1
 internal/host/sessions/sessions.go	os.Stat	2
 internal/host/supportmatrix/supportmatrix.go	os.Open	1
 internal/host/validatorbind/validatorbind.go	os.Chmod	1
+internal/host/validatorbind/validatorbind.go	os.CreateTemp	1
 internal/host/validatorbind/validatorbind.go	os.Remove	1
 internal/host/validatorbind/validatorbind.go	os.Stat	3
 internal/injection/input_limits.go	os.Open	1
@@ -78,6 +86,7 @@ internal/injection/input_limits.go	os.Stat	1
 internal/injection/path.go	os.Stat	1
 internal/injection/prepare_bundle.go	os.Chmod	2
 internal/injection/prepare_bundle.go	os.MkdirAll	3
+internal/injection/prepare_bundle.go	os.MkdirTemp	1
 internal/injection/prepare_bundle.go	os.Stat	3
 internal/injection/prepare_bundle.go	os.WriteFile	1
 internal/injection/render_documents_copies.go	os.Chmod	1

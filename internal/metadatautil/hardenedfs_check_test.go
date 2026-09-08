@@ -40,8 +40,8 @@ func TestHardenedFSFindings(t *testing.T) {
 			source: header + "func f() {\nos.Open(a)\nos.OpenFile(a)\nos.ReadFile(a)\nos.WriteFile(a)\n" +
 				"os.Create(a)\nos.Mkdir(a)\nos.MkdirAll(a)\nos.Rename(a, b)\nos.Stat(a)\nos.ReadDir(a)\n" +
 				"os.Readlink(a)\nos.Remove(a)\nos.RemoveAll(a)\nos.Chmod(a, b)\nos.Chown(a, b, c)\n" +
-				"os.Symlink(a, b)\nos.Link(a, b)\nos.Truncate(a, b)\n}\n",
-			want: 18,
+				"os.Symlink(a, b)\nos.Link(a, b)\nos.Truncate(a, b)\nos.CreateTemp(a, b)\nos.MkdirTemp(a, b)\n}\n",
+			want: 20,
 		},
 		{
 			name:   "an aliased import is still the os package",
@@ -81,6 +81,23 @@ func TestHardenedFSFindings(t *testing.T) {
 			name:   "an exemption clears only its own line",
 			source: header + "func f() {\nos.Open(a) // hardened-fs-exempt: a build constant\nos.Open(b)\n}\n",
 			want:   1,
+		},
+		{
+			// One comment states the reason for one call, so the second call
+			// on the same line is still reported.
+			name:   "one exemption clears one call",
+			source: header + "func f() { os.Open(a); os.ReadFile(b) } // hardened-fs-exempt: a is a build constant\n",
+			want:   1,
+		},
+		{
+			name:   "a parenthesized call is still the call",
+			source: header + "func f() { (os.Open)(path) }\n",
+			want:   1,
+		},
+		{
+			name:   "the temporary-path calls resolve a parent by name",
+			source: header + "func f() {\nos.CreateTemp(dir, pattern)\nos.MkdirTemp(dir, pattern)\n}\n",
+			want:   2,
 		},
 	}
 	for _, testCase := range cases {
