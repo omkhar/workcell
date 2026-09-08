@@ -15,6 +15,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// errStagedSiblingLeft marks a publication that succeeded while the staged
+// sibling could not be removed. The caller must not unlink again: the name is
+// already published, and the removal is the step that just failed.
+var errStagedSiblingLeft = errors.New("the staged sibling was left in place")
+
 // RequireSingleLinkedRegular rejects a leaf that is not a single-linked regular
 // file.
 //
@@ -57,7 +62,10 @@ func MkdirAllSyncedAt(parent *os.File, relative string, mode os.FileMode) error 
 	if err != nil {
 		return err
 	}
-	current, err := unix.Dup(int(parent.Fd()))
+	// F_DUPFD_CLOEXEC rather than dup: dup clears FD_CLOEXEC, so a child
+	// started while this descriptor is open would inherit a handle on a
+	// trusted directory.
+	current, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
@@ -93,10 +101,9 @@ func StageAndPublishAt(parent *os.File, name string, data []byte, mode os.FileMo
 // StageAndCreateAt writes data to name under parent and fails when name
 // already exists.
 //
-// Publication uses linkat rather than renameat, because renameat replaces a
-// name that appeared after any earlier absence check and linkat refuses it.
-// Two callers that both find the name absent therefore cannot both report
-// success.
+// The kernel refuses the existing name in the same step that publishes, so two
+// callers that both find the name absent cannot both report success. A plain
+// renameat would replace a name that appeared after the absence check.
 func StageAndCreateAt(parent *os.File, name string, data []byte, mode os.FileMode, tempPrefix string) error {
 	return stageAndPublish(parent, name, data, mode, tempPrefix, true)
 }
@@ -139,7 +146,13 @@ func stageAndPublish(parent *os.File, name string, data []byte, mode os.FileMode
 			return err
 		}
 		if err := publishStagedFile(parentFD, temporary, name, createOnce); err != nil {
-			_ = unix.Unlinkat(parentFD, temporary, 0)
+			// The staged sibling is removed only when nothing was published;
+			// linkStagedFile reports its own removal failure after the name
+			// exists, and unlinking again there would be a second attempt at
+			// the step that just failed.
+			if !errors.Is(err, errStagedSiblingLeft) {
+				_ = unix.Unlinkat(parentFD, temporary, 0)
+			}
 			return err
 		}
 		// The published entry is only durable once the directory that gained
@@ -187,24 +200,50 @@ func writeStagedFile(parentFD, fd int, temporary, path string, data []byte, mode
 
 // publishStagedFile moves the staged name onto its final name.
 //
-// ponytail: the create-once path links and then unlinks, so the staged file is
-// a second link to the same inode for that window, and a concurrent reader
-// that runs RequireSingleLinkedRegular during it sees two links and refuses a
-// file that is in fact intact. Linux renameat2 with RENAME_NOREPLACE would
-// publish create-once in one step; macOS has no equivalent, and macOS is the
-// host baseline, so the window stays. Replace this with renameat2 if the
-// baseline ever becomes Linux-only, or have the reader retry once.
+// The create-once form asks the kernel to refuse an existing name in the same
+// step that publishes, so no window exists in which both names are links to
+// one inode. Darwin spells that renameatx_np with RENAME_EXCL and Linux spells
+// it renameat2 with RENAME_NOREPLACE.
 func publishStagedFile(parentFD int, temporary, name string, createOnce bool) error {
 	if !createOnce {
 		return unix.Renameat(parentFD, temporary, parentFD, name)
 	}
+	switch err := renameNoReplaceAt(parentFD, temporary, name); {
+	case err == nil:
+		return nil
+	case errors.Is(err, unix.EEXIST):
+		return fmt.Errorf("%s already exists", name)
+	case errors.Is(err, unix.ENOTSUP), errors.Is(err, unix.ENOSYS), errors.Is(err, unix.EINVAL):
+		return linkStagedFile(parentFD, temporary, name)
+	default:
+		return err
+	}
+}
+
+// linkStagedFile is the create-once publication for a filesystem whose kernel
+// refuses the one-step form. link refuses an existing name, so create-once
+// still holds.
+//
+// ponytail: link leaves the staged name as a second link to the inode until
+// the unlink returns, and a concurrent RequireSingleLinkedRegular during that
+// window refuses a file that is in fact intact. The one-step form above has no
+// such window, so this path runs only where the kernel or the filesystem
+// rejects it, such as an older Darwin volume. Delete this fallback when the
+// supported filesystems all carry the one-step form.
+func linkStagedFile(parentFD int, temporary, name string) error {
 	if err := unix.Linkat(parentFD, temporary, parentFD, name, 0); err != nil {
 		if errors.Is(err, unix.EEXIST) {
 			return fmt.Errorf("%s already exists", name)
 		}
 		return err
 	}
-	return unix.Unlinkat(parentFD, temporary, 0)
+	// The published name exists from here on, so a failure to remove the
+	// staged sibling is reported without unpublishing it, and the caller still
+	// syncs the parent.
+	if err := unix.Unlinkat(parentFD, temporary, 0); err != nil {
+		return fmt.Errorf("%w: remove the staged sibling of %s: %w", errStagedSiblingLeft, name, err)
+	}
+	return nil
 }
 
 // relativeComponents splits a relative path into the names to create, and
