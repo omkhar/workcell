@@ -199,6 +199,27 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestScanDocLanguageFlagsReviewedProse", "-count=1"),
 	},
 	{
+		relativePath: "internal/rootio/hardened.go",
+		original:     `	if info.Nlink != 1 {`,
+		replacement:  `	if false && info.Nlink != 1 {`,
+		label:        "hardened leaf single-link requirement",
+		command:      goCmd("test", "./internal/rootio", "-run", "TestRequireSingleLinkedRegular", "-count=1"),
+	},
+	{
+		relativePath: "internal/rootio/hardened.go",
+		original:     `		next, err := unix.Openat(current, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)`,
+		replacement:  `		next, err := unix.Openat(current, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)`,
+		label:        "synced directory creation refuses a symlinked component",
+		command:      goCmd("test", "./internal/rootio", "-run", "TestMkdirAllSyncedAtRejectsASymlinkedComponent", "-count=1"),
+	},
+	{
+		relativePath: "internal/rootio/hardened.go",
+		original:     `	if !createOnce {`,
+		replacement:  `	if true || !createOnce {`,
+		label:        "staged publication create-once semantics",
+		command:      goCmd("test", "./internal/rootio", "-run", "TestStageAndCreateAtRefusesAnExistingName", "-count=1"),
+	},
+	{
 		relativePath: "internal/metadatautil/hardenedfs_check.go",
 		original:     `	return found && strings.TrimSpace(reason) != ""`,
 		replacement:  `	return found || strings.TrimSpace(reason) != ""`,
