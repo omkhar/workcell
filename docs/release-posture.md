@@ -17,13 +17,16 @@ It does these checks:
 - It verifies the pinned Codex, Claude, Copilot, and Gemini releases against upstream metadata.
 - It keeps Antigravity unsupported until that provider passes the same gate.
 
+The tag-policy job resolves the signed tag to one commit before any checkout.
+Every later job checks out that commit, so a moved tag cannot change the release source.
+
 The preflight job records the expected digest for its source archive.
-The release job creates and extracts an independent archive from the checked-out release tag.
+The release job creates and extracts an independent archive from the checked-out release commit.
 It compares that archive digest with the expected digest.
 It creates source-dependent manifests from the extracted tree.
 It creates the Homebrew formula from the verified archive digest.
 
-The native amd64 and arm64 image jobs build from the checked-out release tag.
+The native amd64 and arm64 image jobs build from the checked-out release commit.
 Each one has only `contents: read` permission and emits an OCI archive.
 The workflow compares the bound platform digests with the preflight data.
 
@@ -44,11 +47,11 @@ The `hosted-controls-audit` environment gates release preflight and final GitHub
 
 The workflow uses Cosign to create keyless Sigstore signatures.
 It signs the image, source archive, Homebrew formula, image-digest file, checksums, manifests, and software bills of materials.
-It also creates GitHub attestations when the reviewed hosted controls permit them.
+It creates GitHub attestations after a fixed public-repository guard.
 GitHub attestations are an additional verification surface.
 They do not replace Sigstore signatures.
 
-Forks can keep the GitHub attestation gates off.
-The upstream repository audits those gates as hosted control-plane state.
+Forks can remove the GitHub attestation steps with a reviewed code change.
+The upstream workflow does not accept a variable opt-out.
 
 See [provenance.md](provenance.md) and [github-workflows.md](github-workflows.md).

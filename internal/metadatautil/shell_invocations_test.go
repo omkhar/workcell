@@ -239,6 +239,101 @@ func TestShellInvocations(t *testing.T) {
 			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,
 		},
+		{
+			name:   "a quoted separator is an argument, not the end of a command",
+			script: ": \";\" oras cp one\n",
+			want:   nil,
+		},
+		{
+			name:   "an escaped separator is an argument, not the end of a command",
+			script: ": \\; oras cp one\n",
+			want:   nil,
+		},
+		{
+			name:   "a quoted reserved word closes no compound command",
+			script: "if false; then\n\"fi\"\noras cp one\nfi\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a quoted brace closes no definition body",
+			script: "never_called() {\n\"}\"\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an ANSI-C delimiter ends its body at the word the quotes hold",
+			script: ": <<$'PLAN'\n$PLAN\noras cp one\nPLAN\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a backslash inside single quotes does not continue the line",
+			script: "'or\\\nas' cp one\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "conditional status survives a command group",
+			script: "false && {\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an unconditional command group runs its body",
+			script: "{\noras cp one\n}\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "an ANSI-C delimiter with an escape ends no body this reader can spell",
+			script: ": <<$'\\x50LAN'\n\\x50LAN\noras cp one\nPLAN\noras cp two\n",
+			want:   nil,
+		},
+		{
+			name:   "a backslash inside double quotes continues the line",
+			script: "\"or\\\nas\" cp one\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a conditional command guards no group a later operator opens",
+			script: "false && true; {\noras cp one\n}\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a command after a guarded group's closing brace is read",
+			script: "false && {\noras cp one\n}; oras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an escaped apostrophe does not close an ANSI-C word",
+			script: ": $'x\\'; oras cp one'\n",
+			want:   nil,
+		},
+		{
+			name:   "an argument brace closes no guarded group",
+			script: "false && {\necho }\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an argument brace closes no definition body",
+			script: "never_called() {\necho }\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "a negation does not move a guarded group out of command position",
+			script: "false && ! {\noras cp one\n}\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
+			name:   "an unguarded negated group runs its body",
+			script: "! {\noras cp one\n}\n",
+			want:   [][]string{{"one"}},
+		},
+		{
+			name:   "a locale-translated delimiter ends no body this reader can spell",
+			script: ": <<$\"PLAN\"\nPLAN\noras cp one\nPLAN\n",
+			want:   nil,
+		},
+		{
+			name:   "an ANSI-C span keeps its escapes across a line break",
+			script: ": $'x\n\\'; oras cp one'\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

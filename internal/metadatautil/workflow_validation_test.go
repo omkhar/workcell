@@ -74,7 +74,8 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
         run: |
           ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"
           unset WORKCELL_HOSTED_CONTROLS_TOKEN
-          ./scripts/publish-github-release.sh "${GITHUB_REF_NAME}" \
+          ./scripts/publish-github-release.sh "${RELEASE_TAG}" \
+            --expected-tag-object "${RELEASE_TAG_OBJECT}" \
             --immutable-releases-preverified-by-hosted-controls \
             dist/workcell.tar.gz
 `
@@ -97,13 +98,82 @@ func TestValidateReleaseWorkflowPublicationGate(t *testing.T) {
 		{name: "unsets audit token", old: "unset WORKCELL_HOSTED_CONTROLS_TOKEN", replacement: "true", want: "unset its credential"},
 		{name: "audits the repository and nothing else", old: "run-hosted-controls-audit.sh \"${GITHUB_REPOSITORY}\"", replacement: "run-hosted-controls-audit.sh wrong \"${GITHUB_REPOSITORY}\" || true", want: "recheck hosted controls"},
 		{name: "explicit handoff", old: "--immutable-releases-preverified-by-hosted-controls", replacement: "--other", want: "explicit preverified publisher"},
-		{name: "preverified flag in the position the publisher reads", old: "\"${GITHUB_REF_NAME}\" \\\n            --immutable-releases-preverified-by-hosted-controls \\\n            dist/workcell.tar.gz", replacement: "\"${GITHUB_REF_NAME}\" \\\n            dist/workcell.tar.gz \\\n            --immutable-releases-preverified-by-hosted-controls", want: "explicit preverified publisher"},
+		{name: "publisher bound to the verified tag object", old: `--expected-tag-object "${RELEASE_TAG_OBJECT}"`, replacement: `--expected-tag-object "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
+		{name: "publisher bound to the verified tag", old: `publish-github-release.sh "${RELEASE_TAG}"`, replacement: `publish-github-release.sh "${GITHUB_REF_NAME}"`, want: "explicit preverified publisher"},
+		{name: "reviewed hosted-controls policy path", old: "WORKCELL_HOSTED_CONTROLS_REQUIRED", replacement: "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH", want: "reviewed GitHub hosted-controls policy path"},
+		{
+			name: "tag-object binding moved from the publisher command into a comment",
+			old: "            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n" +
+				"            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz\n",
+			replacement: "            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz # --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
+			want: "explicit preverified publisher",
+		},
+		{
+			name: "tag-object binding moved past a shell separator",
+			old: "            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n" +
+				"            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz\n",
+			replacement: "            --immutable-releases-preverified-by-hosted-controls \\\n" +
+				"            dist/workcell.tar.gz ; : --expected-tag-object \"${RELEASE_TAG_OBJECT}\"\n",
+			want: "explicit preverified publisher",
+		},
+		{name: "preverified flag in the position the publisher reads", old: "--expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n            --immutable-releases-preverified-by-hosted-controls \\\n            dist/workcell.tar.gz", replacement: "--expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n            dist/workcell.tar.gz \\\n            --immutable-releases-preverified-by-hosted-controls", want: "explicit preverified publisher"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("mutation %q did not change the workflow", tc.name)
+			}
 			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A comment that names the reviewed policy path overrides nothing, so the gate
+// must not reject the workflow for mentioning it.
+func TestValidateReleaseWorkflowPublicationGateAcceptsPolicyPathMention(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
+	mutated := strings.Replace(workflow,
+		auditCall,
+		"          # WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH must stay unset in this job.\n"+auditCall, 1)
+	if mutated == workflow {
+		t.Fatal("policy path mention did not change the workflow")
+	}
+	if err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated); err != nil {
+		t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want nil", err)
+	}
+}
+
+// An override reaches the audit through any executable assignment, including an
+// env or export command prefix, so each of those forms must fail the gate.
+func TestValidateReleaseWorkflowPublicationGateRejectsPolicyPathOverrides(t *testing.T) {
+	workflow := string(readReleaseWorkflow(t))
+	const auditCall = `          ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`
+	for name, override := range map[string]string{
+		"env command prefix":       `          env WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"env with an option":       `          env -i WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"plain assignment prefix":  `          WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"export statement":         "          export WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"single-quoted assignment": `          env 'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"double-quoted assignment": `          env "WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml" ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"quoted assignment prefix": `          'WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml' ./scripts/run-hosted-controls-audit.sh "${GITHUB_REPOSITORY}"`,
+		"declare -x export":        "          declare -x WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+		"readonly export":          "          readonly WORKCELL_GITHUB_HOSTED_CONTROLS_POLICY_PATH=/tmp/policy.toml\n" + auditCall,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, auditCall, override, 1)
+			if mutated == workflow {
+				t.Fatalf("override %q did not change the workflow", name)
+			}
+			err := metadatautil.ValidateReleaseWorkflowPublicationGate(mutated)
+			if err == nil || !strings.Contains(err.Error(), "reviewed GitHub hosted-controls policy path") {
+				t.Fatalf("ValidateReleaseWorkflowPublicationGate() error = %v, want a policy path override", err)
 			}
 		})
 	}
@@ -116,7 +186,11 @@ func TestValidateReleaseWorkflowAuthoritySplit(t *testing.T) {
 	}
 	mutated := strings.Replace(string(content), "    permissions:\n      contents: read\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", "    permissions:\n      contents: read\n      packages: write\n    outputs:\n      digest: ${{ steps.build_amd64.outputs.digest }}", 1)
 	requireReleaseAuthorityError(t, mutated, "build-amd64-image")
-	mutated = strings.Replace(string(content), "    steps:\n      - name: Download bound unsigned release artifact", "    steps:\n      - uses: actions/checkout@bad\n      - name: Download bound unsigned release artifact", 1)
+	const signerRecheck = "      - name: Recheck release tag before signing and image mutation"
+	mutated = strings.Replace(string(content), signerRecheck, "      - uses: actions/checkout@bad\n"+signerRecheck, 1)
+	if mutated == string(content) {
+		t.Fatal("signer contract mutation did not change the workflow")
+	}
 	requireReleaseAuthorityError(t, mutated, "exact privileged step contract")
 }
 
@@ -139,7 +213,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsEvasions(t *testing.T) {
 	t.Run("multi-arch index", func(t *testing.T) {
 		RequireRejectsAllEvasions(t, workflow,
 			"          oras manifest index create --oci-layout \\\n"+
-				"            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n"+
+				"            \"dist/release-image:${RELEASE_TAG}\" \\\n"+
 				"            amd64 arm64 >/dev/null",
 			"assemble the multi-arch index", metadatautil.ValidateReleaseWorkflowAuthoritySplit)
 	})
@@ -169,7 +243,8 @@ func TestValidateReleaseWorkflowPublicationGateRejectsEvasions(t *testing.T) {
 	})
 	t.Run("preverified publisher", func(t *testing.T) {
 		RequireRejectsAllEvasions(t, workflow,
-			"          ./scripts/publish-github-release.sh \"${GITHUB_REF_NAME}\" \\\n"+
+			"          ./scripts/publish-github-release.sh \"${RELEASE_TAG}\" \\\n"+
+				"            --expected-tag-object \"${RELEASE_TAG_OBJECT}\" \\\n"+
 				"            --immutable-releases-preverified-by-hosted-controls",
 			recheck, metadatautil.ValidateReleaseWorkflowPublicationGate)
 	})
@@ -205,7 +280,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 	}{
 		{
 			name:  "assembly command in a comment",
-			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          # oras manifest index create --oci-layout dist/release-image amd64 arm64",
 			want:  "assemble the multi-arch index",
 		},
@@ -223,7 +298,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 		},
 		{
 			name:  "assembly command quoted inside another command",
-			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+			old:   "          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          echo \"oras manifest index create --oci-layout dist/release-image amd64 arm64\"",
 			want:  "assemble the multi-arch index",
 		},
@@ -250,7 +325,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands replaced by a heredoc body naming them",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<'PLAN' >/dev/null\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -262,7 +337,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands replaced by the second body of two heredocs",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<'NOTE' <<'PLAN' >/dev/null\n" +
 				"          NOTE\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
@@ -275,7 +350,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind a quoted delimiter that desynchronises the queue",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          : <<'A' \"text <<B\"\n" +
 				"          A\n" +
 				"          cat <<'PLAN' >/dev/null\n" +
@@ -298,7 +373,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind a delimiter an escaped quote appears to quote",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          : \\' <<PLAN ''\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -326,7 +401,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands moved into a heredoc a quoted command substitution opens",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          printf '%s' \"$(cat <<PLAN\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:arm64\n" +
@@ -339,7 +414,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind an indented terminator bash never reads as one",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<PLAN >/dev/null\n" +
 				"            PLAN\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
@@ -352,7 +427,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsCommentDecoys(t *testing.T)
 			name: "real commands hidden behind a space-indented terminator of a tab-stripped body",
 			old: "          oras cp --recursive --from-oci-layout \\\n            \"dist/image-amd64/layout@${AMD64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:amd64\n" +
 				"          oras cp --recursive --from-oci-layout \\\n            \"dist/image-arm64/layout@${ARM64_DIGEST}\" \\\n            --to-oci-layout dist/release-image:arm64\n" +
-				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${GITHUB_REF_NAME}\" \\\n            amd64 arm64 >/dev/null",
+				"          oras manifest index create --oci-layout \\\n            \"dist/release-image:${RELEASE_TAG}\" \\\n            amd64 arm64 >/dev/null",
 			decoy: "          cat <<-PLAN >/dev/null\n" +
 				"            PLAN\n" +
 				"          oras cp --recursive --from-oci-layout --to-oci-layout dist/release-image:amd64\n" +
@@ -414,7 +489,7 @@ func TestValidateReleaseWorkflowAuthoritySplitRejectsSignerDrift(t *testing.T) {
 		strings.Replace(workflow, "  WORKCELL_ORAS_VERSION: 1.3.3", "  WORKCELL_ORAS_VERSION: 1.3.4", 1),
 		strings.Replace(workflow, "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 9ce999f8d2de03fc03968b29d743077a58783e545e5eaa53917ca177352d0e59", "  WORKCELL_ORAS_LINUX_AMD64_SHA256: 0000000000000000000000000000000000000000000000000000000000000000", 1),
 		strings.Replace(workflow, "(cd dist && sha256sum -c SHA256SUMS)", "sha256sum -c dist/SHA256SUMS", 1),
-		strings.Replace(workflow, "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz", "    env:\n      BUNDLE_NAME: workcell-${{ github.ref_name }}.tar.gz\n      EXTRA: forbidden", 1),
+		strings.Replace(workflow, "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz", "      BUNDLE_NAME: workcell-${{ needs.tag-policy.outputs.release_tag }}.tar.gz\n      EXTRA: forbidden", 1),
 		strings.Replace(workflow, "      - name: Sign release image", "      - name: Unexpected command\n        run: eval dist/payload\n\n      - name: Sign release image", 1),
 		strings.Replace(workflow, "    shell: bash --noprofile --norc -euo pipefail {0}", "    shell: bash {0}", 1),
 	}
@@ -1513,155 +1588,247 @@ jobs:
 	}
 }
 
-func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingSupportGuard(t *testing.T) {
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsLegacySupportVariables(t *testing.T) {
 	t.Parallel()
 	releaseWorkflow := `env:
   RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
   ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ !github.event.repository.private || github.event.repository.owner.type != 'User' }}
 
-      - name: Confirm attestation environment policy
+jobs:
+  sign-release:
+    steps:
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         if: env.RELEASE_NO_ATTEST != 'true'
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true'
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true'
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true'
-        with:
-          subject-name: ${{ env.IMAGE_NAME }}
 `
 
 	err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
 	if err == nil {
 		t.Fatal("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "public visibility or an explicit private-repo capability flag") {
+	if !strings.Contains(err.Error(), "must not use mutable repository variables") {
 		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want support guard failure", err)
 	}
 }
 
-func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedAttestStep(t *testing.T) {
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMutableDecisionVariables(t *testing.T) {
 	t.Parallel()
-	releaseWorkflow := `env:
-  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
-  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
+	workflow := string(readReleaseWorkflow(t))
+	for _, tc := range []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{
+			name:        "attestation opt-out",
+			old:         "env:\n",
+			replacement: "env:\n  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}\n",
+		},
+		{
+			name:        "private capability flag",
+			old:         "env:\n",
+			replacement: "env:\n  WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS: ${{ vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS }}\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("release workflow does not contain %q", tc.old)
+			}
+			requireReleaseAttestationError(t, mutated, "must not use mutable repository variables")
+		})
+	}
+}
 
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsConditionalAttestStep(t *testing.T) {
+	t.Parallel()
+	releaseWorkflow := `jobs:
+  release:
+    steps:
       - name: Confirm attestation environment policy
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
-          if [[ "${ENABLE_GITHUB_ATTESTATIONS_SUPPORTED}" != "true" ]]; then
+          if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+            echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
+            echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
             exit 1
           fi
+  sign-release:
+    needs:
+      - release
+    steps:
       - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
+        if: github.event.repository.visibility == 'public'
         with:
           subject-name: ${{ env.IMAGE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true'
-        with:
-          sbom-path: dist/workcell-image.spdx.json
-          subject-name: ${{ env.IMAGE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/${{ env.BUNDLE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          sbom-path: dist/workcell-source.spdx.json
-          subject-path: dist/${{ env.BUNDLE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell.rb
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-image.digest
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-build-inputs.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-control-plane.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-builder-environment.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/SHA256SUMS
 `
 
-	err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow)
-	if err == nil {
-		t.Fatal("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "guard every actions/attest step") {
-		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want unguarded attestation failure", err)
-	}
+	requireReleaseAttestationError(t, releaseWorkflow, "without a mutable condition")
 }
 
 func TestValidateReleaseWorkflowGitHubAttestationFlowAcceptsSupportGuard(t *testing.T) {
 	t.Parallel()
-	releaseWorkflow := `env:
-  RELEASE_NO_ATTEST: ${{ vars.WORKCELL_RELEASE_NO_ATTEST || 'false' }}
-  ENABLE_GITHUB_ATTESTATIONS_SUPPORTED: ${{ github.event.repository.visibility == 'public' || vars.WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS == 'true' }}
+	if err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(string(readReleaseWorkflow(t))); err != nil {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+	}
+}
 
-      - name: Confirm attestation environment policy
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsInvalidVisibilityBinding(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	for _, tc := range []struct {
+		name        string
+		old         string
+		replacement string
+		want        string
+	}{
+		{
+			name:        "mutable repository variable",
+			old:         "REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}",
+			replacement: "REPOSITORY_VISIBILITY: ${{ vars.REPOSITORY_VISIBILITY }}",
+			want:        "must bind repository visibility from the GitHub event",
+		},
+		{
+			name:        "undefined runner variable",
+			old:         `if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then`,
+			replacement: `if [[ "${GITHUB_REPOSITORY_VISIBILITY}" != "public" ]]; then`,
+			want:        "must use the exact fail-closed public repository visibility check",
+		},
+		{
+			name:        "guard made conditional",
+			old:         "      - name: Confirm attestation environment policy\n",
+			replacement: "      - name: Confirm attestation environment policy\n        if: github.event.repository.visibility == 'public'\n",
+			want:        "must run the attestation environment policy step unconditionally",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, tc.old, tc.replacement, 1)
+			if mutated == workflow {
+				t.Fatalf("release workflow does not contain %q", tc.old)
+			}
+			requireReleaseAttestationError(t, mutated, tc.want)
+		})
+	}
+}
+
+// TestValidateReleaseWorkflowGitHubAttestationFlowRejectsGuardOutsideReleaseJob
+// moves the guard into an earlier job. The release artifact job is the one job
+// every attestation subject is built in, so a guard anywhere else can be
+// reordered away from what it protects without this validator noticing.
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsGuardOutsideReleaseJob(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	mutated := strings.Replace(workflow,
+		"      - name: Confirm attestation environment policy\n",
+		"      - name: Attestation environment policy moved out of release\n", 1)
+	mutated = strings.Replace(mutated,
+		"      - name: Classify release tag\n",
+		`      - name: Confirm attestation environment policy
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
-          if [[ "${ENABLE_GITHUB_ATTESTATIONS_SUPPORTED}" != "true" ]]; then
+          if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+            echo "::error::Release requires GitHub attestations but they are not supported for this repository." >&2
+            echo "::error::Publish the repository, or review a fork-specific workflow and hosted-control policy change." >&2
             exit 1
           fi
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-name: ${{ env.IMAGE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          sbom-path: dist/workcell-image.spdx.json
-          subject-name: ${{ env.IMAGE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/${{ env.BUNDLE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          sbom-path: dist/workcell-source.spdx.json
-          subject-path: dist/${{ env.BUNDLE_NAME }}
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell.rb
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-image.digest
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-build-inputs.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-control-plane.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/workcell-builder-environment.json
-      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        if: env.RELEASE_NO_ATTEST != 'true' && env.ENABLE_GITHUB_ATTESTATIONS_SUPPORTED == 'true'
-        with:
-          subject-path: dist/SHA256SUMS
-`
 
-	if err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow); err != nil {
-		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v", err)
+      - name: Classify release tag
+`, 1)
+	if mutated == workflow {
+		t.Fatal("release workflow guard mutation did not change the fixture")
+	}
+	requireReleaseAttestationError(t, mutated, "release artifact job must contain exactly one attestation environment policy step")
+}
+
+// TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedSigner drops
+// the dependency edge that puts the guard ahead of the attestations. The guard
+// runs in the release artifact job and the attestations run in sign-release, so
+// that edge is the only thing ordering one before the other.
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsUnguardedSigner(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	mutated := strings.Replace(workflow, "      - preflight-arm64-repro\n      - release\n", "      - preflight-arm64-repro\n", 1)
+	if mutated == workflow {
+		t.Fatal("sign-release no longer declares the release artifact job in the needs list this test removes")
+	}
+	requireReleaseAttestationError(t, mutated, "must check attestation support before its first attestation step")
+}
+
+// TestValidateReleaseWorkflowGitHubAttestationFlowRejectsAttestationOutsideSigner
+// moves an attestation into an unprivileged job. Only sign-release holds the
+// attestations: write permission, so an attest step elsewhere is either a
+// permission the reviewer did not intend or an attestation that silently fails.
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsAttestationOutsideSigner(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	mutated := strings.Replace(workflow,
+		"      - name: Classify release tag\n",
+		"      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2\n        with:\n          subject-path: dist/SHA256SUMS\n\n      - name: Classify release tag\n", 1)
+	if mutated == workflow {
+		t.Fatal("release workflow does not contain the tag classification step this test extends")
+	}
+	requireReleaseAttestationError(t, mutated, `found one in "tag-policy"`)
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsConditionalVerifierCalls(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	for _, stepName := range []string{
+		"Verify release outputs",
+		"Re-verify sealed release outputs before publication",
+	} {
+		t.Run(stepName, func(t *testing.T) {
+			old := "      - name: " + stepName + "\n"
+			mutated := strings.Replace(workflow, old, old+"        if: github.event.repository.visibility == 'public'\n", 1)
+			if mutated == workflow {
+				t.Fatalf("release workflow does not contain %q", stepName)
+			}
+			requireReleaseAttestationError(t, mutated, "must run release-output attestation verification unconditionally")
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsMissingVerifierAttestations(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	const requiredLine = "            --attestations\n"
+	first := strings.Index(workflow, requiredLine)
+	last := strings.LastIndex(workflow, requiredLine)
+	if first < 0 || last <= first {
+		t.Fatal("release workflow must contain two attestation verifier arguments")
+	}
+	for _, tc := range []struct {
+		name  string
+		index int
+		want  string
+	}{
+		{name: "independent verifier", index: first, want: "verify-release-outputs job"},
+		{name: "pre-publication verifier", index: last, want: "publish-github-release job"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := workflow[:tc.index] + workflow[tc.index+len(requiredLine):]
+			requireReleaseAttestationError(t, mutated, tc.want)
+		})
+	}
+}
+
+func TestValidateReleaseWorkflowGitHubAttestationFlowRejectsDuplicateYAMLKeys(t *testing.T) {
+	t.Parallel()
+	workflow := string(readReleaseWorkflow(t))
+	const jobName = "    name: Release reproducible image (amd64)\n"
+	mutated := strings.Replace(workflow, jobName, jobName+jobName, 1)
+	if mutated == workflow {
+		t.Fatal("release workflow does not contain the amd64 job name")
+	}
+	requireReleaseAttestationError(t, mutated, "parse release attestation flow")
+}
+
+func requireReleaseAttestationError(t *testing.T, workflow, want string) {
+	t.Helper()
+	err := metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow(workflow)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("metadatautil.ValidateReleaseWorkflowGitHubAttestationFlow() error = %v, want %q", err, want)
 	}
 }
 
