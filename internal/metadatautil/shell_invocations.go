@@ -189,27 +189,37 @@ func parenBalance(args []word) int {
 // one the shell is still reading on the next line, which does.
 func withoutExpansions(text string) (string, int) {
 	var kept strings.Builder
-	depth := 0
+	var closers []byte
 	for index := 0; index < len(text); index++ {
 		if text[index] == '$' && index+1 < len(text) &&
 			(text[index+1] == '(' || text[index+1] == '{') {
-			depth++
+			closers = append(closers, expansionCloser(text[index+1]))
 			index++
 			continue
 		}
-		if depth > 0 {
-			if text[index] == '(' || text[index] == '{' {
-				depth++
-				continue
-			}
-			if text[index] == ')' || text[index] == '}' {
-				depth--
+		if len(closers) > 0 {
+			// Only the delimiter this expansion opened with closes it: the two
+			// ) of ${x%))} are the pattern, not the end of the expansion and
+			// then a subshell closer.
+			switch {
+			case text[index] == '(' || text[index] == '{':
+				closers = append(closers, expansionCloser(text[index]))
+			case text[index] == closers[len(closers)-1]:
+				closers = closers[:len(closers)-1]
 			}
 			continue
 		}
 		kept.WriteByte(text[index])
 	}
-	return kept.String(), depth
+	return kept.String(), len(closers)
+}
+
+// expansionCloser returns the delimiter that ends a span the opener started.
+func expansionCloser(opener byte) byte {
+	if opener == '{' {
+		return '}'
+	}
+	return ')'
 }
 
 // controlWords maps each word that opens or closes a compound command to the
