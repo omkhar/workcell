@@ -16,6 +16,7 @@ harness invariant.
 | `internal/tomlsubset` | `FuzzParse` | Policy TOML subset |
 | `internal/injection` | `FuzzIsAllowedSystemSymlink` | Direct-mount source chains |
 | `internal/injection` | `FuzzParseSSHDirective` | SSH configuration directives |
+| `internal/applecontainer` | `FuzzAuditPathValueRoundTrip` | Untrusted audit field values |
 
 The seed corpus includes repository configuration and invalid forms. The
 `go test ./...` pull-request lane replays each saved seed.

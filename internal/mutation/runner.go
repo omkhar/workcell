@@ -199,6 +199,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestScanDocLanguageFlagsReviewedProse", "-count=1"),
 	},
 	{
+		relativePath: "internal/applecontainer/audit.go",
+		original:     `		if c == '%' || c <= 0x20 || c >= 0x7f {`,
+		replacement:  `		if c == '%' || c <= 0x1f || c >= 0x7f {`,
+		label:        "audit field separator encoding",
+		command:      goCmd("test", "./internal/applecontainer", "-run", "TestAuditPathValueEncodingIsInert", "-count=1"),
+	},
+	{
 		relativePath: "internal/metadatautil/portability_check.go",
 		original:     `			if rule.bashVersion && modernBash {`,
 		replacement:  `			if false && rule.bashVersion && modernBash {`,
