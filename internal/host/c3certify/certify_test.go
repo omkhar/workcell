@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/testkit"
 )
 
 type failingWriter struct{}
@@ -577,12 +577,9 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	// hostile TMPDIR (space, literal "$HOME") would get re-expanded rather than
 	// treated as a filename. Neither path is what this test's assertions are
 	// about, so give them a short, TMPDIR-independent home instead. hook is
-	// executed (by git), so it also needs an exec-capable location; a
-	// hardcoded /tmp is noexec in the supported workcell container, so root
-	// this under the checkout instead.
-	fixtureRoot, err := os.MkdirTemp(repoRoot(t), ".c3hook-fixture-")
-	mustNoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(fixtureRoot) })
+	// executed (by git), so it also needs a writable, exec-capable location;
+	// see testkit.ExecFixtureDir for why no single hardcoded path works.
+	fixtureRoot := testkit.ExecFixtureDir(t)
 	marker, hook := filepath.Join(fixtureRoot, "hook-ran"), filepath.Join(fixtureRoot, "hook.sh")
 	mustNoError(t, os.WriteFile(hook, []byte("#!/bin/sh\nprintf tracked >\""+marker+"\"\ncat\n"), 0o700))
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, ".gitattributes"), []byte("tracked filter=host\n"), 0o600))
@@ -683,18 +680,6 @@ func mustNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-// repoRoot returns the checkout root: always exec-capable (that's where the
-// code under test runs from) and, unlike TMPDIR, never carrying a hostile
-// CI axis's space or literal $HOME.
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("unable to determine repo root")
-	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 func newGitRepo(t *testing.T) (string, string) {
 	root, err := filepath.EvalSymlinks(t.TempDir())

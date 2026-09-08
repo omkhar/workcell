@@ -16,16 +16,10 @@ import (
 // hostile-TMPDIR content, for the rare case (see runChildStartupProbe) that
 // no shell quoting can protect against. Some callers (the GOCACHEPROG
 // control, the malicious diff.external fixture) get executed directly, so
-// this is rooted under the checkout rather than a hardcoded /tmp: the
-// supported workcell container mounts /tmp noexec.
+// this needs to be exec-capable too — see ExecFixtureDir.
 func shortStartupProbeDir(tb testing.TB) string {
 	tb.Helper()
-	dir, err := os.MkdirTemp(repoRoot(tb), ".startupprobe-fixture-")
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
+	return ExecFixtureDir(tb)
 }
 
 func runBashProbe(tb testing.TB, script string, env map[string]string) (int, string) {
