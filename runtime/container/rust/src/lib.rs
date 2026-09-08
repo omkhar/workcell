@@ -2491,9 +2491,9 @@ fn execute_snapshot_execveat(
 /// The `execvp` family form. glibc answers `ENOEXEC` by running `/bin/sh` on
 /// the target, from inside libc and without re-entering this guard, so the
 /// guard has to perform that fallback itself once it is executing a descriptor
-/// rather than a name. The shell's argv[1] is built from that same descriptor's
-/// proc path, so a shebang script run through this fallback likewise observes
-/// its /proc/self/fd name as $0, not the path the guard classified.
+/// rather than a name. For a script with no shebang line, the guard runs
+/// `/bin/sh` on that same descriptor, so this script also observes the
+/// /proc/self/fd name as $0, not the path the guard classified.
 #[cfg(target_os = "linux")]
 fn execute_snapshot_execveat_with_shell_fallback(
     fd: c_int,
@@ -5243,15 +5243,16 @@ mod tests {
         let dir = create_temp_test_dir("argv0-descriptor-path");
         let script = dir.join("script");
         let output = dir.join("output");
-        fs::write(
-            &script,
-            format!("#!/bin/sh\nprintf '%s' \"$0\" >{}\n", output.display()),
-        )
-        .expect("write script");
+        // The output path travels as argv[1] rather than baked into the
+        // script text, so a TMPDIR containing spaces or shell metacharacters
+        // cannot break the redirect: "$1" is a single shell word regardless
+        // of what it contains.
+        fs::write(&script, "#!/bin/sh\nprintf '%s' \"$0\" > \"$1\"\n").expect("write script");
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod script");
 
         let arg0 = CString::new(script.as_os_str().as_bytes()).expect("script path");
-        let argv: [*const c_char; 2] = [arg0.as_ptr(), std::ptr::null()];
+        let output_arg = CString::new(output.as_os_str().as_bytes()).expect("output path");
+        let argv: [*const c_char; 3] = [arg0.as_ptr(), output_arg.as_ptr(), std::ptr::null()];
         let envp: [*const c_char; 1] = [std::ptr::null()];
 
         let mut pid: pid_t = 0;
