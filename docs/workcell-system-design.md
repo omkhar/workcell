@@ -225,6 +225,14 @@ this layer does not inspect. The container and VM boundaries stay in force. Use
 [Expected Controls](../verify/invariants/expected-controls.md) for the exact
 enforcement scope.
 
+On the strict path, the guard runs a script from a sealed copy of its bytes.
+The kernel gives the interpreter the name of that copy. Thus a script in
+`/workspace`, `/state`, or `/tmp` sees `$0` as `/dev/fd/<number>` or
+`/proc/self/fd/<number>`. A script that finds a sibling file from `$0` does not
+find it. Give the script an absolute path or an explicit argument for a
+sibling file. The guard does not copy a file under an immutable path such as
+`/usr/local/bin`.
+
 ## Detached Sessions
 
 The host owns detached session state. The operator can start, attach, send

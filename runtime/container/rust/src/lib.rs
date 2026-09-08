@@ -2452,7 +2452,11 @@ fn fd_exec_path(fd: c_int) -> Option<CString> {
 }
 
 /// Executes the prepared descriptor itself, so the bytes that run are the bytes
-/// the guard classified.
+/// the guard classified. The kernel names the descriptor, not the original
+/// path, to a shebang interpreter, so the script observes that /dev/fd or
+/// /proc/self/fd name as $0; re-exposing the original pathname would hand the
+/// interpreter a name to resolve a second time, reopening the exec-time race
+/// the snapshot closes.
 #[cfg(target_os = "linux")]
 fn execute_snapshot_execveat(
     fd: c_int,
@@ -2487,7 +2491,9 @@ fn execute_snapshot_execveat(
 /// The `execvp` family form. glibc answers `ENOEXEC` by running `/bin/sh` on
 /// the target, from inside libc and without re-entering this guard, so the
 /// guard has to perform that fallback itself once it is executing a descriptor
-/// rather than a name.
+/// rather than a name. The shell's argv[1] is built from that same descriptor's
+/// proc path, so a shebang script run through this fallback likewise observes
+/// its /proc/self/fd name as $0, not the path the guard classified.
 #[cfg(target_os = "linux")]
 fn execute_snapshot_execveat_with_shell_fallback(
     fd: c_int,
@@ -5212,6 +5218,89 @@ mod tests {
                 &[]
             ),
             None
+        );
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    /// Documents the consequence in `execute_prepared_spawn`: the descriptor
+    /// is served under its `/proc/self/fd` name, so the kernel's own shebang
+    /// handling hands that name to the interpreter as the script's `$0`. Gated
+    /// on `current_mode_blocks_mutable_native_exec`, which fails closed to
+    /// true off-container, so this runs on the ordinary test lane.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_snapshotted_script_sees_its_descriptor_path_as_argv_zero() {
+        if !current_mode_blocks_mutable_native_exec() {
+            println!("skipping: this lane does not block mutable native exec");
+            return;
+        }
+        if !Path::new("/bin/sh").exists() {
+            println!("skipping: this runtime has no /bin/sh");
+            return;
+        }
+
+        let dir = create_temp_test_dir("argv0-descriptor-path");
+        let script = dir.join("script");
+        let output = dir.join("output");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\nprintf '%s' \"$0\" >{}\n", output.display()),
+        )
+        .expect("write script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod script");
+
+        let arg0 = CString::new(script.as_os_str().as_bytes()).expect("script path");
+        let argv: [*const c_char; 2] = [arg0.as_ptr(), std::ptr::null()];
+        let envp: [*const c_char; 1] = [std::ptr::null()];
+
+        let mut pid: pid_t = 0;
+        let result = execute_prepared_spawn(
+            script.to_str().expect("script path"),
+            &mut pid,
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+            &[],
+        );
+        assert_eq!(
+            result,
+            Some(0),
+            "posix_spawn must accept the snapshotted script"
+        );
+
+        let mut status: c_int = 0;
+        // SAFETY: pid names the child execute_prepared_spawn just spawned, and status is a valid out-param for this thread's own waitpid call.
+        let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert_eq!(waited, pid, "must wait on the spawned child");
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "the script must run to completion"
+        );
+
+        let observed = fs::read_to_string(&output).expect("read recorded argv0");
+        let real_path = script.to_str().expect("script path");
+
+        // (a) The security assertion: the descriptor path is not the script's
+        // real path, so a script cannot recover the pathname the guard
+        // resolved at classification time from its own $0.
+        assert_ne!(
+            observed, real_path,
+            "the recorded $0 must not equal the script's real path"
+        );
+
+        // (b) The documented-property assertion: $0 has the descriptor shape
+        // the guard promises, covering both the execveat (/dev/fd) and the
+        // execve (/proc/self/fd) forms.
+        let is_descriptor_path = ["/proc/self/fd/", "/dev/fd/"].iter().any(|prefix| {
+            observed
+                .strip_prefix(prefix)
+                .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+        });
+        assert!(
+            is_descriptor_path,
+            "$0 must be a /proc/self/fd or /dev/fd descriptor path, got {observed:?}"
         );
 
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
