@@ -1,4 +1,5 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
+# generated-artifact: none (needs a release version and a bundle digest)
 set -euo pipefail
 
 usage() {

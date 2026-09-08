@@ -199,6 +199,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestScanDocLanguageFlagsReviewedProse", "-count=1"),
 	},
 	{
+		relativePath: "internal/metadatautil/generated_artifacts_check.go",
+		original:     `	if !bytes.Equal(committed, regenerated) {`,
+		replacement:  `	if false && !bytes.Equal(committed, regenerated) {`,
+		label:        "generated artifact freshness comparison",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestCheckGeneratedArtifacts$", "-count=1"),
+	},
+	{
 		relativePath: "internal/metadatautil/validator_anchoring.go",
 		original:     `	if anchors != corpus {`,
 		replacement:  `	if false && anchors != corpus {`,

@@ -1,4 +1,5 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
+# generated-artifact: policy/workflow-lanes.json
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

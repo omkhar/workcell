@@ -358,7 +358,7 @@ func runValidatorJobOwnershipFixture(t *testing.T, job string, test validatorJob
 
 func writeValidatorValidateFixtureFiles(t *testing.T, root string) {
 	t.Helper()
-	for _, name := range []string{"verify-github-macos-release-test-runners.sh", "verify-build-input-manifest.sh", "verify-upstream-codex-release.sh", "verify-upstream-claude-release.sh", "verify-upstream-copilot-release.sh", "verify-upstream-gemini-release.sh", "verify-invariants.sh"} {
+	for _, name := range []string{"verify-github-macos-release-test-runners.sh", "verify-build-input-manifest.sh", "verify-upstream-codex-release.sh", "verify-upstream-claude-release.sh", "verify-upstream-copilot-release.sh", "verify-upstream-gemini-release.sh", "verify-invariants.sh", "check-generated-artifacts.sh"} {
 		writeExecutable(t, filepath.Join(root, "scripts"), name, "#!/bin/bash\nexit 0\n")
 	}
 	writeExecutable(t, filepath.Join(root, "scripts", "ci"), "run-validate-in-validator.sh", "#!/bin/bash\nexit \"${WORKCELL_TEST_WORKLOAD_STATUS}\"\n")
