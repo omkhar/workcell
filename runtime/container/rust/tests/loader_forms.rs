@@ -21,7 +21,7 @@
 //! mutable exec roots and the protected runtime signatures exist. Each pending
 //! reason names the lane that holds the form, or states that no lane holds it.
 
-use Call::{Execve, ExecveNullEnv, Execveat, ExecveatMemfd, Execvp};
+use Call::{Execve, ExecveNullEnv, Execveat, ExecveatMemfd, Execvp, RawSyscallExecve};
 use Expect::{NotRefused, Pending, Refused};
 use libc::c_int;
 use std::ffi::{CString, OsString};
@@ -109,7 +109,6 @@ const OVERLONG_SEGMENT_BYTES: usize = 128 * 1024 + 1;
 
 const EQUALS_SIGN_PENDING: &str = "the split-at-equals defect is only observable when the truncated prefix resolves inside a mutable exec root; the container smoke row target-with-equals-sign holds it";
 const ENV_CLUSTER_PENDING: &str = "the cluster is classified only when the shebang scan reaches a protected runtime, whose stat signatures exist in the runtime image; the container smoke fixture .workcell-env-cluster-node-shebang holds it";
-const RAW_SYSCALL_PENDING: &str = "no lane holds this form: the built cdylib exports workcell_syscall_shim and does not export syscall, so nothing interposes a raw syscall(SYS_execve, ...) and a row over it would report a false pass; the missing export is pre-existing on main and is recorded for the trampoline unit of the series";
 
 enum Call {
     /// `execve(path, argv, envp)` with an explicit child environment.
@@ -139,6 +138,14 @@ enum Call {
     /// and the loader-override check, never the child environment. An empty
     /// third field sets no extra variable.
     Execvp(&'static str, &'static str, &'static str),
+    /// `syscall(SYS_execve, path, argv, envp)` through the libc wrapper. The
+    /// raw entry reaches the guard only if the exported `syscall` trampoline
+    /// interposes that wrapper; a plain `execve` row cannot prove interposition.
+    RawSyscallExecve(
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    ),
 }
 
 enum Expect {
@@ -586,6 +593,15 @@ const FORMS: &[Form] = &[
         NotRefused,
         ANY,
     ),
+    // A raw syscall(SYS_execve) reaches the guard only because the exported
+    // `syscall` trampoline interposes the libc wrapper and routes it into
+    // guarded_execve, which refuses the mutable native target.
+    form(
+        "raw syscall(SYS_execve) entry",
+        RawSyscallExecve(LOADER, &["ld", UNKNOWN_OPTION, TARGET], GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
+        LINUX,
+    ),
     // Forms this lane cannot answer. Recorded, never asserted green.
     form(
         "env(1) short-option cluster ahead of a protected runtime",
@@ -593,16 +609,10 @@ const FORMS: &[Form] = &[
         Pending(ENV_CLUSTER_PENDING),
         ANY,
     ),
-    form(
-        "raw syscall(SYS_execve) entry",
-        Execve(LOADER, &["ld", UNKNOWN_OPTION, TARGET], GUARDED_ENV),
-        Pending(RAW_SYSCALL_PENDING),
-        ANY,
-    ),
 ];
 
 /// Keeps a pending row from being added without being counted.
-const PENDING_FORMS: usize = 3;
+const PENDING_FORMS: usize = 2;
 
 #[test]
 fn loader_invocation_forms_reach_the_stated_classification() {
@@ -887,6 +897,32 @@ fn run(call: &Call, fixture: &Path) -> String {
                 set_env(key, value);
             }
             stderr
+        }
+        RawSyscallExecve(path, argv, env) => {
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (path, argv, env);
+                unreachable!("the raw syscall row is Linux-only");
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let path = c_string(path, fixture);
+                let argv = c_strings(argv, fixture);
+                let env = c_strings(env, fixture);
+                let argv = c_pointers(&argv);
+                let env = c_pointers(&env);
+                capture_stderr(|| {
+                    // SAFETY: SYS_execve consumes (path, argv, envp); path is a live NUL-terminated CString and argv/env are live NULL-terminated pointer arrays that outlive the call. The libc syscall wrapper routes through the exported syscall trampoline into the guard.
+                    unsafe {
+                        libc::syscall(
+                            libc::SYS_execve as libc::c_long,
+                            path.as_ptr(),
+                            argv.as_ptr(),
+                            env.as_ptr(),
+                        );
+                    }
+                })
+            }
         }
     }
 }
