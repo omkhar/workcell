@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/testkit"
 )
 
 type failingWriter struct{}
@@ -571,7 +572,15 @@ func TestRunCommandReapsCancelledProcessGroup(t *testing.T) {
 
 func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	workspace, _ := newGitRepo(t)
-	marker, hook := filepath.Join(t.TempDir(), "hook-ran"), filepath.Join(t.TempDir(), "hook.sh")
+	// The hook script embeds marker's path as a double-quoted shell literal, and
+	// the git filter/hook config values below run through a shell too, so a
+	// hostile TMPDIR (space, literal "$HOME") would get re-expanded rather than
+	// treated as a filename. Neither path is what this test's assertions are
+	// about, so give them a short, TMPDIR-independent home instead. hook is
+	// executed (by git), so it also needs a writable, exec-capable location;
+	// see testkit.ExecFixtureDir for why no single hardcoded path works.
+	fixtureRoot := testkit.ExecFixtureDir(t)
+	marker, hook := filepath.Join(fixtureRoot, "hook-ran"), filepath.Join(fixtureRoot, "hook.sh")
 	mustNoError(t, os.WriteFile(hook, []byte("#!/bin/sh\nprintf tracked >\""+marker+"\"\ncat\n"), 0o700))
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, ".gitattributes"), []byte("tracked filter=host\n"), 0o600))
 	runGit(t, workspace, "add", ".gitattributes")

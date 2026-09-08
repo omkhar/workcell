@@ -56,11 +56,14 @@ func TestRunClientRejectsMalformedRequestBeforeDial(t *testing.T) {
 }
 
 func TestRunClientCancelsWhileTheBrokerNeverReadsTheRequest(t *testing.T) {
-	directory, err := os.MkdirTemp("", "wcbr")
+	// shortSocketDir's root skip exists for the server's socket-ancestry
+	// policy; this test only binds a bare client-side listener, which root
+	// can do too, so build the short (sun_path-safe) dir directly instead.
+	directory, err := os.MkdirTemp("/tmp", "wcbr")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(directory)
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
 	socketPath := filepath.Join(directory, "s")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {

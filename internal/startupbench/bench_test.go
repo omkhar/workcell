@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/omkhar/workcell/internal/testkit"
 )
 
 func repoRoot(tb testing.TB) string {
@@ -87,6 +89,19 @@ func writeExec(tb testing.TB, path, script string) {
 	}
 }
 
+// shortDir gives state-hook fixtures (prep/verify/teardown) a home outside
+// TMPDIR. requireExecutable (run.go) rejects any hook path containing
+// whitespace as a shell fragment, and that check is honest; a hostile TMPDIR
+// otherwise fails these tests for a reason unrelated to what they assert.
+// These hooks are also exec'd directly, so the directory needs to be
+// exec-capable too — see testkit.ExecFixtureDir for why no single
+// hardcoded path (repo checkout, /tmp, TMPDIR) works in every supported
+// environment.
+func shortDir(tb testing.TB) string {
+	tb.Helper()
+	return testkit.ExecFixtureDir(tb)
+}
+
 // liveEnv returns a live-run env (auto-detect bypassed, all state hooks no-op,
 // all modes selected, RUNS>=2, gate widened so real timing can't flake) merged
 // with extra, which overrides. Tests set only what they exercise.
@@ -120,7 +135,7 @@ func runLiveDriver(tb testing.TB, env map[string]string, target ...string) (int,
 func completeLiveFixture(tb testing.TB, env map[string]string, target []string) (map[string]string, []string) {
 	tb.Helper()
 	env = maps.Clone(env)
-	dir := tb.TempDir()
+	dir := shortDir(tb)
 	if env["WORKCELL_STARTUP_TEARDOWN_VERIFY"] == "" {
 		verify := filepath.Join(dir, "verify")
 		writeExec(tb, verify, "#!/usr/bin/env bash\nset -euo pipefail\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
@@ -274,7 +289,7 @@ func TestDriverStateHooksRunAtTheRequiredCadence(t *testing.T) {
 	// cold/cache-hit re-run prep per sample; warm prep runs once per pass, warm
 	// verification runs before warmup and measured samples, and teardown runs
 	// after every launch.
-	dir := t.TempDir()
+	dir := shortDir(t)
 	logPath := filepath.Join(dir, "operations")
 	counter := func(name string) string {
 		helper := filepath.Join(dir, name)
@@ -335,7 +350,7 @@ func TestDriverDryRunSkipsPrep(t *testing.T) {
 
 func TestDriverPrepOutputStaysOffReport(t *testing.T) {
 	// A prep hook's stdout (e.g. `docker pull`) must go to stderr, not the stdout report (else `run.sh > report.md` breaks).
-	dir := t.TempDir()
+	dir := shortDir(t)
 	prep := filepath.Join(dir, "prep")
 	writeExec(t, prep, "#!/usr/bin/env bash\nprintf 'PREP_STDOUT_MARKER\\n'\n")
 	env := liveEnv(map[string]string{
@@ -359,7 +374,7 @@ func TestDriverPrepOutputStaysOffReport(t *testing.T) {
 }
 
 func TestEntrypointSignalKillsProcessGroupAndStillCleansUp(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortDir(t)
 	started, childPID, cleaned := filepath.Join(dir, "started"), filepath.Join(dir, "child-pid"), filepath.Join(dir, "cleaned")
 	target, teardown := filepath.Join(dir, "target"), filepath.Join(dir, "teardown")
 	writeExec(t, target, "#!/usr/bin/env bash\ntrap '' TERM\nsh -c 'trap \"\" TERM; while :; do sleep 1; done' &\nprintf '%s\\n' \"$!\" >\""+childPID+"\"\ntouch \""+started+"\"\nwait\n")
@@ -395,7 +410,7 @@ func TestEntrypointSignalKillsProcessGroupAndStillCleansUp(t *testing.T) {
 	}
 }
 func TestLifecycleFailuresAreJoinedAndVerifierGetsIndependentBudget(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortDir(t)
 	teardown, verify, verified := filepath.Join(dir, "teardown"), filepath.Join(dir, "verify"), filepath.Join(dir, "verified")
 	writeExec(t, teardown, "#!/usr/bin/env bash\nsleep 1\n")
 	writeExec(t, verify, "#!/usr/bin/env bash\ntouch \""+verified+"\"\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
