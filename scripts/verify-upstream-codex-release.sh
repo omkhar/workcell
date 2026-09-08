@@ -62,7 +62,7 @@ verify_asset() {
   download_large_asset "${asset_root}/${tarball_name}" "${work_dir}/${tarball_name}"
   download_large_asset "${asset_root}/${bundle_name}" "${work_dir}/${bundle_name}"
 
-  echo "${codex_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null
+  echo "${codex_sha}  ${work_dir}/${tarball_name}" | sha256sum -c - >/dev/null # portability-exempt: require_tool sha256sum fails closed when it is absent
   tar -xzf "${work_dir}/${tarball_name}" -C "${work_dir}"
 
   cosign verify-blob "${work_dir}/${asset_prefix}-${codex_arch}" \

@@ -227,7 +227,7 @@ file_mode_octal() {
   if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
     stat -f '%Lp' "${path}"
   else
-    stat -c '%a' "${path}"
+    stat -c '%a' "${path}" # portability-exempt: the BSD stat form is tried first
   fi
 }
 
@@ -303,7 +303,7 @@ date_stamp_for_offset() {
     if [[ "${offset}" == "0" ]]; then
       date -u +%Y%m%dT000000Z
     else
-      date -u -d "-${offset} day" +%Y%m%dT000000Z
+      date -u -d "-${offset} day" +%Y%m%dT000000Z # portability-exempt: the GNU date form is probed first
     fi
     return
   fi

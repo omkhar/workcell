@@ -52,7 +52,7 @@ verify_asset() {
 
   mkdir -p "${work_dir}"
   download_large_asset "${CLAUDE_RELEASE_ROOT}/${CLAUDE_VERSION}/${platform}/claude" "${binary_path}"
-  echo "${expected_sha}  ${binary_path}" | sha256sum -c - >/dev/null
+  echo "${expected_sha}  ${binary_path}" | sha256sum -c - >/dev/null # portability-exempt: require_tool sha256sum fails closed when it is absent
 }
 
 manifest_sha() {

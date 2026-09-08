@@ -104,7 +104,7 @@ done
 set +e
 malformed_output="$(HOME="${HOST_HOME}" XDG_CONFIG_HOME="${HOST_XDG_CONFIG_HOME}" "${ROOT_DIR}/scripts/check-release-tag-signature.sh" \
   --repo-root "${FIXTURE}" \
-  --tag v9.9.9 --expected-commit "${commit_sha^^}" 2>&1)"
+  --tag v9.9.9 --expected-commit "$(printf '%s' "${commit_sha}" | tr '[:lower:]' '[:upper:]')" 2>&1)"
 malformed_rc=$?
 set -e
 test "${malformed_rc}" -eq 2

@@ -24,7 +24,7 @@ if ! [[ "${DAYS}" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-since="$(date -u -d "${DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)"
+since="$(date -u -d "${DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)" # portability-exempt: runs only in the Linux CI lane
 generated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 printf '## CI cost report (last %s days)\n\n' "${DAYS}"

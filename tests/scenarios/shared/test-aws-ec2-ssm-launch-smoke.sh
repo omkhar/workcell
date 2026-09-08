@@ -69,7 +69,10 @@ jq -e '(.Reservations | length == 1) and (.Reservations[0].Instances | length ==
 [[ "$(jq -r '.Reservations[0].Instances[0].State.Name' "${TMP_DIR}/instance.json")" == "running" ]] ||
   fail "EC2 target ${TARGET_ID} is not running."
 
-mapfile -t SECURITY_GROUP_IDS < <(jq -r '.Reservations[0].Instances[0].SecurityGroups[].GroupId' "${TMP_DIR}/instance.json")
+SECURITY_GROUP_IDS=()
+while IFS= read -r security_group_id; do
+  [[ -n "${security_group_id}" ]] && SECURITY_GROUP_IDS+=("${security_group_id}")
+done < <(jq -r '.Reservations[0].Instances[0].SecurityGroups[].GroupId' "${TMP_DIR}/instance.json")
 ((${#SECURITY_GROUP_IDS[@]} > 0)) || fail "EC2 target ${TARGET_ID} has no security groups."
 for sg_id in "${SECURITY_GROUP_IDS[@]}"; do
   aws_json ec2 describe-security-groups --group-ids "${sg_id}" >"${TMP_DIR}/security-group-${sg_id}.json"

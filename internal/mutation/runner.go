@@ -199,6 +199,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestScanDocLanguageFlagsReviewedProse", "-count=1"),
 	},
 	{
+		relativePath: "internal/metadatautil/portability_check.go",
+		original:     `			if rule.bashVersion && modernBash {`,
+		replacement:  `			if false && rule.bashVersion && modernBash {`,
+		label:        "portability banlist modern-bash exemption",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestShellPortabilityHonoursTheModernBashAssertion", "-count=1"),
+	},
+	{
 		relativePath: "internal/metadatautil/generated_artifacts_check.go",
 		original:     `	if !bytes.Equal(committed, regenerated) {`,
 		replacement:  `	if false && !bytes.Equal(committed, regenerated) {`,
