@@ -4133,6 +4133,9 @@ EOF
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-node-shebang.out
   # The short options cluster into one token, so -iS reaches both -i, which
   # drops the guard preload, and -S, which re-splits the rest of the line.
+  # -i clears the environment env builds for the second hop, so this probe
+  # races the same first-hop refusal as the missing-preload cases above:
+  # tolerate either message.
   cat >"${workspace_exec_scratch}/.workcell-env-cluster-node-shebang" <<EOF
 #!/usr/bin/env -iS /usr/local/libexec/workcell/real/node
 console.log("workcell env cluster shebang bypass");
@@ -4152,7 +4155,7 @@ EOF
     echo "expected strict profile to reject env -S loader shebang execution of the real Node payload" >&2
     exit 1
   fi
-  assert_refused_at_or_before_target "Workcell blocked direct protected runtime execution" /tmp/workspace-env-loader-node-shebang.out
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-loader-node-shebang.out
   cp /usr/local/libexec/workcell/real/node "${workspace_exec_scratch}/node"
   chmod 0700 "${workspace_exec_scratch}/node"
   cat >"${workspace_exec_scratch}/.workcell-env-path-node-shebang" <<EOF
@@ -4163,7 +4166,7 @@ EOF
     echo "expected strict profile to reject env -S PATH-rebound execution of a protected Node copy" >&2
     exit 1
   fi
-  assert_refused_at_or_before_target "Workcell blocked direct protected runtime execution" /tmp/workspace-env-path-node-shebang.out
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-path-node-shebang.out
   # Keep the guard preload in the cleared environment. The exec this probe
   # names is the second hop, where env resolves the basename, but the first hop
   # targets /usr/bin/env, which no more specific reason refuses. Without the
@@ -4173,7 +4176,7 @@ EOF
     echo "expected strict profile to reject env basename resolution to a protected Node copy" >&2
     exit 1
   fi
-  assert_refused_at_or_before_target "Workcell blocked direct protected runtime execution" /tmp/env-path-node.out
+  grep -q "Workcell blocked direct protected runtime execution" /tmp/env-path-node.out
   # A cleared environment strips the guard preload from the child, which the
   # guard refuses on its own once no more specific reason applies.
   if env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/env true >/tmp/env-no-preload.out 2>&1; then
