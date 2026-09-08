@@ -113,3 +113,9 @@ internal/publishpr/publish_pr_main.go	os.ReadFile	1
 internal/sessionctl/logs.go	os.Open	1
 internal/sessionctl/monitor.go	os.Open	1
 internal/sessionctl/monitor.go	os.Stat	1
+internal/supportbundle/collect.go	os.ReadDir	2
+internal/supportbundle/collect.go	os.ReadFile	1
+internal/supportbundle/collect.go	os.Stat	3
+internal/supportbundle/run.go	os.CreateTemp	1
+internal/supportbundle/run.go	os.Remove	1
+internal/supportbundle/run.go	os.Rename	1

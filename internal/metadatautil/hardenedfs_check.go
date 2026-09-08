@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -41,9 +42,17 @@ import (
 func CheckHardenedFS(rootDir string) error {
 	counts := map[hardenedFSKey]int{}
 	details := map[hardenedFSKey][]string{}
-	scanned := 0
 	for _, pkg := range hardenedFSPackages {
-		err := filepath.WalkDir(filepath.Join(rootDir, pkg), func(path string, entry fs.DirEntry, err error) error {
+		root := filepath.Join(rootDir, pkg)
+		// A symlinked package root is not walked: WalkDir reports the link
+		// entry and returns success, so every source below it would escape the
+		// scan while the whole check still reported a clean result.
+		info, statErr := os.Lstat(root) // hardened-fs-exempt: this validator reads repository sources, and this call proves the root is a real directory
+		if statErr != nil || !info.IsDir() {
+			return fmt.Errorf("trust-boundary package %s is not a directory; the hardened filesystem rule cannot read it", pkg)
+		}
+		scanned := 0
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -85,9 +94,9 @@ func CheckHardenedFS(rootDir string) error {
 		if err != nil {
 			return fmt.Errorf("scan %s for raw os file calls: %w", pkg, err)
 		}
-	}
-	if scanned == 0 {
-		return fmt.Errorf("no Go source under the trust-boundary packages; refusing a vacuous pass")
+		if scanned == 0 {
+			return fmt.Errorf("no Go source under the trust-boundary package %s; refusing a vacuous pass", pkg)
+		}
 	}
 	baseline, err := loadHardenedFSBaseline(filepath.Join(rootDir, hardenedFSBaselinePath))
 	if err != nil {
@@ -146,6 +155,7 @@ var hardenedFSPackages = []string{
 	"internal/runtimeutil",
 	"internal/publishpr",
 	"internal/sessionctl",
+	"internal/supportbundle",
 }
 
 // hardenedFSSymbols lists the raw calls the hardened primitives replace. Each
@@ -257,7 +267,13 @@ func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int]bool
 // the rule would silently stop applying to the file.
 func hardenedFSOSImportName(file *ast.File) (string, error) {
 	for _, spec := range file.Imports {
-		if spec.Path == nil || spec.Path.Value != `"os"` {
+		if spec.Path == nil {
+			continue
+		}
+		// Go accepts a raw string and an escaped string for an import path, so
+		// the literal spelling is not the path. Unquote it before comparing.
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path != "os" {
 			continue
 		}
 		if spec.Name == nil {

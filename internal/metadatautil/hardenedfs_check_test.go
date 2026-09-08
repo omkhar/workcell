@@ -49,6 +49,16 @@ func TestHardenedFSFindings(t *testing.T) {
 			want:   1,
 		},
 		{
+			name:   "a raw-string import path is still os",
+			source: "package host\n\nimport os `os`\n\nfunc f() { os.Open(path) }\n",
+			want:   1,
+		},
+		{
+			name:   "an escaped import path is still os",
+			source: "package host\n\nimport os \"o\\x73\"\n\nfunc f() { os.Open(path) }\n",
+			want:   1,
+		},
+		{
 			name:    "a dot import is refused",
 			source:  "package host\n\nimport . \"os\"\n\nfunc f() { Open(path) }\n",
 			wantErr: "hardened filesystem rule can read its calls",
@@ -220,7 +230,7 @@ func TestCheckHardenedFSRatchet(t *testing.T) {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", "host", "doc.go"), "package host\n")
 			}
 			writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), testCase.baseline)
-			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "publishpr", "runtimeutil", "sessionctl"} {
+			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "publishpr", "runtimeutil", "sessionctl", "supportbundle"} {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", pkg, "doc.go"), "package "+pkg+"\n")
 			}
 			err := metadatautil.CheckHardenedFS(root)
@@ -245,6 +255,29 @@ func TestCheckHardenedFSRejectsAMissingPackage(t *testing.T) {
 	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
 	if err := metadatautil.CheckHardenedFS(root); err == nil {
 		t.Fatal("expected a missing trust-boundary package to fail")
+	}
+}
+
+// A symlinked package root must fail. filepath.WalkDir reports the link entry
+// and returns success, so every source below it would escape the scan while
+// the check still reported a clean result.
+func TestCheckHardenedFSRejectsASymlinkedPackageRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
+	writeHardenedFSFixture(t, filepath.Join(root, "host_impl", "state.go"),
+		"package host\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
+	for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "publishpr", "runtimeutil", "sessionctl", "supportbundle"} {
+		writeHardenedFSFixture(t, filepath.Join(root, "internal", pkg, "doc.go"), "package "+pkg+"\n")
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("create the internal directory: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(root, "host_impl"), filepath.Join(root, "internal", "host")); err != nil {
+		t.Fatalf("create the symlinked package root: %v", err)
+	}
+	if err := metadatautil.CheckHardenedFS(root); err == nil {
+		t.Fatal("expected a symlinked trust-boundary package root to fail")
 	}
 }
 
