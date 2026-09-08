@@ -170,7 +170,7 @@ if [[ "${SKIP_VERIFY}" -eq 0 ]]; then
   download "SHA256SUMS.sigstore.json"
 fi
 
-verify_args=(--assets-dir "${WORK_DIR}" --artifact "${BUNDLE_NAME}" --repo "${REPO}")
+verify_args=(--assets-dir "${WORK_DIR}" --artifact "${BUNDLE_NAME}" --repo "${REPO}" --tag "${VERSION}")
 if [[ "${REQUIRE_ATTESTATION}" -eq 1 ]]; then
   verify_args+=(--attestation)
 fi
