@@ -3613,6 +3613,29 @@ EOF
       exit 1
     fi
     grep -qx "raw-execveat-fd-script-allowed" /tmp/workcell-raw-execveat-fd.out
+    case "$(uname -m)" in
+      x86_64)
+        raw_execve_number=59
+        ;;
+      aarch64)
+        raw_execve_number=221
+        ;;
+      *)
+        echo "unsupported architecture for raw execve smoke" >&2
+        exit 1
+        ;;
+    esac
+    # A raw syscall(SYS_execve) reaches the guard only through the exported
+    # `syscall` trampoline in the guard .so. A native ELF under a mutable root
+    # is the mutable-native refusal (unlike the mutable script above, which is
+    # allowed): if `syscall` is not exported the call bypasses the guard and
+    # nothing is refused, so this probe fails and pins the deployment invariant.
+    cp /bin/true "$EXEC_TMP/workcell-raw-execve-native"
+    chmod 0700 "$EXEC_TMP/workcell-raw-execve-native"
+    perl -e '$n=0+shift; $p=pack("Z*", shift); $argv=pack("p*", $p, undef); $guard="LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so"; $env=pack("p*", $guard, undef); syscall($n, $p, $argv, $env);' \
+      "$raw_execve_number" "$EXEC_TMP/workcell-raw-execve-native" \
+      >/tmp/workcell-raw-execve.out 2>&1 || true
+    grep -q "Workcell blocked direct native executable launch from mutable runtime paths on the strict profile." /tmp/workcell-raw-execve.out
 CODEX_USER_SCRIPT
   chmod 0444 "${codex_user_script}"
   setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups \
