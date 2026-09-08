@@ -199,6 +199,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestScanDocLanguageFlagsReviewedProse", "-count=1"),
 	},
 	{
+		relativePath: "internal/metadatautil/hardenedfs_check.go",
+		original:     `		if index < len(original) && strings.Contains(original[index], hardenedFSExemptTag) {`,
+		replacement:  `		if index < len(original) && strings.Contains(line, hardenedFSExemptTag) {`,
+		label:        "hardened filesystem inline exemption source",
+		command:      goCmd("test", "./internal/metadatautil", "-run", "TestHardenedFSFindings", "-count=1"),
+	},
+	{
 		relativePath: "internal/applecontainer/audit.go",
 		original:     `		if c == '%' || c <= 0x20 || c >= 0x7f {`,
 		replacement:  `		if c == '%' || c <= 0x1f || c >= 0x7f {`,
