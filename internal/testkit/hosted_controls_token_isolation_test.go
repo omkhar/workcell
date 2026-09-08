@@ -170,11 +170,11 @@ func prepareHostedControlCommandGraphFixture(t *testing.T, root string) {
 	copyHostedControlFixture(t, "scripts/lib/go-run-env.sh", filepath.Join(root, "scripts", "lib", "go-run-env.sh"))
 	copyHostedControlFixture(t, "go.mod", filepath.Join(root, "go.mod"))
 	// GO_BIN, GH_BIN, and JQ_BIN below are spliced as literal text into the
-	// generated shell script, not passed through a shell-quoted variable, so
-	// their path has to come from ExecFixtureDir rather than root: root is
-	// the hostile TMPDIR-derived t.TempDir() under the hostile-env lane, and
-	// a backtick spliced into that double-quoted assignment would run as a
-	// live command substitution when bash parses the script.
+	// generated shell script, so their path has to come from ExecFixtureDir
+	// rather than root: root is the hostile TMPDIR-derived t.TempDir() under
+	// the hostile-env lane. ExecFixtureDir's own path is shell-safe by
+	// construction, but the splice below still uses ShellQuote as defense in
+	// depth rather than trusting that invariant to hold forever.
 	binDir := ExecFixtureDir(t)
 	writeCanonicalFixture(t, filepath.Join(binDir, "go"), []byte(hostedControlFakeGo), 0o755)
 	writeCanonicalFixture(t, filepath.Join(binDir, "gh"), []byte(hostedControlFakeGH), 0o755)
@@ -191,9 +191,9 @@ func prepareHostedControlCommandGraphFixture(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	fixture := string(source)
-	fixture = strings.Replace(fixture, `GO_BIN="$(resolve_trusted_go_bin)"`, `GO_BIN="`+filepath.Join(binDir, "go")+`"`, 1)
-	fixture = strings.Replace(fixture, `GH_BIN="$(resolve_trusted_tool /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)"`, `GH_BIN="`+filepath.Join(binDir, "gh")+`"`, 1)
-	fixture = strings.Replace(fixture, `JQ_BIN="$(resolve_trusted_tool /opt/homebrew/bin/jq /usr/local/bin/jq /usr/bin/jq)"`, `JQ_BIN="`+filepath.Join(binDir, "jq")+`"`, 1)
+	fixture = strings.Replace(fixture, `GO_BIN="$(resolve_trusted_go_bin)"`, `GO_BIN=`+ShellQuote(filepath.Join(binDir, "go")), 1)
+	fixture = strings.Replace(fixture, `GH_BIN="$(resolve_trusted_tool /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)"`, `GH_BIN=`+ShellQuote(filepath.Join(binDir, "gh")), 1)
+	fixture = strings.Replace(fixture, `JQ_BIN="$(resolve_trusted_tool /opt/homebrew/bin/jq /usr/local/bin/jq /usr/bin/jq)"`, `JQ_BIN=`+ShellQuote(filepath.Join(binDir, "jq")), 1)
 	writeCanonicalFixture(t, filepath.Join(root, "scripts", "verify-github-hosted-controls.sh"), []byte(fixture), 0o755)
 }
 

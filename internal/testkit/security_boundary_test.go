@@ -424,7 +424,10 @@ func TestCheckPRShapeIgnoresAmbientGitConfig(t *testing.T) {
 	maliciousHome := maliciousRoot
 	maliciousMarker := filepath.Join(maliciousRoot, "diff.marker")
 	maliciousDiff := filepath.Join(maliciousRoot, "malicious-diff.sh")
-	if err := os.WriteFile(maliciousDiff, []byte("#!/bin/sh\nprintf 'unexpected diff.external invocation\\n' >\""+maliciousMarker+"\"\nexit 99\n"), 0o755); err != nil {
+	// maliciousMarker is shell-safe by construction (see ExecFixtureDir), but
+	// ShellQuote is used here as defense in depth rather than trusting a
+	// literal double-quoted splice to stay safe.
+	if err := os.WriteFile(maliciousDiff, []byte("#!/bin/sh\nprintf 'unexpected diff.external invocation\\n' >"+ShellQuote(maliciousMarker)+"\nexit 99\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(maliciousHome, ".gitconfig"), []byte("[diff]\n\texternal = "+maliciousDiff+"\n"), 0o644); err != nil {

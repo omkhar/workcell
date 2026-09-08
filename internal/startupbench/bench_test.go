@@ -293,9 +293,12 @@ func TestDriverStateHooksRunAtTheRequiredCadence(t *testing.T) {
 	logPath := filepath.Join(dir, "operations")
 	counter := func(name string) string {
 		helper := filepath.Join(dir, name)
+		// logPath is shell-safe by construction (see ExecFixtureDir), but
+		// ShellQuote is used here as defense in depth rather than trusting a
+		// literal double-quoted splice to stay safe.
 		writeExec(t, helper, "#!/usr/bin/env bash\n"+
 			"set -euo pipefail\n"+
-			"printf '"+name+"\\n' >> \""+logPath+"\"\n")
+			"printf '"+name+"\\n' >> "+testkit.ShellQuote(logPath)+"\n")
 		return helper
 	}
 	env := liveEnv(map[string]string{
@@ -377,8 +380,11 @@ func TestEntrypointSignalKillsProcessGroupAndStillCleansUp(t *testing.T) {
 	dir := shortDir(t)
 	started, childPID, cleaned := filepath.Join(dir, "started"), filepath.Join(dir, "child-pid"), filepath.Join(dir, "cleaned")
 	target, teardown := filepath.Join(dir, "target"), filepath.Join(dir, "teardown")
-	writeExec(t, target, "#!/usr/bin/env bash\ntrap '' TERM\nsh -c 'trap \"\" TERM; while :; do sleep 1; done' &\nprintf '%s\\n' \"$!\" >\""+childPID+"\"\ntouch \""+started+"\"\nwait\n")
-	writeExec(t, teardown, "#!/usr/bin/env bash\n[[ -n \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\" && -z \"${WORKCELL_STARTUP_SESSION_ID}\" ]]\ntouch \""+cleaned+"\"\n")
+	// childPID, started, and cleaned are shell-safe by construction (see
+	// ExecFixtureDir), but ShellQuote is used here as defense in depth rather
+	// than trusting a literal double-quoted splice to stay safe.
+	writeExec(t, target, "#!/usr/bin/env bash\ntrap '' TERM\nsh -c 'trap \"\" TERM; while :; do sleep 1; done' &\nprintf '%s\\n' \"$!\" >"+testkit.ShellQuote(childPID)+"\ntouch "+testkit.ShellQuote(started)+"\nwait\n")
+	writeExec(t, teardown, "#!/usr/bin/env bash\n[[ -n \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\" && -z \"${WORKCELL_STARTUP_SESSION_ID}\" ]]\ntouch "+testkit.ShellQuote(cleaned)+"\n")
 	env := liveEnv(map[string]string{"WORKCELL_STARTUP_MODES": "cold", "WORKCELL_STARTUP_ITERATIONS": "1", "WORKCELL_STARTUP_TEARDOWN": teardown})
 	env, argv := completeLiveFixture(t, env, []string{target})
 	cmd := exec.Command(filepath.Join(repoRoot(t), filepath.FromSlash(driver)), append([]string{"--"}, argv...)...)
@@ -413,7 +419,10 @@ func TestLifecycleFailuresAreJoinedAndVerifierGetsIndependentBudget(t *testing.T
 	dir := shortDir(t)
 	teardown, verify, verified := filepath.Join(dir, "teardown"), filepath.Join(dir, "verify"), filepath.Join(dir, "verified")
 	writeExec(t, teardown, "#!/usr/bin/env bash\nsleep 1\n")
-	writeExec(t, verify, "#!/usr/bin/env bash\ntouch \""+verified+"\"\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
+	// verified is shell-safe by construction (see ExecFixtureDir), but
+	// ShellQuote is used here as defense in depth rather than trusting a
+	// literal double-quoted splice to stay safe.
+	writeExec(t, verify, "#!/usr/bin/env bash\ntouch "+testkit.ShellQuote(verified)+"\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
 	cfg := config{target: []string{"false"}, teardown: teardown, cleanupCheck: verify, teardownTimeout: 50 * time.Millisecond, verifyTimeout: 2 * time.Second}
 	_, err := measureOne(context.Background(), cfg, "cold", 1, "1", io.Discard)
 	if err == nil {

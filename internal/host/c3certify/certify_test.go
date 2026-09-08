@@ -581,7 +581,10 @@ func TestGitCommandDisablesRepositoryExecution(t *testing.T) {
 	// see testkit.ExecFixtureDir for why no single hardcoded path works.
 	fixtureRoot := testkit.ExecFixtureDir(t)
 	marker, hook := filepath.Join(fixtureRoot, "hook-ran"), filepath.Join(fixtureRoot, "hook.sh")
-	mustNoError(t, os.WriteFile(hook, []byte("#!/bin/sh\nprintf tracked >\""+marker+"\"\ncat\n"), 0o700))
+	// marker is shell-safe by construction (see ExecFixtureDir), but
+	// ShellQuote is used here as defense in depth rather than trusting a
+	// literal double-quoted splice to stay safe.
+	mustNoError(t, os.WriteFile(hook, []byte("#!/bin/sh\nprintf tracked >"+testkit.ShellQuote(marker)+"\ncat\n"), 0o700))
 	mustNoError(t, os.WriteFile(filepath.Join(workspace, ".gitattributes"), []byte("tracked filter=host\n"), 0o600))
 	runGit(t, workspace, "add", ".gitattributes")
 	runGit(t, workspace, "-c", "user.name=Workcell Test", "-c", "user.email=workcell-test@example.invalid", "commit", "--quiet", "-m", "attributes")

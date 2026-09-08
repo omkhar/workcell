@@ -7,10 +7,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+// shellSafePath matches a candidate base that is safe to splice as literal
+// text into generated shell script source (a double-quoted assignment, a
+// redirect target) as well as safe for a tool's own naive space-splitting.
+// This is an allowlist rather than a denylist of "$ and backtick": a
+// candidate can come from an ambient environment variable (XDG_RUNTIME_DIR)
+// that this package does not control, and a denylist only covers the
+// metacharacters someone remembered to name.
+var shellSafePath = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
 
 // repoRoot returns the checkout root, derived from this file's own path at
 // compile time: a plain location that a hostile TMPDIR never touches.
@@ -26,14 +36,20 @@ func repoRoot(tb testing.TB) string {
 // ExecFixtureDir returns a directory for an executable test fixture (a
 // hook, filter, or remote helper a test writes and then has git, cmd/go, or
 // the shell actually invoke). Such a fixture needs a path that is all of:
-// writable by an arbitrary or unmapped uid, exec-capable, and free of
-// whitespace (a shell or a tool's own naive argument splitting can misread a
-// space). No single hardcoded location satisfies every supported
-// environment: the repo checkout can be unwritable under a remapped uid or
-// carry whitespace on some dev machines, a hardcoded /tmp is mounted noexec
-// inside the workcell container, and TMPDIR itself is deliberately hostile
-// under the CI lane that exercises that axis. So this probes candidates at
-// runtime and uses the first one that can actually execute a script.
+// writable by an arbitrary or unmapped uid, exec-capable, and shell-safe (a
+// shell's own re-interpolation, a tool's naive argument splitting, or a
+// caller that splices the returned path into generated shell script text can
+// all misread whitespace or a metacharacter such as $ or a backtick). No
+// single hardcoded location satisfies every supported environment: the repo
+// checkout can be unwritable under a remapped uid or carry whitespace on some
+// dev machines, a hardcoded /tmp is mounted noexec inside the workcell
+// container, and TMPDIR itself is deliberately hostile under the CI lane
+// that exercises that axis. So this probes candidates at runtime and uses
+// the first one that can actually execute a script.
+//
+// The returned path always matches shellSafePath, so a caller may still
+// choose to quote it (ShellQuote) as defense in depth, but does not have to
+// treat it as hostile.
 //
 // The repo checkout root is tried last, after /dev/shm and TMPDIR: under
 // the container's uidmap hostile axis the checkout is writable by every
@@ -67,8 +83,8 @@ func ExecFixtureDir(tb testing.TB) string {
 			tried = append(tried, c.name+": unset")
 			continue
 		}
-		if strings.ContainsAny(c.path, " \t\n") {
-			tried = append(tried, c.name+" ("+c.path+"): whitespace in path")
+		if !shellSafePath.MatchString(c.path) {
+			tried = append(tried, c.name+" ("+c.path+"): shell-unsafe path")
 			continue
 		}
 		if info, err := os.Stat(c.path); err != nil || !info.IsDir() {
@@ -99,6 +115,6 @@ func ExecFixtureDir(tb testing.TB) string {
 	// Every candidate failed: this is a real environment defect, not a
 	// reason to quietly drop coverage of whatever security control the
 	// fixture backs. Fail loudly rather than skip.
-	tb.Fatalf("no writable, exec-capable, whitespace-free directory found for executable test fixtures; tried:\n  %s", strings.Join(tried, "\n  "))
+	tb.Fatalf("no writable, exec-capable, shell-safe directory found for executable test fixtures; tried:\n  %s", strings.Join(tried, "\n  "))
 	return ""
 }
