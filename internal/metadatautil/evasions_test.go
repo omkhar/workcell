@@ -156,6 +156,14 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+"false && (\n"+i+"decoy=(\n"+i+"  one\n"+i+")", i+")")
 	})},
+	{"attached subshell opener", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo hidden", i+")")
+	})},
+	{"attached subshell opener closed on its own line", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo hidden)\n"+i+"false && (echo hidden", i+")")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)

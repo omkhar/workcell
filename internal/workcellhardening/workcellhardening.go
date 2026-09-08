@@ -4131,6 +4131,21 @@ func CheckRuntimeSecurityPosture(rootDir string) error {
 // This is deliberately smaller than a shell parser.  It answers the one
 // question a presence check over a diagnostic string needs answered -- is this
 // sentence a live command or a note someone left behind -- and nothing else.
+//
+// It does not strip a heredoc body, so a check that must also refuse body text
+// needs more than this.
+// startsWord reports whether a byte leaves the next byte at the start of a
+// word, which is where bash reads a # as opening a comment.  Whitespace and a
+// newline are the obvious cases; a control operator is the one that is easy to
+// miss, so true;# and cmd &# and (# all open a comment while echo a#b does not.
+func startsWord(previous byte) bool {
+	switch previous {
+	case '\n', ' ', '\t', ';', '&', '|', '(', ')':
+		return true
+	}
+	return false
+}
+
 func stripShellComments(text string) string {
 	var out strings.Builder
 	out.Grow(len(text))
@@ -4158,7 +4173,7 @@ func stripShellComments(text string) string {
 			}
 		case c == '\'' || c == '"':
 			quote = c
-		case c == '#' && (previous == '\n' || previous == ' ' || previous == '\t'):
+		case c == '#' && startsWord(previous):
 			commented = true
 			previous = c
 			continue

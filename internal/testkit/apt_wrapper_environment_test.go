@@ -18,12 +18,16 @@ import (
 // the start of a line instead, and the decoy table below is their negative
 // fixture.
 //
-// The shared shell-invocation parser cannot answer for this file: its
-// compound-command tracking does not close a `case` block, so it proves no
-// command past the wrapper's root branch and reports the delegation as
-// unreachable. That under-reports rather than invents, but it cannot carry an
-// assertion.
+// The shared shell-invocation parser cannot answer for this file at all: an
+// `exec` that names a program is a scan terminator there (`replacesShell`),
+// never an invocation, so `ShellInvocations(source, "exec")` returns nothing
+// for any script. The delegation is unrepresentable through it.
+//
+// A line anchor cannot see a heredoc body either, so the wrapper is required to
+// have no heredoc. That keeps the anchors below the only way its text can
+// appear, and it fails loudly if anyone adds one.
 var (
+	sudoWrapperHeredoc    = regexp.MustCompile(`<<-?`)
 	sudoWrapperDelegation = regexp.MustCompile(
 		`(?m)^exec "\$\{broker_client\}" --sudo-compat "\$@"$`,
 	)
@@ -90,6 +94,11 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 	t.Parallel()
 
 	source := readRepoFile(t, "runtime", "container", "bin", "sudo-wrapper.sh")
+	// A heredoc body would let the delegation's text outlive the command that
+	// runs it, which a line anchor cannot tell apart.
+	if sudoWrapperHeredoc.MatchString(source) {
+		t.Fatal("sudo-wrapper.sh gained a heredoc; the line-anchored checks below cannot see into one")
+	}
 	if !sudoWrapperDelegation.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer delegates to the broker client")
 	}
@@ -103,6 +112,9 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 		`echo 'exec "${broker_client}" --sudo-compat "$@"'`,
 		`# broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"`,
 	} {
+		if sudoWrapperHeredoc.MatchString(decoy) {
+			t.Fatalf("decoy must not need the heredoc guard: %q", decoy)
+		}
 		if sudoWrapperDelegation.MatchString(decoy) || sudoWrapperBrokerClient.MatchString(decoy) {
 			t.Fatalf("a decoy satisfies the sudo-wrapper checks: %q", decoy)
 		}

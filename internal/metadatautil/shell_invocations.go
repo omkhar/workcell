@@ -107,6 +107,16 @@ func commandBrace(each command) int {
 	case openParen(args[0].text):
 		return 1
 	}
+	if opened := attachedParens(args[0].text); opened > 0 {
+		// Bash reads ( as an operator, so false && (echo one opens a subshell
+		// with the ( attached to the command after it. The group closes on this
+		// same command when its last word ends in ), as in ( … one ).
+		last := args[len(args)-1]
+		if !last.quoted && strings.HasSuffix(last.text, ")") && !strings.HasSuffix(last.text, "))") {
+			return 0
+		}
+		return opened
+	}
 	return 0
 }
 
@@ -120,6 +130,16 @@ func commandBrace(each command) int {
 // bare ), so counting it would leave a region that never closes.
 func openParen(text string) bool {
 	return text == "(" || (strings.HasSuffix(text, "(") && !strings.HasSuffix(text, "(("))
+}
+
+// attachedParens returns 1 for a word that carries a subshell opener attached
+// to the command after it, and 0 otherwise. (( is arithmetic, which ends at ))
+// rather than at a bare ), and a case pattern such as -n) opens nothing.
+func attachedParens(text string) int {
+	if strings.HasPrefix(text, "((") || !strings.HasPrefix(text, "(") {
+		return 0
+	}
+	return 1
 }
 
 // controlWords maps each word that opens or closes a compound command to the

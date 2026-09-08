@@ -5885,6 +5885,23 @@ func smokeAptBrokerProbeCommentedFiles() map[string]string {
 	}
 }
 
+// smokeAptBrokerProbeOperatorCommentFiles writes each removed probe's
+// diagnostic as a comment opened straight after a control operator, with no
+// whitespace before the #.  Bash starts a new word after ; & | ( ), so the # is
+// a comment there too, and a stripper that only looks for whitespace would keep
+// the sentence and report the missing probe as present.
+func smokeAptBrokerProbeOperatorCommentFiles() map[string]string {
+	return map[string]string{
+		containerSmokeRelPath: "#!/usr/bin/env bash\n" +
+			"true;# expected the shell apt broker to be absent from the runtime image\n" +
+			"true&# expected no session sudoers grant behind the apt broker\n" +
+			"true|# expected the apt broker to publish a real socket\n" +
+			"(# expected the apt broker socket to serve a privileged package request\n" +
+			")# expected the apt broker client to admit only the package helper\n" +
+			"true;# grep -q \"Workcell sudo compatibility mode only permits the package helper.\" out\n",
+	}
+}
+
 func TestCheckSmokeAptBrokerProbe(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -5973,6 +5990,34 @@ func TestCheckSmokeAptBrokerProbeRejectsCommentedOutAssertions(t *testing.T) {
 		got := CheckSmokeAptBrokerProbe(writeFnBlockGoBlockGitEnvRepo(t, files))
 		if got == nil {
 			t.Fatalf("a commented %q was accepted as live coverage", c.pattern)
+		}
+	}
+}
+
+func TestCheckSmokeAptBrokerProbeRejectsCommentsAfterControlOperators(t *testing.T) {
+	root := writeFnBlockGoBlockGitEnvRepo(t, smokeAptBrokerProbeOperatorCommentFiles())
+	err := CheckSmokeAptBrokerProbe(root)
+	want := "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected the shell apt broker to be absent from the runtime image)"
+	if err == nil || err.Error() != want {
+		t.Fatalf("CheckSmokeAptBrokerProbe() = %v, want %q", err, want)
+	}
+}
+
+// A # that is not at the start of a word is text, so stripping must not eat it.
+func TestStripShellCommentsKeepsAWordInternalHash(t *testing.T) {
+	for _, keep := range []string{"echo a#b", "x=a#b", `echo "a # b"`, "echo 'a # b'"} {
+		if got := stripShellComments(keep); got != keep {
+			t.Fatalf("stripShellComments(%q) = %q, want it unchanged", keep, got)
+		}
+	}
+	for input, want := range map[string]string{
+		"true;# note":  "true;",
+		"true # note":  "true ",
+		"# whole line": "",
+		"true&# note":  "true&",
+	} {
+		if got := stripShellComments(input); got != want {
+			t.Fatalf("stripShellComments(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
