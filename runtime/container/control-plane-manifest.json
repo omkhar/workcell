@@ -186,12 +186,6 @@
     },
     {
       "kind": "runtime-control-plane",
-      "repo_path": "runtime/container/apt-broker.sh",
-      "runtime_path": "/usr/local/libexec/workcell/apt-broker.sh",
-      "sha256": "80ccef258fd23a1c3fa9009ff862f7c9f8e186068e674053c8f78b10153ae188"
-    },
-    {
-      "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/apt-helper.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-helper.sh",
       "sha256": "d49970505a2b4a95a882b2ff0cf296991994ed30fa4f128fcd0c2b155d98eeba"
@@ -206,7 +200,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/sudo-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/sudo-wrapper.sh",
-      "sha256": "df1d09211d67504250fa006fbdbca1d09caf03a12c3746ff8855bbf67373174d"
+      "sha256": "98bd31b1b09194b6f095179dba7427a1cd314fe88b78d88c025d5e49ac69b2da"
     },
     {
       "kind": "runtime-control-plane",
@@ -224,7 +218,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
-      "sha256": "8f15714ecaae4f1c6c45c57e20d16499cfe795e93d7d5d03a9918954d5e57881"
+      "sha256": "afac9a84e26c6ec3378cfafc6f9fe7172ce59be4a5f3730dd3e5df96441aba5f"
     },
     {
       "kind": "runtime-control-plane",
@@ -266,7 +260,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "081b5b06c67665bd15d95ac661b0e47dd89fd015d89a20aac3ec3d3819af4727"
+      "sha256": "a7ecec480650bbf7b7bb9e91bf5c3fcba3a2ad978692607b58c305553c532427"
     },
     {
       "kind": "runtime-control-plane",

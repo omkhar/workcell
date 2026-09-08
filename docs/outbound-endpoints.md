@@ -82,6 +82,10 @@ An ephemeral local launch adds the pinned snapshot mirrors for Debian:
 - `snapshot-cloudflare.debian.org:443`
 - `snapshot.debian.org:443`
 
+Only the apt broker reaches these endpoints. The mapped runtime user sends the
+package request over the broker socket and holds no sudo grant of its own. See
+[invariant 4b](invariants.md).
+
 ### Versioned development and build endpoints
 
 The `development` and `build` profiles add this same fixed set:

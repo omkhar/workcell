@@ -111,6 +111,32 @@ The runtime container uses these controls:
 `hardening-profile-conformance` invariant checks the launcher. It also rejects
 `--privileged` and `seccomp=unconfined`.
 
+## 4b. Privileged package operations go through the broker socket
+
+An ephemeral session can change packages. The mapped runtime user holds no
+standing authority to do so. It holds no sudoers grant, and the real `sudo`
+binary stays unreachable.
+
+The only path is the apt broker:
+
+- `workcell-apt-broker-server` starts as root before the mapped-user step. It
+  creates a root-owned `0755` socket directory and binds a root-owned `0666`
+  socket in it.
+- The server accepts a connection only from the mapped uid, checked against the
+  peer credentials the kernel reports, not against anything the caller sends.
+- The server runs `apt-helper.sh` and nothing else. The helper validates the
+  subcommand and every argument.
+- Requests carry arguments and a fixed set of three environment names. The
+  server rejects any other name and any unlisted value, and builds the helper
+  environment itself.
+- `sudo` in the container is a wrapper. For an unprivileged caller it hands the
+  invocation to `workcell-apt-broker-client`, which admits the package helper
+  and refuses every other command.
+
+No shell broker, spool directory, or pid file takes part. The
+`workcell-smoke-apt-broker-probe` invariant checks that the container smoke test
+keeps proving this end to end.
+
 ## 5. Destructive or trust-widening actions need defense in depth
 
 The runtime boundary is the primary control. Provider controls add defense in

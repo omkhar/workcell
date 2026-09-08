@@ -6933,7 +6933,7 @@ EOF
       exit 1
     fi
     # Assert scripts/container-smoke.sh keeps the Linux runtime apt-broker
-    # slow-wait probe strings.  Migrated to Go (D3): internal/workcellhardening
+    # socket probe strings.  Migrated to Go (D3): internal/workcellhardening
     # behind the workcell-citools workcell-smoke-apt-broker-probe subcommand
     # preserves the exact exit codes and stderr messages of the former inline
     # `for required in ...; do grep -Fq -- "${required}" ...; done` loop (six

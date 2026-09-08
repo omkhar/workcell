@@ -1197,6 +1197,9 @@ run_container_with_injection_bundle_stdin codex "${INJECTION_BUNDLE_ROOT}/codex"
 set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 /usr/local/bin/workcell-entrypoint codex --version >/dev/null
+# The entrypoint runs more than once in one container. A second run has to
+# accept the apt broker the first one started, not fail on its socket.
+/usr/local/bin/workcell-entrypoint codex --version >/dev/null
 setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -s <<'INNER'
 set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
@@ -1232,49 +1235,35 @@ if sudo -n --preserve-env=PATH /usr/local/libexec/workcell/apt-helper.sh apt-get
   echo "expected sudo preserve-env to stay constrained on the apt broker path" >&2
   exit 1
 fi
-grep -q "blocked unsupported preserved environment variable: PATH" /tmp/codex-sudo-preserve-path.err
-slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh
-slow_apt_broker_root=/tmp/workcell-apt-broker
-cat >"${slow_apt_helper}" <<'SLOW_APT_HELPER'
-#!/usr/bin/env bash
-set -euo pipefail
-sleep 11
-printf 'slow-apt-helper-ok\n'
-SLOW_APT_HELPER
-chmod +x "${slow_apt_helper}"
-rm -rf "${slow_apt_broker_root}"
-WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
-  WORKCELL_APT_HELPER="${slow_apt_helper}" \
-  WORKCELL_APT_BROKER_SLEEP_SECONDS=0.05 \
-  /bin/bash /usr/local/libexec/workcell/apt-broker.sh >/dev/null 2>&1 &
-slow_apt_broker_pid=$!
-trap 'kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true; wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true' EXIT
-for _ in $(seq 1 100); do
-  [[ -f "${slow_apt_broker_root}/pid" ]] && break
-  sleep 0.1
-done
-if [[ ! -f "${slow_apt_broker_root}/pid" ]]; then
-  echo "expected slow apt broker fixture to publish its pid file" >&2
+grep -q "Workcell blocked malformed privileged package request." /tmp/codex-sudo-preserve-path.err
+if [[ -e /usr/local/libexec/workcell/apt-broker.sh ]]; then
+  echo "expected the shell apt broker to be absent from the runtime image" >&2
   exit 1
 fi
-if ! WORKCELL_APT_BROKER_ROOT="${slow_apt_broker_root}" \
-  WORKCELL_APT_BROKER_WAIT_INTERVAL_SECONDS=0.05 \
-  sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update \
-  >/tmp/codex-sudo-slow-apt.out 2>/tmp/codex-sudo-slow-apt.err; then
-  echo "expected sudo-wrapper to wait for a slow apt broker request by default" >&2
-  cat /tmp/codex-sudo-slow-apt.out >&2 || true
-  cat /tmp/codex-sudo-slow-apt.err >&2 || true
+if [[ -e /etc/sudoers.d/workcell-runtime-user ]]; then
+  echo "expected no session sudoers grant behind the apt broker" >&2
   exit 1
 fi
-grep -q "slow-apt-helper-ok" /tmp/codex-sudo-slow-apt.out
-if grep -q "Workcell apt broker timed out." /tmp/codex-sudo-slow-apt.err; then
-  echo "expected default apt broker waits to avoid timing out slow requests" >&2
-  cat /tmp/codex-sudo-slow-apt.err >&2
+apt_broker_socket=/run/workcell/apt-broker/socket
+if [[ -L "${apt_broker_socket}" ]] || [[ ! -S "${apt_broker_socket}" ]]; then
+  echo "expected the apt broker to publish a real socket" >&2
   exit 1
 fi
-trap - EXIT
-kill "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
-wait "${slow_apt_broker_pid}" >/dev/null 2>&1 || true
+test "$(stat -c "%u:%a" "${apt_broker_socket}")" = "0:666"
+test "$(stat -c "%u:%a" /run/workcell/apt-broker)" = "0:755"
+if ! sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get --help \
+  >/tmp/codex-sudo-broker-apt.out 2>/tmp/codex-sudo-broker-apt.err; then
+  echo "expected the apt broker socket to serve a privileged package request" >&2
+  cat /tmp/codex-sudo-broker-apt.out >&2 || true
+  cat /tmp/codex-sudo-broker-apt.err >&2 || true
+  exit 1
+fi
+grep -q "apt-get" /tmp/codex-sudo-broker-apt.out
+if sudo -n /bin/sh -c id >/tmp/codex-sudo-broker-other.out 2>&1; then
+  echo "expected the apt broker client to admit only the package helper" >&2
+  exit 1
+fi
+grep -q "Workcell sudo compatibility mode only permits the package helper." /tmp/codex-sudo-broker-other.out
 apt-get --help >/dev/null
 codex --version >/dev/null
 mkdir -p /workspace/exfil

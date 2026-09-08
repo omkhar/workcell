@@ -163,7 +163,9 @@ No architecture build or assembly step can push packages or request an OIDC toke
 The `hosted-controls-audit` environment gates release preflight and final GitHub release publication.
 
 The release uses Cosign to create keyless Sigstore signatures.
-It also creates GitHub attestations when the reviewed hosted controls permit them.
+It creates GitHub attestations after a fixed public-repository guard.
+The guard reads the repository visibility from the GitHub event.
+It stops the release if the repository is not public.
 GitHub attestations do not replace Sigstore signatures.
 
 The final publisher has `actions: read` and `contents: write` permissions.
@@ -240,6 +242,11 @@ The canonical repository requires these variable values:
 - `WORKCELL_RELEASE_NO_ATTEST=false`
 - `WORKCELL_ENABLE_PRIVATE_GITHUB_ATTESTATIONS=false`
 
+The release workflow does not read those variables.
+It pins the attestation decision in versioned source.
+A variable change alone cannot make a release without attestations.
+The hosted-control policy still audits both values.
+
 The release environment permits protected `v*` tags only.
 It has no secret or variable content and no administrator bypass.
 
@@ -250,7 +257,8 @@ This requirement applies to public and private repositories.
 Private code scans and SARIF uploads depend on the GitHub plan.
 
 The public repository creates GitHub attestations.
-A private repository needs reviewed policy and plan support before it creates them.
+The canonical workflow stops for a private repository.
+A private repository needs a reviewed workflow change, a policy change, and plan support.
 
 ## Deliberate omissions
 

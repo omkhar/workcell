@@ -568,7 +568,6 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/.gemini/settings.json", RuntimePath: "/opt/workcell/adapters/gemini/.gemini/settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/GEMINI.md", RuntimePath: "/opt/workcell/adapters/gemini/GEMINI.md"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
-		{Kind: "runtime-control-plane", RepoPath: "runtime/container/apt-broker.sh", RuntimePath: "/usr/local/libexec/workcell/apt-broker.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-helper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-helper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-wrapper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/sudo-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/sudo-wrapper.sh"},
@@ -741,7 +740,6 @@ func ControlPlaneParityRows(manifestPath string) ([]string, error) {
 		label       string
 		runtimePath string
 	}{
-		{label: "apt-broker", runtimePath: "/usr/local/libexec/workcell/apt-broker.sh"},
 		{label: "claude-managed-settings", runtimePath: "/etc/claude-code/managed-settings.json"},
 		{label: "development-wrapper", runtimePath: "/usr/local/libexec/workcell/development-wrapper.sh"},
 		{label: "detached-stdin-wrapper", runtimePath: "/usr/local/libexec/workcell/detached-stdin-wrapper.sh"},

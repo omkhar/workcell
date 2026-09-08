@@ -539,7 +539,6 @@ COPY runtime/container/bin/apt-helper.sh /usr/local/libexec/workcell/apt-helper.
 COPY runtime/container/bin/apt-wrapper.sh /usr/local/libexec/workcell/apt-wrapper.sh
 COPY runtime/container/bin/sudo-wrapper.sh /usr/local/libexec/workcell/sudo-wrapper.sh
 COPY runtime/container/assurance.sh /usr/local/libexec/workcell/assurance.sh
-COPY runtime/container/apt-broker.sh /usr/local/libexec/workcell/apt-broker.sh
 COPY runtime/container/development-wrapper.sh /usr/local/libexec/workcell/development-wrapper.sh
 COPY runtime/container/detached-stdin-wrapper.sh /usr/local/libexec/workcell/detached-stdin-wrapper.sh
 COPY runtime/container/provider-policy.sh /usr/local/libexec/workcell/provider-policy.sh
@@ -555,7 +554,6 @@ RUN mkdir -p /etc/claude-code \
     /etc/claude-code/managed-settings.json \
   && chmod 0444 \
     /usr/local/libexec/workcell/assurance.sh \
-    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
@@ -572,7 +570,6 @@ RUN mkdir -p /etc/claude-code \
   && chmod +x \
     /usr/local/libexec/workcell/core/launcher \
     /usr/local/libexec/workcell/assurance.sh \
-    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
     /usr/local/libexec/workcell/apt-helper.sh \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
@@ -642,7 +639,6 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && chmod +x \
     /usr/local/libexec/workcell/core/git \
     /usr/local/libexec/workcell/core/launcher \
-    /usr/local/libexec/workcell/apt-broker.sh \
     /usr/local/libexec/workcell/detached-stdin-wrapper.sh \
     /usr/local/libexec/workcell/home-control-plane.sh \
     /usr/local/libexec/workcell/public-node-guard.mjs \

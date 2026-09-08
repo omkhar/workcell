@@ -4114,37 +4114,37 @@ func CheckRuntimeSecurityPosture(rootDir string) error {
 	return evaluate(rootDir, runtimeSecurityPostureChecks)
 }
 
-// smokeAptBrokerProbeChecks lists the six container-smoke apt-broker slow-wait
+// smokeAptBrokerProbeChecks lists the six container-smoke apt-broker socket
 // invariants in the same order as the former inline
 // `for required in ...; do grep -Fq -- "${required}" container-smoke.sh; done`
 // loop in scripts/verify-invariants.sh.  Each iteration was a fixed-string
 // presence probe whose stderr interpolated the needle into the message, so each
 // message is computed here verbatim as
 // "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker
-// slow-wait probe (" + needle + ")".  All six read scripts/container-smoke.sh
+// socket probe (" + needle + ")".  All six read scripts/container-smoke.sh
 // via the per-check targetFile field.
 var smokeAptBrokerProbeChecks = func() []check {
 	needles := []string{
-		"slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh",
-		"/bin/bash /usr/local/libexec/workcell/apt-broker.sh",
-		"sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update",
-		"slow-apt-helper-ok",
-		"expected sudo-wrapper to wait for a slow apt broker request by default",
-		"expected default apt broker waits to avoid timing out slow requests",
+		"expected the shell apt broker to be absent from the runtime image",
+		"expected no session sudoers grant behind the apt broker",
+		"expected the apt broker to publish a real socket",
+		"expected the apt broker socket to serve a privileged package request",
+		"expected the apt broker client to admit only the package helper",
+		"Workcell sudo compatibility mode only permits the package helper.",
 	}
 	cs := make([]check, 0, len(needles))
 	for _, needle := range needles {
 		cs = append(cs, check{
 			kind:       kindPresent,
 			pattern:    needle,
-			message:    "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (" + needle + ")",
+			message:    "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (" + needle + ")",
 			targetFile: containerSmokeRelPath,
 		})
 	}
 	return cs
 }()
 
-// CheckSmokeAptBrokerProbe runs the six container-smoke apt-broker slow-wait
+// CheckSmokeAptBrokerProbe runs the six container-smoke apt-broker socket
 // invariants against the repo rooted at rootDir, in the shell's original order.
 // It returns nil when every invariant holds (the shell's exit 0), or an error
 // whose message equals the shell's stderr for the first violated invariant (the
