@@ -69,6 +69,10 @@ The `Hostile environment` lanes run repository validation again on one hostile a
 - `root` runs the container as UID 0.
 - `uidmap` runs the container as a UID that owns none of the bind and has no record in the image.
 
+The `root` and `uidmap` axes validate a copy of the workspace that the container makes as its own UID.
+Git refuses a repository owned by another UID.
+`scripts/ci-plan.sh` runs Git with no configuration that could grant an exception, so the lane aligns the ownership.
+
 These shapes reproduce quoting, argument-boundary, mount-record, and `sun_path` defects before review.
 The lanes are advisory: they use `continue-on-error` and are not required checks.
 Run one axis on a host the same way the lane does, with Docker available:
