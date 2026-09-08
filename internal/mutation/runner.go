@@ -122,7 +122,7 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/injection"),
 	},
 	{
-		relativePath: "internal/injection/render_policy_load.go",
+		relativePath: "internal/injectionpolicy/bundle_load.go",
 		original:     "Sha256:   file.Sha256,",
 		replacement:  "Sha256: \"\",",
 		label:        "injection policy digest binding",
@@ -200,8 +200,8 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/metadatautil/workflows.go",
-		original:     `			publish[0].Args[1] != "--immutable-releases-preverified-by-hosted-controls" {`,
-		replacement:  `			!strings.Contains(step.Run, "--immutable-releases-preverified-by-hosted-controls") {`,
+		original:     `!publisherBindsVerifiedTag(publish[0].Args) {`,
+		replacement:  `!strings.Contains(step.Run, "--immutable-releases-preverified-by-hosted-controls") {`,
 		label:        "publication gate whole-word publisher contract",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowPublicationGateRejectsEvasions", "-count=1"),
 	},
