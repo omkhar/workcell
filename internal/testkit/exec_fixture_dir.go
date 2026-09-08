@@ -7,9 +7,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// repoRoot returns the checkout root, derived from this file's own path at
+// compile time: a plain location that a hostile TMPDIR never touches.
+func repoRoot(tb testing.TB) string {
+	tb.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		tb.Fatal("unable to determine repo root")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+}
 
 // ExecFixtureDir returns a directory for an executable test fixture (a
 // hook, filter, or remote helper a test writes and then has git, cmd/go, or
@@ -22,36 +34,61 @@ import (
 // inside the workcell container, and TMPDIR itself is deliberately hostile
 // under the CI lane that exercises that axis. So this probes candidates at
 // runtime and uses the first one that can actually execute a script.
+//
+// The repo checkout root is tried last, after /dev/shm and TMPDIR: under
+// the container's uidmap hostile axis the checkout is writable by every
+// uid (ownership fix #717) and always exec-capable, so it is a real
+// fallback rather than a redundant one.
 func ExecFixtureDir(tb testing.TB) string {
 	tb.Helper()
 
-	var candidates []string
-	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		candidates = append(candidates, runtimeDir)
+	type candidate struct {
+		name string
+		path string
 	}
-	// /dev/shm: a fixed, world-writable, exec-capable tmpfs on Linux
-	// (including the workcell container's exec-capable roots); absent on
-	// darwin, where the probe below simply skips it.
-	candidates = append(candidates, "/dev/shm", os.TempDir())
+	var candidates []candidate
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		candidates = append(candidates, candidate{"$XDG_RUNTIME_DIR", runtimeDir})
+	} else {
+		candidates = append(candidates, candidate{"$XDG_RUNTIME_DIR", ""})
+	}
+	candidates = append(candidates,
+		// /dev/shm: a fixed, world-writable, exec-capable tmpfs on Linux
+		// (including the workcell container's exec-capable roots); absent on
+		// darwin, where the probe below simply skips it.
+		candidate{"/dev/shm", "/dev/shm"},
+		candidate{"os.TempDir()", os.TempDir()},
+		candidate{"repo checkout root", repoRoot(tb)},
+	)
 
-	for _, base := range candidates {
-		if base == "" || strings.ContainsAny(base, " \t\n") {
+	var tried []string
+	for _, c := range candidates {
+		if c.path == "" {
+			tried = append(tried, c.name+": unset")
 			continue
 		}
-		if info, err := os.Stat(base); err != nil || !info.IsDir() {
+		if strings.ContainsAny(c.path, " \t\n") {
+			tried = append(tried, c.name+" ("+c.path+"): whitespace in path")
 			continue
 		}
-		dir, err := os.MkdirTemp(base, "workcell-exec-fixture-")
+		if info, err := os.Stat(c.path); err != nil || !info.IsDir() {
+			tried = append(tried, c.name+" ("+c.path+"): absent")
+			continue
+		}
+		dir, err := os.MkdirTemp(c.path, "workcell-exec-fixture-")
 		if err != nil {
+			tried = append(tried, c.name+" ("+c.path+"): not writable: "+err.Error())
 			continue
 		}
 		probe := filepath.Join(dir, "probe.sh")
 		if err := os.WriteFile(probe, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 			_ = os.RemoveAll(dir)
+			tried = append(tried, c.name+" ("+c.path+"): not writable: "+err.Error())
 			continue
 		}
 		if err := exec.Command(probe).Run(); err != nil {
 			_ = os.RemoveAll(dir)
+			tried = append(tried, c.name+" ("+c.path+"): noexec: "+err.Error())
 			continue
 		}
 		_ = os.Remove(probe)
@@ -59,6 +96,9 @@ func ExecFixtureDir(tb testing.TB) string {
 		return dir
 	}
 
-	tb.Skip("no writable, exec-capable, whitespace-free directory found for executable test fixtures")
+	// Every candidate failed: this is a real environment defect, not a
+	// reason to quietly drop coverage of whatever security control the
+	// fixture backs. Fail loudly rather than skip.
+	tb.Fatalf("no writable, exec-capable, whitespace-free directory found for executable test fixtures; tried:\n  %s", strings.Join(tried, "\n  "))
 	return ""
 }
