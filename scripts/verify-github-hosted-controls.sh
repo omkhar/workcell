@@ -89,7 +89,12 @@ resolve_trusted_go_bin() {
     "/opt/hostedtoolcache/go/${expected_toolchain#go}/${toolchain_arch}/bin/go" \
     /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go; do
     [[ -x "${candidate}" ]] || continue
-    actual_toolchain="$(GOTOOLCHAIN=local "${candidate}" env GOVERSION 2>/dev/null)" || continue
+    # Probe the toolchain the build will actually run under, not the version
+    # this candidate happens to be: hosted runners cache only older Go
+    # releases, so the pinned toolchain is reached the way every other lane
+    # reaches it, through the checksum-verified toolchain switch driven from
+    # a binary on a trusted path.
+    actual_toolchain="$(GOTOOLCHAIN="${expected_toolchain}" "${candidate}" env GOVERSION 2>/dev/null)" || continue
     if [[ "${actual_toolchain}" == "${expected_toolchain}" ]]; then
       printf '%s\n' "${candidate}"
       return 0
