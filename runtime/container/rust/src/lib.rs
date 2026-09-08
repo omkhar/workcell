@@ -4,6 +4,8 @@
 #![allow(clippy::missing_safety_doc)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(target_os = "linux")]
+use libc::c_uint;
 use libc::{c_char, c_int, c_long, c_void, pid_t};
 #[cfg(all(
     target_os = "linux",
@@ -14,7 +16,11 @@ use std::env;
 use std::ffi::{CStr, CString};
 use std::fs::{self, File};
 use std::io::Read;
+#[cfg(target_os = "linux")]
+use std::io::{Seek, SeekFrom, Write};
 use std::mem::{self, MaybeUninit};
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
@@ -159,6 +165,18 @@ const MAX_EXEC_PATH_BYTES: usize = MAX_EXEC_AGGREGATE_BYTES;
 const MAX_EXEC_PATH_SEGMENTS: usize = MAX_EXEC_ELEMENTS;
 const DEFAULT_SEARCH_PATH: &str = "/bin:/usr/bin";
 const AT_EMPTY_PATH_FLAG: c_int = 0x1000;
+/// The largest target the guard will copy into a sealed snapshot. Past this the
+/// exec is refused rather than served, so a caller cannot make the guard
+/// allocate without bound inside an interposed call.
+#[cfg(target_os = "linux")]
+const MAX_MUTABLE_EXEC_SNAPSHOT_BYTES: u64 = 64 * 1024 * 1024;
+#[cfg(target_os = "linux")]
+const MUTABLE_EXEC_COPY_CHUNK_BYTES: usize = 64 * 1024;
+/// `MFD_EXEC`, added in Linux 6.3. The `libc` crate this crate pins does not
+/// name it. A kernel that does not know the flag answers `EINVAL`, which
+/// `snapshot_mutable_file` retries without it.
+#[cfg(target_os = "linux")]
+const MFD_EXEC_FLAG: c_uint = 0x0010;
 
 #[cfg(target_os = "linux")]
 const SYS_EXECVE: c_long = libc::SYS_execve as c_long;
@@ -2081,6 +2099,375 @@ fn should_block_mutable_native_exec(path: &str, args: &[String], env_entries: &[
         || path_is_untrusted_shebang_native_exec(path, env_entries)
 }
 
+/// What the guard will exec once it has decided a target.
+///
+/// Every classification so far reads a *name* and then hands the same name back
+/// to libc, which looks it up again. That second lookup is a second decision
+/// the guard does not make, and between the two the caller can replace what the
+/// name holds. These outcomes close that gap: the guard executes the bytes it
+/// classified, or refuses.
+#[cfg(target_os = "linux")]
+enum MutableExecPreparation {
+    /// Nothing about this target needs pinning; the caller's own call stands.
+    NotMutable,
+    /// The target cannot be served safely.
+    Block,
+    /// A trusted target reached through a name the guard cannot pin. The open
+    /// descriptor is the pin: the file is already trusted, so its contents need
+    /// no copy, but the name must not be resolved a second time.
+    Pinned(c_int),
+    /// A sealed snapshot of an untrusted target, to be executed in its place.
+    Execute(c_int),
+}
+
+/// Decides how to serve a target and, where it must be pinned, returns the
+/// descriptor to exec.
+///
+/// `O_PATH` is what opens the target: it gives stable identity even for an
+/// execute-only file, which an ordinary open would refuse. A readable duplicate
+/// is taken separately, and only when a snapshot is actually needed.
+#[cfg(target_os = "linux")]
+fn mutable_exec_preparation(
+    path: &str,
+    dirfd: c_int,
+    open_flags: c_int,
+    env_entries: &[String],
+) -> MutableExecPreparation {
+    if !current_mode_blocks_mutable_native_exec() || path.is_empty() {
+        return MutableExecPreparation::NotMutable;
+    }
+
+    let lexical_mutable = path_has_mutable_provenance(path, dirfd);
+    // A relative name resolves against a working directory this process can
+    // change, and a magic descriptor path against a table it can rewrite.
+    // Neither survives being handed back to libc, whatever it names now.
+    let pin_target = !Path::new(path).is_absolute() || path_is_magic_exec_target(path);
+
+    let Ok(c_path) = CString::new(path.as_bytes()) else {
+        return if lexical_mutable || pin_target {
+            MutableExecPreparation::Block
+        } else {
+            MutableExecPreparation::NotMutable
+        };
+    };
+    // SAFETY: c_path is a live NUL-terminated CString and dirfd is the caller's own directory descriptor; O_PATH opens a description that can neither read nor write.
+    let fd = unsafe {
+        libc::openat(
+            dirfd,
+            c_path.as_ptr(),
+            libc::O_PATH | libc::O_CLOEXEC | open_flags,
+        )
+    };
+    if fd < 0 {
+        // The guard cannot pin what it cannot open. A name with untrusted
+        // provenance is refused rather than handed back, since the caller can
+        // fill it in between here and the exec.
+        return if lexical_mutable
+            || path_resolves_to_mutable_root(path, dirfd)
+            || path_has_untrusted_provenance(path, dirfd)
+            || pin_target
+        {
+            MutableExecPreparation::Block
+        } else {
+            MutableExecPreparation::NotMutable
+        };
+    }
+
+    // SAFETY: fd was just opened by this function and is owned by the File from here on.
+    let path_file = unsafe { File::from_raw_fd(fd) };
+    let Ok(metadata) = path_file.metadata() else {
+        return MutableExecPreparation::Block;
+    };
+    if (metadata.mode() & file_type_bits()) != regular_file_mode() {
+        // Nothing that is not a regular file is executable at all, so the
+        // kernel's own errno is the right answer -- but only where the name
+        // cannot be swapped for something that is. An untrusted name is a
+        // lookup race whatever it holds now.
+        return if lexical_mutable || path_has_untrusted_provenance(path, dirfd) || pin_target {
+            MutableExecPreparation::Block
+        } else {
+            MutableExecPreparation::NotMutable
+        };
+    }
+
+    // The lexical decision stands beside the descriptor one. A mutable
+    // directory can alias a trusted inode, so a descriptor that looks trusted
+    // is not enough on its own.
+    let untrusted = lexical_mutable
+        || path_has_untrusted_provenance(path, dirfd)
+        || fd_target_is_untrusted_exec(fd);
+    if !untrusted {
+        return if pin_target {
+            MutableExecPreparation::Pinned(path_file.into_raw_fd())
+        } else {
+            MutableExecPreparation::NotMutable
+        };
+    }
+
+    let Some(mut source) = duplicate_fd_file(fd) else {
+        return MutableExecPreparation::Block;
+    };
+    let Ok(metadata) = source.metadata() else {
+        return MutableExecPreparation::Block;
+    };
+    snapshot_mutable_file(&mut source, metadata.mode(), env_entries).map_or(
+        MutableExecPreparation::Block,
+        MutableExecPreparation::Execute,
+    )
+}
+
+/// Copies a target into a sealed memfd, classifies the copy, and returns it.
+///
+/// The seals are the point: once they are set the bytes cannot change, so the
+/// classification below them holds until the exec. Everything is decided on the
+/// copy rather than on the original, because the original can still change.
+///
+/// A native ELF is never snapshotted. The classifiers refuse an untrusted
+/// native executable outright, and copying one would turn a refusal into an
+/// execution.
+#[cfg(target_os = "linux")]
+fn snapshot_mutable_file(source: &mut File, mode: u32, env_entries: &[String]) -> Option<c_int> {
+    if source.metadata().ok()?.len() > MAX_MUTABLE_EXEC_SNAPSHOT_BYTES {
+        return None;
+    }
+    source.seek(SeekFrom::Start(0)).ok()?;
+
+    // SAFETY: the name is a static NUL-terminated literal and the flags are valid memfd_create flags.
+    let mut fd = unsafe {
+        libc::memfd_create(
+            c"workcell-mutable-exec".as_ptr(),
+            libc::MFD_ALLOW_SEALING | libc::MFD_CLOEXEC | MFD_EXEC_FLAG,
+        )
+    };
+    if fd < 0 {
+        // A kernel older than 6.3 does not know MFD_EXEC and answers EINVAL.
+        // Retry only for that: a newer kernel refusing under its own memfd
+        // execution policy must keep refusing.
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        if unsafe { *errno_location() } == libc::EINVAL {
+            // SAFETY: the name is a static NUL-terminated literal and the fallback flags are valid.
+            fd = unsafe {
+                libc::memfd_create(
+                    c"workcell-mutable-exec".as_ptr(),
+                    libc::MFD_ALLOW_SEALING | libc::MFD_CLOEXEC,
+                )
+            };
+        }
+    }
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: fd was just created by memfd_create and is owned by the File from here on.
+    let mut snapshot = unsafe { File::from_raw_fd(fd) };
+
+    // SAFETY: snapshot is an owned regular memfd and only permission bits are passed.
+    if unsafe { libc::fchmod(snapshot.as_raw_fd(), (mode & 0o777) as libc::mode_t) } != 0 {
+        return None;
+    }
+
+    let mut copied = 0u64;
+    let mut buffer = [0u8; MUTABLE_EXEC_COPY_CHUNK_BYTES];
+    loop {
+        let read = source.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        copied = copied.checked_add(read as u64)?;
+        if copied > MAX_MUTABLE_EXEC_SNAPSHOT_BYTES {
+            return None;
+        }
+        snapshot.write_all(&buffer[..read]).ok()?;
+    }
+
+    snapshot.seek(SeekFrom::Start(0)).ok()?;
+    let mut prefix = [0u8; 511];
+    let prefix_bytes = snapshot.read(&mut prefix).ok()?;
+    let prefix = &prefix[..prefix_bytes];
+    if prefix.starts_with(&[0x7f, b'E', b'L', b'F']) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(prefix);
+    if buffer_targets_protected_runtime_via_shebang(&text, env_entries)
+        || buffer_targets_untrusted_native_via_shebang(&text, env_entries)
+        // A shebang starts a second, loader-interpreted exec that reaches no
+        // entry point of this guard, so a loader override in the child
+        // environment would arrive at it unchecked.
+        || (env_has_unsafe_loader_override(env_entries) && prefix.starts_with(b"#!"))
+    {
+        return None;
+    }
+
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_SEAL;
+    // SAFETY: snapshot is an owned memfd created with MFD_ALLOW_SEALING and the seal set is valid.
+    if unsafe { libc::fcntl(snapshot.as_raw_fd(), libc::F_ADD_SEALS, seals) } != 0 {
+        return None;
+    }
+
+    // The descriptor has to survive the exec: a shebang snapshot is named
+    // through /proc/self/fd, and the interpreter opens that name afterwards.
+    // SAFETY: snapshot is an owned descriptor and F_GETFD reads its flags.
+    let descriptor_flags = unsafe { libc::fcntl(snapshot.as_raw_fd(), libc::F_GETFD) };
+    if descriptor_flags < 0 {
+        return None;
+    }
+    // SAFETY: snapshot is an owned descriptor and descriptor_flags came from F_GETFD.
+    if unsafe {
+        libc::fcntl(
+            snapshot.as_raw_fd(),
+            libc::F_SETFD,
+            descriptor_flags & !libc::FD_CLOEXEC,
+        )
+    } != 0
+    {
+        return None;
+    }
+
+    snapshot.seek(SeekFrom::Start(0)).ok()?;
+    Some(snapshot.into_raw_fd())
+}
+
+#[cfg(target_os = "linux")]
+fn close_prepared_fd(fd: c_int) {
+    // SAFETY: callers pass the descriptor mutable_exec_preparation handed them, which they own.
+    unsafe { libc::close(fd) };
+}
+
+/// The close must not overwrite the errno the failed exec reported.
+#[cfg(target_os = "linux")]
+fn close_prepared_fd_preserving_errno(fd: c_int, result: c_int) {
+    if result < 0 {
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        let saved = unsafe { *errno_location() };
+        close_prepared_fd(fd);
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        unsafe { *errno_location() = saved };
+    } else {
+        close_prepared_fd(fd);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn fd_exec_path(fd: c_int) -> Option<CString> {
+    CString::new(proc_fd_path(fd)).ok()
+}
+
+/// Executes the prepared descriptor itself, so the bytes that run are the bytes
+/// the guard classified.
+#[cfg(target_os = "linux")]
+fn execute_snapshot_execveat(
+    fd: c_int,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    // SAFETY: fd is the prepared descriptor owned by this call; argv and envp are the caller's own exec ABI pointers, unmodified.
+    let result = unsafe { execveat_fn()(fd, c"".as_ptr(), argv, envp, libc::AT_EMPTY_PATH) };
+    if result < 0
+        // A script executed through AT_EMPTY_PATH is answered ENOENT on some
+        // kernels, because the interpreter is handed a /dev/fd name it then
+        // resolves. Retry through the descriptor's own proc path, which names
+        // the same still-open snapshot.
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        && unsafe { *errno_location() } == libc::ENOENT
+        && let Some(fd_path) = fd_exec_path(fd)
+    {
+        // SAFETY: fd_path names the still-open prepared descriptor, and argv and envp remain the caller's valid pointers.
+        let fallback = unsafe { execve_fn()(fd_path.as_ptr(), argv, envp) };
+        close_prepared_fd_preserving_errno(fd, fallback);
+        return fallback;
+    }
+    close_prepared_fd_preserving_errno(fd, result);
+    result
+}
+
+/// The `execvp` family form. glibc answers `ENOEXEC` by running `/bin/sh` on
+/// the target, from inside libc and without re-entering this guard, so the
+/// guard has to perform that fallback itself once it is executing a descriptor
+/// rather than a name.
+#[cfg(target_os = "linux")]
+fn execute_snapshot_execveat_with_shell_fallback(
+    fd: c_int,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    arg_count: usize,
+) -> c_int {
+    // SAFETY: fd is the prepared descriptor owned by this call; argv and envp are the caller's own exec ABI pointers, unmodified.
+    let mut result = unsafe { execveat_fn()(fd, c"".as_ptr(), argv, envp, libc::AT_EMPTY_PATH) };
+    // SAFETY: errno_location returns this thread's valid errno slot.
+    let mut exec_errno = unsafe { *errno_location() };
+    if result < 0
+        && exec_errno == libc::ENOENT
+        && let Some(fd_path) = fd_exec_path(fd)
+    {
+        // SAFETY: fd_path names the still-open prepared descriptor, and argv and envp remain the caller's valid pointers.
+        result = unsafe { execve_fn()(fd_path.as_ptr(), argv, envp) };
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        exec_errno = unsafe { *errno_location() };
+    }
+    if result < 0 && exec_errno == libc::ENOEXEC {
+        let Ok(fd_path) = CString::new(proc_fd_path(fd)) else {
+            close_prepared_fd(fd);
+            set_errno(libc::ENOENT);
+            return -1;
+        };
+        let shell = c"/bin/sh";
+        let mut shell_argv = Vec::with_capacity(arg_count.saturating_add(2));
+        shell_argv.push(shell.as_ptr());
+        shell_argv.push(fd_path.as_ptr());
+        if arg_count > 1 && !argv.is_null() {
+            // SAFETY: collect_cstring_array already walked arg_count entries of argv in this call, so argv[1..arg_count] are readable pointers.
+            let original = unsafe { std::slice::from_raw_parts(argv.add(1), arg_count - 1) };
+            shell_argv.extend_from_slice(original);
+        }
+        shell_argv.push(std::ptr::null());
+
+        // SAFETY: shell, fd_path and shell_argv outlive the call; fd stays open so its proc path names the prepared descriptor.
+        let shell_result = unsafe { execve_fn()(shell.as_ptr(), shell_argv.as_ptr(), envp) };
+        close_prepared_fd_preserving_errno(fd, shell_result);
+        return shell_result;
+    }
+    close_prepared_fd_preserving_errno(fd, result);
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn execute_prepared_execve(
+    path: &str,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    env_entries: &[String],
+) -> Option<c_int> {
+    match mutable_exec_preparation(path, libc::AT_FDCWD, 0, env_entries) {
+        MutableExecPreparation::NotMutable => None,
+        MutableExecPreparation::Block => {
+            report_mutable_native_exec_block();
+            Some(-1)
+        }
+        MutableExecPreparation::Pinned(fd) | MutableExecPreparation::Execute(fd) => {
+            Some(execute_snapshot_execveat(fd, argv, envp))
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn execute_prepared_search_execve(
+    path: &str,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    env_entries: &[String],
+    arg_count: usize,
+) -> Option<c_int> {
+    match mutable_exec_preparation(path, libc::AT_FDCWD, 0, env_entries) {
+        MutableExecPreparation::NotMutable => None,
+        MutableExecPreparation::Block => {
+            report_mutable_native_exec_block();
+            Some(-1)
+        }
+        MutableExecPreparation::Pinned(fd) | MutableExecPreparation::Execute(fd) => Some(
+            execute_snapshot_execveat_with_shell_fallback(fd, argv, envp, arg_count),
+        ),
+    }
+}
+
 // execvp, execvpe and posix_spawnp all search PATH from the caller's own
 // environment rather than the envp handed to the child, so the guard reads the
 // same source libc will. A name containing a slash is not searched at all, so
@@ -2385,6 +2772,11 @@ unsafe extern "C" fn guarded_execve(
         return -1;
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(result) = execute_prepared_execve(&path_string, argv, envp, &env_entries) {
+        return result;
+    }
+
     // SAFETY: forwards the caller's original, unmodified execve arguments to the real libc execve resolved via RTLD_NEXT.
     unsafe { execve_fn()(path, argv, envp) }
 }
@@ -2425,6 +2817,16 @@ unsafe extern "C" fn guarded_execv(path: *const c_char, argv: *const *const c_ch
     if should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: environ is libc-initialized and read in the calling thread with no concurrent setenv/putenv.
+        let current_env = unsafe { environ.cast() };
+        if let Some(result) = execute_prepared_execve(&path_string, argv, current_env, &env_entries)
+        {
+            return result;
+        }
     }
 
     // SAFETY: forwards the caller's original, unmodified execv arguments to the real libc execv resolved via RTLD_NEXT.
@@ -2490,6 +2892,21 @@ unsafe extern "C" fn guarded_execvp(file: *const c_char, argv: *const *const c_c
     if should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: environ is libc-initialized and read in the calling thread with no concurrent setenv/putenv.
+        let current_env = unsafe { environ.cast() };
+        if let Some(result) = execute_prepared_search_execve(
+            &effective_path,
+            argv,
+            current_env,
+            &env_entries,
+            args.len(),
+        ) {
+            return result;
+        }
     }
 
     // SAFETY: forwards the caller's original, unmodified execvp arguments to the real libc execvp resolved via RTLD_NEXT.
@@ -2559,6 +2976,13 @@ unsafe extern "C" fn guarded_execvpe(
     if should_block_null_explicit_env(envp) || should_block_missing_guard_env(&env_entries) {
         report_missing_guard_env_block();
         return -1;
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(result) =
+        execute_prepared_search_execve(&effective_path, argv, envp, &env_entries, args.len())
+    {
+        return result;
     }
 
     // SAFETY: forwards the caller's original, unmodified execvpe arguments to the real libc execvpe resolved via RTLD_NEXT.
@@ -4027,6 +4451,170 @@ mod tests {
 
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
             .expect("restore read permission");
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_snapshot_is_sealed_and_carries_only_what_was_classified() {
+        let dir = create_temp_test_dir("snapshot");
+        let script = dir.join("script");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write script");
+
+        let mut source = File::open(&script).expect("open script");
+        let snapshot = snapshot_mutable_file(&mut source, 0o750, &[]).expect("snapshot the script");
+
+        // Sealed against every kind of change, so the classification holds
+        // until the exec.
+        // SAFETY: snapshot is the owned descriptor just returned; F_GET_SEALS only reads it.
+        let seals = unsafe { libc::fcntl(snapshot, libc::F_GET_SEALS) };
+        for seal in [
+            libc::F_SEAL_WRITE,
+            libc::F_SEAL_SHRINK,
+            libc::F_SEAL_GROW,
+            libc::F_SEAL_SEAL,
+        ] {
+            assert_eq!(seals & seal, seal, "missing seal {seal:#x}");
+        }
+        // The interpreter opens the snapshot by name after the exec, so the
+        // descriptor has to survive it.
+        // SAFETY: snapshot is the owned descriptor just returned; F_GETFD only reads its flags.
+        let descriptor_flags = unsafe { libc::fcntl(snapshot, libc::F_GETFD) };
+        assert_eq!(descriptor_flags & libc::FD_CLOEXEC, 0);
+
+        let mut copy = duplicate_fd_file(snapshot).expect("reopen the snapshot");
+        let mut bytes = String::new();
+        copy.read_to_string(&mut bytes).expect("read the snapshot");
+        assert_eq!(bytes, "#!/bin/sh\nexit 0\n");
+        assert_eq!(
+            copy.metadata().expect("snapshot metadata").mode() & 0o777,
+            0o750
+        );
+        close_prepared_fd(snapshot);
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_snapshot_is_refused_for_everything_the_guard_would_not_run() {
+        let dir = create_temp_test_dir("snapshot-refusals");
+        let interpreter = dir.join("tool");
+        fs::write(&interpreter, [0x7f, b'E', b'L', b'F', 2, 1, 1, 0]).expect("write interpreter");
+
+        let refuse = |name: &str, contents: &[u8], env: &[String]| {
+            let file = dir.join(name);
+            fs::write(&file, contents).expect("write fixture");
+            let mut source = File::open(&file).expect("open fixture");
+            assert!(
+                snapshot_mutable_file(&mut source, 0o755, env).is_none(),
+                "{name} should not be snapshotted"
+            );
+        };
+
+        // A native executable is refused outright by the classifiers, so
+        // copying one would turn a refusal into an execution.
+        refuse("elf", &[0x7f, b'E', b'L', b'F', 2, 1, 1, 0], &[]);
+        // A shebang the guard would refuse if it were read from the original.
+        refuse(
+            "protected",
+            b"#!/usr/local/libexec/workcell/real/node\n",
+            &[],
+        );
+        refuse(
+            "untrusted-interpreter",
+            format!("#!{}\n", interpreter.display()).as_bytes(),
+            &[],
+        );
+        // The interpreter is a second, loader-interpreted exec that reaches no
+        // entry point, so a loader override in the child environment would
+        // arrive at it unchecked.
+        refuse(
+            "loader-override",
+            b"#!/bin/sh\nexit 0\n",
+            &["LD_AUDIT=/tmp/audit.so".to_string()],
+        );
+
+        // Past the copy limit the exec is refused rather than served.
+        let oversized = dir.join("oversized");
+        fs::write(&oversized, "#!/bin/sh\n").expect("write oversized");
+        File::options()
+            .write(true)
+            .open(&oversized)
+            .expect("open oversized")
+            .set_len(MAX_MUTABLE_EXEC_SNAPSHOT_BYTES + 1)
+            .expect("grow past the limit");
+        let mut source = File::open(&oversized).expect("reopen oversized");
+        assert!(snapshot_mutable_file(&mut source, 0o755, &[]).is_none());
+
+        // The control: an ordinary script is still served.
+        let allowed = dir.join("allowed");
+        fs::write(&allowed, "#!/bin/sh\nexit 0\n").expect("write allowed");
+        let mut source = File::open(&allowed).expect("open allowed");
+        let snapshot = snapshot_mutable_file(&mut source, 0o755, &[]).expect("snapshot");
+        close_prepared_fd(snapshot);
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exec_preparation_pins_only_what_it_has_to() {
+        let dir = create_temp_test_dir("preparation");
+        let script = dir.join("script");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod script");
+
+        // An untrusted script is served from a sealed copy of itself.
+        match mutable_exec_preparation(
+            script.to_str().expect("script path"),
+            libc::AT_FDCWD,
+            0,
+            &[],
+        ) {
+            MutableExecPreparation::Execute(fd) => close_prepared_fd(fd),
+            _ => panic!("an untrusted script must be snapshotted"),
+        }
+
+        // A trusted absolute name needs no pin: nothing can replace what it
+        // resolves to, so the caller's own call stands.
+        assert!(matches!(
+            mutable_exec_preparation("/bin/true", libc::AT_FDCWD, 0, &[]),
+            MutableExecPreparation::NotMutable
+        ));
+
+        // A trusted target named through a descriptor table is pinned rather
+        // than copied: the bytes are already trustworthy, the name is not.
+        let trusted = File::open("/bin/true").expect("open /bin/true");
+        let magic = proc_fd_path(trusted.as_raw_fd());
+        match mutable_exec_preparation(&magic, libc::AT_FDCWD, 0, &[]) {
+            MutableExecPreparation::Pinned(fd) => close_prepared_fd(fd),
+            _ => panic!("a magic name for a trusted target must be pinned"),
+        }
+
+        // A directory under a name this process can replace is a lookup race,
+        // whatever it holds now.
+        assert!(matches!(
+            mutable_exec_preparation(dir.to_str().expect("dir path"), libc::AT_FDCWD, 0, &[]),
+            MutableExecPreparation::Block
+        ));
+        // A directory nothing can replace keeps the kernel's own errno.
+        assert!(matches!(
+            mutable_exec_preparation("/bin", libc::AT_FDCWD, 0, &[]),
+            MutableExecPreparation::NotMutable
+        ));
+        // A name that does not exist under a writable directory can be filled
+        // in between here and the exec.
+        assert!(matches!(
+            mutable_exec_preparation(
+                dir.join("absent").to_str().expect("absent path"),
+                libc::AT_FDCWD,
+                0,
+                &[]
+            ),
+            MutableExecPreparation::Block
+        ));
+
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 
