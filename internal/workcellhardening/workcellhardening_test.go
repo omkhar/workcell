@@ -5845,19 +5845,19 @@ func TestCheckRuntimeSecurityPostureRealRepo(t *testing.T) {
 	}
 }
 
-// --- D3 final simple sweep: container-smoke apt-broker slow-wait probe ---
+// --- D3 final simple sweep: container-smoke apt-broker socket probe ---
 
 // smokeAptBrokerProbeHappyFiles returns a container-smoke.sh fixture that carries
-// all six apt-broker slow-wait probe strings, so all six invariants hold.
+// all six apt-broker socket probe strings, so all six invariants hold.
 func smokeAptBrokerProbeHappyFiles() map[string]string {
 	return map[string]string{
 		containerSmokeRelPath: "#!/usr/bin/env bash\n" +
-			"slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh\n" +
-			"/bin/bash /usr/local/libexec/workcell/apt-broker.sh\n" +
-			"sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update\n" +
-			"echo slow-apt-helper-ok\n" +
-			"# expected sudo-wrapper to wait for a slow apt broker request by default\n" +
-			"# expected default apt broker waits to avoid timing out slow requests\n",
+			"# expected the shell apt broker to be absent from the runtime image\n" +
+			"# expected no session sudoers grant behind the apt broker\n" +
+			"# expected the apt broker to publish a real socket\n" +
+			"# expected the apt broker socket to serve a privileged package request\n" +
+			"# expected the apt broker client to admit only the package helper\n" +
+			"grep -q \"Workcell sudo compatibility mode only permits the package helper.\" out\n",
 	}
 }
 
@@ -5869,34 +5869,34 @@ func TestCheckSmokeAptBrokerProbe(t *testing.T) {
 	}{
 		{name: "happy path all invariants hold"},
 		{
-			name:    "slow-apt-helper path probe missing",
-			needle:  "slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (slow_apt_helper=/state/tmp/workcell-slow-apt-helper.sh)",
+			name:    "shell broker absence probe missing",
+			needle:  "expected the shell apt broker to be absent from the runtime image",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected the shell apt broker to be absent from the runtime image)",
 		},
 		{
-			name:    "apt-broker invocation probe missing",
-			needle:  "/bin/bash /usr/local/libexec/workcell/apt-broker.sh",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (/bin/bash /usr/local/libexec/workcell/apt-broker.sh)",
+			name:    "sudoers grant absence probe missing",
+			needle:  "expected no session sudoers grant behind the apt broker",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected no session sudoers grant behind the apt broker)",
 		},
 		{
-			name:    "apt-helper update probe missing",
-			needle:  "sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (sudo -n /usr/local/libexec/workcell/apt-helper.sh apt-get update)",
+			name:    "broker socket probe missing",
+			needle:  "expected the apt broker to publish a real socket",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected the apt broker to publish a real socket)",
 		},
 		{
-			name:    "slow-apt-helper-ok probe missing",
-			needle:  "slow-apt-helper-ok",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (slow-apt-helper-ok)",
+			name:    "broker request probe missing",
+			needle:  "expected the apt broker socket to serve a privileged package request",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected the apt broker socket to serve a privileged package request)",
 		},
 		{
-			name:    "sudo-wrapper wait probe missing",
-			needle:  "expected sudo-wrapper to wait for a slow apt broker request by default",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (expected sudo-wrapper to wait for a slow apt broker request by default)",
+			name:    "helper-only admission probe missing",
+			needle:  "expected the apt broker client to admit only the package helper",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected the apt broker client to admit only the package helper)",
 		},
 		{
-			name:    "default broker wait probe missing",
-			needle:  "expected default apt broker waits to avoid timing out slow requests",
-			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker slow-wait probe (expected default apt broker waits to avoid timing out slow requests)",
+			name:    "compat rejection message probe missing",
+			needle:  "Workcell sudo compatibility mode only permits the package helper.",
+			wantErr: "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (Workcell sudo compatibility mode only permits the package helper.)",
 		},
 	}
 	for _, tt := range tests {

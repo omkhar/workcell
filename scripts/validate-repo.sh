@@ -260,7 +260,6 @@ shell_files=(
   "${ROOT_DIR}/scripts/with-validation-snapshot.sh"
   "${ROOT_DIR}/adapters/claude/hooks/guard-bash.sh"
   "${ROOT_DIR}/runtime/container/entrypoint.sh"
-  "${ROOT_DIR}/runtime/container/apt-broker.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-helper.sh"
   "${ROOT_DIR}/runtime/container/bin/apt-wrapper.sh"
   "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
@@ -287,7 +286,6 @@ shell_files=(
 # These scripts are linted but are not executable in the tree. The container
 # image sets the mode on copy, and the parity library is sourced, not run.
 non_executable_shell_files=(
-  "${ROOT_DIR}/runtime/container/apt-broker.sh"
   "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
   "${ROOT_DIR}/runtime/container/detached-stdin-wrapper.sh"
   "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"

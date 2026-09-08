@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +24,11 @@ import (
 )
 
 const (
-	serverBinary       = "/usr/local/libexec/workcell/workcell-apt-broker-server"
-	startupLimit       = 5 * time.Second
-	startupReadyByte   = byte('R')
-	startupAcknowledge = byte('A')
+	serverBinary          = "/usr/local/libexec/workcell/workcell-apt-broker-server"
+	startupLimit          = 5 * time.Second
+	staleSocketProbeLimit = time.Second
+	startupReadyByte      = byte('R')
+	startupAcknowledge    = byte('A')
 )
 
 type startupProcess interface {
@@ -48,7 +50,8 @@ func startServer(arguments []string) error {
 	if err := prepareSocketParent(filepath.Dir(aptbroker.DefaultSocketPath)); err != nil {
 		return err
 	}
-	if err := requireUnusedSocket(aptbroker.DefaultSocketPath); err != nil {
+	serving, err := claimSocketPath(aptbroker.DefaultSocketPath)
+	if err != nil || serving {
 		return err
 	}
 	binary, err := openServerBinary(serverBinary)
@@ -95,7 +98,23 @@ func createSocketParent(path string) error {
 	if err != nil {
 		return fmt.Errorf("create socket parent: %w", err)
 	}
-	return normalizeCreatedSocketParent(path)
+	if err := normalizeCreatedSocketParent(path); err != nil {
+		return errors.Join(err, removeUnpublishedSocketParent(path))
+	}
+	return nil
+}
+
+// removeUnpublishedSocketParent unmakes a directory this call created but never
+// finished normalizing. Nothing has been placed in it yet, so removing it is
+// free. Leaving it behind publishes whatever mode the umask chose, and every
+// later attempt then takes the ErrExist branch above, skips normalization, and
+// fails the exact-0755 validation, wedging startup until someone repairs it by
+// hand.
+func removeUnpublishedSocketParent(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove unpublished socket parent: %w", err)
+	}
+	return nil
 }
 
 func normalizeCreatedSocketParent(path string) error {
@@ -202,15 +221,80 @@ func validateStartupDescriptor(descriptor int, kind uint32) error {
 	return nil
 }
 
-func requireUnusedSocket(path string) error {
-	_, err := os.Lstat(path)
+// claimSocketPath makes the pathname ready to bind, and reports whether a
+// server is already serving it.
+//
+// Two things reach this. The entrypoint can run more than once in one
+// container, and the second --start must not fail on the socket the first one
+// left serving: that is the idempotence the pid-file check used to provide.
+// And an unclean stop leaves the pathname behind with no listener, because
+// SIGKILL denies the server its own cleanup and bindSocket disables
+// unlink-on-close; without recovery every later --start fails on it until
+// someone removes it by hand.
+//
+// prepareSocketParent has already proved this directory is root-owned and
+// writable by root alone, so no unprivileged uid can have placed this pathname
+// here or swap it while we look. A socket that is still serving is accepted
+// only after it passes the same validation a socket this call started would.
+func claimSocketPath(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect existing server socket: %w", err)
+	}
+	if !isStartedSocket(info, nil) {
+		return false, errors.New("apt broker socket path is not a socket")
+	}
+	if !socketRefusesConnections(path) {
+		return true, validateStartedSocket(path)
+	}
+	if err := os.Remove(path); err != nil {
+		return false, fmt.Errorf("remove stale server socket: %w", err)
+	}
+	return false, nil
+}
+
+// socketRefusesConnections reports whether the pathname has no listener. Only
+// ECONNREFUSED proves that: a connect that times out, or fails any other way,
+// leaves the question open, and a live server must never have its socket
+// unlinked out from under it. So anything but a refusal fails closed.
+//
+// ponytail: connect probe. The kernel accepts this connection before the server
+// checks peer credentials, so a live server refuses it as a root peer and says
+// so on stderr. That is the credential control working, but on a repeated
+// --start it reads like an attack rather than a liveness check. Read the
+// SO_ACCEPTCON flag for the socket's inode in /proc/net/unix instead if that
+// noise ever matters.
+func socketRefusesConnections(path string) bool {
+	connection, err := net.DialTimeout("unix", path, staleSocketProbeLimit)
+	if err != nil {
+		return errors.Is(err, syscall.ECONNREFUSED)
+	}
+	_ = connection.Close()
+	return false
+}
+
+// removeAbandonedSocket clears the socket a killed startup left behind. The
+// child is stopped with SIGKILL, so its own deferred cleanup never runs, and
+// claimSocketPath proved the pathname was free just before the launch, so a
+// socket here was bound by this attempt and nothing else.
+func removeAbandonedSocket(path string) error {
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect existing server socket: %w", err)
+		return fmt.Errorf("inspect abandoned server socket: %w", err)
 	}
-	return errors.New("apt broker socket already exists")
+	if !isStartedSocket(info, nil) {
+		return errors.New("failed startup left a path that is not its socket")
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove abandoned server socket: %w", err)
+	}
+	return nil
 }
 
 func launchServer(binary *os.File, peerUID uint32) error {
@@ -233,7 +317,7 @@ func launchServer(binary *os.File, peerUID uint32) error {
 	}
 	readyWriter.Close()
 	ackReader.Close()
-	return finishStartup(command.Process, readyReader, ackWriter, func() error {
+	return finishStartup(command.Process, aptbroker.DefaultSocketPath, readyReader, ackWriter, func() error {
 		return validateStartedSocket(aptbroker.DefaultSocketPath)
 	})
 }
@@ -272,9 +356,9 @@ func fixedServerEnvironment() []string {
 	}
 }
 
-func finishStartup(process startupProcess, ready startupReader, acknowledge io.Writer, validateSocket func() error) error {
+func finishStartup(process startupProcess, socketPath string, ready startupReader, acknowledge io.Writer, validateSocket func() error) error {
 	if err := completeStartup(ready, acknowledge, validateSocket); err != nil {
-		return stopStartupProcess(process, err)
+		return stopStartupProcess(process, socketPath, err)
 	}
 	// os.Process.Release cannot fail on Linux. Keep the return value so a
 	// future platform implementation cannot silently change this contract.
@@ -302,10 +386,10 @@ func readStartupReady(ready startupReader) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(ready, 2))
 }
 
-func stopStartupProcess(process startupProcess, cause error) error {
+func stopStartupProcess(process startupProcess, socketPath string, cause error) error {
 	killErr := process.Kill()
 	_, waitErr := process.Wait()
-	return errors.Join(cause, killErr, waitErr)
+	return errors.Join(cause, killErr, waitErr, removeAbandonedSocket(socketPath))
 }
 
 func startupHandshake(readyFD, acknowledgeFD uintptr) (func() error, error) {

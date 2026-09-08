@@ -301,7 +301,6 @@ func TestControlPlaneParityRowsIncludePrivilegedAndDetachedWrappers(t *testing.T
 	}
 
 	for _, want := range []string{
-		"path\tapt-broker\t/usr/local/libexec/workcell/apt-broker.sh",
 		"path\tdevelopment-wrapper\t/usr/local/libexec/workcell/development-wrapper.sh",
 		"path\tdetached-stdin-wrapper\t/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
 		"path\tsudo-wrapper\t/usr/local/libexec/workcell/sudo-wrapper.sh",

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -209,9 +210,16 @@ func TestFinishStartupTransfersOnlyValidatedServer(t *testing.T) {
 				return test.validateErr
 			}
 			writer := fixtureStartupWriter{log: &log, err: test.ackErr}
-			err := finishStartup(fixtureStartupProcess{log: &log}, test.ready, writer, validate)
+			socketPath := boundStartupSocket(t)
+			err := finishStartup(fixtureStartupProcess{log: &log}, socketPath, test.ready, writer, validate)
 			if !reflect.DeepEqual(log, test.wantLog) || (err != nil) != test.wantError {
 				t.Fatalf("finishStartup() = (%v, %v), want (%v, error=%v)", log, err, test.wantLog, test.wantError)
+			}
+			// A killed child cannot unlink the socket it bound, so the starter
+			// has to. Anything left behind fails every later --start.
+			_, statErr := os.Lstat(socketPath)
+			if removed := errors.Is(statErr, os.ErrNotExist); removed != test.wantError {
+				t.Fatalf("socket removed = %v, want %v (stat %v)", removed, test.wantError, statErr)
 			}
 		})
 	}
@@ -219,6 +227,22 @@ func TestFinishStartupTransfersOnlyValidatedServer(t *testing.T) {
 
 func startupBody(body string) startupReader {
 	return fixtureStartupReader{Reader: bytes.NewBufferString(body)}
+}
+
+// boundStartupSocket stands in for the socket a launched server binds. Close
+// must not unlink it, or the test could not tell the starter's cleanup apart
+// from the listener's own.
+func boundStartupSocket(tb testing.TB) string {
+	tb.Helper()
+
+	path := filepath.Join(tb.TempDir(), "socket")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	tb.Cleanup(func() { _ = listener.Close() })
+	return path
 }
 
 func TestPrepareSocketParentRejectsSymlinkWithoutChangingTarget(t *testing.T) {
@@ -273,15 +297,72 @@ func TestCreateSocketParentDoesNotModifyExistingDirectory(t *testing.T) {
 	}
 }
 
-func TestRequireUnusedSocketRejectsEveryExistingPath(t *testing.T) {
+func TestClaimSocketPathRejectsAPathThatIsNotASocket(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "socket")
-	if err := requireUnusedSocket(path); err != nil {
-		t.Fatalf("missing socket was rejected: %v", err)
+	serving, err := claimSocketPath(path)
+	if serving || err != nil {
+		t.Fatalf("missing socket was rejected: (%v, %v)", serving, err)
 	}
 	if err := os.WriteFile(path, []byte("stale fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := requireUnusedSocket(path); err == nil {
-		t.Fatal("existing socket path was accepted")
+	if _, err := claimSocketPath(path); err == nil {
+		t.Fatal("a regular file at the socket path was accepted")
+	}
+}
+
+func TestClaimSocketPathKeepsALiveSocketAndClearsAStaleOne(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("a live socket is accepted only after root-owner validation")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "socket")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	// The entrypoint can run twice in one container. The second --start has to
+	// accept the socket the first one left serving rather than fail on it.
+	serving, err := claimSocketPath(path)
+	if !serving || err != nil {
+		t.Fatalf("a live socket was not reported as serving: (%v, %v)", serving, err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("a live socket was removed: %v", err)
+	}
+	// An unclean stop leaves the pathname without a listener behind it.
+	// Recovering it is the difference between the next --start working and
+	// every --start failing until someone removes the socket by hand.
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	serving, err = claimSocketPath(path)
+	if serving || err != nil {
+		t.Fatalf("stale socket was not recovered: (%v, %v)", serving, err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale socket survived recovery: %v", err)
+	}
+}
+
+func TestCreateSocketParentRemovesTheDirectoryItCannotNormalize(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("normalization only fails for a non-root owner")
+	}
+	path := filepath.Join(t.TempDir(), "socket-root")
+	if err := createSocketParent(path); err == nil {
+		t.Fatal("a socket parent this uid cannot own was accepted")
+	}
+	// Leaving the directory behind would make every retry take the ErrExist
+	// path, skip normalization, and fail the exact-0755 validation forever.
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unpublished socket parent survived: %v", err)
 	}
 }
