@@ -199,6 +199,7 @@ var hardenedFSPackages = []string{
 // is part of the answer rather than part of the defect.
 var hardenedFSSymbols = map[string]bool{
 	"Open":       true,
+	"OpenRoot":   true,
 	"OpenFile":   true,
 	"ReadFile":   true,
 	"WriteFile":  true,

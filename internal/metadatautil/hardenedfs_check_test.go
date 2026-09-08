@@ -42,8 +42,8 @@ func TestHardenedFSFindings(t *testing.T) {
 				"os.Create(a)\nos.Mkdir(a)\nos.MkdirAll(a)\nos.Rename(a, b)\nos.Stat(a)\nos.ReadDir(a)\n" +
 				"os.Readlink(a)\nos.Remove(a)\nos.RemoveAll(a)\nos.Chmod(a, b)\nos.Chown(a, b, c)\n" +
 				"os.Symlink(a, b)\nos.Link(a, b)\nos.Truncate(a, b)\nos.CreateTemp(a, b)\nos.MkdirTemp(a, b)\n" +
-				"os.Chtimes(a, b, c)\n}\n",
-			want: 21,
+				"os.Chtimes(a, b, c)\nos.OpenRoot(a)\n}\n",
+			want: 22,
 		},
 		{
 			name:   "an aliased import is still the os package",
@@ -103,6 +103,24 @@ func TestHardenedFSFindings(t *testing.T) {
 		{
 			name:   "an exemption clears only its own line",
 			source: header + "func f() {\nos.Open(a) // hardened-fs-exempt: a build constant\nos.Open(b)\n}\n",
+			want:   1,
+		},
+		{
+			// Two comments on one line name one reference between them, so
+			// neither clears anything.
+			name: "two exemptions on one line clear nothing",
+			source: header + "func f() { os.Open(a); os.ReadFile(b) } " +
+				"/* hardened-fs-exempt: b is fixed */ /* hardened-fs-exempt: b is fixed */\n",
+			want: 2,
+		},
+		{
+			name:   "os.Chtimes mutates a named object",
+			source: header + "func f() { os.Chtimes(path, a, b) }\n",
+			want:   1,
+		},
+		{
+			name:   "os.OpenRoot resolves its own argument",
+			source: header + "func f() { os.OpenRoot(path) }\n",
 			want:   1,
 		},
 		{
@@ -260,6 +278,24 @@ func TestCheckHardenedFSRejectsAMissingPackage(t *testing.T) {
 	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
 	if err := metadatautil.CheckHardenedFS(root); err == nil {
 		t.Fatal("expected a missing trust-boundary package to fail")
+	}
+}
+
+// A symlinked source entry must fail. os.Root follows a symlink whose target
+// stays inside the root, so the scan would read a target other than the entry
+// the walk inspected.
+func TestCheckHardenedFSRejectsASymlinkedSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
+	writeHardenedFSPackageFixtures(t, root)
+	writeHardenedFSFixture(t, filepath.Join(root, "internal", "host", "real.txt"),
+		"package host\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
+	if err := os.Symlink("real.txt", filepath.Join(root, "internal", "host", "state.go")); err != nil {
+		t.Fatalf("create the symlinked source: %v", err)
+	}
+	if err := metadatautil.CheckHardenedFS(root); err == nil {
+		t.Fatal("expected a symlinked source entry to fail")
 	}
 }
 

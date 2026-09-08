@@ -20,12 +20,15 @@ internal/authpolicy/manage_mutate.go	os.Rename	1
 internal/authpolicy/manage_mutate.go	os.Stat	1
 internal/authpolicy/manage_status.go	os.Stat	1
 internal/authpolicy/policy.go	os.MkdirAll	1
+internal/authpolicy/policy.go	os.OpenRoot	1
 internal/authpolicy/policy.go	os.Stat	2
 internal/authpolicy/staging.go	os.Chmod	1
 internal/authpolicy/staging.go	os.MkdirAll	1
+internal/authpolicy/staging.go	os.OpenRoot	2
 internal/authpolicy/staging.go	os.Stat	1
 internal/authresolve/resolve_credential_sources.go	os.Chmod	1
 internal/authresolve/resolve_credential_sources.go	os.MkdirAll	1
+internal/authresolve/resolve_credential_sources.go	os.OpenRoot	1
 internal/authresolve/resolve_path_security.go	os.Stat	1
 internal/authresolve/resolve_policy_load.go	os.Stat	1
 internal/authresolve/resolve_provider_credentials.go	os.Stat	1
@@ -93,6 +96,7 @@ internal/injection/prepare_bundle.go	os.WriteFile	1
 internal/injection/render_documents_copies.go	os.Chmod	1
 internal/injection/render_documents_copies.go	os.Mkdir	1
 internal/injection/render_documents_copies.go	os.MkdirAll	2
+internal/injection/render_documents_copies.go	os.OpenRoot	3
 internal/injection/render_injection_bundle.go	os.Chmod	1
 internal/injection/render_injection_bundle.go	os.MkdirAll	1
 internal/injection/render_injection_bundle.go	os.Open	2

@@ -201,7 +201,7 @@ var goHelperMutations = []mutationCase{
 	{
 		relativePath: "internal/metadatautil/hardenedfs_check.go",
 		original:     `	return found && strings.TrimSpace(reason) != ""`,
-		replacement:  `	return found`,
+		replacement:  `	return found || strings.TrimSpace(reason) != ""`,
 		label:        "hardened filesystem exemption reason requirement",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestHardenedFSFindings", "-count=1"),
 	},
