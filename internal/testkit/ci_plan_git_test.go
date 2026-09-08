@@ -40,10 +40,13 @@ func ciPlanMust(t *testing.T, err error) {
 
 // ciPlanShortDir gives a fixture a path with no space or hostile-TMPDIR
 // content, for the rare case (like git-remote-ext's own naive
-// space-splitting) that no quoting scheme can protect against.
+// space-splitting) that no quoting scheme can protect against. The ext::
+// remote it backs is executed directly, so this is rooted under the
+// checkout rather than a hardcoded /tmp: the supported workcell container
+// mounts /tmp noexec.
 func ciPlanShortDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "ciplan-")
+	dir, err := os.MkdirTemp(repoRoot(t), ".ciplan-fixture-")
 	ciPlanMust(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir

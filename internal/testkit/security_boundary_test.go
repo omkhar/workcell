@@ -14,10 +14,13 @@ import (
 
 // shortStartupProbeDir gives a fixture a plain path with no space or
 // hostile-TMPDIR content, for the rare case (see runChildStartupProbe) that
-// no shell quoting can protect against.
+// no shell quoting can protect against. Some callers (the GOCACHEPROG
+// control, the malicious diff.external fixture) get executed directly, so
+// this is rooted under the checkout rather than a hardcoded /tmp: the
+// supported workcell container mounts /tmp noexec.
 func shortStartupProbeDir(tb testing.TB) string {
 	tb.Helper()
-	dir, err := os.MkdirTemp("/tmp", "startupprobe-")
+	dir, err := os.MkdirTemp(repoRoot(tb), ".startupprobe-fixture-")
 	if err != nil {
 		tb.Fatal(err)
 	}
