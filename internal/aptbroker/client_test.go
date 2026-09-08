@@ -6,6 +6,7 @@ package aptbroker
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -55,7 +56,14 @@ func TestRunClientRejectsMalformedRequestBeforeDial(t *testing.T) {
 }
 
 func TestRunClientCancelsWhileTheBrokerNeverReadsTheRequest(t *testing.T) {
-	directory := shortSocketDir(t)
+	// shortSocketDir's root skip exists for the server's socket-ancestry
+	// policy; this test only binds a bare client-side listener, which root
+	// can do too, so build the short (sun_path-safe) dir directly instead.
+	directory, err := os.MkdirTemp("/tmp", "wcbr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
 	socketPath := filepath.Join(directory, "s")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {

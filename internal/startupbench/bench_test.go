@@ -91,9 +91,14 @@ func writeExec(tb testing.TB, path, script string) {
 // TMPDIR. requireExecutable (run.go) rejects any hook path containing
 // whitespace as a shell fragment, and that check is honest; a hostile TMPDIR
 // otherwise fails these tests for a reason unrelated to what they assert.
+// The dir is rooted under the repo checkout rather than the hardcoded /tmp:
+// the supported workcell container mounts /tmp noexec and redirects TMPDIR
+// to an exec-capable path instead, and a hook binary has to be exec'able.
+// The checkout itself is always exec-capable (that's where the code under
+// test runs from) and its path never carries TMPDIR's hostile content.
 func shortDir(tb testing.TB) string {
 	tb.Helper()
-	dir, err := os.MkdirTemp("/tmp", "startupbench-")
+	dir, err := os.MkdirTemp(repoRoot(tb), ".startupbench-fixture-")
 	if err != nil {
 		tb.Fatal(err)
 	}
