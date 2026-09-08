@@ -79,10 +79,13 @@ func braceDepth(commands []command) int {
 // a case pattern ends in a word such as -n), an arithmetic command opens with
 // ((, and a definition header is handled above, so none of them reaches here.
 // isCommandPrefixWord reports whether the word stands before the command rather
-// than being one. bash accepts `time -p` and `time --` as well as a bare time.
+// than being one. bash has exactly three reserved words in that position -- !,
+// time and coproc -- and accepts `time -p` and `time --` as well as a bare
+// time. coproc may also carry a name before the command it runs, which is an
+// ordinary word and is stepped over with it.
 func isCommandPrefixWord(text string) bool {
 	switch text {
-	case "!", "time", "-p", "--":
+	case "!", "time", "coproc", "-p", "--":
 		return true
 	}
 	return false
@@ -93,7 +96,10 @@ func commandBrace(each command) int {
 	// ! negates the status of the command after it and time reports how long it
 	// takes; neither is a command of its own, so a brace or a parenthesis behind
 	// one still stands in command position.
-	for len(args) > 0 && !args[0].quoted && isCommandPrefixWord(args[0].text) {
+	coproc := false
+	for len(args) > 0 && !args[0].quoted &&
+		(isCommandPrefixWord(args[0].text) || (coproc && !carriesParen(args[0]))) {
+		coproc = coproc || args[0].text == "coproc"
 		args = args[1:]
 	}
 	if len(args) == 0 {
