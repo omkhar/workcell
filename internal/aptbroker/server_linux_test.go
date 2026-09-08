@@ -17,8 +17,10 @@ import (
 
 func TestServeRoundTripPreservesHelperResult(t *testing.T) {
 	ctx, socket := startTestBroker(t)
+	exchange, cancelExchange := context.WithTimeout(ctx, testBrokerExchangeTimeout)
+	defer cancelExchange()
 	lookup := func(string) (string, bool) { return "noninteractive", true }
-	response, status, err := RunClient(ctx, socket, []string{"apt-get"}, []string{"DEBIAN_FRONTEND"}, lookup)
+	response, status, err := RunClient(exchange, socket, []string{"apt-get"}, []string{"DEBIAN_FRONTEND"}, lookup)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,41 +68,45 @@ func TestValidateSocketAncestryRejectsMutableAncestors(t *testing.T) {
 	}
 }
 
+const (
+	testBrokerReadyTimeout    = 10 * time.Second
+	testBrokerExchangeTimeout = 30 * time.Second
+)
+
+// The returned context is the broker lifetime, so a dialing caller derives its
+// own per-exchange deadline and a slow exchange cannot close the listener under
+// itself. Readiness comes from ServerConfig.Ready: polling for the socket file
+// would see the pathname between bind(2) and listen(2), where a dial is refused.
 func startTestBroker(t *testing.T) (context.Context, string) {
 	t.Helper()
+	// ServerConfig rejects peer uid 0, so root is never an admissible peer for
+	// its own broker and this round trip has no uid to dial from.
 	if os.Getuid() == 0 {
-		t.Skip("round trip requires a non-root client")
+		t.Skip("round trip requires a non-root client: peer uid 0 is not admissible")
 	}
 	socket := filepath.Join(shortSocketDir(t), "broker.sock")
 	helper := writeHelper(t, "printf '%s' \"$DEBIAN_FRONTEND\"\nprintf fixture-stderr >&2\nexit 37\n")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan struct{})
 	finished := make(chan error, 1)
 	go func() {
-		finished <- Serve(ctx, ServerConfig{SocketPath: socket, HelperPath: helper, ExpectedPeerUID: uint32(os.Getuid())})
+		finished <- Serve(ctx, ServerConfig{
+			SocketPath:      socket,
+			HelperPath:      helper,
+			ExpectedPeerUID: uint32(os.Getuid()),
+			Ready:           func() error { close(ready); return nil },
+		})
 	}()
 	t.Cleanup(func() {
 		cancel()
 		awaitTestBrokerShutdown(t, finished)
 	})
-	waitForTestBrokerSocket(t, ctx, socket)
-	return ctx, socket
-}
-
-func waitForTestBrokerSocket(t *testing.T, ctx context.Context, socket string) {
-	t.Helper()
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for {
-		info, err := os.Lstat(socket)
-		if isSocketFile(info, err) {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("broker socket did not become ready: %v", ctx.Err())
-		case <-ticker.C:
-		}
+	select {
+	case <-ready:
+	case <-time.After(testBrokerReadyTimeout):
+		t.Fatal("broker did not report readiness")
 	}
+	return ctx, socket
 }
 
 func awaitTestBrokerShutdown(t *testing.T, finished <-chan error) {
