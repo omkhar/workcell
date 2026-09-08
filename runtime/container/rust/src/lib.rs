@@ -7,11 +7,6 @@
 #[cfg(target_os = "linux")]
 use libc::c_uint;
 use libc::{c_char, c_int, c_long, c_void, pid_t};
-#[cfg(all(
-    target_os = "linux",
-    any(target_arch = "x86_64", target_arch = "aarch64")
-))]
-use std::arch::global_asm;
 use std::env;
 use std::ffi::{CStr, CString};
 use std::fs::{self, File};
@@ -37,27 +32,10 @@ unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-global_asm!(
-    r#"
-    .text
-    .globl syscall
-    .type syscall,@function
-syscall:
-    jmp workcell_syscall_shim
-"#
-);
-
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-global_asm!(
-    r#"
-    .text
-    .globl syscall
-    .type syscall,%function
-syscall:
-    b workcell_syscall_shim
-"#
-);
+// The `syscall` trampoline lives with the other exported register-forwarding
+// trampolines below, defined through `define_variadic_exec_trampoline!` so
+// rustc exports it in the cdylib's dynamic symbol table. See the invocation
+// after the exec* trampolines.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProtectedRuntime {
@@ -3708,6 +3686,14 @@ define_variadic_exec_trampoline!(execl, workcell_export_execl);
 define_variadic_exec_trampoline!(execlp, workcell_export_execlp);
 #[cfg(target_os = "linux")]
 define_variadic_exec_trampoline!(execle, workcell_export_execle);
+
+// A raw `syscall(SYS_execve|SYS_execveat, ...)` must interpose as well. The
+// libc `syscall` wrapper is variadic, so the trampoline forwards every
+// argument register unchanged into the shim rather than re-declaring the ABI.
+// Exporting it the same way as the exec* trampolines is what places it in the
+// cdylib's dynamic symbol table, so it overrides the libc wrapper.
+#[cfg(target_os = "linux")]
+define_variadic_exec_trampoline!(syscall, workcell_syscall_shim);
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execve(
