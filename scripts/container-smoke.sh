@@ -4232,11 +4232,24 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-shell-node-shebang.out
+  # The only positive workspace-shebang control in this block: every other row
+  # here asserts a refusal, this one asserts the guard actually runs the
+  # script, and that the script sees its snapshot's descriptor path rather
+  # than its own pathname as $0. The alternation covers both the execveat
+  # descriptor form (/dev/fd) and the ENOENT execve fallback (/proc/self/fd).
+  cat >"${workspace_exec_scratch}/.workcell-argv0-probe" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$0"
+EOF
+  chmod 0700 "${workspace_exec_scratch}/.workcell-argv0-probe"
+  "${workspace_exec_scratch}/.workcell-argv0-probe" >/tmp/workspace-argv0-probe.out 2>&1
+  grep -Eq '^(/proc/self/fd|/dev/fd)/[0-9]+$' /tmp/workspace-argv0-probe.out
   rm -f "${workspace_exec_scratch}/.workcell-node-shebang" "${workspace_exec_scratch}/.workcell-loader-node-shebang"
   rm -f "${workspace_exec_scratch}/.workcell-env-node-shebang" "${workspace_exec_scratch}/.workcell-env-loader-node-shebang" "${workspace_exec_scratch}/.workcell-env-path-node-shebang" "${workspace_exec_scratch}/.workcell-env-shell-node-shebang"
   rm -f "${workspace_exec_scratch}/shebang-bypass" "${workspace_exec_scratch}/workcell-child-envp-bypass.js"
   rm -f "${workspace_exec_scratch}/node"
   rm -f "${workspace_exec_scratch}/.workcell-native-helper"
+  rm -f "${workspace_exec_scratch}/.workcell-argv0-probe"
 		cp /usr/local/libexec/workcell/real/node "$EXEC_TMP/workcell-node-real-copy"
 	chmod 0700 "$EXEC_TMP/workcell-node-real-copy"
 	if "$EXEC_TMP/workcell-node-real-copy" --version >/tmp/node-real-copy.out 2>&1; then
