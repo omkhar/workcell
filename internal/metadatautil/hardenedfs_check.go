@@ -60,6 +60,14 @@ func CheckHardenedFS(rootDir string) error {
 		if err != nil {
 			return fmt.Errorf("open the trust-boundary package %s: %w", pkg, err)
 		}
+		// os.OpenRoot resolves its own argument, so the handle can name a
+		// directory other than the one Lstat proved. Compare the two before
+		// anything is read through it.
+		opened, err := root.Stat(".")
+		if err != nil || !os.SameFile(info, opened) {
+			_ = root.Close()
+			return fmt.Errorf("the trust-boundary package %s changed between the check and the open", pkg)
+		}
 		scanned := 0
 		err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil {
@@ -74,6 +82,12 @@ func CheckHardenedFS(rootDir string) error {
 			}
 			if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
 				return nil
+			}
+			// The walk reports a symlink as a symlink, and os.Root follows one
+			// whose target stays inside the root. Only a regular file is a
+			// source this check can bind to the entry it inspected.
+			if !entry.Type().IsRegular() {
+				return fmt.Errorf("%s/%s is not a regular file; the hardened filesystem rule reads only regular sources", pkg, name)
 			}
 			rel := pkg + "/" + name
 			content, readErr := hardenedFSReadSource(root, name, rel)
@@ -167,6 +181,7 @@ var hardenedFSPackages = []string{
 	"internal/applecontainer",
 	"internal/authpolicy",
 	"internal/authresolve",
+	"internal/colimautil",
 	"internal/host",
 	"internal/injection",
 	"internal/runtimeutil",
@@ -200,6 +215,7 @@ var hardenedFSSymbols = map[string]bool{
 	"RemoveAll":  true,
 	"Chmod":      true,
 	"Chown":      true,
+	"Chtimes":    true,
 	"Symlink":    true,
 	"Link":       true,
 	"Truncate":   true,
@@ -268,10 +284,17 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 // A comment states the reason for the reference it follows, so it clears the
 // nearest reference before it on its own line and nothing else. Clearing the
 // first reference on the line instead would let one reason cover a different
-// call than the one it names.
+// call than the one it names, and a second comment on the line would fall
+// back to a reference it does not name, so a line with two exemption comments
+// clears nothing.
 func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int][]int) []HardenedFSFinding {
 	cleared := map[int]bool{}
 	for line, columns := range exempt {
+		// One line states one reason. A second comment on the same line would
+		// otherwise fall back to an earlier reference that it does not name.
+		if len(columns) > 1 {
+			continue
+		}
 		for _, column := range columns {
 			best, bestColumn := -1, 0
 			for index, finding := range findings {

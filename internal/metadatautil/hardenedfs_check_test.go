@@ -41,8 +41,9 @@ func TestHardenedFSFindings(t *testing.T) {
 			source: header + "func f() {\nos.Open(a)\nos.OpenFile(a)\nos.ReadFile(a)\nos.WriteFile(a)\n" +
 				"os.Create(a)\nos.Mkdir(a)\nos.MkdirAll(a)\nos.Rename(a, b)\nos.Stat(a)\nos.ReadDir(a)\n" +
 				"os.Readlink(a)\nos.Remove(a)\nos.RemoveAll(a)\nos.Chmod(a, b)\nos.Chown(a, b, c)\n" +
-				"os.Symlink(a, b)\nos.Link(a, b)\nos.Truncate(a, b)\nos.CreateTemp(a, b)\nos.MkdirTemp(a, b)\n}\n",
-			want: 20,
+				"os.Symlink(a, b)\nos.Link(a, b)\nos.Truncate(a, b)\nos.CreateTemp(a, b)\nos.MkdirTemp(a, b)\n" +
+				"os.Chtimes(a, b, c)\n}\n",
+			want: 21,
 		},
 		{
 			name:   "an aliased import is still the os package",

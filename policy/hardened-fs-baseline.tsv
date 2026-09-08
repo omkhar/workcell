@@ -29,6 +29,7 @@ internal/authresolve/resolve_credential_sources.go	os.MkdirAll	1
 internal/authresolve/resolve_path_security.go	os.Stat	1
 internal/authresolve/resolve_policy_load.go	os.Stat	1
 internal/authresolve/resolve_provider_credentials.go	os.Stat	1
+internal/colimautil/colima.go	os.ReadFile	1
 internal/host/auditseal/sealio.go	os.Chmod	1
 internal/host/auditseal/sealio.go	os.CreateTemp	1
 internal/host/auditseal/sealio.go	os.OpenFile	1
