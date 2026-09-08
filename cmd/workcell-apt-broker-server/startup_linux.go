@@ -29,6 +29,9 @@ const (
 	staleSocketProbeLimit = time.Second
 	startupReadyByte      = byte('R')
 	startupAcknowledge    = byte('A')
+	// startupLockName is the file in the socket's parent that orders one
+	// --start against another.
+	startupLockName = ".start.lock"
 )
 
 type startupProcess interface {
@@ -47,9 +50,22 @@ func startServer(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if err := prepareSocketParent(filepath.Dir(aptbroker.DefaultSocketPath)); err != nil {
+	parent := filepath.Dir(aptbroker.DefaultSocketPath)
+	if err := prepareSocketParent(parent); err != nil {
 		return err
 	}
+	// Everything from here to the end of startup is one starter's turn. Two
+	// --start calls otherwise race on the pathname rather than on the bind:
+	// each of the probe, the unlink and the bind is a separate lookup, so a
+	// starter can prove a socket dead, lose its turn, and unlink the socket a
+	// second starter has since bound. The entrypoint runs --start more than
+	// once in a container, so overlapping calls are ordinary rather than
+	// adversarial.
+	release, err := holdStartupTurn(parent)
+	if err != nil {
+		return err
+	}
+	defer release()
 	serving, err := claimSocketPath(aptbroker.DefaultSocketPath)
 	if err != nil || serving {
 		return err
@@ -60,6 +76,32 @@ func startServer(arguments []string) error {
 	}
 	defer binary.Close()
 	return launchServer(binary, peerUID)
+}
+
+// holdStartupTurn takes the exclusive startup lock in the socket's parent and
+// returns the release. The parent is root-owned and 0755, proved by
+// prepareSocketParent before this runs, and only root reaches --start, so the
+// lock file is not something the mapped user can interpose on.
+//
+// The lock is advisory and covers this repository's own starter. It orders the
+// claim, the launch and the failed-startup cleanup against each other, which is
+// what makes the probe and the unlink that reads it one decision rather than
+// two lookups with a gap.
+func holdStartupTurn(parent string) (func(), error) {
+	path := filepath.Join(parent, startupLockName)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open startup lock: %w", err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("take startup lock: %w", err)
+	}
+	return func() {
+		// Closing the descriptor releases the lock; the pathname stays so the
+		// next starter locks the same file rather than creating a new one.
+		_ = file.Close()
+	}, nil
 }
 
 func startPeerUID(arguments []string) (uint32, error) {
@@ -247,8 +289,13 @@ func claimSocketPath(path string) (bool, error) {
 	if !isStartedSocket(info, nil) {
 		return false, errors.New("apt broker socket path is not a socket")
 	}
-	if !socketRefusesConnections(path) {
+	switch err := socketProbe(path); {
+	case err == nil:
 		return true, validateStartedSocket(path)
+	case errors.Is(err, syscall.ECONNREFUSED):
+		// Nothing is listening, so this attempt claims the pathname.
+	default:
+		return false, fmt.Errorf("probe existing server socket: %w", err)
 	}
 	if err := os.Remove(path); err != nil {
 		return false, fmt.Errorf("remove stale server socket: %w", err)
@@ -256,10 +303,12 @@ func claimSocketPath(path string) (bool, error) {
 	return false, nil
 }
 
-// socketRefusesConnections reports whether the pathname has no listener. Only
-// ECONNREFUSED proves that: a connect that times out, or fails any other way,
-// leaves the question open, and a live server must never have its socket
-// unlinked out from under it. So anything but a refusal fails closed.
+// socketProbe reports what a connect to the pathname proves. A nil error means
+// a server is listening. syscall.ECONNREFUSED proves nothing is, so the
+// pathname is stale. Any other error leaves the question open, and both
+// decisions that read this probe fail closed on it: a live server never has its
+// socket unlinked, and a pathname the starter cannot reach is never reported as
+// serving.
 //
 // ponytail: connect probe. The kernel accepts this connection before the server
 // checks peer credentials, so a live server refuses it as a root peer and says
@@ -267,19 +316,25 @@ func claimSocketPath(path string) (bool, error) {
 // --start it reads like an attack rather than a liveness check. Read the
 // SO_ACCEPTCON flag for the socket's inode in /proc/net/unix instead if that
 // noise ever matters.
-func socketRefusesConnections(path string) bool {
+func socketProbe(path string) error {
 	connection, err := net.DialTimeout("unix", path, staleSocketProbeLimit)
 	if err != nil {
-		return errors.Is(err, syscall.ECONNREFUSED)
+		return err
 	}
 	_ = connection.Close()
-	return false
+	return nil
 }
 
 // removeAbandonedSocket clears the socket a killed startup left behind. The
-// child is stopped with SIGKILL, so its own deferred cleanup never runs, and
-// claimSocketPath proved the pathname was free just before the launch, so a
-// socket here was bound by this attempt and nothing else.
+// child is stopped with SIGKILL, so its own deferred cleanup never runs.
+//
+// claimSocketPath proved the pathname was free just before the launch, but that
+// does not make a socket here this attempt's own: two overlapping --start calls
+// can both find the pathname free, and then one child binds while the other
+// fails. The loser must not unlink the winner's live socket, which would leave
+// the winner serving an unlinked inode and every later client unable to
+// connect. Only a refusal proves the socket here is the dead one this attempt
+// left behind.
 func removeAbandonedSocket(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -290,6 +345,14 @@ func removeAbandonedSocket(path string) error {
 	}
 	if !isStartedSocket(info, nil) {
 		return errors.New("failed startup left a path that is not its socket")
+	}
+	switch err := socketProbe(path); {
+	case err == nil:
+		return errors.New("failed startup left a socket another server is serving")
+	case errors.Is(err, syscall.ECONNREFUSED):
+		// The socket has no listener, so it is this attempt's own remains.
+	default:
+		return fmt.Errorf("probe abandoned server socket: %w", err)
 	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove abandoned server socket: %w", err)

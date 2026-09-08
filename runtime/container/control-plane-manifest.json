@@ -188,7 +188,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/bin/apt-helper.sh",
       "runtime_path": "/usr/local/libexec/workcell/apt-helper.sh",
-      "sha256": "d49970505a2b4a95a882b2ff0cf296991994ed30fa4f128fcd0c2b155d98eeba"
+      "sha256": "c3b47a6c5e416bf56cbe3bba9b321a65a2542271de6ee54d6450510fcaaf635b"
     },
     {
       "kind": "runtime-control-plane",

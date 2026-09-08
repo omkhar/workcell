@@ -82,9 +82,10 @@ An ephemeral local launch adds the pinned snapshot mirrors for Debian:
 - `snapshot-cloudflare.debian.org:443`
 - `snapshot.debian.org:443`
 
-Only the apt broker reaches these endpoints. The mapped runtime user sends the
-package request over the broker socket and holds no sudo grant of its own. See
-[invariant 4b](invariants.md).
+The session allowlist permits these endpoints by destination, not by process.
+Any process in the container can reach them. Only the apt broker can install a
+package. The mapped runtime user holds no sudo grant of its own, and reaches
+`apt` only over the broker socket. See [invariant 4b](invariants.md).
 
 ### Versioned development and build endpoints
 

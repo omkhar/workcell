@@ -58,7 +58,7 @@ func texts(words []word) []string {
 	return plain
 }
 
-// braceDepth returns the change in brace nesting the commands make.
+// braceDepth returns the change in group nesting the commands make.
 func braceDepth(commands []command) int {
 	change := 0
 	for _, each := range commands {
@@ -67,36 +67,159 @@ func braceDepth(commands []command) int {
 	return change
 }
 
-// commandBrace returns the change in brace nesting one command makes. A brace
+// commandBrace returns the change in group nesting one command makes. A brace
 // groups commands only in command position and only unquoted: bash reads the }
 // of echo } as an argument, so a group is still open after it. A brace inside a
 // word belongs to an expansion such as ${VAR}. A definition header is not a
 // command, so the brace that opens its body stands in command position after
 // it, wherever on the header line it is written.
+//
+// A parenthesis in command position opens a subshell, which bash skips exactly
+// as it skips a brace group, so it counts the same. Only a bare ( or ) counts:
+// a case pattern ends in a word such as -n), an arithmetic command opens with
+// ((, and a definition header is handled above, so none of them reaches here.
+// isCommandPrefixWord reports whether the word stands before the command rather
+// than being one. bash has exactly three reserved words in that position -- !,
+// time and coproc -- and accepts `time -p` and `time --` as well as a bare
+// time. coproc may also carry a name before the command it runs, which is an
+// ordinary word and is stepped over with it.
+func isCommandPrefixWord(text string) bool {
+	switch text {
+	case "!", "time", "coproc", "-p", "--":
+		return true
+	}
+	return false
+}
+
 func commandBrace(each command) int {
 	args := each.args
-	// ! negates the status of the command after it and is not a command of its
-	// own, so the brace behind it still stands in command position.
-	for len(args) > 0 && !args[0].quoted && args[0].text == "!" {
+	// ! negates the status of the command after it and time reports how long it
+	// takes; neither is a command of its own, so a brace or a parenthesis behind
+	// one still stands in command position.
+	coproc := false
+	for len(args) > 0 && !args[0].quoted &&
+		(isCommandPrefixWord(args[0].text) || (coproc && !carriesParen(args[0]))) {
+		coproc = coproc || args[0].text == "coproc"
 		args = args[1:]
 	}
-	if len(args) == 0 || args[0].quoted {
+	if len(args) == 0 {
+		return 0
+	}
+	// Quoting takes a word's meaning as syntax away, so a quoted } closes no
+	// group and a quoted fi ends no compound command. A word that begins with (
+	// is the exception this test cannot make: quote removal has already run, so
+	// (echo")" arrives as the balanced-looking (echo) with only a whole-word
+	// quoted flag to show for it, while bash opened a subshell on the unquoted
+	// ( it began with. Such a word is therefore still read as an opener.
+	if args[0].quoted && !strings.HasPrefix(args[0].text, "(") {
 		return 0
 	}
 	if definedName(args) != "" {
 		if strings.HasSuffix(args[0].text, "(){") || slices.ContainsFunc(args[1:],
-			func(each word) bool { return !each.quoted && each.text == "{" }) {
+			func(each word) bool {
+				return !each.quoted && (each.text == "{" || each.text == "(")
+			}) {
 			return 1
 		}
 		return 0
 	}
-	switch args[0].text {
-	case "{":
+	switch {
+	case args[0].text == "{":
 		return 1
-	case "}":
+	case args[0].text == "}":
+		return -1
+	case args[0].text == ")":
 		return -1
 	}
+	if carriesParen(args[0]) {
+		if args[0].quoted {
+			// Quote removal has already run, so the parentheses left in the
+			// text no longer say which of them were syntax: false && (echo")"
+			// reads as a balanced (echo) while bash opens a subshell on the
+			// unquoted (. A command word that begins with ( is a subshell
+			// opener in every spelling bash accepts, so it opens one here and
+			// the count is not trusted. That loses invocations rather than
+			// inventing them.
+			return 1
+		}
+		return parenBalance(args)
+	}
 	return 0
+}
+
+// carriesParen reports whether the word puts a parenthesis where it can open a
+// subshell: a bare (, one attached to the command after it, or one the shell is
+// still reading at the end of a word (x=( , foo=$(). (( is arithmetic, which
+// ends at )) rather than at a bare ), so it opens nothing here.
+func carriesParen(first word) bool {
+	if strings.HasPrefix(first.text, "((") {
+		return false
+	}
+	if strings.HasPrefix(first.text, "(") {
+		return true
+	}
+	return !first.quoted && strings.HasSuffix(first.text, "(")
+}
+
+// parenBalance sums the parentheses of one command that stand as syntax.
+// Counting rather than testing the last word for a trailing ) is what keeps a
+// substitution from closing the group it did not open: `(echo $(date)` ends in
+// ) and still leaves a subshell open, because the ( of $( is on the same word.
+// An expansion is removed first, so the ) of `${x%)}` closes nothing.
+func parenBalance(args []word) int {
+	balance := 0
+	for _, each := range args {
+		if each.quoted {
+			continue
+		}
+		text, unclosed := withoutExpansions(each.text)
+		// An expansion the word does not close is a substitution the shell is
+		// still reading, as in the foo=$( of a multi-line assignment. Its ) is
+		// a bare word on a later line, so the opener has to count.
+		balance += unclosed + strings.Count(text, "(") - strings.Count(text, ")")
+	}
+	return balance
+}
+
+// withoutExpansions removes every $(…) and ${…} span from a word, including
+// nested ones, and returns how many of them the word leaves open. A parenthesis
+// or a brace inside an expansion is part of the expansion's own syntax -- the )
+// of ${x%)} is a pattern, and the ) of $(date) closes the substitution -- so
+// neither can open or close a command group. A span the word does not close is
+// one the shell is still reading on the next line, which does.
+func withoutExpansions(text string) (string, int) {
+	var kept strings.Builder
+	var closers []byte
+	for index := 0; index < len(text); index++ {
+		if text[index] == '$' && index+1 < len(text) &&
+			(text[index+1] == '(' || text[index+1] == '{') {
+			closers = append(closers, expansionCloser(text[index+1]))
+			index++
+			continue
+		}
+		if len(closers) > 0 {
+			// Only the delimiter this expansion opened with closes it: the two
+			// ) of ${x%))} are the pattern, not the end of the expansion and
+			// then a subshell closer.
+			switch {
+			case text[index] == '(' || text[index] == '{':
+				closers = append(closers, expansionCloser(text[index]))
+			case text[index] == closers[len(closers)-1]:
+				closers = closers[:len(closers)-1]
+			}
+			continue
+		}
+		kept.WriteByte(text[index])
+	}
+	return kept.String(), len(closers)
+}
+
+// expansionCloser returns the delimiter that ends a span the opener started.
+func expansionCloser(opener byte) byte {
+	if opener == '{' {
+		return '}'
+	}
+	return ')'
 }
 
 // controlWords maps each word that opens or closes a compound command to the
