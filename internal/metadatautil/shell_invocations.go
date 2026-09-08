@@ -144,19 +144,55 @@ func carriesParen(first word) bool {
 	return !first.quoted && strings.HasSuffix(first.text, "(")
 }
 
-// parenBalance sums the unquoted parentheses of one command. Counting rather
-// than testing the last word for a trailing ) is what keeps a substitution from
-// closing the group it did not open: `(echo $(date)` ends in ) and still leaves
-// a subshell open, because the ( of $( is on the same word.
+// parenBalance sums the parentheses of one command that stand as syntax.
+// Counting rather than testing the last word for a trailing ) is what keeps a
+// substitution from closing the group it did not open: `(echo $(date)` ends in
+// ) and still leaves a subshell open, because the ( of $( is on the same word.
+// An expansion is removed first, so the ) of `${x%)}` closes nothing.
 func parenBalance(args []word) int {
 	balance := 0
 	for _, each := range args {
 		if each.quoted {
 			continue
 		}
-		balance += strings.Count(each.text, "(") - strings.Count(each.text, ")")
+		text, unclosed := withoutExpansions(each.text)
+		// An expansion the word does not close is a substitution the shell is
+		// still reading, as in the foo=$( of a multi-line assignment. Its ) is
+		// a bare word on a later line, so the opener has to count.
+		balance += unclosed + strings.Count(text, "(") - strings.Count(text, ")")
 	}
 	return balance
+}
+
+// withoutExpansions removes every $(…) and ${…} span from a word, including
+// nested ones, and returns how many of them the word leaves open. A parenthesis
+// or a brace inside an expansion is part of the expansion's own syntax -- the )
+// of ${x%)} is a pattern, and the ) of $(date) closes the substitution -- so
+// neither can open or close a command group. A span the word does not close is
+// one the shell is still reading on the next line, which does.
+func withoutExpansions(text string) (string, int) {
+	var kept strings.Builder
+	depth := 0
+	for index := 0; index < len(text); index++ {
+		if text[index] == '$' && index+1 < len(text) &&
+			(text[index+1] == '(' || text[index+1] == '{') {
+			depth++
+			index++
+			continue
+		}
+		if depth > 0 {
+			if text[index] == '(' || text[index] == '{' {
+				depth++
+				continue
+			}
+			if text[index] == ')' || text[index] == '}' {
+				depth--
+			}
+			continue
+		}
+		kept.WriteByte(text[index])
+	}
+	return kept.String(), depth
 }
 
 // controlWords maps each word that opens or closes a compound command to the

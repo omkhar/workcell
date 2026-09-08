@@ -4156,8 +4156,10 @@ func stripShellComments(text string) string {
 		c := text[i]
 		switch {
 		case c == '\n':
+			// A comment ends at the newline. A quoted span does not: bash keeps
+			// reading one across physical lines, so `: '` on one line makes
+			// every line up to the closing quote a single argument's data.
 			commented = false
-			quote = 0
 		case commented:
 			previous = c
 			continue

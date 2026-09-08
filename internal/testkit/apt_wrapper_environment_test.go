@@ -63,11 +63,15 @@ func lastShellCommand(source string) string {
 	return carried[len(carried)-1]
 }
 
-// continuedGuard returns the operator with which the line before the script's
-// last command carries onto it, or the empty string. A penultimate `false &&`
-// makes the final line conditional: it is still written last and still matches
-// a line anchor, but bash may never reach it.
-func continuedGuard(source string) string {
+// unreachedDelegation reports why the script's last command is not reached, or
+// the empty string. It reads only the command before it, which is where both
+// shapes live that leave the delegation written last and never run: a `false &&`
+// that carries onto it, and an unconditional exit.
+//
+// This is a tripwire over file content, not a reachability proof. What the
+// wrapper actually does end to end is proved by scripts/container-smoke.sh,
+// which drives an unprivileged sudo through the real broker socket.
+func unreachedDelegation(source string) string {
 	carried := commandLines(source)
 	if len(carried) < 2 {
 		return ""
@@ -75,8 +79,13 @@ func continuedGuard(source string) string {
 	previous := carried[len(carried)-2]
 	for _, operator := range []string{"&&", "||", "|", "\\"} {
 		if strings.HasSuffix(previous, operator) {
-			return operator
+			return "a trailing " + operator + " guards it"
 		}
+	}
+	if field := strings.Fields(previous); len(field) > 0 &&
+		!strings.HasPrefix(previous, " ") && !strings.HasPrefix(previous, "\t") &&
+		(field[0] == "exit" || field[0] == "return") {
+		return "an unconditional " + field[0] + " runs before it"
 	}
 	return ""
 }
@@ -164,10 +173,11 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 	if got := lastShellCommand(source); got != sudoWrapperDelegationLine {
 		t.Fatalf("sudo-wrapper.sh no longer ends by delegating to the broker client: last command is %q", got)
 	}
-	// Being written last is not the same as being reached: a penultimate
-	// `false &&` carries onto the delegation and bash may skip it.
-	if operator := continuedGuard(source); operator != "" {
-		t.Fatalf("sudo-wrapper.sh guards its final delegation with a trailing %q", operator)
+	// Being written last is not the same as being reached. Two shapes put the
+	// delegation last and still stop the shell from running it: a penultimate
+	// `false &&` that carries onto it, and an unconditional `exit` before it.
+	if reason := unreachedDelegation(source); reason != "" {
+		t.Fatalf("sudo-wrapper.sh no longer reaches its final delegation: %s", reason)
 	}
 	if !sudoWrapperDelegation.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer delegates to the broker client")

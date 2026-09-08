@@ -6022,6 +6022,16 @@ func TestStripShellCommentsKeepsAWordInternalHash(t *testing.T) {
 	}
 }
 
+// A quoted span runs across physical lines, so a # inside one is data rather
+// than the start of a comment.  Clearing the quote state at each newline would
+// strip the rest of that line and delete text the shell really carries.
+func TestStripShellCommentsKeepsAHashInsideAMultiLineQuote(t *testing.T) {
+	in := ": '\n# expected the shell apt broker to be absent from the runtime image\n'\ntrue\n"
+	if got := stripShellComments(in); got != in {
+		t.Fatalf("stripShellComments(%q) = %q, want it unchanged", in, got)
+	}
+}
+
 func TestCheckSmokeAptBrokerProbeCount(t *testing.T) {
 	if got, want := len(smokeAptBrokerProbeChecks), 6; got != want {
 		t.Fatalf("smokeAptBrokerProbeChecks has %d checks, want %d", got, want)
