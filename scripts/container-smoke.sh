@@ -3204,6 +3204,15 @@ run_container_stdin codex bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3'
   assert_refused_at_or_before_target() {
     grep -Eq "$1|Workcell blocked child execution without the approved exec guard preload" "$2"
   }
+  # A deleted target cannot always be reopened through its /proc/self/fd link:
+  # a virtiofs-backed workspace answers ENOENT for the reopen. The guard refuses
+  # a descriptor it cannot read rather than leaving the target to the kernel, so
+  # the same row reports the shebang classification where the reopen works and
+  # the native-exec refusal where it does not. Either refusal, and the kernel's
+  # own error, proves the launch does not happen.
+  assert_deleted_fd_shebang_refused() {
+    grep -Eq "Workcell blocked direct protected runtime execution|Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\.|cannot execute: required file not found|No such file or directory" "$1"
+  }
   codex_user_script=/run/workcell/container-smoke-codex-user.sh
   cat >"${codex_user_script}" <<'CODEX_USER_SCRIPT'
     set -Eeuo pipefail
@@ -4053,12 +4062,12 @@ EOF
     exit 1
   fi
   exec 4<&-
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-fd.out
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-devfd.out
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-dotfd.out
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-threadself.out
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-taskfd.out
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-stdin.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-fd.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-devfd.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-dotfd.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-threadself.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-taskfd.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-stdin.out
   cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-pidfd" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell pid fd deleted shebang bypass");
@@ -4072,7 +4081,7 @@ EOF
     echo "expected strict profile to reject deleted-fd mutable shebang execution via /proc/\$\$/fd of the real Node payload" >&2
     exit 1
   fi
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-pidfd.out
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-pidfd.out
   cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-stdout" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell stdout deleted shebang bypass");
@@ -4087,7 +4096,7 @@ EOF
     echo "expected strict profile to reject deleted-fd mutable shebang execution via /dev/stdout of the real Node payload" >&2
     exit 1
   fi
-  grep -Eq "Workcell blocked direct protected runtime execution|cannot execute: required file not found|No such file or directory" /tmp/workspace-node-shebang-deleted-stdout.err
+  assert_deleted_fd_shebang_refused /tmp/workspace-node-shebang-deleted-stdout.err
   cat >"${workspace_exec_scratch}/.workcell-node-shebang-deleted-stderr" <<EOF
 #!/usr/local/libexec/workcell/real/node
 console.log("workcell stderr deleted shebang bypass");
