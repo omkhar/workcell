@@ -271,7 +271,11 @@ func TestVerifyReleaseArtifactPinsRequestedIdentities(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			binDir := stubBinDir(t, -1)
 			record := filepath.Join(t.TempDir(), "cosign-args")
-			cosign := "#!/bin/bash\nprintf '%s\\n' \"$@\" > " + record + "\nexit 0\n"
+			// record is unquoted shell text below, so it needs shQuote: under the
+			// hostile TMPDIR axis it can carry a space or a backtick, and an
+			// unquoted redirect target would split on the former and run the
+			// latter as a live command substitution.
+			cosign := "#!/bin/bash\nprintf '%s\\n' \"$@\" > " + shQuote(record) + "\nexit 0\n"
 			if err := os.WriteFile(filepath.Join(binDir, "cosign"), []byte(cosign), 0o755); err != nil {
 				t.Fatal(err)
 			}

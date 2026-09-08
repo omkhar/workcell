@@ -654,7 +654,11 @@ func TestPrePushHookForwardsTransportAuthentication(t *testing.T) {
 	// The destination is reachable only through GIT_SSH_COMMAND, so the hook
 	// cannot read the advertisement without it. The walk then reaches the
 	// published unsigned base and refuses an otherwise valid new-ref push.
-	sshCommand := filepath.Join(fixture.homeDir, "fake-ssh")
+	// Git re-parses GIT_SSH_COMMAND's value as a shell command line, so the
+	// script needs a whitespace-free path rather than fixture.homeDir, which
+	// under the hostile TMPDIR axis carries a space that would otherwise
+	// split the command in two.
+	sshCommand := filepath.Join(ExecFixtureDir(t), "fake-ssh")
 	script := "#!/bin/bash\nexec /bin/sh -c \"${@: -1}\"\n"
 	if err := os.WriteFile(sshCommand, []byte(script), 0o755); err != nil {
 		t.Fatalf("write ssh command failed: %v", err)
