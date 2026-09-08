@@ -3895,10 +3895,12 @@ EOF
   loader_form_reaches_target valueless-option-then-target --inhibit-cache /bin/true
   loader_form_loader_rejects argv0-attached-value "unrecognized option" "--argv0=$EXEC_TMP/workcell-state-native" /bin/true
   loader_form_loader_rejects inhibit-rpath-empty-value "unrecognized option" --inhibit-rpath= /bin/true
-  # The split-at-equals defect the Rust table records as pending: the truncated
-  # prefix is a mutable native payload, so only this lane can observe it. The
-  # loader reports the whole name, which proves it was not truncated either.
-  loader_form_loader_rejects target-with-equals-sign "workcell-state-native=x" "$EXEC_TMP/workcell-state-native=x"
+  # A loader target under a mutable root is refused whether or not it exists:
+  # the loader resolves the name after this guard returns, so the name can be
+  # filled in between the two. That covers the split-at-equals case as well,
+  # because the truncated prefix and the whole name share the same mutable
+  # directory and both refuse.
+  loader_form_refused target-with-equals-sign "$EXEC_TMP/workcell-state-native=x"
   if WORKCELL_MODE=breakglass "$EXEC_TMP/workcell-state-native" >/tmp/state-native-workcell-mode-bypass.out 2>&1; then
     echo "expected strict profile to ignore caller-supplied WORKCELL_MODE for mutable native execution" >&2
     exit 1
