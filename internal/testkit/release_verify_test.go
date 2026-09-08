@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -235,4 +237,80 @@ func TestVerifyReleaseArtifactSkipVerifyNeutralizationLetsTamperedArtifactPass(t
 	if strings.Contains(out, "OK: "+artifact+" verified") {
 		t.Fatalf("skip path must NOT report the artifact as verified, got:\n%s", out)
 	}
+}
+
+// The verifier pins the dispatch identity exactly, and when the caller names the
+// tag it is verifying it also accepts that one exact historical tag identity —
+// releases published before the dispatch trigger were signed from the pushed
+// tag. Neither alternative may become a wildcard, and neither may match a
+// different release.
+func TestVerifyReleaseArtifactPinsRequestedIdentities(t *testing.T) {
+	const prefix = "https://github.com/omkhar/workcell/.github/workflows/release.yml@"
+	for name, testCase := range map[string]struct {
+		extraArgs []string
+		accepts   []string
+		rejects   []string
+	}{
+		"dispatch only": {
+			accepts: []string{prefix + "refs/heads/main"},
+			rejects: []string{prefix + "refs/tags/v1.0.2", prefix + "refs/heads/mainx"},
+		},
+		"historical tag-signed release": {
+			extraArgs: []string{"--tag", "v1.0.2"},
+			accepts:   []string{prefix + "refs/heads/main", prefix + "refs/tags/v1.0.2"},
+			rejects:   []string{prefix + "refs/tags/v1.0.3", prefix + "refs/tags/v1a0b2"},
+		},
+		// A tag published after the cutover must not reintroduce tag-push
+		// signing authority, so its own tag identity is not accepted either.
+		"release after the cutover": {
+			extraArgs: []string{"--tag", "v1.0.3"},
+			accepts:   []string{prefix + "refs/heads/main"},
+			rejects:   []string{prefix + "refs/tags/v1.0.3", prefix + "refs/tags/v1.0.2"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			binDir := stubBinDir(t, -1)
+			record := filepath.Join(t.TempDir(), "cosign-args")
+			cosign := "#!/bin/bash\nprintf '%s\\n' \"$@\" > " + record + "\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(binDir, "cosign"), []byte(cosign), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			assets := writeAssets(t, "workcell-v1.0.2.tar.gz", []byte("bundle"), true)
+			args := append([]string{"--artifact", "workcell-v1.0.2.tar.gz"}, testCase.extraArgs...)
+			if code, out := runVerify(t, binDir, assets, args...); code != 0 {
+				t.Fatalf("verify exited %d: %s", code, out)
+			}
+			pattern := recordedIdentityRegexp(t, record)
+			for _, identity := range testCase.accepts {
+				if !pattern.MatchString(identity) {
+					t.Errorf("identity expression %q rejects %q", pattern, identity)
+				}
+			}
+			for _, identity := range testCase.rejects {
+				if pattern.MatchString(identity) {
+					t.Errorf("identity expression %q accepts %q", pattern, identity)
+				}
+			}
+		})
+	}
+}
+
+// recordedIdentityRegexp returns the compiled --certificate-identity-regexp the
+// script handed to cosign, one argument per recorded line.
+func recordedIdentityRegexp(t *testing.T, recordPath string) *regexp.Regexp {
+	t.Helper()
+	recorded, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(recorded), "\n"), "\n")
+	index := slices.Index(lines, "--certificate-identity-regexp")
+	if index < 0 || index+1 >= len(lines) {
+		t.Fatalf("cosign received no --certificate-identity-regexp: %q", lines)
+	}
+	pattern, err := regexp.Compile(lines[index+1])
+	if err != nil {
+		t.Fatalf("identity expression does not compile: %v", err)
+	}
+	return pattern
 }

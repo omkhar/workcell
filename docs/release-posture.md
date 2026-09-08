@@ -17,13 +17,16 @@ It does these checks:
 - It verifies the pinned Codex, Claude, Copilot, and Gemini releases against upstream metadata.
 - It keeps Antigravity unsupported until that provider passes the same gate.
 
+The tag-policy job resolves the signed tag to one commit before any checkout.
+Every later job checks out that commit, so a moved tag cannot change the release source.
+
 The preflight job records the expected digest for its source archive.
-The release job creates and extracts an independent archive from the checked-out release tag.
+The release job creates and extracts an independent archive from the checked-out release commit.
 It compares that archive digest with the expected digest.
 It creates source-dependent manifests from the extracted tree.
 It creates the Homebrew formula from the verified archive digest.
 
-The native amd64 and arm64 image jobs build from the checked-out release tag.
+The native amd64 and arm64 image jobs build from the checked-out release commit.
 Each one has only `contents: read` permission and emits an OCI archive.
 The workflow compares the bound platform digests with the preflight data.
 
