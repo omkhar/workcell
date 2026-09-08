@@ -50,14 +50,30 @@ git_plan_error() {
   printf '%b' "$1" >&2
   exit 1
 }
-worktree_gitfile_shape_ok() {
-  local gitfile="$1" line="" extra="" target="" line_status=0 extra_status=0
+# The worktree-metadata checks below (gitfile shape, commondir containment,
+# gitdir backlink) are ordinary path-based checks: each opens a path named by
+# an earlier check's output, with no descriptor discipline between them. That
+# is a check/use gap at a language boundary — Bash cannot express fd-relative
+# `openat`/`O_NOFOLLOW` the way a compiled implementation could — so it
+# validates the static shape a planted or cloned metadata layout has on disk,
+# not a filesystem that mutates concurrently with this script's own run.
+# That is outside the threat model: an attacker able to rewrite these paths
+# between one check and the next, under the uid running the planner, already
+# has same-uid write access to ci-plan.sh itself and gains nothing further
+# from this particular gap.
+sole_line_of_file() {
+  local file="$1" line="" extra="" line_status=0 extra_status=0
   {
     if IFS= read -r line; then line_status=0; else line_status=$?; fi
     if IFS= read -r extra; then extra_status=0; else extra_status=$?; fi
-  } <"${gitfile}" 2>/dev/null || return 1
+  } <"${file}" 2>/dev/null || return 1
   [[ "${line_status}" -eq 0 || -n "${line}" ]] || return 1
   [[ "${extra_status}" -ne 0 && -z "${extra}" ]] || return 1
+  printf '%s\n' "${line}"
+}
+worktree_gitfile_shape_ok() {
+  local gitfile="$1" line="" target=""
+  line="$(sole_line_of_file "${gitfile}")" || return 1
   case "${line}" in
     "gitdir: /"*) ;;
     *) return 1 ;;
@@ -65,11 +81,33 @@ worktree_gitfile_shape_ok() {
   target="${line#gitdir: }"
   [[ ! -L "${target}" && -d "${target}" ]]
 }
+# A worktree gitdir's own `gitdir` file backlinks to the `.git` file of the
+# checkout it belongs to. Without this, an absolute gitfile pointing at some
+# other repository's `<other>/.git/worktrees/<name>` would satisfy the
+# commondir/worktrees containment shape below even though that metadata
+# belongs to a different checkout: the backlink ties the borrowed directory
+# back to this exact work tree.
+worktree_gitdir_backlink_matches_checkout() {
+  local git_dir="$1" work_tree="$2" backlink="" line="" backlink_dir="" backlink_base="" resolved_backlink_dir=""
+  backlink="${git_dir}/gitdir"
+  [[ ! -L "${backlink}" && -f "${backlink}" ]] || return 1
+  line="$(sole_line_of_file "${backlink}")" || return 1
+  case "${line}" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  backlink_dir="${line%/*}"
+  [[ -n "${backlink_dir}" ]] || backlink_dir=/
+  backlink_base="${line##*/}"
+  [[ "${backlink_base}" == .git ]] || return 1
+  resolved_backlink_dir="$(cd -P -- "${backlink_dir}" 2>/dev/null && pwd -P)" || return 1
+  [[ "${resolved_backlink_dir}" == "${work_tree}" ]]
+}
 # A linked worktree's gitfile must resolve to a git directory nested at
 # <commondir>/worktrees/<name>, so a crafted gitdir reference cannot borrow an
 # unrelated repository's identity.
 reject_unanchored_worktree_gitdir() {
-  local git_dir="$1" commondir_raw="" commondir_path="" commondir_resolved="" parent_dir=""
+  local git_dir="$1" work_tree="$2" commondir_raw="" commondir_path="" commondir_resolved="" parent_dir=""
   [[ ! -L "${git_dir}/commondir" && -f "${git_dir}/commondir" ]] ||
     git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
   commondir_raw="$(cat -- "${git_dir}/commondir" 2>/dev/null)" ||
@@ -85,6 +123,8 @@ reject_unanchored_worktree_gitdir() {
     git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
   parent_dir="${git_dir%/*}"
   [[ "${parent_dir##*/}" == worktrees && "${parent_dir%/*}" == "${commondir_resolved}" ]] ||
+    git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
+  worktree_gitdir_backlink_matches_checkout "${git_dir}" "${work_tree}" ||
     git_plan_error 'Planner repository metadata must be anchored by the script root .git directory.\n'
 }
 bootstrap_git_dir() {
@@ -115,7 +155,7 @@ bootstrap_git_dir() {
     *) git_plan_error 'Planner repository metadata path is not absolute.\n' ;;
   esac
   [[ -d "${git_dir}" ]] || git_plan_error 'Planner repository metadata path is not a directory.\n'
-  [[ "${worktree_gitfile}" -eq 0 ]] || reject_unanchored_worktree_gitdir "${git_dir}"
+  [[ "${worktree_gitfile}" -eq 0 ]] || reject_unanchored_worktree_gitdir "${git_dir}" "${work_tree}"
   (
     cd -P "${git_dir}" && pwd -P
   )

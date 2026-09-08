@@ -504,6 +504,21 @@ func TestCIPlanAcceptsLinkedWorktreeGitfile(t *testing.T) {
 	config := fixture.requireConfig(fixture.runCommand(script, "--base", "main"))
 	requireCIPlanPaths(t, config.ChangedFiles, "runtime/visible.go")
 }
+func TestCIPlanRejectsBorrowedWorktreeMetadata(t *testing.T) {
+	victim := newCIPlanFixture(t, "sha1")
+	victim.writeTextFiles("runtime/visible.go", "base\n")
+	victim.commit("tracked base file")
+	victimWorktree := filepath.Join(filepath.Dir(victim.root), "victim-linked-worktree")
+	victim.git("worktree", "add", "--quiet", "-b", "topic", victimWorktree, "main")
+	victimGitfile, err := os.ReadFile(filepath.Join(victimWorktree, ".git"))
+	ciPlanMust(t, err)
+	victimGitDir := strings.TrimSpace(strings.TrimPrefix(string(victimGitfile), "gitdir:"))
+
+	attacker := newCIPlanFixture(t, "sha1")
+	ciPlanMust(t, os.RemoveAll(filepath.Join(attacker.root, ".git")))
+	ciPlanMust(t, os.WriteFile(filepath.Join(attacker.root, ".git"), []byte("gitdir: "+victimGitDir+"\n"), 0o644))
+	requireCIPlanError(t, attacker.run("--base", "main"), -1, "anchored by the script root .git directory")
+}
 func TestCIPlanGitCollectorBindsCanonicalWorktreeAndOverridesLocalConfig(t *testing.T) {
 	fixture := newCIPlanTopicFixture(t)
 	fixture.writeFile("real-worktree.txt", []byte("real\n"), 0o644)
