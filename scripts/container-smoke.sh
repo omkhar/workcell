@@ -4558,7 +4558,12 @@ EOF
     echo "expected Workcell git guard to reject symlinked hidden git execution" >&2
     exit 1
   fi
-  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override" /tmp/git-guard-symlink.out
+  # The alias sits in a mutable root and points at the trusted git trampoline.
+  # On the strict profile the exec guard reads the pathname the caller wrote and
+  # refuses before the trampoline runs, so the trampoline's own git refusals only
+  # answer where that check does not run. The failed launch above is asserted
+  # separately, so this line requires one of the three reviewed refusals.
+  grep -Eq "Workcell blocked git hook bypass|Workcell blocked git control-plane override|Workcell blocked direct native executable launch from mutable runtime paths on the strict profile\." /tmp/git-guard-symlink.out
   if ! cp /usr/local/libexec/workcell/core/git "$EXEC_TMP/git-copy" >/tmp/git-copy.out 2>&1; then
     echo "expected Workcell git trampoline to remain copyable for deterministic debugging" >&2
     exit 1
