@@ -119,3 +119,7 @@ internal/supportbundle/collect.go	os.Stat	3
 internal/supportbundle/run.go	os.CreateTemp	1
 internal/supportbundle/run.go	os.Remove	1
 internal/supportbundle/run.go	os.Rename	1
+internal/transcript/pty_darwin.go	os.OpenFile	1
+internal/transcript/pty_linux.go	os.OpenFile	1
+internal/transcript/transcript.go	os.MkdirAll	1
+internal/transcript/transcript.go	os.OpenFile	1

@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,38 +44,39 @@ func CheckHardenedFS(rootDir string) error {
 	counts := map[hardenedFSKey]int{}
 	details := map[hardenedFSKey][]string{}
 	for _, pkg := range hardenedFSPackages {
-		root := filepath.Join(rootDir, pkg)
-		// A symlinked package root is not walked: WalkDir reports the link
-		// entry and returns success, so every source below it would escape the
-		// scan while the whole check still reported a clean result.
-		info, statErr := os.Lstat(root) // hardened-fs-exempt: this validator reads repository sources, and this call proves the root is a real directory
+		// A symlinked package root is not walked: filepath.WalkDir reports the
+		// link entry and returns success, so every source below it would
+		// escape the scan while the check still reported a clean result.
+		info, statErr := os.Lstat(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this proves the package root is a real directory before the walk opens it
 		if statErr != nil || !info.IsDir() {
 			return fmt.Errorf("trust-boundary package %s is not a directory; the hardened filesystem rule cannot read it", pkg)
 		}
+		// Walk and read through one directory handle. A pathname walk resolves
+		// the package name again for every entry, so a rename between the
+		// check and the read hands the scan a different tree than the one it
+		// verified. os.Root binds every open to this handle and refuses a
+		// symlink inside it.
+		root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this opens the handle that every later read is relative to
+		if err != nil {
+			return fmt.Errorf("open the trust-boundary package %s: %w", pkg, err)
+		}
 		scanned := 0
-		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			name := entry.Name()
+			base := entry.Name()
 			if entry.IsDir() {
-				if name == "testdata" {
+				if base == "testdata" {
 					return fs.SkipDir
 				}
 				return nil
 			}
-			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
 				return nil
 			}
-			rel, relErr := filepath.Rel(rootDir, path)
-			if relErr != nil {
-				return relErr
-			}
-			// Read the walked file through a verified parent handle rather
-			// than by name: the entry the walk reported and the bytes a second
-			// resolution returns are not the same file when the name is a
-			// symlink or is swapped in between.
-			content, readErr := rootio.ReadFileNoFollow(path, rel, hardenedFSMaxSourceBytes)
+			rel := pkg + "/" + name
+			content, readErr := hardenedFSReadSource(root, name, rel)
 			if readErr != nil {
 				return readErr
 			}
@@ -84,15 +86,18 @@ func CheckHardenedFS(rootDir string) error {
 				return fmt.Errorf("%s: %w", rel, scanErr)
 			}
 			for _, finding := range fileFindings {
-				key := hardenedFSKey{path: filepath.ToSlash(rel), symbol: finding.Symbol}
+				key := hardenedFSKey{path: rel, symbol: finding.Symbol}
 				counts[key]++
-				details[key] = append(details[key],
-					fmt.Sprintf("%s:%d: %s", filepath.ToSlash(rel), finding.Line, finding.Symbol))
+				details[key] = append(details[key], fmt.Sprintf("%s:%d: %s", rel, finding.Line, finding.Symbol))
 			}
 			return nil
 		})
+		closeErr := root.Close()
 		if err != nil {
-			return fmt.Errorf("scan %s for raw os file calls: %w", pkg, err)
+			return fmt.Errorf("scan %s for raw os pathname references: %w", pkg, err)
+		}
+		if closeErr != nil {
+			return closeErr
 		}
 		if scanned == 0 {
 			return fmt.Errorf("no Go source under the trust-boundary package %s; refusing a vacuous pass", pkg)
@@ -105,16 +110,25 @@ func CheckHardenedFS(rootDir string) error {
 	var failures []string
 	for key, count := range counts {
 		allowed := baseline[key]
-		if count <= allowed {
+		switch {
+		case count == allowed:
 			continue
+		case count < allowed:
+			// A count below its row leaves the difference as unused headroom
+			// that a later change can spend, which is a ratchet that does not
+			// hold. Lower the row with the repair.
+			failures = append(failures, fmt.Sprintf(
+				"%s: %d reference(s) to %s, baseline still allows %d; lower the baseline row to %d",
+				key.path, count, key.symbol, allowed, count))
+		default:
+			reported := details[key]
+			if len(reported) > hardenedFSMaxReported {
+				reported = reported[:hardenedFSMaxReported]
+			}
+			failures = append(failures, fmt.Sprintf(
+				"%s: %d reference(s) to %s, baseline allows %d; use internal/rootio, or state the reason with // %s <reason>\n    %s",
+				key.path, count, key.symbol, allowed, hardenedFSExemptTag, strings.Join(reported, "\n    ")))
 		}
-		reported := details[key]
-		if len(reported) > hardenedFSMaxReported {
-			reported = reported[:hardenedFSMaxReported]
-		}
-		failures = append(failures, fmt.Sprintf(
-			"%s: %d call(s) of %s, baseline allows %d; use internal/rootio, or state the reason with // %s <reason>\n    %s",
-			key.path, count, key.symbol, allowed, hardenedFSExemptTag, strings.Join(reported, "\n    ")))
 	}
 	for key := range baseline {
 		if _, ok := counts[key]; ok {
@@ -146,6 +160,9 @@ const (
 // internal/host holds the session, audit and launcher trees, so one entry
 // covers them all. A name in this list that no directory matches fails the
 // check, so the list cannot outlive its subject.
+//
+// HardenedFSPackages exports the list so a test builds its fixture tree from
+// the same names the check reads.
 var hardenedFSPackages = []string{
 	"internal/applecontainer",
 	"internal/authpolicy",
@@ -156,6 +173,7 @@ var hardenedFSPackages = []string{
 	"internal/publishpr",
 	"internal/sessionctl",
 	"internal/supportbundle",
+	"internal/transcript",
 }
 
 // hardenedFSSymbols lists the raw calls the hardened primitives replace. Each
@@ -192,9 +210,10 @@ type hardenedFSKey struct {
 	symbol string
 }
 
-// HardenedFSFinding is one raw os file call.
+// HardenedFSFinding is one reference to a raw os pathname call.
 type HardenedFSFinding struct {
 	Line   int
+	Column int
 	Symbol string
 }
 
@@ -232,8 +251,10 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
 			return true
 		}
+		position := fileSet.PositionFor(selector.Pos(), false)
 		findings = append(findings, HardenedFSFinding{
-			Line:   hardenedFSLine(fileSet, selector.Pos()),
+			Line:   position.Line,
+			Column: position.Column,
 			Symbol: name + "." + selector.Sel.Name,
 		})
 		return true
@@ -242,21 +263,35 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	return applyHardenedFSExemptions(findings, exempt), nil
 }
 
-// applyHardenedFSExemptions clears one call per exempted line.
+// applyHardenedFSExemptions clears the reference each exemption sits beside.
 //
-// A comment states the reason for the call it sits beside, and one comment
-// cannot state the reason for two. A line that carries an exemption and more
-// than one call keeps every call after the first, so the author splits the
-// line and states a reason for each.
-func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int]bool) []HardenedFSFinding {
-	used := map[int]bool{}
-	kept := findings[:0]
-	for _, finding := range findings {
-		if exempt[finding.Line] && !used[finding.Line] {
-			used[finding.Line] = true
-			continue
+// A comment states the reason for the reference it follows, so it clears the
+// nearest reference before it on its own line and nothing else. Clearing the
+// first reference on the line instead would let one reason cover a different
+// call than the one it names.
+func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int][]int) []HardenedFSFinding {
+	cleared := map[int]bool{}
+	for line, columns := range exempt {
+		for _, column := range columns {
+			best, bestColumn := -1, 0
+			for index, finding := range findings {
+				if cleared[index] || finding.Line != line || finding.Column >= column {
+					continue
+				}
+				if best < 0 || finding.Column > bestColumn {
+					best, bestColumn = index, finding.Column
+				}
+			}
+			if best >= 0 {
+				cleared[best] = true
+			}
 		}
-		kept = append(kept, finding)
+	}
+	kept := findings[:0]
+	for index, finding := range findings {
+		if !cleared[index] {
+			kept = append(kept, finding)
+		}
 	}
 	return kept
 }
@@ -287,16 +322,10 @@ func hardenedFSOSImportName(file *ast.File) (string, error) {
 	return "", nil
 }
 
-// hardenedFSExemptLines returns the lines that carry a reasoned exemption
-// comment. The reason is required: a bare tag states nothing.
-// hardenedFSLine returns the physical line of a position. A //line directive
-// renames a logical line, so two positions in different parts of the file can
-// report the same logical line and one comment would exempt a call it does not
-// sit beside.
-func hardenedFSLine(fileSet *token.FileSet, pos token.Pos) int {
-	return fileSet.PositionFor(pos, false).Line
-}
-
+// hardenedFSExemptLines returns the column of each reasoned exemption comment,
+// by physical line. A //line directive renames a logical line, so two
+// positions in different parts of the file can report the same logical one.
+// The reason is required: a bare tag states nothing.
 // hardenedFSExemptionReason reports a comment whose body opens with the tag
 // and then states a reason. The delimiters are removed first: a block comment
 // carries its closing "*/" in the text, and that is not a reason.
@@ -309,17 +338,42 @@ func hardenedFSExemptionReason(text string) bool {
 	return found && strings.TrimSpace(reason) != ""
 }
 
-func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int]bool {
-	lines := map[int]bool{}
+func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int {
+	lines := map[int][]int{}
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
 			if !hardenedFSExemptionReason(comment.Text) {
 				continue
 			}
-			lines[hardenedFSLine(fileSet, comment.Pos())] = true
+			position := fileSet.PositionFor(comment.Pos(), false)
+			lines[position.Line] = append(lines[position.Line], position.Column)
 		}
 	}
 	return lines
+}
+
+// hardenedFSReadSource reads one source through the package's directory
+// handle. os.Root refuses a symlink inside the root, so the bytes belong to
+// the entry the walk reported.
+func hardenedFSReadSource(root *os.Root, name, label string) ([]byte, error) {
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close() //nolint:errcheck // read-only handle
+	content, err := io.ReadAll(io.LimitReader(file, hardenedFSMaxSourceBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", label, err)
+	}
+	if int64(len(content)) > hardenedFSMaxSourceBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", label, hardenedFSMaxSourceBytes)
+	}
+	return content, nil
+}
+
+// HardenedFSPackages returns the trust-boundary package list.
+func HardenedFSPackages() []string {
+	return append([]string(nil), hardenedFSPackages...)
 }
 
 func loadHardenedFSBaseline(path string) (map[hardenedFSKey]int, error) {

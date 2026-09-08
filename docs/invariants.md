@@ -55,8 +55,9 @@ same authority as the direct call. `os.Lstat` stays permitted, because it does
 not follow the final symlink.
 
 `policy/hardened-fs-baseline.tsv` records the calls that the tree carries
-today. A count above its baseline fails the check. Replace a call with the
-matching `internal/rootio` primitive, then lower the count. New code states its
+today. A count that does not match its baseline fails the check. Replace a call
+with the matching `internal/rootio` primitive, then lower the count in the same
+change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
 ## 3. Repo policy must not silently widen trust

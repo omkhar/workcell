@@ -28,10 +28,11 @@ func TestHardenedFSFindings(t *testing.T) {
 	t.Parallel()
 	const header = "package host\n\nimport \"os\"\n\n"
 	cases := []struct {
-		name    string
-		source  string
-		want    int
-		wantErr string
+		name       string
+		source     string
+		want       int
+		wantSymbol string
+		wantErr    string
 	}{
 		{name: "plain call", source: header + "func f() { os.Open(path) }\n", want: 1},
 		{name: "two calls on one line", source: header + "func f() { os.Stat(a); os.Stat(b) }\n", want: 2},
@@ -104,11 +105,13 @@ func TestHardenedFSFindings(t *testing.T) {
 			want:   1,
 		},
 		{
-			// One comment states the reason for one call, so the second call
-			// on the same line is still reported.
-			name:   "one exemption clears one call",
-			source: header + "func f() { os.Open(a); os.ReadFile(b) } // hardened-fs-exempt: a is a build constant\n",
-			want:   1,
+			// One comment states the reason for one reference, so the other
+			// reference on the line is still reported. The comment follows
+			// os.ReadFile, so os.Open is the one that survives.
+			name:       "one exemption clears the reference it follows",
+			source:     header + "func f() { os.Open(a); os.ReadFile(b) } // hardened-fs-exempt: b is a build constant\n",
+			want:       1,
+			wantSymbol: "os.Open",
 		},
 		{
 			name:   "a parenthesized call is still the call",
@@ -166,6 +169,9 @@ func TestHardenedFSFindings(t *testing.T) {
 			}
 			if len(findings) != testCase.want {
 				t.Fatalf("HardenedFSFindings() = %v, want %d finding(s)", findings, testCase.want)
+			}
+			if testCase.wantSymbol != "" && findings[0].Symbol != testCase.wantSymbol {
+				t.Fatalf("HardenedFSFindings() reported %q, want %q", findings[0].Symbol, testCase.wantSymbol)
 			}
 		})
 	}
@@ -230,9 +236,7 @@ func TestCheckHardenedFSRatchet(t *testing.T) {
 				writeHardenedFSFixture(t, filepath.Join(root, "internal", "host", "doc.go"), "package host\n")
 			}
 			writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), testCase.baseline)
-			for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "publishpr", "runtimeutil", "sessionctl", "supportbundle"} {
-				writeHardenedFSFixture(t, filepath.Join(root, "internal", pkg, "doc.go"), "package "+pkg+"\n")
-			}
+			writeHardenedFSPackageFixtures(t, root, "internal/host")
 			err := metadatautil.CheckHardenedFS(root)
 			if testCase.wantErr == "" {
 				if err != nil {
@@ -267,9 +271,7 @@ func TestCheckHardenedFSRejectsASymlinkedPackageRoot(t *testing.T) {
 	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
 	writeHardenedFSFixture(t, filepath.Join(root, "host_impl", "state.go"),
 		"package host\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
-	for _, pkg := range []string{"applecontainer", "authpolicy", "authresolve", "injection", "publishpr", "runtimeutil", "sessionctl", "supportbundle"} {
-		writeHardenedFSFixture(t, filepath.Join(root, "internal", pkg, "doc.go"), "package "+pkg+"\n")
-	}
+	writeHardenedFSPackageFixtures(t, root, "internal/host")
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
 		t.Fatalf("create the internal directory: %v", err)
 	}
@@ -278,6 +280,24 @@ func TestCheckHardenedFSRejectsASymlinkedPackageRoot(t *testing.T) {
 	}
 	if err := metadatautil.CheckHardenedFS(root); err == nil {
 		t.Fatal("expected a symlinked trust-boundary package root to fail")
+	}
+}
+
+// writeHardenedFSPackageFixtures gives every trust-boundary package one source,
+// because the check requires each one to contribute a scanned file. The list
+// comes from the check itself, so a new package needs no fixture edit.
+func writeHardenedFSPackageFixtures(t *testing.T, root string, skip ...string) {
+	t.Helper()
+	skipped := map[string]bool{}
+	for _, name := range skip {
+		skipped[name] = true
+	}
+	for _, pkg := range metadatautil.HardenedFSPackages() {
+		if skipped[pkg] {
+			continue
+		}
+		writeHardenedFSFixture(t, filepath.Join(root, filepath.FromSlash(pkg), "doc.go"),
+			"package "+filepath.Base(pkg)+"\n")
 	}
 }
 

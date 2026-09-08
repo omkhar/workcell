@@ -586,6 +586,7 @@ go test ./...
 # same targets (FuzzParse, FuzzParseSSHDirective, and the injection/metadata
 # parsers). See docs/fuzzing.md and docs/ci-efficiency-and-reliability.md.
 
+"${ROOT_DIR}/scripts/check-hardened-fs.sh"
 "${ROOT_DIR}/scripts/check-dead-code.sh"
 "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
 
