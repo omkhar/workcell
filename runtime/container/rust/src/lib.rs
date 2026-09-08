@@ -922,7 +922,26 @@ fn shell_option_executes_command(option: &str) -> bool {
     option.starts_with('-') && option[1..].contains('c')
 }
 
-fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -> bool {
+/// What an `env(1)` shebang line comes to once its options have been walked the
+/// way env walks them.
+enum EnvCommand<'a> {
+    /// env rewrites the loader environment before the target starts, or names a
+    /// command the guard cannot resolve. Either way the line is refused without
+    /// reading a target.
+    Refused,
+    /// The command env would execute, and the rest of the line after it.
+    Command(String, &'a str),
+    /// The line names no command at all.
+    None,
+}
+
+/// Walks an `env(1)` shebang line to the command env would run.
+///
+/// Every classifier that reads a shebang asks the same question of this prefix
+/// and differs only in what it makes of the command the walk yields. One walk
+/// is the point: every defect in this class has been a syntactic form one
+/// scanner handled and its sibling did not.
+fn scan_env_command<'a>(cursor: &'a str, env_entries: &[String]) -> EnvCommand<'a> {
     let mut scan = cursor;
     let mut path_override: Option<String> = None;
 
@@ -931,7 +950,7 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
         // options that add, drop or replace it end the scan with a refusal.
         if let Some(name) = env_long_option_name(&token) {
             if "split-string".starts_with(name) || "ignore-environment".starts_with(name) {
-                return true;
+                return EnvCommand::Refused;
             }
             if "unset".starts_with(name) {
                 let unset = token
@@ -939,27 +958,27 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
                     .map(|(_, value)| value.to_owned())
                     .or_else(|| next_shebang_token(&mut scan));
                 if unset.is_some_and(|name| token_is_loader_environment_name(&name)) {
-                    return true;
+                    return EnvCommand::Refused;
                 }
                 continue;
             }
         }
         if token == "-" || token_clusters_loader_environment_control(&token) {
-            return true;
+            return EnvCommand::Refused;
         }
         if token == "-u" {
             if next_shebang_token(&mut scan)
                 .is_some_and(|name| token_is_loader_environment_name(&name))
             {
-                return true;
+                return EnvCommand::Refused;
             }
             continue;
         }
         if token_is_loader_environment_unset_option(&token) {
-            return true;
+            return EnvCommand::Refused;
         }
         if token_is_loader_environment_assignment(&token) {
-            return true;
+            return EnvCommand::Refused;
         }
 
         if let Some(path) = token.strip_prefix("PATH=") {
@@ -978,32 +997,42 @@ fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -
         ) {
             Ok(Some(path)) => path,
             Ok(None) => token.clone(),
-            // Fail closed: an unclassifiable interpreter is treated as blocked.
-            Err(_) => return true,
+            // Fail closed: an unclassifiable command is treated as blocked.
+            Err(_) => return EnvCommand::Refused,
         };
 
-        if token_is_shell_interpreter(&token_path)
-            && let Some(target) = next_shebang_token(&mut scan)
-            && shell_option_executes_command(&target)
-        {
-            return true;
-        }
-
-        if classify_protected_runtime_path(&token_path) != ProtectedRuntime::None {
-            return true;
-        }
-
-        if !is_dynamic_loader_path(&token_path) {
-            return false;
-        }
-
-        let Some(target) = next_shebang_token(&mut scan) else {
-            return false;
-        };
-        return classify_protected_runtime_path(&target) != ProtectedRuntime::None;
+        return EnvCommand::Command(token_path, scan);
     }
 
-    false
+    EnvCommand::None
+}
+
+fn env_command_targets_protected_runtime(cursor: &str, env_entries: &[String]) -> bool {
+    let (command, mut scan) = match scan_env_command(cursor, env_entries) {
+        EnvCommand::Refused => return true,
+        EnvCommand::None => return false,
+        EnvCommand::Command(command, rest) => (command, rest),
+    };
+
+    if token_is_shell_interpreter(&command)
+        && let Some(target) = next_shebang_token(&mut scan)
+        && shell_option_executes_command(&target)
+    {
+        return true;
+    }
+
+    if classify_protected_runtime_path(&command) != ProtectedRuntime::None {
+        return true;
+    }
+
+    if !is_dynamic_loader_path(&command) {
+        return false;
+    }
+
+    let Some(target) = next_shebang_token(&mut scan) else {
+        return false;
+    };
+    classify_protected_runtime_path(&target) != ProtectedRuntime::None
 }
 
 fn buffer_targets_protected_runtime_via_shebang(buffer: &str, env_entries: &[String]) -> bool {
