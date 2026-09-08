@@ -1,4 +1,5 @@
 #!/bin/bash -p
+# generated-artifact: none (release artifact under dist/; scripts/verify-control-plane-manifest.sh proves determinism)
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
 

@@ -103,6 +103,9 @@ echo "[ci/validate] validator evasion corpus registration"
 echo "[ci/validate] GitHub macOS release test runners"
 "${ROOT_DIR}/scripts/verify-github-macos-release-test-runners.sh" macos-26 macos-15
 
+echo "[ci/validate] generated artifact freshness"
+"${ROOT_DIR}/scripts/check-generated-artifacts.sh"
+
 echo "[ci/validate] build input manifest determinism"
 "${ROOT_DIR}/scripts/verify-build-input-manifest.sh"
 
