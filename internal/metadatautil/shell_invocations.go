@@ -58,7 +58,7 @@ func texts(words []word) []string {
 	return plain
 }
 
-// braceDepth returns the change in brace nesting the commands make.
+// braceDepth returns the change in group nesting the commands make.
 func braceDepth(commands []command) int {
 	change := 0
 	for _, each := range commands {
@@ -67,12 +67,17 @@ func braceDepth(commands []command) int {
 	return change
 }
 
-// commandBrace returns the change in brace nesting one command makes. A brace
+// commandBrace returns the change in group nesting one command makes. A brace
 // groups commands only in command position and only unquoted: bash reads the }
 // of echo } as an argument, so a group is still open after it. A brace inside a
 // word belongs to an expansion such as ${VAR}. A definition header is not a
 // command, so the brace that opens its body stands in command position after
 // it, wherever on the header line it is written.
+//
+// A parenthesis in command position opens a subshell, which bash skips exactly
+// as it skips a brace group, so it counts the same. Only a bare ( or ) counts:
+// a case pattern ends in a word such as -n), an arithmetic command opens with
+// ((, and a definition header is handled above, so none of them reaches here.
 func commandBrace(each command) int {
 	args := each.args
 	// ! negates the status of the command after it and is not a command of its
@@ -85,18 +90,36 @@ func commandBrace(each command) int {
 	}
 	if definedName(args) != "" {
 		if strings.HasSuffix(args[0].text, "(){") || slices.ContainsFunc(args[1:],
-			func(each word) bool { return !each.quoted && each.text == "{" }) {
+			func(each word) bool {
+				return !each.quoted && (each.text == "{" || each.text == "(")
+			}) {
 			return 1
 		}
 		return 0
 	}
-	switch args[0].text {
-	case "{":
+	switch {
+	case args[0].text == "{":
 		return 1
-	case "}":
+	case args[0].text == "}":
 		return -1
+	case args[0].text == ")":
+		return -1
+	case openParen(args[0].text):
+		return 1
 	}
 	return 0
+}
+
+// openParen reports whether the word opens a parenthesised region that a later
+// ) closes. A bare ( opens a subshell, and a word ending in ( opens one the
+// shell is still reading -- a multi-line array assignment x=( or a command
+// substitution foo=$(. Both have to count, because their closing ) is a bare
+// word on its own line and would otherwise close a group nothing opened.
+//
+// (( opens an arithmetic command instead, which ends at )) rather than at a
+// bare ), so counting it would leave a region that never closes.
+func openParen(text string) bool {
+	return text == "(" || (strings.HasSuffix(text, "(") && !strings.HasSuffix(text, "(("))
 }
 
 // controlWords maps each word that opens or closes a compound command to the

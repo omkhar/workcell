@@ -5848,8 +5848,32 @@ func TestCheckRuntimeSecurityPostureRealRepo(t *testing.T) {
 // --- D3 final simple sweep: container-smoke apt-broker socket probe ---
 
 // smokeAptBrokerProbeHappyFiles returns a container-smoke.sh fixture that carries
-// all six apt-broker socket probe strings, so all six invariants hold.
+// all six apt-broker socket probe strings as live commands, so all six
+// invariants hold.
+//
+// They have to be live commands.  The first five needles are the diagnostics
+// the real script emits from `echo ... >&2` inside the failure branch of each
+// assertion, and writing them as `#` comments here would make this fixture a
+// demonstration that the invariant cannot tell an assertion from a note about
+// one.  smokeAptBrokerProbeCommentedFiles is that demonstration, as a negative
+// fixture.
 func smokeAptBrokerProbeHappyFiles() map[string]string {
+	return map[string]string{
+		containerSmokeRelPath: "#!/usr/bin/env bash\n" +
+			"echo \"expected the shell apt broker to be absent from the runtime image\" >&2\n" +
+			"echo \"expected no session sudoers grant behind the apt broker\" >&2\n" +
+			"echo \"expected the apt broker to publish a real socket\" >&2\n" +
+			"echo \"expected the apt broker socket to serve a privileged package request\" >&2\n" +
+			"echo \"expected the apt broker client to admit only the package helper\" >&2\n" +
+			"grep -q \"Workcell sudo compatibility mode only permits the package helper.\" out\n",
+	}
+}
+
+// smokeAptBrokerProbeCommentedFiles returns the same six sentences with every
+// assertion deleted and its diagnostic kept as a comment.  That is what a
+// maintainer removing the coverage would leave behind, and the invariant must
+// report it as missing rather than as present.
+func smokeAptBrokerProbeCommentedFiles() map[string]string {
 	return map[string]string{
 		containerSmokeRelPath: "#!/usr/bin/env bash\n" +
 			"# expected the shell apt broker to be absent from the runtime image\n" +
@@ -5857,7 +5881,7 @@ func smokeAptBrokerProbeHappyFiles() map[string]string {
 			"# expected the apt broker to publish a real socket\n" +
 			"# expected the apt broker socket to serve a privileged package request\n" +
 			"# expected the apt broker client to admit only the package helper\n" +
-			"grep -q \"Workcell sudo compatibility mode only permits the package helper.\" out\n",
+			"true out  # grep -q \"Workcell sudo compatibility mode only permits the package helper.\" out\n",
 	}
 }
 
@@ -5917,6 +5941,39 @@ func TestCheckSmokeAptBrokerProbe(t *testing.T) {
 				t.Fatalf("CheckSmokeAptBrokerProbe() = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// The needles are the assertions' own diagnostics, so a containment probe that
+// reads comments cannot tell live coverage from a note about coverage that was
+// removed.  Every one of the six must fail on the commented form.
+func TestCheckSmokeAptBrokerProbeRejectsCommentedOutAssertions(t *testing.T) {
+	root := writeFnBlockGoBlockGitEnvRepo(t, smokeAptBrokerProbeCommentedFiles())
+	err := CheckSmokeAptBrokerProbe(root)
+	want := "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (expected the shell apt broker to be absent from the runtime image)"
+	if err == nil || err.Error() != want {
+		t.Fatalf("CheckSmokeAptBrokerProbe() = %v, want %q", err, want)
+	}
+	// Each needle on its own, so no one of the six is carried by another.
+	for _, c := range smokeAptBrokerProbeChecks {
+		files := smokeAptBrokerProbeHappyFiles()
+		body := files[containerSmokeRelPath]
+		commented := smokeAptBrokerProbeCommentedFiles()[containerSmokeRelPath]
+		for _, line := range strings.Split(commented, "\n") {
+			if !strings.Contains(line, c.pattern) {
+				continue
+			}
+			for _, live := range strings.Split(body, "\n") {
+				if strings.Contains(live, c.pattern) {
+					body = strings.Replace(body, live, line, 1)
+				}
+			}
+		}
+		files[containerSmokeRelPath] = body
+		got := CheckSmokeAptBrokerProbe(writeFnBlockGoBlockGitEnvRepo(t, files))
+		if got == nil {
+			t.Fatalf("a commented %q was accepted as live coverage", c.pattern)
+		}
 	}
 }
 

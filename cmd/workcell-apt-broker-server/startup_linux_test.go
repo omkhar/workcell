@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -251,7 +252,13 @@ func boundStartupSocket(tb testing.TB) string {
 		tb.Fatal(err)
 	}
 	listener.SetUnlinkOnClose(false)
-	tb.Cleanup(func() { _ = listener.Close() })
+	// A SIGKILLed child leaves the pathname with nothing behind it, and that is
+	// what removeAbandonedSocket has to recognise as its own remains. Closing
+	// the listener here rather than at cleanup is what makes this fixture that
+	// rather than a live server the starter must not touch.
+	if err := listener.Close(); err != nil {
+		tb.Fatal(err)
+	}
 	return path
 }
 
@@ -359,6 +366,97 @@ func TestClaimSocketPathKeepsALiveSocketAndClearsAStaleOne(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale socket survived recovery: %v", err)
+	}
+}
+
+func TestRemoveAbandonedSocketKeepsAConcurrentStartersLiveSocket(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("a started socket is recognised only after root-owner validation")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "socket")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two overlapping --start calls both found the pathname free. This is the
+	// loser cleaning up after its own failed child, and the socket it finds
+	// belongs to the winner.
+	if err := removeAbandonedSocket(path); err == nil {
+		t.Fatal("a live socket was accepted as this attempt's own remains")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("a concurrent starter's live socket was removed: %v", err)
+	}
+
+	// Once the winner stops, the pathname really is abandoned.
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAbandonedSocket(path); err != nil {
+		t.Fatalf("a stale socket was not cleared: %v", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale socket survived cleanup: %v", err)
+	}
+}
+
+func TestClaimSocketPathFailsClosedOnAnInconclusiveProbe(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("a live socket is accepted only after root-owner validation")
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "socket")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	defer func() { _ = listener.Close() }()
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same socket named through a path too long for sun_path. Lstat still
+	// answers, so the metadata checks pass and only the connect fails -- with
+	// something other than a refusal, which is what "inconclusive" means here.
+	deep := filepath.Join(root, strings.Repeat("d", 90))
+	if err := os.Mkdir(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root, filepath.Join(deep, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	long := filepath.Join(deep, "alias", "socket")
+	if len(long) <= 108 {
+		t.Fatalf("the fixture path is not long enough to be inconclusive: %d bytes", len(long))
+	}
+	if info, err := os.Lstat(long); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("the fixture must still lstat as a socket: (%v, %v)", info, err)
+	}
+	if probe := socketProbe(long); probe == nil || errors.Is(probe, syscall.ECONNREFUSED) {
+		t.Fatalf("the fixture probe is not inconclusive: %v", probe)
+	}
+
+	// An open question must not be reported as a serving broker: the entrypoint
+	// would drop to the mapped user with nothing behind the socket.
+	serving, err := claimSocketPath(long)
+	if serving || err == nil {
+		t.Fatalf("an inconclusive probe was reported as serving: (%v, %v)", serving, err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("an inconclusive probe removed the socket: %v", err)
 	}
 }
 

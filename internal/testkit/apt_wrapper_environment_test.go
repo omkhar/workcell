@@ -12,6 +12,26 @@ import (
 	"testing"
 )
 
+// A bare substring search over the wrapper's text is satisfied by the same
+// words in a comment, a quoted decoy, or a heredoc body, so it would keep
+// passing after the real delegation was deleted. Both checks are anchored to
+// the start of a line instead, and the decoy table below is their negative
+// fixture.
+//
+// The shared shell-invocation parser cannot answer for this file: its
+// compound-command tracking does not close a `case` block, so it proves no
+// command past the wrapper's root branch and reports the delegation as
+// unreachable. That under-reports rather than invents, but it cannot carry an
+// assertion.
+var (
+	sudoWrapperDelegation = regexp.MustCompile(
+		`(?m)^exec "\$\{broker_client\}" --sudo-compat "\$@"$`,
+	)
+	sudoWrapperBrokerClient = regexp.MustCompile(
+		`(?m)^broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"$`,
+	)
+)
+
 func readRepoFile(tb testing.TB, parts ...string) string {
 	tb.Helper()
 
@@ -70,11 +90,22 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 	t.Parallel()
 
 	source := readRepoFile(t, "runtime", "container", "bin", "sudo-wrapper.sh")
-	if !strings.Contains(source, `exec "${broker_client}" --sudo-compat "$@"`) {
+	if !sudoWrapperDelegation.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer delegates to the broker client")
 	}
-	if !strings.Contains(source, `broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"`) {
+	if !sudoWrapperBrokerClient.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer names the broker client binary")
+	}
+	// Neither check may be satisfied by text the shell never runs.
+	for _, decoy := range []string{
+		`# exec "${broker_client}" --sudo-compat "$@"`,
+		`  exec "${broker_client}" --sudo-compat "$@"  # kept for reference`,
+		`echo 'exec "${broker_client}" --sudo-compat "$@"'`,
+		`# broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"`,
+	} {
+		if sudoWrapperDelegation.MatchString(decoy) || sudoWrapperBrokerClient.MatchString(decoy) {
+			t.Fatalf("a decoy satisfies the sudo-wrapper checks: %q", decoy)
+		}
 	}
 	for _, forbidden := range []string{
 		"apt-broker.sh",
