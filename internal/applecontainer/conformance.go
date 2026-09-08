@@ -18,29 +18,23 @@ import (
 
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/providerid"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
-// requireNoSymlink verifies path (under stateRoot) is reached without traversing any symlink and
-// is the expected kind (regular file, or directory when wantDir), via the production no-follow
-// stat (statPathSafe: parents O_NOFOLLOW, leaf Fstatat AT_SYMLINK_NOFOLLOW). A regular leaf also
-// requires Nlink==1 (mirroring readFileSafe), so a symlink OR a hardlink to a decoy outside
-// StateRoot is rejected before any content is read.
-func requireNoSymlink(stateRoot, path, label string, wantDir bool) error {
+// requireSingleLinkedRegular verifies path (under stateRoot) is reached without traversing any
+// symlink and is a single-linked regular file, via the production no-follow stat (statPathSafe:
+// parents O_NOFOLLOW, leaf Fstatat AT_SYMLINK_NOFOLLOW). The type and link-count rule itself is
+// rootio.RequireSingleLinkedRegular, so a symlink, a FIFO or a hardlink to a decoy outside
+// StateRoot is rejected by one rule rather than by a copy of it. The rule is not applied by the
+// hardened readers: ReadFileAtNoFollow checks the file type only, because a hard-linked bundle
+// manifest is read on purpose elsewhere and protected by the atomic replace instead. A caller that
+// needs the link-count guarantee calls this rule itself.
+func requireSingleLinkedRegular(stateRoot, path, label string) error {
 	st, err := statPathSafe(stateRoot, path)
 	if err != nil {
 		return fmt.Errorf("%s %q: %w", label, path, err)
 	}
-	want := unix.S_IFREG
-	if wantDir {
-		want = unix.S_IFDIR
-	}
-	if int(st.Mode)&unix.S_IFMT != want {
-		return fmt.Errorf("%s %q is not the expected file type (mode %#o) — a symlink/decoy is rejected", label, path, st.Mode&unix.S_IFMT)
-	}
-	if !wantDir && st.Nlink != 1 {
-		return fmt.Errorf("%s %q is multiply linked (%d links) — a hardlink to a decoy is rejected", label, path, st.Nlink)
-	}
-	return nil
+	return rootio.RequireSingleLinkedRegular(&st, label, path)
 }
 
 // canonicalLayout is the set of on-disk paths derived purely from the state root + contract + case
@@ -229,7 +223,7 @@ func RunConformance(ctx context.Context, target ConformanceTarget, contract Cont
 	}
 	// The export reads the audit log by FOLLOWING record.AuditLogPath (== layout.auditLog); reject a
 	// symlink/hardlink there first, else a decoy log outside StateRoot could be exported.
-	if err := requireNoSymlink(c.StateRoot, layout.auditLog, "audit log", false); err != nil {
+	if err := requireSingleLinkedRegular(c.StateRoot, layout.auditLog, "audit log"); err != nil {
 		return ConformanceResult{}, err
 	}
 	exported, err := sessions.ExportSessionRecordInRoots([]string{c.StateRoot}, c.SessionID)

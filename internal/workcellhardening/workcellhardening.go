@@ -381,6 +381,13 @@ const (
 	// kindPresent requires the fixed string to appear anywhere in the
 	// launcher, mirroring an affirmative `rg -q FIXED`.
 	kindPresent
+	// kindPresentInCode requires the fixed string to appear anywhere in the
+	// target file outside a shell comment.  kindPresent cannot tell a live
+	// assertion from its own diagnostic left behind in a `#` comment, so a
+	// check whose needle IS the diagnostic of the assertion it stands for
+	// uses this instead: deleting the assertion and keeping the sentence as a
+	// note then fails the check, which is the whole point of the check.
+	kindPresentInCode
 	// kindAbsent requires the fixed string NOT to appear anywhere in the
 	// launcher, mirroring a negative `if rg -q FIXED; then ... exit 1`.
 	kindAbsent
@@ -4114,6 +4121,71 @@ func CheckRuntimeSecurityPosture(rootDir string) error {
 	return evaluate(rootDir, runtimeSecurityPostureChecks)
 }
 
+// stripShellComments removes the comment part of every line of a shell script,
+// keeping the line itself so that line-oriented checks still line up.  A `#`
+// opens a comment only in an unquoted word position: at the start of a line, or
+// after whitespace, and not inside a single- or double-quoted span.  Quoting
+// state is tracked across the whole file rather than per line, because a quoted
+// span can run past the end of its line and a `#` inside one is text.
+//
+// This is deliberately smaller than a shell parser.  It answers the one
+// question a presence check over a diagnostic string needs answered -- is this
+// sentence a live command or a note someone left behind -- and nothing else.
+//
+// It does not strip a heredoc body, so a check that must also refuse body text
+// needs more than this.
+// startsWord reports whether a byte leaves the next byte at the start of a
+// word, which is where bash reads a # as opening a comment.  Whitespace and a
+// newline are the obvious cases; a control operator is the one that is easy to
+// miss, so true;# and cmd &# and (# all open a comment while echo a#b does not.
+func startsWord(previous byte) bool {
+	switch previous {
+	case '\n', ' ', '\t', ';', '&', '|', '(', ')':
+		return true
+	}
+	return false
+}
+
+func stripShellComments(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	var quote byte
+	commented := false
+	previous := byte('\n')
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		switch {
+		case c == '\n':
+			// A comment ends at the newline. A quoted span does not: bash keeps
+			// reading one across physical lines, so `: '` on one line makes
+			// every line up to the closing quote a single argument's data.
+			commented = false
+		case commented:
+			previous = c
+			continue
+		case quote != 0:
+			if c == '\\' && quote == '"' && i+1 < len(text) {
+				out.WriteByte(c)
+				i++
+				c = text[i]
+				break
+			}
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '#' && startsWord(previous):
+			commented = true
+			previous = c
+			continue
+		}
+		out.WriteByte(c)
+		previous = c
+	}
+	return out.String()
+}
+
 // smokeAptBrokerProbeChecks lists the six container-smoke apt-broker socket
 // invariants in the same order as the former inline
 // `for required in ...; do grep -Fq -- "${required}" container-smoke.sh; done`
@@ -4123,6 +4195,13 @@ func CheckRuntimeSecurityPosture(rootDir string) error {
 // "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker
 // socket probe (" + needle + ")".  All six read scripts/container-smoke.sh
 // via the per-check targetFile field.
+//
+// Each needle IS the diagnostic of the assertion it stands for, so a plain
+// containment probe cannot tell a live assertion from the same sentence left in
+// a comment: all six would keep passing after every assertion was deleted, and
+// the invariant would report coverage that no longer exists.  The checks are
+// therefore kindPresentInCode, which is stricter than the `grep -Fq` loop they
+// were migrated from.
 var smokeAptBrokerProbeChecks = func() []check {
 	needles := []string{
 		"expected the shell apt broker to be absent from the runtime image",
@@ -4135,7 +4214,7 @@ var smokeAptBrokerProbeChecks = func() []check {
 	cs := make([]check, 0, len(needles))
 	for _, needle := range needles {
 		cs = append(cs, check{
-			kind:       kindPresent,
+			kind:       kindPresentInCode,
 			pattern:    needle,
 			message:    "Expected scripts/container-smoke.sh to keep the Linux runtime apt-broker socket probe (" + needle + ")",
 			targetFile: containerSmokeRelPath,
@@ -4795,6 +4874,8 @@ func (c check) holds(text, rootDir string) bool {
 		return regexp.MustCompile(c.regex).MatchString(first)
 	case kindPresent:
 		return strings.Contains(text, c.pattern)
+	case kindPresentInCode:
+		return strings.Contains(stripShellComments(text), c.pattern)
 	case kindPresentInAnyFile:
 		// Per-file containment predicate for a single listed file; evaluate
 		// ORs this across every path in targetFiles to reproduce grep's

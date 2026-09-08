@@ -128,16 +128,23 @@ case "${subcommand}" in
     ;;
 esac
 
-set +e
-"${real_command}" "$@"
-command_status="$?"
-set -e
-
+# Mark before the package manager runs, not after it returns. The broker owns
+# this helper's process group and kills it on a timeout, an output-limit
+# overflow, or a client disconnect -- a user pressing Ctrl-C on a slow install
+# is the common one. This script installs no trap, so a kill after dpkg has
+# started unpacking would leave the container modified and still recorded at its
+# original assurance level. The marker is already attempt-based rather than
+# outcome-based: a failed install downgrades the session too.
 if [[ "${mutates_packages}" -eq 1 ]]; then
   workcell_mark_lower_assurance_session
   echo "WORKCELL_EVENT package-mutation assurance=lower-assurance-package-mutation" >&2
   echo "Workcell note: this session is now lower-assurance until the container exits." >&2
 fi
+
+set +e
+"${real_command}" "$@"
+command_status="$?"
+set -e
 
 if [[ "${command_status}" -ne 0 ]]; then
   exit "${command_status}"

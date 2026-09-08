@@ -12,6 +12,98 @@ import (
 	"testing"
 )
 
+// A bare substring search over the wrapper's text is satisfied by the same
+// words in a comment, a quoted decoy, or a heredoc body, so it would keep
+// passing after the real delegation was deleted. Both checks are anchored to
+// the start of a line instead, and the decoy table below is their negative
+// fixture.
+//
+// The shared shell-invocation parser cannot answer for this file at all: an
+// `exec` that names a program is a scan terminator there (`replacesShell`),
+// never an invocation, so `ShellInvocations(source, "exec")` returns nothing
+// for any script. The delegation is unrepresentable through it.
+//
+// A line anchor cannot see a heredoc body either, so the wrapper is required to
+// have no heredoc. That keeps the anchors below the only way its text can
+// appear, and it fails loudly if anyone adds one.
+//
+// Nor can a line anchor see reachability: the same line parked inside
+// `if false; then ... fi` satisfies it while nothing runs it. The delegation is
+// therefore required to be the wrapper's final command, which is what an exec
+// that replaces the shell has to be anyway.
+// sudoWrapperDelegationLine is the delegation exactly as the wrapper's final
+// command must be written, unindented.
+const sudoWrapperDelegationLine = `exec "${broker_client}" --sudo-compat "$@"`
+
+// commandLines returns the lines of a script that carry a command, in order:
+// blank lines and whole-line comments are dropped, and a trailing comment is
+// cut. It is not a parser -- it answers only which lines run and in what order.
+func commandLines(source string) []string {
+	var carried []string
+	for _, line := range strings.Split(source, "\n") {
+		if cut := trailingComment.FindStringIndex(line); cut != nil {
+			line = line[:cut[0]]
+		}
+		line = strings.TrimRight(line, " \t")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		carried = append(carried, line)
+	}
+	return carried
+}
+
+// lastShellCommand returns the last line of a script that carries a command,
+// which is what an exec that replaces the shell has to be.
+func lastShellCommand(source string) string {
+	carried := commandLines(source)
+	if len(carried) == 0 {
+		return ""
+	}
+	return carried[len(carried)-1]
+}
+
+// unreachedDelegation reports why the script's last command is not reached, or
+// the empty string. It reads only the command before it, which is where both
+// shapes live that leave the delegation written last and never run: a `false &&`
+// that carries onto it, and an unconditional exit, return or exec -- the last
+// replaces the shell, so nothing written after it runs either.
+//
+// This is a tripwire over file content, not a reachability proof. What the
+// wrapper actually does end to end is proved by scripts/container-smoke.sh,
+// which drives an unprivileged sudo through the real broker socket.
+func unreachedDelegation(source string) string {
+	carried := commandLines(source)
+	if len(carried) < 2 {
+		return ""
+	}
+	previous := carried[len(carried)-2]
+	for _, operator := range []string{"&&", "||", "|", "\\"} {
+		if strings.HasSuffix(previous, operator) {
+			return "a trailing " + operator + " guards it"
+		}
+	}
+	if field := strings.Fields(previous); len(field) > 0 &&
+		!strings.HasPrefix(previous, " ") && !strings.HasPrefix(previous, "\t") &&
+		(field[0] == "exit" || field[0] == "return" || field[0] == "exec") {
+		return "an unconditional " + field[0] + " runs before it"
+	}
+	return ""
+}
+
+var (
+	// trailingComment matches a comment opened after whitespace, which is the
+	// only spelling the wrapper could grow on its final line.
+	trailingComment       = regexp.MustCompile(`[ \t]#.*$`)
+	sudoWrapperHeredoc    = regexp.MustCompile(`<<-?`)
+	sudoWrapperDelegation = regexp.MustCompile(
+		`(?m)^exec "\$\{broker_client\}" --sudo-compat "\$@"$`,
+	)
+	sudoWrapperBrokerClient = regexp.MustCompile(
+		`(?m)^broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"$`,
+	)
+)
+
 func readRepoFile(tb testing.TB, parts ...string) string {
 	tb.Helper()
 
@@ -70,11 +162,43 @@ func TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient(t *testing.T) 
 	t.Parallel()
 
 	source := readRepoFile(t, "runtime", "container", "bin", "sudo-wrapper.sh")
-	if !strings.Contains(source, `exec "${broker_client}" --sudo-compat "$@"`) {
+	// A heredoc body would let the delegation's text outlive the command that
+	// runs it, which a line anchor cannot tell apart.
+	if sudoWrapperHeredoc.MatchString(source) {
+		t.Fatal("sudo-wrapper.sh gained a heredoc; the line-anchored checks below cannot see into one")
+	}
+	// exec replaces the shell, so the delegation is the wrapper's last command.
+	// A copy parked inside `if false; then ... fi` satisfies a line anchor while
+	// nothing reaches it; being the final command is the reachability a line
+	// anchor can check.
+	if got := lastShellCommand(source); got != sudoWrapperDelegationLine {
+		t.Fatalf("sudo-wrapper.sh no longer ends by delegating to the broker client: last command is %q", got)
+	}
+	// Being written last is not the same as being reached. Two shapes put the
+	// delegation last and still stop the shell from running it: a penultimate
+	// `false &&` that carries onto it, and an unconditional `exit` before it.
+	if reason := unreachedDelegation(source); reason != "" {
+		t.Fatalf("sudo-wrapper.sh no longer reaches its final delegation: %s", reason)
+	}
+	if !sudoWrapperDelegation.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer delegates to the broker client")
 	}
-	if !strings.Contains(source, `broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"`) {
+	if !sudoWrapperBrokerClient.MatchString(source) {
 		t.Fatal("sudo-wrapper.sh no longer names the broker client binary")
+	}
+	// Neither check may be satisfied by text the shell never runs.
+	for _, decoy := range []string{
+		`# exec "${broker_client}" --sudo-compat "$@"`,
+		`  exec "${broker_client}" --sudo-compat "$@"  # kept for reference`,
+		`echo 'exec "${broker_client}" --sudo-compat "$@"'`,
+		`# broker_client="/usr/local/libexec/workcell/workcell-apt-broker-client"`,
+	} {
+		if sudoWrapperHeredoc.MatchString(decoy) {
+			t.Fatalf("decoy must not need the heredoc guard: %q", decoy)
+		}
+		if sudoWrapperDelegation.MatchString(decoy) || sudoWrapperBrokerClient.MatchString(decoy) {
+			t.Fatalf("a decoy satisfies the sudo-wrapper checks: %q", decoy)
+		}
 	}
 	for _, forbidden := range []string{
 		"apt-broker.sh",

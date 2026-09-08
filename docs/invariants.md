@@ -43,6 +43,23 @@ The managed Colima VM mounts these roots as read-only. These mounts do not give
 the runtime durable write access outside the selected workspace. GitHub
 publication remains a separate host action.
 
+## 2a. Host path reads go through the hardened primitives
+
+A host path that an operator or a provider controls can change between the
+check and the open. `internal/rootio` opens through a verified parent handle
+and refuses to follow a symlink.
+
+`scripts/check-hardened-fs.sh` rejects a reference to a raw `os` pathname call
+in a trust-boundary package. A function value counts, because it carries the
+same authority as the direct call. `os.Lstat` stays permitted, because it does
+not follow the final symlink.
+
+`policy/hardened-fs-baseline.tsv` records the calls that the tree carries
+today. A count that does not match its baseline fails the check. Replace a call
+with the matching `internal/rootio` primitive, then lower the count in the same
+change. New code states its
+reason at the call with a `// hardened-fs-exempt: <reason>` comment.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only

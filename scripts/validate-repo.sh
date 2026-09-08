@@ -163,6 +163,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-dead-code.sh"
   "${ROOT_DIR}/scripts/check-doc-language.sh"
   "${ROOT_DIR}/scripts/check-generated-artifacts.sh"
+  "${ROOT_DIR}/scripts/check-hardened-fs.sh"
   "${ROOT_DIR}/scripts/check-shell-portability.sh"
   "${ROOT_DIR}/scripts/check-doc-links.sh"
   "${ROOT_DIR}/scripts/check-doc-support-matrix-fields.sh"
@@ -585,6 +586,7 @@ go test ./...
 # same targets (FuzzParse, FuzzParseSSHDirective, and the injection/metadata
 # parsers). See docs/fuzzing.md and docs/ci-efficiency-and-reliability.md.
 
+"${ROOT_DIR}/scripts/check-hardened-fs.sh"
 "${ROOT_DIR}/scripts/check-dead-code.sh"
 "${ROOT_DIR}/scripts/check-public-repo-hygiene.sh"
 

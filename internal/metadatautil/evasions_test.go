@@ -144,6 +144,50 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return hide(a, i+"never_called() {\n"+i+"echo }", i+"}")
 	})},
+	{"conditional subshell group", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (", i+")")
+	})},
+	{"negated guarded subshell", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && ! (", i+")")
+	})},
+	{"array assignment in a guarded subshell", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (\n"+i+"decoy=(\n"+i+"  one\n"+i+")", i+")")
+	})},
+	{"attached subshell opener", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo hidden", i+")")
+	})},
+	{"attached subshell opener closed on its own line", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo hidden)\n"+i+"false && (echo hidden", i+")")
+	})},
+	{"substitution inside a subshell opener", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo $(date)", i+")")
+	})},
+	{"quoted fragment in a subshell opener", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+`false && (echo")"`, i+")")
+	})},
+	{"parameter expansion in a subshell opener", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo ${x%)}", i+")")
+	})},
+	{"subshell behind a reserved prefix", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && time (", i+")")
+	})},
+	{"subshell behind a named coproc", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && coproc DECOY (", i+")")
+	})},
+	{"paired closers in a subshell opener", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"false && (echo ${x%))}", i+")")
+	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)

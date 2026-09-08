@@ -4,7 +4,6 @@
 package rootio
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -149,59 +148,12 @@ func MarshalCompactJSON(value any, label string, limit int64) ([]byte, error) {
 }
 
 // WriteFileAtomicAtNoFollow replaces name from an already trusted parent.
-// It writes a unique sibling with O_EXCL, sets mode before publication, then
-// uses renameat. renameat replaces a swapped leaf symlink instead of following it.
+//
+// It is StageAndPublishAt under its original name: one staged sibling created
+// with O_EXCL under a random name, its mode set through the descriptor, its
+// contents synced, published with renameat, and the parent directory synced.
 func WriteFileAtomicAtNoFollow(parent *os.File, name string, data []byte, mode os.FileMode, tempPrefix string) error {
-	if err := validateLeafName(name); err != nil {
-		return err
-	}
-	if tempPrefix == "" {
-		tempPrefix = ".workcell-tmp-"
-	}
-	if strings.Contains(tempPrefix, string(filepath.Separator)) {
-		return fmt.Errorf("temporary-file prefix must not contain a path separator: %s", tempPrefix)
-	}
-	parentFD := int(parent.Fd())
-	for attempt := 0; attempt < 32; attempt++ {
-		suffix, err := randomSuffix()
-		if err != nil {
-			return err
-		}
-		temporaryName := tempPrefix + suffix + ".tmp"
-		fd, err := unix.Openat(parentFD, temporaryName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, uint32(mode.Perm()))
-		if errors.Is(err, unix.EEXIST) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		file := os.NewFile(uintptr(fd), filepath.Join(parent.Name(), temporaryName))
-		if file == nil {
-			_ = unix.Close(fd)
-			_ = unix.Unlinkat(parentFD, temporaryName, 0)
-			return fmt.Errorf("create temporary file for %s", name)
-		}
-		if _, err := io.Copy(file, bytes.NewReader(data)); err != nil {
-			_ = file.Close()
-			_ = unix.Unlinkat(parentFD, temporaryName, 0)
-			return err
-		}
-		if err := unix.Fchmod(fd, uint32(mode.Perm())); err != nil {
-			_ = file.Close()
-			_ = unix.Unlinkat(parentFD, temporaryName, 0)
-			return err
-		}
-		if err := file.Close(); err != nil {
-			_ = unix.Unlinkat(parentFD, temporaryName, 0)
-			return err
-		}
-		if err := unix.Renameat(parentFD, temporaryName, parentFD, name); err != nil {
-			_ = unix.Unlinkat(parentFD, temporaryName, 0)
-			return err
-		}
-		return nil
-	}
-	return fmt.Errorf("unable to allocate temporary file under %s", parent.Name())
+	return StageAndPublishAt(parent, name, data, mode, tempPrefix)
 }
 
 func validateLeafName(name string) error {
