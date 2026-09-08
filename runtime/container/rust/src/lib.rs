@@ -2303,27 +2303,36 @@ fn snapshot_mutable_file(source: &mut File, mode: u32, env_entries: &[String]) -
         return None;
     }
 
-    // The descriptor has to survive the exec: a shebang snapshot is named
-    // through /proc/self/fd, and the interpreter opens that name afterwards.
-    // SAFETY: snapshot is an owned descriptor and F_GETFD reads its flags.
-    let descriptor_flags = unsafe { libc::fcntl(snapshot.as_raw_fd(), libc::F_GETFD) };
-    if descriptor_flags < 0 {
-        return None;
-    }
-    // SAFETY: snapshot is an owned descriptor and descriptor_flags came from F_GETFD.
-    if unsafe {
-        libc::fcntl(
-            snapshot.as_raw_fd(),
-            libc::F_SETFD,
-            descriptor_flags & !libc::FD_CLOEXEC,
-        )
-    } != 0
-    {
-        return None;
-    }
-
     snapshot.seek(SeekFrom::Start(0)).ok()?;
     Some(snapshot.into_raw_fd())
+}
+
+/// The kernel hands a shebang interpreter the script as a `/proc/self/fd` name
+/// and the interpreter opens it *after* the exec, so a close-on-exec descriptor
+/// is gone by the time it looks. Clearing the flag is only right for a shebang:
+/// a native target is mapped before the close-on-exec descriptors go, and
+/// leaving one open would hand every child a descriptor on its own image.
+#[cfg(target_os = "linux")]
+fn descriptor_is_shebang(fd: c_int) -> bool {
+    let Some(mut file) = duplicate_fd_file(fd) else {
+        return false;
+    };
+    let mut prefix = [0u8; 2];
+    file.read_exact(&mut prefix).is_ok() && prefix == *b"#!"
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_descriptor_for_exec(fd: c_int) -> bool {
+    if !descriptor_is_shebang(fd) {
+        return true;
+    }
+    // SAFETY: fd is the prepared descriptor owned by the caller and F_GETFD reads its flags.
+    let descriptor_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if descriptor_flags < 0 {
+        return false;
+    }
+    // SAFETY: fd is the prepared descriptor owned by the caller and descriptor_flags came from F_GETFD.
+    unsafe { libc::fcntl(fd, libc::F_SETFD, descriptor_flags & !libc::FD_CLOEXEC) == 0 }
 }
 
 #[cfg(target_os = "linux")]
@@ -2359,6 +2368,11 @@ fn execute_snapshot_execveat(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
+    if !prepare_descriptor_for_exec(fd) {
+        close_prepared_fd(fd);
+        set_errno(libc::EPERM);
+        return -1;
+    }
     // SAFETY: fd is the prepared descriptor owned by this call; argv and envp are the caller's own exec ABI pointers, unmodified.
     let result = unsafe { execveat_fn()(fd, c"".as_ptr(), argv, envp, libc::AT_EMPTY_PATH) };
     if result < 0
@@ -2390,6 +2404,11 @@ fn execute_snapshot_execveat_with_shell_fallback(
     envp: *const *const c_char,
     arg_count: usize,
 ) -> c_int {
+    if !prepare_descriptor_for_exec(fd) {
+        close_prepared_fd(fd);
+        set_errno(libc::EPERM);
+        return -1;
+    }
     // SAFETY: fd is the prepared descriptor owned by this call; argv and envp are the caller's own exec ABI pointers, unmodified.
     let mut result = unsafe { execveat_fn()(fd, c"".as_ptr(), argv, envp, libc::AT_EMPTY_PATH) };
     // SAFETY: errno_location returns this thread's valid errno slot.
@@ -4476,11 +4495,16 @@ mod tests {
         ] {
             assert_eq!(seals & seal, seal, "missing seal {seal:#x}");
         }
-        // The interpreter opens the snapshot by name after the exec, so the
-        // descriptor has to survive it.
+        // The interpreter opens the snapshot by name after the exec, so a
+        // shebang descriptor has to survive it -- and only a shebang one, which
+        // is why the snapshot arrives close-on-exec and is prepared separately.
         // SAFETY: snapshot is the owned descriptor just returned; F_GETFD only reads its flags.
-        let descriptor_flags = unsafe { libc::fcntl(snapshot, libc::F_GETFD) };
-        assert_eq!(descriptor_flags & libc::FD_CLOEXEC, 0);
+        let before = unsafe { libc::fcntl(snapshot, libc::F_GETFD) };
+        assert_ne!(before & libc::FD_CLOEXEC, 0);
+        assert!(prepare_descriptor_for_exec(snapshot));
+        // SAFETY: snapshot is the owned descriptor just returned; F_GETFD only reads its flags.
+        let after = unsafe { libc::fcntl(snapshot, libc::F_GETFD) };
+        assert_eq!(after & libc::FD_CLOEXEC, 0);
 
         let mut copy = duplicate_fd_file(snapshot).expect("reopen the snapshot");
         let mut bytes = String::new();
