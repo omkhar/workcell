@@ -476,6 +476,14 @@ fn duplicate_fd_file(fd: c_int) -> Option<File> {
     File::open(proc_fd_path(fd)).ok()
 }
 
+/// The host build has no `/proc` and never runs the guard, so it keeps the
+/// root-list answer the descriptor classifiers used before provenance.
+#[cfg(not(target_os = "linux"))]
+fn fd_target_is_untrusted_exec(fd: c_int) -> bool {
+    fd_target_is_mutable_root(fd)
+}
+
+#[cfg(not(target_os = "linux"))]
 fn fd_target_is_mutable_root(fd: c_int) -> bool {
     let Ok(target) = fs::read_link(proc_fd_path(fd)) else {
         return false;
@@ -486,6 +494,77 @@ fn fd_target_is_mutable_root(fd: c_int) -> bool {
     }
 
     resolved_path_is_mutable_root(trim_deleted_suffix(&target.to_string_lossy()))
+}
+
+/// The descriptor's own `(dev, ino)`, read from the descriptor rather than from
+/// a pathname. `fstat` needs no read permission, so an exec-only target still
+/// answers.
+#[cfg(target_os = "linux")]
+fn fd_signature(fd: c_int) -> Option<StatSignature> {
+    let mut stat_buf = MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: fd is only borrowed for this call and stat_buf is valid writable storage for one libc::stat.
+    if unsafe { libc::fstat(fd, stat_buf.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: fstat returned 0, so the kernel fully initialized stat_buf.
+    let stat_buf = unsafe { stat_buf.assume_init() };
+    stat_signature_from_stat(&stat_buf)
+}
+
+/// The descriptor twin of `path_is_trusted_immutable`.
+///
+/// Provenance is a property of a pathname — who can replace what sits at that
+/// name — and a descriptor has no pathname of its own. `/proc/self/fd/N`
+/// recovers the name the descriptor was opened through, which is the only thing
+/// the path predicate can be asked about. That recovery is exactly where a
+/// check/use gap lives: the name can hold a different file now than the one the
+/// descriptor is open on, and the kernel executes the descriptor. So the answer
+/// is pinned by comparing the descriptor's own `(dev, ino)` against the name's.
+/// A mismatch means the name was replaced after the descriptor was opened, and
+/// the trusted answer belongs to a file this exec will not run.
+///
+/// Three shapes have no name to ask about at all and are untrusted outright: a
+/// descriptor the kernel reports as deleted, one on anonymous memory (`memfd:`,
+/// `anon_inode:`), and one whose link is not an absolute path (a pipe or a
+/// socket). None of them can be judged by provenance, and a memory descriptor
+/// is precisely what a caller reaches for to execute bytes it wrote itself.
+#[cfg(target_os = "linux")]
+fn fd_target_is_trusted_immutable(fd: c_int) -> bool {
+    let Ok(link) = fs::read_link(proc_fd_path(fd)) else {
+        return false;
+    };
+    let link = link.to_string_lossy();
+    if link.ends_with(" (deleted)")
+        || link.starts_with("memfd:")
+        || link.starts_with("/memfd:")
+        || link.starts_with("anon_inode:")
+        || link.starts_with("/anon_inode:")
+        || !link.starts_with('/')
+    {
+        return false;
+    }
+    let Ok(canonical) = fs::canonicalize(Path::new(link.as_ref())) else {
+        return false;
+    };
+    if !path_is_trusted_immutable(&canonical) {
+        return false;
+    }
+    let Some(descriptor) = fd_signature(fd) else {
+        return false;
+    };
+    fs::metadata(&canonical)
+        .map(|metadata| {
+            let named = metadata_signature_from_metadata(&metadata);
+            descriptor.dev == named.dev && descriptor.ino == named.ino
+        })
+        .unwrap_or(false)
+}
+
+/// The descriptor could have been planted or replaced by this process, so the
+/// exec it feeds is one the guard must classify rather than trust.
+#[cfg(target_os = "linux")]
+fn fd_target_is_untrusted_exec(fd: c_int) -> bool {
+    !fd_target_is_trusted_immutable(fd)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -733,20 +812,31 @@ fn resolve_command_via_path_value(
     }
 }
 
-fn file_descriptor_is_native_elf(fd: c_int) -> bool {
-    let Some(mut file) = duplicate_fd_file(fd) else {
-        return false;
-    };
-
-    let mut header = [0u8; 4];
-    matches!(file.read_exact(&mut header), Ok(())) && header == [0x7f, b'E', b'L', b'F']
-}
-
+/// The descriptor form of `path_is_mutable_native_exec`, and the same shape: a
+/// target this process could have planted or could still replace, whose
+/// contents the loader will run natively. A descriptor the guard cannot read
+/// stays unclassified and is refused, as the path side refuses one it cannot
+/// read.
 fn file_descriptor_is_mutable_native_exec(fd: c_int) -> bool {
-    current_mode_blocks_mutable_native_exec()
-        && fd >= 0
-        && fd_target_is_mutable_root(fd)
-        && file_descriptor_is_native_elf(fd)
+    if !current_mode_blocks_mutable_native_exec() || fd < 0 || !fd_target_is_untrusted_exec(fd) {
+        return false;
+    }
+    let Some(mut file) = duplicate_fd_file(fd) else {
+        return true;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return true;
+    };
+    // Only a regular file is executable at all; anything else keeps the
+    // kernel's own errno.
+    if (metadata.mode() & file_type_bits()) != regular_file_mode() {
+        return false;
+    }
+    let mut header = [0u8; 4];
+    if file.read_exact(&mut header).is_err() {
+        return true;
+    }
+    header == [0x7f, b'E', b'L', b'F']
 }
 
 fn next_shebang_token(cursor: &mut &str) -> Option<String> {
@@ -971,7 +1061,7 @@ fn file_descriptor_is_mutable_shebang_to_protected_runtime(
     env_entries: &[String],
 ) -> bool {
     fd >= 0
-        && fd_target_is_mutable_root(fd)
+        && fd_target_is_untrusted_exec(fd)
         && file_descriptor_targets_protected_runtime_via_shebang(fd, env_entries)
 }
 
@@ -3642,6 +3732,140 @@ mod tests {
             libc::AT_FDCWD
         ));
 
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn descriptor_provenance_answers_for_the_named_file_or_refuses() {
+        // A descriptor opened on a trusted-immutable pathname keeps that
+        // answer, so the ordinary case is not blanket-refused.
+        let trusted = File::open("/bin/true").expect("open /bin/true");
+        assert!(fd_target_is_trusted_immutable(trusted.as_raw_fd()));
+        assert!(!fd_target_is_untrusted_exec(trusted.as_raw_fd()));
+
+        let dir = create_temp_test_dir("fd-provenance");
+        let planted = dir.join("planted");
+        fs::write(&planted, "planted").expect("write planted");
+        let planted_file = File::open(&planted).expect("open planted");
+        assert!(fd_target_is_untrusted_exec(planted_file.as_raw_fd()));
+
+        // A deleted target has a name that no longer holds it, so there is
+        // nothing left to ask about.
+        let unlinked = dir.join("unlinked");
+        fs::write(&unlinked, "unlinked").expect("write unlinked");
+        let unlinked_file = File::open(&unlinked).expect("open unlinked");
+        fs::remove_file(&unlinked).expect("unlink");
+        assert!(fd_target_is_untrusted_exec(unlinked_file.as_raw_fd()));
+
+        // A descriptor with no pathname at all cannot be judged by provenance.
+        let (socket, _peer) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        assert!(fd_target_is_untrusted_exec(socket.as_raw_fd()));
+
+        // A descriptor the guard cannot read back is refused, not trusted.
+        assert!(fd_target_is_untrusted_exec(-1));
+
+        fs::remove_dir_all(&dir).expect("cleanup temp test dir");
+    }
+
+    /// The check/use closure this unit exists for: the pathname a descriptor
+    /// was opened through can hold a different file by the time provenance is
+    /// read off it, and the kernel executes the descriptor rather than the
+    /// name. Building the case needs a trusted-immutable pathname to start
+    /// from, which only a root runtime can create; the pinned container lane
+    /// runs as root and a non-root host has nothing to build it out of, so the
+    /// body only runs where the premise holds.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_replaced_pathname_no_longer_matches_its_descriptor() {
+        let dir = Path::new("/opt/workcell-fd-check-use-test");
+        if fs::create_dir(dir).is_err() {
+            return;
+        }
+        let run = || -> Option<()> {
+            let named = dir.join("named");
+            fs::write(&named, "the file the descriptor is open on").ok()?;
+            let opened = File::open(&named).ok()?;
+            // The premise: without the replacement this descriptor is trusted.
+            if !fd_target_is_trusted_immutable(opened.as_raw_fd()) {
+                return None;
+            }
+
+            // Provenance is read from the directory, not from a root list:
+            // this fixture sits outside every mutable exec root and is still
+            // untrusted once anyone but its owner can write it. That is the
+            // whole difference between the root-list answer and this one, so
+            // the classifier is asserted here rather than on a temp-directory
+            // fixture the root list already covers.
+            let writable = dir.join("writable");
+            fs::write(&writable, [0x7f, b'E', b'L', b'F', 2, 1, 1, 0]).ok()?;
+            fs::set_permissions(&writable, fs::Permissions::from_mode(0o666)).ok()?;
+            let writable_file = File::open(&writable).ok()?;
+            let writable_fd = writable_file.as_raw_fd();
+            assert!(!resolved_path_is_mutable_root(&writable.to_string_lossy()));
+            assert!(fd_target_is_untrusted_exec(writable_fd));
+            assert!(file_descriptor_is_mutable_native_exec(writable_fd));
+            assert!(path_is_mutable_native_exec(&proc_fd_path(writable_fd)));
+
+            let replacement = dir.join("replacement");
+            fs::write(&replacement, "a different file").ok()?;
+            fs::rename(&replacement, &named).ok()?;
+            // The name still resolves to a trusted-immutable file, and the
+            // descriptor is still open on the original one.
+            assert!(path_is_trusted_immutable(&named));
+            assert!(fd_target_is_untrusted_exec(opened.as_raw_fd()));
+            Some(())
+        };
+        let outcome = run();
+        fs::remove_dir_all(dir).expect("cleanup the check/use fixture");
+        if outcome.is_none() {
+            println!("skipping: this runtime cannot own a trusted-immutable pathname");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn mutable_native_exec_classifies_a_descriptor_target() {
+        let dir = create_temp_test_dir("fd-native-exec");
+        let elf = dir.join("elf");
+        fs::write(&elf, [0x7f, b'E', b'L', b'F', 2, 1, 1, 0]).expect("write elf");
+        let elf_file = File::open(&elf).expect("open elf");
+        let elf_fd = elf_file.as_raw_fd();
+        assert!(file_descriptor_is_mutable_native_exec(elf_fd));
+        // And the `/proc/self/fd` pathname form reaches the same answer, which
+        // is how the path entry points hand a descriptor target over.
+        assert!(path_is_mutable_native_exec(&proc_fd_path(elf_fd)));
+
+        // A trusted-immutable native target is still allowed through.
+        let trusted = File::open("/bin/true").expect("open /bin/true");
+        assert!(!file_descriptor_is_mutable_native_exec(trusted.as_raw_fd()));
+
+        // Not a regular file: nothing the kernel would execute, so it keeps
+        // its own errno rather than this refusal.
+        let dir_file = File::open(&dir).expect("open the fixture directory");
+        assert!(!file_descriptor_is_mutable_native_exec(
+            dir_file.as_raw_fd()
+        ));
+
+        // Untrusted and unreadable is refused rather than passed through. Its
+        // contents are not an ELF, so a readable copy of the same file answers
+        // no and only the failed read can produce the refusal. A root runtime
+        // reads it regardless, so the case asserts where the read really fails.
+        let unreadable = dir.join("unreadable");
+        fs::write(&unreadable, "not an elf").expect("write unreadable");
+        let unreadable_file = File::open(&unreadable).expect("open unreadable");
+        let unreadable_fd = unreadable_file.as_raw_fd();
+        assert!(!file_descriptor_is_mutable_native_exec(unreadable_fd));
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))
+            .expect("drop read permission");
+        if duplicate_fd_file(unreadable_fd).is_none() {
+            assert!(file_descriptor_is_mutable_native_exec(unreadable_fd));
+        }
+
+        assert!(!file_descriptor_is_mutable_native_exec(-1));
+
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644))
+            .expect("restore read permission");
         fs::remove_dir_all(&dir).expect("cleanup temp test dir");
     }
 

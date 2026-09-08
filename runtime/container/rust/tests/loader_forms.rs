@@ -21,7 +21,7 @@
 //! mutable exec roots and the protected runtime signatures exist. Each pending
 //! reason names the lane that holds the form, or states that no lane holds it.
 
-use Call::{Execve, ExecveNullEnv, Execveat, Execvp};
+use Call::{Execve, ExecveNullEnv, Execveat, ExecveatMemfd, Execvp};
 use Expect::{NotRefused, Pending, Refused};
 use libc::c_int;
 use std::ffi::{CString, OsString};
@@ -107,6 +107,12 @@ enum Call {
         &'static [&'static str],
         &'static [&'static str],
     ),
+    /// `execveat(memfd, "", argv, envp, AT_EMPTY_PATH)`. The target has no
+    /// pathname at all: it is bytes this process wrote into anonymous memory,
+    /// which is the shape a caller reaches for to execute something it built
+    /// itself. Only the descriptor names it, so only descriptor provenance can
+    /// answer for it.
+    ExecveatMemfd(&'static [&'static str]),
     /// `execvp(file, argv)` with `PATH` and one more variable set on the
     /// caller. `execvp` reads the caller's own environment for both the search
     /// and the loader-override check, never the child environment. An empty
@@ -503,6 +509,12 @@ const FORMS: &[Form] = &[
         NotRefused,
         LINUX,
     ),
+    form(
+        "execveat of an anonymous memory descriptor",
+        ExecveatMemfd(GUARDED_ENV),
+        Refused(MUTABLE_NATIVE),
+        LINUX,
+    ),
     // PATH resolution, read from the caller's own environment.
     form(
         "relative PATH entry is refused rather than searched",
@@ -723,6 +735,52 @@ fn run(call: &Call, fixture: &Path) -> String {
             // SAFETY: dirfd was opened above, is still open, and is closed once.
             unsafe { libc::close(dirfd) };
             stderr
+        }
+        ExecveatMemfd(env) => {
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = env;
+                unreachable!("the memfd row is Linux-only");
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let name = c_string("workcell-loader-form-memfd", fixture);
+                // SAFETY: name is a live NUL-terminated CString; memfd_create only reads it and returns an owned descriptor.
+                let memfd = unsafe { libc::memfd_create(name.as_ptr(), 0) };
+                assert!(memfd >= 0, "create the anonymous memory descriptor");
+                // ELF magic so the native-exec classifier reaches its
+                // provenance answer, followed by bytes no kernel will load, so
+                // an unrefused row cannot replace this process.
+                let mut payload: Vec<u8> = vec![0x7f, b'E', b'L', b'F'];
+                payload.extend_from_slice(b"not a loadable image");
+                // SAFETY: memfd is open and owned here; payload is a live buffer of the stated length.
+                let written = unsafe { libc::write(memfd, payload.as_ptr().cast(), payload.len()) };
+                assert_eq!(
+                    written,
+                    payload.len() as isize,
+                    "fill the memory descriptor"
+                );
+                let empty = c_string("", fixture);
+                let argv = c_strings(TARGET_ARGV, fixture);
+                let env = c_strings(env, fixture);
+                let argv = c_pointers(&argv);
+                let env = c_pointers(&env);
+                let stderr = capture_stderr(|| {
+                    // SAFETY: memfd is an open descriptor; empty, argv and env are live and NULL-terminated for the call.
+                    unsafe {
+                        workcell_exec_guard::execveat(
+                            memfd,
+                            empty.as_ptr(),
+                            argv.as_ptr(),
+                            env.as_ptr(),
+                            libc::AT_EMPTY_PATH,
+                        );
+                    }
+                });
+                // SAFETY: memfd was opened above, is still open, and is closed once.
+                unsafe { libc::close(memfd) };
+                stderr
+            }
         }
         Execvp(file, path_value, extra_env) => {
             let (extra_key, extra_value) = extra_env.split_once('=').unwrap_or(("", ""));
