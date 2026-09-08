@@ -4155,7 +4155,12 @@ EOF
     exit 1
   fi
   grep -q "Workcell blocked direct protected runtime execution" /tmp/workspace-env-path-node-shebang.out
-  if env -i PATH="${workspace_exec_scratch}" /usr/bin/env node --version >/tmp/env-path-node.out 2>&1; then
+  # Keep the guard preload in the cleared environment. The exec this probe
+  # names is the second hop, where env resolves the basename, but the first hop
+  # targets /usr/bin/env, which no more specific reason refuses. Without the
+  # preload the guard stops that hop for the missing preload and the protected
+  # Node copy is never reached.
+  if env -i LD_PRELOAD=/usr/local/lib/libworkcell_exec_guard.so PATH="${workspace_exec_scratch}" /usr/bin/env node --version >/tmp/env-path-node.out 2>&1; then
     echo "expected strict profile to reject env basename resolution to a protected Node copy" >&2
     exit 1
   fi
