@@ -32,9 +32,7 @@ func writePublicRepoHygieneFixture(t *testing.T, readme string) string {
 		t.Fatal(err)
 	}
 	scriptPath := filepath.Join(root, "scripts", "check-public-repo-hygiene.sh")
-	if err := os.WriteFile(scriptPath, scriptBytes, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, scriptPath, scriptBytes, 0o755)
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readme), 0o644); err != nil {
 		t.Fatal(err)
 	}

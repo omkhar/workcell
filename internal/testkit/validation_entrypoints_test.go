@@ -55,9 +55,7 @@ case "$*" in
   *) exit 64 ;;
 esac
 `
-	if err := os.WriteFile(fakeGo, []byte(fakeGoScript), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, fakeGo, []byte(fakeGoScript), 0o700)
 
 	pathDir := filepath.Join(tempDir, "path")
 	if err := os.Mkdir(pathDir, 0o700); err != nil {
@@ -80,9 +78,7 @@ if [ "$*" = "env GOVERSION" ]; then
 fi
 exit 64
 `
-	if err := os.WriteFile(staleGo, []byte(staleGoScript), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, staleGo, []byte(staleGoScript), 0o700)
 
 	script := filepath.Join(repoRoot(t), "scripts", "ci", "job-release-asset-acl.sh")
 	cmd := exec.Command("/bin/bash", script)
@@ -380,9 +376,7 @@ func runReleaseAssetACLToolcacheFixture(t *testing.T, fixture releaseAssetACLToo
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		writeExecFile(t, path, []byte(script), 0o700)
 	}
 	writeCandidate := func(candidate releaseAssetACLToolcacheCandidate) {
 		t.Helper()
@@ -492,9 +486,7 @@ case "$*" in
   *) exit 64 ;;
 esac
 `
-		if err := os.WriteFile(filepath.Join(pathDir, "go"), []byte(ambientScript), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		writeExecFile(t, filepath.Join(pathDir, "go"), []byte(ambientScript), 0o700)
 	}
 
 	script := filepath.Join(repoRoot(t), "scripts", "ci", "job-release-asset-acl.sh")
@@ -580,9 +572,7 @@ case "$*" in
   *) exit 64 ;;
 esac
 `
-	if err := os.WriteFile(fakeGo, []byte(fakeGoScript), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, fakeGo, []byte(fakeGoScript), 0o700)
 	toolchainVersion := reportedToolchain
 	if toolchainVersion == "" {
 		toolchainVersion = expectedToolchain
@@ -879,9 +869,7 @@ set -euo pipefail
 [[ -z "${GIT_REPLACE_REF_BASE:-}" ]]
 printf 'canonical\n' >>"${WORKCELL_CANONICAL_GIT_MARKER:?}"
 `
-	if err := os.WriteFile(goWrapper, []byte(wrapper), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, goWrapper, []byte(wrapper), 0o755)
 	home := filepath.Join(tempDir, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
@@ -918,9 +906,7 @@ func TestVerifyOperatorContractIgnoresAmbientHelpOverride(t *testing.T) {
 	scriptPath := filepath.Join(repoRoot(t), "scripts", "verify-operator-contract.sh")
 	marker := filepath.Join(t.TempDir(), "hostile-help-ran")
 	helpBin := filepath.Join(t.TempDir(), "hostile-workcell")
-	if err := os.WriteFile(helpBin, []byte("#!/bin/sh\n: >\"${WORKCELL_HELP_MARKER:?}\"\nexit 97\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, helpBin, []byte("#!/bin/sh\n: >\"${WORKCELL_HELP_MARKER:?}\"\nexit 97\n"), 0o755)
 
 	cmd := exec.Command(scriptPath)
 	cmd.Env = canonicalBuildEnv(map[string]string{
@@ -1058,9 +1044,7 @@ func TestValidateRepoRejectsStaleMarkdownlintInstall(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755)
 	if err := os.WriteFile(lockPath, []byte("current lock\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1070,9 +1054,7 @@ func TestValidateRepoRejectsStaleMarkdownlintInstall(t *testing.T) {
 
 	probePath := filepath.Join(t.TempDir(), "markdownlint-resolver-probe.sh")
 	probe := "#!/bin/bash\nset -euo pipefail\nROOT_DIR=\"$1\"\n" + resolver + "\nresolve_markdownlint_bin\n"
-	if err := os.WriteFile(probePath, []byte(probe), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, probePath, []byte(probe), 0o700)
 	if output, err := exec.Command("/bin/bash", probePath, fixtureRoot).CombinedOutput(); err == nil {
 		t.Fatalf("resolve_markdownlint_bin accepted a stale lock stamp: %s", output)
 	}
@@ -1117,9 +1099,7 @@ func TestInstallDevToolsEnforcesLockedMarkdownlintNodeRanges(t *testing.T) {
 		t.Fatalf("%s is missing markdownlint_node_install_hint", scriptPath)
 	}
 	probe := filepath.Join(t.TempDir(), "node-range-probe.sh")
-	if err := os.WriteFile(probe, []byte(prefix+"version=\"$(node_version)\"\nmarkdownlint_node_compatible \"${version}\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, probe, []byte(prefix+"version=\"$(node_version)\"\nmarkdownlint_node_compatible \"${version}\"\n"), 0o700)
 
 	for _, tc := range []struct {
 		version string
@@ -1143,9 +1123,7 @@ func TestInstallDevToolsEnforcesLockedMarkdownlintNodeRanges(t *testing.T) {
 		t.Run(tc.version, func(t *testing.T) {
 			binDir := t.TempDir()
 			node := filepath.Join(binDir, "node")
-			if err := os.WriteFile(node, []byte("#!/bin/sh\nprintf '%s\\n' '"+tc.version+"'\n"), 0o700); err != nil {
-				t.Fatal(err)
-			}
+			writeExecFile(t, node, []byte("#!/bin/sh\nprintf '%s\\n' '"+tc.version+"'\n"), 0o700)
 			command := exec.Command("/bin/bash", probe)
 			command.Env = []string{"PATH=" + binDir + ":/usr/bin:/bin"}
 			err := command.Run()

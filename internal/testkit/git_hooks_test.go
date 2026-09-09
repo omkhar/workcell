@@ -57,9 +57,7 @@ func newGitHooksFixture(t *testing.T) *gitHooksFixture {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			t.Fatalf("mkdir for %s failed: %v", relative, err)
 		}
-		if err := os.WriteFile(target, source, 0o755); err != nil {
-			t.Fatalf("write %s failed: %v", relative, err)
-		}
+		writeExecFile(t, target, source, 0o755)
 	}
 	fixture.run("init", "--quiet", "--initial-branch=main")
 	fixture.run("config", "core.hooksPath", ".githooks")
@@ -660,9 +658,7 @@ func TestPrePushHookForwardsTransportAuthentication(t *testing.T) {
 	// split the command in two.
 	sshCommand := filepath.Join(ExecFixtureDir(t), "fake-ssh")
 	script := "#!/bin/bash\nexec /bin/sh -c \"${@: -1}\"\n"
-	if err := os.WriteFile(sshCommand, []byte(script), 0o755); err != nil {
-		t.Fatalf("write ssh command failed: %v", err)
-	}
+	writeExecFile(t, sshCommand, []byte(script), 0o755)
 	fixture.run("remote", "set-url", "origin", "ssh://host"+fixture.remote)
 	env := []string{"GIT_SSH_COMMAND=" + sshCommand}
 	if output, err := fixture.tryGit(env, "push", "--quiet", "origin", "main:refs/heads/published"); err != nil {

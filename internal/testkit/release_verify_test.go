@@ -40,9 +40,7 @@ func stubBinDir(t *testing.T, cosignExit int, extraTools ...string) string {
 	if cosignExit >= 0 {
 		cosign := filepath.Join(dir, "cosign")
 		script := "#!/bin/bash\nexit " + strconv.Itoa(cosignExit) + "\n"
-		if err := os.WriteFile(cosign, []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecFile(t, cosign, []byte(script), 0o755)
 	}
 
 	tools := append([]string{"env", "bash", "awk", "wc", "sha256sum", "shasum"}, extraTools...)
@@ -276,9 +274,7 @@ func TestVerifyReleaseArtifactPinsRequestedIdentities(t *testing.T) {
 			// unquoted redirect target would split on the former and run the
 			// latter as a live command substitution.
 			cosign := "#!/bin/bash\nprintf '%s\\n' \"$@\" > " + shQuote(record) + "\nexit 0\n"
-			if err := os.WriteFile(filepath.Join(binDir, "cosign"), []byte(cosign), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			writeExecFile(t, filepath.Join(binDir, "cosign"), []byte(cosign), 0o755)
 			assets := writeAssets(t, "workcell-v1.0.2.tar.gz", []byte("bundle"), true)
 			args := append([]string{"--artifact", "workcell-v1.0.2.tar.gz"}, testCase.extraArgs...)
 			if code, out := runVerify(t, binDir, assets, args...); code != 0 {

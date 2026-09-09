@@ -401,9 +401,7 @@ func copyValidatorFixtureFile(t *testing.T, sourceRoot, root, relative string, m
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, relative), content, mode); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, filepath.Join(root, relative), content, mode)
 }
 
 func assertCommandExitStatus(t *testing.T, err error, want int, output []byte) {
@@ -509,20 +507,29 @@ func assertValidatorImagePrefixes(t *testing.T, images []string, prefix string) 
 	}
 }
 
-// writeExecutable writes body to dir/name and makes it executable. The write
-// happens at mode 0o644 and is fully closed before the exec bit is added, so
-// no writable file description on the inode is ever open while it is
-// executable -- writing directly at 0o755 leaves that window open and can
-// race a subsequent exec into ETXTBSY ("text file busy") on Linux.
+// writeExecFile is the shared write-then-chmod primitive every executable
+// test fixture in this package must go through: content is written at
+// 0o644 and the writer is fully closed before the exec bit is added via a
+// separate os.Chmod. Creating a file with the exec bit already set (0o755,
+// 0o700, ...) leaves a window where the inode is both writable and
+// executable, and a concurrent exec of that path can be rejected with
+// ETXTBSY ("text file busy") on Linux.
+func writeExecFile(tb testing.TB, path string, content []byte, mode os.FileMode) {
+	tb.Helper()
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// writeExecutable writes body to dir/name and makes it executable via
+// writeExecFile.
 func writeExecutable(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, path, []byte(body), 0o755)
 	return path
 }
 

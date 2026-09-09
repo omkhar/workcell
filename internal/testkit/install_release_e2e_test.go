@@ -133,9 +133,7 @@ func installReleaseStubBin(t *testing.T, cosignExit int, fixtureDir string) stri
 	dir := t.TempDir()
 
 	cosign := "#!/bin/bash\nexit " + strconv.Itoa(cosignExit) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(cosign), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, filepath.Join(dir, "cosign"), []byte(cosign), 0o755)
 
 	// Fake curl: ignore every real download flag, find the -o output path and the
 	// trailing URL, and copy fixtureDir/<basename-of-URL> to the output path. A
@@ -144,9 +142,7 @@ func installReleaseStubBin(t *testing.T, cosignExit int, fixtureDir string) stri
 	// src="..." literal: a hostile TMPDIR's literal $HOME would otherwise be
 	// re-expanded by bash when this stub runs, pointing src at the wrong file.
 	curl := "#!/bin/bash\nset -euo pipefail\nout=\"\"\nurl=\"\"\nwhile [[ $# -gt 0 ]]; do\n  case \"$1\" in\n    -o) out=\"$2\"; shift 2;;\n    http://*|https://*) url=\"$1\"; shift;;\n    *) shift;;\n  esac\ndone\n[[ -n \"${out}\" && -n \"${url}\" ]] || exit 2\nsrc=" + ShellQuote(fixtureDir) + "\"/${url##*/}\"\n[[ -f \"${src}\" ]] || exit 22\ncp \"${src}\" \"${out}\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "curl"), []byte(curl), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, filepath.Join(dir, "curl"), []byte(curl), 0o755)
 
 	// tar wrapper: install-release.sh extracts with `tar -xzf` only AFTER
 	// verification passes. Wrap tar so any real extraction appends to a durable
@@ -161,9 +157,7 @@ func installReleaseStubBin(t *testing.T, cosignExit int, fixtureDir string) stri
 		t.Fatal(err)
 	}
 	tarWrapper := "#!/bin/bash\nprintf 'extract-invoked\\n' >>\"${WORKCELL_TEST_TAR_LOG:-/dev/null}\"\nexec " + realTar + " \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "tar"), []byte(tarWrapper), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, filepath.Join(dir, "tar"), []byte(tarWrapper), 0o755)
 
 	// gzip: the wrapped real tar (GNU tar on the Ubuntu validate lane) forks a
 	// separate `gzip` for `-z`, so gzip must be reachable on the stub-only PATH

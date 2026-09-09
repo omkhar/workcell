@@ -113,7 +113,7 @@ func (f *ciPlanFixture) writeFile(relative string, content []byte, mode os.FileM
 	f.t.Helper()
 	path := filepath.Join(f.root, filepath.FromSlash(relative))
 	ciPlanMust(f.t, os.MkdirAll(filepath.Dir(path), 0o755))
-	ciPlanMust(f.t, os.WriteFile(path, content, mode))
+	writeExecFile(f.t, path, content, mode)
 }
 func (f *ciPlanFixture) writeTextFiles(files ...string) {
 	f.t.Helper()
@@ -127,7 +127,7 @@ func (f *ciPlanFixture) writeTextFiles(files ...string) {
 func (f *ciPlanFixture) writeExecutable(path string, content string) {
 	f.t.Helper()
 	ciPlanMust(f.t, os.MkdirAll(filepath.Dir(path), 0o755))
-	ciPlanMust(f.t, os.WriteFile(path, []byte(content), 0o755))
+	writeExecFile(f.t, path, []byte(content), 0o755)
 }
 func (f *ciPlanFixture) initRepository(root string, relative string) {
 	f.t.Helper()
@@ -221,7 +221,7 @@ func (f *ciPlanFixture) replaceScript(original string, replacement string) {
 		f.t.Fatalf("ci-plan mutation anchor missing: %q", original)
 	}
 	mutated := strings.ReplaceAll(string(content), original, replacement)
-	ciPlanMust(f.t, os.WriteFile(path, []byte(mutated), 0o755))
+	writeExecFile(f.t, path, []byte(mutated), 0o755)
 }
 func requireCIPlanPaths(t *testing.T, actual []string, expected ...string) {
 	t.Helper()

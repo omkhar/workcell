@@ -212,9 +212,7 @@ func TestContainerSmokeBashSyntaxRejectsStatusZeroParserWarnings(t *testing.T) {
 	t.Parallel()
 	parserPath := filepath.Join(t.TempDir(), "bash")
 	parser := []byte("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' 'warning: here-document delimited by end-of-file' >&2\n")
-	if err := os.WriteFile(parserPath, parser, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, parserPath, parser, 0o755)
 	if err := containerSmokeBashSyntaxWithPath(parserPath, "cat <<'EOF'\n"); err == nil {
 		t.Fatal("bash parser warning passed validation with a successful status")
 	}
