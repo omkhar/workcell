@@ -1886,8 +1886,8 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
 			"release": map[string]any{
-				"allow_admin_bypass": false,
-				"deployment_tags":    []any{"v*"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 			"upstream-refresh": map[string]any{
 				"allow_admin_bypass":  false,
@@ -1914,43 +1914,43 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsInvalidReleas
 	}{
 		{
 			name:    "missing admin bypass",
-			release: map[string]any{"deployment_tags": []any{"v*"}},
+			release: map[string]any{"deployment_branches": []any{"main"}},
 			want:    "must set workflow_environment.release.allow_admin_bypass = false",
 		},
 		{
 			name:    "admin bypass enabled",
-			release: map[string]any{"allow_admin_bypass": true, "deployment_tags": []any{"v*"}},
+			release: map[string]any{"allow_admin_bypass": true, "deployment_branches": []any{"main"}},
 			want:    "must set workflow_environment.release.allow_admin_bypass = false",
 		},
 		{
 			name:    "unexpected secrets",
-			release: map[string]any{"required_secrets": []any{"RELEASE_TOKEN"}, "allow_admin_bypass": false, "deployment_tags": []any{"v*"}},
+			release: map[string]any{"required_secrets": []any{"RELEASE_TOKEN"}, "allow_admin_bypass": false, "deployment_branches": []any{"main"}},
 			want:    "must not declare secrets for workflow_environment.release",
 		},
 		{
 			name:    "unexpected variables",
-			release: map[string]any{"variables": map[string]any{"RELEASE_REGION": "north"}, "allow_admin_bypass": false, "deployment_tags": []any{"v*"}},
+			release: map[string]any{"variables": map[string]any{"RELEASE_REGION": "north"}, "allow_admin_bypass": false, "deployment_branches": []any{"main"}},
 			want:    "must not declare public variables for workflow_environment.release",
 		},
 		{
-			name:    "deployment branches",
+			name:    "deployment tags",
 			release: map[string]any{"allow_admin_bypass": false, "deployment_branches": []any{"main"}, "deployment_tags": []any{"v*"}},
-			want:    "must not set workflow_environment.release.deployment_branches",
+			want:    "must not set workflow_environment.release.deployment_tags",
 		},
 		{
-			name:    "missing deployment tags",
+			name:    "missing deployment branches",
 			release: map[string]any{"allow_admin_bypass": false},
-			want:    "must set workflow_environment.release.deployment_tags = [\"v*\"]",
+			want:    "must set workflow_environment.release.deployment_branches = [\"main\"]",
 		},
 		{
-			name:    "wrong deployment tag",
-			release: map[string]any{"allow_admin_bypass": false, "deployment_tags": []any{"release/*"}},
-			want:    "must set workflow_environment.release.deployment_tags = [\"v*\"]",
+			name:    "wrong deployment branch",
+			release: map[string]any{"allow_admin_bypass": false, "deployment_branches": []any{"release"}},
+			want:    "must set workflow_environment.release.deployment_branches = [\"main\"]",
 		},
 		{
-			name:    "multiple deployment tags",
-			release: map[string]any{"allow_admin_bypass": false, "deployment_tags": []any{"v*", "v1.*"}},
-			want:    "must set workflow_environment.release.deployment_tags = [\"v*\"]",
+			name:    "multiple deployment branches",
+			release: map[string]any{"allow_admin_bypass": false, "deployment_branches": []any{"main", "release"}},
+			want:    "must set workflow_environment.release.deployment_branches = [\"main\"]",
 		},
 	}
 
@@ -1988,8 +1988,8 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
 			"release": map[string]any{
-				"allow_admin_bypass": false,
-				"deployment_tags":    []any{"v*"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 			"hosted-controls-audit": map[string]any{
 				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
@@ -2019,8 +2019,8 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 	policy := map[string]any{
 		"workflow_environment": map[string]any{
 			"release": map[string]any{
-				"allow_admin_bypass": false,
-				"deployment_tags":    []any{"v*"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
 			},
 			"hosted-controls-audit": map[string]any{
 				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
