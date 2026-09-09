@@ -518,6 +518,15 @@ The `Release` workflow does not trigger on the tag push. It triggers only on
 a `repository_dispatch` event of type `release`. GitHub always loads that
 workflow from the default branch, not from the pushed tag.
 
+The dispatch run loads the current `main`. The run rejects a tag whose target
+commit differs from the `main` head. Do not merge to `main` between the tag
+push and the dispatch event. Confirm the remote `main` head still equals the
+tagged commit before you send the event:
+
+```sh
+git ls-remote origin refs/heads/main
+```
+
 Send the dispatch event with the tag and its target commit:
 
 ```sh
