@@ -1321,9 +1321,9 @@ grep -q '^SESSION_META_TARGET_PROVIDER=docker-desktop$' <<<"${monitor_env_output
 grep -q '^SESSION_META_TARGET_ID=desktop-linux$' <<<"${monitor_env_output}"
 grep -q '^SESSION_META_TARGET_ASSURANCE_CLASS=compat$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
-grep -q '^XDG_STATE_HOME='"${TMP_DIR}/monitor-xdg-state"'$' <<<"${monitor_env_output}"
-grep -q '^WORKCELL_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell"'$' <<<"${monitor_env_output}"
-grep -q '^WORKCELL_TARGET_STATE_ROOT='"${TMP_DIR}/monitor-xdg-state/workcell/targets"'$' <<<"${monitor_env_output}"
+grep -qxF "XDG_STATE_HOME=$(printf '%q' "${TMP_DIR}/monitor-xdg-state")" <<<"${monitor_env_output}"
+grep -qxF "WORKCELL_STATE_ROOT=$(printf '%q' "${TMP_DIR}/monitor-xdg-state/workcell")" <<<"${monitor_env_output}"
+grep -qxF "WORKCELL_TARGET_STATE_ROOT=$(printf '%q' "${TMP_DIR}/monitor-xdg-state/workcell/targets")" <<<"${monitor_env_output}"
 
 monitor_ready_probe_output="$(
   bash -lc '
@@ -1492,16 +1492,16 @@ bash -lc '
   "workspace_control_plane": "masked"
 }
 EOF_JSON
-    cat >"${STATE_FILE}" <<EOF_STATE
-SESSION_ID=${SESSION_ID}
-COLIMA_PROFILE=${PROFILE_NAME}
-CONTAINER_NAME=${CONTAINER_NAME}
-EXECUTION_PATH=managed-tier1
-SESSION_AUDIT_DIR=${SESSION_AUDIT_DIR}
-WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}
-WORKCELL_TARGET_STATE_ROOT=${WORKCELL_TARGET_STATE_ROOT}
-COLIMA_STATE_ROOT=${COLIMA_STATE_ROOT}
-EOF_STATE
+    {
+      printf "SESSION_ID=%q\n" "${SESSION_ID}"
+      printf "COLIMA_PROFILE=%q\n" "${PROFILE_NAME}"
+      printf "CONTAINER_NAME=%q\n" "${CONTAINER_NAME}"
+      printf "EXECUTION_PATH=%q\n" "managed-tier1"
+      printf "SESSION_AUDIT_DIR=%q\n" "${SESSION_AUDIT_DIR}"
+      printf "WORKCELL_STATE_ROOT=%q\n" "${WORKCELL_STATE_ROOT}"
+      printf "WORKCELL_TARGET_STATE_ROOT=%q\n" "${WORKCELL_TARGET_STATE_ROOT}"
+      printf "COLIMA_STATE_ROOT=%q\n" "${COLIMA_STATE_ROOT}"
+    } >"${STATE_FILE}"
     resolve_host_tool() { printf "/usr/bin/true\n"; }
     sanitize_host_docker_env() { :; }
     capture_session_audit_state() { :; }
