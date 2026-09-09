@@ -206,7 +206,20 @@ RUN case "${BUILDARCH}" in \
       *) echo "Unsupported Go build architecture: ${BUILDARCH}" >&2; exit 1 ;; \
     esac \
   && case "${TARGETARCH}" in amd64|arm64) ;; *) echo "Unsupported Go target architecture: ${TARGETARCH}" >&2; exit 1 ;; esac \
-  && node --dns-result-order=ipv4first -e 'const { createWriteStream } = require("node:fs"); const { Readable } = require("node:stream"); const { pipeline } = require("node:stream/promises"); (async () => { const response = await fetch(process.argv[1]); if (!response.ok) throw new Error("Go download HTTP status " + response.status); await pipeline(Readable.fromWeb(response.body), createWriteStream("/tmp/go.tar.gz")); })().catch((error) => { console.error(error.message); process.exit(1); });' "https://dl.google.com/go/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz" \
+  && fetch_go_toolchain() { \
+       local attempt=""; \
+       for attempt in 1 2 3 4 5; do \
+         if node --dns-result-order=ipv4first -e 'const { createWriteStream } = require("node:fs"); const { Readable } = require("node:stream"); const { pipeline } = require("node:stream/promises"); (async () => { const response = await fetch(process.argv[1]); if (!response.ok) throw new Error("Go download HTTP status " + response.status); await pipeline(Readable.fromWeb(response.body), createWriteStream("/tmp/go.tar.gz")); })().catch((error) => { console.error(error.message); process.exit(1); });' "https://dl.google.com/go/go${GO_VERSION}.linux-${BUILDARCH}.tar.gz"; then \
+           return 0; \
+         fi; \
+         rm -f /tmp/go.tar.gz; \
+         if [[ "${attempt}" -eq 5 ]]; then \
+           return 1; \
+         fi; \
+         sleep "$((attempt * 5))"; \
+       done; \
+     } \
+  && fetch_go_toolchain \
   && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
   && tar -xzf /tmp/go.tar.gz -C /usr/local \
   && rm -f /tmp/go.tar.gz

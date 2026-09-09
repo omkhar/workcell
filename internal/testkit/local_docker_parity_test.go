@@ -509,10 +509,18 @@ func assertValidatorImagePrefixes(t *testing.T, images []string, prefix string) 
 	}
 }
 
+// writeExecutable writes body to dir/name and makes it executable. The write
+// happens at mode 0o644 and is fully closed before the exec bit is added, so
+// no writable file description on the inode is ever open while it is
+// executable -- writing directly at 0o755 leaves that window open and can
+// race a subsequent exec into ETXTBSY ("text file busy") on Linux.
 func writeExecutable(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
