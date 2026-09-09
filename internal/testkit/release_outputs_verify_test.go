@@ -201,7 +201,6 @@ func releaseOutputStubDriver(t *testing.T, opts stubOptions) (string, string, st
 	dir := t.TempDir()
 	cosignLog := filepath.Join(dir, "cosign.log")
 	ghLog := filepath.Join(dir, "gh.log")
-	driver := filepath.Join(dir, "verify-release-outputs-test-driver.sh")
 	script := fmt.Sprintf(`#!/bin/bash
 source %[1]s
 cosign_fail_glob=%[2]s
@@ -286,9 +285,7 @@ main "$@"
 		shQuote(opts.release.token),
 		shQuote(ghLog),
 	)
-	if err := os.WriteFile(driver, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	driver := writeExecutable(t, dir, "verify-release-outputs-test-driver.sh", script)
 	return driver, cosignLog, ghLog
 }
 
@@ -395,10 +392,7 @@ func TestVerifyReleaseOutputsIgnoresHostileBashStartup(t *testing.T) {
 	if unprivileged == string(content) {
 		t.Fatal("release verifier no longer uses a privileged Bash shebang")
 	}
-	copyPath := filepath.Join(t.TempDir(), "unprivileged-verify-release-outputs.sh")
-	if err := os.WriteFile(copyPath, []byte(unprivileged), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	copyPath := writeExecutable(t, t.TempDir(), "unprivileged-verify-release-outputs.sh", unprivileged)
 	runVerifyDriver(t, copyPath, nil, hostile)
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("dropping the privileged shebang did not run the startup file, so the control is vacuous (%v)", err)
@@ -525,9 +519,7 @@ func poisonedToolPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, tool := range []string{"jq", "sha256sum", "awk", "find", "wc", "cat", "sort", "sed", "grep"} {
-		if err := os.WriteFile(filepath.Join(dir, tool), []byte("#!/bin/bash\nexit 3\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, dir, tool, "#!/bin/bash\nexit 3\n")
 	}
 	return dir
 }
@@ -1122,12 +1114,9 @@ func TestFlagValueRejectsShortAliasOverride(t *testing.T) {
 // both guards under test reject before any signature verification.
 func runReleaseOutputsInventoryGuard(t *testing.T, dir string) (int, string) {
 	t.Helper()
-	driver := filepath.Join(t.TempDir(), "release-outputs-inventory-driver.sh")
 	script := fmt.Sprintf("#!/bin/bash\nsource %s\ncosign() { return 0; }\nmain \"$@\"\n",
 		ShellQuote(filepath.Join(repoRoot(t), "scripts", "verify-release-outputs.sh")))
-	if err := os.WriteFile(driver, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	driver := writeExecutable(t, t.TempDir(), "release-outputs-inventory-driver.sh", script)
 
 	digest := strings.Repeat("c", 40)
 	cmd := exec.Command(driver,
