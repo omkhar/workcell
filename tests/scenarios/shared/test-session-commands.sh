@@ -103,7 +103,7 @@ EOF
 chmod +x "${WORKSPACE_A}/textconv.sh"
 cat >"${WORKSPACE_A}/filter.sh" <<EOF
 #!/bin/sh
-touch "${FILTER_MARKER}"
+touch '${FILTER_MARKER}'
 cat
 EOF
 chmod +x "${WORKSPACE_A}/filter.sh"
@@ -111,7 +111,7 @@ git -C "${WORKSPACE_A}" config diff.workcell.textconv "${WORKSPACE_A}/textconv.s
 git -C "${WORKSPACE_A}" config extensions.worktreeConfig true
 cat >"${FILTER_CONFIG}" <<EOF
 [filter "workcell-test"]
-	clean = ${WORKSPACE_A}/filter.sh
+	clean = '${WORKSPACE_A}/filter.sh'
 	smudge = cat
 EOF
 git -C "${WORKSPACE_A}" config --worktree include.path "${FILTER_CONFIG}"
