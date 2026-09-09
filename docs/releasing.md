@@ -54,10 +54,11 @@ honestly in docs, status reports, and release commentary.
 - For agentic release PR publication and follow-up, use the repo-local
   `workcell-pr-lifecycle` skill in addition to this release runbook.
 - Wait for `main` to be green before pushing the release tag.
-- Follow the tag-triggered `Release` workflow through completion.
+- Push the tag, then send the release dispatch event and follow the `Release`
+  workflow through completion.
 - Before pushing the tag, verify the hosted-controls audit confirms that the
-  `release` environment permits only `v*` deployment tags, with no deployment
-  branches, variables, secrets, or administrator bypass.
+  `release` environment permits only the `main` branch, with no deployment
+  tags, variables, secrets, or administrator bypass.
 - Approve the `release` environment only after release preflight and install
   verification are green.
 - Verify that the repository-level immutable-release control is enabled before
@@ -508,9 +509,38 @@ git push origin "refs/tags/${VERSION}"
 
 Never move or rewrite an existing release tag.
 
-## 10. Follow the tag-triggered `Release` workflow
+Pushing the tag does not start the release. The `Release` workflow only
+listens for a `repository_dispatch` event. Continue to step 10 to send it.
 
-Watch the `Release` workflow for the tagged commit until it completes:
+## 10. Start the `Release` workflow with a `repository_dispatch` event
+
+The `Release` workflow does not trigger on the tag push. It triggers only on
+a `repository_dispatch` event of type `release`. GitHub always loads that
+workflow from the default branch, not from the pushed tag.
+
+The dispatch run loads the current `main`. The run rejects a tag whose target
+commit differs from the `main` head. Do not merge to `main` between the tag
+push and the dispatch event. Confirm the remote `main` head still equals the
+tagged commit before you send the event:
+
+```sh
+git ls-remote origin refs/heads/main
+```
+
+Send the dispatch event with the tag and its target commit:
+
+```sh
+gh api repos/"${REPO}"/dispatches \
+  -f event_type=release \
+  -F "client_payload[tag]=${VERSION}" \
+  -F "client_payload[commit]=<main-commit-sha>"
+```
+
+Sending this event needs a token with write access to the repository, the
+same access level that pushing the tag needs. The workflow accepts no other
+actor check.
+
+Watch the `Release` workflow for the dispatched run until it completes:
 
 ```sh
 gh run list --repo "${REPO}" --workflow Release --limit 10
@@ -534,6 +564,14 @@ Unsupported tags therefore fail before a write-capable job or API mutation can
 run. Release candidates are published as prereleases and never become latest;
 final tags are non-prereleases and become latest only when their populated
 draft is published.
+
+That gate re-verifies the tag from step 9. It checks that the tag is
+annotated, that GitHub verified its signature, and that the tag targets the
+payload commit. `scripts/verify-release-artifact.sh` tracks which past
+releases signed from the pushed tag instead of this default-branch identity.
+Its `TAG_SIGNED_RELEASES` list names only the releases published before the
+move to `repository_dispatch`. Every later release verifies against the
+default-branch identity only.
 
 In immutable-release mode, the release publisher must create or reuse a draft
 release, stage and validate the full artifact set before the first GitHub

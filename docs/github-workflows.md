@@ -251,7 +251,7 @@ It pins the attestation decision in versioned source.
 A variable change alone cannot make a release without attestations.
 The hosted-control policy still audits both values.
 
-The release environment permits protected `v*` tags only.
+The release environment permits the `main` branch only.
 It has no secret or variable content and no administrator bypass.
 
 ## Public and private repositories
