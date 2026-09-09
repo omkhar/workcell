@@ -152,12 +152,11 @@ jobs:
     #   uidmap     the container runs as a uid that owns none of the bind and
     #              that the image has no passwd record for.
     #
-    # Advisory while the first failures are triaged: these jobs are deliberately
-    # absent from required_status_checks in policy/github-hosted-controls.toml
-    # and carry continue-on-error, so a red run reports without blocking a
-    # merge.  Gated on validate rather than pr-shape so the validator image
-    # layers are already in the shared buildx cache scope when these builds run.
-    continue-on-error: true
+    # Required merge gate: the four "Hostile environment (<axis>)" contexts are
+    # listed in required_status_checks in policy/github-hosted-controls.toml, so
+    # a red axis fails the job and blocks the merge.  Gated on validate rather
+    # than pr-shape so the validator image layers are already in the shared
+    # buildx cache scope when these builds run.
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 60

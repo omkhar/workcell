@@ -620,6 +620,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: true
+
+  hostile-env:
+    name: Hostile environment (${{ matrix.axis }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - axis: tmpdir
+          - axis: workspace
+          - axis: root
+          - axis: uidmap
+    steps:
+      - run: true
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(ci.yml) error = %v", err)
 	}
@@ -672,6 +685,10 @@ contexts = [
   "Reproducible build",
   "GitHub Actions lint",
   "GitHub Actions security analysis",
+  "Hostile environment (tmpdir)",
+  "Hostile environment (workspace)",
+  "Hostile environment (root)",
+  "Hostile environment (uidmap)",
 ]
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(policy.toml) error = %v", err)
