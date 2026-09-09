@@ -97,7 +97,7 @@ WORKSPACE_B="$(cd "${WORKSPACE_B}" && pwd -P)"
 git -C "${WORKSPACE_A}" init >/dev/null
 cat >"${WORKSPACE_A}/textconv.sh" <<EOF
 #!/bin/sh
-touch "${TEXTCONV_MARKER}"
+touch '${TEXTCONV_MARKER}'
 cat "\$1"
 EOF
 chmod +x "${WORKSPACE_A}/textconv.sh"
@@ -107,7 +107,7 @@ touch '${FILTER_MARKER}'
 cat
 EOF
 chmod +x "${WORKSPACE_A}/filter.sh"
-git -C "${WORKSPACE_A}" config diff.workcell.textconv "${WORKSPACE_A}/textconv.sh"
+git -C "${WORKSPACE_A}" config diff.workcell.textconv "'${WORKSPACE_A}/textconv.sh'"
 git -C "${WORKSPACE_A}" config extensions.worktreeConfig true
 cat >"${FILTER_CONFIG}" <<EOF
 [filter "workcell-test"]
