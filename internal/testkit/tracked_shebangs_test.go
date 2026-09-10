@@ -156,12 +156,8 @@ func TestReadTrackedFileRefusesASymlinkedPath(t *testing.T) {
 	real := filepath.Join(dir, "real.sh")
 	decoy := filepath.Join(dir, "decoy.sh")
 	link := filepath.Join(dir, "link.sh")
-	if err := os.WriteFile(real, []byte("#!/bin/bash -p\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(decoy, []byte("#!/bin/bash\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, real, []byte("#!/bin/bash -p\n"), 0o755)
+	writeExecFile(t, decoy, []byte("#!/bin/bash\n"), 0o755)
 	if err := os.Symlink(decoy, link); err != nil {
 		t.Fatal(err)
 	}
