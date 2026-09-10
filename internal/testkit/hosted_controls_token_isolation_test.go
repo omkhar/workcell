@@ -22,9 +22,15 @@ func TestHostedControlsRunnerRelaysTokenOnlyThroughStdin(t *testing.T) {
 	stdinPath := filepath.Join(root, "stdin")
 	argsPath := filepath.Join(root, "args")
 	envPath := filepath.Join(root, "environment")
-	cmd := exec.Command(filepath.Join(scriptsDir, "run-hosted-controls-audit.sh"), "owner/repo")
-	cmd.Env = hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "37")
-	output, err := cmd.CombinedOutput()
+	// runner is a fixture this test just wrote, and it in turn execs the
+	// verifier fixture above, so a concurrent sibling test's forkExec can
+	// transiently ETXTBSY either the outer exec or that inner one
+	// (golang/go#22315); retry both shapes.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
+		cmd := exec.Command(filepath.Join(scriptsDir, "run-hosted-controls-audit.sh"), "owner/repo")
+		cmd.Env = hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "37")
+		return cmd
+	})
 	requireExitStatus(t, err, 37, output)
 	requireHostedControlProbe(t, stdinPath, argsPath, envPath, "dummy-token\n")
 }
@@ -37,9 +43,15 @@ func TestHostedControlsRunnerRequiresNamespacedTokenInGitHubActions(t *testing.T
 	writeCanonicalFixture(t, filepath.Join(scriptsDir, "verify-github-hosted-controls.sh"), []byte(hostedControlChildProbe), 0o755)
 	environment := hostedControlProbeEnvironment(filepath.Join(root, "stdin"), filepath.Join(root, "args"), filepath.Join(root, "environment"), "0")
 	environment = environmentWithout(environment, "WORKCELL_HOSTED_CONTROLS_TOKEN")
-	cmd := exec.Command(runner, "owner/repo")
-	cmd.Env = environment
-	output, err := cmd.CombinedOutput()
+	// runner is a fixture this test just wrote, and it in turn execs the
+	// verifier fixture above, so a concurrent sibling test's forkExec can
+	// transiently ETXTBSY either the outer exec or that inner one
+	// (golang/go#22315); retry both shapes.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
+		cmd := exec.Command(runner, "owner/repo")
+		cmd.Env = environment
+		return cmd
+	})
 	requireExitStatus(t, err, 1, output)
 	if !strings.Contains(string(output), "requires WORKCELL_HOSTED_CONTROLS_TOKEN") {
 		t.Fatalf("runner output = %q, want namespaced-token requirement", output)
@@ -57,9 +69,15 @@ func TestHostedControlsRunnerUsesGitHubTokenOutsideActions(t *testing.T) {
 	envPath := filepath.Join(root, "environment")
 	environment := hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "31")
 	environment = environmentWithout(environment, "GITHUB_ACTIONS")
-	cmd := exec.Command(runner, "owner/repo")
-	cmd.Env = environment
-	output, err := cmd.CombinedOutput()
+	// runner is a fixture this test just wrote, and it in turn execs the
+	// verifier fixture above, so a concurrent sibling test's forkExec can
+	// transiently ETXTBSY either the outer exec or that inner one
+	// (golang/go#22315); retry both shapes.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
+		cmd := exec.Command(runner, "owner/repo")
+		cmd.Env = environment
+		return cmd
+	})
 	requireExitStatus(t, err, 31, output)
 	requireHostedControlProbe(t, stdinPath, argsPath, envPath, "wrong-gh-token\n")
 }
@@ -83,9 +101,13 @@ func TestHostedControlsVerifierRelaysAmbientTokenOnce(t *testing.T) {
 	stdinPath := filepath.Join(root, "stdin")
 	argsPath := filepath.Join(root, "args")
 	envPath := filepath.Join(root, "environment")
-	cmd := exec.Command(verifier, "owner/repo")
-	cmd.Env = hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "29")
-	output, err := cmd.CombinedOutput()
+	// verifier is a fixture this test just wrote, so a concurrent sibling test's
+	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
+	output, err := execRetryETXTBSY(func() *exec.Cmd {
+		cmd := exec.Command(verifier, "owner/repo")
+		cmd.Env = hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "29")
+		return cmd
+	})
 	requireExitStatus(t, err, 29, output)
 	requireHostedControlProbe(t, stdinPath, argsPath, envPath, "wrong-gh-token\n")
 }
@@ -126,13 +148,17 @@ func TestHostedControlsVerifierScopesDummyTokenToGitHubCommands(t *testing.T) {
 	root := t.TempDir()
 	prepareHostedControlCommandGraphFixture(t, root)
 	verifier := filepath.Join(root, "scripts", "verify-github-hosted-controls.sh")
-	cmd := exec.Command(verifier, "--token-stdin", "owner/repo")
-	cmd.Env = append(canonicalBuildEnv(nil),
-		"WORKCELL_TEST_LOG_DIR="+filepath.Join(root, "logs"),
-		"WORKCELL_TEST_CITOOLS_TEMPLATE="+filepath.Join(root, "citools-template"),
-	)
-	cmd.Stdin = strings.NewReader("dummy-token\n")
-	output, err := cmd.CombinedOutput()
+	// verifier is a fixture this test just wrote, so a concurrent sibling test's
+	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
+	output, err := execRetryETXTBSY(func() *exec.Cmd {
+		cmd := exec.Command(verifier, "--token-stdin", "owner/repo")
+		cmd.Env = append(canonicalBuildEnv(nil),
+			"WORKCELL_TEST_LOG_DIR="+filepath.Join(root, "logs"),
+			"WORKCELL_TEST_CITOOLS_TEMPLATE="+filepath.Join(root, "citools-template"),
+		)
+		cmd.Stdin = strings.NewReader("dummy-token\n")
+		return cmd
+	})
 	if err != nil {
 		t.Fatalf("command graph fixture: %v: %s", err, output)
 	}
