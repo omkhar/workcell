@@ -4,14 +4,45 @@
 package testkit
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// execRetryETXTBSY runs newCmd's freshly built *exec.Cmd and returns its
+// combined output, retrying up to 20 times with a short capped backoff when
+// the fork/exec fails with ETXTBSY: the transient Linux race (golang/go#22315)
+// where a concurrent goroutine's dup'd fd briefly holds a just-written test
+// fixture script open for write, even though that script's own writer closed
+// it before making it executable. exec.Cmd cannot be re-run, so newCmd builds
+// a fresh one each attempt. Any other error - including a genuinely noexec
+// fixture directory, which surfaces as EACCES or ENOEXEC rather than ETXTBSY -
+// returns immediately without retrying.
+func execRetryETXTBSY(newCmd func() *exec.Cmd) ([]byte, error) {
+	const maxBackoff = 100 * time.Millisecond
+	backoff := 5 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		out, err := newCmd().CombinedOutput()
+		if !errors.Is(err, syscall.ETXTBSY) || attempt >= 19 {
+			return out, err
+		}
+		time.Sleep(backoff)
+		// Double the backoff for the next attempt, capped at maxBackoff: the
+		// cap must apply after doubling, or the sleep just before it hits the
+		// cap overshoots to double the cap.
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
 
 // shellSafePath matches a candidate base that is safe to splice as literal
 // text into generated shell script source (a double-quoted assignment, a
@@ -111,7 +142,7 @@ func ExecFixtureDir(tb testing.TB) string {
 			tried = append(tried, c.name+" ("+c.path+"): not writable: "+err.Error())
 			continue
 		}
-		if err := exec.Command(probe).Run(); err != nil {
+		if _, err := execRetryETXTBSY(func() *exec.Cmd { return exec.Command(probe) }); err != nil {
 			_ = os.RemoveAll(dir)
 			tried = append(tried, c.name+" ("+c.path+"): noexec: "+err.Error())
 			continue

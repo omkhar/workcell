@@ -313,9 +313,13 @@ func runVerifyDriver(t *testing.T, driver string, args, env []string) (int, stri
 			full = append(full, name+"=")
 		}
 	}
-	cmd := exec.Command(driver, args...)
-	cmd.Env = full
-	out, err := cmd.CombinedOutput()
+	// The driver is a fixture the test just wrote, so a concurrent sibling test's
+	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
+	out, err := execRetryETXTBSY(func() *exec.Cmd {
+		cmd := exec.Command(driver, args...)
+		cmd.Env = full
+		return cmd
+	})
 	if err == nil {
 		return 0, string(out)
 	}
@@ -1119,17 +1123,21 @@ func runReleaseOutputsInventoryGuard(t *testing.T, dir string) (int, string) {
 	driver := writeExecutable(t, t.TempDir(), "release-outputs-inventory-driver.sh", script)
 
 	digest := strings.Repeat("c", 40)
-	cmd := exec.Command(driver,
-		"--assets-dir", dir,
-		"--repo", "omkhar/workcell",
-		"--tag", "v1.2.3",
-		"--image-repository", "ghcr.io/omkhar/workcell",
-		"--source-digest", digest,
-		"--workflow-digest", digest,
-	)
-	// Bash startup files are cleared so caller state cannot reach the verifier.
-	cmd.Env = []string{"BASH_ENV=", "ENV="}
-	out, err := cmd.CombinedOutput()
+	// The driver is a fixture the test just wrote, so a concurrent sibling test's
+	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
+	out, err := execRetryETXTBSY(func() *exec.Cmd {
+		cmd := exec.Command(driver,
+			"--assets-dir", dir,
+			"--repo", "omkhar/workcell",
+			"--tag", "v1.2.3",
+			"--image-repository", "ghcr.io/omkhar/workcell",
+			"--source-digest", digest,
+			"--workflow-digest", digest,
+		)
+		// Bash startup files are cleared so caller state cannot reach the verifier.
+		cmd.Env = []string{"BASH_ENV=", "ENV="}
+		return cmd
+	})
 	if err == nil {
 		return 0, string(out)
 	}
