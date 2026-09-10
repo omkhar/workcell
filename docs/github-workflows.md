@@ -42,7 +42,7 @@ For an approved large adapter PR, use both required options:
 | --- | --- |
 | `bench.yml` | Measures exec-guard performance on a schedule or manual run. |
 | `ci-insights.yml` | Writes weekly flake and cost reports. See [CI reliability](ci-efficiency-and-reliability.md). |
-| `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and advisory hostile-environment reruns. |
+| `ci.yml` | Runs repository validation, smoke tests, reproducibility, install checks, PR-shape checks, and required hostile-environment reruns. |
 | `codeql.yml` | Scans the shipped Go, Rust, and JavaScript code. |
 | `docs.yml` | Checks spelling, links, contracts, and the man page. |
 | `fuzz.yml` | Runs extended Go and Rust fuzz tests. |
@@ -74,7 +74,7 @@ Git refuses a repository owned by another UID.
 `scripts/ci-plan.sh` runs Git with no configuration that could grant an exception, so the lane aligns the ownership.
 
 These shapes reproduce quoting, argument-boundary, mount-record, and `sun_path` defects before review.
-The lanes are advisory: they use `continue-on-error` and are not required checks.
+The lanes are required merge gates: each axis is a required status check, so a red axis blocks the merge.
 Run one axis on a host the same way the lane does, with Docker available:
 
 ```bash

@@ -42,8 +42,9 @@ type workflowJob struct {
 	Environment struct {
 		Name string `yaml:"name"`
 	} `yaml:"environment"`
-	Permissions map[string]string `yaml:"permissions"`
-	Steps       []workflowStep    `yaml:"steps"`
+	Permissions map[string]string          `yaml:"permissions"`
+	Steps       []workflowStep             `yaml:"steps"`
+	Strategy    workflowLaneRawJobStrategy `yaml:"strategy"`
 }
 
 type workflowStep struct {
@@ -73,7 +74,15 @@ func CollectWorkflowJobNames(content []byte) ([]string, error) {
 		if name == "" {
 			continue
 		}
-		names = append(names, name)
+		// A matrix job's name: is a template such as "Hostile environment
+		// (${{ matrix.axis }})", and GitHub reports one check context per
+		// matrix leg.  Expand the template against matrix.include so every
+		// concrete leg name (e.g. "Hostile environment (tmpdir)") can match a
+		// required status-check context.  Non-matrix jobs expand to the single
+		// unchanged name.
+		for _, matrix := range workflowLaneExpandMatrix(job.Strategy.Matrix.Include) {
+			names = append(names, workflowLaneRenderJobName(name, matrix))
+		}
 	}
 	return names, nil
 }

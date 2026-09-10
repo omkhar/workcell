@@ -81,7 +81,7 @@
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "advisory rerun of repository validation under a container running as uid 0, where a chmod assertion and a write-only read assertion stop holding; it carries continue-on-error and is absent from required_status_checks while its first failures are triaged, so it never gates a PR or release and is not part of any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=root, which builds the validator image and selects the repo-core profile the hosted job uses"
+      "github_only_reason": "required rerun of repository validation under a container running as uid 0, where a chmod assertion and a write-only read assertion stop holding; it is a required merge gate in required_status_checks that runs only on GitHub, with no local mirror and no place in any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=root, which builds the validator image and selects the repo-core profile the hosted job uses"
     },
     {
       "id": "ci.yml/hostile-env[axis=tmpdir]",
@@ -99,7 +99,7 @@
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "advisory rerun of repository validation under a TMPDIR whose name holds a space, a literal dollar sign, a --prefixed token and 80 characters of padding; it carries continue-on-error and is absent from required_status_checks while its first failures are triaged, so it never gates a PR or release and is not part of any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=tmpdir, which builds the validator image and selects the repo-core profile the hosted job uses"
+      "github_only_reason": "required rerun of repository validation under a TMPDIR whose name holds a space, a literal dollar sign, a --prefixed token and 80 characters of padding; it is a required merge gate in required_status_checks that runs only on GitHub, with no local mirror and no place in any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=tmpdir, which builds the validator image and selects the repo-core profile the hosted job uses"
     },
     {
       "id": "ci.yml/hostile-env[axis=uidmap]",
@@ -117,7 +117,7 @@
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "advisory rerun of repository validation under a container running as a uid that owns none of the bind and that the image has no passwd record for; it carries continue-on-error and is absent from required_status_checks while its first failures are triaged, so it never gates a PR or release and is not part of any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=uidmap, which builds the validator image and selects the repo-core profile the hosted job uses"
+      "github_only_reason": "required rerun of repository validation under a container running as a uid that owns none of the bind and that the image has no passwd record for; it is a required merge gate in required_status_checks that runs only on GitHub, with no local mirror and no place in any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=uidmap, which builds the validator image and selects the repo-core profile the hosted job uses"
     },
     {
       "id": "ci.yml/hostile-env[axis=workspace]",
@@ -135,7 +135,7 @@
       ],
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "advisory rerun of repository validation under a bind source whose name holds a space and a comma, which the CSV --mount record has to survive; it carries continue-on-error and is absent from required_status_checks while its first failures are triaged, so it never gates a PR or release and is not part of any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=workspace, which builds the validator image and selects the repo-core profile the hosted job uses"
+      "github_only_reason": "required rerun of repository validation under a bind source whose name holds a space and a comma, which the CSV --mount record has to survive; it is a required merge gate in required_status_checks that runs only on GitHub, with no local mirror and no place in any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=workspace, which builds the validator image and selects the repo-core profile the hosted job uses"
     },
     {
       "id": "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]",

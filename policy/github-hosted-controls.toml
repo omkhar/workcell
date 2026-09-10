@@ -49,6 +49,10 @@ contexts = [
   "Dependency review",
   "GitHub Actions lint",
   "GitHub Actions security analysis",
+  "Hostile environment (tmpdir)",
+  "Hostile environment (workspace)",
+  "Hostile environment (root)",
+  "Hostile environment (uidmap)",
 ]
 
 [actions_policy]
