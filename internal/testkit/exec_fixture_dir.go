@@ -26,11 +26,40 @@ import (
 // fixture directory, which surfaces as EACCES or ENOEXEC rather than ETXTBSY -
 // returns immediately without retrying.
 func execRetryETXTBSY(newCmd func() *exec.Cmd) ([]byte, error) {
+	return execRetryOn(newCmd, func(out []byte, err error) bool {
+		return errors.Is(err, syscall.ETXTBSY)
+	})
+}
+
+// execRetryETXTBSYOrNestedBusy is execRetryETXTBSY plus one more retryable
+// shape: newCmd's target is a shell script that itself execs a second
+// test-written fixture (e.g. run-hosted-controls-audit.sh launching the
+// verifier fixture it was just handed). The outer process starts fine - Go
+// never sees ETXTBSY directly - but the same golang/go#22315 race can hit the
+// script's own inner execve, and bash reports that as exit 126 with "text
+// file busy" on stderr rather than propagating an errno Go can unwrap. Only
+// that exact message is treated as retryable, so an unrelated exit 126 (a
+// missing interpreter, a real permission error) still fails immediately.
+func execRetryETXTBSYOrNestedBusy(newCmd func() *exec.Cmd) ([]byte, error) {
+	return execRetryOn(newCmd, func(out []byte, err error) bool {
+		if errors.Is(err, syscall.ETXTBSY) {
+			return true
+		}
+		var exitErr *exec.ExitError
+		return errors.As(err, &exitErr) && exitErr.ExitCode() == 126 &&
+			strings.Contains(strings.ToLower(string(out)), "text file busy")
+	})
+}
+
+// execRetryOn is the shared retry loop behind execRetryETXTBSY and
+// execRetryETXTBSYOrNestedBusy: up to 20 attempts, backoff starting at 5ms and
+// doubling up to a 100ms cap, retrying only while retryable reports true.
+func execRetryOn(newCmd func() *exec.Cmd, retryable func(out []byte, err error) bool) ([]byte, error) {
 	const maxBackoff = 100 * time.Millisecond
 	backoff := 5 * time.Millisecond
 	for attempt := 0; ; attempt++ {
 		out, err := newCmd().CombinedOutput()
-		if !errors.Is(err, syscall.ETXTBSY) || attempt >= 19 {
+		if !retryable(out, err) || attempt >= 19 {
 			return out, err
 		}
 		time.Sleep(backoff)

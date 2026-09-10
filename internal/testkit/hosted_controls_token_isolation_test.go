@@ -22,9 +22,11 @@ func TestHostedControlsRunnerRelaysTokenOnlyThroughStdin(t *testing.T) {
 	stdinPath := filepath.Join(root, "stdin")
 	argsPath := filepath.Join(root, "args")
 	envPath := filepath.Join(root, "environment")
-	// runner is a fixture this test just wrote, so a concurrent sibling test's
-	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
-	output, err := execRetryETXTBSY(func() *exec.Cmd {
+	// runner is a fixture this test just wrote, and it in turn execs the
+	// verifier fixture above, so a concurrent sibling test's forkExec can
+	// transiently ETXTBSY either the outer exec or that inner one
+	// (golang/go#22315); retry both shapes.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
 		cmd := exec.Command(filepath.Join(scriptsDir, "run-hosted-controls-audit.sh"), "owner/repo")
 		cmd.Env = hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "37")
 		return cmd
@@ -41,9 +43,11 @@ func TestHostedControlsRunnerRequiresNamespacedTokenInGitHubActions(t *testing.T
 	writeCanonicalFixture(t, filepath.Join(scriptsDir, "verify-github-hosted-controls.sh"), []byte(hostedControlChildProbe), 0o755)
 	environment := hostedControlProbeEnvironment(filepath.Join(root, "stdin"), filepath.Join(root, "args"), filepath.Join(root, "environment"), "0")
 	environment = environmentWithout(environment, "WORKCELL_HOSTED_CONTROLS_TOKEN")
-	// runner is a fixture this test just wrote, so a concurrent sibling test's
-	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
-	output, err := execRetryETXTBSY(func() *exec.Cmd {
+	// runner is a fixture this test just wrote, and it in turn execs the
+	// verifier fixture above, so a concurrent sibling test's forkExec can
+	// transiently ETXTBSY either the outer exec or that inner one
+	// (golang/go#22315); retry both shapes.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
 		cmd := exec.Command(runner, "owner/repo")
 		cmd.Env = environment
 		return cmd
@@ -65,9 +69,11 @@ func TestHostedControlsRunnerUsesGitHubTokenOutsideActions(t *testing.T) {
 	envPath := filepath.Join(root, "environment")
 	environment := hostedControlProbeEnvironment(stdinPath, argsPath, envPath, "31")
 	environment = environmentWithout(environment, "GITHUB_ACTIONS")
-	// runner is a fixture this test just wrote, so a concurrent sibling test's
-	// forkExec can transiently ETXTBSY it (golang/go#22315); retry that alone.
-	output, err := execRetryETXTBSY(func() *exec.Cmd {
+	// runner is a fixture this test just wrote, and it in turn execs the
+	// verifier fixture above, so a concurrent sibling test's forkExec can
+	// transiently ETXTBSY either the outer exec or that inner one
+	// (golang/go#22315); retry both shapes.
+	output, err := execRetryETXTBSYOrNestedBusy(func() *exec.Cmd {
 		cmd := exec.Command(runner, "owner/repo")
 		cmd.Env = environment
 		return cmd
