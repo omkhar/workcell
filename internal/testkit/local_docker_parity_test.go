@@ -508,18 +508,37 @@ func assertValidatorImagePrefixes(t *testing.T, images []string, prefix string) 
 }
 
 // writeExecFile is the shared write-then-chmod primitive every executable
-// test fixture in this package must go through: content is written at
-// 0o644 and the writer is fully closed before the exec bit is added via a
-// separate os.Chmod. Creating a file with the exec bit already set (0o755,
-// 0o700, ...) leaves a window where the inode is both writable and
-// executable, and a concurrent exec of that path can be rejected with
-// ETXTBSY ("text file busy") on Linux.
+// test fixture in this package must go through. It writes through a fresh
+// inode -- a temp file in the same directory, closed, chmod'd, then renamed
+// over path -- rather than writing path in place: if path already exists
+// (e.g. replaceScript overwriting an already-checked-out, already-executable
+// ci-plan.sh), an in-place os.WriteFile truncates the live inode without
+// touching its mode, so it stays executable with an open writable fd for the
+// duration of the write. That is the same ETXTBSY ("text file busy") window
+// this helper exists to close; renaming a fresh inode into place means the
+// path a concurrent exec sees is never the one being written.
 func writeExecFile(tb testing.TB, path string, content []byte, mode os.FileMode) {
 	tb.Helper()
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".wcx-*")
+	if err != nil {
 		tb.Fatal(err)
 	}
-	if err := os.Chmod(path, mode); err != nil {
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		tb.Fatal(err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		tb.Fatal(err)
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		os.Remove(tmpPath)
+		tb.Fatal(err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
 		tb.Fatal(err)
 	}
 }
