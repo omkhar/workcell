@@ -101,9 +101,7 @@ func writeCanonicalFixture(tb testing.TB, path string, content []byte, mode os.F
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		tb.Fatal(err)
 	}
-	if err := os.WriteFile(path, content, mode); err != nil {
-		tb.Fatal(err)
-	}
+	writeExecFile(tb, path, content, mode)
 }
 
 func copyCanonicalFixture(tb testing.TB, source string, destination string) {

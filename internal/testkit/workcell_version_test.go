@@ -83,9 +83,7 @@ func writeWorkcellVersionFixture(tb testing.TB, changelog *string) string {
 		tb.Fatal(err)
 	}
 	fixtureWorkcellPath := filepath.Join(fixtureScriptsDir, "workcell")
-	if err := os.WriteFile(fixtureWorkcellPath, launcher, 0o755); err != nil {
-		tb.Fatal(err)
-	}
+	writeExecFile(tb, fixtureWorkcellPath, launcher, 0o755)
 
 	if err := os.Symlink(filepath.Join(sourceRoot, "scripts", "lib"), filepath.Join(fixtureScriptsDir, "lib")); err != nil {
 		tb.Fatal(err)

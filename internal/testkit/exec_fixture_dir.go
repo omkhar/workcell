@@ -97,7 +97,16 @@ func ExecFixtureDir(tb testing.TB) string {
 			continue
 		}
 		probe := filepath.Join(dir, "probe.sh")
-		if err := os.WriteFile(probe, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		// Write at 0o644 and add the exec bit with a separate Chmod, fully
+		// closed in between: creating the file with the exec bit already set
+		// leaves a window where the inode is both writable and executable,
+		// and the exec.Command below can race it into ETXTBSY.
+		if err := os.WriteFile(probe, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
+			_ = os.RemoveAll(dir)
+			tried = append(tried, c.name+" ("+c.path+"): not writable: "+err.Error())
+			continue
+		}
+		if err := os.Chmod(probe, 0o700); err != nil {
 			_ = os.RemoveAll(dir)
 			tried = append(tried, c.name+" ("+c.path+"): not writable: "+err.Error())
 			continue

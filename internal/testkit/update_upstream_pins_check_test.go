@@ -605,12 +605,7 @@ func writeUpdaterFixtureFile(t *testing.T, root, rel, content string, mode fs.Fi
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatal(err)
-	}
+	writeExecFile(t, path, []byte(content), mode)
 }
 
 func runUpdaterFixture(t *testing.T, fixtureRoot, scratchRoot, citoolsPath, goWrapperPath string, pins updaterFixturePins, plan updaterFixtureDebianPlan, mode string) updaterFixtureRun {
