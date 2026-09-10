@@ -35,7 +35,10 @@ func TestExecRetryETXTBSYRetriesThroughTheTransientRace(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("ETXTBSY on a file open for write is Linux-specific (golang/go#22315)")
 	}
-	path := filepath.Join(t.TempDir(), "busy.sh")
+	// ExecFixtureDir, not t.TempDir(): TMPDIR can be a noexec mount (a layout
+	// this package's own hostile-env axis exercises elsewhere), which would
+	// fail this exec with EACCES instead of proving ETXTBSY recovery.
+	path := filepath.Join(ExecFixtureDir(t), "busy.sh")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		t.Fatal(err)
