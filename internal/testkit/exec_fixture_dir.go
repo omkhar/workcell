@@ -4,14 +4,74 @@
 package testkit
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// execRetryETXTBSY runs newCmd's freshly built *exec.Cmd and returns its
+// combined output, retrying up to 20 times with a short capped backoff when
+// the fork/exec fails with ETXTBSY: the transient Linux race (golang/go#22315)
+// where a concurrent goroutine's dup'd fd briefly holds a just-written test
+// fixture script open for write, even though that script's own writer closed
+// it before making it executable. exec.Cmd cannot be re-run, so newCmd builds
+// a fresh one each attempt. Any other error - including a genuinely noexec
+// fixture directory, which surfaces as EACCES or ENOEXEC rather than ETXTBSY -
+// returns immediately without retrying.
+func execRetryETXTBSY(newCmd func() *exec.Cmd) ([]byte, error) {
+	return execRetryOn(newCmd, func(out []byte, err error) bool {
+		return errors.Is(err, syscall.ETXTBSY)
+	})
+}
+
+// execRetryETXTBSYOrNestedBusy is execRetryETXTBSY plus one more retryable
+// shape: newCmd's target is a shell script that itself execs a second
+// test-written fixture (e.g. run-hosted-controls-audit.sh launching the
+// verifier fixture it was just handed). The outer process starts fine - Go
+// never sees ETXTBSY directly - but the same golang/go#22315 race can hit the
+// script's own inner execve, and bash reports that as exit 126 with "text
+// file busy" on stderr rather than propagating an errno Go can unwrap. Only
+// that exact message is treated as retryable, so an unrelated exit 126 (a
+// missing interpreter, a real permission error) still fails immediately.
+func execRetryETXTBSYOrNestedBusy(newCmd func() *exec.Cmd) ([]byte, error) {
+	return execRetryOn(newCmd, func(out []byte, err error) bool {
+		if errors.Is(err, syscall.ETXTBSY) {
+			return true
+		}
+		var exitErr *exec.ExitError
+		return errors.As(err, &exitErr) && exitErr.ExitCode() == 126 &&
+			strings.Contains(strings.ToLower(string(out)), "text file busy")
+	})
+}
+
+// execRetryOn is the shared retry loop behind execRetryETXTBSY and
+// execRetryETXTBSYOrNestedBusy: up to 20 attempts, backoff starting at 5ms and
+// doubling up to a 100ms cap, retrying only while retryable reports true.
+func execRetryOn(newCmd func() *exec.Cmd, retryable func(out []byte, err error) bool) ([]byte, error) {
+	const maxBackoff = 100 * time.Millisecond
+	backoff := 5 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		out, err := newCmd().CombinedOutput()
+		if !retryable(out, err) || attempt >= 19 {
+			return out, err
+		}
+		time.Sleep(backoff)
+		// Double the backoff for the next attempt, capped at maxBackoff: the
+		// cap must apply after doubling, or the sleep just before it hits the
+		// cap overshoots to double the cap.
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
 
 // shellSafePath matches a candidate base that is safe to splice as literal
 // text into generated shell script source (a double-quoted assignment, a
@@ -111,7 +171,7 @@ func ExecFixtureDir(tb testing.TB) string {
 			tried = append(tried, c.name+" ("+c.path+"): not writable: "+err.Error())
 			continue
 		}
-		if err := exec.Command(probe).Run(); err != nil {
+		if _, err := execRetryETXTBSY(func() *exec.Cmd { return exec.Command(probe) }); err != nil {
 			_ = os.RemoveAll(dir)
 			tried = append(tried, c.name+" ("+c.path+"): noexec: "+err.Error())
 			continue
