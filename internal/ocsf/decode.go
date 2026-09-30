@@ -49,6 +49,11 @@ func DecodeAuditLineStrict(line, targetProvider string) ([]AuditField, error) {
 	fields := make([]AuditField, 0, len(tokens))
 	seen := make(map[string]struct{}, len(tokens))
 	for _, tok := range tokens {
+		// The record digest joins fields with NUL, so a NUL inside a token would
+		// let adjacent fields merge with an unchanged digest. No writer emits one.
+		if strings.IndexByte(tok, 0) >= 0 {
+			return nil, fmt.Errorf("audit record has a NUL byte in token %q", tok)
+		}
 		key, value, ok := strings.Cut(tok, "=")
 		if !ok {
 			return nil, fmt.Errorf("audit record has bare token %q (no key=value)", tok)

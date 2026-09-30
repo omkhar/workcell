@@ -677,3 +677,28 @@ func findPub(t *testing.T, dir string) string {
 	t.Fatalf("no .pub in %s", dir)
 	return ""
 }
+
+// A NUL inside one value re-splits the record without changing the digest
+// input (digest fields are NUL-joined). Verification must fail closed.
+func TestVerifySessionSealRejectsNULFoldedRecord(t *testing.T) {
+	_, signingDir, logPath, lines, seal := signedGenuine(t)
+	orig := lines[2]
+	for name, tampered := range map[string]string{
+		"ansi-c-octal": strings.Replace(orig, "session_id=sess-A event=assurance_change final=lower", `session_id=$'sess-A\000event=assurance_change\000final=lower'`, 1),
+		"raw-nul-byte": strings.Replace(orig, "session_id=sess-A event=assurance_change final=lower", "session_id=sess-A\x00event=assurance_change\x00final=lower", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tampered == orig {
+				t.Fatal("replace did not apply")
+			}
+			mod := append([]string{}, lines...)
+			mod[2] = tampered
+			if err := os.WriteFile(logPath, []byte(strings.Join(mod, "\n")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyA(signingDir, logPath, seal); err == nil {
+				t.Fatal("restructured record must not verify")
+			}
+		})
+	}
+}
