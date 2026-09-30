@@ -263,4 +263,13 @@ HOST_GO_BIN="` + statusGo + `"; GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostuti
 	if code != 7 || len(binaries()) != before {
 		t.Fatalf("failing second lookup: exit=%d output=%q binaries=%v, want refusal and no new binary", code, output, binaries())
 	}
+
+	// A failed pre-rename sync removes the temp file and publishes nothing.
+	code, output = run(`printf 'package main\nimport "fmt"\nfunc main() { fmt.Println("v7") }\n' > "` + mainPath + `"
+sync() { return 1; }
+GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
+	leftovers, _ = filepath.Glob(filepath.Join(binDir, ".workcell-hostutil.*"))
+	if code != 7 || len(binaries()) != before+1 || len(leftovers) != 0 {
+		t.Fatalf("failing sync: exit=%d output=%q binaries=%v leftovers=%v, want refusal, no new binary, no temp file", code, output, binaries(), leftovers)
+	}
 }

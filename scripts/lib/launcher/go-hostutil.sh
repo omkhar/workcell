@@ -123,9 +123,12 @@ go_tool_bin() {
     fi
     # Flush the binary data before the rename and the new entry after it, so a
     # crash cannot leave a non-empty partial binary under the final name.
-    sync
+    if ! sync; then
+      rm -f "${tmp}"
+      return 1
+    fi
     mv -f "${tmp}" "${bin}" || return 1
-    sync
+    sync || return 1
   fi
   if ! go_tool_bin_trusted "${bin}"; then
     echo "Refusing untrusted cached Go tool: ${bin}" >&2
