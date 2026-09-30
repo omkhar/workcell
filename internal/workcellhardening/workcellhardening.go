@@ -3972,10 +3972,9 @@ func CheckSmokeChownTar(rootDir string) error {
 //     (`run_in_vm "\$\(render_allowlist_apply_plan\)"`) or carried none
 //     (`if ! type ip6tables >/dev/null 2>&1; then`), so they are fixed-string
 //     containment (kindPresent).
-//   - The atomic-swap pair scopes to render_allowlist_apply_plan: the block
-//     must not unlink or flush the live chain (kindFunctionBlockRegexAbsent),
-//     and the parsed apply plan must run `iptables-restore --noflush` for both
-//     families (metadatautil.ValidateColimaEgressAtomicSwap, after the table).
+//   - The atomic-swap rules (no unlink or flush of the live chain, one
+//     `iptables-restore --noflush` per family) read the parsed apply plan in
+//     metadatautil.ValidateColimaEgressAtomicSwap, run after the table.
 //   - The two affirmative function_block_contains_regex probes scope to
 //     render_allowlist_apply_plan (kindFunctionBlockRegex); their patterns
 //     (resolve_vm_endpoint_ips, getent ahosts) are
@@ -3997,16 +3996,6 @@ var dualStackApplyPlanChecks = []check{
 		pattern:    "if ! type ip6tables >/dev/null 2>&1; then",
 		message:    "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules",
 		targetFile: colimaEgressAllowlistRelPath,
-	},
-	{
-		// kindFunctionBlockRegexAbsent: the apply plan must not unlink or flush
-		// the live chain. Doing so leaves profile containers without a default
-		// deny until the new DROP rule lands.
-		kind:         kindFunctionBlockRegexAbsent,
-		functionName: "render_allowlist_apply_plan",
-		regex:        `-[DF] (DOCKER-USER|WORKCELL_EGRESS)`,
-		message:      "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
-		targetFile:   colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:         kindFunctionBlockRegex,

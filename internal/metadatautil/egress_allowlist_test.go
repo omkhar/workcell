@@ -6,6 +6,7 @@ package metadatautil_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
@@ -28,6 +29,29 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		t.Run(anchor, func(t *testing.T) {
 			RequireRejectsAllEvasions(t, string(script), anchor, "one iptables-restore transaction",
 				metadatautil.ValidateColimaEgressAtomicSwap)
+		})
+	}
+	guard := "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n" +
+		"sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6"
+	RequireRejectsAllEvasions(t, string(script), guard, "live chain linked",
+		metadatautil.ValidateColimaEgressAtomicSwap)
+
+	// The live chain must never be deleted or flushed, in any spelling.
+	for name, hidden := range map[string]string{
+		"quoted flush":        `sudo iptables "-F" WORKCELL_EGRESS`,
+		"continued flush":     "sudo iptables \\\n  -F WORKCELL_EGRESS",
+		"ip6 delete":          "sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6",
+		"chain delete":        "sudo iptables -X WORKCELL_EGRESS",
+		"wait before flush":   "sudo iptables -w -F WORKCELL_EGRESS",
+		"long flush":          "sudo iptables --flush WORKCELL_EGRESS",
+		"flush without chain": "sudo ip6tables -F",
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(string(script), "sudo iptables-restore --noflush <<<", hidden+"\nsudo iptables-restore --noflush <<<", 1)
+			err := metadatautil.ValidateColimaEgressAtomicSwap(mutated)
+			if err == nil || !strings.Contains(err.Error(), "live chain linked") {
+				t.Fatalf("error = %v, want live chain rejection", err)
+			}
 		})
 	}
 }

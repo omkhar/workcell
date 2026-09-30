@@ -5580,6 +5580,8 @@ func dualStackApplyPlanHappyFiles() map[string]string {
 		"  cat <<'EOF'\n" +
 		"  sudo iptables-restore --noflush\n" +
 		"  sudo ip6tables-restore --noflush\n" +
+		"  sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS\n" +
+		"  sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6\n" +
 		"EOF\n" +
 		"  resolve_vm_endpoint_ips \"${endpoints}\"\n" +
 		"  getent ahosts \"${host}\"\n" +
@@ -5618,14 +5620,14 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 		{
 			name: "live chain unlinked in block",
 			mutate: func(f map[string]string) {
-				f[rel] = strings.Replace(f[rel], `resolve_vm_endpoint_ips "${endpoints}"`, "resolve_vm_endpoint_ips \"${endpoints}\"\n  echo \"sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS\"", 1)
+				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush\n", "  sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS\n  sudo iptables-restore --noflush\n", 1)
 			},
 			wantErr: "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
 		},
 		{
 			name: "live chain flushed in block",
 			mutate: func(f map[string]string) {
-				f[rel] = strings.Replace(f[rel], `resolve_vm_endpoint_ips "${endpoints}"`, "resolve_vm_endpoint_ips \"${endpoints}\"\n  echo \"sudo ip6tables -F WORKCELL_EGRESS6\"", 1)
+				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush\n", "  sudo ip6tables \"-F\" WORKCELL_EGRESS6\n  sudo iptables-restore --noflush\n", 1)
 			},
 			wantErr: "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
 		},
@@ -5705,7 +5707,7 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 }
 
 func TestCheckDualStackApplyPlanCount(t *testing.T) {
-	if got, want := len(dualStackApplyPlanChecks), 7; got != want {
+	if got, want := len(dualStackApplyPlanChecks), 6; got != want {
 		t.Fatalf("dualStackApplyPlanChecks has %d checks, want %d", got, want)
 	}
 }
