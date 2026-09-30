@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -60,7 +61,10 @@ func TestBlockedAddr(t *testing.T) {
 		"240.0.0.1":                true, // reserved
 		"100::1":                   true, // discard-only
 		"2001:2::1":                true,
-		"2001:db8::1":              true, // documentation
+		"2001:10::1":               true,  // ORCHID
+		"2001:20::1":               true,  // ORCHIDv2
+		"2001:200::1":              false, // just above 2001::/23
+		"2001:db8::1":              true,  // documentation
 		"3fff::1":                  true,
 		"5f00::1":                  true,
 		"198.17.255.255":           false, // just below benchmarking
@@ -382,5 +386,32 @@ func TestConnectGivesEachAddressItsOwnDeadline(t *testing.T) {
 	}
 	if len(deadlines) != 2 || !deadlines[1].After(deadlines[0]) {
 		t.Fatalf("dial deadlines = %v, want a later deadline for the second address", deadlines)
+	}
+}
+
+// withExtension returns a ClientHello record with one more empty extension.
+func withExtension(t *testing.T, hello []byte, typ uint16) []byte {
+	t.Helper()
+	off := 5 + 4 + 2 + 32
+	off += 1 + int(hello[off])                           // session id
+	off += 2 + int(binary.BigEndian.Uint16(hello[off:])) // cipher suites
+	off += 1 + int(hello[off])                           // compression
+	out := append(bytes.Clone(hello), byte(typ>>8), byte(typ), 0, 0)
+	binary.BigEndian.PutUint16(out[off:], binary.BigEndian.Uint16(out[off:])+4)
+	binary.BigEndian.PutUint16(out[3:], binary.BigEndian.Uint16(out[3:])+4)
+	hs := uint32(out[6])<<16 | uint32(out[7])<<8 | uint32(out[8])
+	hs += 4
+	out[6], out[7], out[8] = byte(hs>>16), byte(hs>>8), byte(hs)
+	return out
+}
+
+func TestPeekSNIRefusesECH(t *testing.T) {
+	t.Parallel()
+	hello := clientHello(t, "example.com")
+	if _, _, ok := peekSNI(feed(withExtension(t, hello, 0x0a0a))); !ok {
+		t.Fatal("control hello with an unknown extension refused, want accepted")
+	}
+	if _, _, ok := peekSNI(feed(withExtension(t, hello, extECH))); ok {
+		t.Fatal("ECH hello accepted, want refused")
 	}
 }

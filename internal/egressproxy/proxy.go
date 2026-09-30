@@ -17,11 +17,15 @@ import (
 	"time"
 )
 
+// extECH is the encrypted_client_hello extension type.
+const extECH = 0xfe0d
+
 const (
 	peekTimeout   = 10 * time.Second
-	dialTimeout   = 10 * time.Second
-	maxHelloBytes = 1 << 17 // above the 64 KiB handshake message limit plus record framing
-	maxLogHost    = 253     // longest DNS name
+	dialTimeout   = 10 * time.Second // per resolve and per dial attempt
+	connectBudget = 3 * dialTimeout  // all dial attempts for one connection
+	maxHelloBytes = 1 << 17          // above the 64 KiB handshake message limit plus record framing
+	maxLogHost    = 253              // longest DNS name
 	maxDenyKeys   = 4096
 	overflowHost  = "(overflow)"
 )
@@ -35,7 +39,7 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("::/96"),           // IPv4-compatible
 	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64
 	netip.MustParsePrefix("64:ff9b:1::/48"),  // local NAT64
-	netip.MustParsePrefix("2001::/32"),       // Teredo
+	netip.MustParsePrefix("2001::/23"),       // IETF protocol assignments: Teredo, benchmarking, ORCHID
 	netip.MustParsePrefix("2002::/16"),       // 6to4
 	netip.MustParsePrefix("192.0.2.0/24"),    // documentation (TEST-NET-1)
 	netip.MustParsePrefix("192.88.99.0/24"),  // deprecated 6to4 relay anycast
@@ -44,7 +48,6 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("203.0.113.0/24"),  // documentation (TEST-NET-3)
 	netip.MustParsePrefix("240.0.0.0/4"),     // reserved
 	netip.MustParsePrefix("100::/64"),        // discard-only
-	netip.MustParsePrefix("2001:2::/48"),     // benchmarking
 	netip.MustParsePrefix("2001:db8::/32"),   // documentation
 	netip.MustParsePrefix("3fff::/20"),       // documentation
 	netip.MustParsePrefix("5f00::/16"),       // SRv6 SIDs
@@ -173,9 +176,13 @@ func (p *Proxy) connect(host string, port uint16) (net.Conn, string) {
 			return nil, "blocked_address"
 		}
 	}
+	budget, cancelBudget := context.WithTimeout(context.Background(), connectBudget)
+	defer cancelBudget()
 	for _, a := range addrs {
-		conn, err := p.dialOne(netip.AddrPortFrom(a.Unmap(), port))
-		if err == nil {
+		if budget.Err() != nil {
+			break
+		}
+		if conn, err := p.dialOne(budget, netip.AddrPortFrom(a.Unmap(), port)); err == nil {
 			return conn, ""
 		}
 	}
@@ -183,9 +190,9 @@ func (p *Proxy) connect(host string, port uint16) (net.Conn, string) {
 }
 
 // dialOne gives each address its own timeout, so one silent address cannot
-// starve the ones after it.
-func (p *Proxy) dialOne(addr netip.AddrPort) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+// starve the ones after it, while budget still bounds the whole connection.
+func (p *Proxy) dialOne(budget context.Context, addr netip.AddrPort) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(budget, dialTimeout)
 	defer cancel()
 	return p.dial(ctx, addr)
 }
@@ -221,6 +228,12 @@ func peekSNI(conn net.Conn) (sni string, read []byte, ok bool) {
 	abort := errors.New("sni peeked")
 	_ = tls.Server(rec, &tls.Config{
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			// The outer name of an ECH hello is not the name the upstream serves.
+			for _, ext := range hello.Extensions {
+				if ext == extECH {
+					return nil, abort
+				}
+			}
 			sni, ok = hello.ServerName, true
 			return nil, abort
 		},

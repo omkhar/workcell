@@ -276,6 +276,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestProxyTLSEndToEnd", "-count=1"),
 	},
 	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `if ext == extECH {`,
+		replacement:  `if false && ext == extECH {`,
+		label:        "egress proxy refuses ECH hellos",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestPeekSNIRefusesECH", "-count=1"),
+	},
+	{
 		relativePath: "internal/egressproxy/allowlist.go",
 		original:     `syscall.O_NOFOLLOW`,
 		replacement:  `0`,
