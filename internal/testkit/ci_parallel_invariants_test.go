@@ -58,6 +58,9 @@ func TestHostInvariantsRunInTheirOwnRequiredJob(t *testing.T) {
 	if !strings.Contains(validate, "if [[ \"${SKIP_HOST_INVARIANTS}\" != \"1\" ]]; then\n  echo \"[ci/validate] host launcher invariants\"\n  \"${ROOT_DIR}/scripts/verify-invariants.sh\"\nfi") {
 		t.Fatal("job-validate.sh must keep running verify-invariants.sh unless the skip flag is 1")
 	}
+	if !strings.Contains(validate, "if [[ \"${GITHUB_ACTIONS:-}\" == \"true\" ]]; then\n  SKIP_HOST_INVARIANTS=\"${WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS:-0}\"") {
+		t.Fatal("job-validate.sh must honor the skip flag only on a GitHub Actions runner")
+	}
 }
 
 // Caches are restored on every run and saved only by a push to main, so a pull
