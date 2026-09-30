@@ -45,7 +45,11 @@ committed="${tmp}/committed"
 mkdir "${tmp}/src" "${committed}"
 tar -C "${RUST_DIR}" --exclude=./vendor --exclude=./.cargo --exclude=./target -cf - . | tar -C "${tmp}/src" -xf -
 tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
-(cd "${tmp}/src" && cargo vendor --locked "${fresh}" >/dev/null)
+# A pull request controls the sources in Cargo.lock, so keep host Cargo, Git
+# and SSH state out of the fetch: a scratch CARGO_HOME and no Git configuration.
+(cd "${tmp}/src" && RUSTUP_HOME="${RUSTUP_HOME:-${HOME}/.rustup}" CARGO_HOME="${tmp}/cargo-home" \
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+  GIT_ALLOW_PROTOCOL=https GIT_TERMINAL_PROMPT=0 cargo vendor --locked "${fresh}" >/dev/null)
 
 # Newer cargo adds a "$comment" key to .cargo-checksum.json. Drop that key from
 # every such file in both trees, then compare the trees byte for byte. A
@@ -55,7 +59,13 @@ for tree in "${fresh}" "${committed}"; do
     for f; do jq -S "del(.\"\$comment\")" "$f" >"$0" && cp "$0" "$f" || exit 1; done
   ' "${tmp}/norm.json" {} +
 done
-if ! diff -r "${fresh}" "${committed}"; then
+# diff ignores file modes, so compare the executable files as well.
+executables() {
+  (cd "$1" && find . -type f -perm -u+x | sort)
+}
+exec_fresh="$(executables "${fresh}")"
+exec_committed="$(executables "${committed}")"
+if ! diff -r "${fresh}" "${committed}" || [[ "${exec_fresh}" != "${exec_committed}" ]]; then
   echo "runtime/container/rust/vendor differs from crates.io for the pinned Cargo.lock" >&2
   exit 1
 fi
