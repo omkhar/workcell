@@ -100,6 +100,9 @@ func TestValidatorCacheMountIsGatedOnHostUID(t *testing.T) {
 	lane := readRepoFile(t, "scripts", "ci", "run-validate-in-validator.sh")
 	for _, want := range []string{
 		`[[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)" ]]`,
+		`WORKCELL_VALIDATOR_CACHE_DIR must be an absolute path`,
+		`WORKCELL_VALIDATOR_CACHE_DIR must not be a symlink`,
+		`! -O "${WORKCELL_VALIDATOR_CACHE_DIR}"`,
 		`validator_cache="/workcell-validator-cache"`,
 		`workcell_ci_workspace_mount_spec "${WORKCELL_VALIDATOR_CACHE_DIR}" false "${validator_cache}"`,
 		`${cache_mount_args[@]+"${cache_mount_args[@]}"} \`,

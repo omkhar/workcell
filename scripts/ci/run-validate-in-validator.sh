@@ -126,7 +126,26 @@ validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" fal
 # (or would leave root-owned files in it), so they keep the in-container cache.
 cache_mount_args=()
 if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)" ]]; then
-  mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}"
+  # Fail closed: the source must be an absolute path whose final component is a
+  # real directory, owned by the host uid and closed to group and other, so a
+  # caller cannot aim this read-write mount at an unrelated host directory.
+  case "${WORKCELL_VALIDATOR_CACHE_DIR}" in
+    /*) ;;
+    *)
+      echo "WORKCELL_VALIDATOR_CACHE_DIR must be an absolute path" >&2
+      exit 1
+      ;;
+  esac
+  if [[ -L "${WORKCELL_VALIDATOR_CACHE_DIR}" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must not be a symlink" >&2
+    exit 1
+  fi
+  (umask 077 && mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}")
+  if [[ ! -d "${WORKCELL_VALIDATOR_CACHE_DIR}" || ! -O "${WORKCELL_VALIDATOR_CACHE_DIR}" ]] ||
+    [[ -n "$(find "${WORKCELL_VALIDATOR_CACHE_DIR}" -maxdepth 0 -perm /022)" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be a directory owned by the host uid and not group or other writable" >&2
+    exit 1
+  fi
   validator_cache="/workcell-validator-cache"
   cache_mount_args=(--mount "$(workcell_ci_workspace_mount_spec "${WORKCELL_VALIDATOR_CACHE_DIR}" false "${validator_cache}")")
 fi
