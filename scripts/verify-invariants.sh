@@ -6598,10 +6598,30 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
 
-# Nested branches topic/HEAD and topic/commondir are refs, not a redirect.
-git -C "${COMMONDIR_BRANCH_REPO}" branch topic/HEAD
-git -C "${COMMONDIR_BRANCH_REPO}" branch topic/commondir
-run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_BRANCH_REPO}" --dry-run >/tmp/workcell-commondir-nested.out 2>&1
+# A Git admin directory under refs can carry a redirect and must be rejected.
+COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
+git init -q -b master "${COMMONDIR_REFS_REPO}"
+git -C "${COMMONDIR_REFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_REFS_REPO}/.git/refs/admin"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_REFS_REPO}/.git/refs/admin/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_REFS_REPO}/.git/refs/admin/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REFS_REPO}" --dry-run >/tmp/workcell-commondir-refs.out 2>&1; then
+  echo "Expected repo with a Git admin directory under refs to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/refs/admin/commondir' /tmp/workcell-commondir-refs.out
+
+# A module symlink that dangles on the host can resolve inside the container.
+COMMONDIR_DANGLE_REPO="${COMMONDIR_ROOT}/dangling-link-repo"
+git init -q -b master "${COMMONDIR_DANGLE_REPO}"
+git -C "${COMMONDIR_DANGLE_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_DANGLE_REPO}/.git/modules"
+ln -s /workspace/admin "${COMMONDIR_DANGLE_REPO}/.git/modules/foo"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_DANGLE_REPO}" --dry-run >/tmp/workcell-commondir-dangle.out 2>&1; then
+  echo "Expected repo with a dangling module symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-dangle.out
 
 # An unreadable directory in the workspace must fail the Git directory inventory closed.
 if [[ "$(id -u)" -ne 0 ]]; then

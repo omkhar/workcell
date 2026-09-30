@@ -86,11 +86,15 @@ Workcell also masks Git execution-control paths for the workspace repository and
 its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 `worktrees`.
 
-Workcell refuses a safe-path workspace that has a Git `commondir` file beside a
-`HEAD` file outside `worktrees`. It also refuses a symlinked directory under
-`.git/modules`, and `.git/modules` itself when it is a symlink. Each makes Git read config and hooks from another directory,
-past the masks. It also refuses the workspace when it cannot list the Git
-directory. The check runs at launch. It does not stop a file that is created
+Workcell refuses a safe-path workspace in these cases. Each case can make Git
+read config and hooks from a directory that the masks do not cover.
+
+- A Git `commondir` file is beside a `HEAD` file outside `worktrees`.
+- A symlink is under `.git/modules`, or `.git/modules` is a symlink. The
+  launcher refuses the link even when it dangles on the host.
+
+Workcell also refuses the workspace when it cannot list the workspace or a Git
+directory. The checks run at launch. They do not stop a file that is created
 after launch.
 
 The Copilot adapter also masks Copilot settings, instructions, MCP files,

@@ -8060,11 +8060,12 @@ prepare_workspace_control_plane_shadow() {
     # A commondir file, or a symlinked module directory, makes Git read config
     # and hooks from another directory, past the masks below. A standard clone
     # has neither. The prune skips the directories the masks below replace. A
-    # commondir counts only beside a HEAD file, and the top-level refs and logs
-    # are pruned, so a branch or reflog named commondir is not a redirect. Bash drops the status of a process
+    # commondir counts only beside a HEAD file, so a branch or reflog named
+    # commondir is not a redirect. A module symlink counts even when it
+    # dangles on the host, because it can resolve inside the container. Bash drops the status of a process
     # substitution, so capture the walk status: an unreadable Git directory
     # must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o -path ./refs -prune -o -path ./logs -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path './modules' -o -path './modules/*' \) -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path './modules' -o -path './modules/*' \) -type l ! -name hooks ! -name config ! -name config.worktree -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi
