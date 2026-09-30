@@ -180,12 +180,6 @@ jobs:
               echo
               echo "No upstream refresh changes were detected."
               echo
-              if grep -q 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log"; then
-                echo "Held for manual classification:"
-                echo
-                grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /'
-                echo
-              fi
               echo "- generated: \`${generated_at}\`"
               echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo "- base ref: ${GITHUB_REF}"
@@ -227,6 +221,16 @@ jobs:
               cat "${diffstat_path}"
               echo '```'
             } > "${issue_body}"
+          fi
+
+          # Held releases show in every result branch, not only the no-change one.
+          if grep -q 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log"; then
+            {
+              echo
+              echo "## Held for manual classification"
+              echo
+              grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /'
+            } >> "${issue_body}"
           fi
 
           issues_json="$(
