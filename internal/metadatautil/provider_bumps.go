@@ -115,6 +115,11 @@ type ProviderBumpSources struct {
 	GeminiRegistryURL     string
 	ClaudeRegistryURL     string
 	ClaudeReleaseRootURL  string
+	// CodexCLISourceURLFmt and CodexSubcommandFixturePath enable the
+	// plan-time Codex command namespace check. An empty fixture path skips
+	// it; prepare-codex-subcommand-fixture still enforces it at apply time.
+	CodexCLISourceURLFmt       string
+	CodexSubcommandFixturePath string
 }
 
 type npmRegistryMetadata struct {
@@ -169,6 +174,7 @@ func DefaultProviderBumpSources() ProviderBumpSources {
 		GeminiRegistryURL:     defaultProviderBumpGeminiRegistryURL,
 		ClaudeRegistryURL:     defaultProviderBumpClaudeRegistryURL,
 		ClaudeReleaseRootURL:  defaultProviderBumpClaudeReleaseRoot,
+		CodexCLISourceURLFmt:  defaultCodexCLISourceAPIURLFormat,
 	}
 }
 
@@ -297,6 +303,12 @@ func PlanProviderBumps(policyPath, dockerfilePath, providersPackageJSONPath stri
 	codexSelection, err := selectCodexStable(codexCurrent, cutoff, policy.Providers[providerid.Codex].MaxVersion, sources, client)
 	if err != nil {
 		return nil, err
+	}
+	if codexSelection.Changed && sources.CodexSubcommandFixturePath != "" {
+		codexSelection, err = holdCodexOnUnclassifiedCLISurface(codexSelection, sources, client)
+		if err != nil {
+			return nil, err
+		}
 	}
 	claudeSelection, err := selectClaudeStable(
 		claudeCurrent,
@@ -550,6 +562,36 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 		}, nil
 	}
 	return currentSelection(time.Time{}), nil
+}
+
+// holdCodexOnUnclassifiedCLISurface keeps the current Codex pin when the
+// target release changes the classified command namespace. Other providers and
+// upstream pins still refresh. Fetch, provenance, and fixture errors stay fatal.
+func holdCodexOnUnclassifiedCLISurface(selection ProviderBumpSelection, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
+	subcommands, err := fetchCodexSubcommands(selection.TargetVersion, fmt.Sprintf(sources.CodexCLISourceURLFmt, selection.TargetVersion), client)
+	if err != nil {
+		return ProviderBumpSelection{}, err
+	}
+	fixture, err := os.ReadFile(sources.CodexSubcommandFixturePath)
+	if err != nil {
+		return ProviderBumpSelection{}, err
+	}
+	_, err = updateCodexSubcommandFixture(selection.TargetVersion, fixture, subcommands)
+	var namespaceErr *codexNamespaceChangeError
+	if !errors.As(err, &namespaceErr) {
+		return selection, err
+	}
+	held := ProviderBumpSkippedRelease{
+		Version:     selection.TargetVersion,
+		PublishedAt: selection.PublishedAt,
+		Reason:      fmt.Sprintf("unclassified-cli-surface added=%v removed=%v", namespaceErr.added, namespaceErr.removed),
+	}
+	return ProviderBumpSelection{
+		Channel:         selection.Channel,
+		CurrentVersion:  selection.CurrentVersion,
+		TargetVersion:   selection.CurrentVersion,
+		SkippedReleases: append(selection.SkippedReleases, held),
+	}, nil
 }
 
 func codexReleaseChecksums(release codexReleaseMetadata) (map[string]string, []string, bool) {

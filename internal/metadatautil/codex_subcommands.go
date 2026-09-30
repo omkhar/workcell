@@ -45,8 +45,9 @@ type githubContentsFile struct {
 // PrepareCodexSubcommandFixture fetches the authoritative CLI source at the
 // exact pinned release tag and prepares a replacement fixture. It only advances
 // the version stamp when the complete command namespace is unchanged. A new or
-// removed command therefore stops automated provider refresh before any pin is
-// applied and requires an explicit policy classification review.
+// removed command therefore stops the apply step before any pin is applied and
+// requires an explicit policy classification review. Provider bump planning
+// normally holds Codex back first (holdCodexOnUnclassifiedCLISurface).
 func PrepareCodexSubcommandFixture(version, fixturePath, outputPath string) error {
 	if !stableVersionPattern.MatchString(version) {
 		return fmt.Errorf("Codex fixture version must be an exact stable version, got %q", version)
@@ -59,27 +60,9 @@ func prepareCodexSubcommandFixture(version, fixturePath, outputPath, sourceURL s
 	if fixturePath == outputPath {
 		return errors.New("Codex fixture output must be a separate prepared file")
 	}
-	var sourceFile githubContentsFile
-	if err := fetchJSON(client, sourceURL, &sourceFile); err != nil {
-		return fmt.Errorf("fetch authoritative Codex CLI source for %s: %w", version, err)
-	}
-	if sourceFile.Type != "file" || sourceFile.Encoding != "base64" || !codexGitBlobSHAPattern.MatchString(sourceFile.SHA) {
-		return fmt.Errorf("authoritative Codex CLI source for %s has malformed GitHub content metadata", version)
-	}
-	encoded := strings.ReplaceAll(sourceFile.Content, "\n", "")
-	source, err := base64.StdEncoding.DecodeString(encoded)
+	subcommands, err := fetchCodexSubcommands(version, sourceURL, client)
 	if err != nil {
-		return fmt.Errorf("decode authoritative Codex CLI source for %s: %w", version, err)
-	}
-	if len(source) == 0 || len(source) > maxCodexCLISourceBytes {
-		return fmt.Errorf("authoritative Codex CLI source for %s has %d decoded bytes, want 1..%d", version, len(source), maxCodexCLISourceBytes)
-	}
-	if actualSHA := codexGitBlobObjectID(source); sourceFile.SHA != actualSHA {
-		return fmt.Errorf("authoritative Codex CLI source for %s disagrees with its Git blob SHA: metadata=%s actual=%s", version, sourceFile.SHA, actualSHA)
-	}
-	subcommands, err := parseCodexSubcommands(source)
-	if err != nil {
-		return fmt.Errorf("parse authoritative Codex CLI source for %s: %w", version, err)
+		return err
 	}
 	fixtureInfo, err := os.Lstat(fixturePath)
 	if err != nil {
@@ -102,6 +85,34 @@ func prepareCodexSubcommandFixture(version, fixturePath, outputPath, sourceURL s
 		return err
 	}
 	return writePreparedCodexFixture(outputPath, updated)
+}
+
+// fetchCodexSubcommands fetches the authoritative CLI source at the exact
+// release tag, binds it to its Git blob SHA, and parses its command namespace.
+func fetchCodexSubcommands(version, sourceURL string, client *http.Client) ([]string, error) {
+	var sourceFile githubContentsFile
+	if err := fetchJSON(client, sourceURL, &sourceFile); err != nil {
+		return nil, fmt.Errorf("fetch authoritative Codex CLI source for %s: %w", version, err)
+	}
+	if sourceFile.Type != "file" || sourceFile.Encoding != "base64" || !codexGitBlobSHAPattern.MatchString(sourceFile.SHA) {
+		return nil, fmt.Errorf("authoritative Codex CLI source for %s has malformed GitHub content metadata", version)
+	}
+	encoded := strings.ReplaceAll(sourceFile.Content, "\n", "")
+	source, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode authoritative Codex CLI source for %s: %w", version, err)
+	}
+	if len(source) == 0 || len(source) > maxCodexCLISourceBytes {
+		return nil, fmt.Errorf("authoritative Codex CLI source for %s has %d decoded bytes, want 1..%d", version, len(source), maxCodexCLISourceBytes)
+	}
+	if actualSHA := codexGitBlobObjectID(source); sourceFile.SHA != actualSHA {
+		return nil, fmt.Errorf("authoritative Codex CLI source for %s disagrees with its Git blob SHA: metadata=%s actual=%s", version, sourceFile.SHA, actualSHA)
+	}
+	subcommands, err := parseCodexSubcommands(source)
+	if err != nil {
+		return nil, fmt.Errorf("parse authoritative Codex CLI source for %s: %w", version, err)
+	}
+	return subcommands, nil
 }
 
 // codexGitBlobObjectID computes the SHA-1 object ID mandated by Git's current
@@ -488,12 +499,24 @@ func updateCodexSubcommandFixture(version string, fixture []byte, authoritative 
 	}
 	added, removed := stringSetDifference(authoritative, existing), stringSetDifference(existing, authoritative)
 	if len(added) != 0 || len(removed) != 0 {
-		return nil, fmt.Errorf("Codex %s changes the classified subcommand namespace (added=%v removed=%v); review and classify the new authoritative enum before updating the fixture", version, added, removed)
+		return nil, &codexNamespaceChangeError{version: version, added: added, removed: removed}
 	}
 	header := strings.Join(lines[:firstToken], "\n")
 	header = codexFixtureStampPattern.ReplaceAllString(header, "# codex-version: "+version)
 	header = codexFixtureSourceTagPattern.ReplaceAllString(header, "openai/codex tag rust-v"+version)
 	return []byte(strings.TrimRight(header, "\n") + "\n" + strings.Join(authoritative, "\n") + "\n"), nil
+}
+
+// codexNamespaceChangeError reports an authoritative Codex command namespace
+// that differs from the classified fixture. Provider bump planning holds back
+// only Codex on this error; every other fixture error stays fatal.
+type codexNamespaceChangeError struct {
+	version        string
+	added, removed []string
+}
+
+func (e *codexNamespaceChangeError) Error() string {
+	return fmt.Sprintf("Codex %s changes the classified subcommand namespace (added=%v removed=%v); review and classify the new authoritative enum before updating the fixture", e.version, e.added, e.removed)
 }
 
 func stringSetDifference(left, right []string) []string {

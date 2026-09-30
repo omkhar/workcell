@@ -120,7 +120,7 @@ if [[ "${mode}" == "apply" ]]; then
   export PATH="${npm_bin_dir}:${PATH}"
 fi
 
-plan_cmd=(go run ./cmd/workcell-citools provider-bump-plan "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}")
+plan_cmd=(go run ./cmd/workcell-citools provider-bump-plan "${POLICY_PATH}" "${DOCKERFILE_PATH}" "${PROVIDERS_PACKAGE_JSON_PATH}" "${CODEX_SUBCOMMAND_FIXTURE_PATH}")
 if [[ -n "${now_override}" ]]; then
   plan_cmd+=("${now_override}")
 fi
