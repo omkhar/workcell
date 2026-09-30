@@ -116,6 +116,27 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.WriteFile(refSum, origSum, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Only the top-level member is exempt: a nested one must still differ.
+	if err := os.WriteFile(libSum, []byte(strings.Replace(string(origSum), "\"files\":{", "\"files\":{\"$comment\":\"hidden\",", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("nested comment member accepted: %s", out)
+	}
+	if err := os.WriteFile(libSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A link outside vendor is copied for Cargo, so it must be rejected too.
+	srcLink := filepath.Join(filepath.Dir(vendor), "member-link")
+	if err := os.Symlink("/etc/hosts", srcLink); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("symlink outside vendor accepted: %s", out)
+	}
+	if err := os.Remove(srcLink); err != nil {
+		t.Fatal(err)
+	}
 	// A lock file that names a Git source must be rejected before Cargo runs.
 	gitLock := cleanLock + "[[package]]\nname = \"evil\"\nsource = \"git+https://example.invalid/evil#abc\"\n"
 	if err := os.WriteFile(lock, []byte(gitLock), 0o644); err != nil {

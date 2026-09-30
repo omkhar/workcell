@@ -30,9 +30,11 @@ for part in runtime runtime/container runtime/container/rust runtime/container/r
     exit 1
   fi
 done
-odd="$(find "${RUST_DIR}/vendor" ! -type f ! -type d)"
+# Cargo follows links in path dependencies too, so scan every source file that
+# is copied for Cargo, not only vendor.
+odd="$(find "${RUST_DIR}" \( -path "${RUST_DIR}/target" -o -path "${RUST_DIR}/.cargo" \) -prune -o ! -type f ! -type d -print)"
 if [[ -n "${odd}" ]]; then
-  echo "vendor tree contains a link or special file: ${odd}" >&2
+  echo "Rust tree contains a link or special file: ${odd}" >&2
   exit 1
 fi
 
@@ -76,7 +78,7 @@ tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
 # byte. The only accepted difference is that member. A JSON parser would hide
 # duplicate keys and formatting, so sed cuts the exact text instead.
 # shellcheck disable=SC2016 # a sed expression; the shell must not expand it
-comment_member='s/"\$comment":"[^"\\]*",//; s/,"\$comment":"[^"\\]*"\}/}/'
+comment_member='s/^\{"\$comment":"[^"\\]*",/{/; s/,"\$comment":"[^"\\]*"\}$/}/'
 for tree in "${fresh}" "${committed}"; do
   find "${tree}" -name .cargo-checksum.json -exec sh -c '
     expr=$1
