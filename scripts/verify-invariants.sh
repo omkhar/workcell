@@ -6577,7 +6577,7 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   echo "Expected repo with a redirecting .git/commondir to be rejected" >&2
   exit 1
 fi
-grep -q 'This workspace has a Git commondir file or symlinked module directory that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
+grep -q 'This workspace has a Git commondir file or symlinked module path that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
 
 # A branch named commondir is a ref, not a redirect, and must still launch.
 COMMONDIR_BRANCH_REPO="${COMMONDIR_ROOT}/branch-repo"
@@ -6596,7 +6596,19 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   echo "Expected repo with a symlinked module admin directory to be rejected" >&2
   exit 1
 fi
-grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
+
+# A dangling module config symlink can resolve inside the container.
+COMMONDIR_CONFIG_REPO="${COMMONDIR_ROOT}/config-link-repo"
+git init -q -b master "${COMMONDIR_CONFIG_REPO}"
+git -C "${COMMONDIR_CONFIG_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_CONFIG_REPO}/.git/modules/foo"
+ln -s /workspace/evil-config "${COMMONDIR_CONFIG_REPO}/.git/modules/foo/config"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_CONFIG_REPO}" --dry-run >/tmp/workcell-commondir-config.out 2>&1; then
+  echo "Expected repo with a dangling module config symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo/config' /tmp/workcell-commondir-config.out
 
 # A Git admin directory under refs can carry a redirect and must be rejected.
 COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
@@ -6621,7 +6633,7 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   echo "Expected repo with a dangling module symlink to be rejected" >&2
   exit 1
 fi
-grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-dangle.out
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-dangle.out
 
 # An unreadable directory in the workspace must fail the Git directory inventory closed.
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -6650,7 +6662,7 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   echo "Expected repo with a symlinked .git/modules to be rejected" >&2
   exit 1
 fi
-grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules' /tmp/workcell-commondir-parent.out
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules' /tmp/workcell-commondir-parent.out
 
 # An unreadable Git directory must fail the commondir inventory closed. Root
 # ignores directory modes, so the probe runs only for a non-root user.

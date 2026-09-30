@@ -90,7 +90,7 @@ Workcell refuses a safe-path workspace in these cases. Each case can make Git
 read config and hooks from a directory that the masks do not cover.
 
 - A Git `commondir` file is beside a `HEAD` file outside `worktrees`.
-- A symlink is under `.git/modules`, or `.git/modules` is a symlink. The
+- A symlink is anywhere under `.git/modules`, or `.git/modules` is a symlink. The
   launcher refuses the link even when it dangles on the host.
 
 Workcell also refuses the workspace when it cannot list the workspace or a Git
