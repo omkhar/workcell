@@ -67,7 +67,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				remOld--
 			case strings.HasPrefix(line, "+"):
 				remNew--
-			case line == "" || strings.HasPrefix(line, " "):
+			case strings.HasPrefix(line, " "):
 				remOld--
 				remNew--
 			default:

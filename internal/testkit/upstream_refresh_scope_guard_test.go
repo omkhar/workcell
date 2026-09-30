@@ -127,6 +127,12 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch:   scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "\\evil\n",
 			wantErr: "unrecognized patch line",
 		},
+		{
+			name: "unprefixed blank line in hunk",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1 +1 @@\n\nnext\n",
+			wantErr: "unrecognized hunk line",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",
