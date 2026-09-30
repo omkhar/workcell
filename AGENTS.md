@@ -246,9 +246,6 @@ argument again. Do not start another review round to settle them.
   its addressed threads; and require a clean marker for the current head before
   merge. Repeat the loop after every push. When available, use the Codex PR
   review loop skill for the exact response and SHA checks.
-- Exception: upstream-refresh bump PRs that pass scope-guard. Codex review is
-  advisory for these PRs. They auto-merge after the 48 h cool-off when all
-  required checks pass.
 - Actionable comments must be addressed or explicitly dispositioned before
   merge.
 - Re-check comments and review threads after CI turns green and immediately

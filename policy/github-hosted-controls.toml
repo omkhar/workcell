@@ -23,8 +23,8 @@ block_deletions = true
 #   owner/thread gate so merges remain workable without an admin bypass
 mode = "review-gated"
 # Optional: numeric ID of the upstream-refresh GitHub App. The review ruleset may
-# list at most one Integration/pull_request bypass actor. When this key is set,
-# that actor's actor_id must equal it; when absent, any positive actor_id passes.
+# list at most one Integration/pull_request bypass actor. That actor's actor_id
+# must equal this key. Without this key, no Integration bypass actor is allowed.
 # upstream_refresh_app_id = 123456
 
 [release_environment]

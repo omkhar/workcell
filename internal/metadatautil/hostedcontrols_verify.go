@@ -31,6 +31,7 @@ type hostedControlInputs struct {
 type hostedRulesetControls struct {
 	branchIntegrity    map[string]any
 	branchReview       map[string]any
+	duplicate          string
 	branchStatusChecks map[string]any
 	tagRelease         map[string]any
 }
@@ -540,13 +541,24 @@ func isReleaseTagRuleset(ruleset map[string]any) bool {
 
 func classifyDefaultBranchRuleset(controls *hostedRulesetControls, ruleset map[string]any) {
 	if hasIntegrityRules(ruleset) {
+		controls.noteDuplicate(controls.branchIntegrity, "integrity")
 		controls.branchIntegrity = ruleset
 	}
 	if hostedRulesetRule(ruleset, "pull_request") != nil {
+		controls.noteDuplicate(controls.branchReview, "review")
 		controls.branchReview = ruleset
 	}
 	if hostedRulesetRule(ruleset, "required_status_checks") != nil {
+		controls.noteDuplicate(controls.branchStatusChecks, "status-check")
 		controls.branchStatusChecks = ruleset
+	}
+}
+
+// noteDuplicate records a second active default-branch ruleset of one kind, so
+// the bypass checks never look at only the last match.
+func (controls *hostedRulesetControls) noteDuplicate(existing map[string]any, kind string) {
+	if existing != nil && controls.duplicate == "" {
+		controls.duplicate = kind
 	}
 }
 
@@ -589,6 +601,9 @@ func hostedRulesetRule(ruleset map[string]any, ruleType string) map[string]any {
 }
 
 func verifyHostedRulesetShape(controls hostedRulesetControls, expectedAppID int, repo string) error {
+	if controls.duplicate != "" {
+		return fmt.Errorf("more than one active default-branch %s ruleset on %s", controls.duplicate, repo)
+	}
 	if controls.branchIntegrity == nil {
 		return fmt.Errorf("missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
 	}
@@ -602,7 +617,7 @@ func verifyHostedRulesetShape(controls hostedRulesetControls, expectedAppID int,
 }
 
 // expectedAppID is the optional branch_review.upstream_refresh_app_id policy
-// value; zero means the policy does not pin the App.
+// value; zero means no pin, and then no Integration bypass actor is allowed.
 func verifyHostedRulesetBypasses(controls hostedRulesetControls, expectedAppID int, repo string) error {
 	if actors, _ := controls.branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
 		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
@@ -642,8 +657,8 @@ func requireReviewBypassShape(ruleset map[string]any, expectedAppID int, repo st
 		}
 		apps++
 		id, _ := raw.(map[string]any)["actor_id"].(float64)
-		if apps > 1 || id <= 0 || id != float64(int(id)) || (expectedAppID > 0 && int(id) != expectedAppID) {
-			return fmt.Errorf("ruleset %v on %s allows at most one Integration bypass actor with the expected positive actor_id", ruleset["name"], repo)
+		if apps > 1 || id <= 0 || id != float64(int(id)) || expectedAppID == 0 || int(id) != expectedAppID {
+			return fmt.Errorf("ruleset %v on %s allows at most one Integration bypass actor, and its actor_id must equal branch_review.upstream_refresh_app_id", ruleset["name"], repo)
 		}
 	}
 	return nil
