@@ -69,15 +69,32 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 			}
 		})
 	}
-	// A quote before a hash must not hide a definition.
-	quoted := "\nx=\" #\"; render_allowlist_apply_plan() { echo unsafe; }\n"
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + quoted); err == nil {
-		t.Fatal("validator accepted a definition behind a quoted hash")
+	// A quote or an escape before a hash must not hide a definition.
+	for name, hidden := range map[string]string{
+		"double quoted hash": "\nx=\" #\"; render_allowlist_apply_plan() { echo unsafe; }\n",
+		"single quoted hash": "\nx=' #'; render_allowlist_apply_plan() { echo unsafe; }\n",
+		"escaped hash":       "\nx=\\# ; render_allowlist_apply_plan() { echo unsafe; }\n",
+		"hash inside word":   "\nx=a#b; render_allowlist_apply_plan() { echo unsafe; }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + hidden); err == nil {
+				t.Fatal("validator accepted a definition behind a hash that is not a comment")
+			}
+		})
 	}
-	// A message that names the function without a definition shape passes.
-	message := "\necho \"render_allowlist_apply_plan failed\" >&2\n"
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + message); err != nil && strings.Contains(err.Error(), "definition") {
-		t.Fatalf("harmless mention rejected: %v", err)
+	// A comment or a message that names the function passes, definition shape
+	// included, because bash ignores it.
+	for name, harmless := range map[string]string{
+		"comment with shape": "\n# render_allowlist_apply_plan() emits the VM plan\n",
+		"trailing comment":   "\ntrue # function render_allowlist_apply_plan { }\n",
+		"message":            "\necho \"render_allowlist_apply_plan failed\" >&2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + harmless)
+			if err != nil && strings.Contains(err.Error(), "definition") {
+				t.Fatalf("harmless mention rejected: %v", err)
+			}
+		})
 	}
 
 	// Moving the endpoint loop across the first heredoc boundary keeps every

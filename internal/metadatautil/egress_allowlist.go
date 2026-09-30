@@ -37,13 +37,11 @@ var planDefinition = regexp.MustCompile(`(function\s+)?render_allowlist_apply_pl
 func ValidateColimaEgressAtomicSwap(script string) error {
 	// Bash runs the last definition of a name, so a reviewed copy kept ahead of
 	// a second definition would pass the checks below. Count every text that has
-	// the shape of a definition, after joining line continuations. Comments and
-	// quotes are not stripped: a parser that strips them can be led to drop a
-	// real definition, so a definition-shaped mention in a comment fails too. A
-	// definition that bash assembles at run time is outside what a static check
-	// can close; the replay in scripts/verify-invariants.sh covers the plan the
-	// real apply path captures.
-	if len(planDefinition.FindAllString(strings.ReplaceAll(script, "\\\n", " "), -1)) != 1 {
+	// the shape of a definition once continuations are joined and comments are
+	// dropped. A definition that bash assembles at run time is outside what a
+	// static check can close; the replay in scripts/verify-invariants.sh covers
+	// the plan the real apply path captures.
+	if len(planDefinition.FindAllString(stripShellComments(strings.ReplaceAll(script, "\\\n", " ")), -1)) != 1 {
 		return errors.New("Expected exactly one render_allowlist_apply_plan definition")
 	}
 	plan, stream := applyPlanText(script)
@@ -63,6 +61,45 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 		return fmt.Errorf("Expected dual-stack allowlist apply plan to equal the reviewed plan text (digest %s)", got)
 	}
 	return nil
+}
+
+// stripShellComments removes each comment: a # outside quotes that starts a word
+// runs to the end of its line. A backslash escapes the next byte outside single
+// quotes, so \# and a quoted # are text. A quote left open at the end of the
+// text is read as open to the end, which keeps later text and so fails closed.
+func stripShellComments(text string) string {
+	var out strings.Builder
+	var quote byte
+	for index := 0; index < len(text); index++ {
+		character := text[index]
+		switch {
+		case quote == '\'':
+			if character == '\'' {
+				quote = 0
+			}
+		case character == '\\' && index+1 < len(text):
+			out.WriteByte(character)
+			index++
+			character = text[index]
+		case quote == '"':
+			if character == '"' {
+				quote = 0
+			}
+		case character == '\'' || character == '"':
+			quote = character
+		case character == '#' && (index == 0 || strings.ContainsRune(" \t\n;&|(", rune(text[index-1]))):
+			for index < len(text) && text[index] != '\n' {
+				index++
+			}
+			if index < len(text) {
+				character = '\n'
+			} else {
+				continue
+			}
+		}
+		out.WriteByte(character)
+	}
+	return out.String()
 }
 
 func applyPlanDigestOf(stream string) string {
