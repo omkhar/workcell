@@ -52,47 +52,18 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		})
 	}
 
-	// A second definition of the plan function replaces the reviewed one, in
-	// any valid spelling. A comment or a message that names it does not.
+	// Definitions and commands that bash assembles or hides in any spelling
+	// change the script, so the digest rejects each.
 	for name, extra := range map[string]string{
-		"later definition":    "\nrender_allowlist_apply_plan() {\n  echo unsafe\n}\n",
-		"function keyword":    "\nfunction render_allowlist_apply_plan {\n  echo unsafe\n}\n",
-		"spaced parentheses":  "\nrender_allowlist_apply_plan () { echo unsafe; }\n",
-		"tab after keyword":   "\nfunction\trender_allowlist_apply_plan { echo unsafe; }\n",
-		"continued keyword":   "\nfunction \\\nrender_allowlist_apply_plan { echo unsafe; }\n",
-		"indented definition": "\n  render_allowlist_apply_plan() { echo unsafe; }\n",
-		"after a separator":   "\ntrue; render_allowlist_apply_plan() { echo unsafe; }\n",
+		"later definition":     "\nrender_allowlist_apply_plan() {\n  echo unsafe\n}\n",
+		"quoted hash":          "\nx=\" #\"; render_allowlist_apply_plan() { echo unsafe; }\n",
+		"comment continuation": "\n# note \\\nrender_allowlist_apply_plan() { echo unsafe; }\n",
+		"eval assembled":       "\neval 'render_allowlist_'apply'_plan() { echo unsafe; }'\n",
+		"comment edit":         "\n# render_allowlist_apply_plan() emits the VM plan\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + extra); err == nil {
-				t.Fatal("validator accepted a second plan definition")
-			}
-		})
-	}
-	// A quote or an escape before a hash must not hide a definition.
-	for name, hidden := range map[string]string{
-		"double quoted hash": "\nx=\" #\"; render_allowlist_apply_plan() { echo unsafe; }\n",
-		"single quoted hash": "\nx=' #'; render_allowlist_apply_plan() { echo unsafe; }\n",
-		"escaped hash":       "\nx=\\# ; render_allowlist_apply_plan() { echo unsafe; }\n",
-		"hash inside word":   "\nx=a#b; render_allowlist_apply_plan() { echo unsafe; }\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + hidden); err == nil {
-				t.Fatal("validator accepted a definition behind a hash that is not a comment")
-			}
-		})
-	}
-	// A comment or a message that names the function passes, definition shape
-	// included, because bash ignores it.
-	for name, harmless := range map[string]string{
-		"comment with shape": "\n# render_allowlist_apply_plan() emits the VM plan\n",
-		"trailing comment":   "\ntrue # function render_allowlist_apply_plan { }\n",
-		"message":            "\necho \"render_allowlist_apply_plan failed\" >&2\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + harmless)
-			if err != nil && strings.Contains(err.Error(), "definition") {
-				t.Fatalf("harmless mention rejected: %v", err)
+				t.Fatal("validator accepted an edited script")
 			}
 		})
 	}

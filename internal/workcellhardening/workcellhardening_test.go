@@ -5609,14 +5609,14 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 			mutate: func(f map[string]string) {
 				f[rel] = strings.Replace(f[rel], "sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", "sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS\nsudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", 1)
 			},
-			wantErr: "Expected dual-stack allowlist apply plan to equal the reviewed plan text",
+			wantErr: "Expected the Colima egress allowlist script to equal the reviewed script",
 		},
 		{
 			name: "live chain flushed in block",
 			mutate: func(f map[string]string) {
 				f[rel] = strings.Replace(f[rel], "sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", "sudo ip6tables \"-F\" WORKCELL_EGRESS6\nsudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", 1)
 			},
-			wantErr: "Expected dual-stack allowlist apply plan to equal the reviewed plan text",
+			wantErr: "Expected the Colima egress allowlist script to equal the reviewed script",
 		},
 		{
 			name: "iptables-restore swap missing",
