@@ -3805,6 +3805,46 @@ if grep -q 'ambient-docker-client' "${DETACHED_CAPTURE_RECORD}"; then
   exit 1
 fi
 
+# docker cp without -L copies an in-container symlink as a host symlink. The
+# stub reproduces that: a container actor must not plant a host link at the
+# capture destination or make the launcher chmod the link target.
+SYMLINK_CAPTURE_DIR="${DETACHED_STATE_DIR}/symlink-capture"
+mkdir -p "${SYMLINK_CAPTURE_DIR}/audit"
+printf 'victim\n' >"${SYMLINK_CAPTURE_DIR}/victim"
+chmod 0755 "${SYMLINK_CAPTURE_DIR}/victim"
+printf 'preexisting-trace\n' >"${SYMLINK_CAPTURE_DIR}/trace.log"
+bash -lc '
+  set -euo pipefail
+  source "$1"
+  trap - EXIT
+  COLIMA_PROFILE="wcl-detached-fixture"
+  SESSION_AUDIT_STATE_FILE="$2/audit/session-assurance"
+  SESSION_AUDIT_CONTAINER_FILE="/var/lib/workcell/session-assurance"
+  FILE_TRACE_LOG_PATH="$2/trace.log"
+  SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
+  VICTIM="$2/victim"
+  revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+  run_profile_docker_command() {
+    rm -f "$4"
+    ln -s "${VICTIM}" "$4"
+  }
+  capture_session_audit_state "workcell-session-fixture"
+  capture_session_file_trace "workcell-session-fixture"
+' _ "${WORKCELL_FUNCTIONS_COPY}" "${SYMLINK_CAPTURE_DIR}"
+if [[ -L "${SYMLINK_CAPTURE_DIR}/audit/session-assurance" || -L "${SYMLINK_CAPTURE_DIR}/trace.log" ]]; then
+  echo "Session capture published a container-planted symlink on the host" >&2
+  exit 1
+fi
+if [[ -z "$(find "${SYMLINK_CAPTURE_DIR}/victim" -perm 0755)" ]]; then
+  echo "Session capture changed the mode of a container-chosen host file" >&2
+  exit 1
+fi
+grep -qx 'preexisting-trace' "${SYMLINK_CAPTURE_DIR}/trace.log"
+if [[ -n "$(find "${SYMLINK_CAPTURE_DIR}" -name '.workcell-cp.*')" ]]; then
+  echo "Session capture left a staging directory behind" >&2
+  exit 1
+fi
+
 mkdir -p "${DETACHED_STATE_DIR}" "$(dirname "${DETACHED_WORKSPACE}")"
 cat >"${DETACHED_DEBUG_LOG}" <<EOF
 debug-log: detached session observability fixture
