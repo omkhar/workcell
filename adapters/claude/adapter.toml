@@ -1,6 +1,4 @@
-# Workcell adapter manifest. Schema and loader: internal/adapters/manifest.go.
-# Nothing reads this file at runtime yet. The parity test in
-# internal/adapters/manifest_test.go keeps it equal to the current tables.
+# Workcell adapter manifest (not read at runtime yet); see adapters/README.md.
 
 schema = 1
 id = "claude"

@@ -106,11 +106,11 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 
 // providerEndpoints runs provider_endpoints from script under an xtrace that
 // prefixes each executed command with its line number, so the trace names the
-// case arm that ran.
+// case arm that ran. The trace starts with the function as bash parsed it.
 func providerEndpoints(t *testing.T, script, id string) (out, trace string, code int) {
 	t.Helper()
 	cmd := exec.Command("bash", "--noprofile", "--norc", "-c",
-		`source "$1" && PS4='+$LINENO ' && set -x && provider_endpoints "$2"`, "bash", script, id)
+		`source "$1" && declare -f provider_endpoints >&2 && PS4='+$LINENO ' && set -x && provider_endpoints "$2"`, "bash", script, id)
 	cmd.Dir = repoRoot
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	var stderr strings.Builder
@@ -133,17 +133,11 @@ func endpointRowAbsent(t *testing.T, script, id string) bool {
 	if unknownCode != 1 || unknownOut != "" || !strings.Contains(unknownTrace, "return 1") {
 		t.Fatalf("provider_endpoints probe cannot detect the default arm (exit %d, out %q): %s", unknownCode, unknownOut, unknownTrace)
 	}
-	// A pattern list with the wildcard ("id | *)") runs the default arm too, so
-	// also reject the id anywhere in the function as bash parsed it.
-	cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && declare -f provider_endpoints`, "bash", script)
-	cmd.Dir = repoRoot
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	body, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("declare -f provider_endpoints: %v", err)
-	}
+	// A pattern list with the wildcard ("id | *)") runs the default arm too. The
+	// trace starts with the parsed function, so an id there also makes the
+	// replaced trace differ.
 	out, trace, code := providerEndpoints(t, script, id)
-	return code == 1 && out == "" && strings.ReplaceAll(trace, id, unknown) == unknownTrace && !strings.Contains(string(body), id)
+	return code == 1 && out == "" && strings.ReplaceAll(trace, id, unknown) == unknownTrace
 }
 
 func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
@@ -262,10 +256,8 @@ func rustTokens(src string) ([]string, error) {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			i++
 		case strings.HasPrefix(src[i:], "//"):
-			if end := strings.IndexByte(src[i:], '\n'); end >= 0 {
-				i += end
-			} else {
-				i = len(src)
+			for i < len(src) && src[i] != '\n' {
+				i++
 			}
 		case strings.HasPrefix(src[i:], "/*"):
 			depth := 0
@@ -378,50 +370,35 @@ func rustLaunchTargets(source string) [][]string {
 	if len(start) != 1 {
 		return nil
 	}
-	// The table is the first "[" after "=" through its matching "]".
-	i := slices.Index(tokens[start[0]:], "=")
-	if i < 0 {
+	// The declaration reads "const LAUNCH_TARGETS: &[LaunchTarget] = &[...];".
+	// The table runs to the next ";" token; the whole-table match below
+	// rejects anything else in that span.
+	head := []string{":", "&", "[", "LaunchTarget", "]", "=", "&"}
+	rest := tokens[start[0]+1:]
+	end := slices.Index(rest, ";")
+	if end < len(head) || !slices.Equal(rest[:len(head)], head) {
 		return nil
 	}
-	i += start[0]
-	for i < len(tokens) && tokens[i] != "[" {
-		i++
+	// Any other shape (an attribute, a macro, a const or escaped field, a
+	// provider row with other than two invocations) could hide a row, so
+	// reject it instead of skipping it.
+	table := strings.Join(rest[len(head):end], " ")
+	if !rustLaunchTable.MatchString(table) {
+		return nil
 	}
-	for depth, j := 0, i; j < len(tokens); j++ {
-		switch tokens[j] {
-		case "[":
-			depth++
-		case "]":
-			depth--
-		}
-		if depth == 0 {
-			// Any other shape (an attribute, a macro, a const or escaped field, a
-			// provider row with other than two invocations) could hide a row, so
-			// reject it instead of skipping it.
-			table := strings.Join(tokens[i:j+1], " ")
-			if !rustLaunchTable.MatchString(table) {
-				return nil
-			}
-			targets := rustLaunchBlock.FindAllStringSubmatch(table, -1)
-			if strings.Count(table, `script_path : "/usr/local/libexec/workcell/provider-wrapper.sh"`) != len(targets) {
-				return nil
-			}
-			return targets
-		}
+	targets := rustLaunchBlock.FindAllStringSubmatch(table, -1)
+	if strings.Count(table, `script_path : "/usr/local/libexec/workcell/provider-wrapper.sh"`) != len(targets) {
+		return nil
 	}
-	return nil
+	return targets
 }
 
-// dockerfilePinnedArgs returns the ARG names that a Dockerfile pins with a
-// non-empty value. It splits instructions as BuildKit does: parser directives
-// at the top set the escape character; an escape at the end of a line (before
-// optional blanks) continues the instruction; comment and blank lines are
-// dropped, also inside a continuation; and a RUN, COPY, or ADD instruction
-// queues one heredoc per "<<NAME" or "<<-NAME" word, whose bodies follow in
-// order. A body ends at a line equal to NAME ("<<-" first strips leading
-// tabs, not spaces). Text in a comment, a continuation, or a heredoc body is
-// not an instruction, so an ARG there does not count. A malformed file (bad
-// escape directive, unterminated heredoc) returns nil.
+// dockerfilePinnedArgs returns the ARG names a Dockerfile pins with a non-empty
+// value, splitting instructions as BuildKit does: an escape directive, line
+// continuations, comment and blank lines dropped even inside a continuation,
+// and RUN/COPY/ADD heredocs ("<<NAME" ends at a line equal to NAME; "<<-NAME"
+// first strips leading tabs), queued in order. A decoy in a comment, a
+// continuation, or a heredoc body does not count. A malformed file returns nil.
 func dockerfilePinnedArgs(dockerfile string) map[string]bool {
 	args := map[string]bool{}
 	escape := byte('\\')
@@ -464,19 +441,20 @@ func dockerfilePinnedArgs(dockerfile string) map[string]bool {
 			continue
 		}
 		instruction.WriteString(line)
-		words := dockerWords(instruction.String(), escape)
+		words := dockerWords(instruction.String(), escape, true)
+		unquoted := dockerWords(instruction.String(), escape, false)
 		instruction.Reset()
 		switch strings.ToUpper(words[0]) {
 		case "ARG":
-			for _, word := range words[1:] {
-				if name, value, ok := strings.Cut(dockerUnquote(word, escape), "="); ok && value != "" {
+			for _, word := range unquoted[1:] {
+				if name, value, ok := strings.Cut(word, "="); ok && value != "" {
 					args[name] = true
 				}
 			}
 		case "RUN", "COPY", "ADD":
 			for _, word := range words[1:] {
 				if m := dockerHeredocWord.FindStringSubmatch(word); m != nil {
-					if name := dockerUnquote(m[2], escape); name != "" {
+					if name := dockerWords(m[2], escape, false)[0]; name != "" {
 						heredocs = append(heredocs, heredoc{name, m[1] == "-"})
 					}
 				}
@@ -489,15 +467,15 @@ func dockerfilePinnedArgs(dockerfile string) map[string]bool {
 	return args
 }
 
-// dockerWords splits an instruction at blanks outside quotes. Quotes and
+// dockerWords splits text at blanks outside quotes. With raw, quotes and
 // escapes stay in each word, as BuildKit's heredoc scan keeps them, so a
-// quoted "<<EOF" is not a heredoc.
-func dockerWords(instruction string, escape byte) []string {
+// quoted "<<EOF" is not a heredoc; without raw, they are removed.
+func dockerWords(text string, escape byte, raw bool) []string {
 	var words []string
 	var word strings.Builder
 	var quote byte
-	for i := 0; i < len(instruction); i++ {
-		c := instruction[i]
+	for i := 0; i < len(text); i++ {
+		c := text[i]
 		switch {
 		case quote == 0 && (c == ' ' || c == '\t'):
 			if word.Len() > 0 {
@@ -505,39 +483,21 @@ func dockerWords(instruction string, escape byte) []string {
 				word.Reset()
 			}
 			continue
-		case c == escape && quote != '\'' && i+1 < len(instruction):
-			word.WriteByte(c)
+		case c == escape && quote != '\'' && i+1 < len(text):
+			if raw {
+				word.WriteByte(c)
+			}
 			i++
-			c = instruction[i]
-		case quote == 0 && (c == '"' || c == '\''):
-			quote = c
-		case c == quote:
-			quote = 0
+			c = text[i]
+		case quote == 0 && (c == '"' || c == '\''), c == quote:
+			quote ^= c // opens or closes the quote
+			if !raw {
+				continue
+			}
 		}
 		word.WriteByte(c)
 	}
 	return append(words, word.String())
-}
-
-// dockerUnquote removes quotes and escapes from one word.
-func dockerUnquote(word string, escape byte) string {
-	var out strings.Builder
-	var quote byte
-	for i := 0; i < len(word); i++ {
-		c := word[i]
-		switch {
-		case c == escape && quote != '\'' && i+1 < len(word):
-			i++
-			out.WriteByte(word[i])
-		case quote == 0 && (c == '"' || c == '\''):
-			quote = c
-		case c == quote:
-			quote = 0
-		default:
-			out.WriteByte(c)
-		}
-	}
-	return out.String()
 }
 
 const rustTableFixture = "const LAUNCH_TARGETS: &[LaunchTarget] = &[\n%s\n];\n"
@@ -733,20 +693,6 @@ container_path = "/opt/demo.json"
 	}
 }
 
-func TestLoadManifestsRejectsIDDirectoryMismatch(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "other"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	content := "schema = 1\nid = \"demo\"\ntier = \"planned\"\n"
-	if err := os.WriteFile(filepath.Join(root, "other", "adapter.toml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadManifests(root); err == nil {
-		t.Fatal("LoadManifests accepted an id that does not match its directory")
-	}
-}
-
 func TestLoadManifestsFailsClosed(t *testing.T) {
 	const planned = "schema = 1\nid = \"demo\"\ntier = \"planned\"\n"
 	outside := t.TempDir()
@@ -763,6 +709,10 @@ func TestLoadManifestsFailsClosed(t *testing.T) {
 		"symlinked manifest": func(root string) {
 			os.Mkdir(filepath.Join(root, "demo"), 0o700)
 			os.Symlink(filepath.Join(outside, "demo", "adapter.toml"), filepath.Join(root, "demo", "adapter.toml"))
+		},
+		"id does not match directory": func(root string) {
+			os.Mkdir(filepath.Join(root, "other"), 0o700)
+			os.WriteFile(filepath.Join(root, "other", "adapter.toml"), []byte(planned), 0o600)
 		},
 		"directory without manifest": func(root string) {
 			os.Mkdir(filepath.Join(root, "demo"), 0o700)
@@ -795,21 +745,12 @@ func TestLoadManifestsFailsClosed(t *testing.T) {
 	if _, err := LoadManifests(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("LoadManifests accepted a missing root")
 	}
-}
-
-func TestLoadManifestsSkipsRegularFiles(t *testing.T) {
+	// Positive control: a regular file named like README.md is skipped.
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("notes\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(root, "demo"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "demo", "adapter.toml"), []byte("schema = 1\nid = \"demo\"\ntier = \"planned\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	manifests, err := LoadManifests(root)
-	if err != nil || len(manifests) != 1 || manifests[0].ID != "demo" {
-		t.Fatalf("LoadManifests = %v, %v; want the demo manifest only", manifests, err)
+	os.WriteFile(filepath.Join(root, "README.md"), []byte("notes\n"), 0o600)
+	os.Mkdir(filepath.Join(root, "demo"), 0o700)
+	os.WriteFile(filepath.Join(root, "demo", "adapter.toml"), []byte(planned), 0o600)
+	if manifests, err := LoadManifests(root); err != nil || len(manifests) != 1 {
+		t.Errorf("LoadManifests = %v, %v; want the demo manifest only", manifests, err)
 	}
 }
