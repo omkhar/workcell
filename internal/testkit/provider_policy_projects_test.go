@@ -31,6 +31,8 @@ func TestCodexPolicyRejectsProjectsTrustOverrides(t *testing.T) {
 		{"-c", "\u00a0projects={\"/workspace\"={trust_level=\"trusted\"}}"},
 		{"-c", "\u2003projects.x.trust_level=\"trusted\""},
 		{"-c", "\vprojects.x.trust_level=\"trusted\""},
+		{"-c", "profiles=\u00a0{strict={projects={\"/workspace\"={trust_level=\"trusted\"}}}}"},
+		{"-c", "features=\u2003{remote_plugin=true}"},
 	}
 	run := func(args ...string) error {
 		cmd := exec.Command(bash, append([]string{"-c", `source "$1"; shift; reject_unsafe_codex_args "$@" exec hi`, "_", policy}, args...)...)

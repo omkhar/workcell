@@ -120,6 +120,12 @@ codex_config_override_is_blocked() {
   if [[ "${value}" == *=* ]]; then
     local raw_value="${value#*=}"
     raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
+    # Codex trims Unicode whitespace bash keeps, so `features=<U+00A0>{...}` would hide
+    # the `{`. A value that STARTS with a non-ASCII or control byte is not a legitimate
+    # scalar or table here: fail closed (same stance as the key check).
+    local LC_ALL=C
+    local unsafe_char=$'[^[:print:]\t]'
+    [[ "${raw_value}" == ${unsafe_char}* ]] && return 0
     if [[ "${raw_value}" == '{'* ]]; then
       case "${key_lower}" in
         features | plugins | marketplaces | projects | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
