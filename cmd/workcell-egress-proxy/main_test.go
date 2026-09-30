@@ -30,6 +30,7 @@ func TestRunFailsClosedOnBadConfig(t *testing.T) {
 		"missing file":      {[]string{"-allowlist", filepath.Join(dir, "missing")}, "no such file"},
 		"shared plain port": {[]string{"-allowlist", shared}, "more than one host"},
 		"extra argument":    {[]string{"-allowlist", shared, "typo"}, "unexpected argument"},
+		"bad listen":        {[]string{"-allowlist", shared, "-listen", "bad/address"}, "-listen must be an IP address"},
 		"unknown flag":      {[]string{"-bogus"}, "flag provided but not defined"},
 	}
 	for name, tc := range cases {

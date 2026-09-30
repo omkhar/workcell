@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 
@@ -52,6 +53,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	if *allowPath == "" {
 		return usageError(errors.New("-allowlist is required"))
+	}
+	if _, err := netip.ParseAddr(*listenHost); err != nil {
+		return usageError(fmt.Errorf("-listen must be an IP address: %q", *listenHost))
 	}
 	allow, err := egressproxy.LoadAllowlist(*allowPath)
 	if err != nil {
