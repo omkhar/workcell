@@ -37,6 +37,7 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),   // CGNAT; holds the 100.100.100.200 metadata address
 	netip.MustParsePrefix("192.0.0.0/24"),    // IETF assignments; holds the 192.0.0.192 metadata address
 	netip.MustParsePrefix("::/96"),           // IPv4-compatible
+	netip.MustParsePrefix("::ffff:0:0:0/96"), // IPv4-translatable (SIIT)
 	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64
 	netip.MustParsePrefix("64:ff9b:1::/48"),  // local NAT64
 	netip.MustParsePrefix("2001::/23"),       // IETF protocol assignments: Teredo, benchmarking, ORCHID
