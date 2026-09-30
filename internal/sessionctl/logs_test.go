@@ -4,6 +4,12 @@
 package sessionctl
 
 import (
+	"errors"
+
+	"bytes"
+	"golang.org/x/sys/unix"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -148,5 +154,49 @@ func TestLogPathForKindMapsAllKnown(t *testing.T) {
 		if got := logPathForKind(record, kind); got != want {
 			t.Fatalf("logPathForKind(%q) = %q, want %q", kind, got, want)
 		}
+	}
+}
+
+// TestLogsMainRefusesLeafSwappedToSymlinkAfterCheck covers a swap between the
+// path check and the open: the check passes, then the leaf becomes a symlink.
+func TestLogsMainRefusesLeafSwappedToSymlinkAfterCheck(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("TOP-SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "debug.log")
+	if err := os.WriteFile(logPath, []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeAttachFixtureRecord(t, root, "p", "s1", map[string]string{
+		"profile": "p", "target_kind": "local_vm", "target_provider": "colima", "target_id": "p",
+		"target_assurance_class": "strict", "runtime_api": "docker", "workspace_transport": "mount",
+		"status": "running", "debug_log_path": logPath,
+	})
+
+	orig := resolveLogPath
+	t.Cleanup(func() { resolveLogPath = orig })
+	resolveLogPath = func(p string) (string, error) {
+		resolved, err := orig(p)
+		if err != nil {
+			return "", err
+		}
+		if err := os.Remove(p); err != nil {
+			return "", err
+		}
+		return resolved, os.Symlink(secret, p)
+	}
+
+	var out bytes.Buffer
+	err := logsMain([]string{"--root=" + root, "--id", "s1", "--kind", "debug"}, &out)
+	if err == nil {
+		t.Fatalf("logsMain followed a swapped symlink; output = %q", out.String())
+	}
+	if !errors.Is(err, unix.ELOOP) {
+		t.Fatalf("logsMain error = %v, want ELOOP from the no-follow open", err)
+	}
+	if strings.Contains(out.String(), "TOP-SECRET") {
+		t.Fatalf("logsMain leaked symlink target: %q", out.String())
 	}
 }
