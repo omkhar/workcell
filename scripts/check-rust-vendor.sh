@@ -55,6 +55,18 @@ if [[ -n "${odd_lock}" ]]; then
   exit 1
 fi
 
+# Cargo reads every path dependency before it checks the lock, and a parse
+# error prints file content. The root manifest has no path dependency, so allow
+# only the crate's own target paths under src/, and no workspace or escape
+# sequence that could hide a key.
+odd_manifest="$(awk '
+  /path|workspace|\\/ && !/^path = "src\/[A-Za-z0-9_\/.-]+\.rs"$/ { print }
+' "${RUST_DIR}/Cargo.toml")"
+if [[ -n "${odd_manifest}" ]]; then
+  echo "Cargo.toml has a path, workspace or escape this check does not accept: ${odd_manifest}" >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 fresh="${tmp}/vendor"
@@ -78,7 +90,7 @@ tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
 # byte. The only accepted difference is that member. A JSON parser would hide
 # duplicate keys and formatting, so sed cuts the exact text instead.
 # shellcheck disable=SC2016 # a sed expression; the shell must not expand it
-comment_member='s/^\{"\$comment":"[^"\\]*",/{/; s/,"\$comment":"[^"\\]*"\}$/}/'
+comment_member='s/^\{"\$comment":"[[:alnum:] .,;:()\/_-]*",/{/; s/,"\$comment":"[[:alnum:] .,;:()\/_-]*"\}$/}/'
 for tree in "${fresh}" "${committed}"; do
   find "${tree}" -name .cargo-checksum.json -exec sh -c '
     expr=$1

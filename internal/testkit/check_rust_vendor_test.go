@@ -52,6 +52,11 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.WriteFile(lock, []byte(cleanLock), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	manifest := filepath.Join(filepath.Dir(vendor), "Cargo.toml")
+	cleanManifest := "[package]\nname = \"x\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[dependencies]\nlibc = \"0.2\"\n"
+	if err := os.WriteFile(manifest, []byte(cleanManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	fakeCargo := "#!/bin/sh\n[ ! -e rust-toolchain.toml ] || exit 9\ncp -R '" + reference + "' \"$3\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".cargo", "bin", "cargo"), []byte(fakeCargo), 0o755); err != nil {
 		t.Fatal(err)
@@ -124,6 +129,31 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 		t.Fatalf("nested comment member accepted: %s", out)
 	}
 	if err := os.WriteFile(libSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A comment value with a control character is not valid JSON, so it must differ.
+	if err := os.WriteFile(libSum, []byte(strings.Replace(string(origSum), "{", "{\"$comment\":\"a\tb\",", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("comment with a control character accepted: %s", out)
+	}
+	if err := os.WriteFile(libSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(refSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A path dependency, a workspace or an escaped key must be rejected before Cargo runs.
+	for _, bad := range []string{"evil = { path = \"/tmp/evil\" }\n", "[workspace]\n", "\"pa\\u0074h\" = \"/tmp\"\n"} {
+		if err := os.WriteFile(manifest, []byte(cleanManifest+bad), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := run(); err == nil {
+			t.Fatalf("manifest line %q accepted: %s", bad, out)
+		}
+	}
+	if err := os.WriteFile(manifest, []byte(cleanManifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A link outside vendor is copied for Cargo, so it must be rejected too.
