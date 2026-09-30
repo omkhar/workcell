@@ -305,8 +305,8 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/egressproxy/proxy.go",
-		original:     `p.deny("", port, "overloaded")`,
-		replacement:  `_ = port`,
+		original:     `case p.shed <- port:`,
+		replacement:  `case <-p.shed:`,
 		label:        "egress proxy logs connections shed over the limit",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestServeShedsConnectionsOverTheLimit", "-count=1"),
 	},

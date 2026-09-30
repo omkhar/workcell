@@ -80,6 +80,7 @@ type Proxy struct {
 	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
 
 	slots chan struct{} // one token per live connection
+	shed  chan uint16   // ports of shed connections awaiting a deny line
 
 	mu      sync.Mutex
 	denyLog io.Writer
@@ -95,7 +96,7 @@ type denyKey struct {
 // New returns a proxy for allow that writes deny lines to denyLog.
 func New(allow *Allowlist, denyLog io.Writer) *Proxy {
 	var dialer net.Dialer
-	return &Proxy{
+	p := &Proxy{
 		allow: allow,
 		lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
@@ -104,9 +105,16 @@ func New(allow *Allowlist, denyLog io.Writer) *Proxy {
 			return dialer.DialContext(ctx, "tcp", addr.String())
 		},
 		slots:   make(chan struct{}, maxConns),
+		shed:    make(chan uint16, 64),
 		denyLog: denyLog,
 		denies:  map[denyKey]uint64{},
 	}
+	go func() {
+		for port := range p.shed {
+			p.deny("", port, "overloaded")
+		}
+	}()
+	return p
 }
 
 // Serve handles connections from ln, which receives traffic for port, until
@@ -128,9 +136,13 @@ func (p *Proxy) Serve(ln net.Listener, port uint16) error {
 				p.handle(conn, port)
 			}()
 		default:
-			// Log before closing so the record exists when the peer sees EOF.
-			p.deny("", port, "overloaded")
 			_ = conn.Close() // at the limit: shed load instead of exhausting descriptors
+			// The deny line goes through a queue so a blocked log cannot stall accept.
+			// ponytail: a flood past the queue depth goes unlogged; add a dropped counter if audits need it.
+			select {
+			case p.shed <- port:
+			default:
+			}
 		}
 	}
 }

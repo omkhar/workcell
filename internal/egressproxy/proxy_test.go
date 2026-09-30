@@ -464,7 +464,11 @@ func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
 		t.Fatalf("read on a connection over the limit = %v, want EOF or reset", err)
 	}
 	want := denyLine{Port: 443, Reason: "overloaded", Count: 1}
-	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
+	var d []denyLine
+	for deadline := time.Now().Add(5 * time.Second); len(d) == 0 && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		d = denies(t, p, log)
+	}
+	if len(d) != 1 || d[0] != want {
 		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
 	}
 }
