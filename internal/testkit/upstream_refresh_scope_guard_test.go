@@ -68,6 +68,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch:   "diff --git a/scripts/workcell b/tests/fixtures/flags/x.txt\nsimilarity index 100%\nrename from scripts/workcell\nrename to tests/fixtures/flags/x.txt\n",
 			wantErr: "unsupported diff header",
 		},
+		{
+			name:    "truncated section",
+			patch:   inScope + "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n",
+			wantErr: "incomplete patch section",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",

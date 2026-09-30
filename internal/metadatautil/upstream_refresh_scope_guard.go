@@ -42,10 +42,17 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 	}
 	var file string
 	var seen, inHunk bool
+	// A section without a hunk is truncated or empty. Fail closed.
+	closeSection := func() {
+		if file != "" && !inHunk {
+			fail("%s: incomplete patch section (no hunk)", file)
+		}
+	}
 	for _, line := range strings.Split(string(bytes.TrimSuffix(data, []byte("\n"))), "\n") {
 		fields := strings.Fields(line)
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
+			closeSection()
 			inHunk, file = false, ""
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
@@ -73,6 +80,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: line %s", file, line)
 		}
 	}
+	closeSection()
 	if !seen {
 		fail("empty patch")
 	}
