@@ -6598,6 +6598,28 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
 
+# Nested branches topic/HEAD and topic/commondir are refs, not a redirect.
+git -C "${COMMONDIR_BRANCH_REPO}" branch topic/HEAD
+git -C "${COMMONDIR_BRANCH_REPO}" branch topic/commondir
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_BRANCH_REPO}" --dry-run >/tmp/workcell-commondir-nested.out 2>&1
+
+# An unreadable directory in the workspace must fail the Git directory inventory closed.
+if [[ "$(id -u)" -ne 0 ]]; then
+  COMMONDIR_OUTER_REPO="${COMMONDIR_ROOT}/outer-walk-repo"
+  git init -q -b master "${COMMONDIR_OUTER_REPO}"
+  git -C "${COMMONDIR_OUTER_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+  mkdir "${COMMONDIR_OUTER_REPO}/unreadable"
+  chmod 000 "${COMMONDIR_OUTER_REPO}/unreadable"
+  outer_status=0
+  run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_OUTER_REPO}" --dry-run >/tmp/workcell-commondir-outer.out 2>&1 || outer_status=$?
+  chmod 755 "${COMMONDIR_OUTER_REPO}/unreadable"
+  if [[ "${outer_status}" -eq 0 ]]; then
+    echo "Expected repo with an unreadable workspace directory to be rejected" >&2
+    exit 1
+  fi
+  grep -q 'could not inventory the workspace for Git directories' /tmp/workcell-commondir-outer.out
+fi
+
 # A symlinked .git/modules parent must be rejected too.
 COMMONDIR_PARENT_REPO="${COMMONDIR_ROOT}/parent-link-repo"
 git init -q -b master "${COMMONDIR_PARENT_REPO}"

@@ -8039,6 +8039,7 @@ prepare_workspace_control_plane_shadow() {
   local session_workspace="${3:-$1}"
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
   local rel path git_dir git_rel commondir_hits
+  local git_walk_complete=0
 
   SHADOW_MOUNTS=()
   SHADOW_DEST_PATHS=()
@@ -8049,15 +8050,21 @@ prepare_workspace_control_plane_shadow() {
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
   while IFS= read -r -d '' git_dir; do
+    # A lone NUL after a successful walk is the completion sentinel: bash
+    # drops the status of the process substitution below.
+    if [[ -z "${git_dir}" ]]; then
+      git_walk_complete=1
+      continue
+    fi
     git_rel="${git_dir#"${workspace}/"}"
     # A commondir file, or a symlinked module directory, makes Git read config
     # and hooks from another directory, past the masks below. A standard clone
     # has neither. The prune skips the directories the masks below replace. A
-    # commondir counts only beside a HEAD file, so a branch or reflog named
-    # commondir is not a redirect. Bash drops the status of a process
+    # commondir counts only beside a HEAD file, and the top-level refs and logs
+    # are pruned, so a branch or reflog named commondir is not a redirect. Bash drops the status of a process
     # substitution, so capture the walk status: an unreadable Git directory
     # must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path './modules' -o -path './modules/*' \) -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o -path ./refs -prune -o -path ./logs -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path './modules' -o -path './modules/*' \) -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi
@@ -8097,8 +8104,12 @@ prepare_workspace_control_plane_shadow() {
       )
     fi
   done < <(
-    find "${workspace}" -type d -name .git -prune -print0
+    find "${workspace}" -type d -name .git -prune -print0 && printf '\0'
   )
+  if [[ "${git_walk_complete}" -ne 1 ]]; then
+    echo "Refusing git workspace: Workcell could not inventory the workspace for Git directories: ${workspace}" >&2
+    exit 2
+  fi
 
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     while IFS= read -r -d '' path; do
