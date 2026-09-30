@@ -61,9 +61,9 @@ func sorted(values []string) []string {
 func TestManifestsMatchProviderIDLists(t *testing.T) {
 	manifests := loadRepoManifests(t)
 
-	certified := manifestIDs(manifests, func(m Manifest) bool { return m.Tier == "certified" })
-	if !slices.Equal(certified, providerid.AllProviders) {
-		t.Errorf("certified manifests = %v, want providerid.AllProviders %v", certified, providerid.AllProviders)
+	supported := manifestIDs(manifests, func(m Manifest) bool { return m.Tier != "planned" })
+	if !slices.Equal(supported, providerid.AllProviders) {
+		t.Errorf("non-planned manifests = %v, want providerid.AllProviders %v", supported, providerid.AllProviders)
 	}
 	withCredentials := manifestIDs(manifests, func(m Manifest) bool { return len(m.Credentials) > 0 })
 	if !slices.Equal(withCredentials, providerid.CredentialMetadataProviders) {
@@ -107,9 +107,12 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 // providerEndpoints runs provider_endpoints from script, rewritten from declare -f
 // so that the lone "*)" arm prints "default-arm-N" to stderr and any other line
 // ending in ")" (another arm pattern) prints "line-N": arm lists each arm entered.
+// The probe is parsed before the source runs, and POSIX-mode unset (a special
+// builtin) drops any function the script defines over a builtin it uses.
 func providerEndpoints(t *testing.T, script, id string) (out, arm string, code int) {
 	t.Helper()
-	const probe = `source "$1" || exit 3
+	const probe = `{ source "$1" || exit 3
+POSIXLY_CORRECT=y; unset -f builtin declare read echo eval exit set unset trap; trap - DEBUG RETURN; unset POSIXLY_CORRECT
 n=0 body=""
 while IFS= read -r line; do
   n=$((n + 1)) body+="$line"$'\n'
@@ -117,7 +120,7 @@ while IFS= read -r line; do
   [[ "$line" =~ \)$ ]] && body+="echo line-$n >&2"$'\n'
 done < <(declare -f provider_endpoints)
 eval "$body" || exit 3
-provider_endpoints "$2"`
+provider_endpoints "$2"; }`
 	cmd := exec.Command("bash", "--noprofile", "--norc", "-c", probe, "bash", script, id)
 	cmd.Dir = repoRoot
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
@@ -161,14 +164,22 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 		"arm that recurses":         {"    antigravity)\n      provider_endpoints no-such-provider\n      ;;\n", false},
 		"arm with a row":            {"    antigravity)\n      echo x:443\n      ;;\n", false},
 	}
-	for name, c := range cases {
+	absent := func(src string) bool {
 		path := filepath.Join(t.TempDir(), "endpoints.sh")
-		if err := os.WriteFile(path, []byte(fmt.Sprintf(script, c.arm)), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got := endpointRowAbsent(t, path, providerid.Antigravity); got != c.want {
+		return endpointRowAbsent(t, path, providerid.Antigravity)
+	}
+	for name, c := range cases {
+		if got := absent(fmt.Sprintf(script, c.arm)); got != c.want {
 			t.Errorf("%s: row absent = %v, want %v", name, got, c.want)
 		}
+	}
+	// A script function over the declare builtin must not forge a default-only body.
+	forge := `declare() { printf 'provider_endpoints () {\ncase "$1" in\n*)\nreturn 1\n;;\nesac\n}\n'; }`
+	if absent(fmt.Sprintf(script, cases["return 1 arm"].arm) + forge) {
+		t.Error("a declare override forged an absent row")
 	}
 }
 
@@ -233,18 +244,16 @@ var (
 	dockerHeredocWord = regexp.MustCompile(`^[0-9]*<<(-?)([^<]*)$`)
 )
 
-// rustTokens splits Rust source into tokens. Comments (nested block comments
-// included) are dropped. A plain "..." string without escapes keeps its text;
-// every other literal (raw, byte, C, and char strings, and strings with
-// escapes) becomes one opaque "<lit>" token, so text inside a literal can
-// never look like code. An unterminated comment or literal is an error.
+// rustTokens splits Rust source into tokens and drops comments (nested too). A
+// plain "..." string without escapes keeps its text; every other literal (raw,
+// byte, C, char, or escaped) is one opaque "<lit>" token, so literal text never
+// looks like code. An unterminated comment or literal is an error.
 func rustTokens(src string) ([]string, error) {
 	var tokens []string
 	isWord := func(c byte) bool {
 		return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= 0x80
 	}
-	// quoted returns the index after the closing quote of a string or char
-	// literal whose opening quote is at i.
+	// quoted returns the index past the literal whose opening quote is at i.
 	quoted := func(i int, quote byte) (int, error) {
 		for j := i + 1; j < len(src); j++ {
 			switch src[j] {
@@ -632,8 +641,7 @@ func TestManifestInstallPinsExist(t *testing.T) {
 		if m.Tier == "planned" {
 			continue
 		}
-		// Each pin and provenance script is named for its own adapter, so two
-		// manifests cannot swap them and still pass.
+		// Each pin and provenance script is named for its own adapter (no swaps).
 		if want := strings.ToUpper(m.ID) + "_VERSION"; m.Install.Method == "binary" && m.Install.VersionArg != want {
 			t.Errorf("%s: version_arg = %q, want %q", m.ID, m.Install.VersionArg, want)
 		}
@@ -643,8 +651,8 @@ func TestManifestInstallPinsExist(t *testing.T) {
 		if m.Install.VersionArg != "" && !pinned[m.Install.VersionArg] {
 			t.Errorf("%s: Dockerfile has no pinned ARG %s", m.ID, m.Install.VersionArg)
 		}
-		if m.Install.Package != "" && pkg.Dependencies[m.Install.Package] == "" {
-			t.Errorf("%s: providers/package.json has no dependency %s", m.ID, m.Install.Package)
+		if m.Install.Package != "" && (pkg.Dependencies[m.Install.Package] == "" || !strings.Contains(m.Install.Package, m.ID)) {
+			t.Errorf("%s: package %q must name the adapter and be a providers/package.json dependency", m.ID, m.Install.Package)
 		}
 		if _, err := os.Stat(filepath.Join(repoRoot, m.Install.Provenance)); err != nil {
 			t.Errorf("%s: provenance script: %v", m.ID, err)

@@ -56,16 +56,11 @@ type Credential struct {
 
 var manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// LoadManifests loads every adapters/<id>/adapter.toml under root, in
-// directory-name order, and requires each id to match its directory. It fails
-// closed: a missing or unreadable root, a symlinked adapter directory, and a
-// directory without a regular adapter.toml are errors. A regular root entry
-// whose name is not an adapter id (such as README.md) is skipped; any other
-// non-directory entry is an error.
-// The listing reads names only. Each entry is classified by opening it with
-// O_NOFOLLOW from the root descriptor, and each manifest is opened the same
-// way from its adapter directory, so a path swapped after the listing cannot
-// redirect a read or drop an adapter.
+// LoadManifests loads every <root>/<id>/adapter.toml in name order; each id must
+// match its directory. It fails closed: only a regular file whose name cannot be
+// an id (README.md) is skipped. Entries and manifests open with O_NOFOLLOW from
+// the parent descriptor, so a path swapped after the listing cannot redirect a
+// read or drop an adapter.
 func LoadManifests(root string) ([]Manifest, error) {
 	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -101,13 +96,11 @@ func LoadManifests(root string) ([]Manifest, error) {
 	return out, nil
 }
 
-// errRegularFile marks a root entry that is a regular file, not an adapter.
 var errRegularFile = errors.New("regular file, not an adapter directory")
 
-// readManifestFile reads <dir>/adapter.toml below rootFD. O_NONBLOCK keeps a
-// FIFO swapped in for either path from blocking the open; the fstat then
-// rejects it. When dir is not a directory, it returns errRegularFile only for
-// a regular file; a symlink or any other type is an error.
+// readManifestFile reads <dir>/adapter.toml below rootFD (O_NONBLOCK: a FIFO
+// cannot block the open). A non-directory dir gives errRegularFile only for a
+// regular file; a symlink or any other type is an error.
 func readManifestFile(rootFD int, dir string) ([]byte, error) {
 	dirFD, err := unix.Openat(rootFD, dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ENOTDIR) {

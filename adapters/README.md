@@ -50,12 +50,11 @@ These registry changes do not make a provider supported. Support also requires
 launcher, auth, policy, tests, documents, and live certification. A provider
 directory without a registry row is a fail-closed scaffold.
 
-Each adapter directory also has an `adapter.toml` manifest. The schema and the
-loader are in `internal/adapters/manifest.go`. The loader rejects unknown
-tables and keys. No launcher or runtime code reads the manifest yet. A parity
-test in `internal/adapters/manifest_test.go` compares each manifest with the
-tables above, the launcher shell tables, and the Rust launcher table. When you
-change one of these tables, change the manifest in the same review unit.
+Each adapter directory also has an `adapter.toml` manifest (strict schema and
+loader: `internal/adapters/manifest.go`; no runtime code reads it yet). The
+parity test in `internal/adapters/manifest_test.go` compares each manifest with
+the tables above, the launcher shell tables, and the Rust launcher table. When
+you change one of these tables, change the manifest in the same review unit.
 
 The file `internal/adapters/adapters.go` contains the public API. Injection,
 policy, and runtime code use this API.
