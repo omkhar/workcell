@@ -189,14 +189,14 @@ func parseSSHDirective(line string) (string, string, bool) {
 		return "", "", false
 	}
 	// Parse like ssh(1): skip one leading '=', end the keyword at whitespace
-	// or '=', strip keyword quotes, and drop one '=' before the value.
+	// or '=', remove keyword quotes anywhere, and drop one '=' before the value.
 	stripped = strings.TrimLeftFunc(strings.TrimPrefix(stripped, "="), unicode.IsSpace)
 	directive, remainder := stripped, ""
 	if idx := strings.IndexFunc(stripped, func(r rune) bool { return r == '=' || unicode.IsSpace(r) }); idx >= 0 {
 		directive = stripped[:idx]
 		remainder = strings.TrimPrefix(strings.TrimLeftFunc(stripped[idx:], unicode.IsSpace), "=")
 	}
-	directive = strings.ToLower(strings.Trim(directive, "\""))
+	directive = strings.ToLower(strings.ReplaceAll(directive, "\"", ""))
 	if directive == "" {
 		return "", "", false
 	}

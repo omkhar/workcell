@@ -19,6 +19,8 @@ func TestValidateSSHConfigSafetyKeywordForms(t *testing.T) {
 		"ProxyCommand= sh -c id",
 		"\"ProxyCommand\" sh -c id",
 		"\"ProxyCommand\"=sh -c id",
+		"ProxyCom\"mand\"=echo HI",
+		"\"Proxy\"Command sh -c id",
 		"Match=exec \"id\"",
 		"Match = user alice exec id",
 		"Match \"exec\" \"id\"",
