@@ -128,8 +128,12 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				fail("%s: malformed hunk or not exactly one old and one new file header: %s", file, line)
 				continue
 			}
-			hunks++
 			remOld, remNew = scopeGuardHunkCount(m[1]), scopeGuardHunkCount(m[2])
+			if remOld == 0 && remNew == 0 {
+				fail("%s: zero-line hunk: %s", file, line)
+				continue
+			}
+			hunks++
 		case strings.HasPrefix(line, "\\"):
 		default:
 			fail("%s: unrecognized patch line %q", file, line)

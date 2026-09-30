@@ -112,6 +112,12 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch:   scopeGuardFilePatch("runtime/container/providers-staging/package.json", "old", "new"),
 			wantErr: "path runtime/container/providers-staging/package.json",
 		},
+		{
+			name: "zero-line hunk",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,0 +1,0 @@\n",
+			wantErr: "zero-line hunk",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",
