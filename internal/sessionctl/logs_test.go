@@ -4,14 +4,14 @@
 package sessionctl
 
 import (
-	"errors"
-
 	"bytes"
-	"golang.org/x/sys/unix"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/sessions"
