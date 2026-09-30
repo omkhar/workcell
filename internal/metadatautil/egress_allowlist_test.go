@@ -51,9 +51,34 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		t.Fatal("validator accepted a decoy guard")
 	}
 
-	// A second definition of the plan function replaces the reviewed one.
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + "\nrender_allowlist_apply_plan() {\n  echo unsafe\n}\n"); err == nil {
-		t.Fatal("validator accepted a second plan definition")
+	// A second definition of the plan function replaces the reviewed one, in
+	// any valid spelling. A comment or a message that names it does not.
+	for name, extra := range map[string]string{
+		"later definition":    "\nrender_allowlist_apply_plan() {\n  echo unsafe\n}\n",
+		"function keyword":    "\nfunction render_allowlist_apply_plan {\n  echo unsafe\n}\n",
+		"spaced parentheses":  "\nrender_allowlist_apply_plan () { echo unsafe; }\n",
+		"tab after keyword":   "\nfunction\trender_allowlist_apply_plan { echo unsafe; }\n",
+		"continued keyword":   "\nfunction \\\nrender_allowlist_apply_plan { echo unsafe; }\n",
+		"indented definition": "\n  render_allowlist_apply_plan() { echo unsafe; }\n",
+		"after a separator":   "\ntrue; render_allowlist_apply_plan() { echo unsafe; }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + extra); err == nil {
+				t.Fatal("validator accepted a second plan definition")
+			}
+		})
+	}
+	for name, harmless := range map[string]string{
+		"comment":            "\n# render_allowlist_apply_plan() { is reviewed }\n",
+		"trailing comment":   "\ntrue # render_allowlist_apply_plan\n",
+		"diagnostic message": "\necho \"render_allowlist_apply_plan failed\" >&2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + harmless)
+			if err != nil && strings.Contains(err.Error(), "definition") {
+				t.Fatalf("harmless mention rejected: %v", err)
+			}
+		})
 	}
 
 	// The emitted plan text and the restore payload are fixed, line for line.

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -17,6 +18,11 @@ import (
 // as applyPlanDigestOf joins them. Regenerate it only after a review of the plan
 // and a pass of the replay in scripts/verify-invariants.sh.
 const applyPlanDigest = "4d197047a9c0328934ab648a274bd74264eb67141ea4e09a4efd023327de1906"
+
+var (
+	commentStart   = regexp.MustCompile(`(^|\s)#`)
+	planDefinition = regexp.MustCompile(`(^|[;&|{(]|\s)(function\s+)?render_allowlist_apply_plan(\s*\(\s*\)|\s*\{|\s*$)`)
+)
 
 // ValidateColimaEgressAtomicSwap requires the VM apply plan of
 // scripts/colima-egress-allowlist.sh to replace each chain in one
@@ -33,15 +39,17 @@ const applyPlanDigest = "4d197047a9c0328934ab648a274bd74264eb67141ea4e09a4efd023
 // scripts/verify-invariants.sh then checks the behavior of the reviewed plan.
 func ValidateColimaEgressAtomicSwap(script string) error {
 	// Bash runs the last definition of a name, so a reviewed copy kept ahead of
-	// a second definition would pass the checks below. This guards a plain
-	// duplicate; a definition that bash assembles at run time is outside what
-	// a static check can close, and the replay in scripts/verify-invariants.sh
-	// covers the plan the real apply path captures.
+	// a second definition would pass the checks below. Count each statement
+	// that defines the function, in any valid spelling, after joining line
+	// continuations and dropping comments. A definition that bash assembles at
+	// run time is outside what a static check can close; the replay in
+	// scripts/verify-invariants.sh covers the plan the real apply path captures.
 	definitions := 0
-	for line := range strings.Lines(script) {
-		if strings.HasPrefix(line, "render_allowlist_apply_plan()") {
-			definitions++
+	for line := range strings.Lines(strings.ReplaceAll(script, "\\\n", " ")) {
+		if comment := commentStart.FindStringIndex(line); comment != nil {
+			line = line[:comment[0]]
 		}
+		definitions += len(planDefinition.FindAllString(line, -1))
 	}
 	if definitions != 1 {
 		return errors.New("Expected exactly one render_allowlist_apply_plan definition")
