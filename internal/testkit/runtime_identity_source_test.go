@@ -142,6 +142,16 @@ func TestRuntimeStateValueRejectsNonRootOwnedFile(t *testing.T) {
 		}
 	}
 
+	// A symlink to a root-owned file is refused: the target is root-owned, but
+	// the state entry is the attacker's link.
+	link := filepath.Join(t.TempDir(), "mode")
+	if err := os.Symlink("/etc/profile", link); err != nil {
+		t.Fatal(err)
+	}
+	if out, ok := runtimeStateValue(t, link); ok || out != "" {
+		t.Fatalf("symlinked state entry was trusted: ok=%v out=%q", ok, out)
+	}
+
 	// Negative control: a root-owned file is still read. /etc/passwd is not used
 	// because the validator container bind-mounts it with the runner's owner.
 	if out, ok := runtimeStateValue(t, "/etc/profile"); !ok || out == "" {
