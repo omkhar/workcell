@@ -118,6 +118,15 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,0 +1,0 @@\n",
 			wantErr: "zero-line hunk",
 		},
+		{
+			name:  "no-newline marker",
+			patch: scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "\\ No newline at end of file\n",
+		},
+		{
+			name:    "invalid marker line",
+			patch:   scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "\\evil\n",
+			wantErr: "unrecognized patch line",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",

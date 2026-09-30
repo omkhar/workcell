@@ -16,6 +16,8 @@ import (
 
 const scopeGuardMaxPatchBytes = 16 << 20
 
+const scopeGuardNoNewline = "\\ No newline at end of file"
+
 const scopeGuardDockerfilePath = "runtime/container/Dockerfile"
 
 var (
@@ -60,7 +62,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		fields := strings.Fields(line)
 		if remOld > 0 || remNew > 0 {
 			switch {
-			case strings.HasPrefix(line, "\\"):
+			case line == scopeGuardNoNewline:
 			case strings.HasPrefix(line, "-"):
 				remOld--
 			case strings.HasPrefix(line, "+"):
@@ -134,7 +136,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				continue
 			}
 			hunks++
-		case strings.HasPrefix(line, "\\"):
+		case line == scopeGuardNoNewline && hunks > 0:
 		default:
 			fail("%s: unrecognized patch line %q", file, line)
 		}
