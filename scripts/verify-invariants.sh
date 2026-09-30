@@ -6598,6 +6598,18 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
 
+# A symlinked .git/modules parent must be rejected too.
+COMMONDIR_PARENT_REPO="${COMMONDIR_ROOT}/parent-link-repo"
+git init -q -b master "${COMMONDIR_PARENT_REPO}"
+git -C "${COMMONDIR_PARENT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_ROOT}/linked-modules"
+ln -s ../../linked-modules "${COMMONDIR_PARENT_REPO}/.git/modules"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_PARENT_REPO}" --dry-run >/tmp/workcell-commondir-parent.out 2>&1; then
+  echo "Expected repo with a symlinked .git/modules to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules' /tmp/workcell-commondir-parent.out
+
 # An unreadable Git directory must fail the commondir inventory closed. Root
 # ignores directory modes, so the probe runs only for a non-root user.
 if [[ "$(id -u)" -ne 0 ]]; then

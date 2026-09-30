@@ -8057,7 +8057,7 @@ prepare_workspace_control_plane_shadow() {
     # commondir is not a redirect. Bash drops the status of a process
     # substitution, so capture the walk status: an unreadable Git directory
     # must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( -path './modules/*' -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path './modules' -o -path './modules/*' \) -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi

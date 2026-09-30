@@ -88,7 +88,7 @@ its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 
 Workcell refuses a safe-path workspace that has a Git `commondir` file beside a
 `HEAD` file outside `worktrees`. It also refuses a symlinked directory under
-`.git/modules`. Each makes Git read config and hooks from another directory,
+`.git/modules`, and `.git/modules` itself when it is a symlink. Each makes Git read config and hooks from another directory,
 past the masks. It also refuses the workspace when it cannot list the Git
 directory. The check runs at launch. It does not stop a file that is created
 after launch.

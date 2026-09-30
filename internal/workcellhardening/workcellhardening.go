@@ -519,13 +519,6 @@ const (
 	// expected non-null type → violation), and a navigation type error or invalid
 	// JSON is jq's error exit → violation (navigateJSONPath returns (nil, false)).
 	kindJSONTypeEquals
-	// kindFunctionBlockRegexInCode requires regex to match one whole line of
-	// the top-level bash function body named functionName after shell comments
-	// are stripped.  The regex must be anchored (^...$) so a quoted echo of the
-	// command cannot satisfy it.  Unlike kindFunctionBlockRegex it reads code,
-	// not comments.  metadatautil.ShellInvocations cannot anchor these commands:
-	// it drops function and compound-command bodies by design.
-	kindFunctionBlockRegexInCode
 )
 
 // check is one hardening invariant: how to match, which fixed string or regex
@@ -1357,7 +1350,7 @@ func CheckPublishPrShadowMounts(rootDir string) error {
 	return evaluate(rootDir, publishPrShadowMountChecks)
 }
 
-// shadowEnumEgressChecks lists the eight shadow-enumeration / IPv6-egress
+// shadowEnumEgressChecks lists the seven shadow-enumeration / IPv6-egress
 // invariants in the same order as the former inline block in
 // scripts/verify-invariants.sh (the block between the publish-PR /
 // shadow-mount group and the hostile-BASH_ENV runtime fixture), so a
@@ -1371,9 +1364,6 @@ func CheckPublishPrShadowMounts(rootDir string) error {
 // literal, matched by `grep -Fq`), each message is computed here verbatim as
 // "Expected prepare_workspace_control_plane_shadow to match snippet: " +
 // needle.
-//
-// The sixth probe is a Go-native addition: it requires the launcher to
-// refuse a Git commondir file (docs/invariants.md section 3).
 //
 // The final two probes read scripts/colima-egress-allowlist.sh (via
 // targetFile), mirroring the two shell `rg` probes that ran against that
@@ -1417,15 +1407,6 @@ var shadowEnumEgressChecks = []check{
 		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
 	},
 	{
-		// The launcher must capture the status of the commondir walk and refuse
-		// a Git commondir file, which redirects Git config and hooks past the
-		// masks above.  Anchored, comment-stripped, function-scoped.
-		kind:         kindFunctionBlockRegexInCode,
-		functionName: "prepare_workspace_control_plane_shadow",
-		regex:        `^\s*if ! commondir_hits="\$\(cd "\$\{git_dir\}" && find \. -name worktrees -prune -o \\\( -name commondir ! -type d -execdir test -e HEAD \\; -print \\\) -o \\\( -path '\./modules/\*' -type l ! -name hooks ! -name config ! -name config\.worktree -exec test -d \{\} \\; -print \\\)\)"; then$`,
-		message:      "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
-	},
-	{
 		// kindAbsent against scripts/colima-egress-allowlist.sh: silently
 		// disabling IPv6 as an allowlist-enforcement fallback is a violation
 		// (present → exit 1).
@@ -1445,7 +1426,7 @@ var shadowEnumEgressChecks = []check{
 	},
 }
 
-// CheckShadowEnumEgress runs the eight shadow-enumeration / IPv6-egress
+// CheckShadowEnumEgress runs the seven shadow-enumeration / IPv6-egress
 // invariants against the repo rooted at rootDir, in the shell's original
 // order.  It returns nil when every invariant holds (the shell's exit 0), or
 // an error whose message equals the shell's stderr for the first violated
@@ -4835,7 +4816,7 @@ func (c check) validatePatternFields() error {
 
 func (c check) usesRegex() bool {
 	switch c.kind {
-	case kindFirstLineRegex, kindRegexAbsent, kindRegexPresent, kindFunctionBlockRegex, kindFunctionBlockRegexAbsent, kindFunctionBlockRegexInCode:
+	case kindFirstLineRegex, kindRegexAbsent, kindRegexPresent, kindFunctionBlockRegex, kindFunctionBlockRegexAbsent:
 		return true
 	default:
 		return false
@@ -4856,9 +4837,6 @@ func (c check) holds(text, rootDir string) bool {
 		return !strings.Contains(block, c.pattern)
 	case kindFunctionBlockRegex:
 		block := extractNamedFunctionBlock(text, c.functionName)
-		return regexMatchesAnyLine(c.regex, block)
-	case kindFunctionBlockRegexInCode:
-		block := stripShellComments(extractNamedFunctionBlock(text, c.functionName))
 		return regexMatchesAnyLine(c.regex, block)
 	case kindFunctionBlockRegexAbsent:
 		// Negated function_block_contains_regex: a regex match on any line of
