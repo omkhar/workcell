@@ -135,8 +135,16 @@ func TestRuntimeStateValueRejectsNonRootOwnedFile(t *testing.T) {
 		t.Fatalf("planted state file was trusted: ok=%v out=%q", ok, out)
 	}
 
-	// Negative control: a root-owned file is still read.
-	if out, ok := runtimeStateValue(t, "/etc/passwd"); !ok || out == "" {
+	// A missing path and a directory are refused, not read.
+	for _, p := range []string{filepath.Join(t.TempDir(), "absent"), t.TempDir()} {
+		if out, ok := runtimeStateValue(t, p); ok || out != "" {
+			t.Fatalf("non-file state path was trusted: %s ok=%v out=%q", p, ok, out)
+		}
+	}
+
+	// Negative control: a root-owned file is still read. /etc/passwd is not used
+	// because the validator container bind-mounts it with the runner's owner.
+	if out, ok := runtimeStateValue(t, "/etc/profile"); !ok || out == "" {
 		t.Fatalf("root-owned state file was refused: ok=%v out=%q", ok, out)
 	}
 }

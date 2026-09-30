@@ -334,8 +334,13 @@ workcell_runtime_state_value() {
 
   # Only root writes session state. A readonly session mounts this directory
   # as the mapped uid, so a file that root does not own is a planted value.
-  [[ -f "${path}" && -r "${path}" && "$(stat -c %u -- "${path}")" == "0" ]] || return 1
-  head -n1 "${path}"
+  # Open the file once, then check and read that same descriptor, so a swap of
+  # the directory entry cannot change the inode after the owner check.
+  (
+    { exec {fd}<"${path}"; } 2>/dev/null || exit 1
+    [[ -f "/dev/fd/${fd}" && "$(stat -L -c %u -- "/dev/fd/${fd}")" == "0" ]] || exit 1
+    head -n1 <&"${fd}"
+  )
 }
 
 workcell_reexec_as_runtime_user() {
