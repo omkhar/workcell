@@ -40,7 +40,12 @@ GO_HOSTUTIL_BIN=""
 # otherwise run as an empty shell script and exit 0.
 go_tool_bin_trusted() {
   [[ -f "$1" && -s "$1" && ! -L "$1" && -O "$1" && -x "$1" ]] &&
-    [[ -z "$(find "$1" \( -perm -020 -o -perm -002 \) -print)" ]]
+    go_tool_path_private "$1"
+}
+
+# go_tool_path_private succeeds when $1 is not writable by group or other.
+go_tool_path_private() {
+  [[ -z "$(find "$1" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]]
 }
 
 # go_tool_build_id prints the Go build ID of ./cmd/TOOL.
@@ -82,7 +87,8 @@ go_tool_bin() {
 
   mkdir -p "${bin_dir}" || return 1
   if [[ -L "${WORKCELL_GO_CACHE_ROOT}" || ! -O "${WORKCELL_GO_CACHE_ROOT}" ||
-    -L "${bin_dir}" || ! -d "${bin_dir}" || ! -O "${bin_dir}" ]]; then
+    -L "${bin_dir}" || ! -d "${bin_dir}" || ! -O "${bin_dir}" ]] ||
+    ! go_tool_path_private "${WORKCELL_GO_CACHE_ROOT}"; then
     echo "Refusing untrusted Go tool cache: ${bin_dir}" >&2
     return 1
   fi

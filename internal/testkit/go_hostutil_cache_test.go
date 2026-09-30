@@ -219,4 +219,11 @@ HOST_GO_BIN="` + racer + `"; GO_HOSTUTIL_BIN=""; go_hostutil hello`)
 	if code != 7 || strings.TrimSpace(output) != "refused" {
 		t.Fatalf("failing chmod: exit=%d output=%q, want the refusal path", code, output)
 	}
+
+	// A group-writable cache root lets another account swap bin/: refused.
+	// Sourcing the launcher resets the root mode, so loosen it inside the call.
+	code, output = run(`chmod 0770 "${WORKCELL_GO_CACHE_ROOT}"; GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
+	if code != 7 || !strings.Contains(output, "Refusing untrusted Go tool cache") {
+		t.Fatalf("group-writable cache root: exit=%d output=%q, want refusal", code, output)
+	}
 }
