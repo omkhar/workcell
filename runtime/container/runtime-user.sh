@@ -3,6 +3,14 @@
 # also run as plain `/bin/bash <script>`, so clear them for every child bash.
 # A startup file that already ran can pin either one readonly, which makes the
 # unset fail while errexit is still off, so refuse to run while one survives.
+# Language-boundary justification: workcell_runtime_state_value cannot open
+# /run/workcell state with O_NOFOLLOW and a parent descriptor, because bash has
+# no openat. It opens once, then checks type, owner, no-link and the device and
+# inode of that descriptor against the path. Threat model: in a readonly
+# session the mapped uid owns /run/workcell and can add, remove or rename
+# entries there. It cannot hardlink a root-owned file or place an entry on
+# another mount, so no replacement entry matches the opened inode. Residual
+# risk: none known for this directory. A Go port is a separate change.
 unset BASH_ENV ENV
 [[ -z "${BASH_ENV+set}${ENV+set}" ]] || {
   echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2
