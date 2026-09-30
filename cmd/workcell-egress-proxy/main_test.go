@@ -4,6 +4,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,5 +34,12 @@ func TestRunFailsClosedOnBadConfig(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: run error = %v, want %q", name, err, tc.want)
 		}
+	}
+}
+
+func TestRunReportsHelpAsErrHelp(t *testing.T) {
+	t.Parallel()
+	if err := run([]string{"-h"}, io.Discard, io.Discard); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("run(-h) error = %v, want flag.ErrHelp", err)
 	}
 }

@@ -372,24 +372,28 @@ func TestDenyLogIsBounded(t *testing.T) {
 	}
 }
 
-func TestConnectGivesEachAddressItsOwnDeadline(t *testing.T) {
+func TestConnectSharesBudgetAcrossAddresses(t *testing.T) {
 	t.Parallel()
 	p := New(&Allowlist{}, io.Discard)
 	p.lookup = func(context.Context, string) ([]netip.Addr, error) {
-		return []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("8.8.4.4")}, nil
+		return []netip.Addr{
+			netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("8.8.4.4"),
+			netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("1.0.0.1"),
+		}, nil
 	}
-	var deadlines []time.Time
+	var timeouts []time.Duration
 	p.dial = func(ctx context.Context, _ netip.AddrPort) (net.Conn, error) {
 		d, _ := ctx.Deadline()
-		deadlines = append(deadlines, d)
-		time.Sleep(20 * time.Millisecond)
+		timeouts = append(timeouts, time.Until(d))
 		return nil, errors.New("unreachable")
 	}
 	if _, reason := p.connect("example.com", 443); reason != "dial_failed" {
 		t.Fatalf("reason = %q, want dial_failed", reason)
 	}
-	if len(deadlines) != 2 || !deadlines[1].After(deadlines[0]) {
-		t.Fatalf("dial deadlines = %v, want a later deadline for the second address", deadlines)
+	// Four addresses split the 30 s budget: the first attempt gets a quarter
+	// of it, not the full 10 s, so the fourth address is still reachable.
+	if len(timeouts) != 4 || timeouts[0] > connectBudget/4 || timeouts[0] < connectBudget/4-time.Second {
+		t.Fatalf("dial timeouts = %v, want 4 attempts and a first share near %v", timeouts, connectBudget/4)
 	}
 }
 

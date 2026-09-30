@@ -179,23 +179,24 @@ func (p *Proxy) connect(host string, port uint16) (net.Conn, string) {
 			return nil, "blocked_address"
 		}
 	}
-	budget, cancelBudget := context.WithTimeout(context.Background(), connectBudget)
-	defer cancelBudget()
-	for _, a := range addrs {
-		if budget.Err() != nil {
+	deadline := time.Now().Add(connectBudget)
+	for i, a := range addrs {
+		// Share the remaining budget with the addresses still to try, so
+		// silent early answers cannot starve a reachable later one.
+		share := min(dialTimeout, time.Until(deadline)/time.Duration(len(addrs)-i))
+		if share <= 0 {
 			break
 		}
-		if conn, err := p.dialOne(budget, netip.AddrPortFrom(a.Unmap(), port)); err == nil {
+		if conn, err := p.dialOne(share, netip.AddrPortFrom(a.Unmap(), port)); err == nil {
 			return conn, ""
 		}
 	}
 	return nil, "dial_failed"
 }
 
-// dialOne gives each address its own timeout, so one silent address cannot
-// starve the ones after it, while budget still bounds the whole connection.
-func (p *Proxy) dialOne(budget context.Context, addr netip.AddrPort) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(budget, dialTimeout)
+// dialOne dials addr with its own timeout.
+func (p *Proxy) dialOne(timeout time.Duration, addr netip.AddrPort) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return p.dial(ctx, addr)
 }

@@ -19,7 +19,9 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); errors.Is(err, flag.ErrHelp) {
+		return // usage was printed
+	} else if err != nil {
 		fmt.Fprintf(os.Stderr, "workcell-egress-proxy: %v\n", err)
 		os.Exit(1)
 	}
