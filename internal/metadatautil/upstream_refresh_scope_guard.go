@@ -24,7 +24,7 @@ var (
 	scopeGuardDockerfileLineRE = regexp.MustCompile(
 		`^[-+](ARG (CLAUDE|CODEX|COPILOT|GEMINI)_[A-Z0-9_]*(VERSION|SHA256)=[A-Za-z0-9._+:@/-]*|\s+(CLAUDE|CODEX|COPILOT)_(CODE_MODE_HOST_)?(SHA256)="[0-9a-f]{64}"; \\)$`)
 	scopeGuardPathRE = regexp.MustCompile(
-		`^(runtime/container/providers[^/]*/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
+		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
 	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d{1,6}))? \+\d+(?:,(\d{1,6}))? @@`)

@@ -107,6 +107,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,99999999999999999999999 +1,99999999999999999999999 @@\n",
 			wantErr: "malformed hunk",
 		},
+		{
+			name:    "prefixed providers sibling",
+			patch:   scopeGuardFilePatch("runtime/container/providers-staging/package.json", "old", "new"),
+			wantErr: "path runtime/container/providers-staging/package.json",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",
