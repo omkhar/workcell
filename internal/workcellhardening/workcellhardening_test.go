@@ -5577,7 +5577,8 @@ func TestCheckSmokeChownTarRealRepo(t *testing.T) {
 func dualStackApplyPlanHappyFiles() map[string]string {
 	body := "#!/usr/bin/env bash\n" +
 		"render_allowlist_apply_plan() {\n" +
-		"  echo \"sudo iptables-restore --noflush\"\n" +
+		"  printf x |\n" +
+		"  sudo iptables-restore --noflush\n" +
 		"  resolve_vm_endpoint_ips \"${endpoints}\"\n" +
 		"  getent ahosts \"${host}\"\n" +
 		"}\n" +
@@ -5630,6 +5631,20 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 			name: "iptables-restore swap missing",
 			mutate: func(f map[string]string) {
 				f[rel] = strings.Replace(f[rel], "sudo iptables-restore --noflush", "sudo iptables -A WORKCELL_EGRESS -j DROP", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to replace the chain in one iptables-restore transaction",
+		},
+		{
+			name: "iptables-restore only in a comment",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush", "  # sudo iptables-restore --noflush", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to replace the chain in one iptables-restore transaction",
+		},
+		{
+			name: "iptables-restore only in an echo string",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush", "  echo \"sudo iptables-restore --noflush\"", 1)
 			},
 			wantErr: "Expected dual-stack allowlist apply plan to replace the chain in one iptables-restore transaction",
 		},

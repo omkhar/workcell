@@ -3972,8 +3972,8 @@ func CheckSmokeChownTar(rootDir string) error {
 //     containment (kindPresent).
 //   - The atomic-swap pair scopes to render_allowlist_apply_plan: the block
 //     must not unlink or flush the live chain (kindFunctionBlockRegexAbsent),
-//     and the file must replace it with `iptables-restore --noflush`
-//     (kindPresent).
+//     and the file must carry `iptables-restore --noflush` as a command line
+//     (kindRegexPresent).
 //   - The two affirmative function_block_contains_regex probes scope to
 //     render_allowlist_apply_plan (kindFunctionBlockRegex); their patterns
 //     (resolve_vm_endpoint_ips, getent ahosts) are
@@ -4007,10 +4007,12 @@ var dualStackApplyPlanChecks = []check{
 		targetFile:   colimaEgressAllowlistRelPath,
 	},
 	{
-		// kindPresent (whole file): the block extractor stops at the first
-		// column-0 `}` inside the plan heredoc, before the restore step.
-		kind:       kindPresent,
-		pattern:    "sudo iptables-restore --noflush",
+		// kindRegexPresent (whole file): the block extractor stops at the first
+		// column-0 `}` inside the plan heredoc, before the restore step. The
+		// line anchors reject the command inside a comment or an echo/printf
+		// string; the replay in verify-invariants.sh covers placement.
+		kind:       kindRegexPresent,
+		regex:      `^[[:space:]]+sudo iptables-restore --noflush$`,
 		message:    "Expected dual-stack allowlist apply plan to replace the chain in one iptables-restore transaction",
 		targetFile: colimaEgressAllowlistRelPath,
 	},
