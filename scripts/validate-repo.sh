@@ -237,6 +237,8 @@ shell_files=(
   "${ROOT_DIR}/scripts/check-release-tag-signature.sh"
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
   "${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh"
+  "${ROOT_DIR}/scripts/ci/upstream-refresh-publish.sh"
+  "${ROOT_DIR}/scripts/ci/upstream-refresh-scope-guard.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"
   "${ROOT_DIR}/scripts/run-mutation-tests.sh"
   "${ROOT_DIR}/scripts/update-upstream-pins.sh"

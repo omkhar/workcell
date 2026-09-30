@@ -456,6 +456,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		`deployment_tags = ["v*"]`,
 		"",
 		"[workflow_environment.upstream-refresh]",
+		`optional_secrets = ["WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"]`,
 		"allow_admin_bypass = false",
 		`deployment_branches = ["main"]`,
 		"",
@@ -1536,6 +1537,27 @@ func TestVerifyGitHubHostedControlsRejectsNonOwnerPublicCollaboratorForBranchRev
 	}
 	if !strings.Contains(err.Error(), "requires the owner to be the only direct collaborator") {
 		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want owner-only collaborator rejection", err)
+	}
+}
+
+func TestVerifyGitHubHostedControlsAcceptsOptionalUpstreamRefreshAppSecrets(t *testing.T) {
+	t.Parallel()
+
+	tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+		{
+			"login": "omkhar",
+			"permissions": map[string]any{
+				"admin": true,
+			},
+		},
+	})
+
+	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-secrets.json"), func(content string) string {
+		return strings.Replace(content, `"secrets": []`, `"secrets": [{"name":"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID"},{"name":"WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"}]`, 1)
+	})
+
+	if err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath); err != nil {
+		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want optional App secrets accepted", err)
 	}
 }
 

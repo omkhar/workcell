@@ -16,6 +16,7 @@
 allowed = [
   "actions/attest",
   "actions/checkout",
+  "actions/create-github-app-token",
   "actions/dependency-review-action",
   "actions/download-artifact",
   "actions/upload-artifact",

@@ -17,6 +17,7 @@ import (
 type WorkflowEnvironmentPolicy struct {
 	Variables             map[string]string
 	RequiredSecrets       []string
+	OptionalSecrets       []string
 	AllowAdminBypass      bool
 	HasAllowAdminBypass   bool
 	DeploymentBranches    []string
@@ -152,6 +153,24 @@ func WorkflowEnvironments(policy map[string]any, policyPath string) (map[string]
 			slices.Sort(requiredSecrets)
 		}
 
+		optionalSecrets := []string{}
+		if rawSecrets, ok := entry["optional_secrets"]; ok {
+			secrets, present, err := MustStringSlice(rawSecrets)
+			if err != nil {
+				return nil, fmt.Errorf("%s workflow_environment.%s.optional_secrets: %w", policyPath, environmentName, err)
+			}
+			if !present {
+				return nil, fmt.Errorf("%s workflow_environment.%s.optional_secrets must be an array of secret names", policyPath, environmentName)
+			}
+			for _, secretName := range secrets {
+				if strings.TrimSpace(secretName) == "" {
+					return nil, fmt.Errorf("%s workflow_environment.%s.optional_secrets must be an array of non-empty secret names", policyPath, environmentName)
+				}
+			}
+			optionalSecrets = append(optionalSecrets, secrets...)
+			slices.Sort(optionalSecrets)
+		}
+
 		allowAdminBypass := false
 		hasAllowAdminBypass := false
 		if rawAllowAdminBypass, ok := entry["allow_admin_bypass"]; ok {
@@ -205,6 +224,7 @@ func WorkflowEnvironments(policy map[string]any, policyPath string) (map[string]
 		environments[environmentName] = WorkflowEnvironmentPolicy{
 			Variables:             variables,
 			RequiredSecrets:       requiredSecrets,
+			OptionalSecrets:       optionalSecrets,
 			AllowAdminBypass:      allowAdminBypass,
 			HasAllowAdminBypass:   hasAllowAdminBypass,
 			DeploymentBranches:    deploymentBranches,
@@ -267,7 +287,10 @@ func ValidateCanonicalWorkflowEnvironments(policy map[string]any, policyPath str
 		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh")
 	}
 	if len(upstreamRefresh.RequiredSecrets) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not declare secrets for workflow_environment.upstream-refresh")
+		return errors.New("policy/github-hosted-controls.toml must not require secrets for workflow_environment.upstream-refresh; the App credentials are optional until the admin creates them")
+	}
+	if !slices.Equal(upstreamRefresh.OptionalSecrets, []string{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"}) {
+		return errors.New("policy/github-hosted-controls.toml must set workflow_environment.upstream-refresh.optional_secrets to the upstream-refresh App client ID and private key")
 	}
 	if len(upstreamRefresh.Variables) != 0 {
 		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.upstream-refresh")

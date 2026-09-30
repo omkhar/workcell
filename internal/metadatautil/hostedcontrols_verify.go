@@ -259,7 +259,7 @@ func verifyHostedWorkflowEnvironment(tmpDir, name string, policy WorkflowEnviron
 	if err := verifyHostedEnvironmentVariables(tmpDir, name, policy.Variables, repo); err != nil {
 		return err
 	}
-	if err := verifyHostedEnvironmentSecrets(tmpDir, name, policy.RequiredSecrets, repo); err != nil {
+	if err := verifyHostedEnvironmentSecrets(tmpDir, name, policy.RequiredSecrets, policy.OptionalSecrets, repo); err != nil {
 		return err
 	}
 	return verifyHostedEnvironmentDeployment(tmpDir, name, policy, meta, repo)
@@ -296,7 +296,7 @@ func verifyHostedEnvironmentVariables(tmpDir, name string, expected map[string]s
 	return nil
 }
 
-func verifyHostedEnvironmentSecrets(tmpDir, name string, expected []string, repo string) error {
+func verifyHostedEnvironmentSecrets(tmpDir, name string, expected, optional []string, repo string) error {
 	var payload map[string]any
 	artifact := EnvironmentArtifactName(name)
 	if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", artifact)), &payload); err != nil {
@@ -306,7 +306,7 @@ func verifyHostedEnvironmentSecrets(tmpDir, name string, expected []string, repo
 	if missing := missingHostedSecretNames(actual, expected); len(missing) > 0 {
 		return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, name, strings.Join(missing, ", "))
 	}
-	if unexpected := UnexpectedEnvironmentSecretNames(actual, expected); len(unexpected) > 0 {
+	if unexpected := UnexpectedEnvironmentSecretNames(actual, append(slices.Clone(expected), optional...)); len(unexpected) > 0 {
 		return fmt.Errorf("workflow environment secrets on %s/%s include unexpected entries: %s", repo, name, strings.Join(unexpected, ", "))
 	}
 	return nil
