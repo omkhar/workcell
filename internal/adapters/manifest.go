@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -243,6 +244,10 @@ func validateManifest(m Manifest, schema int) error {
 	switch m.Tier {
 	case "certified", "uncertified":
 	case "planned":
+		// A planned scaffold declares nothing that a parity check would skip.
+		if !reflect.DeepEqual(m, Manifest{ID: m.ID, Tier: m.Tier}) {
+			return errors.New("a planned manifest declares only schema, id, and tier")
+		}
 		return nil
 	default:
 		return fmt.Errorf("invalid tier %q", m.Tier)

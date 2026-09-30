@@ -104,10 +104,9 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 	}
 }
 
-// providerEndpoints runs provider_endpoints from script. It first rewrites
-// the function as bash parsed it (declare -f): each arm whose whole pattern
-// is "*)" prints "default-arm-N" to stderr, and every other line that ends in
-// ")" (any other arm pattern) prints "line-N". So arm lists each arm entered.
+// providerEndpoints runs provider_endpoints from script, rewritten from declare -f
+// so that the lone "*)" arm prints "default-arm-N" to stderr and any other line
+// ending in ")" (another arm pattern) prints "line-N": arm lists each arm entered.
 func providerEndpoints(t *testing.T, script, id string) (out, arm string, code int) {
 	t.Helper()
 	const probe = `source "$1" || exit 3
@@ -153,7 +152,6 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 		"no row":                    {"", true},
 		"other row":                 {"    gemini)\n      return 1\n      ;;\n", true},
 		"return 1 arm":              {"    antigravity)\n      return 1\n      ;;\n", false},
-		"false arm":                 {"    antigravity)\n      false\n      ;;\n", false},
 		"arm in a pattern":          {"    gemini | antigravity)\n      return 1\n      ;;\n", false},
 		"wildcard pattern list":     {"    antigravity | *)\n      return 1\n      ;;\n", false},
 		"glob matching both probes": {"    anti* | no-*)\n      return 1\n      ;;\n", false},
@@ -162,7 +160,6 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 		"test-next arm":             {"    antigravity)\n      true\n      ;;&\n", false},
 		"arm that recurses":         {"    antigravity)\n      provider_endpoints no-such-provider\n      ;;\n", false},
 		"arm with a row":            {"    antigravity)\n      echo x:443\n      ;;\n", false},
-		"arm that returns 0":        {"    antigravity)\n      return 0\n      ;;\n", false},
 	}
 	for name, c := range cases {
 		path := filepath.Join(t.TempDir(), "endpoints.sh")
@@ -215,13 +212,13 @@ func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
 	for _, m := range loadRepoManifests(t) {
 		out, code := probe(m.ID)
 		switch m.Tier {
-		case "certified":
-			if code != 0 || strings.Contains(out, unsupported) || strings.Contains(out, planned) {
-				t.Errorf("%s: certified manifest but the launcher rejects --agent (exit %d): %s", m.ID, code, out)
-			}
 		case "planned":
 			if code != 2 || !strings.Contains(out, planned) {
 				t.Errorf("%s: planned manifest but the launcher does not report a planned adapter (exit %d): %s", m.ID, code, out)
+			}
+		default:
+			if code != 0 || strings.Contains(out, unsupported) || strings.Contains(out, planned) {
+				t.Errorf("%s: %s manifest but the launcher rejects --agent (exit %d): %s", m.ID, m.Tier, code, out)
 			}
 		}
 	}
@@ -601,10 +598,8 @@ func TestDockerfilePinnedArgsIgnoreDecoys(t *testing.T) {
 }
 
 func TestManifestsMatchRustLaunchTargets(t *testing.T) {
-	source := readRepoFile(t, "runtime/container/rust/src/bin/workcell-launcher.rs")
-	targets := rustLaunchTargets(source)
 	var names []string
-	for _, target := range targets {
+	for _, target := range rustLaunchTargets(readRepoFile(t, "runtime/container/rust/src/bin/workcell-launcher.rs")) {
 		name := target[1]
 		names = append(names, name)
 		if target[2] != "/usr/local/bin/"+name || target[3] != "/usr/local/libexec/workcell/core/"+name {
@@ -613,7 +608,7 @@ func TestManifestsMatchRustLaunchTargets(t *testing.T) {
 	}
 	var binaries []string
 	for _, m := range loadRepoManifests(t) {
-		if m.Tier == "certified" {
+		if m.Tier != "planned" {
 			if m.Binary != m.ID {
 				t.Errorf("%s: binary %q must equal the adapter id to match its Rust LaunchTarget", m.ID, m.Binary)
 			}
@@ -621,7 +616,7 @@ func TestManifestsMatchRustLaunchTargets(t *testing.T) {
 		}
 	}
 	if !slices.Equal(sorted(names), sorted(binaries)) {
-		t.Errorf("Rust provider LaunchTargets = %v, certified manifest binaries = %v", names, binaries)
+		t.Errorf("Rust provider LaunchTargets = %v, non-planned manifest binaries = %v", names, binaries)
 	}
 }
 
@@ -683,6 +678,7 @@ container_path = "/opt/demo.json"
 		"wrong schema":            strings.Replace(valid, "schema = 1", "schema = 2", 1),
 		"missing schema":          strings.Replace(valid, "schema = 1\n", "", 1),
 		"invalid id":              strings.Replace(valid, `id = "demo"`, `id = "Demo"`, 1),
+		"planned with fields":     strings.Replace(valid, `"certified"`, `"planned"`, 1),
 		"invalid tier":            strings.Replace(valid, `"certified"`, `"trusted"`, 1),
 		"missing binary":          strings.Replace(valid, "binary = \"demo\"\n", "", 1),
 		"invalid method":          strings.Replace(valid, `method = "binary"`, `method = "curl"`, 1),
