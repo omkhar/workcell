@@ -850,11 +850,11 @@ func upstreamRefreshGuardUses(step workflowStep, action string, inputs map[strin
 	return strings.HasPrefix(step.Uses, action) && step.Run == "" && len(step.Env) == 0 && maps.Equal(step.With, inputs)
 }
 
-// runsCommand reports whether run executes command. It reads the commands the
-// shell really runs, so a line continuation, comment or heredoc cannot hide or
-// fake one.
-func runsCommand(run, command string) bool {
-	return len(ShellInvocations(run, command)) > 0
+// commandRuns returns each execution of command in run. It reads the commands
+// the shell really runs, so a line continuation, comment or heredoc cannot hide
+// or fake one.
+func commandRuns(run, command string) []Invocation {
+	return ShellInvocations(run, command)
 }
 
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
@@ -884,7 +884,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				return fmt.Errorf("%s %s job must not mint the GitHub App token", path, name)
 			}
 			for _, command := range []string{"gh pr create", "gh pr merge", "./scripts/ci/upstream-refresh-publish.sh"} {
-				if name != "publish" && runsCommand(step.Run, command) {
+				if name != "publish" && len(commandRuns(step.Run, command)) > 0 {
 					return fmt.Errorf("%s %s job must not contain %q", path, name, command)
 				}
 			}
@@ -931,8 +931,13 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				return fmt.Errorf("%s publish job must mint the App token as step app-token from the client-id secret and private-key secret with only contents and pull-requests write", path)
 			}
 		}
-		if runsCommand(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
+		for _, run := range commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
 			publishRuns++
+			// The second argument is the guard result; a literal would pass an
+			// out-of-scope candidate.
+			if len(run.Args) != 3 || run.Args[1] != "${SCOPE_GUARD_RESULT}" {
+				return fmt.Errorf("%s publish job must pass \"${SCOPE_GUARD_RESULT}\" as the second publish script argument", path)
+			}
 			if step.Env["SCOPE_GUARD_RESULT"] != "${{ needs.scope-guard.outputs.result }}" {
 				return fmt.Errorf("%s publish job must pass the scope-guard result to the publish script", path)
 			}

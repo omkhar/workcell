@@ -1389,6 +1389,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"refresh publishes behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            create --fill\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr create\""},
 		{"refresh merges behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            merge 1\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr merge\""},
 		{"publish missing scope-guard need", "needs: [refresh, scope-guard]", "needs: [refresh]", "publish job must need exactly"},
+		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
 		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
 		{"publish App token from wrong secret", "client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}", "client-id: ${{ secrets.OTHER }}", "client-id secret"},
 		{"publish App token from wrong private key", "private-key: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}", "private-key: ${{ secrets.OTHER }}", "private-key secret"},
