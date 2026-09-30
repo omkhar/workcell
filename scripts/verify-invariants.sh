@@ -6610,6 +6610,19 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo/config' /tmp/workcell-commondir-config.out
 
+# A Git admin directory under a worktrees name outside the masked paths must be rejected.
+COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"
+git init -q -b master "${COMMONDIR_WT_REPO}"
+git -C "${COMMONDIR_WT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_WT_REPO}/.git/foo/worktrees/admin"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_WT_REPO}/.git/foo/worktrees/admin/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_WT_REPO}/.git/foo/worktrees/admin/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WT_REPO}" --dry-run >/tmp/workcell-commondir-wt.out 2>&1; then
+  echo "Expected repo with a Git admin directory under foo/worktrees to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/foo/worktrees/admin/commondir' /tmp/workcell-commondir-wt.out
+
 # A Git admin directory under refs can carry a redirect and must be rejected.
 COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
 git init -q -b master "${COMMONDIR_REFS_REPO}"
