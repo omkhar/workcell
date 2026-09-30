@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "1ce60696e0662ff3d55cd74eaad5e5d758a5a9f59682c45f144e38d1ad2868aa"
+      "sha256": "43b838c5dca8977421869922a391c39aca3b0f8247330282a30115e4f10a010b"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -158,7 +158,7 @@
       "kind": "adapter-baseline",
       "repo_path": "adapters/codex/requirements.toml",
       "runtime_path": "/opt/workcell/adapters/codex/requirements.toml",
-      "sha256": "52ada96708b32c92f660c723f38061950248d05052df174319481b5e36917963"
+      "sha256": "9d51292007cb0955118927cdc1ac3c3ec5e9a8007620181c8ac3b17ac7ba7c1f"
     },
     {
       "kind": "adapter-baseline",
@@ -177,6 +177,12 @@
       "repo_path": "adapters/gemini/GEMINI.md",
       "runtime_path": "/opt/workcell/adapters/gemini/GEMINI.md",
       "sha256": "371f44f99b4a080286086493b470a6bf12d63bd6a9ce94e835f2a0a24b9a1c56"
+    },
+    {
+      "kind": "adapter-baseline",
+      "repo_path": "adapters/gemini/system-settings.json",
+      "runtime_path": "/opt/workcell/adapters/gemini/system-settings.json",
+      "sha256": "6f2c4a77946eafca9cc7947652fa066104de96c88ab63e9c9421a39a102bb90f"
     },
     {
       "kind": "runtime-control-plane",
@@ -230,7 +236,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/home-control-plane.sh",
       "runtime_path": "/usr/local/libexec/workcell/home-control-plane.sh",
-      "sha256": "c7def16da7751ae65bbe8e8bf2eb8ddfecea9c8eb7b2baaed63a642bdbe1f1ee"
+      "sha256": "d0f93dedec1d43e9467aee87d59984e004043d65d4ca1cdb24b6cf2ac605298d"
     },
     {
       "kind": "runtime-control-plane",
@@ -248,7 +254,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "60fd12d837c047f488963ff635cff02c6a80e19be6149cd43a0bf28a0f418507"
+      "sha256": "10987f463dbedfe2d1e5856bc4dc31377e40ea135928adbcc97853512b98c9bd"
     },
     {
       "kind": "runtime-control-plane",
@@ -267,6 +273,18 @@
       "repo_path": "adapters/claude/managed-settings.json",
       "runtime_path": "/etc/claude-code/managed-settings.json",
       "sha256": "977745dc9b4071011de5966aac596f89fa225bebb17306a4917238e7eff427d8"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "adapters/codex/requirements.toml",
+      "runtime_path": "/etc/codex/requirements.toml",
+      "sha256": "9d51292007cb0955118927cdc1ac3c3ec5e9a8007620181c8ac3b17ac7ba7c1f"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "adapters/gemini/system-settings.json",
+      "runtime_path": "/etc/gemini-cli/settings.json",
+      "sha256": "6f2c4a77946eafca9cc7947652fa066104de96c88ab63e9c9421a39a102bb90f"
     }
   ],
   "schema_version": 2
