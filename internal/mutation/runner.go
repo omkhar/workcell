@@ -261,6 +261,27 @@ var goHelperMutations = []mutationCase{
 		label:        "publication gate whole-word publisher contract",
 		command:      goCmd("test", "./internal/metadatautil", "-run", "TestValidateReleaseWorkflowPublicationGateRejectsEvasions", "-count=1"),
 	},
+	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `		if blockedAddr(a) {`,
+		replacement:  `		if false && blockedAddr(a) {`,
+		label:        "egress proxy refuses non-public resolved addresses",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestProxyRefusesBlockedResolution", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `	if !p.allow.sni[sni] {`,
+		replacement:  `	if false && !p.allow.sni[sni] {`,
+		label:        "egress proxy SNI allowlist",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestProxyTLSEndToEnd", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/allowlist.go",
+		original:     `if prev, ok := a.forward[port]; ok && prev != host {`,
+		replacement:  `if prev, ok := a.forward[port]; false && ok && prev != host {`,
+		label:        "egress proxy plain port maps to one host",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestParseAllowlist", "-count=1"),
+	},
 }
 
 var rustMutations = []mutationCase{
