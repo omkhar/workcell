@@ -59,7 +59,8 @@ var manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // directory-name order, and requires each id to match its directory. It fails
 // closed: a missing or unreadable root, a symlinked adapter directory, and a
 // directory without a regular adapter.toml are errors. A regular root entry
-// (such as README.md) is skipped; any other non-directory entry is an error.
+// whose name is not an adapter id (such as README.md) is skipped; any other
+// non-directory entry is an error.
 // The listing reads names only. Each entry is classified by opening it with
 // O_NOFOLLOW from the root descriptor, and each manifest is opened the same
 // way from its adapter directory, so a path swapped after the listing cannot
@@ -80,7 +81,8 @@ func LoadManifests(root string) ([]Manifest, error) {
 	for _, name := range names {
 		path := filepath.Join(root, name, "adapter.toml")
 		content, err := readManifestFile(rootFD, name)
-		if errors.Is(err, errRegularFile) {
+		// A regular file named like an adapter id could be a replaced adapter.
+		if errors.Is(err, errRegularFile) && !manifestIDPattern.MatchString(name) {
 			continue
 		}
 		if err != nil {

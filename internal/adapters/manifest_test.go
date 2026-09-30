@@ -133,8 +133,17 @@ func endpointRowAbsent(t *testing.T, script, id string) bool {
 	if unknownCode != 1 || unknownOut != "" || !strings.Contains(unknownTrace, "return 1") {
 		t.Fatalf("provider_endpoints probe cannot detect the default arm (exit %d, out %q): %s", unknownCode, unknownOut, unknownTrace)
 	}
+	// A pattern list with the wildcard ("id | *)") runs the default arm too, so
+	// also reject the id anywhere in the function as bash parsed it.
+	cmd := exec.Command("bash", "--noprofile", "--norc", "-c", `source "$1" && declare -f provider_endpoints`, "bash", script)
+	cmd.Dir = repoRoot
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	body, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("declare -f provider_endpoints: %v", err)
+	}
 	out, trace, code := providerEndpoints(t, script, id)
-	return code == 1 && out == "" && strings.ReplaceAll(trace, id, unknown) == unknownTrace
+	return code == 1 && out == "" && strings.ReplaceAll(trace, id, unknown) == unknownTrace && !strings.Contains(string(body), id)
 }
 
 func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
@@ -143,13 +152,14 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 		arm  string
 		want bool
 	}{
-		"no row":             {"", true},
-		"other row":          {"    gemini)\n      return 1\n      ;;\n", true},
-		"return 1 arm":       {"    antigravity)\n      return 1\n      ;;\n", false},
-		"false arm":          {"    antigravity)\n      false\n      ;;\n", false},
-		"arm in a pattern":   {"    gemini | antigravity)\n      return 1\n      ;;\n", false},
-		"arm with a row":     {"    antigravity)\n      echo x:443\n      ;;\n", false},
-		"arm that returns 0": {"    antigravity)\n      return 0\n      ;;\n", false},
+		"no row":                {"", true},
+		"other row":             {"    gemini)\n      return 1\n      ;;\n", true},
+		"return 1 arm":          {"    antigravity)\n      return 1\n      ;;\n", false},
+		"false arm":             {"    antigravity)\n      false\n      ;;\n", false},
+		"arm in a pattern":      {"    gemini | antigravity)\n      return 1\n      ;;\n", false},
+		"wildcard pattern list": {"    antigravity | *)\n      return 1\n      ;;\n", false},
+		"arm with a row":        {"    antigravity)\n      echo x:443\n      ;;\n", false},
+		"arm that returns 0":    {"    antigravity)\n      return 0\n      ;;\n", false},
 	}
 	for name, c := range cases {
 		path := filepath.Join(t.TempDir(), "endpoints.sh")
@@ -762,6 +772,9 @@ func TestLoadManifestsFailsClosed(t *testing.T) {
 			if err := unix.Mkfifo(filepath.Join(root, "demo", "adapter.toml"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+		},
+		"regular file with an adapter name": func(root string) {
+			os.WriteFile(filepath.Join(root, "demo"), []byte(planned), 0o600)
 		},
 		"manifest is a directory": func(root string) {
 			os.MkdirAll(filepath.Join(root, "demo", "adapter.toml"), 0o700)
