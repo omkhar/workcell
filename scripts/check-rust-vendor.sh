@@ -23,15 +23,19 @@ trap 'rm -rf "${tmp}"' EXIT
 fresh="${tmp}/vendor"
 # The committed .cargo/config.toml replaces crates-io with vendor/, so vendor
 # from a copy that has no such override.
-cp -R "${RUST_DIR}" "${tmp}/src"
-rm -rf "${tmp}/src/vendor" "${tmp}/src/.cargo" "${tmp}/src/target"
+mkdir "${tmp}/src"
+tar -C "${RUST_DIR}" --exclude=./vendor --exclude=./.cargo --exclude=./target -cf - . | tar -C "${tmp}/src" -xf -
 (cd "${tmp}/src" && cargo vendor --locked "${fresh}" >/dev/null)
 
 # Newer cargo adds a "$comment" key to .cargo-checksum.json, so compare that
 # file without it and every other file byte for byte. The exclusion matches
-# that name at any depth, so compare checksum files below a crate root apart.
+# that name at any depth, so compare the ones at the vendor root and below a
+# crate root apart.
 nested_checksums() {
-  (cd "$1" && find . -mindepth 3 -name .cargo-checksum.json -exec shasum -a 256 {} + | sort -k2)
+  (cd "$1" && {
+    find . -maxdepth 1 -name .cargo-checksum.json -exec shasum -a 256 {} +
+    find . -mindepth 3 -name .cargo-checksum.json -exec shasum -a 256 {} +
+  } | sort -k2)
 }
 mismatch=0
 # diff follows symlinks, so reject them before it runs. Assignments stop the

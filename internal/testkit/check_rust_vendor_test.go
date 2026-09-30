@@ -70,6 +70,17 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.Remove(nested); err != nil {
 		t.Fatal(err)
 	}
+	// A checksum file at the vendor root is not a crate-root file either.
+	rootSum := filepath.Join(vendor, ".cargo-checksum.json")
+	if err := os.WriteFile(rootSum, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("vendor-root checksum file accepted: %s", out)
+	}
+	if err := os.Remove(rootSum); err != nil {
+		t.Fatal(err)
+	}
 	// A broken nested link must fail the scan, not read as an empty list.
 	if err := os.Symlink("missing", nested); err != nil {
 		t.Fatal(err)
