@@ -6565,6 +6565,20 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   exit 1
 fi
 
+COMMONDIR_ROOT="${BARRIER_VERIFY_ROOT}/commondir-root"
+COMMONDIR_REPO="${COMMONDIR_ROOT}/repo"
+COMMONDIR_ALT="${COMMONDIR_ROOT}/alt"
+git init -q -b master "${COMMONDIR_REPO}"
+git -C "${COMMONDIR_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_ALT}/hooks"
+cp -R "${COMMONDIR_REPO}/.git/objects" "${COMMONDIR_REPO}/.git/refs" "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_REPO}/.git/config" "${COMMONDIR_ALT}/"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_REPO}/.git/commondir"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REPO}" --dry-run >/tmp/workcell-commondir.out 2>&1; then
+  echo "Expected repo with a redirecting .git/commondir to be rejected" >&2
+  exit 1
+fi
+grep -q 'This workspace has a Git commondir file that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
+
 if ! grep -q 'WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE' "${ROOT_DIR}/scripts/provider-e2e.sh"; then
   echo "Expected provider-e2e secret preservation to use a restore env file" >&2
   exit 1

@@ -86,6 +86,10 @@ Workcell also masks Git execution-control paths for the workspace repository and
 its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 `worktrees`.
 
+Workcell refuses a safe-path workspace that has a Git `commondir` file outside
+`worktrees`. That file makes Git read config and hooks from another directory,
+past the masks.
+
 The Copilot adapter also masks Copilot settings, instructions, MCP files,
 skills, and hooks. It disables custom instructions and blocks skill and dynamic
 retrieval overrides.

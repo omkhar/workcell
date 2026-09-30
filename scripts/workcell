@@ -8050,6 +8050,17 @@ prepare_workspace_control_plane_shadow() {
 
   while IFS= read -r -d '' git_dir; do
     git_rel="${git_dir#"${workspace}/"}"
+    # A commondir file makes Git read config and hooks from another directory,
+    # past the masks below. A standard clone has none outside worktrees/.
+    while IFS= read -r -d '' path; do
+      echo "Refusing git workspace with admin state outside the mounted workspace: ${workspace}" >&2
+      echo "This workspace has a Git commondir file that redirects Git config and hooks: ${path#"${workspace}/"}" >&2
+      echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
+      echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with this workspace." >&2
+      exit 2
+    done < <(
+      find "${git_dir}" -name worktrees -prune -o -name commondir -print0
+    )
     for rel in "${git_rel}/hooks" "${git_rel}/config" "${git_rel}/config.worktree"; do
       add_shadow_git_path_if_present "${workspace}" "${rel}"
     done

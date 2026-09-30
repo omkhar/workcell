@@ -1350,7 +1350,7 @@ func CheckPublishPrShadowMounts(rootDir string) error {
 	return evaluate(rootDir, publishPrShadowMountChecks)
 }
 
-// shadowEnumEgressChecks lists the seven shadow-enumeration / IPv6-egress
+// shadowEnumEgressChecks lists the eight shadow-enumeration / IPv6-egress
 // invariants in the same order as the former inline block in
 // scripts/verify-invariants.sh (the block between the publish-PR /
 // shadow-mount group and the hostile-BASH_ENV runtime fixture), so a
@@ -1364,6 +1364,9 @@ func CheckPublishPrShadowMounts(rootDir string) error {
 // literal, matched by `grep -Fq`), each message is computed here verbatim as
 // "Expected prepare_workspace_control_plane_shadow to match snippet: " +
 // needle.
+//
+// The sixth probe is a Go-native addition: it requires the launcher to
+// refuse a Git commondir file (docs/invariants.md section 3).
 //
 // The final two probes read scripts/colima-egress-allowlist.sh (via
 // targetFile), mirroring the two shell `rg` probes that ran against that
@@ -1407,6 +1410,13 @@ var shadowEnumEgressChecks = []check{
 		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
 	},
 	{
+		// kindPresent: the launcher must refuse a Git commondir file, which
+		// redirects Git config and hooks past the masks above.
+		kind:    kindPresent,
+		pattern: `-prune -o -name commondir -print0`,
+		message: "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
+	},
+	{
 		// kindAbsent against scripts/colima-egress-allowlist.sh: silently
 		// disabling IPv6 as an allowlist-enforcement fallback is a violation
 		// (present → exit 1).
@@ -1426,7 +1436,7 @@ var shadowEnumEgressChecks = []check{
 	},
 }
 
-// CheckShadowEnumEgress runs the seven shadow-enumeration / IPv6-egress
+// CheckShadowEnumEgress runs the eight shadow-enumeration / IPv6-egress
 // invariants against the repo rooted at rootDir, in the shell's original
 // order.  It returns nil when every invariant holds (the shell's exit 0), or
 // an error whose message equals the shell's stderr for the first violated

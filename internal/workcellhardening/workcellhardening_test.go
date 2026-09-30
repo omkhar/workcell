@@ -1225,8 +1225,9 @@ func TestCheckPublishPrShadowMountsRealRepo(t *testing.T) {
 }
 
 // shadowEnumEgressHappyLauncher is a minimal scripts/workcell that satisfies
-// the five launcher-scoped shadow-enumeration invariants: the whole-file .git
-// enumeration and all four submodule find-snippet needles.  Individual
+// the six launcher-scoped shadow-enumeration invariants: the whole-file .git
+// enumeration, all four submodule find-snippet needles, and the commondir
+// refusal.  Individual
 // negative cases mutate one property of this baseline.  The needles are
 // reproduced here byte-for-byte from scripts/workcell so a mis-transcription
 // is caught by both the negative cases and TestCheckShadowEnumEgressRealRepo.
@@ -1239,6 +1240,7 @@ prepare_workspace_control_plane_shadow() {
     \( -type f -o -type l \) -name hooks \
     -o \( -type f -o -type l \) \( -name config -o -name config.worktree \) \
     -o \( -type f -o -type l \) -name worktrees
+  find "${git_dir}" -name worktrees -prune -o -name commondir -print0
 }
 `
 
@@ -1328,6 +1330,13 @@ func TestCheckShadowEnumEgress(t *testing.T) {
 			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -name worktrees`, `-type l \) -name other`, 1),
 			colima:   shadowEnumEgressHappyColima,
 			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
+		},
+		{
+			// kindPresent: the commondir refusal find removed.
+			name:     "missing commondir refusal",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-name commondir -print0`, `-name other -print0`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
 		},
 		{
 			// kindAbsent against the colima helper: silently disabling IPv6 as a
