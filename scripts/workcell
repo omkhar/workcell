@@ -3233,6 +3233,28 @@ ensure_session_audit_state() {
   rm -f "${SESSION_AUDIT_STATE_FILE}"
 }
 
+# docker cp without -L copies an in-container symlink as a host symlink, and
+# container content is agent-controlled. Stage the copy in a private directory,
+# accept only a regular file, set its mode there, then rename it over the
+# destination (rename replaces a link; it never follows one).
+copy_container_regular_file() {
+  local container_name="$1"
+  local container_path="$2"
+  local destination="$3"
+  local staged_dir=""
+  local status=1
+
+  staged_dir="$(mktemp -d "$(dirname "${destination}")/.workcell-cp.XXXXXX")" || return 1
+  if run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${container_path}" "${staged_dir}/file" >/dev/null 2>&1 &&
+    [[ -f "${staged_dir}/file" && ! -L "${staged_dir}/file" ]] &&
+    chmod 0600 "${staged_dir}/file" &&
+    mv -f "${staged_dir}/file" "${destination}"; then
+    status=0
+  fi
+  rm -rf "${staged_dir}"
+  return "${status}"
+}
+
 capture_session_audit_state() {
   local container_name="$1"
 
@@ -3242,12 +3264,9 @@ capture_session_audit_state() {
     return 0
   fi
   mkdir -p "$(dirname "${SESSION_AUDIT_STATE_FILE}")"
-  if ! run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
-    if ! run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" >/dev/null 2>&1; then
-      :
-    fi
+  if ! copy_container_regular_file "${container_name}" "${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}"; then
+    copy_container_regular_file "${container_name}" "/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" || true
   fi
-  chmod 0600 "${SESSION_AUDIT_STATE_FILE}" 2>/dev/null || true
 }
 
 capture_session_file_trace() {
@@ -3258,13 +3277,13 @@ capture_session_file_trace() {
   if ! file_trace_log_path="$(revalidate_recorded_host_output_path "${FILE_TRACE_LOG_PATH}")"; then
     return 0
   fi
-  if ! run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${SESSION_FILE_TRACE_CONTAINER_FILE}" "${file_trace_log_path}" >/dev/null 2>&1; then
+  if ! copy_container_regular_file "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" "${file_trace_log_path}"; then
     if [[ ! -s "${file_trace_log_path}" ]]; then
       printf '%s\tevent=host-collect-missing\tcontainer=%s\tcontainer_path=%s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" >>"${file_trace_log_path}"
     fi
+    chmod 0600 "${file_trace_log_path}" 2>/dev/null || true
   fi
-  chmod 0600 "${file_trace_log_path}" 2>/dev/null || true
 }
 
 session_record_status() {
