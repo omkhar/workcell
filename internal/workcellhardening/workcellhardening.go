@@ -519,6 +519,13 @@ const (
 	// expected non-null type → violation), and a navigation type error or invalid
 	// JSON is jq's error exit → violation (navigateJSONPath returns (nil, false)).
 	kindJSONTypeEquals
+	// kindFunctionBlockRegexInCode requires regex to match one whole line of
+	// the top-level bash function body named functionName after shell comments
+	// are stripped.  The regex must be anchored (^...$) so a quoted echo of the
+	// command cannot satisfy it.  Unlike kindFunctionBlockRegex it reads code,
+	// not comments.  scripts/lib ShellInvocations cannot anchor these commands:
+	// it drops function and compound-command bodies by design.
+	kindFunctionBlockRegexInCode
 )
 
 // check is one hardening invariant: how to match, which fixed string or regex
@@ -1410,11 +1417,13 @@ var shadowEnumEgressChecks = []check{
 		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
 	},
 	{
-		// kindPresent: the launcher must refuse a Git commondir file, which
-		// redirects Git config and hooks past the masks above.
-		kind:    kindPresent,
-		pattern: `-prune -o -name commondir -print0`,
-		message: "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
+		// The launcher must capture the status of the commondir walk and refuse
+		// a Git commondir file, which redirects Git config and hooks past the
+		// masks above.  Anchored, comment-stripped, function-scoped.
+		kind:         kindFunctionBlockRegexInCode,
+		functionName: "prepare_workspace_control_plane_shadow",
+		regex:        `^\s*if ! commondir_hits="\$\(find "\$\{git_dir\}" -name worktrees -prune -o -name commondir -print\)"; then$`,
+		message:      "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
 	},
 	{
 		// kindAbsent against scripts/colima-egress-allowlist.sh: silently
@@ -4826,7 +4835,7 @@ func (c check) validatePatternFields() error {
 
 func (c check) usesRegex() bool {
 	switch c.kind {
-	case kindFirstLineRegex, kindRegexAbsent, kindRegexPresent, kindFunctionBlockRegex, kindFunctionBlockRegexAbsent:
+	case kindFirstLineRegex, kindRegexAbsent, kindRegexPresent, kindFunctionBlockRegex, kindFunctionBlockRegexAbsent, kindFunctionBlockRegexInCode:
 		return true
 	default:
 		return false
@@ -4847,6 +4856,9 @@ func (c check) holds(text, rootDir string) bool {
 		return !strings.Contains(block, c.pattern)
 	case kindFunctionBlockRegex:
 		block := extractNamedFunctionBlock(text, c.functionName)
+		return regexMatchesAnyLine(c.regex, block)
+	case kindFunctionBlockRegexInCode:
+		block := stripShellComments(extractNamedFunctionBlock(text, c.functionName))
 		return regexMatchesAnyLine(c.regex, block)
 	case kindFunctionBlockRegexAbsent:
 		// Negated function_block_contains_regex: a regex match on any line of

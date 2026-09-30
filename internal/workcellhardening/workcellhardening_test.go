@@ -1240,7 +1240,9 @@ prepare_workspace_control_plane_shadow() {
     \( -type f -o -type l \) -name hooks \
     -o \( -type f -o -type l \) \( -name config -o -name config.worktree \) \
     -o \( -type f -o -type l \) -name worktrees
-  find "${git_dir}" -name worktrees -prune -o -name commondir -print0
+  if ! commondir_hits="$(find "${git_dir}" -name worktrees -prune -o -name commondir -print)"; then
+    exit 2
+  fi
 }
 `
 
@@ -1283,6 +1285,9 @@ func writeShadowEnumEgressRepo(t *testing.T, launcher, colima string) string {
 }
 
 func TestCheckShadowEnumEgress(t *testing.T) {
+	const commondirErr = "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection"
+	const commondirLine = `  if ! commondir_hits="$(find "${git_dir}" -name worktrees -prune -o -name commondir -print)"; then`
+
 	tests := []struct {
 		name     string
 		launcher string
@@ -1332,11 +1337,29 @@ func TestCheckShadowEnumEgress(t *testing.T) {
 			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
 		},
 		{
-			// kindPresent: the commondir refusal find removed.
+			// The commondir refusal with its walk-status capture removed.
 			name:     "missing commondir refusal",
-			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-name commondir -print0`, `-name other -print0`, 1),
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-name commondir -print)"; then`, `-name other -print)"; then`, 1),
 			colima:   shadowEnumEgressHappyColima,
-			wantErr:  "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
+			wantErr:  commondirErr,
+		},
+		{
+			name:     "commondir refusal only in a comment",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, commondirLine, "  # "+commondirLine, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  commondirErr,
+		},
+		{
+			name:     "commondir refusal only in a quoted echo",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, commondirLine, `  echo '`+commondirLine+`'`, 1),
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  commondirErr,
+		},
+		{
+			name:     "commondir refusal outside the function",
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, commondirLine, "  :", 1) + commondirLine + "\n",
+			colima:   shadowEnumEgressHappyColima,
+			wantErr:  commondirErr,
 		},
 		{
 			// kindAbsent against the colima helper: silently disabling IPv6 as a

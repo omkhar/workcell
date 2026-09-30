@@ -6579,6 +6579,23 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'This workspace has a Git commondir file that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
 
+# An unreadable Git directory must fail the commondir inventory closed. Root
+# ignores directory modes, so the probe runs only for a non-root user.
+if [[ "$(id -u)" -ne 0 ]]; then
+  COMMONDIR_WALK_REPO="${COMMONDIR_ROOT}/walk-repo"
+  git init -q -b master "${COMMONDIR_WALK_REPO}"
+  git -C "${COMMONDIR_WALK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+  mkdir "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  chmod 000 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WALK_REPO}" --dry-run >/tmp/workcell-commondir-walk.out 2>&1; then
+    chmod 755 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+    echo "Expected repo with an unreadable Git directory to be rejected" >&2
+    exit 1
+  fi
+  chmod 755 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  grep -q 'could not inventory the Git directory for a commondir file' /tmp/workcell-commondir-walk.out
+fi
+
 if ! grep -q 'WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE' "${ROOT_DIR}/scripts/provider-e2e.sh"; then
   echo "Expected provider-e2e secret preservation to use a restore env file" >&2
   exit 1

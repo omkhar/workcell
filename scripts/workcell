@@ -8038,7 +8038,7 @@ prepare_workspace_control_plane_shadow() {
   # the source when they are the same (direct/in-place workspace).
   local session_workspace="${3:-$1}"
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
-  local rel path git_dir git_rel
+  local rel path git_dir git_rel commondir_hits
 
   SHADOW_MOUNTS=()
   SHADOW_DEST_PATHS=()
@@ -8052,15 +8052,21 @@ prepare_workspace_control_plane_shadow() {
     git_rel="${git_dir#"${workspace}/"}"
     # A commondir file makes Git read config and hooks from another directory,
     # past the masks below. A standard clone has none outside worktrees/.
-    while IFS= read -r -d '' path; do
+    # Bash drops the status of a process substitution, so capture the walk
+    # status: an unreadable Git directory must not pass as "no commondir".
+    if ! commondir_hits="$(find "${git_dir}" -name worktrees -prune -o -name commondir -print)"; then
+      echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
+      exit 2
+    fi
+    if [[ -n "${commondir_hits}" ]]; then
+      commondir_hits="${commondir_hits%%$'\n'*}"
+      commondir_hits="${commondir_hits#"${workspace}/"}"
       echo "Refusing git workspace with admin state outside the mounted workspace: ${workspace}" >&2
-      echo "This workspace has a Git commondir file that redirects Git config and hooks: ${path#"${workspace}/"}" >&2
+      echo "This workspace has a Git commondir file that redirects Git config and hooks: ${commondir_hits}" >&2
       echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
       echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with this workspace." >&2
       exit 2
-    done < <(
-      find "${git_dir}" -name worktrees -prune -o -name commondir -print0
-    )
+    fi
     for rel in "${git_rel}/hooks" "${git_rel}/config" "${git_rel}/config.worktree"; do
       add_shadow_git_path_if_present "${workspace}" "${rel}"
     done

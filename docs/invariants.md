@@ -88,7 +88,9 @@ its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 
 Workcell refuses a safe-path workspace that has a Git `commondir` file outside
 `worktrees`. That file makes Git read config and hooks from another directory,
-past the masks.
+past the masks. It also refuses the workspace when it cannot list the Git
+directory. The check runs at launch. It does not stop a file that is created
+after launch.
 
 The Copilot adapter also masks Copilot settings, instructions, MCP files,
 skills, and hooks. It disables custom instructions and blocks skill and dynamic
