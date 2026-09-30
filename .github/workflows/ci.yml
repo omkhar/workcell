@@ -90,6 +90,20 @@ jobs:
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
+      # Persist the validator's Go build, Go module and cargo target caches.
+      # Every run restores; only a push to main saves, so a pull request can
+      # never write into the cache that main and later pull requests read.
+      # The key carries go.sum, both Cargo.lock files and the validator
+      # Dockerfile, which pins the Go and Rust toolchain versions.
+      - name: Restore validator caches
+        id: validator-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workcell-validator-cache
+          key: workcell-validator-cache-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'runtime/container/rust/Cargo.lock', 'runtime/container/rust/fuzz/Cargo.lock', 'tools/validator/Dockerfile') }}-${{ github.sha }}
+          restore-keys: |
+            workcell-validator-cache-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'runtime/container/rust/Cargo.lock', 'runtime/container/rust/fuzz/Cargo.lock', 'tools/validator/Dockerfile') }}-
+
       - name: Validate repository
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
@@ -101,6 +115,10 @@ jobs:
           WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
           WORKCELL_CI_INSTALL_ARTIFACT_DIR: dist/release-install
+          # The host launcher invariants run in the parallel "Host launcher
+          # invariants" job.
+          WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS: "1"
+          WORKCELL_VALIDATOR_CACHE_DIR: ${{ runner.temp }}/workcell-validator-cache
           WORKCELL_CI_ARCHIVE_REF: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -109,6 +127,13 @@ jobs:
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
           WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-validate.sh --profile pr-parity
+
+      - name: Save validator caches
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workcell-validator-cache
+          key: ${{ steps.validator-cache.outputs.cache-primary-key }}
 
       - name: Export validator image for hostile-env jobs
         id: validator-image
@@ -140,6 +165,27 @@ jobs:
             dist/release-install/workcell.rb
             dist/release-install/SHA256SUMS
           retention-days: 7
+
+  invariants:
+    name: Host launcher invariants
+    # Runs scripts/verify-invariants.sh in parallel with validate.  The script
+    # used to run at the end of scripts/ci/job-validate.sh, which put its
+    # duration on the validate critical path.  Required merge gate: the
+    # context is listed in required_status_checks in
+    # policy/github-hosted-controls.toml.
+    needs: pr-shape
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify host launcher invariants
+        run: ./scripts/verify-invariants.sh
 
   container-smoke:
     name: Container smoke
@@ -224,9 +270,25 @@ jobs:
             exit 1
           fi
 
+      # Persist the validator's Go build, Go module and cargo target caches.
+      # Every run restores; only a push to main saves, so a pull request can
+      # never write into the cache that main and later pull requests read.
+      # The key carries go.sum, both Cargo.lock files and the validator
+      # Dockerfile, which pins the Go and Rust toolchain versions.
+      - name: Restore validator caches
+        id: validator-cache
+        if: ${{ matrix.axis == 'tmpdir' || matrix.axis == 'workspace' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/workcell-validator-cache
+          key: workcell-validator-cache-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'runtime/container/rust/Cargo.lock', 'runtime/container/rust/fuzz/Cargo.lock', 'tools/validator/Dockerfile') }}-${{ github.sha }}
+          restore-keys: |
+            workcell-validator-cache-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum', 'runtime/container/rust/Cargo.lock', 'runtime/container/rust/fuzz/Cargo.lock', 'tools/validator/Dockerfile') }}-
+
       - name: Validate repository under a hostile environment
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+          WORKCELL_VALIDATOR_CACHE_DIR: ${{ runner.temp }}/workcell-validator-cache
           WORKCELL_VALIDATE_REPO_PROFILE: repo-core
           WORKCELL_HOSTILE_ENV: ${{ matrix.axis }}
         run: ./scripts/ci/run-validate-in-validator.sh

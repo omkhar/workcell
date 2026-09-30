@@ -118,6 +118,16 @@ validator_passwd_mount="$(workcell_ci_workspace_mount_spec "${validator_passwd}"
 require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
 validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" false)"
 
+# WORKCELL_VALIDATOR_CACHE_DIR is a host directory that persists the Go build,
+# Go module and cargo target caches across runs.  Mount it only when the
+# container uid is the host uid: the root and uidmap axes cannot write to it
+# (or would leave root-owned files in it), so they keep the in-container cache.
+cache_mount_args=()
+if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)" ]]; then
+  mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}"
+  cache_mount_args=(--mount "$(workcell_ci_workspace_mount_spec "${WORKCELL_VALIDATOR_CACHE_DIR}" false "${validator_cache}")")
+fi
+
 # shellcheck disable=SC2016
 workcell_ci_docker run --rm \
   --user "${validator_uid}:${validator_gid}" \
@@ -133,6 +143,7 @@ workcell_ci_docker run --rm \
   -e WORKCELL_VALIDATOR_WORKSPACE_COPY="${validator_workspace_copy}" \
   --mount "${validator_workspace_mount}" \
   --mount "${validator_passwd_mount}" \
+  ${cache_mount_args[@]+"${cache_mount_args[@]}"} \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
   -lc '

@@ -15,6 +15,7 @@
 [actions]
 allowed = [
   "actions/attest",
+  "actions/cache",
   "actions/checkout",
   "actions/dependency-review-action",
   "actions/download-artifact",

@@ -26,6 +26,9 @@ REPOSITORY_NAME="${GITHUB_REPOSITORY:-workcell/local}"
 ARTIFACT_DIR="${WORKCELL_CI_INSTALL_ARTIFACT_DIR:-}"
 KEEP_ARTIFACT_DIR=0
 SKIP_RELEASE_BUNDLE="${WORKCELL_CI_VALIDATE_SKIP_RELEASE_BUNDLE:-0}"
+# The hosted CI workflow runs verify-invariants.sh in its own parallel job and
+# sets this to 1; local parity and every other caller keep the default.
+SKIP_HOST_INVARIANTS="${WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS:-0}"
 
 usage() {
   cat <<'EOF'
@@ -148,8 +151,10 @@ echo "[ci/validate] repository validation in validator"
 WORKCELL_VALIDATE_REPO_PROFILE="${PROFILE}" \
   "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh"
 
-echo "[ci/validate] host launcher invariants"
-"${ROOT_DIR}/scripts/verify-invariants.sh"
+if [[ "${SKIP_HOST_INVARIANTS}" != "1" ]]; then
+  echo "[ci/validate] host launcher invariants"
+  "${ROOT_DIR}/scripts/verify-invariants.sh"
+fi
 
 if [[ "${PROFILE}" == "release-preflight" ]] && [[ "${SKIP_RELEASE_BUNDLE}" != "1" ]]; then
   echo "[ci/validate] release bundle reproducibility"
