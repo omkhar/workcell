@@ -19,6 +19,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -435,5 +436,31 @@ func TestConnectLooksUpRootedName(t *testing.T) {
 	p.connect("db", 5432)
 	if looked != "db." {
 		t.Fatalf("lookup host = %q, want %q", looked, "db.")
+	}
+}
+
+func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
+	t.Parallel()
+	p, _, _ := testProxy(t, "example.com:443", []netip.Addr{netip.MustParseAddr("8.8.8.8")}, "127.0.0.1:1")
+	p.slots = make(chan struct{}, 1)
+	addr := listen(t, p, 443)
+	stalled, err := net.Dial("tcp", addr) // holds the only slot while the proxy waits for a hello
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stalled.Close()
+	for deadline := time.Now().Add(5 * time.Second); len(p.slots) == 0; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("proxy never took a slot for the stalled connection")
+		}
+	}
+	extra, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	_ = extra.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err != io.EOF && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("read on a connection over the limit = %v, want EOF or reset", err)
 	}
 }

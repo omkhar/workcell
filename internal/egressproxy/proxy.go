@@ -27,6 +27,7 @@ const (
 	maxHelloBytes = 1 << 17          // above the 64 KiB handshake message limit plus record framing
 	maxLogHost    = 253              // longest DNS name
 	maxDenyKeys   = 4096
+	maxConns      = 1024 // concurrent connections across all ports
 	overflowHost  = "(overflow)"
 )
 
@@ -78,6 +79,8 @@ type Proxy struct {
 	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
 
+	slots chan struct{} // one token per live connection
+
 	mu      sync.Mutex
 	denyLog io.Writer
 	denies  map[denyKey]uint64
@@ -100,6 +103,7 @@ func New(allow *Allowlist, denyLog io.Writer) *Proxy {
 		dial: func(ctx context.Context, addr netip.AddrPort) (net.Conn, error) {
 			return dialer.DialContext(ctx, "tcp", addr.String())
 		},
+		slots:   make(chan struct{}, maxConns),
 		denyLog: denyLog,
 		denies:  map[denyKey]uint64{},
 	}
@@ -117,7 +121,15 @@ func (p *Proxy) Serve(ln net.Listener, port uint16) error {
 			time.Sleep(50 * time.Millisecond) // e.g. EMFILE; retry instead of exiting
 			continue
 		}
-		go p.handle(conn, port)
+		select {
+		case p.slots <- struct{}{}:
+			go func() {
+				defer func() { <-p.slots }()
+				p.handle(conn, port)
+			}()
+		default:
+			_ = conn.Close() // at the limit: shed load instead of exhausting descriptors
+		}
 	}
 }
 
