@@ -2972,15 +2972,15 @@ if ! echo "${EGRESS_PLAN_IPV6_LITERAL}" | grep -q 'iptables -A WORKCELL_EGRESS -
 fi
 # Assert the dual-stack allowlist-apply-plan invariants on
 # scripts/colima-egress-allowlist.sh: the guarded apply path runs the guarded
-# plan, the plan preflights ip6tables and renders a clear-rules helper, and
-# render_allowlist_apply_plan renders the clear plan, resolves endpoint IPs inside
-# the VM (getent ahosts), avoids host-resolved endpoint rules, and does not invoke
+# plan, the plan preflights ip6tables, never unlinks or flushes the live chain,
+# replaces it with iptables-restore --noflush, resolves endpoint IPs inside the
+# VM (getent ahosts), avoids host-resolved endpoint rules, and does not invoke
 # clear_rules directly during render.  Migrated to Go (D3):
 # internal/workcellhardening behind the workcell-citools
 # workcell-dualstack-apply-plan subcommand preserves the exact exit codes and
 # stderr messages of the former inline rg / function_block_contains_regex block,
-# including the two fixed-string rg probes, the line-anchored render_clear_plan
-# definition regex, the three affirmative function-block regex probes, the negated
+# including the fixed-string probes, the negated live-chain unlink/flush
+# function-block regex, the two affirmative function-block regex probes, the negated
 # (metacharacter-free) render_allowlist_plan function-block probe, and the negated
 # `^[[:space:]]*clear_rules$` function-block GENUINE regex (now migrated via the
 # kindFunctionBlockRegexAbsent kind).  Only the run_in_vm awk-ordering block below
@@ -3015,12 +3015,12 @@ if ! grep -Fq 'resolve_vm_endpoint_ips()' "${RUN_IN_VM_CAPTURE_DIR}/apply-defaul
   exit 1
 fi
 # shellcheck disable=SC2016
-if ! grep -Fq 'sudo iptables -A WORKCELL_EGRESS -p tcp -d "${host}" --dport "${port}" -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+if ! grep -Fq 'IPV4_RULES+="-A WORKCELL_EGRESS -p tcp -d ${host} --dport ${port} -j ACCEPT"' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
   echo "Expected captured dual-stack apply script to preserve IPv4 literal allowlist handling" >&2
   exit 1
 fi
 # shellcheck disable=SC2016
-if ! grep -Fq 'sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${host:1:${#host}-2}" --dport "${port}" -j ACCEPT' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
+if ! grep -Fq 'IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${host:1:${#host}-2} --dport ${port} -j ACCEPT"' "${RUN_IN_VM_CAPTURE_DIR}/apply-default.script"; then
   echo "Expected captured dual-stack apply script to preserve IPv6 literal allowlist handling" >&2
   exit 1
 fi
@@ -3043,6 +3043,92 @@ if ! grep -q 'sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true' "${RUN_IN_VM
   exit 1
 fi
 rm -rf "${RUN_IN_VM_CAPTURE_DIR}"
+# Replay the captured apply script against a stub netfilter model. A profile
+# container must never see DOCKER-USER without a linked, DROP-terminated
+# Workcell chain while the replacement runs, and a resolver failure must keep
+# the old chain in force.
+EGRESS_SWAP_ROOT="$(mktemp -d)"
+mkdir -p "${EGRESS_SWAP_ROOT}/bin"
+cat >"${EGRESS_SWAP_ROOT}/bin/iptables" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+d="${EGRESS_SWAP_STATE}/${0##*/}"
+d="${d%-restore}"
+check_default_deny() {
+  local chain
+  while IFS= read -r chain; do
+    [[ "$(tail -n 1 "${d}/chain.${chain}")" != "-j DROP" ]] || return 0
+  done <"${d}/jumps"
+  echo "${d##*/}: no DROP-terminated chain linked after: $*" >>"${EGRESS_SWAP_STATE}/violations"
+}
+if [[ "${0##*/}" == *-restore ]]; then
+  [[ "${1:-}" == "--noflush" ]] || exit 1
+  rm -rf "${d}.next" && cp -R "${d}" "${d}.next"
+  while read -r line; do
+    case "${line}" in
+      :*) chain="${line#:}" && : >"${d}.next/chain.${chain%% *}" ;;
+      -A\ *) read -r _ chain rule <<<"${line}" && printf '%s\n' "${rule}" >>"${d}.next/chain.${chain}" ;;
+      COMMIT) rm -rf "${d}" && mv "${d}.next" "${d}" && check_default_deny restore && exit 0 ;;
+    esac
+  done
+  exit 1
+fi
+case "$1" in
+  -N) [[ ! -e "${d}/chain.$2" ]] && : >"${d}/chain.$2" ;;
+  -F) [[ -e "${d}/chain.$2" ]] && : >"${d}/chain.$2" ;;
+  -X) [[ -e "${d}/chain.$2" ]] && ! grep -qx -- "$2" "${d}/jumps" && rm "${d}/chain.$2" ;;
+  -L) [[ -e "${d}/chain.$2" ]] ;;
+  -A) [[ -e "${d}/chain.$2" ]] && chain="$2" && shift 2 && printf '%s\n' "$*" >>"${d}/chain.${chain}" ;;
+  -C) grep -qx -- "$4" "${d}/jumps" ;;
+  -I) { printf '%s\n' "$5" && cat "${d}/jumps"; } >"${d}/jumps.next" && mv "${d}/jumps.next" "${d}/jumps" ;;
+  -D) grep -qx -- "$4" "${d}/jumps" && { grep -vx -- "$4" "${d}/jumps" || true; } >"${d}/jumps.next" && mv "${d}/jumps.next" "${d}/jumps" ;;
+  *) exit 1 ;;
+esac || exit 1
+check_default_deny "$@"
+EOF
+cat >"${EGRESS_SWAP_ROOT}/bin/getent" <<'EOF'
+#!/bin/bash
+[[ "$2" == "resolvable.test" ]] && printf '192.0.2.10 STREAM resolvable.test\n'
+EOF
+printf '#!/bin/bash\nexec "$@"\n' >"${EGRESS_SWAP_ROOT}/bin/sudo"
+chmod +x "${EGRESS_SWAP_ROOT}/bin/"*
+for egress_swap_tool in ip6tables iptables-restore ip6tables-restore; do
+  ln -s iptables "${EGRESS_SWAP_ROOT}/bin/${egress_swap_tool}"
+done
+run_egress_swap_case() {
+  local endpoints="$1"
+  local family=""
+
+  rm -rf "${EGRESS_SWAP_ROOT}/state" "${EGRESS_SWAP_ROOT}/capture"
+  for family in iptables:WORKCELL_EGRESS ip6tables:WORKCELL_EGRESS6; do
+    mkdir -p "${EGRESS_SWAP_ROOT}/state/${family%%:*}"
+    printf '%s\n' "${family#*:}" >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
+    printf -- '-j DROP\n' >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/chain.${family#*:}"
+  done
+  "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" \
+    --test-run-in-vm-capture-dir "${EGRESS_SWAP_ROOT}/capture" \
+    apply default "${endpoints}" >/dev/null 2>&1
+  { printf 'set -euo pipefail\n' && cat "${EGRESS_SWAP_ROOT}/capture/apply-default.script"; } |
+    EGRESS_SWAP_STATE="${EGRESS_SWAP_ROOT}/state" PATH="${EGRESS_SWAP_ROOT}/bin:${PATH}" bash -s -- >/dev/null 2>&1
+}
+if ! run_egress_swap_case '127.0.0.1:443 [::1]:443 resolvable.test:443' ||
+  [[ -e "${EGRESS_SWAP_ROOT}/state/violations" ]] ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/jumps")" != "WORKCELL_EGRESS" ]] ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/ip6tables/jumps")" != "WORKCELL_EGRESS6" ]] ||
+  ! grep -Fxq -- '-p tcp -d 192.0.2.10 --dport 443 -j ACCEPT' "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS" ||
+  ! grep -Fxq -- '-p tcp -d ::1 --dport 443 -j ACCEPT' "${EGRESS_SWAP_ROOT}/state/ip6tables/chain.WORKCELL_EGRESS6"; then
+  cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
+  echo "Expected allowlist apply to keep a DROP-terminated chain linked while it swaps in the new rules" >&2
+  exit 1
+fi
+if run_egress_swap_case '127.0.0.1:443 unresolvable.test:443' ||
+  [[ -e "${EGRESS_SWAP_ROOT}/state/violations" ]] ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS")" != "-j DROP" ]]; then
+  cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
+  echo "Expected allowlist apply to keep the old chain in force when endpoint resolution fails" >&2
+  exit 1
+fi
+rm -rf "${EGRESS_SWAP_ROOT}"
 
 HOST_PYTHON_INJECT_DIR="${BARRIER_VERIFY_ROOT}/python-inject"
 HOST_PYTHON_MARKER="${BARRIER_VERIFY_ROOT}/pythonpath-ran"

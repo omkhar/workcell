@@ -25,11 +25,12 @@ launch replaces the rules for all active containers in that profile.
 An unrestricted launch clears the Workcell rules for the profile. The clear
 state remains until a later allowlist launch applies new rules.
 
-Rule replacement is not atomic. The helper removes the old chains before it
-resolves endpoint names. It installs the final drop rules after allow rules.
+The helper resolves endpoint names before it changes rules. It then replaces
+each chain in one `iptables-restore --noflush` transaction. The new chain has
+its final drop rule when it replaces the old chain.
 
-If name resolution or rule setup fails, active profile containers can lose the
-Workcell default-deny rule. Stop the affected profile. Inspect its rules.
+If name resolution or rule setup fails, the previous rules stay in force for
+each address family that the helper did not replace.
 
 Policy changes do not stop an established connection. The rules accept
 `ESTABLISHED,RELATED` traffic before they evaluate a new endpoint set.

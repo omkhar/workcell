@@ -5569,18 +5569,15 @@ func TestCheckSmokeChownTarRealRepo(t *testing.T) {
 // --- D3 simple-clusters sweep: dual-stack allowlist apply plan ---
 
 // dualStackApplyPlanHappyFiles returns a colima-egress-allowlist.sh fixture that
-// satisfies all seven dual-stack allowlist-apply-plan invariants: a line-anchored
-// render_clear_plan definition, a render_allowlist_apply_plan block that renders
-// the clear plan, resolves endpoint IPs in the VM (getent ahosts) and never calls
-// render_allowlist_plan, an ip6tables preflight, and the guarded run_in_vm apply.
+// satisfies all eight dual-stack allowlist-apply-plan invariants: a
+// render_allowlist_apply_plan block that never unlinks or flushes the live chain,
+// replaces it with iptables-restore --noflush, resolves endpoint IPs in the VM
+// (getent ahosts) and never calls render_allowlist_plan, an ip6tables preflight,
+// and the guarded run_in_vm apply.
 func dualStackApplyPlanHappyFiles() map[string]string {
 	body := "#!/usr/bin/env bash\n" +
-		"render_clear_plan() {\n" +
-		"  echo clear\n" +
-		"}\n" +
 		"render_allowlist_apply_plan() {\n" +
-		"  local plan\n" +
-		"  plan=\"$(render_clear_plan)\"\n" +
+		"  echo \"sudo iptables-restore --noflush\"\n" +
 		"  resolve_vm_endpoint_ips \"${endpoints}\"\n" +
 		"  getent ahosts \"${host}\"\n" +
 		"}\n" +
@@ -5616,18 +5613,25 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 			wantErr: "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules",
 		},
 		{
-			name: "render_clear_plan definition missing",
+			name: "live chain unlinked in block",
 			mutate: func(f map[string]string) {
-				f[rel] = strings.Replace(f[rel], "render_clear_plan() {", "xrender_clear_plan() {", 1)
+				f[rel] = strings.Replace(f[rel], `resolve_vm_endpoint_ips "${endpoints}"`, "resolve_vm_endpoint_ips \"${endpoints}\"\n  echo \"sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS\"", 1)
 			},
-			wantErr: "Expected dual-stack allowlist helper to render clear rules in the VM apply plan",
+			wantErr: "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
 		},
 		{
-			name: "in-block render_clear_plan call missing",
+			name: "live chain flushed in block",
 			mutate: func(f map[string]string) {
-				f[rel] = strings.Replace(f[rel], `plan="$(render_clear_plan)"`, `plan="$(render_empty)"`, 1)
+				f[rel] = strings.Replace(f[rel], `resolve_vm_endpoint_ips "${endpoints}"`, "resolve_vm_endpoint_ips \"${endpoints}\"\n  echo \"sudo ip6tables -F WORKCELL_EGRESS6\"", 1)
 			},
-			wantErr: "Expected dual-stack allowlist apply plan to include render_clear_plan",
+			wantErr: "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
+		},
+		{
+			name: "iptables-restore swap missing",
+			mutate: func(f map[string]string) {
+				f[rel] = strings.Replace(f[rel], "sudo iptables-restore --noflush", "sudo iptables -A WORKCELL_EGRESS -j DROP", 1)
+			},
+			wantErr: "Expected dual-stack allowlist apply plan to replace the chain in one iptables-restore transaction",
 		},
 		{
 			name: "resolve_vm_endpoint_ips missing",

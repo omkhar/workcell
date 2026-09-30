@@ -337,19 +337,6 @@ clear_rules() {
   '
 }
 
-render_clear_plan() {
-  cat <<'EOF'
-sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
-sudo iptables -F WORKCELL_EGRESS 2>/dev/null || true
-sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true
-if type ip6tables >/dev/null 2>&1; then
-  sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || true
-  sudo ip6tables -F WORKCELL_EGRESS6 2>/dev/null || true
-  sudo ip6tables -X WORKCELL_EGRESS6 2>/dev/null || true
-fi
-EOF
-}
-
 declare -a RULES=()
 declare -a IPV6_RULES=()
 
@@ -425,17 +412,8 @@ if ! type ip6tables >/dev/null 2>&1; then
   exit 1
 fi
 sudo ip6tables -L WORKCELL_EGRESS6 >/dev/null 2>&1 || true
-EOF
-  render_clear_plan
-  cat <<'EOF'
-sudo iptables -N WORKCELL_EGRESS 2>/dev/null || true
-sudo iptables -F WORKCELL_EGRESS
-sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
-sudo iptables -A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-sudo ip6tables -N WORKCELL_EGRESS6 2>/dev/null || true
-sudo ip6tables -F WORKCELL_EGRESS6
-sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
-sudo ip6tables -A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+IPV4_RULES=""
+IPV6_RULES=""
 
 resolve_vm_endpoint_ips() {
   local host="$1"
@@ -479,23 +457,23 @@ add_vm_endpoint_rules() {
   fi
 
   if [[ "${host}" == \[*\] ]]; then
-    sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${host:1:${#host}-2}" --dport "${port}" -j ACCEPT
+    IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${host:1:${#host}-2} --dport ${port} -j ACCEPT"$'\n'
     return 0
   fi
   if [[ "${host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    sudo iptables -A WORKCELL_EGRESS -p tcp -d "${host}" --dport "${port}" -j ACCEPT
+    IPV4_RULES+="-A WORKCELL_EGRESS -p tcp -d ${host} --dport ${port} -j ACCEPT"$'\n'
     return 0
   fi
 
   while IFS= read -r ip; do
     [[ -n "${ip}" ]] || continue
     if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      sudo iptables -A WORKCELL_EGRESS -p tcp -d "${ip}" --dport "${port}" -j ACCEPT
+      IPV4_RULES+="-A WORKCELL_EGRESS -p tcp -d ${ip} --dport ${port} -j ACCEPT"$'\n'
       resolved_any=1
       continue
     fi
-    if [[ "${ip}" == *:* ]]; then
-      sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${ip}" --dport "${port}" -j ACCEPT
+    if [[ "${ip}" == *:* && "${ip}" =~ ^[0-9A-Fa-f:.]+$ ]]; then
+      IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${ip} --dport ${port} -j ACCEPT"$'\n'
       resolved_any=1
       continue
     fi
@@ -514,8 +492,14 @@ EOF
 for endpoint in ${WORKCELL_ENDPOINTS}; do
   add_vm_endpoint_rules "${endpoint}"
 done
-sudo iptables -A WORKCELL_EGRESS -j DROP
-sudo ip6tables -A WORKCELL_EGRESS6 -j DROP
+# Replace each chain in one iptables-restore transaction. The old
+# DROP-terminated chain stays in force until the complete new chain replaces it.
+printf '*filter\n:WORKCELL_EGRESS - [0:0]\n-A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS -j DROP\nCOMMIT\n' "${IPV4_RULES}" |
+  sudo iptables-restore --noflush
+printf '*filter\n:WORKCELL_EGRESS6 - [0:0]\n-A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS6 -j DROP\nCOMMIT\n' "${IPV6_RULES}" |
+  sudo ip6tables-restore --noflush
+sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
+sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
 EOF
 }
 
