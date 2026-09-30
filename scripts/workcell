@@ -8050,19 +8050,22 @@ prepare_workspace_control_plane_shadow() {
 
   while IFS= read -r -d '' git_dir; do
     git_rel="${git_dir#"${workspace}/"}"
-    # A commondir file makes Git read config and hooks from another directory,
-    # past the masks below. A standard clone has none outside worktrees/.
-    # Bash drops the status of a process substitution, so capture the walk
-    # status: an unreadable Git directory must not pass as "no commondir".
-    if ! commondir_hits="$(find "${git_dir}" -name worktrees -prune -o -name commondir -print)"; then
+    # A commondir file, or a symlinked module directory, makes Git read config
+    # and hooks from another directory, past the masks below. A standard clone
+    # has neither. The prune skips the directories the masks below replace. A
+    # commondir counts only beside a HEAD file, so a branch or reflog named
+    # commondir is not a redirect. Bash drops the status of a process
+    # substitution, so capture the walk status: an unreadable Git directory
+    # must not pass as "no redirect".
+    if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( -path './modules/*' -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi
     if [[ -n "${commondir_hits}" ]]; then
       commondir_hits="${commondir_hits%%$'\n'*}"
-      commondir_hits="${commondir_hits#"${workspace}/"}"
+      commondir_hits="${git_rel}/${commondir_hits#./}"
       echo "Refusing git workspace with admin state outside the mounted workspace: ${workspace}" >&2
-      echo "This workspace has a Git commondir file that redirects Git config and hooks: ${commondir_hits}" >&2
+      echo "This workspace has a Git commondir file or symlinked module directory that redirects Git config and hooks: ${commondir_hits}" >&2
       echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
       echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with this workspace." >&2
       exit 2

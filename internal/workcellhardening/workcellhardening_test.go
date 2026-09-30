@@ -1240,7 +1240,7 @@ prepare_workspace_control_plane_shadow() {
     \( -type f -o -type l \) -name hooks \
     -o \( -type f -o -type l \) \( -name config -o -name config.worktree \) \
     -o \( -type f -o -type l \) -name worktrees
-  if ! commondir_hits="$(find "${git_dir}" -name worktrees -prune -o -name commondir -print)"; then
+  if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( -path './modules/*' -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then
     exit 2
   fi
 }
@@ -1286,7 +1286,7 @@ func writeShadowEnumEgressRepo(t *testing.T, launcher, colima string) string {
 
 func TestCheckShadowEnumEgress(t *testing.T) {
 	const commondirErr = "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection"
-	const commondirLine = `  if ! commondir_hits="$(find "${git_dir}" -name worktrees -prune -o -name commondir -print)"; then`
+	const commondirLine = `  if ! commondir_hits="$(cd "${git_dir}" && find . -name worktrees -prune -o \( -name commondir ! -type d -execdir test -e HEAD \; -print \) -o \( -path './modules/*' -type l ! -name hooks ! -name config ! -name config.worktree -exec test -d {} \; -print \))"; then`
 
 	tests := []struct {
 		name     string
@@ -1339,7 +1339,7 @@ func TestCheckShadowEnumEgress(t *testing.T) {
 		{
 			// The commondir refusal with its walk-status capture removed.
 			name:     "missing commondir refusal",
-			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-name commondir -print)"; then`, `-name other -print)"; then`, 1),
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-name commondir ! -type d`, `-name other ! -type d`, 1),
 			colima:   shadowEnumEgressHappyColima,
 			wantErr:  commondirErr,
 		},

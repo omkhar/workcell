@@ -6577,7 +6577,26 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   echo "Expected repo with a redirecting .git/commondir to be rejected" >&2
   exit 1
 fi
-grep -q 'This workspace has a Git commondir file that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
+grep -q 'This workspace has a Git commondir file or symlinked module directory that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
+
+# A branch named commondir is a ref, not a redirect, and must still launch.
+COMMONDIR_BRANCH_REPO="${COMMONDIR_ROOT}/branch-repo"
+git init -q -b master "${COMMONDIR_BRANCH_REPO}"
+git -C "${COMMONDIR_BRANCH_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+git -C "${COMMONDIR_BRANCH_REPO}" branch commondir
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_BRANCH_REPO}" --dry-run >/tmp/workcell-commondir-branch.out 2>&1
+
+# A symlinked module admin directory can carry a redirect and must be rejected.
+COMMONDIR_LINK_REPO="${COMMONDIR_ROOT}/link-repo"
+git init -q -b master "${COMMONDIR_LINK_REPO}"
+git -C "${COMMONDIR_LINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_LINK_REPO}/.git/modules" "${COMMONDIR_ROOT}/linked-admin"
+ln -s ../../../linked-admin "${COMMONDIR_LINK_REPO}/.git/modules/foo"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_LINK_REPO}" --dry-run >/tmp/workcell-commondir-link.out 2>&1; then
+  echo "Expected repo with a symlinked module admin directory to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module directory that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
 
 # An unreadable Git directory must fail the commondir inventory closed. Root
 # ignores directory modes, so the probe runs only for a non-root user.

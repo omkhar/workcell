@@ -1422,7 +1422,7 @@ var shadowEnumEgressChecks = []check{
 		// masks above.  Anchored, comment-stripped, function-scoped.
 		kind:         kindFunctionBlockRegexInCode,
 		functionName: "prepare_workspace_control_plane_shadow",
-		regex:        `^\s*if ! commondir_hits="\$\(find "\$\{git_dir\}" -name worktrees -prune -o -name commondir -print\)"; then$`,
+		regex:        `^\s*if ! commondir_hits="\$\(cd "\$\{git_dir\}" && find \. -name worktrees -prune -o \\\( -name commondir ! -type d -execdir test -e HEAD \\; -print \\\) -o \\\( -path '\./modules/\*' -type l ! -name hooks ! -name config ! -name config\.worktree -exec test -d \{\} \\; -print \\\)\)"; then$`,
 		message:      "Expected prepare_workspace_control_plane_shadow to refuse Git commondir redirection",
 	},
 	{
