@@ -106,18 +106,16 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 
 // providerEndpoints runs provider_endpoints from script. It first rewrites
 // the function as bash parsed it (declare -f): each arm whose whole pattern
-// is "*)" prints "default-arm-N" to stderr. So arm names the lone wildcard
-// arm that ran, or is empty when another arm ran.
+// is "*)" prints "default-arm-N" to stderr, and every other line that ends in
+// ")" (any other arm pattern) prints "line-N". So arm lists each arm entered.
 func providerEndpoints(t *testing.T, script, id string) (out, arm string, code int) {
 	t.Helper()
 	const probe = `source "$1" || exit 3
 n=0 body=""
 while IFS= read -r line; do
-  body+="$line"$'\n'
-  if [[ "$line" =~ ^[[:space:]]*\*\)$ ]]; then
-    n=$((n + 1))
-    body+="echo default-arm-$n >&2"$'\n'
-  fi
+  n=$((n + 1)) body+="$line"$'\n'
+  [[ "$line" =~ ^[[:space:]]*\*\)$ ]] && body+="echo default-arm-$n >&2"$'\n' && continue
+  [[ "$line" =~ \)$ ]] && body+="echo line-$n >&2"$'\n'
 done < <(declare -f provider_endpoints)
 eval "$body" || exit 3
 provider_endpoints "$2"`
@@ -135,9 +133,9 @@ provider_endpoints "$2"`
 }
 
 // endpointRowAbsent reports whether script has no provider_endpoints row for
-// id: id must run the same lone "*)" arm as an unknown id, with exit 1 and no
-// output. An arm with any other pattern, even "id | *)" or a glob that also
-// matches the unknown id, is not marked, so it fails.
+// id: id and an unknown id must enter only the same lone "*)" arm, with exit 1
+// and no output. Any other arm entered first (a pattern list, a glob, a
+// fall-through, a recursive call) adds its own marker, so it fails.
 func endpointRowAbsent(t *testing.T, script, id string) bool {
 	t.Helper()
 	unknownOut, unknownArm, unknownCode := providerEndpoints(t, script, "no-such-provider")
@@ -160,6 +158,9 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 		"wildcard pattern list":     {"    antigravity | *)\n      return 1\n      ;;\n", false},
 		"glob matching both probes": {"    anti* | no-*)\n      return 1\n      ;;\n", false},
 		"nested wildcard arm":       {"    antigravity)\n      case x in\n        *)\n          return 1\n          ;;\n      esac\n      ;;\n", false},
+		"fall-through arm":          {"    antigravity)\n      ;&\n", false},
+		"test-next arm":             {"    antigravity)\n      true\n      ;;&\n", false},
+		"arm that recurses":         {"    antigravity)\n      provider_endpoints no-such-provider\n      ;;\n", false},
 		"arm with a row":            {"    antigravity)\n      echo x:443\n      ;;\n", false},
 		"arm that returns 0":        {"    antigravity)\n      return 0\n      ;;\n", false},
 	}
