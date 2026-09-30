@@ -90,6 +90,32 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.Remove(rootSum); err != nil {
 		t.Fatal(err)
 	}
+	// Duplicate keys must not collapse: a parser would hide this one.
+	libSum := filepath.Join(vendor, "libc", ".cargo-checksum.json")
+	origSum, err := os.ReadFile(libSum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(libSum, []byte(strings.Replace(string(origSum), "{", "{\"files\":{},", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("duplicate checksum key accepted: %s", out)
+	}
+	if err := os.WriteFile(libSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Newer cargo adds a $comment member; the reference may carry it.
+	refSum := filepath.Join(reference, "libc", ".cargo-checksum.json")
+	if err := os.WriteFile(refSum, []byte(strings.Replace(string(origSum), "{", "{\"$comment\":\"x y\",", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err != nil {
+		t.Fatalf("reference with a comment member rejected: %v: %s", err, out)
+	}
+	if err := os.WriteFile(refSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// A lock file that names a Git source must be rejected before Cargo runs.
 	gitLock := cleanLock + "[[package]]\nname = \"evil\"\nsource = \"git+https://example.invalid/evil#abc\"\n"
 	if err := os.WriteFile(lock, []byte(gitLock), 0o644); err != nil {

@@ -71,13 +71,18 @@ tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
   GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   GIT_ALLOW_PROTOCOL=https GIT_TERMINAL_PROMPT=0 cargo vendor --locked "${fresh}" >/dev/null)
 
-# Newer cargo adds a "$comment" key to .cargo-checksum.json. Drop that key from
-# every such file in both trees, then compare the trees byte for byte. The
-# only accepted differences are that key and the JSON formatting of those files.
+# Newer cargo adds a plain "$comment" member to .cargo-checksum.json. Cut that
+# member from every such file in both trees, then compare the trees byte for
+# byte. The only accepted difference is that member. A JSON parser would hide
+# duplicate keys and formatting, so sed cuts the exact text instead.
+# shellcheck disable=SC2016 # a sed expression; the shell must not expand it
+comment_member='s/"\$comment":"[^"\\]*",//; s/,"\$comment":"[^"\\]*"\}/}/'
 for tree in "${fresh}" "${committed}"; do
   find "${tree}" -name .cargo-checksum.json -exec sh -c '
-    for f; do jq -S "del(.\"\$comment\")" "$f" >"$0" && cp "$0" "$f" || exit 1; done
-  ' "${tmp}/norm.json" {} +
+    expr=$1
+    shift
+    for f; do sed -E "${expr}" "$f" >"$0" && cp "$0" "$f" || exit 1; done
+  ' "${tmp}/norm.json" "${comment_member}" {} +
 done
 # diff ignores file modes, so compare the executable files as well.
 executables() {
