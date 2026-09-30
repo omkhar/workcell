@@ -35,7 +35,15 @@ nested_checksums() {
 }
 mismatch=0
 diff -r --exclude=.cargo-checksum.json "${fresh}" "${RUST_DIR}/vendor" || mismatch=1
-diff <(nested_checksums "${fresh}") <(nested_checksums "${RUST_DIR}/vendor") || mismatch=1
+# Under set -e a failed scan stops the script, so an unreadable file cannot
+# pass as an empty list. diff follows symlinks, so reject them outright.
+nested_fresh="$(nested_checksums "${fresh}")"
+nested_committed="$(nested_checksums "${RUST_DIR}/vendor")"
+[[ "${nested_fresh}" == "${nested_committed}" ]] || mismatch=1
+if [[ -n "$(find "${RUST_DIR}/vendor" -type l)" ]]; then
+  echo "vendor tree contains a symbolic link" >&2
+  mismatch=1
+fi
 for sum in "${fresh}"/*/.cargo-checksum.json; do
   crate="$(basename "$(dirname "${sum}")")"
   want="$(jq -S 'del(."$comment")' "${sum}")" || want=""

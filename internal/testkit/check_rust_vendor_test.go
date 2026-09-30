@@ -70,6 +70,44 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.Remove(nested); err != nil {
 		t.Fatal(err)
 	}
+	// A broken nested link must fail the scan, not read as an empty list.
+	if err := os.Symlink("missing", nested); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("broken nested checksum link accepted: %s", out)
+	}
+	if err := os.Remove(nested); err != nil {
+		t.Fatal(err)
+	}
+	// A file replaced by a link to an identical sibling must be rejected.
+	cfg := filepath.Join(vendor, "libc", "Cargo.toml")
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.Join(reference, "libc"), filepath.Join(vendor, "libc")} {
+		if err := os.WriteFile(filepath.Join(dir, "twin"), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("twin", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("symlinked vendor file accepted: %s", out)
+	}
+	for _, path := range []string{cfg, filepath.Join(vendor, "libc", "twin"), filepath.Join(reference, "libc", "twin")} {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(cfg, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	lib := filepath.Join(vendor, "libc", "src", "lib.rs")
 	f, err := os.OpenFile(lib, os.O_APPEND|os.O_WRONLY, 0)
