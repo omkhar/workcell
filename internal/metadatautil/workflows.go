@@ -846,6 +846,17 @@ var upstreamRefreshAppTokenInputs = map[string]string{
 	"permission-pull-requests": "write",
 }
 
+func upstreamRefreshGuardUses(step workflowStep, action string, inputs map[string]string) bool {
+	return strings.HasPrefix(step.Uses, action) && step.Run == "" && len(step.Env) == 0 && maps.Equal(step.With, inputs)
+}
+
+// runsCommand reports whether run executes command. It reads the commands the
+// shell really runs, so a line continuation, comment or heredoc cannot hide or
+// fake one.
+func runsCommand(run, command string) bool {
+	return len(ShellInvocations(run, command)) > 0
+}
+
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
 // the environment and the GitHub App token. No job token may write contents or
 // pull requests, because the App token does every write.
@@ -872,8 +883,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 			if name != "publish" && strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
 				return fmt.Errorf("%s %s job must not mint the GitHub App token", path, name)
 			}
-			for _, command := range []string{"gh pr create", "gh pr merge", "upstream-refresh-publish.sh"} {
-				if name != "publish" && strings.Contains(step.Run, command) {
+			for _, command := range []string{"gh pr create", "gh pr merge", "./scripts/ci/upstream-refresh-publish.sh"} {
+				if name != "publish" && runsCommand(step.Run, command) {
 					return fmt.Errorf("%s %s job must not contain %q", path, name, command)
 				}
 			}
@@ -890,20 +901,15 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if len(guard.Permissions) != 1 || guard.Permissions["contents"] != "read" {
 		return fmt.Errorf("%s scope-guard job must run the scope guard with only contents: read", path)
 	}
-	// The guard step is the job's only run step and runs exactly the guard, so
-	// its outcome is the guard's real exit status. No other step can write the
-	// result or change the script, and "|| true" cannot mask a failure.
-	guardRuns := 0
-	for _, step := range guard.Steps {
-		if step.Run == "" {
-			continue
-		}
-		guardRuns++
-		if step.ID != "guard" || step.Shell != "" || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
-			return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
-		}
+	// The job is exactly the reviewed checkout, the candidate download, and the
+	// guard step. No other step can replace the script, write the result, or
+	// mask a failure, so the guard step outcome is the guard's real exit status.
+	if len(guard.Steps) != 3 ||
+		!upstreamRefreshGuardUses(guard.Steps[0], "actions/checkout@", map[string]string{"persist-credentials": "false"}) ||
+		!upstreamRefreshGuardUses(guard.Steps[1], "actions/download-artifact@", map[string]string{"name": "upstream-refresh-candidate", "path": "${{ runner.temp }}/candidate"}) {
+		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
 	}
-	if guardRuns != 1 {
+	if step := guard.Steps[2]; step.ID != "guard" || step.Uses != "" || step.Shell != "" || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
 		return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
 	}
 	if guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
@@ -925,7 +931,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				return fmt.Errorf("%s publish job must mint the App token as step app-token from the client-id secret and private-key secret with only contents and pull-requests write", path)
 			}
 		}
-		if len(ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0 {
+		if runsCommand(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
 			publishRuns++
 			if step.Env["SCOPE_GUARD_RESULT"] != "${{ needs.scope-guard.outputs.result }}" {
 				return fmt.Errorf("%s publish job must pass the scope-guard result to the publish script", path)
