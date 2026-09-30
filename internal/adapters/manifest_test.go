@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/omkhar/workcell/internal/providerid"
 )
 
@@ -158,10 +160,91 @@ func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
 	}
 }
 
+var (
+	rustComment     = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*`)
+	rustLaunchBlock = regexp.MustCompile(`name: "([a-z-]+)",\s*script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",\s*approved_invocations: &\[\s*"([^"]+)",\s*"([^"]+)",\s*\]`)
+	dockerfileArg   = regexp.MustCompile(`^ARG ([A-Z0-9_]+)=\S+$`)
+	heredocOpen     = regexp.MustCompile(`<<-?\s*["']?([A-Za-z0-9_]+)["']?`)
+)
+
+// rustLaunchTargets returns each provider LaunchTarget block in live Rust
+// source. Comments are removed first, so a commented-out block does not count.
+// ponytail: a "//" inside a string literal drops the rest of its line, which
+// can only hide a block (the test then fails); use a Rust parser if that bites.
+func rustLaunchTargets(source string) [][]string {
+	return rustLaunchBlock.FindAllStringSubmatch(rustComment.ReplaceAllString(source, ""), -1)
+}
+
+// dockerfilePinnedArgs returns the ARG names that a Dockerfile pins with a
+// value on an instruction line. Heredoc bodies and continuation lines of
+// another instruction are not instructions, so a decoy there does not count.
+func dockerfilePinnedArgs(dockerfile string) map[string]bool {
+	args := map[string]bool{}
+	var terminator string
+	continued := false
+	for line := range strings.Lines(dockerfile) {
+		line = strings.TrimRight(line, "\r\n")
+		switch {
+		case terminator != "":
+			if strings.TrimSpace(line) == terminator {
+				terminator = ""
+			}
+			continue
+		case continued:
+		default:
+			if m := dockerfileArg.FindStringSubmatch(line); m != nil {
+				args[m[1]] = true
+			}
+		}
+		continued = strings.HasSuffix(line, "\\")
+		if m := heredocOpen.FindStringSubmatch(line); m != nil {
+			terminator = m[1]
+		}
+	}
+	return args
+}
+
+func TestRustLaunchTargetsIgnoreComments(t *testing.T) {
+	const block = `name: "demo",
+script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",
+approved_invocations: &["/usr/local/bin/demo", "/usr/local/libexec/workcell/core/demo",],`
+	if got := rustLaunchTargets(block); len(got) != 1 {
+		t.Fatalf("live block not found: %v", got)
+	}
+	for name, source := range map[string]string{
+		"line comment":  "// " + strings.ReplaceAll(block, "\n", "\n// "),
+		"block comment": "/*\n" + block + "\n*/",
+	} {
+		if got := rustLaunchTargets(source); len(got) != 0 {
+			t.Errorf("%s: commented block counted: %v", name, got)
+		}
+	}
+}
+
+func TestDockerfilePinnedArgsIgnoreDecoys(t *testing.T) {
+	cases := map[string]struct {
+		text string
+		want bool
+	}{
+		"live":               {"ARG DEMO_VERSION=1.2.3\n", true},
+		"comment":            {"# ARG DEMO_VERSION=1.2.3\n", false},
+		"unpinned":           {"ARG DEMO_VERSION\n", false},
+		"COPY heredoc":       {"COPY <<EOF /x\nARG DEMO_VERSION=1.2.3\nEOF\n", false},
+		"RUN quoted heredoc": {"RUN <<'EOF'\nARG DEMO_VERSION=1.2.3\nEOF\n", false},
+		"continuation":       {"RUN echo \\\nARG DEMO_VERSION=1.2.3\n", false},
+		"live after heredoc": {"RUN <<EOF\ntrue\nEOF\nARG DEMO_VERSION=1.2.3\n", true},
+		"after continuation": {"RUN echo \\\n  ok\nARG DEMO_VERSION=1.2.3\n", true},
+	}
+	for name, c := range cases {
+		if got := dockerfilePinnedArgs(c.text)["DEMO_VERSION"]; got != c.want {
+			t.Errorf("%s: pinned = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
 func TestManifestsMatchRustLaunchTargets(t *testing.T) {
 	source := readRepoFile(t, "runtime/container/rust/src/bin/workcell-launcher.rs")
-	targets := regexp.MustCompile(`name: "([a-z-]+)",\s*script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",\s*approved_invocations: &\[\s*"([^"]+)",\s*"([^"]+)",\s*\]`).
-		FindAllStringSubmatch(source, -1)
+	targets := rustLaunchTargets(source)
 	var names []string
 	for _, target := range targets {
 		name := target[1]
@@ -193,7 +276,7 @@ func TestManifestInstallPinsExist(t *testing.T) {
 		if m.Tier == "planned" {
 			continue
 		}
-		if m.Install.VersionArg != "" && !regexp.MustCompile(`(?m)^ARG `+regexp.QuoteMeta(m.Install.VersionArg)+`=\S+$`).MatchString(dockerfile) {
+		if m.Install.VersionArg != "" && !dockerfilePinnedArgs(dockerfile)[m.Install.VersionArg] {
 			t.Errorf("%s: Dockerfile has no pinned ARG %s", m.ID, m.Install.VersionArg)
 		}
 		if m.Install.Package != "" && pkg.Dependencies[m.Install.Package] == "" {
@@ -283,6 +366,12 @@ func TestLoadManifestsFailsClosed(t *testing.T) {
 		},
 		"directory without manifest": func(root string) {
 			os.Mkdir(filepath.Join(root, "demo"), 0o700)
+		},
+		"manifest is a FIFO": func(root string) {
+			os.Mkdir(filepath.Join(root, "demo"), 0o700)
+			if err := unix.Mkfifo(filepath.Join(root, "demo", "adapter.toml"), 0o600); err != nil {
+				t.Fatal(err)
+			}
 		},
 		"manifest is a directory": func(root string) {
 			os.MkdirAll(filepath.Join(root, "demo", "adapter.toml"), 0o700)

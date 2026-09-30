@@ -4,13 +4,17 @@
 package adapters
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
@@ -55,19 +59,21 @@ var manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // LoadManifests loads every adapters/<id>/adapter.toml under root, in
 // directory-name order, and requires each id to match its directory. It fails
 // closed: a missing or unreadable root, a symlinked adapter directory, and a
-// directory without a regular adapter.toml are errors. It reads through an
-// os.Root, so a symlink swapped in after the listing cannot redirect a read
-// outside root.
+// directory without a regular adapter.toml are errors. Each adapter directory
+// and each manifest is opened with O_NOFOLLOW from the descriptor of its
+// parent, so a path swapped after the listing cannot redirect a read.
 func LoadManifests(root string) ([]Manifest, error) {
-	tree, err := os.OpenRoot(root)
+	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", root, err)
 	}
-	defer tree.Close()
-	entries, err := fs.ReadDir(tree.FS(), ".")
+	rootDir := os.NewFile(uintptr(rootFD), root)
+	defer rootDir.Close()
+	entries, err := rootDir.ReadDir(-1)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", root, err)
 	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	var out []Manifest
 	for _, entry := range entries {
 		path := filepath.Join(root, entry.Name(), "adapter.toml")
@@ -77,22 +83,9 @@ func LoadManifests(root string) ([]Manifest, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		rel := filepath.Join(entry.Name(), "adapter.toml")
-		info, err := tree.Lstat(rel)
+		content, err := readManifestFile(rootFD, entry.Name())
 		if err != nil {
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s: adapter.toml must be a regular file", path)
-		}
-		file, err := tree.Open(rel)
-		if err != nil {
-			return nil, err
-		}
-		content, err := io.ReadAll(file)
-		file.Close()
-		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		m, err := parseManifest(path, content)
 		if err != nil {
@@ -104,6 +97,30 @@ func LoadManifests(root string) ([]Manifest, error) {
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// readManifestFile reads <dir>/adapter.toml below rootFD. O_NONBLOCK keeps a
+// FIFO swapped in for the file from blocking the open; the fstat then rejects it.
+func readManifestFile(rootFD int, dir string) ([]byte, error) {
+	dirFD, err := unix.Openat(rootFD, dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(dirFD)
+	fileFD, err := unix.Openat(dirFD, "adapter.toml", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fileFD), "adapter.toml")
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("adapter.toml must be a regular file")
+	}
+	return io.ReadAll(file)
 }
 
 // parseManifest parses one adapter.toml with the strict TOML subset parser.
