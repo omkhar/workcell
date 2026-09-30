@@ -332,7 +332,9 @@ workcell_runtime_state_value() {
       ;;
   esac
 
-  [[ -r "${path}" ]] || return 1
+  # Only root writes session state. A readonly session mounts this directory
+  # as the mapped uid, so a file that root does not own is a planted value.
+  [[ -f "${path}" && -r "${path}" && "$(stat -c %u -- "${path}")" == "0" ]] || return 1
   head -n1 "${path}"
 }
 

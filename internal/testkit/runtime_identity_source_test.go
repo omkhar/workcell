@@ -5,6 +5,7 @@ package testkit
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,5 +79,64 @@ func TestRuntimeUserKeepsNoShellBrokerState(t *testing.T) {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("runtime-user.sh still carries shell broker state: %q", forbidden)
 		}
+	}
+}
+
+// runtimeStateValue runs the real workcell_runtime_state_value from
+// runtime-user.sh against one mode-state file and returns its output and
+// whether it succeeded.
+func runtimeStateValue(t *testing.T, stateFile string) (string, bool) {
+	t.Helper()
+
+	source := runtimeUserSource(t)
+	start := strings.Index(source, "\nworkcell_runtime_state_value() {\n")
+	if start < 0 {
+		t.Fatal("runtime-user.sh no longer defines workcell_runtime_state_value")
+	}
+	end := strings.Index(source[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("workcell_runtime_state_value has no closing brace")
+	}
+	script := source[start:start+end+3] +
+		"WORKCELL_RUNTIME_MODE_FILE=\"$1\"\nworkcell_runtime_state_value WORKCELL_MODE\n"
+
+	cmd := exec.Command("bash", "-c", script, "bash", stateFile)
+	// The runtime is Linux; give a macOS host GNU stat so the check is real.
+	if exec.Command("stat", "-c", "%u", "/").Run() != nil {
+		gstat, err := exec.LookPath("gstat")
+		if err != nil {
+			t.Skip("GNU stat is not available")
+		}
+		shim := t.TempDir()
+		if err := os.Symlink(gstat, filepath.Join(shim, "stat")); err != nil {
+			t.Fatal(err)
+		}
+		cmd.Env = append(os.Environ(), "PATH="+shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	out, err := cmd.Output()
+	return string(out), err == nil
+}
+
+// In a readonly session /run/workcell is a tmpfs that the mapped agent uid
+// owns, and no root phase writes the state files. The provider wrappers prefer
+// a state file over the PID1 environment, so a planted file must not be
+// trusted: only root writes real session state.
+func TestRuntimeStateValueRejectsNonRootOwnedFile(t *testing.T) {
+	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("needs a non-root uid to plant a non-root-owned state file")
+	}
+	planted := filepath.Join(t.TempDir(), "mode")
+	if err := os.WriteFile(planted, []byte("build\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if out, ok := runtimeStateValue(t, planted); ok || out != "" {
+		t.Fatalf("planted state file was trusted: ok=%v out=%q", ok, out)
+	}
+
+	// Negative control: a root-owned file is still read.
+	if out, ok := runtimeStateValue(t, "/etc/passwd"); !ok || out == "" {
+		t.Fatalf("root-owned state file was refused: ok=%v out=%q", ok, out)
 	}
 }
