@@ -349,12 +349,14 @@ workcell_runtime_state_value() {
   # mapped uid cannot hardlink a root-owned file or place an entry on another
   # mount, so no replacement can match after the open. The tools run by absolute
   # path, because the wrappers inherit exported bash functions that shadow names.
-  (
-    { exec {fd}<"${path}"; } 2>/dev/null || exit 1
-    [[ -f "/dev/fd/${fd}" && ! -L "${path}" && "$(/usr/bin/stat -L -c %u -- "/dev/fd/${fd}")" == "0" &&
-    "$(/usr/bin/stat -L -c %d:%i -- "/dev/fd/${fd}")" == "$(/usr/bin/stat -c %d:%i -- "${path}")" ]] || exit 1
-    /usr/bin/head -n1 <&"${fd}"
-  )
+  # Failure ends through && and the redirection status only: exit, return and
+  # exec are builtins that an imported function could replace.
+  local entry="${path}" fd
+  {
+    [[ -f "/dev/fd/${fd}" && ! -L "${entry}" && "$(/usr/bin/stat -L -c %u -- "/dev/fd/${fd}")" == "0" &&
+    "$(/usr/bin/stat -L -c %d:%i -- "/dev/fd/${fd}")" == "$(/usr/bin/stat -c %d:%i -- "${entry}")" ]] &&
+      /usr/bin/head -n1 <&"${fd}"
+  } {fd}<"${path}" 2>/dev/null
 }
 
 workcell_reexec_as_runtime_user() {
