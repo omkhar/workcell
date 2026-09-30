@@ -14,6 +14,10 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   exit 0
 fi
 
+# Residual risk: cargo comes from the caller's HOME (as in build-and-test.sh),
+# and the link checks below do not stop a same-user process that races them.
+# This check guards the committed tree against a pull request, not the host
+# user against themselves.
 export PATH="${HOME}/.cargo/bin:${PATH}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_DIR="${ROOT_DIR}/runtime/container/rust"
@@ -48,8 +52,8 @@ tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
 # difference in that one key is the only difference the check accepts.
 for tree in "${fresh}" "${committed}"; do
   find "${tree}" -name .cargo-checksum.json -exec sh -c '
-    for f; do jq -S "del(.\"\$comment\")" "$f" >"$f.norm" && mv "$f.norm" "$f" || exit 1; done
-  ' _ {} +
+    for f; do jq -S "del(.\"\$comment\")" "$f" >"$0" && cp "$0" "$f" || exit 1; done
+  ' "${tmp}/norm.json" {} +
 done
 if ! diff -r "${fresh}" "${committed}"; then
   echo "runtime/container/rust/vendor differs from crates.io for the pinned Cargo.lock" >&2

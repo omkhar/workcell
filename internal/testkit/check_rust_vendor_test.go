@@ -81,6 +81,17 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.Remove(rootSum); err != nil {
 		t.Fatal(err)
 	}
+	// A stray file beside a checksum file must not be consumed by normalizing.
+	stray := filepath.Join(vendor, "libc", ".cargo-checksum.json.norm")
+	if err := os.WriteFile(stray, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("stray normalization file accepted: %s", out)
+	}
+	if err := os.Remove(stray); err != nil {
+		t.Fatal(err)
+	}
 	// A directory with the checksum file name must fail, not be skipped.
 	if err := os.Mkdir(rootSum, 0o755); err != nil {
 		t.Fatal(err)
