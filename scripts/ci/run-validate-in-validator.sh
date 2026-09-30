@@ -141,8 +141,10 @@ if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)"
     exit 1
   fi
   (umask 077 && mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}")
-  if [[ ! -d "${WORKCELL_VALIDATOR_CACHE_DIR}" || ! -O "${WORKCELL_VALIDATOR_CACHE_DIR}" ]] ||
-    [[ -n "$(find "${WORKCELL_VALIDATOR_CACHE_DIR}" -maxdepth 0 -perm /022)" ]]; then
+  # The find status is checked on its own: inside a test expression a failing
+  # find would yield empty output and pass as safe.
+  cache_unsafe_mode="$(find "${WORKCELL_VALIDATOR_CACHE_DIR}" -maxdepth 0 -perm /022 -print)" || cache_unsafe_mode="find-failed"
+  if [[ ! -d "${WORKCELL_VALIDATOR_CACHE_DIR}" || ! -O "${WORKCELL_VALIDATOR_CACHE_DIR}" || -n "${cache_unsafe_mode}" ]]; then
     echo "WORKCELL_VALIDATOR_CACHE_DIR must be a directory owned by the host uid and not group or other writable" >&2
     exit 1
   fi

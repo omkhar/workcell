@@ -103,6 +103,7 @@ func TestValidatorCacheMountIsGatedOnHostUID(t *testing.T) {
 		`WORKCELL_VALIDATOR_CACHE_DIR must be an absolute path`,
 		`WORKCELL_VALIDATOR_CACHE_DIR must not be a symlink`,
 		`! -O "${WORKCELL_VALIDATOR_CACHE_DIR}"`,
+		`|| cache_unsafe_mode="find-failed"`,
 		`validator_cache="/workcell-validator-cache"`,
 		`workcell_ci_workspace_mount_spec "${WORKCELL_VALIDATOR_CACHE_DIR}" false "${validator_cache}"`,
 		`${cache_mount_args[@]+"${cache_mount_args[@]}"} \`,
