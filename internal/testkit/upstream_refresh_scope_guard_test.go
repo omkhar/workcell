@@ -85,6 +85,22 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
 			wantErr: "file header does not match the diff path",
 		},
+		{
+			name:    "traditional section after a hunk",
+			patch:   inScope + "--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
+			wantErr: "unrecognized patch line",
+		},
+		{
+			name:    "hunk longer than its header",
+			patch:   scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "+extra\n",
+			wantErr: "unrecognized patch line",
+		},
+		{
+			name: "hunk shorter than its header",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,3 +1,3 @@\n-a\n+b\n",
+			wantErr: "truncated hunk",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",

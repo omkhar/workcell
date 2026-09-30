@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/rootio"
@@ -26,10 +27,13 @@ var (
 		`^(runtime/container/providers[^/]*/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
+	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
 )
 
 // CheckUpstreamRefreshScope reads one git patch without following symlinks
 // and returns an error that lists every change outside the agent-bump surface.
+// The parser follows hunk line counts and fails closed on any line it does not
+// recognize, so git apply cannot see a target that the guard did not check.
 // A rejected patch is still a valid PR. A human must review it.
 func CheckUpstreamRefreshScope(patchPath string) error {
 	data, err := rootio.ReadFileNoFollow(patchPath, "upstream-refresh patch", scopeGuardMaxPatchBytes)
@@ -41,20 +45,47 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		problems = append(problems, "out of scope: "+fmt.Sprintf(format, args...))
 	}
 	var file string
-	var seen, inHunk bool
-	var oldHeaders, newHeaders int
-	// A section without a hunk is truncated or empty. Fail closed.
+	var seen bool
+	var oldHeaders, newHeaders, hunks, remOld, remNew int
 	closeSection := func() {
-		if file != "" && !inHunk {
+		switch {
+		case file == "":
+		case remOld != 0 || remNew != 0:
+			fail("%s: truncated hunk", file)
+		case hunks == 0:
 			fail("%s: incomplete patch section (no hunk)", file)
 		}
 	}
 	for _, line := range strings.Split(string(bytes.TrimSuffix(data, []byte("\n"))), "\n") {
 		fields := strings.Fields(line)
+		if remOld > 0 || remNew > 0 {
+			switch {
+			case strings.HasPrefix(line, "\\"):
+			case strings.HasPrefix(line, "-"):
+				remOld--
+			case strings.HasPrefix(line, "+"):
+				remNew--
+			case line == "" || strings.HasPrefix(line, " "):
+				remOld--
+				remNew--
+			default:
+				fail("%s: unrecognized hunk line %q", file, line)
+				remOld, remNew = 0, 0
+				continue
+			}
+			if remOld < 0 || remNew < 0 {
+				fail("%s: hunk longer than its header", file)
+				remOld, remNew = 0, 0
+			}
+			if file == scopeGuardDockerfilePath && (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) && !scopeGuardDockerfileLineRE.MatchString(line) {
+				fail("%s: line %s", file, line)
+			}
+			continue
+		}
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
-			inHunk, file, oldHeaders, newHeaders = false, "", 0, 0
+			file, oldHeaders, newHeaders, hunks = "", 0, 0, 0
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
 				continue
@@ -63,36 +94,45 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			if file != scopeGuardDockerfilePath && !scopeGuardPathRE.MatchString(file) {
 				fail("path %s", file)
 			}
-		case !inHunk && scopeGuardHeaderOnlyRE.MatchString(line):
+		case file == "":
+			fail("line outside a checked diff section: %q", line)
+		case scopeGuardHeaderOnlyRE.MatchString(line):
 			fail("%s: %s", file, line)
-		case !inHunk && strings.HasPrefix(line, "new file mode "):
+		case strings.HasPrefix(line, "new file mode "):
 			if len(fields) < 4 || fields[3] != "100644" {
 				fail("%s: %s", file, line)
 			}
-		case !inHunk && (strings.HasPrefix(line, "GIT binary patch") || strings.HasPrefix(line, "Binary files ")):
+		case strings.HasPrefix(line, "GIT binary patch") || strings.HasPrefix(line, "Binary files "):
 			fail("%s: binary change", file)
-		case !inHunk && strings.HasPrefix(line, "index "):
+		case strings.HasPrefix(line, "index "):
 			if len(fields) == 3 && fields[2] != "100644" {
 				fail("%s: %s", file, line)
 			}
-		case !inHunk && strings.HasPrefix(line, "--- "):
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
 			// git apply takes target paths from these headers, not from the diff line.
-			oldHeaders++
-			if line != "--- a/"+file && line != "--- /dev/null" {
-				fail("%s: file header does not match the diff path: %s", file, line)
+			want := "--- a/" + file
+			if line[0] == '+' {
+				want = "+++ b/" + file
+				newHeaders++
+			} else {
+				oldHeaders++
 			}
-		case !inHunk && strings.HasPrefix(line, "+++ "):
-			newHeaders++
-			if line != "+++ b/"+file {
+			if hunks > 0 {
+				fail("%s: file header after a hunk: %s", file, line)
+			} else if line != want && line != "--- /dev/null" {
 				fail("%s: file header does not match the diff path: %s", file, line)
 			}
 		case strings.HasPrefix(line, "@@ "):
-			if !inHunk && (oldHeaders != 1 || newHeaders != 1) {
-				fail("%s: need exactly one old and one new file header before the first hunk", file)
+			m := scopeGuardHunkRE.FindStringSubmatch(line)
+			if m == nil || oldHeaders != 1 || newHeaders != 1 {
+				fail("%s: malformed hunk or not exactly one old and one new file header: %s", file, line)
+				continue
 			}
-			inHunk = true
-		case inHunk && file == scopeGuardDockerfilePath && (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) && !scopeGuardDockerfileLineRE.MatchString(line):
-			fail("%s: line %s", file, line)
+			hunks++
+			remOld, remNew = scopeGuardHunkCount(m[1]), scopeGuardHunkCount(m[2])
+		case strings.HasPrefix(line, "\\"):
+		default:
+			fail("%s: unrecognized patch line %q", file, line)
 		}
 	}
 	closeSection()
@@ -103,4 +143,15 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		return errors.New(strings.Join(problems, "\n"))
 	}
 	return nil
+}
+
+func scopeGuardHunkCount(text string) int {
+	if text == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil {
+		return 0
+	}
+	return n
 }
