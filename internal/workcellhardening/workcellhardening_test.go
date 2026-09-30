@@ -5582,9 +5582,9 @@ func dualStackApplyPlanHappyFiles() map[string]string {
 		"  sudo ip6tables-restore --noflush <<<\"${IPV6_RESTORE}\"\n" +
 		"  sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n" +
 		"  sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6\n" +
-		"EOF\n" +
 		"  resolve_vm_endpoint_ips \"${endpoints}\"\n" +
 		"  getent ahosts \"${host}\"\n" +
+		"EOF\n" +
 		"}\n" +
 		"apply_allowlist() {\n" +
 		"  if ! type ip6tables >/dev/null 2>&1; then\n" +

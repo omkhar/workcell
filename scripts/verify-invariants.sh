@@ -3119,8 +3119,15 @@ if ! run_egress_swap_case '127.0.0.1:443 [::1]:443 resolvable.test:443' ||
   [[ -e "${EGRESS_SWAP_ROOT}/state/violations" ]] ||
   [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/jumps")" != "WORKCELL_EGRESS" ]] ||
   [[ "$(cat "${EGRESS_SWAP_ROOT}/state/ip6tables/jumps")" != "WORKCELL_EGRESS6" ]] ||
-  ! grep -Fxq -- '-p tcp -d 192.0.2.10 --dport 443 -j ACCEPT' "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS" ||
-  ! grep -Fxq -- '-p tcp -d ::1 --dport 443 -j ACCEPT' "${EGRESS_SWAP_ROOT}/state/ip6tables/chain.WORKCELL_EGRESS6"; then
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS")" != "$(printf '%s\n' \
+    '-m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT' \
+    '-p tcp -d 127.0.0.1 --dport 443 -j ACCEPT' \
+    '-p tcp -d 192.0.2.10 --dport 443 -j ACCEPT' \
+    '-j DROP')" ]] ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/ip6tables/chain.WORKCELL_EGRESS6")" != "$(printf '%s\n' \
+    '-m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT' \
+    '-p tcp -d ::1 --dport 443 -j ACCEPT' \
+    '-j DROP')" ]]; then
   cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
   echo "Expected allowlist apply to keep a DROP-terminated chain linked while it swaps in the new rules" >&2
   exit 1

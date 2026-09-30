@@ -51,6 +51,23 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		t.Fatalf("decoy guard error = %v, want live chain rejection", err)
 	}
 
+	// The emitted plan text and the restore payload are fixed, line for line.
+	for name, edit := range map[string][2]string{
+		"accept before drop": {"\\n%s-A WORKCELL_EGRESS -j DROP", "\\n-A WORKCELL_EGRESS -j ACCEPT\\n%s-A WORKCELL_EGRESS -j DROP"},
+		"extra rule line":    {"IPV4_RULES=\"\"\n", "IPV4_RULES=\"\"\nIPV4_RULES+=\"-A WORKCELL_EGRESS -j ACCEPT\"$'\\n'\n"},
+		"extra emitter":      {"  printf 'WORKCELL_ENDPOINTS=%q\\n' \"${ENDPOINTS}\"\n", "  printf 'WORKCELL_ENDPOINTS=%q\\n' \"${ENDPOINTS}\"\n  echo 'sudo iptables -A WORKCELL_EGRESS -j ACCEPT'\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(string(script), edit[0], edit[1], 1)
+			if mutated == string(script) {
+				t.Fatal("edit left the script unchanged")
+			}
+			if err := metadatautil.ValidateColimaEgressAtomicSwap(mutated); err == nil {
+				t.Fatal("validator accepted a changed plan payload")
+			}
+		})
+	}
+
 	// The live chain must never be deleted or flushed, in any spelling.
 	for name, hidden := range map[string]string{
 		"quoted flush":        `sudo iptables "-F" WORKCELL_EGRESS`,
