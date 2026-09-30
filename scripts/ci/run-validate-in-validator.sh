@@ -119,12 +119,15 @@ require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
 validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" false)"
 
 # WORKCELL_VALIDATOR_CACHE_DIR is a host directory that persists the Go build,
-# Go module and cargo target caches across runs.  Mount it only when the
+# Go module and cargo target caches across runs.  It is mounted at its own
+# top-level path, because Docker creates the parents of a mount target as root
+# and a target under ${validator_home} would make the home unwritable.  Mount it only when the
 # container uid is the host uid: the root and uidmap axes cannot write to it
 # (or would leave root-owned files in it), so they keep the in-container cache.
 cache_mount_args=()
 if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)" ]]; then
   mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}"
+  validator_cache="/workcell-validator-cache"
   cache_mount_args=(--mount "$(workcell_ci_workspace_mount_spec "${WORKCELL_VALIDATOR_CACHE_DIR}" false "${validator_cache}")")
 fi
 
