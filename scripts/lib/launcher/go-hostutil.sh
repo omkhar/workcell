@@ -43,9 +43,12 @@ go_tool_bin_trusted() {
     go_tool_path_private "$1"
 }
 
-# go_tool_path_private succeeds when $1 is not writable by group or other.
+# go_tool_path_private succeeds when $1 is not writable by group or other.  A
+# failed find is not a pass.
 go_tool_path_private() {
-  [[ -z "$(find "$1" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" ]]
+  local writable
+  writable="$(find "$1" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" || return 1
+  [[ -z "${writable}" ]]
 }
 
 # go_tool_build_id prints the Go build ID of ./cmd/TOOL.

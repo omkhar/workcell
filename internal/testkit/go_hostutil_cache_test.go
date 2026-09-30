@@ -226,4 +226,10 @@ HOST_GO_BIN="` + racer + `"; GO_HOSTUTIL_BIN=""; go_hostutil hello`)
 	if code != 7 || !strings.Contains(output, "Refusing untrusted Go tool cache") {
 		t.Fatalf("group-writable cache root: exit=%d output=%q, want refusal", code, output)
 	}
+
+	// A failing permission lookup is not a pass.
+	code, output = run(`find() { return 1; }; go_tool_path_private "${WORKCELL_GO_CACHE_ROOT}" && echo private; exit 0`)
+	if code != 0 || strings.Contains(output, "private") {
+		t.Fatalf("failing find: exit=%d output=%q, want the path treated as not private", code, output)
+	}
 }
