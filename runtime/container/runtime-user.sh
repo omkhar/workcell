@@ -336,12 +336,14 @@ workcell_runtime_state_value() {
   # as the mapped uid, so a file that root does not own is a planted value.
   # Open the file once, then check and read that same descriptor, so a swap of
   # the directory entry cannot change the inode after the owner check. The
-  # open follows a final symlink, so the path must also name that same inode
-  # without being followed: a link, even to a root-owned file, is refused.
+  # open follows a final symlink, so the path must also be no link and name that
+  # same device and inode: a link, even to a root-owned file, is refused. The
+  # mapped uid cannot hardlink a root-owned file or place an entry on another
+  # mount, so no replacement can match after the open.
   (
     { exec {fd}<"${path}"; } 2>/dev/null || exit 1
     [[ -f "/dev/fd/${fd}" && ! -L "${path}" && "$(stat -L -c %u -- "/dev/fd/${fd}")" == "0" &&
-    "$(stat -L -c %i -- "/dev/fd/${fd}")" == "$(stat -c %i -- "${path}")" ]] || exit 1
+    "$(stat -L -c %d:%i -- "/dev/fd/${fd}")" == "$(stat -c %d:%i -- "${path}")" ]] || exit 1
     head -n1 <&"${fd}"
   )
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -100,20 +101,12 @@ func runtimeStateValue(t *testing.T, stateFile string) (string, bool) {
 	script := source[start:start+end+3] +
 		"WORKCELL_RUNTIME_MODE_FILE=\"$1\"\nworkcell_runtime_state_value WORKCELL_MODE\n"
 
-	cmd := exec.Command("bash", "-c", script, "bash", stateFile)
-	// The runtime is Linux; give a macOS host GNU stat so the check is real.
-	if exec.Command("stat", "-c", "%u", "/").Run() != nil {
-		gstat, err := exec.LookPath("gstat")
-		if err != nil {
-			t.Skip("GNU stat is not available")
-		}
-		shim := t.TempDir()
-		if err := os.Symlink(gstat, filepath.Join(shim, "stat")); err != nil {
-			t.Fatal(err)
-		}
-		cmd.Env = append(os.Environ(), "PATH="+shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// The function reads /dev/fd through GNU stat, which only a Linux host
+	// reports with the device number that the path check compares.
+	if runtime.GOOS != "linux" {
+		t.Skip("needs Linux /dev/fd and GNU stat")
 	}
-	out, err := cmd.Output()
+	out, err := exec.Command("bash", "-c", script, "bash", stateFile).Output()
 	return string(out), err == nil
 }
 
