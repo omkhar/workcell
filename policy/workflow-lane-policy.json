@@ -298,6 +298,16 @@
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "upstream refresh candidate generation depends on GitHub-hosted scheduling, artifacts, and issue publication"
+    },
+    "upstream-refresh.yml/scope-guard": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the scope guard reads the candidate artifact that the GitHub-hosted refresh job uploads"
+    },
+    "upstream-refresh.yml/publish": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "publication needs the upstream-refresh environment secrets, the GitHub App token, and GitHub-side commit signing"
     }
   }
 }
