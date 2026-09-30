@@ -51,6 +51,20 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		t.Fatal("validator accepted a decoy guard")
 	}
 
+	// A second definition of the plan function replaces the reviewed one.
+	for name, extra := range map[string]string{
+		"later definition":    "\nrender_allowlist_apply_plan() {\n  echo unsafe\n}\n",
+		"function keyword":    "\nfunction render_allowlist_apply_plan {\n  echo unsafe\n}\n",
+		"spaced parentheses":  "\nrender_allowlist_apply_plan () { echo unsafe; }\n",
+		"indented definition": "\n  render_allowlist_apply_plan() { echo unsafe; }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + extra); err == nil {
+				t.Fatal("validator accepted a second plan definition")
+			}
+		})
+	}
+
 	// The emitted plan text and the restore payload are fixed, line for line.
 	for name, edit := range map[string][2]string{
 		"accept before drop": {"\\n%s-A WORKCELL_EGRESS -j DROP", "\\n-A WORKCELL_EGRESS -j ACCEPT\\n%s-A WORKCELL_EGRESS -j DROP"},

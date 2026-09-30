@@ -32,6 +32,18 @@ const applyPlanDigest = "4d197047a9c0328934ab648a274bd74264eb67141ea4e09a4efd023
 // spelling, fails until a reviewer regenerates it. The replay in
 // scripts/verify-invariants.sh then checks the behavior of the reviewed plan.
 func ValidateColimaEgressAtomicSwap(script string) error {
+	// Bash runs the last definition of a name, so a reviewed copy kept as a
+	// decoy ahead of another definition would pass the checks below.
+	definitions := 0
+	for line := range strings.Lines(script) {
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "function "))
+		if name, _, _ := strings.Cut(strings.Join(fields[:min(len(fields), 1)], ""), "("); name == "render_allowlist_apply_plan" {
+			definitions++
+		}
+	}
+	if definitions != 1 {
+		return errors.New("Expected exactly one render_allowlist_apply_plan definition")
+	}
 	plan, emitters := applyPlanText(script)
 	families := []struct{ name, chain string }{{"iptables", "WORKCELL_EGRESS"}, {"ip6tables", "WORKCELL_EGRESS6"}}
 	for _, family := range families {
