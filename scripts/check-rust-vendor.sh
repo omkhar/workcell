@@ -43,7 +43,10 @@ committed="${tmp}/committed"
 # The committed .cargo/config.toml replaces crates-io with vendor/, so vendor
 # from a copy that has no such override.
 mkdir "${tmp}/src" "${committed}"
-tar -C "${RUST_DIR}" --exclude=./vendor --exclude=./.cargo --exclude=./target -cf - . | tar -C "${tmp}/src" -xf -
+# Leave out rust-toolchain files too: a pull request could point one at a
+# program to run, so cargo uses the host default toolchain.
+tar -C "${RUST_DIR}" --exclude=./vendor --exclude=./.cargo --exclude=./target \
+  --exclude=./rust-toolchain --exclude=./rust-toolchain.toml -cf - . | tar -C "${tmp}/src" -xf -
 tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
 # A pull request controls the sources in Cargo.lock, so keep host Cargo, Git
 # and SSH state out of the fetch: a scratch CARGO_HOME and no Git configuration.
@@ -52,8 +55,8 @@ tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
   GIT_ALLOW_PROTOCOL=https GIT_TERMINAL_PROMPT=0 cargo vendor --locked "${fresh}" >/dev/null)
 
 # Newer cargo adds a "$comment" key to .cargo-checksum.json. Drop that key from
-# every such file in both trees, then compare the trees byte for byte. A
-# difference in that one key is the only difference the check accepts.
+# every such file in both trees, then compare the trees byte for byte. The
+# only accepted differences are that key and the JSON formatting of those files.
 for tree in "${fresh}" "${committed}"; do
   find "${tree}" -name .cargo-checksum.json -exec sh -c '
     for f; do jq -S "del(.\"\$comment\")" "$f" >"$0" && cp "$0" "$f" || exit 1; done

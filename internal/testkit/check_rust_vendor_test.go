@@ -43,7 +43,11 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	fakeCargo := "#!/bin/sh\ncp -R '" + reference + "' \"$3\"\n"
+	// The fixture carries a rust-toolchain.toml; the fake cargo fails if the copy keeps it.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(vendor), "rust-toolchain.toml"), []byte("[toolchain]\npath = \"/proc/self/cwd/fake\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeCargo := "#!/bin/sh\n[ ! -e rust-toolchain.toml ] || exit 9\ncp -R '" + reference + "' \"$3\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".cargo", "bin", "cargo"), []byte(fakeCargo), 0o755); err != nil {
 		t.Fatal(err)
 	}
