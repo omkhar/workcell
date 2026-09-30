@@ -145,7 +145,7 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A path dependency, a workspace or an escaped key must be rejected before Cargo runs.
-	for _, bad := range []string{"evil = { path = \"/tmp/evil\" }\n", "[workspace]\n", "\"pa\\u0074h\" = \"/tmp\"\n"} {
+	for _, bad := range []string{"evil = { path = \"/tmp/evil\" }\n", "[workspace]\n", "evil = { 'path' = '/tmp/evil' }\n", "evil = { 'workspace' = true }\n", "\"pa\\u0074h\" = \"/tmp\"\n"} {
 		if err := os.WriteFile(manifest, []byte(cleanManifest+bad), 0o644); err != nil {
 			t.Fatal(err)
 		}

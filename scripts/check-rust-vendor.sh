@@ -69,7 +69,7 @@ fi
 # a key, fails closed.
 odd_manifest="$(awk '
   /^[ \t]*#/ { next }
-  /(^|[^A-Za-z0-9_-])(path|workspace)"?[ \t]*[=.\]]/ || /\\/ {
+  /(^|[^A-Za-z0-9_-])(path|workspace)["'"'"']?[ \t]*[=.\]]/ || /\\/ {
     if ($0 !~ /^path = "src\/[A-Za-z0-9_\/.-]+\.rs"$/) print
   }
 ' "${RUST_DIR}/Cargo.toml")"
