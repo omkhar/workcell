@@ -26,7 +26,7 @@ defaults:
     shell: bash --noprofile --norc -euo pipefail {0}
 
 env:
-  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+  WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
   WORKCELL_BUILDX_VERSION: v0.37.0
 
 concurrency:
