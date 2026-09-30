@@ -26,6 +26,14 @@
 # terminal/GnuPG/SSH/XDG/GitHub environment variables (read at call time)
 # so host-side PR publication can reach the operator's credentials.  See
 # docs/launcher-contract.md for the module contract.
+#
+# Language boundary: a cached binary is checked by path (owner, mode, no
+# symlink, owner-only cache root) and then run by path.  Bash has no
+# descriptor-relative open/exec, so a check-to-run swap by a process that can
+# write the cache is not closed here.  The cache sits in the operator's own
+# 0700 cache root beside GOCACHE and GOMODCACHE, which the previous `go run`
+# path already trusted.  A writer to that root is same-user malware
+# (docs/threat-model.md, Exclusions).  A port to Go would close the gap.
 
 HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
 
@@ -220,5 +228,11 @@ go_colimautil() {
 # Resolve the hostutil binary once in the sourcing shell.  Most go_hostutil
 # calls run in command substitutions, and a subshell cannot update the memo
 # for later calls.  The first go_hostutil call reports a failure here again.
-ensure_go_run_env
-go_tool_bin workcell-hostutil 2>/dev/null || true
+# A help request never calls a host utility, so it skips the build.
+case " $* " in
+  *" -h "* | *" --help "*) ;;
+  *)
+    ensure_go_run_env
+    go_tool_bin workcell-hostutil 2>/dev/null || true
+    ;;
+esac

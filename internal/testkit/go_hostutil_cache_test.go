@@ -272,4 +272,24 @@ GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
 	if code != 7 || len(binaries()) != before+1 || len(leftovers) != 0 {
 		t.Fatalf("failing sync: exit=%d output=%q binaries=%v leftovers=%v, want refusal, no new binary, no temp file", code, output, binaries(), leftovers)
 	}
+
+	// A help request skips the eager build: a cold cache root stays empty.
+	coldRoot := filepath.Join(fixture, "cold")
+	coldEnv := map[string]string{}
+	for k, v := range env {
+		coldEnv[k] = v
+	}
+	coldEnv["WORKCELL_GO_CACHE_ROOT"] = coldRoot
+	code, output = runBashProbe(t, `set -euo pipefail
+ROOT_DIR="`+rootDir+`"
+REAL_HOME="`+fixture+`"
+TRUSTED_HOST_PATH="${PATH}"
+set -- --help
+source "`+libDir+`/launcher/host-exec.sh"
+source "`+libDir+`/go-run-env.sh"
+source "`+libDir+`/launcher/go-hostutil.sh"
+`, coldEnv)
+	if _, err := os.Stat(filepath.Join(coldRoot, "bin")); code != 0 || err == nil {
+		t.Fatalf("help sourcing: exit=%d output=%q stat err=%v, want no build", code, output, err)
+	}
 }
