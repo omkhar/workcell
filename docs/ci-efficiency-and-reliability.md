@@ -105,5 +105,26 @@ The workflow then used `max-parallel: 1`, and the four jobs ran one after the ot
 Now the four jobs run in parallel, because none of them builds the image.
 The job names that branch protection requires did not change.
 
+## Parallel Host Invariants
+
+The `Host launcher invariants` job runs `scripts/verify-invariants.sh`.
+It runs in parallel with `Validate repository` and needs only `Pull request shape`.
+The hosted workflow passes `--skip-host-invariants` to `scripts/ci/job-validate.sh` for `Validate repository`.
+The skip is a flag, so no environment value can disable the local run.
+The job name is a required status check in `policy/github-hosted-controls.toml`.
+An administrator must add `Host launcher invariants` to the repository ruleset before this change merges.
+
+## Validator Caches
+
+`Validate repository` and the `tmpdir` and `workspace` hostile jobs restore one cache directory with `actions/cache/restore`.
+`scripts/ci/run-validate-in-validator.sh` mounts it over the validator cache path.
+The directory holds the Go build cache, the Go module cache and the cargo target directory.
+The `root` and `uidmap` jobs do not mount it, because their uid cannot use the host directory.
+
+The key holds the hash of `go.mod`, `go.sum`, both `Cargo.lock` files and `tools/validator/Dockerfile`.
+The Dockerfile pins the Go and Rust versions.
+Only a push to `main` saves the cache, with `actions/cache/save`.
+A pull request restores the cache and never saves, so it cannot write into the scope that `main` uses.
+
 Use the CI cost report for current measured history. Do not present the recorded
 estimate as a current service-level objective.

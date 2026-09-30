@@ -43,6 +43,7 @@ contexts = [
   "Allowed PR base",
   "Pull request shape",
   "Validate repository",
+  "Host launcher invariants",
   "Container smoke",
   "Release asset ACL (Darwin)",
   "Reproducible build",

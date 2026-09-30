@@ -118,6 +118,65 @@ validator_passwd_mount="$(workcell_ci_workspace_mount_spec "${validator_passwd}"
 require_workcell_ci_workspace_mount "${VALIDATOR_IMAGE}" "${WORKSPACE}"
 validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" false)"
 
+# WORKCELL_VALIDATOR_CACHE_DIR is a host directory that persists the Go build,
+# Go module and cargo target caches across runs.  It is mounted at its own
+# top-level path, because Docker creates the parents of a mount target as root
+# and a target under ${validator_home} would make the home unwritable.  Mount it only when the
+# container uid is the host uid: the root and uidmap axes cannot write to it
+# (or would leave root-owned files in it), so they keep the in-container cache.
+cache_mount_args=()
+if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)" ]]; then
+  # Fail closed: the source must be an absolute path whose final component is a
+  # real directory, owned by the host uid and owner-only, so a
+  # caller cannot aim this read-write mount at an unrelated host directory.
+  case "${WORKCELL_VALIDATOR_CACHE_DIR}" in
+    /*) ;;
+    *)
+      echo "WORKCELL_VALIDATOR_CACHE_DIR must be an absolute path" >&2
+      exit 1
+      ;;
+  esac
+  if [[ -L "${WORKCELL_VALIDATOR_CACHE_DIR}" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must not be a symlink" >&2
+    exit 1
+  fi
+  (umask 077 && mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}")
+  # Resolve every parent link once and use only the canonical path below, for
+  # the checks and for the mount, so Docker never receives a path whose parents
+  # can be swapped for links.  The owner-only mode check then closes the
+  # directory itself to other local users.
+  cache_dir="$(cd -P -- "${WORKCELL_VALIDATOR_CACHE_DIR}" && pwd -P)" || {
+    echo "WORKCELL_VALIDATOR_CACHE_DIR cannot be resolved" >&2
+    exit 1
+  }
+  # Confine the mount to a dedicated root: the cache must sit strictly below
+  # the runner temp directory, so a caller cannot expose $HOME or any other
+  # owned host directory read-write.  Outside a runner there is no root, and
+  # the cache mount is refused.
+  cache_root="$(cd -P -- "${RUNNER_TEMP:-/nonexistent}" 2>/dev/null && pwd -P)" || cache_root=""
+  if [[ -z "${cache_root}" || "${cache_dir}" != "${cache_root}"/?* ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be below RUNNER_TEMP" >&2
+    exit 1
+  fi
+  # Take the directory over as owner-only.  A directory that actions/cache or an
+  # earlier run created with a looser mode is tightened first, but only when
+  # this uid owns it, so an unowned directory still fails closed.
+  if [[ ! -d "${cache_dir}" || ! -O "${cache_dir}" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be a directory owned by the host uid" >&2
+    exit 1
+  fi
+  chmod 700 "${cache_dir}"
+  # The find status is checked on its own: inside a test expression a failing
+  # find would yield empty output and pass as safe.
+  cache_unsafe_mode="$(find "${cache_dir}" -maxdepth 0 -perm /077 -print)" || cache_unsafe_mode="find-failed"
+  if [[ -n "${cache_unsafe_mode}" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be owner-only" >&2
+    exit 1
+  fi
+  validator_cache="/workcell-validator-cache"
+  cache_mount_args=(--mount "$(workcell_ci_workspace_mount_spec "${cache_dir}" false "${validator_cache}")")
+fi
+
 # shellcheck disable=SC2016
 workcell_ci_docker run --rm \
   --user "${validator_uid}:${validator_gid}" \
@@ -133,6 +192,7 @@ workcell_ci_docker run --rm \
   -e WORKCELL_VALIDATOR_WORKSPACE_COPY="${validator_workspace_copy}" \
   --mount "${validator_workspace_mount}" \
   --mount "${validator_passwd_mount}" \
+  ${cache_mount_args[@]+"${cache_mount_args[@]}"} \
   -w /workspace \
   "${VALIDATOR_IMAGE}" \
   -lc '

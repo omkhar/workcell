@@ -43,6 +43,11 @@
       "local_mode": "none",
       "github_only_reason": "required rerun of repository validation under a bind source whose name holds a space and a comma, which the CSV --mount record has to survive; it is a required merge gate in required_status_checks that runs only on GitHub, with no local mirror and no place in any local profile plan; docs/github-workflows.md carries the local reproduction sequence for WORKCELL_HOSTILE_ENV=workspace, which builds the validator image and selects the repo-core profile the hosted job uses"
     },
+    "ci.yml/invariants": {
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "required parallel hosted job for scripts/verify-invariants.sh; local parity keeps running the same script inside scripts/ci/job-validate.sh, which only the hosted workflow skips through the --skip-host-invariants flag"
+    },
     "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]": {
       "profiles": ["pr-parity"],
       "authority": "pr-parity",

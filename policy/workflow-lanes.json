@@ -188,6 +188,21 @@
       "github_only_reason": "exact hosted macOS install verification remains GitHub-only"
     },
     {
+      "id": "ci.yml/invariants",
+      "workflow_path": ".github/workflows/ci.yml",
+      "workflow_name": "CI",
+      "job_id": "invariants",
+      "job_name": "Host launcher invariants",
+      "workflow_events": [
+        "pull_request",
+        "push",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "required parallel hosted job for scripts/verify-invariants.sh; local parity keeps running the same script inside scripts/ci/job-validate.sh, which only the hosted workflow skips through the --skip-host-invariants flag"
+    },
+    {
       "id": "ci.yml/pr-shape",
       "workflow_path": ".github/workflows/ci.yml",
       "workflow_name": "CI",

@@ -26,10 +26,15 @@ REPOSITORY_NAME="${GITHUB_REPOSITORY:-workcell/local}"
 ARTIFACT_DIR="${WORKCELL_CI_INSTALL_ARTIFACT_DIR:-}"
 KEEP_ARTIFACT_DIR=0
 SKIP_RELEASE_BUNDLE="${WORKCELL_CI_VALIDATE_SKIP_RELEASE_BUNDLE:-0}"
+# The hosted CI workflow runs verify-invariants.sh in its own parallel job and
+# passes --skip-host-invariants.  This is a command-line flag on purpose: an
+# environment variable is inherited from a developer's shell or a parent script
+# and could silently disable the check in local parity.
+SKIP_HOST_INVARIANTS=0
 
 usage() {
   cat <<'EOF'
-Usage: job-validate.sh [--profile repo-core|pr-parity|release-preflight]
+Usage: job-validate.sh [--profile repo-core|pr-parity|release-preflight] [--skip-host-invariants]
 
 Run the shared validator-backed repository validation job used by local parity
 and GitHub CI. The default profile mirrors the standard PR validate lane.
@@ -45,6 +50,10 @@ while [[ $# -gt 0 ]]; do
         exit 2
       }
       shift 2
+      ;;
+    --skip-host-invariants)
+      SKIP_HOST_INVARIANTS=1
+      shift
       ;;
     -h | --help)
       usage
@@ -148,8 +157,10 @@ echo "[ci/validate] repository validation in validator"
 WORKCELL_VALIDATE_REPO_PROFILE="${PROFILE}" \
   "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh"
 
-echo "[ci/validate] host launcher invariants"
-"${ROOT_DIR}/scripts/verify-invariants.sh"
+if [[ "${SKIP_HOST_INVARIANTS}" != "1" ]]; then
+  echo "[ci/validate] host launcher invariants"
+  "${ROOT_DIR}/scripts/verify-invariants.sh"
+fi
 
 if [[ "${PROFILE}" == "release-preflight" ]] && [[ "${SKIP_RELEASE_BUNDLE}" != "1" ]]; then
   echo "[ci/validate] release bundle reproducibility"
