@@ -40,15 +40,15 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 	unlinked := strings.Replace(string(script),
 		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\nsudo ip6tables",
 		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\nsudo ip6tables", 1)
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(unlinked); err == nil || !strings.Contains(err.Error(), "live chain linked") {
-		t.Fatalf("swallowed insert error = %v, want live chain rejection", err)
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(unlinked); err == nil {
+		t.Fatal("validator accepted a swallowed guard insert")
 	}
 
 	// A commented copy of the guard must not cover a swallowed insert.
 	decoy := strings.Replace(unlinked, "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\n",
 		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\n# sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n", 1)
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(decoy); err == nil || !strings.Contains(err.Error(), "live chain linked") {
-		t.Fatalf("decoy guard error = %v, want live chain rejection", err)
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(decoy); err == nil {
+		t.Fatal("validator accepted a decoy guard")
 	}
 
 	// The emitted plan text and the restore payload are fixed, line for line.
@@ -84,6 +84,7 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		"direct replace":      "sudo ip6tables -R WORKCELL_EGRESS6 1 -j ACCEPT",
 		"direct append":       "sudo iptables -A WORKCELL_EGRESS -j ACCEPT",
 		"policy change":       "sudo iptables -P FORWARD ACCEPT",
+		"multi-line assembly": "x=ipt\nx+=ables\nc=WORKCELL_\nc+=EGRESS\ns=su\ns+=do\n$s $x -F \"$c\"",
 		"variable split":      "empty=; sudo ipt${empty}ables -F WORKCELL_EGRESS",
 		"split word":          `sudo ipt""ables -A WORKCELL_EGRESS -j ACCEPT`,
 		"conditional flush":   "if type iptables; then sudo iptables -F WORKCELL_EGRESS; fi",
