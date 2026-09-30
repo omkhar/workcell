@@ -189,7 +189,7 @@ func ValidateCodexProfileLayer(path, sandboxMode, approvalPolicy string) error {
 
 // ValidateCodexAdapterLockstep verifies that adapters/codex/requirements.toml
 // and the managed provider wrapper stay in lockstep with the managed Codex
-// baseline: the two reviewed sandbox modes, the wrapper lines that disable the
+// baseline: the three reviewed sandbox modes, the wrapper lines that disable the
 // incompatible native sandbox, and the reviewed [features] key set and values.
 func ValidateCodexAdapterLockstep(rootDir string) error {
 	requirementsPath := filepath.Join(rootDir, "adapters", "codex", "requirements.toml")
@@ -197,8 +197,8 @@ func ValidateCodexAdapterLockstep(rootDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireCodexAssignment(requirementsPath, "", requirements, "allowed_sandbox_modes", []any{"workspace-write", "danger-full-access"}); err != nil {
-		return fmt.Errorf("%w\nExpected adapters/codex/requirements.toml to allow the two reviewed Codex sandbox values", err)
+	if err := requireCodexAssignment(requirementsPath, "", requirements, "allowed_sandbox_modes", []any{"read-only", "workspace-write", "danger-full-access"}); err != nil {
+		return fmt.Errorf("%w\nExpected adapters/codex/requirements.toml to allow the reviewed Codex sandbox values", err)
 	}
 
 	wrapperPath := filepath.Join(rootDir, "runtime", "container", "provider-wrapper.sh")

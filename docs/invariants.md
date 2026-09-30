@@ -78,6 +78,10 @@ The mask includes these directories:
 - `.agents/skills/`
 - `.vscode/`, `.idea/`, `.cursor/`, and `.zed/`
 
+The `.gemini/` mask does not copy a tracked `.gemini/.env` file. The Gemini
+system settings at `/etc/gemini-cli/settings.json` have precedence over
+workspace settings. They disable Gemini hooks and ignore the workspace `.env` file.
+
 Workcell also masks Git execution-control paths for the workspace repository and
 its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 `worktrees`.
@@ -159,9 +163,13 @@ keeps proving this end to end.
 The runtime boundary is the primary control. Provider controls add defense in
 depth:
 
-- Codex requirements and rules
+- Codex requirements at `/etc/codex/requirements.toml`, and Codex rules
 - Claude managed settings and Bash hook
-- Gemini managed settings and trusted-folder seed
+- Gemini system settings at `/etc/gemini-cli/settings.json`, managed user
+  settings, and trusted-folder seed
+
+The session seed verifies each root-owned file against the control-plane
+manifest before the provider starts.
 
 These controls do not replace the runtime boundary.
 

@@ -1535,6 +1535,7 @@ workcell_apply_manifest_ssh() {
 
 seed_codex_home() {
   workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/codex/"
+  workcell_verify_control_plane_path "/etc/codex/requirements.toml"
   workcell_prepare_session_directory "${CODEX_HOME}" "Codex home"
   workcell_prepare_session_directory "${CODEX_HOME}/mcp" "Codex MCP directory"
   workcell_render_provider_doc "${ADAPTER_ROOT}/codex/.codex/AGENTS.md" "${CODEX_HOME}/AGENTS.md" codex
@@ -1585,6 +1586,7 @@ seed_gemini_home() {
   local selected_auth_type=""
 
   workcell_verify_control_plane_prefix "${ADAPTER_ROOT}/gemini/"
+  workcell_verify_control_plane_path "/etc/gemini-cli/settings.json"
   workcell_prepare_session_directory "${HOME}/.gemini" "Gemini home"
   workcell_reset_session_target "${HOME}/.gemini/settings.json" "Gemini settings"
   cp "${ADAPTER_ROOT}/gemini/.gemini/settings.json" "${HOME}/.gemini/settings.json"

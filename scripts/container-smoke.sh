@@ -3304,6 +3304,9 @@ test -f "$CODEX_HOME/config.toml"
     assert_codex_stderr_clean /tmp/codex-features.err
     grep -Eq "^unified_exec[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
     grep -Eq "^code_mode_host[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features.out
+    # /etc/codex/requirements.toml pins code_mode_host, so a config override must not win.
+    codex -c features.code_mode_host=false features list >/tmp/codex-features-override.out 2>/tmp/codex-features-override.err
+    grep -Eq "^code_mode_host[[:space:]]+stable[[:space:]]+true$" /tmp/codex-features-override.out
     test -x /usr/local/libexec/workcell/real/codex-code-mode-host
     test "$(stat -c '%u:%g:%a' /usr/local/libexec/workcell/real/codex)" = 0:0:755
     test "$(stat -c '%u:%g:%a' /usr/local/libexec/workcell/real/codex-code-mode-host)" = 0:0:755
@@ -5099,6 +5102,10 @@ run_container_stdin gemini bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3
       echo "unexpected Gemini settings write warning" >&2
       exit 1
     fi
+    if echo "$out" | grep -q "system configuration contains deprecated settings"; then
+      echo "unexpected Gemini system settings deprecation warning" >&2
+      exit 1
+    fi
     echo "$out" | grep -Eq "([0-9]+\\.){2}[0-9]+"
     test -f "$HOME/.gemini/settings.json"
     test -f "$HOME/.gemini/GEMINI.md"
@@ -5163,6 +5170,32 @@ run_container_stdin gemini bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3
     jq -r ".general.enableAutoUpdate" "$HOME/.gemini/settings.json" | grep -q "^false$"
     jq -r ".general.enableAutoUpdateNotification" "$HOME/.gemini/settings.json" | grep -q "^false$"
   '
+  # The root-owned Gemini system settings must win over a workspace hook and a
+  # workspace .env file.
+  if [[ -w /workspace ]]; then
+    mkdir -p /workspace/.gemini
+    printf "%s\n" "{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch /state/tmp/gemini-workspace-hook-ran\"}]}]}}" >/workspace/.gemini/settings.json
+    printf "GEMINI_SYSTEM_MD=/workspace/missing-system.md\n" >/workspace/.env
+    chmod 0644 /workspace/.gemini/settings.json /workspace/.env
+    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+      set -euo pipefail
+      printf "GEMINI_API_KEY=workcell-smoke-invalid-key\n" >"$HOME/.gemini/.env"
+      timeout 120 gemini -p hi >/tmp/gemini-workspace-override.out 2>&1 || true
+      if test -e /state/tmp/gemini-workspace-hook-ran; then
+        echo "expected Gemini system settings to disable workspace hooks" >&2
+        exit 1
+      fi
+      if grep -Eq "must specify the GEMINI_API_KEY|missing system prompt file" /tmp/gemini-workspace-override.out; then
+        echo "expected Gemini system settings to ignore the workspace .env file" >&2
+        cat /tmp/gemini-workspace-override.out >&2
+        exit 1
+      fi
+      grep -q "API key not valid" /tmp/gemini-workspace-override.out
+    '
+    rm -rf /workspace/.gemini /workspace/.env
+  else
+    echo "Workcell note: skipping Gemini workspace override smoke because /workspace is not writable." >&2
+  fi
 SCRIPT
 
 echo "Workcell container smoke passed."

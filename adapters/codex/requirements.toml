@@ -1,12 +1,15 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
 # Hard requirements for the Workcell Codex adapter. These values are restrictive
-# by design and are intended to be copied into an admin-enforced deployment.
+# by design. The runtime image installs this file root-owned at
+# /etc/codex/requirements.toml, the only requirements path Codex reads on Linux.
 
 allowed_approval_policies = ["on-request", "never"]
 # Standalone profiles use workspace-write. The managed wrapper disables the
 # native sandbox only after Workcell establishes the outer runtime boundary.
-allowed_sandbox_modes = ["workspace-write", "danger-full-access"]
+# Codex 0.153.2 rejects a requirements set that omits read-only, the most
+# restrictive mode.
+allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]
 allowed_web_search_modes = ["disabled"]
 
 [features]

@@ -637,3 +637,39 @@ func TestRuntimeScriptProloguesClearBashStartupFilesForChildren(t *testing.T) {
 		})
 	}
 }
+
+// Gemini reads <cwd>/.gemini/.env ahead of the managed ~/.gemini/.env, and
+// advanced.ignoreLocalEnv does not cover that path, so the control-plane mask
+// must not materialize a tracked .gemini/.env.
+func TestWorkcellShadowDirSkipsGeminiDotEnv(t *testing.T) {
+	t.Parallel()
+
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "workcell")
+	workspace := t.TempDir()
+	shadowRoot := t.TempDir()
+	probe := fmt.Sprintf(`set -euo pipefail
+eval "$(sed -n -e '/^workspace_is_git_worktree() {$/,/^}$/p' -e '/^git_index_materialize_regular_file() {$/,/^}$/p' -e '/^git_index_populate_shadow_dir() {$/,/^}$/p' %[1]s)"
+run_clean_host_command() { "$@"; }
+CONTROL_PLANE_SHADOW_ROOT=%[3]s
+cd %[2]s
+git init -q
+for dir in .gemini nested/.gemini; do
+  mkdir -p "${dir}"
+  printf 'GEMINI_SYSTEM_MD=/workspace/sys.md\n' >"${dir}/.env"
+  printf '{}\n' >"${dir}/settings.json"
+done
+git add -A
+for dir in .gemini nested/.gemini; do
+  git_index_populate_shadow_dir %[2]s "${dir}" "%[3]s/dirs/${dir}"
+  test -f "%[3]s/dirs/${dir}/settings.json"
+  if test -e "%[3]s/dirs/${dir}/.env"; then
+    echo "materialized ${dir}/.env"
+    exit 1
+  fi
+done
+`, ShellQuote(scriptPath), ShellQuote(workspace), ShellQuote(shadowRoot))
+	code, output := runBashProbe(t, probe, nil)
+	if code != 0 {
+		t.Fatalf("control-plane mask materialized a workspace .gemini/.env: exit %d: %s", code, output)
+	}
+}

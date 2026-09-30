@@ -7698,6 +7698,10 @@ git_index_populate_shadow_dir() {
       rm -f "${tracked_paths_file}"
       return 2
     fi
+    # Gemini reads <dir>/.gemini/.env ahead of the managed ~/.gemini/.env.
+    if [[ "${relative_path##*/}" == ".gemini" ]] && [[ "${relative_suffix}" == ".env" ]]; then
+      continue
+    fi
     if git_index_materialize_regular_file "${workspace}" "${tracked_path}" "${source_root}/${relative_suffix}"; then
       populated=1
     fi

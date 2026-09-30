@@ -60,6 +60,7 @@ sanitize_provider_env() {
   unset BASH_ENV
   unset ENV
   unset CLAUDE_CONFIG_DIR
+  unset GEMINI_CLI_SYSTEM_SETTINGS_PATH
   unset GH_CONFIG_DIR
   unset GH_HOST
   unset GH_TOKEN

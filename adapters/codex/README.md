@@ -37,7 +37,9 @@ Repo baselines under `adapters/codex/` (paths relative to this directory):
   ships today; the directory shape lets future overlays drop in alongside it.
 - `.codex/agents/`: managed sub-agent guidance.
 - `managed_config.toml`: workcell-side managed-mode TOML consumed by the launcher.
-- `requirements.toml`: workcell-side adapter requirements contract.
+- `requirements.toml`: adapter requirements contract. The runtime image
+  installs it root-owned at `/etc/codex/requirements.toml`, where Codex reads
+  the requirements layer on Linux.
 - `mcp/config.toml`: MCP server config (no live MCP defaults ship in the baseline).
 
 In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
