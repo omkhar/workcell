@@ -34,7 +34,7 @@ login
 logout
 mcp
 plugin
-tcp-tunnel
+mcp-server
 app-server
 remote-control
 app
