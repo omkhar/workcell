@@ -266,7 +266,7 @@ Residual risk describes the risk after the current controls.
 | ID | Threat | Current control | Residual risk |
 | --- | --- | --- | --- |
 | 1 | A poisoned action runs in a privileged job. | Full-SHA pins, the action allowlist, and pin checks restrict the action set. Zizmor checks other workflow risks. | Low. A reviewed pinned commit can still contain malicious code. |
-| 2 | A poisoned build dependency enters an image. | Workcell pins snapshots, provider digests, base images, tools, and Rust vendor data. | Medium. `apt` and `npm ci` still use network data. |
+| 2 | A poisoned build dependency enters an image. | Workcell pins snapshots, provider digests, base images, and tools. It also rebuilds the Rust vendor tree from crates.io against `Cargo.lock` and rejects any difference except the `$comment` member of checksum files. | Medium. `apt` and `npm ci` still use network data. |
 | 3 | Fork code steals a secret. | GitHub makes fork tokens read-only. Fork code cannot use environment secrets. | Low. |
 | 4 | A runner steals authority or changes output. | GitHub-hosted ephemeral jobs, narrow tokens, and disabled checkout credentials reduce exposure. | Medium. Jobs do not restrict network egress. |
 | 5 | An attacker compromises a signing identity. | Cosign is keyless. The maintainer key stays outside CI. Releases are immutable. | Medium. Keyless signing removes stored Cosign keys, but it does not stop workflow-identity or maintainer-key misuse. |

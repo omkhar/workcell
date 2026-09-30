@@ -106,6 +106,9 @@ fi
 echo "[ci/validate] pinned input policy"
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
 
+echo "[ci/validate] Rust vendor tree against crates.io"
+"${ROOT_DIR}/scripts/check-rust-vendor.sh"
+
 echo "[ci/validate] validator evasion corpus registration"
 "${ROOT_DIR}/scripts/check-validator-anchoring.sh"
 
