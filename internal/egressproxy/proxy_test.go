@@ -363,3 +363,24 @@ func TestDenyLogIsBounded(t *testing.T) {
 		t.Fatal("no overflow deny line after the key limit")
 	}
 }
+
+func TestConnectGivesEachAddressItsOwnDeadline(t *testing.T) {
+	t.Parallel()
+	p := New(&Allowlist{}, io.Discard)
+	p.lookup = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("8.8.4.4")}, nil
+	}
+	var deadlines []time.Time
+	p.dial = func(ctx context.Context, _ netip.AddrPort) (net.Conn, error) {
+		d, _ := ctx.Deadline()
+		deadlines = append(deadlines, d)
+		time.Sleep(20 * time.Millisecond)
+		return nil, errors.New("unreachable")
+	}
+	if _, reason := p.connect("example.com", 443); reason != "dial_failed" {
+		t.Fatalf("reason = %q, want dial_failed", reason)
+	}
+	if len(deadlines) != 2 || !deadlines[1].After(deadlines[0]) {
+		t.Fatalf("dial deadlines = %v, want a later deadline for the second address", deadlines)
+	}
+}

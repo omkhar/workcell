@@ -174,11 +174,20 @@ func (p *Proxy) connect(host string, port uint16) (net.Conn, string) {
 		}
 	}
 	for _, a := range addrs {
-		if conn, err := p.dial(ctx, netip.AddrPortFrom(a.Unmap(), port)); err == nil {
+		conn, err := p.dialOne(netip.AddrPortFrom(a.Unmap(), port))
+		if err == nil {
 			return conn, ""
 		}
 	}
 	return nil, "dial_failed"
+}
+
+// dialOne gives each address its own timeout, so one silent address cannot
+// starve the ones after it.
+func (p *Proxy) dialOne(addr netip.AddrPort) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	defer cancel()
+	return p.dial(ctx, addr)
 }
 
 // recordingConn records what the TLS stack reads and drops what it writes, so
