@@ -6587,12 +6587,13 @@ if [[ "$(id -u)" -ne 0 ]]; then
   git -C "${COMMONDIR_WALK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
   mkdir "${COMMONDIR_WALK_REPO}/.git/unreadable"
   chmod 000 "${COMMONDIR_WALK_REPO}/.git/unreadable"
-  if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WALK_REPO}" --dry-run >/tmp/workcell-commondir-walk.out 2>&1; then
-    chmod 755 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  walk_status=0
+  run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WALK_REPO}" --dry-run >/tmp/workcell-commondir-walk.out 2>&1 || walk_status=$?
+  chmod 755 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  if [[ "${walk_status}" -eq 0 ]]; then
     echo "Expected repo with an unreadable Git directory to be rejected" >&2
     exit 1
   fi
-  chmod 755 "${COMMONDIR_WALK_REPO}/.git/unreadable"
   grep -q 'could not inventory the Git directory for a commondir file' /tmp/workcell-commondir-walk.out
 fi
 

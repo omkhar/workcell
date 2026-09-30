@@ -523,7 +523,7 @@ const (
 	// the top-level bash function body named functionName after shell comments
 	// are stripped.  The regex must be anchored (^...$) so a quoted echo of the
 	// command cannot satisfy it.  Unlike kindFunctionBlockRegex it reads code,
-	// not comments.  scripts/lib ShellInvocations cannot anchor these commands:
+	// not comments.  metadatautil.ShellInvocations cannot anchor these commands:
 	// it drops function and compound-command bodies by design.
 	kindFunctionBlockRegexInCode
 )
