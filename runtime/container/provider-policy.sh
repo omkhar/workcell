@@ -37,6 +37,15 @@ codex_normalize_config_key() {
   local -a segments=()
   local segment normalized="" first=1
   local backslash=$'\\'
+  # Real keys are printable ASCII. `read` stops at a newline, and Codex trims Unicode
+  # whitespace that bash does not (for example U+00A0), so either would dodge the
+  # blocklist. Fail closed on any control (except tab) or non-ASCII byte in the key.
+  local LC_ALL=C
+  local unsafe_char=$'[^[:print:]\t]'
+  if [[ "${key}" == *${unsafe_char}* ]]; then
+    printf '%s\n' '__workcell_malformed__'
+    return 0
+  fi
   local IFS='.'
   read -r -a segments <<<"${key}"
   for segment in "${segments[@]}"; do
@@ -72,7 +81,7 @@ codex_normalize_config_key() {
 # under a profile. Returns 0 (guarded) / 1 (not).
 codex_config_key_is_guarded() {
   case "$1" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | projects | projects.* | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
       return 0
       ;;
   esac
@@ -111,9 +120,15 @@ codex_config_override_is_blocked() {
   if [[ "${value}" == *=* ]]; then
     local raw_value="${value#*=}"
     raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
+    # Codex trims Unicode whitespace bash keeps, so `features=<U+00A0>{...}` would hide
+    # the `{`. A value that STARTS with a non-ASCII or control byte is not a legitimate
+    # scalar or table here: fail closed (same stance as the key check).
+    local LC_ALL=C
+    local unsafe_char=$'[^[:print:]\t]'
+    [[ "${raw_value}" == ${unsafe_char}* ]] && return 0
     if [[ "${raw_value}" == '{'* ]]; then
       case "${key_lower}" in
-        features | plugins | marketplaces | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
+        features | plugins | marketplaces | projects | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
           return 0
           ;;
       esac
