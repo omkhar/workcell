@@ -31,24 +31,25 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 				metadatautil.ValidateColimaEgressAtomicSwap)
 		})
 	}
-	guard := "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n" +
-		"sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6"
-	RequireRejectsAllEvasions(t, string(script), guard, "live chain linked",
-		metadatautil.ValidateColimaEgressAtomicSwap)
-
-	// A guard whose insert is swallowed leaves a new profile unlinked.
-	unlinked := strings.Replace(string(script),
-		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\nsudo ip6tables",
-		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\nsudo ip6tables", 1)
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(unlinked); err == nil {
-		t.Fatal("validator accepted a swallowed guard insert")
-	}
-
-	// A commented copy of the guard must not cover a swallowed insert.
-	decoy := strings.Replace(unlinked, "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\n",
-		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\n# sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n", 1)
-	if err := metadatautil.ValidateColimaEgressAtomicSwap(decoy); err == nil {
-		t.Fatal("validator accepted a decoy guard")
+	// The head guard keeps the Workcell jump first. Dropping the insert, or
+	// checking only that the jump exists somewhere, leaves a new or misordered
+	// chain unenforced.
+	guardLine := `[[ "$(sudo iptables -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j WORKCELL_EGRESS" ]] || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS`
+	for name, weaker := range map[string]string{
+		"swallowed insert":  `[[ "$(sudo iptables -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j WORKCELL_EGRESS" ]] || true`,
+		"presence check":    "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS",
+		"commented guard":   "# " + guardLine,
+		"guard not reached": "exit 0\n" + guardLine,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(string(script), guardLine, weaker, 1)
+			if mutated == string(script) {
+				t.Fatal("edit left the script unchanged")
+			}
+			if err := metadatautil.ValidateColimaEgressAtomicSwap(mutated); err == nil {
+				t.Fatal("validator accepted a weaker link guard")
+			}
+		})
 	}
 
 	// A second definition of the plan function replaces the reviewed one, in

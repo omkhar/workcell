@@ -17,7 +17,7 @@ import (
 // of render_allowlist_apply_plan and the lines of that function outside them,
 // as applyPlanDigestOf joins them. Regenerate it only after a review of the plan
 // and a pass of the replay in scripts/verify-invariants.sh.
-const applyPlanDigest = "4d197047a9c0328934ab648a274bd74264eb67141ea4e09a4efd023327de1906"
+const applyPlanDigest = "bd1ac7911d49c33844f765b386af06e6749ad08aaee63bc65429b4c4886caeba"
 
 var (
 	commentStart   = regexp.MustCompile(`(^|\s)#`)
@@ -26,7 +26,7 @@ var (
 
 // ValidateColimaEgressAtomicSwap requires the VM apply plan of
 // scripts/colima-egress-allowlist.sh to replace each chain in one
-// iptables-restore --noflush transaction, to keep the DOCKER-USER link guard,
+// iptables-restore --noflush transaction, to keep the DOCKER-USER head guard,
 // and to equal the reviewed plan text. The plan is what
 // render_allowlist_apply_plan prints, so the parser reads that text and not the
 // whole script: a comment, a heredoc body, an unrun branch or a function that
@@ -62,9 +62,8 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 		}
 	}
 	for _, family := range families {
-		if !slices.ContainsFunc(ShellInvocations(plan, "sudo "+family.name), func(check Invocation) bool {
-			return slices.Equal(check.Args[:min(len(check.Args), 4)], []string{"-C", "DOCKER-USER", "-j", family.chain})
-		}) {
+		guard := `[[ "$(sudo ` + family.name + ` -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j ` + family.chain + `" ]] || sudo ` + family.name + ` -I DOCKER-USER 1 -j ` + family.chain
+		if !slices.ContainsFunc(strings.Split(plan, "\n"), func(line string) bool { return strings.TrimSpace(line) == guard }) {
 			return errors.New("Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete")
 		}
 	}

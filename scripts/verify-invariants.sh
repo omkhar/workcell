@@ -3080,6 +3080,7 @@ case "$1" in
   -L) [[ -e "${d}/chain.$2" ]] ;;
   -A) [[ -e "${d}/chain.$2" ]] && chain="$2" && shift 2 && printf '%s\n' "$*" >>"${d}/chain.${chain}" ;;
   -C) grep -qx -- "$4" "${d}/jumps" ;;
+  -S) { printf -- '-N DOCKER-USER\n' && while read -r jump; do printf -- '-A DOCKER-USER -j %s\n' "${jump}"; done <"${d}/jumps"; } ;;
   -I) { printf '%s\n' "$5" && cat "${d}/jumps"; } >"${d}/jumps.next" && mv "${d}/jumps.next" "${d}/jumps" ;;
   -D) grep -qx -- "$4" "${d}/jumps" && { grep -vx -- "$4" "${d}/jumps" || true; } >"${d}/jumps.next" && mv "${d}/jumps.next" "${d}/jumps" ;;
   *) exit 1 ;;
@@ -3104,9 +3105,14 @@ run_egress_swap_case() {
   for family in iptables:WORKCELL_EGRESS ip6tables:WORKCELL_EGRESS6; do
     mkdir -p "${EGRESS_SWAP_ROOT}/state/${family%%:*}"
     : >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
-    if [[ "${seed}" == "linked" ]]; then
+    if [[ "${seed}" != "unlinked" ]]; then
       printf '%s\n' "${family#*:}" >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
       printf -- '-j DROP\n' >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/chain.${family#*:}"
+    fi
+    if [[ "${seed}" == "behind-other" ]]; then
+      # Another component put a rule ahead of the Workcell jump.
+      printf 'OTHER\n%s\n' "${family#*:}" >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
+      printf -- '-j RETURN\n' >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/chain.OTHER"
     fi
   done
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" \
@@ -3147,6 +3153,14 @@ if ! run_egress_swap_case '127.0.0.1:443 [::1]:443' unlinked ||
   [[ "$(tail -n 1 "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS")" != "-j DROP" ]] ||
   [[ "$(tail -n 1 "${EGRESS_SWAP_ROOT}/state/ip6tables/chain.WORKCELL_EGRESS6")" != "-j DROP" ]]; then
   echo "Expected a first allowlist apply to link both DROP-terminated chains into DOCKER-USER" >&2
+  exit 1
+fi
+# A jump behind another rule does not enforce the chain. The apply must put the
+# Workcell jump first again.
+if ! run_egress_swap_case '127.0.0.1:443 [::1]:443' behind-other ||
+  [[ "$(head -n 1 "${EGRESS_SWAP_ROOT}/state/iptables/jumps")" != "WORKCELL_EGRESS" ]] ||
+  [[ "$(head -n 1 "${EGRESS_SWAP_ROOT}/state/ip6tables/jumps")" != "WORKCELL_EGRESS6" ]]; then
+  echo "Expected allowlist apply to keep the Workcell jump at the head of DOCKER-USER" >&2
   exit 1
 fi
 rm -rf "${EGRESS_SWAP_ROOT}"

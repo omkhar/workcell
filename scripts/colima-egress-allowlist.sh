@@ -498,8 +498,10 @@ IPV4_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS - [0:0]\n-A WORKCELL_EGRESS -m
 IPV6_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS6 - [0:0]\n-A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS6 -j DROP\nCOMMIT\n' "${IPV6_RULES}")"
 sudo iptables-restore --noflush <<<"${IPV4_RESTORE}"
 sudo ip6tables-restore --noflush <<<"${IPV6_RESTORE}"
-sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
-sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
+# Keep each jump at the head of DOCKER-USER. A jump that sits behind another
+# component's rule is not enough, so check the head and insert when it differs.
+[[ "$(sudo iptables -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j WORKCELL_EGRESS" ]] || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
+[[ "$(sudo ip6tables -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j WORKCELL_EGRESS6" ]] || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
 EOF
 }
 
