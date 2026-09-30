@@ -127,7 +127,7 @@ validator_workspace_mount="$(workcell_ci_workspace_mount_spec "${WORKSPACE}" fal
 cache_mount_args=()
 if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)" ]]; then
   # Fail closed: the source must be an absolute path whose final component is a
-  # real directory, owned by the host uid and closed to group and other, so a
+  # real directory, owned by the host uid and owner-only, so a
   # caller cannot aim this read-write mount at an unrelated host directory.
   case "${WORKCELL_VALIDATOR_CACHE_DIR}" in
     /*) ;;
@@ -149,11 +149,19 @@ if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)"
     echo "WORKCELL_VALIDATOR_CACHE_DIR cannot be resolved" >&2
     exit 1
   }
+  # Take the directory over as owner-only.  A directory that actions/cache or an
+  # earlier run created with a looser mode is tightened first, but only when
+  # this uid owns it, so an unowned directory still fails closed.
+  if [[ ! -d "${cache_dir}" || ! -O "${cache_dir}" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be a directory owned by the host uid" >&2
+    exit 1
+  fi
+  chmod 700 "${cache_dir}"
   # The find status is checked on its own: inside a test expression a failing
   # find would yield empty output and pass as safe.
-  cache_unsafe_mode="$(find "${cache_dir}" -maxdepth 0 -perm /022 -print)" || cache_unsafe_mode="find-failed"
-  if [[ ! -d "${cache_dir}" || ! -O "${cache_dir}" || -n "${cache_unsafe_mode}" ]]; then
-    echo "WORKCELL_VALIDATOR_CACHE_DIR must be a directory owned by the host uid and not group or other writable" >&2
+  cache_unsafe_mode="$(find "${cache_dir}" -maxdepth 0 -perm /077 -print)" || cache_unsafe_mode="find-failed"
+  if [[ -n "${cache_unsafe_mode}" ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be owner-only" >&2
     exit 1
   fi
   validator_cache="/workcell-validator-cache"

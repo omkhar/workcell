@@ -104,6 +104,8 @@ func TestValidatorCacheMountIsGatedOnHostUID(t *testing.T) {
 		`WORKCELL_VALIDATOR_CACHE_DIR must not be a symlink`,
 		`cd -P -- "${WORKCELL_VALIDATOR_CACHE_DIR}" && pwd -P`,
 		`! -O "${cache_dir}"`,
+		`chmod 700 "${cache_dir}"`,
+		`-perm /077`,
 		`|| cache_unsafe_mode="find-failed"`,
 		`validator_cache="/workcell-validator-cache"`,
 		`workcell_ci_workspace_mount_spec "${cache_dir}" false "${validator_cache}"`,
