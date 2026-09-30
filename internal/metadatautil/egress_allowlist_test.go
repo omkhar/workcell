@@ -63,6 +63,11 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		"escaped flush":       `sudo iptables -\F WORKCELL_EGRESS`,
 		"cluster flush":       "sudo iptables -wF WORKCELL_EGRESS",
 		"abbreviated flush":   "sudo iptables --fl WORKCELL_EGRESS",
+		"direct insert":       "sudo iptables -I WORKCELL_EGRESS 1 -j ACCEPT",
+		"direct replace":      "sudo ip6tables -R WORKCELL_EGRESS6 1 -j ACCEPT",
+		"direct append":       "sudo iptables -A WORKCELL_EGRESS -j ACCEPT",
+		"policy change":       "sudo iptables -P FORWARD ACCEPT",
+		"split word":          `sudo ipt""ables -A WORKCELL_EGRESS -j ACCEPT`,
 		"conditional flush":   "if type iptables; then sudo iptables -F WORKCELL_EGRESS; fi",
 		"function flush":      "flush_live() { sudo iptables -F WORKCELL_EGRESS; }",
 		"comment flush":       "# sudo iptables -F WORKCELL_EGRESS",
@@ -70,8 +75,8 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			mutated := strings.Replace(string(script), "sudo iptables-restore --noflush <<<", hidden+"\nsudo iptables-restore --noflush <<<", 1)
 			err := metadatautil.ValidateColimaEgressAtomicSwap(mutated)
-			if err == nil || !strings.Contains(err.Error(), "live chain linked") {
-				t.Fatalf("error = %v, want live chain rejection", err)
+			if err == nil {
+				t.Fatal("validator accepted a plan that changes a live chain outside the swap")
 			}
 		})
 	}

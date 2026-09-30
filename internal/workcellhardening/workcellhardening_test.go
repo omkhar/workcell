@@ -5578,8 +5578,8 @@ func dualStackApplyPlanHappyFiles() map[string]string {
 	body := "#!/usr/bin/env bash\n" +
 		"render_allowlist_apply_plan() {\n" +
 		"  cat <<'EOF'\n" +
-		"  sudo iptables-restore --noflush\n" +
-		"  sudo ip6tables-restore --noflush\n" +
+		"  sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n" +
+		"  sudo ip6tables-restore --noflush <<<\"${IPV6_RESTORE}\"\n" +
 		"  sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n" +
 		"  sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6\n" +
 		"EOF\n" +
@@ -5620,14 +5620,14 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 		{
 			name: "live chain unlinked in block",
 			mutate: func(f map[string]string) {
-				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush\n", "  sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS\n  sudo iptables-restore --noflush\n", 1)
+				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", "  sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS\n  sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", 1)
 			},
 			wantErr: "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
 		},
 		{
 			name: "live chain flushed in block",
 			mutate: func(f map[string]string) {
-				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush\n", "  sudo ip6tables \"-F\" WORKCELL_EGRESS6\n  sudo iptables-restore --noflush\n", 1)
+				f[rel] = strings.Replace(f[rel], "  sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", "  sudo ip6tables \"-F\" WORKCELL_EGRESS6\n  sudo iptables-restore --noflush <<<\"${IPV4_RESTORE}\"\n", 1)
 			},
 			wantErr: "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
 		},

@@ -492,7 +492,7 @@ EOF
 for endpoint in ${WORKCELL_ENDPOINTS}; do
   add_vm_endpoint_rules "${endpoint}"
 done
-# Replace each chain in one iptables-restore transaction. The old
+# Replace each chain in one restore transaction. The old
 # DROP-terminated chain stays in force until the complete new chain replaces it.
 IPV4_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS - [0:0]\n-A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS -j DROP\nCOMMIT\n' "${IPV4_RULES}")"
 IPV6_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS6 - [0:0]\n-A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS6 -j DROP\nCOMMIT\n' "${IPV6_RULES}")"
