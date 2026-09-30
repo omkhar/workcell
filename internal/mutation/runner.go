@@ -290,6 +290,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestConnectLooksUpRootedName", "-count=1"),
 	},
 	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `if a.Is6() && !publicIPv6.Contains(a) {`,
+		replacement:  `if false && a.Is6() && !publicIPv6.Contains(a) {`,
+		label:        "egress proxy refuses IPv6 outside 2000::/3",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestBlockedAddr", "-count=1"),
+	},
+	{
 		relativePath: "internal/egressproxy/allowlist.go",
 		original:     `rootio.ReadFileNoFollow(path, "egress allowlist", maxAllowlistBytes)`,
 		replacement:  `rootio.ReadFileNoFollow(path, "egress allowlist", 1<<62)`,

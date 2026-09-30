@@ -63,6 +63,7 @@ func TestBlockedAddr(t *testing.T) {
 		"2001:2::1":                true,
 		"::ffff:0:a9fe:a9fe":       true, // IPv4-translatable of 169.254.169.254
 		"::ffff:0:8.8.8.8":         true,
+		"4000::1":                  true,  // outside 2000::/3
 		"fec0::1":                  true,  // site-local
 		"2001:10::1":               true,  // ORCHID
 		"2001:20::1":               true,  // ORCHIDv2

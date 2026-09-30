@@ -30,17 +30,16 @@ const (
 	overflowHost  = "(overflow)"
 )
 
+// publicIPv6 is the only IPv6 block allocated for global unicast; everything
+// outside it (IPv4-embedding forms, site-local, SRv6, reserved) is refused.
+var publicIPv6 = netip.MustParsePrefix("2000::/3")
+
 // blockedPrefixes adds the ranges that netip does not classify: shared,
-// reserved or documentation space and IPv6 forms that embed an IPv4 target.
+// reserved or documentation IPv4 space and special blocks inside 2000::/3.
 var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),       // "this network"
 	netip.MustParsePrefix("100.64.0.0/10"),   // CGNAT; holds the 100.100.100.200 metadata address
 	netip.MustParsePrefix("192.0.0.0/24"),    // IETF assignments; holds the 192.0.0.192 metadata address
-	netip.MustParsePrefix("fec0::/10"),       // deprecated site-local
-	netip.MustParsePrefix("::/96"),           // IPv4-compatible
-	netip.MustParsePrefix("::ffff:0:0:0/96"), // IPv4-translatable (SIIT)
-	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64
-	netip.MustParsePrefix("64:ff9b:1::/48"),  // local NAT64
 	netip.MustParsePrefix("2001::/23"),       // IETF protocol assignments: Teredo, benchmarking, ORCHID
 	netip.MustParsePrefix("2002::/16"),       // 6to4
 	netip.MustParsePrefix("192.0.2.0/24"),    // documentation (TEST-NET-1)
@@ -49,10 +48,8 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("198.51.100.0/24"), // documentation (TEST-NET-2)
 	netip.MustParsePrefix("203.0.113.0/24"),  // documentation (TEST-NET-3)
 	netip.MustParsePrefix("240.0.0.0/4"),     // reserved
-	netip.MustParsePrefix("100::/64"),        // discard-only
 	netip.MustParsePrefix("2001:db8::/32"),   // documentation
 	netip.MustParsePrefix("3fff::/20"),       // documentation
-	netip.MustParsePrefix("5f00::/16"),       // SRv6 SIDs
 }
 
 // blockedAddr reports whether the proxy must refuse to connect to a.
@@ -62,6 +59,9 @@ var blockedPrefixes = []netip.Prefix{
 func blockedAddr(a netip.Addr) bool {
 	a = a.Unmap()
 	if !a.IsGlobalUnicast() || a.IsPrivate() {
+		return true
+	}
+	if a.Is6() && !publicIPv6.Contains(a) {
 		return true
 	}
 	for _, p := range blockedPrefixes {
