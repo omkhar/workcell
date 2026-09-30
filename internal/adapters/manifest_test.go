@@ -161,7 +161,6 @@ func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
 }
 
 var (
-	rustComment     = regexp.MustCompile(`(?s)/\*.*?\*/|//[^\n]*`)
 	rustLaunchBlock = regexp.MustCompile(`name: "([a-z-]+)",\s*script_path: "/usr/local/libexec/workcell/provider-wrapper.sh",\s*approved_invocations: &\[\s*"([^"]+)",\s*"([^"]+)",\s*\]`)
 	dockerfileArg   = regexp.MustCompile(`^ARG ([A-Z0-9_]+)=\S+$`)
 	heredocOpen     = regexp.MustCompile(`<<-?\s*["']?([A-Za-z0-9_]+)["']?`)
@@ -172,7 +171,32 @@ var (
 // ponytail: a "//" inside a string literal drops the rest of its line, which
 // can only hide a block (the test then fails); use a Rust parser if that bites.
 func rustLaunchTargets(source string) [][]string {
-	return rustLaunchBlock.FindAllStringSubmatch(rustComment.ReplaceAllString(source, ""), -1)
+	return rustLaunchBlock.FindAllStringSubmatch(stripRustComments(source), -1)
+}
+
+// stripRustComments removes line comments and nested block comments.
+func stripRustComments(source string) string {
+	var out strings.Builder
+	depth := 0
+	for i := 0; i < len(source); i++ {
+		switch {
+		case strings.HasPrefix(source[i:], "/*"):
+			depth++
+			i++
+		case depth > 0 && strings.HasPrefix(source[i:], "*/"):
+			depth--
+			i++
+		case depth > 0:
+		case strings.HasPrefix(source[i:], "//"):
+			for i < len(source) && source[i] != '\n' {
+				i++
+			}
+			out.WriteByte('\n')
+		default:
+			out.WriteByte(source[i])
+		}
+	}
+	return out.String()
 }
 
 // dockerfilePinnedArgs returns the ARG names that a Dockerfile pins with a
@@ -180,14 +204,14 @@ func rustLaunchTargets(source string) [][]string {
 // another instruction are not instructions, so a decoy there does not count.
 func dockerfilePinnedArgs(dockerfile string) map[string]bool {
 	args := map[string]bool{}
-	var terminator string
+	var terminators []string
 	continued := false
 	for line := range strings.Lines(dockerfile) {
 		line = strings.TrimRight(line, "\r\n")
 		switch {
-		case terminator != "":
-			if strings.TrimSpace(line) == terminator {
-				terminator = ""
+		case len(terminators) > 0:
+			if strings.TrimSpace(line) == terminators[0] {
+				terminators = terminators[1:]
 			}
 			continue
 		case continued:
@@ -197,8 +221,8 @@ func dockerfilePinnedArgs(dockerfile string) map[string]bool {
 			}
 		}
 		continued = strings.HasSuffix(line, "\\")
-		if m := heredocOpen.FindStringSubmatch(line); m != nil {
-			terminator = m[1]
+		for _, m := range heredocOpen.FindAllStringSubmatch(line, -1) {
+			terminators = append(terminators, m[1])
 		}
 	}
 	return args
@@ -212,8 +236,9 @@ approved_invocations: &["/usr/local/bin/demo", "/usr/local/libexec/workcell/core
 		t.Fatalf("live block not found: %v", got)
 	}
 	for name, source := range map[string]string{
-		"line comment":  "// " + strings.ReplaceAll(block, "\n", "\n// "),
-		"block comment": "/*\n" + block + "\n*/",
+		"line comment":         "// " + strings.ReplaceAll(block, "\n", "\n// "),
+		"block comment":        "/*\n" + block + "\n*/",
+		"nested block comment": "/* outer /* inner */\n" + block + "\n*/",
 	} {
 		if got := rustLaunchTargets(source); len(got) != 0 {
 			t.Errorf("%s: commented block counted: %v", name, got)
@@ -226,14 +251,15 @@ func TestDockerfilePinnedArgsIgnoreDecoys(t *testing.T) {
 		text string
 		want bool
 	}{
-		"live":               {"ARG DEMO_VERSION=1.2.3\n", true},
-		"comment":            {"# ARG DEMO_VERSION=1.2.3\n", false},
-		"unpinned":           {"ARG DEMO_VERSION\n", false},
-		"COPY heredoc":       {"COPY <<EOF /x\nARG DEMO_VERSION=1.2.3\nEOF\n", false},
-		"RUN quoted heredoc": {"RUN <<'EOF'\nARG DEMO_VERSION=1.2.3\nEOF\n", false},
-		"continuation":       {"RUN echo \\\nARG DEMO_VERSION=1.2.3\n", false},
-		"live after heredoc": {"RUN <<EOF\ntrue\nEOF\nARG DEMO_VERSION=1.2.3\n", true},
-		"after continuation": {"RUN echo \\\n  ok\nARG DEMO_VERSION=1.2.3\n", true},
+		"live":                {"ARG DEMO_VERSION=1.2.3\n", true},
+		"comment":             {"# ARG DEMO_VERSION=1.2.3\n", false},
+		"unpinned":            {"ARG DEMO_VERSION\n", false},
+		"COPY heredoc":        {"COPY <<EOF /x\nARG DEMO_VERSION=1.2.3\nEOF\n", false},
+		"RUN quoted heredoc":  {"RUN <<'EOF'\nARG DEMO_VERSION=1.2.3\nEOF\n", false},
+		"continuation":        {"RUN echo \\\nARG DEMO_VERSION=1.2.3\n", false},
+		"second heredoc body": {"RUN <<A <<B\ntrue\nA\nARG DEMO_VERSION=1.2.3\nB\n", false},
+		"live after heredoc":  {"RUN <<EOF\ntrue\nEOF\nARG DEMO_VERSION=1.2.3\n", true},
+		"after continuation":  {"RUN echo \\\n  ok\nARG DEMO_VERSION=1.2.3\n", true},
 	}
 	for name, c := range cases {
 		if got := dockerfilePinnedArgs(c.text)["DEMO_VERSION"]; got != c.want {
@@ -256,6 +282,9 @@ func TestManifestsMatchRustLaunchTargets(t *testing.T) {
 	var binaries []string
 	for _, m := range loadRepoManifests(t) {
 		if m.Tier == "certified" {
+			if m.Binary != m.ID {
+				t.Errorf("%s: binary %q must equal the adapter id to match its Rust LaunchTarget", m.ID, m.Binary)
+			}
 			binaries = append(binaries, m.Binary)
 		}
 	}
