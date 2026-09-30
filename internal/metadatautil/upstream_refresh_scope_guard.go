@@ -42,6 +42,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 	}
 	var file string
 	var seen, inHunk bool
+	var oldHeaders, newHeaders int
 	// A section without a hunk is truncated or empty. Fail closed.
 	closeSection := func() {
 		if file != "" && !inHunk {
@@ -53,7 +54,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
-			inHunk, file = false, ""
+			inHunk, file, oldHeaders, newHeaders = false, "", 0, 0
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
 				continue
@@ -74,7 +75,21 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			if len(fields) == 3 && fields[2] != "100644" {
 				fail("%s: %s", file, line)
 			}
+		case !inHunk && strings.HasPrefix(line, "--- "):
+			// git apply takes target paths from these headers, not from the diff line.
+			oldHeaders++
+			if line != "--- a/"+file && line != "--- /dev/null" {
+				fail("%s: file header does not match the diff path: %s", file, line)
+			}
+		case !inHunk && strings.HasPrefix(line, "+++ "):
+			newHeaders++
+			if line != "+++ b/"+file {
+				fail("%s: file header does not match the diff path: %s", file, line)
+			}
 		case strings.HasPrefix(line, "@@ "):
+			if !inHunk && (oldHeaders != 1 || newHeaders != 1) {
+				fail("%s: need exactly one old and one new file header before the first hunk", file)
+			}
 			inHunk = true
 		case inHunk && file == scopeGuardDockerfilePath && (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) && !scopeGuardDockerfileLineRE.MatchString(line):
 			fail("%s: line %s", file, line)

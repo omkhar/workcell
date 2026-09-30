@@ -73,6 +73,18 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch:   inScope + "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n",
 			wantErr: "incomplete patch section",
 		},
+		{
+			name: "file headers name another path",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
+			wantErr: "file header does not match the diff path",
+		},
+		{
+			name: "duplicate file headers",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
+			wantErr: "file header does not match the diff path",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",
