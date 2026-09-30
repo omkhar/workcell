@@ -161,10 +161,11 @@ can also include build and snapshot endpoints. It does not list all hosts that a
 session can reach. A deny rule can remove an endpoint from the effective session
 or bootstrap set.
 
-Rule replacement is not atomic. A failed replacement can leave the profile
-without the default-deny rule. Existing connections can continue after a more
-restrictive policy replaces the rule set. These are residual risks of the
-current profile-wide control.
+Each apply replaces a chain in one `iptables-restore --noflush` transaction.
+The old chain stays in force until the complete new chain replaces it. A
+failed replacement keeps the previous rules for that address family. Existing
+connections can continue after a more restrictive policy replaces the rule
+set. This is a residual risk of the current profile-wide control.
 
 Docker Desktop reports `egress_enforcement=none`. Workcell does not claim VM
 egress enforcement for that target.

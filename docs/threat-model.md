@@ -79,7 +79,6 @@ endpoints. Both inputs broaden the allowed set.
 |---|---|
 | Colima rules are profile-wide. | The last launch controls all active containers in that profile. |
 | A Colima `breakglass` launch clears the profile rules. | Existing strict containers lose Workcell egress enforcement. |
-| Colima rule replacement is not atomic. | A setup failure can leave active profile containers without default-deny rules. |
 | A policy change keeps established connections. | A connection can continue after the new endpoint set removes its destination. |
 | Allowed host names resolve to shared IP addresses. | Another host on the same IP can remain reachable. |
 | Docker Desktop has no dedicated Workcell VM. | It provides lower isolation than the strict target. |

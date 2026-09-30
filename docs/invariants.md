@@ -104,9 +104,10 @@ reviewed `host:port` entries and drops other egress. It stops the launch if it
 cannot contain IPv6.
 
 Only Colima applies the profile-wide allowlist. The last allowlist launch
-replaces rules for all active containers in that profile. Other targets use
-their own network controls. The launch summary states the result in
-`egress_enforcement=`.
+replaces rules for all active containers in that profile. The replacement is
+atomic for each address family. The old default-deny chain stays in force until
+the complete new chain replaces it. Other targets use their own network
+controls. The launch summary states the result in `egress_enforcement=`.
 
 The injection policy can add or deny endpoints through `[network]`. It cannot
 disable the default policy or change `NETWORK_POLICY`. See

@@ -326,28 +326,15 @@ EOF
 clear_rules() {
   run_in_vm '
     set -euo pipefail
-    sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
+    while sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null; do :; done
     sudo iptables -F WORKCELL_EGRESS 2>/dev/null || true
     sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true
     if type ip6tables >/dev/null 2>&1; then
-      sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || true
+      while sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null; do :; done
       sudo ip6tables -F WORKCELL_EGRESS6 2>/dev/null || true
       sudo ip6tables -X WORKCELL_EGRESS6 2>/dev/null || true
     fi
   '
-}
-
-render_clear_plan() {
-  cat <<'EOF'
-sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
-sudo iptables -F WORKCELL_EGRESS 2>/dev/null || true
-sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true
-if type ip6tables >/dev/null 2>&1; then
-  sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || true
-  sudo ip6tables -F WORKCELL_EGRESS6 2>/dev/null || true
-  sudo ip6tables -X WORKCELL_EGRESS6 2>/dev/null || true
-fi
-EOF
 }
 
 declare -a RULES=()
@@ -425,39 +412,29 @@ if ! type ip6tables >/dev/null 2>&1; then
   exit 1
 fi
 sudo ip6tables -L WORKCELL_EGRESS6 >/dev/null 2>&1 || true
-EOF
-  render_clear_plan
-  cat <<'EOF'
-sudo iptables -N WORKCELL_EGRESS 2>/dev/null || true
-sudo iptables -F WORKCELL_EGRESS
-sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
-sudo iptables -A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-sudo ip6tables -N WORKCELL_EGRESS6 2>/dev/null || true
-sudo ip6tables -F WORKCELL_EGRESS6
-sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
-sudo ip6tables -A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+IPV4_RULES=""
+IPV6_RULES=""
 
 resolve_vm_endpoint_ips() {
   local host="$1"
   local ip=""
   local rest=""
+  local output=""
 
   if ! type getent >/dev/null 2>&1; then
     echo "Missing required VM resolver: getent" >&2
     return 1
   fi
 
-  if getent ahosts "${host}" 2>/dev/null | while read -r ip rest; do
-    [[ -n "${ip}" ]] || continue
-    printf '%s\n' "${ip}"
-  done; then
-    return 0
+  # Keep the output of a lookup only when that lookup succeeds: a failed
+  # lookup that printed an address must not mix into the fallback result.
+  if ! output="$(getent ahosts "${host}" 2>/dev/null)"; then
+    output="$(getent hosts "${host}" 2>/dev/null)" || return 1
   fi
-
-  getent hosts "${host}" 2>/dev/null | while read -r ip rest; do
+  while read -r ip rest; do
     [[ -n "${ip}" ]] || continue
     printf '%s\n' "${ip}"
-  done
+  done <<<"${output}"
 }
 
 add_vm_endpoint_rules() {
@@ -466,6 +443,7 @@ add_vm_endpoint_rules() {
   local port=""
   local ip=""
   local resolved_any=0
+  local resolved=""
 
   if [[ "${endpoint}" =~ ^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$ ]]; then
     host="[${BASH_REMATCH[1]}]"
@@ -479,29 +457,32 @@ add_vm_endpoint_rules() {
   fi
 
   if [[ "${host}" == \[*\] ]]; then
-    sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${host:1:${#host}-2}" --dport "${port}" -j ACCEPT
+    IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${host:1:${#host}-2} --dport ${port} -j ACCEPT"$'\n'
     return 0
   fi
   if [[ "${host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    sudo iptables -A WORKCELL_EGRESS -p tcp -d "${host}" --dport "${port}" -j ACCEPT
+    IPV4_RULES+="-A WORKCELL_EGRESS -p tcp -d ${host} --dport ${port} -j ACCEPT"$'\n'
     return 0
   fi
 
+  # Read the resolver status before any rule is kept: a process substitution
+  # drops it, and a resolver that fails after one address leaves a partial list.
+  resolved="$(resolve_vm_endpoint_ips "${host}")" || exit 1
   while IFS= read -r ip; do
     [[ -n "${ip}" ]] || continue
     if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      sudo iptables -A WORKCELL_EGRESS -p tcp -d "${ip}" --dport "${port}" -j ACCEPT
+      IPV4_RULES+="-A WORKCELL_EGRESS -p tcp -d ${ip} --dport ${port} -j ACCEPT"$'\n'
       resolved_any=1
       continue
     fi
-    if [[ "${ip}" == *:* ]]; then
-      sudo ip6tables -A WORKCELL_EGRESS6 -p tcp -d "${ip}" --dport "${port}" -j ACCEPT
+    if [[ "${ip}" == *:* && "${ip}" =~ ^[0-9A-Fa-f:.]+$ ]]; then
+      IPV6_RULES+="-A WORKCELL_EGRESS6 -p tcp -d ${ip} --dport ${port} -j ACCEPT"$'\n'
       resolved_any=1
       continue
     fi
     echo "Resolver returned invalid IP address: ${ip}" >&2
     exit 1
-  done < <(resolve_vm_endpoint_ips "${host}")
+  done <<<"${resolved}"
 
   if [[ "${resolved_any}" -ne 1 ]]; then
     echo "Resolver returned no IP addresses for: ${host}" >&2
@@ -514,8 +495,16 @@ EOF
 for endpoint in ${WORKCELL_ENDPOINTS}; do
   add_vm_endpoint_rules "${endpoint}"
 done
-sudo iptables -A WORKCELL_EGRESS -j DROP
-sudo ip6tables -A WORKCELL_EGRESS6 -j DROP
+# Replace each chain in one restore transaction. The old
+# DROP-terminated chain stays in force until the complete new chain replaces it.
+IPV4_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS - [0:0]\n-A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS -j DROP\nCOMMIT\n' "${IPV4_RULES}")"
+IPV6_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS6 - [0:0]\n-A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS6 -j DROP\nCOMMIT\n' "${IPV6_RULES}")"
+sudo iptables-restore --noflush <<<"${IPV4_RESTORE}"
+sudo ip6tables-restore --noflush <<<"${IPV6_RESTORE}"
+# Keep each jump at the head of DOCKER-USER. A jump that sits behind another
+# component's rule is not enough, so check the head and insert when it differs.
+[[ "$(sudo iptables -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j WORKCELL_EGRESS" ]] || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
+[[ "$(sudo ip6tables -S DOCKER-USER | sed -n 2p)" == "-A DOCKER-USER -j WORKCELL_EGRESS6" ]] || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
 EOF
 }
 

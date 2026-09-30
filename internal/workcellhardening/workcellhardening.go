@@ -145,6 +145,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
 // launcherRelPath is the repo-relative path to the host launcher every
@@ -3970,12 +3972,12 @@ func CheckSmokeChownTar(rootDir string) error {
 //     (`run_in_vm "\$\(render_allowlist_apply_plan\)"`) or carried none
 //     (`if ! type ip6tables >/dev/null 2>&1; then`), so they are fixed-string
 //     containment (kindPresent).
-//   - The render_clear_plan definition probe anchored `^render_clear_plan\(\)`
-//     to a line start with escaped parens, so it is a genuine (line-anchored)
-//     regex (kindRegexPresent) whose `\(\)` matches literal `()`.
-//   - The three affirmative function_block_contains_regex probes scope to
+//   - The atomic-swap rules (no unlink or flush of the live chain, one
+//     `iptables-restore --noflush` per family) read the parsed apply plan in
+//     metadatautil.ValidateColimaEgressAtomicSwap, run after the table.
+//   - The two affirmative function_block_contains_regex probes scope to
 //     render_allowlist_apply_plan (kindFunctionBlockRegex); their patterns
-//     (render_clear_plan, resolve_vm_endpoint_ips, getent ahosts) are
+//     (resolve_vm_endpoint_ips, getent ahosts) are
 //     metacharacter-free, so they behave like fixed-string containment today but
 //     keep genuine-regex semantics for parity with `grep -q`.
 //   - The NEGATED function_block_contains_regex probe for render_allowlist_plan
@@ -3994,22 +3996,6 @@ var dualStackApplyPlanChecks = []check{
 		pattern:    "if ! type ip6tables >/dev/null 2>&1; then",
 		message:    "Expected dual-stack allowlist apply plan to preflight ip6tables before rewriting rules",
 		targetFile: colimaEgressAllowlistRelPath,
-	},
-	{
-		// kindRegexPresent: the shell's line-anchored `^render_clear_plan\(\)`
-		// keeps its `^` anchor; regexMatchesAnyLine anchors it to each line's
-		// start (rg's line-oriented default), and `\(\)` matches literal `()`.
-		kind:       kindRegexPresent,
-		regex:      `^render_clear_plan\(\)`,
-		message:    "Expected dual-stack allowlist helper to render clear rules in the VM apply plan",
-		targetFile: colimaEgressAllowlistRelPath,
-	},
-	{
-		kind:         kindFunctionBlockRegex,
-		functionName: "render_allowlist_apply_plan",
-		regex:        "render_clear_plan",
-		message:      "Expected dual-stack allowlist apply plan to include render_clear_plan",
-		targetFile:   colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:         kindFunctionBlockRegex,
@@ -4044,9 +4030,8 @@ var dualStackApplyPlanChecks = []check{
 		// block for a bare `clear_rules` line via the GENUINE regex
 		// `^[[:space:]]*clear_rules$` (a line that is only optional leading
 		// whitespace followed by `clear_rules`); a match inside the block is a
-		// violation.  render_clear_plan and render_allowlist_apply_plan do not
-		// match the anchored pattern, so neither the in-block clear-plan call nor
-		// the block's own opening line can false-match.
+		// violation.  render_allowlist_apply_plan does not match the anchored
+		// pattern, so the block's own opening line cannot false-match.
 		kind:         kindFunctionBlockRegexAbsent,
 		functionName: "render_allowlist_apply_plan",
 		regex:        `^[[:space:]]*clear_rules$`,
@@ -4061,7 +4046,14 @@ var dualStackApplyPlanChecks = []check{
 // whose message equals the shell's stderr for the first violated invariant (the
 // shell's exit 1).
 func CheckDualStackApplyPlan(rootDir string) error {
-	return evaluate(rootDir, dualStackApplyPlanChecks)
+	if err := evaluate(rootDir, dualStackApplyPlanChecks); err != nil {
+		return err
+	}
+	script, err := os.ReadFile(filepath.Join(rootDir, colimaEgressAllowlistRelPath))
+	if err != nil {
+		return err
+	}
+	return metadatautil.ValidateColimaEgressAtomicSwap(string(script))
 }
 
 // publishBaseRefcheckChecks holds the single publish-pr base-name invariant
