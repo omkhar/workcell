@@ -69,17 +69,15 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 			}
 		})
 	}
-	for name, harmless := range map[string]string{
-		"comment":            "\n# render_allowlist_apply_plan() { is reviewed }\n",
-		"trailing comment":   "\ntrue # render_allowlist_apply_plan\n",
-		"diagnostic message": "\necho \"render_allowlist_apply_plan failed\" >&2\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + harmless)
-			if err != nil && strings.Contains(err.Error(), "definition") {
-				t.Fatalf("harmless mention rejected: %v", err)
-			}
-		})
+	// A quote before a hash must not hide a definition.
+	quoted := "\nx=\" #\"; render_allowlist_apply_plan() { echo unsafe; }\n"
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + quoted); err == nil {
+		t.Fatal("validator accepted a definition behind a quoted hash")
+	}
+	// A message that names the function without a definition shape passes.
+	message := "\necho \"render_allowlist_apply_plan failed\" >&2\n"
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(string(script) + message); err != nil && strings.Contains(err.Error(), "definition") {
+		t.Fatalf("harmless mention rejected: %v", err)
 	}
 
 	// Moving the endpoint loop across the first heredoc boundary keeps every

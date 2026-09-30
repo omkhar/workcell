@@ -19,10 +19,7 @@ import (
 // and a pass of the replay in scripts/verify-invariants.sh.
 const applyPlanDigest = "0bf6987731321fbdd1706e58077d73a02d7135c103179743d43d682c345103c1"
 
-var (
-	commentStart   = regexp.MustCompile(`(^|\s)#`)
-	planDefinition = regexp.MustCompile(`(^|[;&|{(]|\s)(function\s+)?render_allowlist_apply_plan(\s*\(\s*\)|\s*\{|\s*$)`)
-)
+var planDefinition = regexp.MustCompile(`(function\s+)?render_allowlist_apply_plan\s*\(|function\s+render_allowlist_apply_plan\b`)
 
 // ValidateColimaEgressAtomicSwap requires the VM apply plan of
 // scripts/colima-egress-allowlist.sh to replace each chain in one
@@ -39,19 +36,14 @@ var (
 // scripts/verify-invariants.sh then checks the behavior of the reviewed plan.
 func ValidateColimaEgressAtomicSwap(script string) error {
 	// Bash runs the last definition of a name, so a reviewed copy kept ahead of
-	// a second definition would pass the checks below. Count each statement
-	// that defines the function, in any valid spelling, after joining line
-	// continuations and dropping comments. A definition that bash assembles at
-	// run time is outside what a static check can close; the replay in
-	// scripts/verify-invariants.sh covers the plan the real apply path captures.
-	definitions := 0
-	for line := range strings.Lines(strings.ReplaceAll(script, "\\\n", " ")) {
-		if comment := commentStart.FindStringIndex(line); comment != nil {
-			line = line[:comment[0]]
-		}
-		definitions += len(planDefinition.FindAllString(line, -1))
-	}
-	if definitions != 1 {
+	// a second definition would pass the checks below. Count every text that has
+	// the shape of a definition, after joining line continuations. Comments and
+	// quotes are not stripped: a parser that strips them can be led to drop a
+	// real definition, so a definition-shaped mention in a comment fails too. A
+	// definition that bash assembles at run time is outside what a static check
+	// can close; the replay in scripts/verify-invariants.sh covers the plan the
+	// real apply path captures.
+	if len(planDefinition.FindAllString(strings.ReplaceAll(script, "\\\n", " "), -1)) != 1 {
 		return errors.New("Expected exactly one render_allowlist_apply_plan definition")
 	}
 	plan, stream := applyPlanText(script)
