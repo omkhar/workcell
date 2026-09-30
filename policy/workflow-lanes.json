@@ -983,6 +983,20 @@
       "local_order": 10
     },
     {
+      "id": "upstream-refresh.yml/publish",
+      "workflow_path": ".github/workflows/upstream-refresh.yml",
+      "workflow_name": "Upstream refresh",
+      "job_id": "publish",
+      "job_name": "Publish upstream refresh PR",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "publication needs the upstream-refresh environment secrets, the GitHub App token, and GitHub-side commit signing"
+    },
+    {
       "id": "upstream-refresh.yml/refresh",
       "workflow_path": ".github/workflows/upstream-refresh.yml",
       "workflow_name": "Upstream refresh",
@@ -995,6 +1009,20 @@
       "authority": "github-only",
       "local_mode": "none",
       "github_only_reason": "upstream refresh candidate generation depends on GitHub-hosted scheduling, artifacts, and issue publication"
+    },
+    {
+      "id": "upstream-refresh.yml/scope-guard",
+      "workflow_path": ".github/workflows/upstream-refresh.yml",
+      "workflow_name": "Upstream refresh",
+      "job_id": "scope-guard",
+      "job_name": "Check bump scope",
+      "workflow_events": [
+        "schedule",
+        "workflow_dispatch"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the scope guard reads the candidate artifact that the GitHub-hosted refresh job uploads"
     }
   ]
 }

@@ -96,8 +96,9 @@ Workcell keeps both convenience copies for five days.
 
 ### Upstream refresh artifact
 
-`upstream-refresh-candidate` contains a patch, a diffstat, and metadata.
-It is advisory input for a host-side refresh PR.
+`upstream-refresh-candidate` contains a patch, a diffstat, metadata, and a provider summary.
+The publish job of the same run applies it to open the refresh PR.
+The publish job checks the candidate identity again before it writes.
 It is not release provenance.
 
 Workcell keeps the candidate for seven days.
