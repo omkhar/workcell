@@ -347,12 +347,13 @@ workcell_runtime_state_value() {
   # open follows a final symlink, so the path must also be no link and name that
   # same device and inode: a link, even to a root-owned file, is refused. The
   # mapped uid cannot hardlink a root-owned file or place an entry on another
-  # mount, so no replacement can match after the open.
+  # mount, so no replacement can match after the open. The tools run by absolute
+  # path, because the wrappers inherit exported bash functions that shadow names.
   (
     { exec {fd}<"${path}"; } 2>/dev/null || exit 1
-    [[ -f "/dev/fd/${fd}" && ! -L "${path}" && "$(stat -L -c %u -- "/dev/fd/${fd}")" == "0" &&
-    "$(stat -L -c %d:%i -- "/dev/fd/${fd}")" == "$(stat -c %d:%i -- "${path}")" ]] || exit 1
-    head -n1 <&"${fd}"
+    [[ -f "/dev/fd/${fd}" && ! -L "${path}" && "$(/usr/bin/stat -L -c %u -- "/dev/fd/${fd}")" == "0" &&
+    "$(/usr/bin/stat -L -c %d:%i -- "/dev/fd/${fd}")" == "$(/usr/bin/stat -c %d:%i -- "${path}")" ]] || exit 1
+    /usr/bin/head -n1 <&"${fd}"
   )
 }
 
