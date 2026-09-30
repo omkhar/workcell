@@ -1685,3 +1685,24 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedReleaseBranchPolicy(t *testi
 		t.Fatalf("metadatautil.VerifyGitHubHostedControls() error = %v, want release branch-policy rejection", err)
 	}
 }
+
+func TestVerifyGitHubHostedControlsRejectsNonPositiveAppIDPin(t *testing.T) {
+	t.Parallel()
+	for _, pin := range []string{"0", "-1"} {
+		tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+			{"login": "omkhar", "permissions": map[string]any{"admin": true}},
+		})
+		content, err := os.ReadFile(policyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated := strings.Replace(string(content), "[branch_review]\n", "[branch_review]\nupstream_refresh_app_id = "+pin+"\n", 1)
+		if err := os.WriteFile(policyPath, []byte(mutated), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err = metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+		if err == nil || !strings.Contains(err.Error(), "upstream_refresh_app_id must be a positive integer") {
+			t.Fatalf("pin %s: error = %v, want positive-integer rejection", pin, err)
+		}
+	}
+}

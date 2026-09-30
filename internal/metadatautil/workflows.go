@@ -42,12 +42,14 @@ type workflowJob struct {
 	Environment struct {
 		Name string `yaml:"name"`
 	} `yaml:"environment"`
+	Outputs     map[string]string          `yaml:"outputs"`
 	Permissions map[string]string          `yaml:"permissions"`
 	Steps       []workflowStep             `yaml:"steps"`
 	Strategy    workflowLaneRawJobStrategy `yaml:"strategy"`
 }
 
 type workflowStep struct {
+	ID   string            `yaml:"id"`
 	Name string            `yaml:"name"`
 	If   yaml.Node         `yaml:"if"`
 	Uses string            `yaml:"uses"`
@@ -873,11 +875,18 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	guard := document.Jobs["scope-guard"]
 	// Read the invocation the shell really runs, not a substring of the step text.
-	guardRuns := slices.ContainsFunc(guard.Steps, func(step workflowStep) bool {
-		return len(ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-scope-guard.sh")) > 0
-	})
-	if !guardRuns || len(guard.Permissions) != 1 || guard.Permissions["contents"] != "read" {
+	guardID := ""
+	for _, step := range guard.Steps {
+		if len(ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-scope-guard.sh")) > 0 {
+			guardID = step.ID
+		}
+	}
+	if guardID == "" || len(guard.Permissions) != 1 || guard.Permissions["contents"] != "read" {
 		return fmt.Errorf("%s scope-guard job must run the scope guard with only contents: read", path)
+	}
+	// The result that enables auto-merge must come from the step that runs the guard.
+	if guardID != "guard" || guard.Outputs["result"] != "${{ steps.guard.outputs.result }}" {
+		return fmt.Errorf("%s scope-guard job must export result from the guard step output", path)
 	}
 	publish := document.Jobs["publish"]
 	if publish.Environment.Name != "upstream-refresh" {

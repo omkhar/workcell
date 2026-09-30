@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -484,7 +485,13 @@ func verifyHostedRulesetControls(inputs hostedControlInputs, reviewMode, ownerTy
 	}
 	controls := classifyHostedRulesets(active)
 	branchReviewPolicy, _ := inputs.policy["branch_review"].(map[string]any)
-	expectedAppID, _ := branchReviewPolicy["upstream_refresh_app_id"].(int)
+	expectedAppID := 0
+	if raw, ok := branchReviewPolicy["upstream_refresh_app_id"]; ok {
+		if id, isInt := raw.(int); !isInt || id <= 0 {
+			return errors.New("branch_review.upstream_refresh_app_id must be a positive integer when set")
+		}
+		expectedAppID = raw.(int)
+	}
 	if err := verifyHostedRulesetShape(controls, expectedAppID, repo); err != nil {
 		return err
 	}

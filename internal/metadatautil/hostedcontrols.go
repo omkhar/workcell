@@ -249,6 +249,9 @@ func ValidateCanonicalWorkflowEnvironments(policy map[string]any, policyPath str
 	if len(release.RequiredSecrets) != 0 {
 		return errors.New("policy/github-hosted-controls.toml must not declare secrets for workflow_environment.release")
 	}
+	if len(release.OptionalSecrets) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare optional secrets for workflow_environment.release")
+	}
 	if len(release.Variables) != 0 {
 		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.release")
 	}
@@ -265,6 +268,9 @@ func ValidateCanonicalWorkflowEnvironments(policy map[string]any, policyPath str
 	hostedControlsAudit, ok := environments["hosted-controls-audit"]
 	if !ok {
 		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.hosted-controls-audit")
+	}
+	if len(hostedControlsAudit.OptionalSecrets) != 0 {
+		return errors.New("policy/github-hosted-controls.toml must not declare optional secrets for workflow_environment.hosted-controls-audit")
 	}
 	if len(hostedControlsAudit.Variables) != 0 {
 		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.hosted-controls-audit")

@@ -1317,10 +1317,13 @@ jobs:
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
   scope-guard:
     needs: refresh
+    outputs:
+      result: ${{ steps.guard.outputs.result }}
     permissions:
       contents: read
     steps:
-      - run: |
+      - id: guard
+        run: |
           ./scripts/ci/upstream-refresh-scope-guard.sh patch
   publish:
     needs: [refresh, scope-guard]
@@ -1362,7 +1365,8 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish pull-requests write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: read\n      pull-requests: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must not grant pull-requests: write"},
 		{"refresh job environment", "  refresh:\n", "  refresh:\n    environment:\n      name: upstream-refresh\n", "refresh job must not bind an environment"},
 		{"refresh job mints App token", "      - run: |\n          jq -n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - run: |\n          jq -n", "must not mint the GitHub App token"},
-		{"scope-guard extra permission", "  scope-guard:\n    needs: refresh\n    permissions:\n      contents: read\n", "  scope-guard:\n    needs: refresh\n    permissions:\n      contents: read\n      issues: write\n", "scope-guard job must run the scope guard"},
+		{"scope-guard extra permission", "    outputs:\n      result: ${{ steps.guard.outputs.result }}\n    permissions:\n      contents: read\n    steps:\n      - id: guard", "    outputs:\n      result: ${{ steps.guard.outputs.result }}\n    permissions:\n      contents: read\n      issues: write\n    steps:\n      - id: guard", "scope-guard job must run the scope guard"},
+		{"scope-guard result forged", "result: ${{ steps.guard.outputs.result }}", "result: passed", "must export result from the guard step output"},
 		{"publish contents write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must not grant contents: write"},
 		{"publish missing environment", "    environment:\n      name: upstream-refresh\n", "", "publish job must bind the upstream-refresh environment"},
 		{"publish missing scope-guard need", "needs: [refresh, scope-guard]", "needs: [refresh]", "publish job must need exactly"},
@@ -1827,6 +1831,11 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsInvalidReleas
 			want:    "must not declare secrets for workflow_environment.release",
 		},
 		{
+			name:    "unexpected optional secrets",
+			release: map[string]any{"optional_secrets": []any{"RELEASE_TOKEN"}, "allow_admin_bypass": false, "deployment_branches": []any{"main"}},
+			want:    "must not declare optional secrets for workflow_environment.release",
+		},
+		{
 			name:    "unexpected variables",
 			release: map[string]any{"variables": map[string]any{"RELEASE_REGION": "north"}, "allow_admin_bypass": false, "deployment_branches": []any{"main"}},
 			want:    "must not declare public variables for workflow_environment.release",
@@ -1953,5 +1962,25 @@ func TestHostedControlsEnvironmentArtifactNameEscapesReservedCharacters(t *testi
 
 	if got := metadatautil.EnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
 		t.Fatalf("metadatautil.EnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
+	}
+}
+
+func TestValidateCanonicalWorkflowEnvironmentsRejectsAuditOptionalSecrets(t *testing.T) {
+	t.Parallel()
+	policy := map[string]any{
+		"workflow_environment": map[string]any{
+			"release": map[string]any{"allow_admin_bypass": false, "deployment_branches": []any{"main"}},
+			"hosted-controls-audit": map[string]any{
+				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+				"optional_secrets":    []any{"EXTRA"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
+				"deployment_tags":     []any{"v*"},
+			},
+		},
+	}
+	err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	if err == nil || !strings.Contains(err.Error(), "must not declare optional secrets for workflow_environment.hosted-controls-audit") {
+		t.Fatalf("error = %v, want optional-secret rejection", err)
 	}
 }
