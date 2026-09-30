@@ -37,12 +37,12 @@ mismatch=0
 diff -r --exclude=.cargo-checksum.json "${fresh}" "${RUST_DIR}/vendor" || mismatch=1
 for sum in "${fresh}"/*/.cargo-checksum.json; do
   crate="$(basename "$(dirname "${sum}")")"
-  want="$(jq -S 'del(."$comment")' "${sum}")" &&
-    have="$(jq -S 'del(."$comment")' "${RUST_DIR}/vendor/${crate}/.cargo-checksum.json")" &&
-    [[ -n "${want}" && "${want}" == "${have}" ]] || {
+  want="$(jq -S 'del(."$comment")' "${sum}")" || want=""
+  have="$(jq -S 'del(."$comment")' "${RUST_DIR}/vendor/${crate}/.cargo-checksum.json")" || have=""
+  if [[ -z "${want}" || "${want}" != "${have}" ]]; then
     echo "checksum file differs or is unreadable: ${crate}" >&2
     mismatch=1
-  }
+  fi
 done
 if [[ "${mismatch}" -ne 0 ]]; then
   echo "runtime/container/rust/vendor differs from crates.io for the pinned Cargo.lock" >&2
