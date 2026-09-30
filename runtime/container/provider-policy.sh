@@ -274,7 +274,7 @@ reject_unsafe_codex_args() {
         # app-server test client, `debug clear-memories` mutates local memory), and the
         # managed path never uses it.
         agents | queue | migrate-rollouts | plugin | remote-control | exec-server | \
-          mcp | mcp-server | cloud | cloud-tasks | responses-api-proxy | \
+          mcp | mcp-server | tcp-tunnel | cloud | cloud-tasks | responses-api-proxy | \
           stdio-to-uds | sandbox | update | debug)
           # cloud-tasks is the 0.142.4 alias of `cloud`; responses-api-proxy and stdio-to-
           # uds are HIDDEN daemon/bridge subcommands the clap enum still dispatches.

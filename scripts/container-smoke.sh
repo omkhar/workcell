@@ -2298,7 +2298,7 @@ fi
 # DENY-SET REGRESSION LOCK. Every KNOWN-dangerous Codex subcommand is denied by exact
 # token on the CLI path. These are real pinned-Codex subcommands (not prompt text), so
 # the gate must reject them.
-for codex_denied_sub in agents queue migrate-rollouts cloud cloud-tasks responses-api-proxy stdio-to-uds sandbox mcp plugin remote-control exec-server mcp-server update; do
+for codex_denied_sub in agents queue migrate-rollouts cloud cloud-tasks responses-api-proxy stdio-to-uds sandbox mcp plugin remote-control exec-server mcp-server tcp-tunnel update; do
   codex_deny_out="/tmp/workcell-entrypoint-codex-denydefault-${codex_denied_sub}.out"
   if run_entrypoint codex codex "${codex_denied_sub}" >"${codex_deny_out}" 2>&1; then
     echo "expected the deny-set gate to reject the dangerous subcommand: ${codex_denied_sub}" >&2

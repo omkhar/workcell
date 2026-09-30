@@ -65,7 +65,7 @@ In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
 - The wrapper blocks `agents`, `queue`, `migrate-rollouts`, plugins, cloud,
   remote-control, `exec-server`, update, sandbox, debug, and unclassified
   subcommands.
-- It also blocks MCP servers, `responses-api-proxy`, and `stdio-to-uds`.
+- It also blocks MCP servers, `responses-api-proxy`, `stdio-to-uds`, and `tcp-tunnel`.
 - The wrapper permits `app-server` only as a bare start without arguments.
 - The wrapper also blocks unsafe autonomy, network, profile, and configuration
   flags. This includes changes to guarded configuration namespaces.
