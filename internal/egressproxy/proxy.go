@@ -128,6 +128,8 @@ func (p *Proxy) Serve(ln net.Listener, port uint16) error {
 				p.handle(conn, port)
 			}()
 		default:
+			// Log before closing so the record exists when the peer sees EOF.
+			p.deny("", port, "overloaded")
 			_ = conn.Close() // at the limit: shed load instead of exhausting descriptors
 		}
 	}

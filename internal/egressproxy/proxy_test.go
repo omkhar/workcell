@@ -441,7 +441,7 @@ func TestConnectLooksUpRootedName(t *testing.T) {
 
 func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
 	t.Parallel()
-	p, _, _ := testProxy(t, "example.com:443", []netip.Addr{netip.MustParseAddr("8.8.8.8")}, "127.0.0.1:1")
+	p, log, _ := testProxy(t, "example.com:443", []netip.Addr{netip.MustParseAddr("8.8.8.8")}, "127.0.0.1:1")
 	p.slots = make(chan struct{}, 1)
 	addr := listen(t, p, 443)
 	stalled, err := net.Dial("tcp", addr) // holds the only slot while the proxy waits for a hello
@@ -462,5 +462,9 @@ func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
 	_ = extra.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := extra.Read(make([]byte, 1)); err != io.EOF && !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("read on a connection over the limit = %v, want EOF or reset", err)
+	}
+	want := denyLine{Port: 443, Reason: "overloaded", Count: 1}
+	if d := denies(t, p, log); len(d) != 1 || d[0] != want {
+		t.Fatalf("deny lines = %+v, want [%+v]", d, want)
 	}
 }

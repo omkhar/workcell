@@ -304,6 +304,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestServeShedsConnectionsOverTheLimit", "-count=1"),
 	},
 	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `p.deny("", port, "overloaded")`,
+		replacement:  `_ = port`,
+		label:        "egress proxy logs connections shed over the limit",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestServeShedsConnectionsOverTheLimit", "-count=1"),
+	},
+	{
 		relativePath: "internal/egressproxy/allowlist.go",
 		original:     `rootio.ReadFileNoFollow(path, "egress allowlist", maxAllowlistBytes)`,
 		replacement:  `rootio.ReadFileNoFollow(path, "egress allowlist", 1<<62)`,
