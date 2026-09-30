@@ -15,26 +15,27 @@ if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
 fi
 
 export PATH="${HOME}/.cargo/bin:${PATH}"
-ROOT_DIR="${WORKCELL_RUST_VENDOR_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUST_DIR="${ROOT_DIR}/runtime/container/rust"
 
-# A test supplies a pre-fetched reference tree instead of the network.
-fresh="${WORKCELL_RUST_VENDOR_REFERENCE_DIR:-}"
-if [[ -z "${fresh}" ]]; then
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' EXIT
-  fresh="${tmp}/vendor"
-  # The committed .cargo/config.toml replaces crates-io with vendor/, so vendor
-  # from a copy that has no such override.
-  cp -R "${RUST_DIR}" "${tmp}/src"
-  rm -rf "${tmp}/src/vendor" "${tmp}/src/.cargo" "${tmp}/src/target"
-  (cd "${tmp}/src" && cargo vendor --locked "${fresh}" >/dev/null)
-fi
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+fresh="${tmp}/vendor"
+# The committed .cargo/config.toml replaces crates-io with vendor/, so vendor
+# from a copy that has no such override.
+cp -R "${RUST_DIR}" "${tmp}/src"
+rm -rf "${tmp}/src/vendor" "${tmp}/src/.cargo" "${tmp}/src/target"
+(cd "${tmp}/src" && cargo vendor --locked "${fresh}" >/dev/null)
 
 # Newer cargo adds a "$comment" key to .cargo-checksum.json, so compare that
-# file without it and every other file byte for byte.
+# file without it and every other file byte for byte. The exclusion matches
+# that name at any depth, so compare checksum files below a crate root apart.
+nested_checksums() {
+  (cd "$1" && find . -mindepth 3 -name .cargo-checksum.json -exec shasum -a 256 {} + | sort -k2)
+}
 mismatch=0
 diff -r --exclude=.cargo-checksum.json "${fresh}" "${RUST_DIR}/vendor" || mismatch=1
+diff <(nested_checksums "${fresh}") <(nested_checksums "${RUST_DIR}/vendor") || mismatch=1
 for sum in "${fresh}"/*/.cargo-checksum.json; do
   crate="$(basename "$(dirname "${sum}")")"
   want="$(jq -S 'del(."$comment")' "${sum}")" || want=""
