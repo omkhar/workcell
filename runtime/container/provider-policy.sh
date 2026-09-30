@@ -37,6 +37,12 @@ codex_normalize_config_key() {
   local -a segments=()
   local segment normalized="" first=1
   local backslash=$'\\'
+  # `read` stops at the first newline, so a key like $'\nprojects.x' would normalize to
+  # empty and dodge the blocklist. Real keys never hold a line break: fail closed.
+  if [[ "${key}" == *$'\n'* || "${key}" == *$'\r'* ]]; then
+    printf '%s\n' '__workcell_malformed__'
+    return 0
+  fi
   local IFS='.'
   read -r -a segments <<<"${key}"
   for segment in "${segments[@]}"; do

@@ -25,6 +25,8 @@ func TestCodexPolicyRejectsProjectsTrustOverrides(t *testing.T) {
 		{"--config", `projects={"/workspace/sub"={trust_level="trusted"}}`},
 		{`--config=projects.x.trust_level="trusted"`},
 		{`-cprojects.x.trust_level="trusted"`},
+		{"-c", "\nprojects.\"/workspace\".trust_level=\"trusted\""},
+		{"-c", "model\n.x=1\nprojects.x.trust_level=\"trusted\""},
 	}
 	run := func(args ...string) error {
 		cmd := exec.Command(bash, append([]string{"-c", `source "$1"; shift; reject_unsafe_codex_args "$@" exec hi`, "_", policy}, args...)...)
