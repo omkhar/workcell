@@ -3090,6 +3090,10 @@ EOF
 cat >"${EGRESS_SWAP_ROOT}/bin/getent" <<'EOF'
 #!/bin/bash
 [[ "$2" == "resolvable.test" ]] && printf '192.0.2.10 STREAM resolvable.test\n'
+if [[ "$2" == "partial.test" ]]; then
+  printf '192.0.2.20 STREAM partial.test\n'
+  exit 1
+fi
 EOF
 printf '#!/bin/bash\nexec "$@"\n' >"${EGRESS_SWAP_ROOT}/bin/sudo"
 chmod +x "${EGRESS_SWAP_ROOT}/bin/"*
@@ -3136,6 +3140,14 @@ if ! run_egress_swap_case '127.0.0.1:443 [::1]:443 resolvable.test:443' ||
     '-j DROP')" ]]; then
   cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
   echo "Expected allowlist apply to keep a DROP-terminated chain linked while it swaps in the new rules" >&2
+  exit 1
+fi
+# A resolver that prints one address and then fails must not leave a partial chain.
+if run_egress_swap_case '127.0.0.1:443 partial.test:443' ||
+  [[ -e "${EGRESS_SWAP_ROOT}/state/violations" ]] ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS")" != "-j DROP" ]]; then
+  cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
+  echo "Expected allowlist apply to keep the old chain in force when the resolver fails after one address" >&2
   exit 1
 fi
 if run_egress_swap_case '127.0.0.1:443 unresolvable.test:443' ||

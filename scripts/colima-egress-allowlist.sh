@@ -444,6 +444,7 @@ add_vm_endpoint_rules() {
   local port=""
   local ip=""
   local resolved_any=0
+  local resolved=""
 
   if [[ "${endpoint}" =~ ^\[([0-9A-Fa-f:.]+)\]:([0-9]{1,5})$ ]]; then
     host="[${BASH_REMATCH[1]}]"
@@ -465,6 +466,9 @@ add_vm_endpoint_rules() {
     return 0
   fi
 
+  # Read the resolver status before any rule is kept: a process substitution
+  # drops it, and a resolver that fails after one address leaves a partial list.
+  resolved="$(resolve_vm_endpoint_ips "${host}")" || exit 1
   while IFS= read -r ip; do
     [[ -n "${ip}" ]] || continue
     if [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
@@ -479,7 +483,7 @@ add_vm_endpoint_rules() {
     fi
     echo "Resolver returned invalid IP address: ${ip}" >&2
     exit 1
-  done < <(resolve_vm_endpoint_ips "${host}")
+  done <<<"${resolved}"
 
   if [[ "${resolved_any}" -ne 1 ]]; then
     echo "Resolver returned no IP addresses for: ${host}" >&2
