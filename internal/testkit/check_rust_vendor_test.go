@@ -156,6 +156,19 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.WriteFile(manifest, []byte(cleanManifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Two comment members (first and last) must not both be cut.
+	twice := strings.Replace(string(origSum), "{", "{\"$comment\":\"a\",", 1)
+	last := strings.LastIndex(twice, "}")
+	twice = twice[:last] + ",\"$comment\":\"b\"" + twice[last:]
+	if err := os.WriteFile(libSum, []byte(twice), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("two comment members accepted: %s", out)
+	}
+	if err := os.WriteFile(libSum, origSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Harmless manifest text that only mentions the words must still pass.
 	if err := os.WriteFile(manifest, []byte("# workspace and path note\n"+cleanManifest+"description = \"path handling\"\n"), 0o644); err != nil {
 		t.Fatal(err)

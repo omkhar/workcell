@@ -101,9 +101,10 @@ tar -C "${RUST_DIR}/vendor" -cf - . | tar -C "${committed}" -xf -
 # Newer cargo adds a plain "$comment" member to .cargo-checksum.json. Cut that
 # member from every such file in both trees, then compare the trees byte for
 # byte. The only accepted difference is that member. A JSON parser would hide
-# duplicate keys and formatting, so sed cuts the exact text instead.
+# duplicate keys and formatting, so sed cuts the exact text instead, and at most
+# one member per file (t skips the second cut), so a pair of members still differs.
 # shellcheck disable=SC2016 # a sed expression; the shell must not expand it
-comment_member='s/^\{"\$comment":"[[:alnum:] .,;:()\/_-]*",/{/; s/,"\$comment":"[[:alnum:] .,;:()\/_-]*"\}$/}/'
+comment_member=$'s/^\\{"\\$comment":"[[:alnum:] .,;:()\\/_-]*",/{/\nt\ns/,"\\$comment":"[[:alnum:] .,;:()\\/_-]*"\\}$/}/'
 for tree in "${fresh}" "${committed}"; do
   find "${tree}" -name .cargo-checksum.json -exec sh -c '
     expr=$1
