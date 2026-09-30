@@ -83,3 +83,29 @@ func TestLoadAllowlistAndPorts(t *testing.T) {
 		t.Fatal("LoadAllowlist(missing) error = nil, want error")
 	}
 }
+
+func TestLoadAllowlistRefusesSymlinkAndOversize(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.WriteFile(real, []byte("api.example.com:443\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAllowlist(link); err == nil {
+		t.Error("LoadAllowlist(symlink) error = nil, want error")
+	}
+	if _, err := LoadAllowlist(dir); err == nil {
+		t.Error("LoadAllowlist(directory) error = nil, want error")
+	}
+	big := filepath.Join(dir, "big")
+	if err := os.WriteFile(big, []byte("#"+strings.Repeat("x", maxAllowlistBytes)+"\napi.example.com:443\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAllowlist(big); err == nil {
+		t.Error("LoadAllowlist(oversize) error = nil, want error")
+	}
+}

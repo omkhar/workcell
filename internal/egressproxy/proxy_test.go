@@ -51,14 +51,26 @@ func TestBlockedAddr(t *testing.T) {
 		"64:ff9b:1::1":             true,
 		"2002:a9fe:a9fe::1":        true, // 6to4
 		"2001:0:4136:e378::1":      true, // Teredo
+		"192.0.2.1":                true, // documentation
+		"198.51.100.1":             true,
+		"203.0.113.10":             true,
+		"198.18.0.1":               true, // benchmarking
+		"198.19.255.255":           true,
+		"192.88.99.1":              true,
+		"240.0.0.1":                true, // reserved
+		"100::1":                   true, // discard-only
+		"2001:2::1":                true,
+		"2001:db8::1":              true, // documentation
+		"3fff::1":                  true,
+		"5f00::1":                  true,
+		"198.17.255.255":           false, // just below benchmarking
+		"198.20.0.0":               false, // just above benchmarking
 		"8.8.8.8":                  false,
-		"203.0.113.10":             false,
 		"100.63.255.255":           false, // just below CGNAT
 		"100.128.0.0":              false, // just above CGNAT
 		"2606:4700:4700::1111":     false,
 		"::ffff:8.8.8.8":           false,
 		"2001:4860:4860::8888":     false,
-		"2001:db8::1":              false, // documentation, not in the refused set
 		"2a00:1450:4001:80b::200e": false,
 	}
 	for text, want := range cases {
@@ -230,7 +242,7 @@ func TestProxyTLSEndToEnd(t *testing.T) {
 	defer server.Close()
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
-	public := netip.MustParseAddr("203.0.113.10")
+	public := netip.MustParseAddr("8.8.8.8")
 
 	p, log, dialed := testProxy(t, "example.com:443", []netip.Addr{public}, server.Listener.Addr().String())
 	addr := listen(t, p, 443)
@@ -269,7 +281,7 @@ func TestProxyRefusesBlockedResolution(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
 	// A public answer mixed with a metadata answer must still be refused.
-	addrs := []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("::ffff:169.254.169.254")}
+	addrs := []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("::ffff:169.254.169.254")}
 	p, log, dialed := testProxy(t, "example.com:443", addrs, server.Listener.Addr().String())
 	addr := listen(t, p, 443)
 
@@ -304,7 +316,7 @@ func TestProxyTCPForward(t *testing.T) {
 			go func() { _, _ = io.Copy(c, c); _ = c.Close() }()
 		}
 	}()
-	p, log, _ := testProxy(t, "db.example:5432", []netip.Addr{netip.MustParseAddr("203.0.113.10")}, echo.Addr().String())
+	p, log, _ := testProxy(t, "db.example:5432", []netip.Addr{netip.MustParseAddr("8.8.8.8")}, echo.Addr().String())
 
 	conn, err := net.Dial("tcp", listen(t, p, 5432))
 	if err != nil {

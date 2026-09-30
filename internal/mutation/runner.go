@@ -277,6 +277,13 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/egressproxy/allowlist.go",
+		original:     `syscall.O_NOFOLLOW`,
+		replacement:  `0`,
+		label:        "egress proxy allowlist refuses a symlink leaf",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestLoadAllowlistRefusesSymlinkAndOversize", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/allowlist.go",
 		original:     `if prev, ok := a.forward[port]; ok && prev != host {`,
 		replacement:  `if prev, ok := a.forward[port]; false && ok && prev != host {`,
 		label:        "egress proxy plain port maps to one host",

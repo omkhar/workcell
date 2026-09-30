@@ -26,17 +26,28 @@ const (
 	overflowHost  = "(overflow)"
 )
 
-// blockedPrefixes adds the ranges that netip does not classify: shared or
-// special IPv4 space and IPv6 forms that embed an IPv4 target.
+// blockedPrefixes adds the ranges that netip does not classify: shared,
+// reserved or documentation space and IPv6 forms that embed an IPv4 target.
 var blockedPrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),      // "this network"
-	netip.MustParsePrefix("100.64.0.0/10"),  // CGNAT; holds the 100.100.100.200 metadata address
-	netip.MustParsePrefix("192.0.0.0/24"),   // IETF assignments; holds the 192.0.0.192 metadata address
-	netip.MustParsePrefix("::/96"),          // IPv4-compatible
-	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64
-	netip.MustParsePrefix("64:ff9b:1::/48"), // local NAT64
-	netip.MustParsePrefix("2001::/32"),      // Teredo
-	netip.MustParsePrefix("2002::/16"),      // 6to4
+	netip.MustParsePrefix("0.0.0.0/8"),       // "this network"
+	netip.MustParsePrefix("100.64.0.0/10"),   // CGNAT; holds the 100.100.100.200 metadata address
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF assignments; holds the 192.0.0.192 metadata address
+	netip.MustParsePrefix("::/96"),           // IPv4-compatible
+	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64
+	netip.MustParsePrefix("64:ff9b:1::/48"),  // local NAT64
+	netip.MustParsePrefix("2001::/32"),       // Teredo
+	netip.MustParsePrefix("2002::/16"),       // 6to4
+	netip.MustParsePrefix("192.0.2.0/24"),    // documentation (TEST-NET-1)
+	netip.MustParsePrefix("192.88.99.0/24"),  // deprecated 6to4 relay anycast
+	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking
+	netip.MustParsePrefix("198.51.100.0/24"), // documentation (TEST-NET-2)
+	netip.MustParsePrefix("203.0.113.0/24"),  // documentation (TEST-NET-3)
+	netip.MustParsePrefix("240.0.0.0/4"),     // reserved
+	netip.MustParsePrefix("100::/64"),        // discard-only
+	netip.MustParsePrefix("2001:2::/48"),     // benchmarking
+	netip.MustParsePrefix("2001:db8::/32"),   // documentation
+	netip.MustParsePrefix("3fff::/20"),       // documentation
+	netip.MustParsePrefix("5f00::/16"),       // SRv6 SIDs
 }
 
 // blockedAddr reports whether the proxy must refuse to connect to a.
