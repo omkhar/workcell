@@ -1322,6 +1322,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
       - id: guard
         continue-on-error: true
         run: |
@@ -1368,15 +1375,19 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish pull-requests write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: read\n      pull-requests: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must not grant pull-requests: write"},
 		{"refresh job environment", "  refresh:\n", "  refresh:\n    environment:\n      name: upstream-refresh\n", "refresh job must not bind an environment"},
 		{"refresh job mints App token", "      - run: |\n          jq -n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - run: |\n          jq -n", "must not mint the GitHub App token"},
-		{"scope-guard extra permission", "    permissions:\n      contents: read\n    steps:\n      - id: guard", "    permissions:\n      contents: read\n      issues: write\n    steps:\n      - id: guard", "scope-guard job must run the scope guard"},
+		{"scope-guard extra permission", "      contents: read\n    steps:\n      - uses: actions/checkout", "      contents: read\n      issues: write\n    steps:\n      - uses: actions/checkout", "scope-guard job must run the scope guard"},
 		{"scope-guard result forged", "result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}", "result: passed", "must export result from the guard step outcome"},
 		{"scope-guard result from step output", "result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}", "result: ${{ steps.guard.outputs.result }}", "must export result from the guard step outcome"},
 		{"scope-guard failure masked", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\"", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\" || true\n          echo result=passed >> \"${GITHUB_OUTPUT}\"", "scope-guard job must run the scope guard as its only run step"},
 		{"scope-guard shell override", "      - id: guard\n", "      - id: guard\n        shell: sh -c 'exit 0' {0}\n", "scope-guard job must run the scope guard as its only run step"},
-		{"scope-guard second run step", "      - id: guard\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-scope-guard.sh\n      - id: guard\n", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard second run step", "      - id: guard\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-scope-guard.sh\n      - id: guard\n", "reviewed checkout, candidate download"},
 		{"scope-guard renamed step", "      - id: guard\n", "      - id: check\n", "scope-guard job must run the scope guard as its only run step"},
 		{"publish contents write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must not grant contents: write"},
 		{"publish missing environment", "    environment:\n      name: upstream-refresh\n", "", "publish job must bind the upstream-refresh environment"},
+		{"scope-guard checkout from another repository", "          persist-credentials: false\n      - uses: actions/download", "          persist-credentials: false\n          repository: evil/other\n      - uses: actions/download", "reviewed checkout, candidate download"},
+		{"scope-guard extra action step", "      - id: guard\n        continue-on-error: true", "      - uses: actions/checkout@abc\n      - id: guard\n        continue-on-error: true", "reviewed checkout, candidate download"},
+		{"refresh publishes behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            create --fill\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr create\""},
+		{"refresh merges behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            merge 1\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr merge\""},
 		{"publish missing scope-guard need", "needs: [refresh, scope-guard]", "needs: [refresh]", "publish job must need exactly"},
 		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
 		{"publish App token from wrong secret", "client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}", "client-id: ${{ secrets.OTHER }}", "client-id secret"},
@@ -1799,6 +1810,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 				"deployment_branches": []any{"main"},
 			},
 			"upstream-refresh": map[string]any{
+				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
 			},
@@ -1875,6 +1887,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsInvalidReleas
 						"deployment_tags":     []any{"v*"},
 					},
 					"upstream-refresh": map[string]any{
+						"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
 						"allow_admin_bypass":  false,
 						"deployment_branches": []any{"main"},
 					},
@@ -1907,7 +1920,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 				"deployment_tags":     []any{"v*"},
 			},
 			"upstream-refresh": map[string]any{
-				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
 			},
@@ -1918,7 +1931,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 	if err == nil {
 		t.Fatal("metadatautil.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "must not declare secrets") {
+	if !strings.Contains(err.Error(), "exactly the two GitHub App secrets") {
 		t.Fatalf("metadatautil.ValidateCanonicalWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
 	}
 }
@@ -1938,6 +1951,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 				"deployment_tags":     []any{"v*"},
 			},
 			"upstream-refresh": map[string]any{
+				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
 			},

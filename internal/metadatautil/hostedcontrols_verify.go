@@ -596,36 +596,36 @@ func verifyHostedRulesetBypasses(controls hostedRulesetControls, repo string) er
 	if actors, _ := controls.branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
 		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
 	}
-	if err := requireHostedBypassShape(controls.branchReview, "RepositoryRole", "pull_request", false, repo); err != nil {
+	if err := requireHostedBypassShape(controls.branchReview, []string{"RepositoryRole", "Integration"}, "pull_request", false, repo); err != nil {
 		return err
 	}
 	if controls.tagRelease == nil {
 		return fmt.Errorf("missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
 	}
-	return requireHostedBypassShape(controls.tagRelease, "RepositoryRole", "always", true, repo)
+	return requireHostedBypassShape(controls.tagRelease, []string{"RepositoryRole"}, "always", true, repo)
 }
 
-func requireHostedBypassShape(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool, repo string) error {
+func requireHostedBypassShape(ruleset map[string]any, actorTypes []string, bypassMode string, requireNonEmpty bool, repo string) error {
 	actors, _ := ruleset["bypass_actors"].([]any)
 	if requireNonEmpty && len(actors) == 0 {
 		return fmt.Errorf("ruleset %v on %s must declare an explicit bypass actor", ruleset["name"], repo)
 	}
 	for _, raw := range actors {
-		if !hostedBypassActorMatches(raw, actorType, bypassMode) {
-			return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, actorType, bypassMode)
+		if !hostedBypassActorMatches(raw, actorTypes, bypassMode) {
+			return fmt.Errorf("ruleset %v on %s must only use %s/%s bypass actors", ruleset["name"], repo, strings.Join(actorTypes, " or "), bypassMode)
 		}
 	}
 	return nil
 }
 
-func hostedBypassActorMatches(raw any, actorType, bypassMode string) bool {
+func hostedBypassActorMatches(raw any, actorTypes []string, bypassMode string) bool {
 	entry, ok := raw.(map[string]any)
 	if !ok {
 		return false
 	}
 	actualType, _ := entry["actor_type"].(string)
 	actualMode, _ := entry["bypass_mode"].(string)
-	return actualType == actorType && actualMode == bypassMode
+	return slices.Contains(actorTypes, actualType) && actualMode == bypassMode
 }
 
 func verifyBranchReviewRuleset(ruleset, repoMeta map[string]any, mode, ownerType string, requireOwner func(string) error, repo string) error {

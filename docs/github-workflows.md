@@ -244,7 +244,8 @@ The comment lists the PR, the commit, the merge decision, the cool-off policy, a
    A bot cannot approve its own PR, so this bypass replaces the approval.
 
 Without the bypass, auto-merge waits for a human review.
-The hosted-controls policy accepts these two secrets and no others in this environment.
+The hosted-controls audit requires these two secrets and no others in this environment.
+It accepts the App as a bypass actor on the review ruleset only.
 
 An operator can still use `./scripts/publish-upstream-refresh-pr.sh` for host publication.
 

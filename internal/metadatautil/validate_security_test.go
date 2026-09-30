@@ -456,6 +456,7 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		`deployment_tags = ["v*"]`,
 		"",
 		"[workflow_environment.upstream-refresh]",
+		`required_secrets = ["WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"]`,
 		"allow_admin_bypass = false",
 		`deployment_branches = ["main"]`,
 		"",
@@ -665,7 +666,10 @@ func writeHostedControlsFixture(tb testing.TB, branchMode, releaseMode string, d
 		"variables": []map[string]any{},
 	}
 	upstreamRefreshSecrets := map[string]any{
-		"secrets": []map[string]any{},
+		"secrets": []map[string]any{
+			{"name": "WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID"},
+			{"name": "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
+		},
 	}
 	hostedControlsAuditDeploymentBranches := map[string]any{
 		"branch_policies": []map[string]any{
@@ -1391,6 +1395,42 @@ func TestVerifyGitHubHostedControlsRejectsReviewGatedRulesetWithoutCodeOwnerRevi
 	}
 }
 
+func TestVerifyGitHubHostedControlsAppBypassActor(t *testing.T) {
+	t.Parallel()
+
+	// The review ruleset lists RepositoryRole first and the tag ruleset last.
+	cases := []struct {
+		name    string
+		rewrite func(string) string
+		want    string
+	}{
+		{"review ruleset accepts the App", func(c string) string { return strings.Replace(c, `"RepositoryRole"`, `"Integration"`, 1) }, ""},
+		{"tag ruleset rejects the App", func(c string) string {
+			at := strings.LastIndex(c, `"RepositoryRole"`)
+			return c[:at] + `"Integration"` + c[at+len(`"RepositoryRole"`):]
+		}, "must only use RepositoryRole/always bypass actors"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpDir, policyPath := writeHostedControlsFixture(t, "review-gated", "review-gated", []map[string]any{
+				{"login": "omkhar", "permissions": map[string]any{"admin": true}},
+			})
+			rewriteFile(t, filepath.Join(tmpDir, "rulesets.json"), tc.rewrite)
+			err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("VerifyGitHubHostedControls() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("VerifyGitHubHostedControls() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestVerifyGitHubHostedControlsRejectsAllActionsAllowed(t *testing.T) {
 	t.Parallel()
 
@@ -1552,7 +1592,7 @@ func TestVerifyGitHubHostedControlsRejectsUnexpectedUpstreamRefreshSecret(t *tes
 	})
 
 	rewriteFile(t, filepath.Join(tmpDir, "environment-upstream-refresh-secrets.json"), func(content string) string {
-		return strings.Replace(content, `"secrets": []`, `"secrets": [{"name":"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"}]`, 1)
+		return strings.Replace(content, `"secrets": [`, `"secrets": [{"name":"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},`, 1)
 	})
 
 	err := metadatautil.VerifyGitHubHostedControls(tmpDir, "omkhar/workcell", policyPath)

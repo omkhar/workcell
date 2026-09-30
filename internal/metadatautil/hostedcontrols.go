@@ -266,8 +266,8 @@ func ValidateCanonicalWorkflowEnvironments(policy map[string]any, policyPath str
 	if !ok {
 		return errors.New("policy/github-hosted-controls.toml must declare workflow_environment.upstream-refresh")
 	}
-	if len(upstreamRefresh.RequiredSecrets) != 0 {
-		return errors.New("policy/github-hosted-controls.toml must not declare secrets for workflow_environment.upstream-refresh")
+	if !slices.Equal(upstreamRefresh.RequiredSecrets, []string{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"}) {
+		return errors.New("policy/github-hosted-controls.toml must declare exactly the two GitHub App secrets for workflow_environment.upstream-refresh")
 	}
 	if len(upstreamRefresh.Variables) != 0 {
 		return errors.New("policy/github-hosted-controls.toml must not declare public variables for workflow_environment.upstream-refresh")
