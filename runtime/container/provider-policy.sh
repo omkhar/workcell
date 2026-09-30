@@ -37,9 +37,12 @@ codex_normalize_config_key() {
   local -a segments=()
   local segment normalized="" first=1
   local backslash=$'\\'
-  # `read` stops at the first newline, so a key like $'\nprojects.x' would normalize to
-  # empty and dodge the blocklist. Real keys never hold a line break: fail closed.
-  if [[ "${key}" == *$'\n'* || "${key}" == *$'\r'* ]]; then
+  # Real keys are printable ASCII. `read` stops at a newline, and Codex trims Unicode
+  # whitespace that bash does not (for example U+00A0), so either would dodge the
+  # blocklist. Fail closed on any control (except tab) or non-ASCII byte in the key.
+  local LC_ALL=C
+  local unsafe_char=$'[^[:print:]\t]'
+  if [[ "${key}" == *${unsafe_char}* ]]; then
     printf '%s\n' '__workcell_malformed__'
     return 0
   fi

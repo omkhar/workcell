@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -27,9 +28,13 @@ func TestCodexPolicyRejectsProjectsTrustOverrides(t *testing.T) {
 		{`-cprojects.x.trust_level="trusted"`},
 		{"-c", "\nprojects.\"/workspace\".trust_level=\"trusted\""},
 		{"-c", "model\n.x=1\nprojects.x.trust_level=\"trusted\""},
+		{"-c", "\u00a0projects={\"/workspace\"={trust_level=\"trusted\"}}"},
+		{"-c", "\u2003projects.x.trust_level=\"trusted\""},
+		{"-c", "\vprojects.x.trust_level=\"trusted\""},
 	}
 	run := func(args ...string) error {
 		cmd := exec.Command(bash, append([]string{"-c", `source "$1"; shift; reject_unsafe_codex_args "$@" exec hi`, "_", policy}, args...)...)
+		cmd.Env = append(os.Environ(), "LC_ALL=C") // a non-UTF-8 locale must not let NBSP dodge the guard
 		return cmd.Run()
 	}
 	for _, args := range blocked {
