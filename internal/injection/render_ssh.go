@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // allowedSSHKeys is the parser-accepted key set for the `[ssh]` table, shared
@@ -187,13 +188,19 @@ func parseSSHDirective(line string) (string, string, bool) {
 	if stripped == "" || strings.HasPrefix(stripped, "#") {
 		return "", "", false
 	}
-	parts := strings.Fields(stripped)
-	directive := strings.ToLower(parts[0])
-	remainder := ""
-	if len(parts) > 1 {
-		remainder = strings.Join(parts[1:], " ")
+	// Parse like ssh(1): skip one leading '=', end the keyword at whitespace
+	// or '=', remove keyword quotes anywhere, and drop one '=' before the value.
+	stripped = strings.TrimLeftFunc(strings.TrimPrefix(stripped, "="), unicode.IsSpace)
+	directive, remainder := stripped, ""
+	if idx := strings.IndexFunc(stripped, func(r rune) bool { return r == '=' || unicode.IsSpace(r) }); idx >= 0 {
+		directive = stripped[:idx]
+		remainder = strings.TrimPrefix(strings.TrimLeftFunc(stripped[idx:], unicode.IsSpace), "=")
 	}
-	return directive, remainder, true
+	directive = strings.ToLower(strings.ReplaceAll(directive, "\"", ""))
+	if directive == "" {
+		return "", "", false
+	}
+	return directive, strings.Join(strings.Fields(remainder), " "), true
 }
 
 func validateSSHConfigSafety(source Path, allowUnsafe bool) error {
@@ -213,9 +220,23 @@ func validateSSHConfigSafety(source Path, allowUnsafe bool) error {
 		if _, risky := riskySSHDirectives[directive]; risky {
 			return fmt.Errorf("ssh.config contains unsafe directive %q at line %d; set ssh.allow_unsafe_config = true only when you explicitly accept lower assurance", directive, i+1)
 		}
-		if directive == "match" && strings.Contains(" "+strings.ToLower(remainder)+" ", " exec ") {
+		if directive == "match" && sshMatchHasExec(remainder) {
 			return fmt.Errorf("ssh.config contains unsafe Match exec at line %d; set ssh.allow_unsafe_config = true only when you explicitly accept lower assurance", i+1)
 		}
 	}
 	return nil
+}
+
+// sshMatchHasExec reports an exec criterion in any form ssh(1) runs:
+// `exec`, `!exec`, `exec=...`, any case, quoted or not.
+func sshMatchHasExec(criteria string) bool {
+	tokens := strings.FieldsFunc(strings.ToLower(strings.ReplaceAll(criteria, "\"", "")), func(r rune) bool {
+		return r == '=' || unicode.IsSpace(r)
+	})
+	for _, token := range tokens {
+		if strings.TrimPrefix(token, "!") == "exec" {
+			return true
+		}
+	}
+	return false
 }
