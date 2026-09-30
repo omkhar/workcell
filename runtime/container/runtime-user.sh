@@ -315,30 +315,32 @@ workcell_write_runtime_state() {
   fi
 }
 
+# This function uses no builtin but the case and [[ keywords: local, return,
+# exit and exec are builtins that an exported bash function of the same name
+# could replace, so variables are plain globals and failure is an exit status.
 workcell_runtime_state_value() {
-  local key="$1"
-  local path=""
-
-  case "${key}" in
+  case "$1" in
     WORKCELL_CONTAINER_MUTABILITY)
-      path="${WORKCELL_RUNTIME_MUTABILITY_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_MUTABILITY_FILE}"
       ;;
     WORKCELL_MODE)
-      path="${WORKCELL_RUNTIME_MODE_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_MODE_FILE}"
       ;;
     CODEX_PROFILE)
-      path="${WORKCELL_RUNTIME_PROFILE_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_PROFILE_FILE}"
       ;;
     WORKCELL_AGENT_AUTONOMY)
-      path="${WORKCELL_RUNTIME_AUTONOMY_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_AUTONOMY_FILE}"
       ;;
     WORKCELL_SESSION_ASSURANCE)
-      path="${WORKCELL_RUNTIME_ASSURANCE_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_ASSURANCE_FILE}"
       ;;
     *)
-      return 1
+      # An empty entry makes the open below fail.
+      WORKCELL_STATE_ENTRY=""
       ;;
   esac
+  WORKCELL_STATE_CHECK="${WORKCELL_STATE_ENTRY}"
 
   # Only root writes session state. A readonly session mounts this directory
   # as the mapped uid, so a file that root does not own is a planted value.
@@ -349,14 +351,11 @@ workcell_runtime_state_value() {
   # mapped uid cannot hardlink a root-owned file or place an entry on another
   # mount, so no replacement can match after the open. The tools run by absolute
   # path, because the wrappers inherit exported bash functions that shadow names.
-  # Failure ends through && and the redirection status only: exit, return and
-  # exec are builtins that an imported function could replace.
-  local entry="${path}" fd
   {
-    [[ -f "/dev/fd/${fd}" && ! -L "${entry}" && "$(/usr/bin/stat -L -c %u -- "/dev/fd/${fd}")" == "0" &&
-    "$(/usr/bin/stat -L -c %d:%i -- "/dev/fd/${fd}")" == "$(/usr/bin/stat -c %d:%i -- "${entry}")" ]] &&
-      /usr/bin/head -n1 <&"${fd}"
-  } {fd}<"${path}" 2>/dev/null
+    [[ -f "/dev/fd/${WORKCELL_STATE_FD}" && ! -L "${WORKCELL_STATE_CHECK}" && "$(/usr/bin/stat -L -c %u -- "/dev/fd/${WORKCELL_STATE_FD}")" == "0" &&
+    "$(/usr/bin/stat -L -c %d:%i -- "/dev/fd/${WORKCELL_STATE_FD}")" == "$(/usr/bin/stat -c %d:%i -- "${WORKCELL_STATE_CHECK}")" ]] &&
+      /usr/bin/head -n1 <&"${WORKCELL_STATE_FD}"
+  } 2>/dev/null {WORKCELL_STATE_FD}<"${WORKCELL_STATE_ENTRY}"
 }
 
 workcell_reexec_as_runtime_user() {

@@ -149,7 +149,7 @@ func TestRuntimeStateValueRejectsNonRootOwnedFile(t *testing.T) {
 
 	// An exported bash function named stat or head must not stand in for the
 	// real tool: the planted file stays refused when the functions claim root.
-	fake := []string{"BASH_FUNC_stat%%=() { echo 0; }", "BASH_FUNC_head%%=() { echo build; }", "BASH_FUNC_exit%%=() { :; }", "BASH_FUNC_exec%%=() { :; }", "BASH_FUNC_return%%=() { :; }"}
+	fake := []string{"BASH_FUNC_stat%%=() { echo 0; }", "BASH_FUNC_head%%=() { echo build; }", "BASH_FUNC_exit%%=() { :; }", "BASH_FUNC_exec%%=() { :; }", "BASH_FUNC_return%%=() { :; }", "BASH_FUNC_local%%=() { echo yolo; }"}
 	if out, ok := runtimeStateValue(t, planted, fake...); ok || out != "" {
 		t.Fatalf("imported function shadowed a state check: ok=%v out=%q", ok, out)
 	}

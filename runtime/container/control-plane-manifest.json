@@ -266,7 +266,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/runtime-user.sh",
       "runtime_path": "/usr/local/libexec/workcell/runtime-user.sh",
-      "sha256": "29d58715a4058cfecee0cdbd2630c9a369154af1e4b485af4fa8a17b0aaac206"
+      "sha256": "feb4cf9608102a4c3d9da0f72dc6575aa26d637e71a1cd23b232712cd3b058c7"
     },
     {
       "kind": "runtime-control-plane",
