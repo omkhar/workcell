@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -259,7 +260,7 @@ func verifyHostedWorkflowEnvironment(tmpDir, name string, policy WorkflowEnviron
 	if err := verifyHostedEnvironmentVariables(tmpDir, name, policy.Variables, repo); err != nil {
 		return err
 	}
-	if err := verifyHostedEnvironmentSecrets(tmpDir, name, policy.RequiredSecrets, repo); err != nil {
+	if err := verifyHostedEnvironmentSecrets(tmpDir, name, policy.RequiredSecrets, policy.OptionalSecrets, repo); err != nil {
 		return err
 	}
 	return verifyHostedEnvironmentDeployment(tmpDir, name, policy, meta, repo)
@@ -296,7 +297,7 @@ func verifyHostedEnvironmentVariables(tmpDir, name string, expected map[string]s
 	return nil
 }
 
-func verifyHostedEnvironmentSecrets(tmpDir, name string, expected []string, repo string) error {
+func verifyHostedEnvironmentSecrets(tmpDir, name string, expected, optional []string, repo string) error {
 	var payload map[string]any
 	artifact := EnvironmentArtifactName(name)
 	if err := readJSONFile(filepath.Join(tmpDir, fmt.Sprintf("environment-%s-secrets.json", artifact)), &payload); err != nil {
@@ -306,7 +307,7 @@ func verifyHostedEnvironmentSecrets(tmpDir, name string, expected []string, repo
 	if missing := missingHostedSecretNames(actual, expected); len(missing) > 0 {
 		return fmt.Errorf("workflow environment secrets missing on %s/%s: %s", repo, name, strings.Join(missing, ", "))
 	}
-	if unexpected := UnexpectedEnvironmentSecretNames(actual, expected); len(unexpected) > 0 {
+	if unexpected := UnexpectedEnvironmentSecretNames(actual, append(slices.Clone(expected), optional...)); len(unexpected) > 0 {
 		return fmt.Errorf("workflow environment secrets on %s/%s include unexpected entries: %s", repo, name, strings.Join(unexpected, ", "))
 	}
 	return nil
@@ -483,7 +484,15 @@ func verifyHostedRulesetControls(inputs hostedControlInputs, reviewMode, ownerTy
 		return fmt.Errorf("no active rulesets found on %s", repo)
 	}
 	controls := classifyHostedRulesets(active)
-	if err := verifyHostedRulesetShape(controls, repo); err != nil {
+	branchReviewPolicy, _ := inputs.policy["branch_review"].(map[string]any)
+	expectedAppID := 0
+	if raw, ok := branchReviewPolicy["upstream_refresh_app_id"]; ok {
+		if id, isInt := raw.(int); !isInt || id <= 0 {
+			return errors.New("branch_review.upstream_refresh_app_id must be a positive integer when set")
+		}
+		expectedAppID = raw.(int)
+	}
+	if err := verifyHostedRulesetShape(controls, expectedAppID, repo); err != nil {
 		return err
 	}
 	if err := verifyBranchReviewRuleset(controls.branchReview, inputs.repoMeta, reviewMode, ownerType, requireOwner, repo); err != nil {
@@ -579,7 +588,7 @@ func hostedRulesetRule(ruleset map[string]any, ruleType string) map[string]any {
 	return nil
 }
 
-func verifyHostedRulesetShape(controls hostedRulesetControls, repo string) error {
+func verifyHostedRulesetShape(controls hostedRulesetControls, expectedAppID int, repo string) error {
 	if controls.branchIntegrity == nil {
 		return fmt.Errorf("missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
 	}
@@ -589,20 +598,55 @@ func verifyHostedRulesetShape(controls hostedRulesetControls, repo string) error
 	if controls.branchStatusChecks == nil {
 		return fmt.Errorf("missing active default-branch status-check ruleset on %s with a required_status_checks rule", repo)
 	}
-	return verifyHostedRulesetBypasses(controls, repo)
+	return verifyHostedRulesetBypasses(controls, expectedAppID, repo)
 }
 
-func verifyHostedRulesetBypasses(controls hostedRulesetControls, repo string) error {
+// expectedAppID is the optional branch_review.upstream_refresh_app_id policy
+// value; zero means the policy does not pin the App.
+func verifyHostedRulesetBypasses(controls hostedRulesetControls, expectedAppID int, repo string) error {
 	if actors, _ := controls.branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
 		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
 	}
-	if err := requireHostedBypassShape(controls.branchReview, "RepositoryRole", "pull_request", false, repo); err != nil {
+	if err := requireReviewBypassShape(controls.branchReview, expectedAppID, repo); err != nil {
 		return err
+	}
+	if actors, _ := controls.branchStatusChecks["bypass_actors"].([]any); hasIntegrationActor(actors) {
+		return fmt.Errorf("default-branch status-check ruleset on %s must not declare Integration bypass actors", repo)
 	}
 	if controls.tagRelease == nil {
 		return fmt.Errorf("missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
 	}
 	return requireHostedBypassShape(controls.tagRelease, "RepositoryRole", "always", true, repo)
+}
+
+func hasIntegrationActor(actors []any) bool {
+	for _, raw := range actors {
+		if entry, _ := raw.(map[string]any); entry["actor_type"] == "Integration" {
+			return true
+		}
+	}
+	return false
+}
+
+// The review ruleset allows RepositoryRole/pull_request actors plus at most one
+// Integration/pull_request actor (the upstream-refresh App) with a positive id.
+func requireReviewBypassShape(ruleset map[string]any, expectedAppID int, repo string) error {
+	actors, _ := ruleset["bypass_actors"].([]any)
+	apps := 0
+	for _, raw := range actors {
+		if hostedBypassActorMatches(raw, "RepositoryRole", "pull_request") {
+			continue
+		}
+		if !hostedBypassActorMatches(raw, "Integration", "pull_request") {
+			return fmt.Errorf("ruleset %v on %s must only use RepositoryRole/pull_request or one Integration/pull_request bypass actor", ruleset["name"], repo)
+		}
+		apps++
+		id, _ := raw.(map[string]any)["actor_id"].(float64)
+		if apps > 1 || id <= 0 || id != float64(int(id)) || (expectedAppID > 0 && int(id) != expectedAppID) {
+			return fmt.Errorf("ruleset %v on %s allows at most one Integration bypass actor with the expected positive actor_id", ruleset["name"], repo)
+		}
+	}
+	return nil
 }
 
 func requireHostedBypassShape(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool, repo string) error {

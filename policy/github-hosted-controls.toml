@@ -22,6 +22,10 @@ block_deletions = true
 #   single-owner repository, but allow zero required approvals and no code
 #   owner/thread gate so merges remain workable without an admin bypass
 mode = "review-gated"
+# Optional: numeric ID of the upstream-refresh GitHub App. The review ruleset may
+# list at most one Integration/pull_request bypass actor. When this key is set,
+# that actor's actor_id must equal it; when absent, any positive actor_id passes.
+# upstream_refresh_app_id = 123456
 
 [release_environment]
 # Valid modes:
@@ -101,5 +105,12 @@ deployment_branches = ["main"]
 deployment_tags = ["v*"]
 
 [workflow_environment.upstream-refresh]
+# The publish job reads the upstream-refresh GitHub App credentials from this
+# environment. They are optional: until an admin creates the App, publish
+# skips with a notice. When present they are the only permitted secrets.
+optional_secrets = [
+  "WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID",
+  "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY",
+]
 allow_admin_bypass = false
 deployment_branches = ["main"]

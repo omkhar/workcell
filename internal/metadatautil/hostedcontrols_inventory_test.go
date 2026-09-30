@@ -118,7 +118,7 @@ func TestVerifyHostedEnvironmentSecretsReportsMissingBeforeUnexpected(t *testing
 	root := t.TempDir()
 	payload := map[string]any{"secrets": []any{map[string]any{"name": "UNEXPECTED"}}}
 	writeHostedInventoryJSON(t, filepath.Join(root, "environment-release-secrets.json"), payload)
-	err := verifyHostedEnvironmentSecrets(root, "release", []string{"MISSING"}, "omkhar/workcell")
+	err := verifyHostedEnvironmentSecrets(root, "release", []string{"MISSING"}, nil, "omkhar/workcell")
 	want := "workflow environment secrets missing on omkhar/workcell/release: MISSING"
 	if err == nil || err.Error() != want {
 		t.Fatalf("verifyHostedEnvironmentSecrets() error = %v, want %q", err, want)
