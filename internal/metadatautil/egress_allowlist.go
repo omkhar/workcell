@@ -19,8 +19,11 @@ import (
 //
 // The shared parser drops what bash may not run, which suits the required
 // commands and not a deny rule. So the deny rule is an allowlist over the
-// text: every plan line that names iptables or ip6tables, after quotes and
-// backslashes are removed, must be one of the exact lines below. A comment, a
+// text: every plan line that names iptables or ip6tables or runs sudo, after
+// quotes and backslashes are removed, must be one of the exact lines below.
+// Naming sudo covers a command word that a variable splits, as in
+// sudo ipt${empty}ables; the replay in scripts/verify-invariants.sh runs the
+// plan against a stub netfilter model and covers every other spelling. A comment, a
 // conditional, a function body or a different option on such a line fails.
 func ValidateColimaEgressAtomicSwap(script string) error {
 	plan := applyPlanText(script)
@@ -54,7 +57,7 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 		allowed[i] = plainLine.Replace(allowed[i])
 	}
 	for line := range strings.Lines(plainLine.Replace(plan)) {
-		if strings.Contains(line, "tables") && !slices.Contains(allowed, strings.TrimSpace(line)) {
+		if (strings.Contains(line, "tables") || strings.Contains(line, "sudo")) && !slices.Contains(allowed, strings.TrimSpace(line)) {
 			return errors.New(liveChain)
 		}
 	}

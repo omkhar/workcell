@@ -67,6 +67,7 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		"direct replace":      "sudo ip6tables -R WORKCELL_EGRESS6 1 -j ACCEPT",
 		"direct append":       "sudo iptables -A WORKCELL_EGRESS -j ACCEPT",
 		"policy change":       "sudo iptables -P FORWARD ACCEPT",
+		"variable split":      "empty=; sudo ipt${empty}ables -F WORKCELL_EGRESS",
 		"split word":          `sudo ipt""ables -A WORKCELL_EGRESS -j ACCEPT`,
 		"conditional flush":   "if type iptables; then sudo iptables -F WORKCELL_EGRESS; fi",
 		"function flush":      "flush_live() { sudo iptables -F WORKCELL_EGRESS; }",
