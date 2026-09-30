@@ -85,6 +85,7 @@ func subcommands() []subcommand {
 		{"assemble-hosted-control-rulesets", "SUMMARY_PATH DETAILS_PATH OUTPUT_PATH", 3, 3, cmdAssembleHostedControlRulesets},
 		{"list-hosted-control-environments", "POLICY_PATH", 1, 1, cmdListHostedControlEnvironments},
 		{"verify-github-hosted-controls", "TMP_DIR REPO POLICY_PATH", 3, 3, cmdVerifyGitHubHostedControls},
+		{"upstream-refresh-scope-guard", "PATCH_FILE", 1, 1, cmdUpstreamRefreshScopeGuard},
 		{"extract-dockerfile-arg", "DOCKERFILE_PATH ARG_NAME", 2, 2, cmdExtractDockerfileArg},
 		{"extract-claude-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractClaudeSHA},
 		{"extract-codex-sha", "DOCKERFILE_PATH TARGET_ARCH", 2, 2, cmdExtractCodexSHA},
@@ -342,6 +343,14 @@ func cmdListHostedControlEnvironments(args []string) error {
 
 func cmdVerifyGitHubHostedControls(args []string) error {
 	return metadatautil.VerifyGitHubHostedControls(args[0], args[1], args[2])
+}
+
+func cmdUpstreamRefreshScopeGuard(args []string) error {
+	if err := metadatautil.CheckUpstreamRefreshScope(args[0]); err != nil {
+		return err
+	}
+	fmt.Println("scope-guard: patch is inside the agent-bump surface")
+	return nil
 }
 
 func cmdExtractDockerfileArg(args []string) error {

