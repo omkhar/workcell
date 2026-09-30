@@ -495,12 +495,16 @@ should_skip_shellcheck_file() {
   return 1
 }
 
+shellcheck_files=()
 for file in "${shell_files[@]}"; do
   if should_skip_shellcheck_file "${file}"; then
     continue
   fi
-  shellcheck -x "${file}"
+  shellcheck_files+=("${file}")
 done
+# One shellcheck process per file, four at a time. Each process prints its own
+# findings under its own file name; xargs exits non-zero if any process fails.
+printf '%s\0' "${shellcheck_files[@]}" | xargs -0 -n 1 -P 4 shellcheck -x
 
 # A lost exit status turns a trust decision into a vacuous pass: an unread
 # inventory looks the same as a clean one. SC2311 and SC2312 detect it, but they

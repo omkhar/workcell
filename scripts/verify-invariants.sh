@@ -5864,7 +5864,8 @@ EOF
 chmod +x "${BUILDVCS_FIXTURE}/fsmonitor.sh"
 BUILDVCS_OUTPUT="${BUILDVCS_FIXTURE}/fixture-bin"
 git -C "${BUILDVCS_FIXTURE}" config core.fsmonitor "${BUILDVCS_FIXTURE}/fsmonitor.sh"
-build_go_tool_in_repo "${BUILDVCS_FIXTURE}" "${BUILDVCS_OUTPUT}" .
+# The fixture go.mod is older than the repo toolchain; never download one.
+GOTOOLCHAIN=local build_go_tool_in_repo "${BUILDVCS_FIXTURE}" "${BUILDVCS_OUTPUT}" .
 [[ -x "${BUILDVCS_OUTPUT}" ]]
 if [[ -e "${BUILDVCS_MARKER}" ]]; then
   echo "Expected build_go_tool_in_repo to avoid repo-controlled fsmonitor execution" >&2
