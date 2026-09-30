@@ -141,15 +141,23 @@ if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)"
     exit 1
   fi
   (umask 077 && mkdir -p "${WORKCELL_VALIDATOR_CACHE_DIR}")
+  # Resolve every parent link once and use only the canonical path below, for
+  # the checks and for the mount, so Docker never receives a path whose parents
+  # can be swapped for links.  The owner-only mode check then closes the
+  # directory itself to other local users.
+  cache_dir="$(cd -P -- "${WORKCELL_VALIDATOR_CACHE_DIR}" && pwd -P)" || {
+    echo "WORKCELL_VALIDATOR_CACHE_DIR cannot be resolved" >&2
+    exit 1
+  }
   # The find status is checked on its own: inside a test expression a failing
   # find would yield empty output and pass as safe.
-  cache_unsafe_mode="$(find "${WORKCELL_VALIDATOR_CACHE_DIR}" -maxdepth 0 -perm /022 -print)" || cache_unsafe_mode="find-failed"
-  if [[ ! -d "${WORKCELL_VALIDATOR_CACHE_DIR}" || ! -O "${WORKCELL_VALIDATOR_CACHE_DIR}" || -n "${cache_unsafe_mode}" ]]; then
+  cache_unsafe_mode="$(find "${cache_dir}" -maxdepth 0 -perm /022 -print)" || cache_unsafe_mode="find-failed"
+  if [[ ! -d "${cache_dir}" || ! -O "${cache_dir}" || -n "${cache_unsafe_mode}" ]]; then
     echo "WORKCELL_VALIDATOR_CACHE_DIR must be a directory owned by the host uid and not group or other writable" >&2
     exit 1
   fi
   validator_cache="/workcell-validator-cache"
-  cache_mount_args=(--mount "$(workcell_ci_workspace_mount_spec "${WORKCELL_VALIDATOR_CACHE_DIR}" false "${validator_cache}")")
+  cache_mount_args=(--mount "$(workcell_ci_workspace_mount_spec "${cache_dir}" false "${validator_cache}")")
 fi
 
 # shellcheck disable=SC2016
