@@ -189,7 +189,7 @@ func ValidateCodexProfileLayer(path, sandboxMode, approvalPolicy string) error {
 
 // ValidateCodexAdapterLockstep verifies that adapters/codex/requirements.toml
 // and the managed provider wrapper stay in lockstep with the managed Codex
-// baseline: the two reviewed sandbox modes, the wrapper lines that disable the
+// baseline: the three reviewed sandbox modes, the wrapper lines that disable the
 // incompatible native sandbox, and the reviewed [features] key set and values.
 func ValidateCodexAdapterLockstep(rootDir string) error {
 	requirementsPath := filepath.Join(rootDir, "adapters", "codex", "requirements.toml")
