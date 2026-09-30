@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func TestRunFailsClosedOnBadConfig(t *testing.T) {
@@ -33,6 +35,9 @@ func TestRunFailsClosedOnBadConfig(t *testing.T) {
 		err := run(tc.args, io.Discard, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: run error = %v, want %q", name, err, tc.want)
+		}
+		if ec, ok := cliexit.IsExitCodeError(err); !ok || ec.Code != 2 {
+			t.Errorf("%s: run error = %v, want exit code 2", name, err)
 		}
 	}
 }

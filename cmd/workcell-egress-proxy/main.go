@@ -15,16 +15,25 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/egressproxy"
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); errors.Is(err, flag.ErrHelp) {
-		return // usage was printed
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "workcell-egress-proxy: %v\n", err)
-		os.Exit(1)
+	err := run(os.Args[1:], os.Stdout, os.Stderr)
+	if err == nil || errors.Is(err, flag.ErrHelp) { // help: usage was printed
+		return
 	}
+	fmt.Fprintf(os.Stderr, "workcell-egress-proxy: %v\n", err)
+	if ec, ok := cliexit.IsExitCodeError(err); ok {
+		os.Exit(ec.Code)
+	}
+	os.Exit(1)
+}
+
+// usageError marks a usage or precondition error, which exits 2.
+func usageError(err error) error {
+	return &cliexit.ExitCodeError{Code: 2, Message: err.Error()}
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
@@ -33,14 +42,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 	allowPath := flags.String("allowlist", "", "file with one host:port entry per line")
 	listenHost := flags.String("listen", "0.0.0.0", "address to listen on")
 	if err := flags.Parse(args); err != nil {
-		return err
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError(err)
 	}
 	if *allowPath == "" {
-		return errors.New("-allowlist is required")
+		return usageError(errors.New("-allowlist is required"))
 	}
 	allow, err := egressproxy.LoadAllowlist(*allowPath)
 	if err != nil {
-		return err
+		return usageError(err)
 	}
 	proxy := egressproxy.New(allow, stdout)
 	errs := make(chan error)
