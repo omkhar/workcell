@@ -494,10 +494,10 @@ for endpoint in ${WORKCELL_ENDPOINTS}; do
 done
 # Replace each chain in one iptables-restore transaction. The old
 # DROP-terminated chain stays in force until the complete new chain replaces it.
-printf '*filter\n:WORKCELL_EGRESS - [0:0]\n-A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS -j DROP\nCOMMIT\n' "${IPV4_RULES}" |
-  sudo iptables-restore --noflush
-printf '*filter\n:WORKCELL_EGRESS6 - [0:0]\n-A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS6 -j DROP\nCOMMIT\n' "${IPV6_RULES}" |
-  sudo ip6tables-restore --noflush
+IPV4_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS - [0:0]\n-A WORKCELL_EGRESS -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS -j DROP\nCOMMIT\n' "${IPV4_RULES}")"
+IPV6_RESTORE="$(printf '*filter\n:WORKCELL_EGRESS6 - [0:0]\n-A WORKCELL_EGRESS6 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n%s-A WORKCELL_EGRESS6 -j DROP\nCOMMIT\n' "${IPV6_RULES}")"
+sudo iptables-restore --noflush <<<"${IPV4_RESTORE}"
+sudo ip6tables-restore --noflush <<<"${IPV6_RESTORE}"
 sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS
 sudo ip6tables -C DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || sudo ip6tables -I DOCKER-USER 1 -j WORKCELL_EGRESS6
 EOF

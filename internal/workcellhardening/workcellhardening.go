@@ -145,6 +145,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
 // launcherRelPath is the repo-relative path to the host launcher every
@@ -3972,8 +3974,8 @@ func CheckSmokeChownTar(rootDir string) error {
 //     containment (kindPresent).
 //   - The atomic-swap pair scopes to render_allowlist_apply_plan: the block
 //     must not unlink or flush the live chain (kindFunctionBlockRegexAbsent),
-//     and the file must carry `iptables-restore --noflush` as a command line
-//     (kindRegexPresent).
+//     and the parsed apply plan must run `iptables-restore --noflush` for both
+//     families (metadatautil.ValidateColimaEgressAtomicSwap, after the table).
 //   - The two affirmative function_block_contains_regex probes scope to
 //     render_allowlist_apply_plan (kindFunctionBlockRegex); their patterns
 //     (resolve_vm_endpoint_ips, getent ahosts) are
@@ -4005,16 +4007,6 @@ var dualStackApplyPlanChecks = []check{
 		regex:        `-[DF] (DOCKER-USER|WORKCELL_EGRESS)`,
 		message:      "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete",
 		targetFile:   colimaEgressAllowlistRelPath,
-	},
-	{
-		// kindRegexPresent (whole file): the block extractor stops at the first
-		// column-0 `}` inside the plan heredoc, before the restore step. The
-		// line anchors reject the command inside a comment or an echo/printf
-		// string; the replay in verify-invariants.sh covers placement.
-		kind:       kindRegexPresent,
-		regex:      `^[[:space:]]+sudo iptables-restore --noflush$`,
-		message:    "Expected dual-stack allowlist apply plan to replace the chain in one iptables-restore transaction",
-		targetFile: colimaEgressAllowlistRelPath,
 	},
 	{
 		kind:         kindFunctionBlockRegex,
@@ -4065,7 +4057,14 @@ var dualStackApplyPlanChecks = []check{
 // whose message equals the shell's stderr for the first violated invariant (the
 // shell's exit 1).
 func CheckDualStackApplyPlan(rootDir string) error {
-	return evaluate(rootDir, dualStackApplyPlanChecks)
+	if err := evaluate(rootDir, dualStackApplyPlanChecks); err != nil {
+		return err
+	}
+	script, err := os.ReadFile(filepath.Join(rootDir, colimaEgressAllowlistRelPath))
+	if err != nil {
+		return err
+	}
+	return metadatautil.ValidateColimaEgressAtomicSwap(string(script))
 }
 
 // publishBaseRefcheckChecks holds the single publish-pr base-name invariant

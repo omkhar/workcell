@@ -5577,8 +5577,10 @@ func TestCheckSmokeChownTarRealRepo(t *testing.T) {
 func dualStackApplyPlanHappyFiles() map[string]string {
 	body := "#!/usr/bin/env bash\n" +
 		"render_allowlist_apply_plan() {\n" +
-		"  printf x |\n" +
+		"  cat <<'EOF'\n" +
 		"  sudo iptables-restore --noflush\n" +
+		"  sudo ip6tables-restore --noflush\n" +
+		"EOF\n" +
 		"  resolve_vm_endpoint_ips \"${endpoints}\"\n" +
 		"  getent ahosts \"${host}\"\n" +
 		"}\n" +
@@ -5703,7 +5705,7 @@ func TestCheckDualStackApplyPlan(t *testing.T) {
 }
 
 func TestCheckDualStackApplyPlanCount(t *testing.T) {
-	if got, want := len(dualStackApplyPlanChecks), 8; got != want {
+	if got, want := len(dualStackApplyPlanChecks), 7; got != want {
 		t.Fatalf("dualStackApplyPlanChecks has %d checks, want %d", got, want)
 	}
 }
