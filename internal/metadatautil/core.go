@@ -567,6 +567,7 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "adapter-baseline", RepoPath: "adapters/copilot/README.md", RuntimePath: "/opt/workcell/adapters/copilot/README.md"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/.gemini/settings.json", RuntimePath: "/opt/workcell/adapters/gemini/.gemini/settings.json"},
 		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/GEMINI.md", RuntimePath: "/opt/workcell/adapters/gemini/GEMINI.md"},
+		{Kind: "adapter-baseline", RepoPath: "adapters/gemini/system-settings.json", RuntimePath: "/opt/workcell/adapters/gemini/system-settings.json"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/assurance.sh", RuntimePath: "/usr/local/libexec/workcell/assurance.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-helper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-helper.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/bin/apt-wrapper.sh", RuntimePath: "/usr/local/libexec/workcell/apt-wrapper.sh"},
@@ -582,6 +583,8 @@ func GenerateControlPlaneManifest(rootDir, outputPath string) error {
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/public-node-guard.mjs", RuntimePath: "/usr/local/libexec/workcell/public-node-guard.mjs"},
 		{Kind: "runtime-control-plane", RepoPath: "runtime/container/runtime-user.sh", RuntimePath: "/usr/local/libexec/workcell/runtime-user.sh"},
 		{Kind: "runtime-control-plane", RepoPath: "adapters/claude/managed-settings.json", RuntimePath: "/etc/claude-code/managed-settings.json"},
+		{Kind: "runtime-control-plane", RepoPath: "adapters/codex/requirements.toml", RuntimePath: "/etc/codex/requirements.toml"},
+		{Kind: "runtime-control-plane", RepoPath: "adapters/gemini/system-settings.json", RuntimePath: "/etc/gemini-cli/settings.json"},
 	}
 
 	renderedHost := make([]map[string]any, 0, len(hostArtifacts))
@@ -741,6 +744,8 @@ func ControlPlaneParityRows(manifestPath string) ([]string, error) {
 		runtimePath string
 	}{
 		{label: "claude-managed-settings", runtimePath: "/etc/claude-code/managed-settings.json"},
+		{label: "codex-requirements", runtimePath: "/etc/codex/requirements.toml"},
+		{label: "gemini-system-settings", runtimePath: "/etc/gemini-cli/settings.json"},
 		{label: "development-wrapper", runtimePath: "/usr/local/libexec/workcell/development-wrapper.sh"},
 		{label: "detached-stdin-wrapper", runtimePath: "/usr/local/libexec/workcell/detached-stdin-wrapper.sh"},
 		{label: "sudo-wrapper", runtimePath: "/usr/local/libexec/workcell/sudo-wrapper.sh"},

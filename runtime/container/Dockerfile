@@ -562,9 +562,14 @@ COPY runtime/container/public-node-guard.mjs /usr/local/libexec/workcell/public-
 COPY runtime/container/entrypoint.sh /usr/local/libexec/workcell/entrypoint.sh
 
 RUN mkdir -p /etc/claude-code \
+  && mkdir -p /etc/codex /etc/gemini-cli \
   && cp /opt/workcell/adapters/claude/managed-settings.json /etc/claude-code/managed-settings.json \
+  && cp /opt/workcell/adapters/codex/requirements.toml /etc/codex/requirements.toml \
+  && cp /opt/workcell/adapters/gemini/system-settings.json /etc/gemini-cli/settings.json \
   && chmod 0444 \
     /etc/claude-code/managed-settings.json \
+    /etc/codex/requirements.toml \
+    /etc/gemini-cli/settings.json \
   && chmod 0444 \
     /usr/local/libexec/workcell/assurance.sh \
     /usr/local/libexec/workcell/apt-wrapper.sh \
@@ -593,7 +598,7 @@ RUN mkdir -p /etc/claude-code \
     /usr/local/libexec/workcell/runtime-user.sh \
     /usr/local/libexec/workcell/sudo-wrapper.sh \
     /opt/workcell/adapters/claude/hooks/guard-bash.sh \
-  && find /opt/workcell/adapters /etc/claude-code /usr/local/libexec/workcell -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
+  && find /opt/workcell/adapters /etc/claude-code /usr/local/libexec/workcell /etc/codex /etc/gemini-cli -print0 | LC_ALL=C sort -z | xargs -0 touch -h -d "@${SOURCE_DATE_EPOCH}" \
   && touch -h -d "@${SOURCE_DATE_EPOCH}" \
     /etc/ld.so.preload \
     /usr/local/lib/libworkcell_exec_guard.so \
@@ -609,6 +614,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # tar decompression overhead on every container cold start.
 COPY --from=provider-builder /opt/workcell/providers /opt/workcell/providers
 COPY --from=runtime-builder /etc/claude-code/managed-settings.json /etc/claude-code/managed-settings.json
+COPY --from=runtime-builder /etc/codex/requirements.toml /etc/codex/requirements.toml
+COPY --from=runtime-builder /etc/gemini-cli/settings.json /etc/gemini-cli/settings.json
 COPY --from=runtime-builder /etc/ld.so.preload /etc/ld.so.preload
 COPY --from=runtime-builder /opt/workcell/adapters /opt/workcell/adapters
 COPY --from=runtime-builder /usr/local/lib/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so
@@ -645,6 +652,8 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && ln -sf /usr/local/libexec/workcell/sudo-wrapper.sh /usr/bin/sudo \
   && chmod 0444 \
     /etc/claude-code/managed-settings.json \
+    /etc/codex/requirements.toml \
+    /etc/gemini-cli/settings.json \
     /usr/local/libexec/workcell/control-plane-manifest.json \
   && chmod 0644 \
     /opt/workcell/providers/node_modules/@google/gemini-cli/bundle/gemini.js \
@@ -664,6 +673,8 @@ RUN mv /usr/bin/git /usr/local/libexec/workcell/real/git \
   && find \
       /opt/workcell/adapters \
       /etc/claude-code \
+      /etc/codex \
+      /etc/gemini-cli \
       /etc/ld.so.preload \
       /usr/local/bin \
       /usr/local/lib/libworkcell_exec_guard.so \

@@ -31,6 +31,11 @@ Repo baselines under `adapters/gemini/`:
 
 - `.gemini/settings.json`: managed settings seeded to `~/.gemini/settings.json`.
 - `GEMINI.md`: managed baseline rendered into `~/.gemini/GEMINI.md`.
+- `system-settings.json`: installed root-owned at
+  `/etc/gemini-cli/settings.json`, the Gemini system scope. It has precedence
+  over user and workspace settings. It turns off hooks, telemetry, and
+  auto-update, pins the context file-name list, and sets
+  `advanced.ignoreLocalEnv` so Gemini does not load a workspace `.env` file.
 
 Additional in-container session targets: `~/.gemini/.env`,
 `~/.gemini/oauth_creds.json`, `~/.gemini/projects.json`,
@@ -48,7 +53,9 @@ Additional in-container session targets: `~/.gemini/.env`,
   (`docs/adapter-control-planes.md#gemini-folder-trust`).
 - The wrapper sanitizes Gemini's own-sandbox env
   (`GEMINI_SANDBOX*`) before launch (`sanitize_gemini_sandbox_env` in
-  `runtime/container/provider-wrapper.sh`).
+  `runtime/container/provider-wrapper.sh`). It also removes
+  `GEMINI_CLI_SYSTEM_SETTINGS_PATH` (`sanitize_provider_env`), so Gemini
+  always reads the root-owned system settings.
 - Autonomy is set host-side via `workcell --agent-autonomy` (mapped to
   `--approval-mode`); provider-native overrides are not honored.
 - `reject_unsafe_gemini_args` blocks permission bypass, sandbox, extra

@@ -1,0 +1,17 @@
+{
+  "general": {
+    "enableAutoUpdate": false
+  },
+  "context": {
+    "fileName": []
+  },
+  "hooksConfig": {
+    "enabled": false
+  },
+  "telemetry": {
+    "enabled": false
+  },
+  "advanced": {
+    "ignoreLocalEnv": true
+  }
+}

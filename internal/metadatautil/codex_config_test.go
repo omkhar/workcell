@@ -15,7 +15,7 @@ approval_policy = "on-request"
 web_search = "disabled"
 `
 
-const validCodexRequirementsFixture = `allowed_sandbox_modes = ["workspace-write", "danger-full-access"]
+const validCodexRequirementsFixture = `allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]
 
 [features]
 unified_exec = true
@@ -215,11 +215,11 @@ func TestValidateCodexAdapterLockstep(t *testing.T) {
 			"wrong allowed_sandbox_modes",
 			strings.Replace(validCodexRequirementsFixture, "\"danger-full-access\"", "\"read-only\"", 1),
 			validCodexWrapperFixture,
-			"Expected adapters/codex/requirements.toml to allow the two reviewed Codex sandbox values",
+			"Expected adapters/codex/requirements.toml to allow the reviewed Codex sandbox values",
 		},
 		{
 			"missing allowed_sandbox_modes",
-			strings.Replace(validCodexRequirementsFixture, "allowed_sandbox_modes = [\"workspace-write\", \"danger-full-access\"]\n", "", 1),
+			strings.Replace(validCodexRequirementsFixture, "allowed_sandbox_modes = [\"read-only\", \"workspace-write\", \"danger-full-access\"]\n", "", 1),
 			validCodexWrapperFixture,
 			"to define allowed_sandbox_modes",
 		},

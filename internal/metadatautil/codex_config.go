@@ -197,8 +197,8 @@ func ValidateCodexAdapterLockstep(rootDir string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireCodexAssignment(requirementsPath, "", requirements, "allowed_sandbox_modes", []any{"workspace-write", "danger-full-access"}); err != nil {
-		return fmt.Errorf("%w\nExpected adapters/codex/requirements.toml to allow the two reviewed Codex sandbox values", err)
+	if err := requireCodexAssignment(requirementsPath, "", requirements, "allowed_sandbox_modes", []any{"read-only", "workspace-write", "danger-full-access"}); err != nil {
+		return fmt.Errorf("%w\nExpected adapters/codex/requirements.toml to allow the reviewed Codex sandbox values", err)
 	}
 
 	wrapperPath := filepath.Join(rootDir, "runtime", "container", "provider-wrapper.sh")

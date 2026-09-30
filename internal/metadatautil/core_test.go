@@ -304,6 +304,8 @@ func TestControlPlaneParityRowsIncludePrivilegedAndDetachedWrappers(t *testing.T
 		"path\tdevelopment-wrapper\t/usr/local/libexec/workcell/development-wrapper.sh",
 		"path\tdetached-stdin-wrapper\t/usr/local/libexec/workcell/detached-stdin-wrapper.sh",
 		"path\tsudo-wrapper\t/usr/local/libexec/workcell/sudo-wrapper.sh",
+		"path\tcodex-requirements\t/etc/codex/requirements.toml",
+		"path\tgemini-system-settings\t/etc/gemini-cli/settings.json",
 	} {
 		found := false
 		for _, row := range rows {

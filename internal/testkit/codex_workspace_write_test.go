@@ -55,7 +55,7 @@ func TestCodexManagedConfigKeepsWorkspaceWriteOutsideBreakglass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(requirements), `allowed_sandbox_modes = ["workspace-write", "danger-full-access"]`) {
+	if !strings.Contains(string(requirements), `allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]`) {
 		t.Fatalf("%s does not allow managed workspace-write mode", requirementsPath)
 	}
 }
