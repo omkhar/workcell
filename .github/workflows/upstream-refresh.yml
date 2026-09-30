@@ -54,7 +54,7 @@ jobs:
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
           trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply | tee "${RUNNER_TEMP}/upstream-refresh-apply.log"
 
       - id: changes
         name: Detect refreshed content
@@ -221,6 +221,16 @@ jobs:
               cat "${diffstat_path}"
               echo '```'
             } > "${issue_body}"
+          fi
+
+          # Held releases show in every result branch, not only the no-change one.
+          if grep -q 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log"; then
+            {
+              echo
+              echo "## Held for manual classification"
+              echo
+              grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /' | sort -u
+            } >>"${issue_body}"
           fi
 
           issues_json="$(

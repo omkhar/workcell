@@ -4,6 +4,8 @@
 package metadatautil
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -196,6 +198,81 @@ func TestPlanProviderBumpsSelectsNewestStableVersionsPastCooloff(t *testing.T) {
 	}
 	if got := plan.Providers["codex"].Checksums; !reflect.DeepEqual(got, wantCodexChecksums) {
 		t.Fatalf("Codex checksums = %#v, want %#v", got, wantCodexChecksums)
+	}
+}
+
+func TestPlanProviderBumpsHoldsBackOnlyCodexOnUnclassifiedCLISurface(t *testing.T) {
+	root := t.TempDir()
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	packageJSONPath := filepath.Join(root, "package.json")
+	policyPath := filepath.Join(root, "provider-bumps.toml")
+	fixturePath := filepath.Join(root, "codex-subcommands.txt")
+	mustWriteText(t, dockerfilePath, "ARG CLAUDE_VERSION=2.1.86\nARG CODEX_VERSION=0.144.1\nARG COPILOT_VERSION=1.0.65\n")
+	mustWriteText(t, packageJSONPath, `{"dependencies":{"@google/gemini-cli":"0.34.0"}}`+"\n")
+	mustWriteText(t, policyPath, "version = 1\ncooloff_hours = 72\n[provider.codex]\nchannel = \"stable\"\n[provider.copilot]\nchannel = \"stable\"\n[provider.claude]\nchannel = \"stable\"\n[provider.gemini]\nchannel = \"stable\"\n")
+	mustWriteText(t, fixturePath, codexFixtureText("0.144.1", []string{"update", "exec", "e", "app", "cloud", "cloud-tasks", "stdio-to-uds", "help"}))
+
+	driftedSource := strings.Replace(codexSubcommandSourceFixture, "    Update,\n", "    Update,\n    Danger(DangerCli),\n", 1)
+	sourceSHA := codexGitBlobObjectID([]byte(driftedSource))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex-registry":
+			writeRegistryMetadata(w, "0.145.0", map[string]string{"0.144.1": "2026-03-20T00:00:00Z", "0.145.0": "2026-04-01T00:00:00Z"})
+		case "/codex-release/rust-v0.145.0":
+			_, _ = w.Write([]byte(`{"tag_name":"rust-v0.145.0","prerelease":false,"assets":[
+  {"name":"codex-aarch64-unknown-linux-musl.tar.gz","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+  {"name":"codex-x86_64-unknown-linux-musl.tar.gz","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+  {"name":"codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz","digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+  {"name":"codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444"}]}`))
+		case "/codex-source/0.145.0":
+			_ = json.NewEncoder(w).Encode(githubContentsFile{Type: "file", Encoding: "base64", Content: base64.StdEncoding.EncodeToString([]byte(driftedSource)), SHA: sourceSHA})
+		case "/gemini-registry":
+			writeRegistryMetadata(w, "0.34.0", map[string]string{"0.34.0": "2026-03-17T00:00:00Z"})
+		case "/claude-registry":
+			writeRegistryMetadata(w, "2.1.92", map[string]string{"2.1.92": "2026-04-03T23:57:51Z"})
+		case "/claude-release/2.1.92/manifest.json":
+			_, _ = w.Write([]byte(`{"version":"2.1.92","buildDate":"2026-04-03T23:57:51Z","platforms":{
+  "linux-arm64":{"checksum":"08deb3d56477496eb92e624f492e25b123f4527dd5674f71afff58a48eccd953"},
+  "linux-x64":{"checksum":"e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	sources := ProviderBumpSources{
+		CodexRegistryURL:           server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt:      server.URL + "/codex-release/rust-v%s",
+		GeminiRegistryURL:          server.URL + "/gemini-registry",
+		ClaudeRegistryURL:          server.URL + "/claude-registry",
+		ClaudeReleaseRootURL:       server.URL + "/claude-release",
+		CodexCLISourceURLFmt:       server.URL + "/codex-source/%s",
+		CodexSubcommandFixturePath: fixturePath,
+	}
+	now := time.Date(2026, time.April, 8, 10, 0, 0, 0, time.UTC)
+
+	plan, err := PlanProviderBumps(policyPath, dockerfilePath, packageJSONPath, now, sources, server.Client())
+	if err != nil {
+		t.Fatalf("PlanProviderBumps() error = %v", err)
+	}
+	codex := plan.Providers["codex"]
+	if codex.Changed || codex.TargetVersion != "0.144.1" || codex.Checksums != nil {
+		t.Fatalf("Codex selection = %#v, want held at 0.144.1", codex)
+	}
+	wantHeld := ProviderBumpSkippedRelease{Version: "0.145.0", PublishedAt: "2026-04-01T00:00:00Z", Reason: "unclassified-cli-surface added=[danger] removed=[]"}
+	if len(codex.SkippedReleases) != 1 || codex.SkippedReleases[0] != wantHeld {
+		t.Fatalf("Codex skipped releases = %#v, want [%#v]", codex.SkippedReleases, wantHeld)
+	}
+	if claude := plan.Providers["claude"]; !claude.Changed || claude.TargetVersion != "2.1.92" {
+		t.Fatalf("Claude selection = %#v, want bump to 2.1.92", claude)
+	}
+	if !plan.HasChanges {
+		t.Fatal("PlanProviderBumps() should still report the Claude change")
+	}
+
+	// A provenance failure is not a classification result: it stays fatal.
+	sourceSHA = strings.Repeat("0", 40)
+	if _, err := PlanProviderBumps(policyPath, dockerfilePath, packageJSONPath, now, sources, server.Client()); err == nil || !strings.Contains(err.Error(), "disagrees with its Git blob SHA") {
+		t.Fatalf("PlanProviderBumps() error = %v, want fatal Git blob SHA mismatch", err)
 	}
 }
 
@@ -2392,5 +2469,46 @@ func mustWriteText(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+}
+
+func holdCodexWithFixturePath(t *testing.T, fixturePath string) error {
+	t.Helper()
+	sources := ProviderBumpSources{CodexCLISourceURLFmt: "http://codex.test/%s", CodexSubcommandFixturePath: fixturePath}
+	source := []byte(codexSubcommandSourceFixture)
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(githubContentsFile{Type: "file", Encoding: "base64", Content: base64.StdEncoding.EncodeToString(source), SHA: codexGitBlobObjectID(source)})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	_, err := holdCodexOnUnclassifiedCLISurface(ProviderBumpSelection{TargetVersion: "0.145.0"}, sources, client)
+	return err
+}
+
+func TestHoldCodexRejectsSymlinkedFixture(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real.txt")
+	link := filepath.Join(root, "codex-subcommands.txt")
+	mustWriteText(t, real, codexFixtureText("0.144.1", []string{"update"}))
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdCodexWithFixturePath(t, link); err == nil || !strings.Contains(err.Error(), "read Codex subcommand fixture") {
+		t.Fatalf("error = %v, want symlink rejection", err)
+	}
+}
+
+func TestHoldCodexRejectsSymlinkedFixtureParent(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteText(t, filepath.Join(realDir, "codex-subcommands.txt"), codexFixtureText("0.144.1", []string{"update"}))
+	linkDir := filepath.Join(root, "fixtures")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdCodexWithFixturePath(t, filepath.Join(linkDir, "codex-subcommands.txt")); err == nil || !strings.Contains(err.Error(), "read Codex subcommand fixture") {
+		t.Fatalf("error = %v, want parent symlink rejection", err)
 	}
 }

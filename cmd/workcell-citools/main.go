@@ -97,7 +97,7 @@ func subcommands() []subcommand {
 		{"manifest-checksum", "MANIFEST_PATH PLATFORM", 2, 2, cmdManifestChecksum},
 		{"manifest-version", "MANIFEST_PATH EXPECTED_VERSION", 2, 2, cmdManifestVersion},
 		{"check-provider-bump-policy", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 3, 3, cmdCheckProviderBumpPolicy},
-		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON [NOW_RFC3339]", 3, 4, cmdProviderBumpPlan},
+		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE [NOW_RFC3339]", 4, 5, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
@@ -490,14 +490,16 @@ func cmdCheckProviderBumpPolicy(args []string) error {
 
 func cmdProviderBumpPlan(args []string) error {
 	now := time.Now().UTC()
-	if len(args) == 4 {
-		parsed, err := time.Parse(time.RFC3339, args[3])
+	if len(args) == 5 {
+		parsed, err := time.Parse(time.RFC3339, args[4])
 		if err != nil {
 			return err
 		}
 		now = parsed.UTC()
 	}
-	plan, err := metadatautil.PlanProviderBumps(args[0], args[1], args[2], now, metadatautil.DefaultProviderBumpSources(), nil)
+	sources := metadatautil.DefaultProviderBumpSources()
+	sources.CodexSubcommandFixturePath = args[3]
+	plan, err := metadatautil.PlanProviderBumps(args[0], args[1], args[2], now, sources, nil)
 	if err != nil {
 		return err
 	}
