@@ -36,6 +36,14 @@ if [[ -n "${odd}" ]]; then
   exit 1
 fi
 
+# Cargo follows links inside a Git dependency and copies their targets into the
+# vendor output, so accept only crates.io sources from the lock file.
+foreign="$(awk '/^source = / && $0 != "source = \"registry+https://github.com/rust-lang/crates.io-index\"" { print }' "${RUST_DIR}/Cargo.lock")"
+if [[ -n "${foreign}" ]]; then
+  echo "Cargo.lock names a source other than crates.io: ${foreign}" >&2
+  exit 1
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 fresh="${tmp}/vendor"

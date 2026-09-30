@@ -47,6 +47,11 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(vendor), "rust-toolchain.toml"), []byte("[toolchain]\npath = \"/proc/self/cwd/fake\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	lock := filepath.Join(filepath.Dir(vendor), "Cargo.lock")
+	cleanLock := "[[package]]\nname = \"libc\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+	if err := os.WriteFile(lock, []byte(cleanLock), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	fakeCargo := "#!/bin/sh\n[ ! -e rust-toolchain.toml ] || exit 9\ncp -R '" + reference + "' \"$3\"\n"
 	if err := os.WriteFile(filepath.Join(home, ".cargo", "bin", "cargo"), []byte(fakeCargo), 0o755); err != nil {
 		t.Fatal(err)
@@ -83,6 +88,17 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 		t.Fatalf("vendor-root checksum file accepted: %s", out)
 	}
 	if err := os.Remove(rootSum); err != nil {
+		t.Fatal(err)
+	}
+	// A lock file that names a Git source must be rejected before Cargo runs.
+	gitLock := cleanLock + "[[package]]\nname = \"evil\"\nsource = \"git+https://example.invalid/evil#abc\"\n"
+	if err := os.WriteFile(lock, []byte(gitLock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("Git source in Cargo.lock accepted: %s", out)
+	}
+	if err := os.WriteFile(lock, []byte(cleanLock), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A mode change alone must be rejected.
