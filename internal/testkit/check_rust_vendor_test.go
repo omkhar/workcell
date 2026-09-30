@@ -98,6 +98,15 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if out, err := run(); err == nil {
 		t.Fatalf("Git source in Cargo.lock accepted: %s", out)
 	}
+	// Other spellings of the same field must fail too.
+	for _, spelled := range []string{"source=\"git+https://example.invalid/evil#abc\"\n", " source = \"git+https://example.invalid/evil#abc\"\n"} {
+		if err := os.WriteFile(lock, []byte(cleanLock+spelled), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := run(); err == nil {
+			t.Fatalf("Cargo.lock spelling %q accepted: %s", spelled, out)
+		}
+	}
 	if err := os.WriteFile(lock, []byte(cleanLock), 0o644); err != nil {
 		t.Fatal(err)
 	}

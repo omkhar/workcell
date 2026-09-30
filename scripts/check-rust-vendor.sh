@@ -37,10 +37,19 @@ if [[ -n "${odd}" ]]; then
 fi
 
 # Cargo follows links inside a Git dependency and copies their targets into the
-# vendor output, so accept only crates.io sources from the lock file.
-foreign="$(awk '/^source = / && $0 != "source = \"registry+https://github.com/rust-lang/crates.io-index\"" { print }' "${RUST_DIR}/Cargo.lock")"
-if [[ -n "${foreign}" ]]; then
-  echo "Cargo.lock names a source other than crates.io: ${foreign}" >&2
+# vendor output, so accept only crates.io sources. Cargo reads spellings that a
+# line match misses, so allow only the exact form Cargo writes and reject every
+# other line.
+odd_lock="$(awk '
+  /^$/ || /^#/ || /^version = [0-9]+$/ || /^\[\[package\]\]$/ { next }
+  /^name = "[A-Za-z0-9_-]+"$/ || /^version = "[0-9A-Za-z.+-]+"$/ { next }
+  /^source = "registry\+https:\/\/github.com\/rust-lang\/crates.io-index"$/ { next }
+  /^checksum = "[0-9a-f]+"$/ || /^dependencies = \[$/ || /^\]$/ { next }
+  /^ "[A-Za-z0-9_. +-]+",$/ { next }
+  { print }
+' "${RUST_DIR}/Cargo.lock")"
+if [[ -n "${odd_lock}" ]]; then
+  echo "Cargo.lock has a line this check does not accept: ${odd_lock}" >&2
   exit 1
 fi
 
