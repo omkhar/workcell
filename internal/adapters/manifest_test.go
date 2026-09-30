@@ -651,8 +651,9 @@ func TestManifestInstallPinsExist(t *testing.T) {
 		if m.Install.VersionArg != "" && !pinned[m.Install.VersionArg] {
 			t.Errorf("%s: Dockerfile has no pinned ARG %s", m.ID, m.Install.VersionArg)
 		}
-		if m.Install.Package != "" && (pkg.Dependencies[m.Install.Package] == "" || !strings.Contains(m.Install.Package, m.ID)) {
-			t.Errorf("%s: package %q must name the adapter and be a providers/package.json dependency", m.ID, m.Install.Package)
+		// The runtime runs this exact package (Dockerfile and provider-wrapper.sh).
+		if want := map[string]string{providerid.Gemini: "@google/gemini-cli"}[m.ID]; m.Install.Package != want || want != "" && pkg.Dependencies[want] == "" {
+			t.Errorf("%s: package = %q, want %q as a providers/package.json dependency", m.ID, m.Install.Package, want)
 		}
 		if _, err := os.Stat(filepath.Join(repoRoot, m.Install.Provenance)); err != nil {
 			t.Errorf("%s: provenance script: %v", m.ID, err)
