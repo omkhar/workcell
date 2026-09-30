@@ -229,8 +229,8 @@ jobs:
               echo
               echo "## Held for manual classification"
               echo
-              grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /'
-            } >> "${issue_body}"
+              grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /' | sort -u
+            } >>"${issue_body}"
           fi
 
           issues_json="$(
