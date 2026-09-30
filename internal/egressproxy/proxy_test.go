@@ -415,3 +415,17 @@ func TestPeekSNIRefusesECH(t *testing.T) {
 		t.Fatal("ECH hello accepted, want refused")
 	}
 }
+
+func TestConnectLooksUpRootedName(t *testing.T) {
+	t.Parallel()
+	p := New(&Allowlist{}, io.Discard)
+	var looked string
+	p.lookup = func(_ context.Context, host string) ([]netip.Addr, error) {
+		looked = host
+		return nil, errors.New("stop")
+	}
+	p.connect("db", 5432)
+	if looked != "db." {
+		t.Fatalf("lookup host = %q, want %q", looked, "db.")
+	}
+}

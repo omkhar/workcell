@@ -283,6 +283,13 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestPeekSNIRefusesECH", "-count=1"),
 	},
 	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `p.lookup(ctx, host+".")`,
+		replacement:  `p.lookup(ctx, host)`,
+		label:        "egress proxy resolves the rooted name",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestConnectLooksUpRootedName", "-count=1"),
+	},
+	{
 		relativePath: "internal/egressproxy/allowlist.go",
 		original:     `syscall.O_NOFOLLOW`,
 		replacement:  `0`,

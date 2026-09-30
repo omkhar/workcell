@@ -167,7 +167,8 @@ func (p *Proxy) route(client net.Conn, port uint16) (host string, replay []byte,
 func (p *Proxy) connect(host string, port uint16) (net.Conn, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
-	addrs, err := p.lookup(ctx, host)
+	// A rooted name keeps the resolver from appending a DNS search suffix.
+	addrs, err := p.lookup(ctx, host+".")
 	if err != nil || len(addrs) == 0 {
 		return nil, "resolve_failed"
 	}
