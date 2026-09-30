@@ -145,9 +145,10 @@ source "`+libDir+`/launcher/go-hostutil.sh"
 	if err := os.Chmod(current, 0o770); err != nil {
 		t.Fatal(err)
 	}
-	tamperedInode := inode(current)
 	expectOutput("go_hostutil hello", "v2 [hello]")
-	if info, err := os.Lstat(current); err != nil || info.Mode().Perm() != 0o700 || inode(current) == tamperedInode {
+	// The script never chmods an existing binary, so mode 0700 proves a rebuild.
+	// An inode compare is unsafe: Linux reuses a freed inode number.
+	if info, err := os.Lstat(current); err != nil || info.Mode().Perm() != 0o700 {
 		t.Fatalf("group-writable cached binary was not rebuilt (err %v)", err)
 	}
 
