@@ -36,6 +36,21 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 	RequireRejectsAllEvasions(t, string(script), guard, "live chain linked",
 		metadatautil.ValidateColimaEgressAtomicSwap)
 
+	// A guard whose insert is swallowed leaves a new profile unlinked.
+	unlinked := strings.Replace(string(script),
+		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\nsudo ip6tables",
+		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\nsudo ip6tables", 1)
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(unlinked); err == nil || !strings.Contains(err.Error(), "live chain linked") {
+		t.Fatalf("swallowed insert error = %v, want live chain rejection", err)
+	}
+
+	// A commented copy of the guard must not cover a swallowed insert.
+	decoy := strings.Replace(unlinked, "sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\n",
+		"sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS || true\n# sudo iptables -C DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || sudo iptables -I DOCKER-USER 1 -j WORKCELL_EGRESS\n", 1)
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(decoy); err == nil || !strings.Contains(err.Error(), "live chain linked") {
+		t.Fatalf("decoy guard error = %v, want live chain rejection", err)
+	}
+
 	// The live chain must never be deleted or flushed, in any spelling.
 	for name, hidden := range map[string]string{
 		"quoted flush":        `sudo iptables "-F" WORKCELL_EGRESS`,

@@ -34,13 +34,33 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 		}
 	}
 	for _, family := range families {
-		if !slices.ContainsFunc(ShellInvocations(plan, "sudo "+family), func(invocation Invocation) bool {
-			return len(invocation.Args) > 0 && invocation.Args[0] == "-C"
-		}) {
+		chain := map[string]string{"iptables": "WORKCELL_EGRESS", "ip6tables": "WORKCELL_EGRESS6"}[family]
+		if !linkGuardRuns(plan, family, chain) {
 			return errors.New(liveChain)
 		}
 	}
 	return nil
+}
+
+// linkGuardRuns reports whether the plan runs the DOCKER-USER link guard for
+// family: check for the jump and, when the check fails, insert it. The parser
+// drops the insert after ||, so it proves only that the check runs. The plan
+// must hold exactly one line that names the check, and that line must be the
+// whole guard, so a swallowed insert such as `|| true` cannot pass and a decoy
+// copy of the guard cannot stand in for the line that runs.
+func linkGuardRuns(plan, family, chain string) bool {
+	guard := "sudo " + family + " -C DOCKER-USER -j " + chain + " 2>/dev/null || sudo " + family + " -I DOCKER-USER 1 -j " + chain
+	named := 0
+	whole := false
+	for line := range strings.Lines(plan) {
+		if strings.Contains(line, family+" -C") {
+			named++
+			whole = strings.TrimSpace(line) == guard
+		}
+	}
+	return named == 1 && whole && slices.ContainsFunc(ShellInvocations(plan, "sudo "+family), func(check Invocation) bool {
+		return slices.Equal(check.Args[:min(len(check.Args), 4)], []string{"-C", "DOCKER-USER", "-j", chain})
+	})
 }
 
 // hasDestructiveNetfilterOption reports whether any line of the plan names

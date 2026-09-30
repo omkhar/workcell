@@ -3097,13 +3097,17 @@ for egress_swap_tool in ip6tables iptables-restore ip6tables-restore; do
 done
 run_egress_swap_case() {
   local endpoints="$1"
+  local seed="${2:-linked}"
   local family=""
 
   rm -rf "${EGRESS_SWAP_ROOT}/state" "${EGRESS_SWAP_ROOT}/capture"
   for family in iptables:WORKCELL_EGRESS ip6tables:WORKCELL_EGRESS6; do
     mkdir -p "${EGRESS_SWAP_ROOT}/state/${family%%:*}"
-    printf '%s\n' "${family#*:}" >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
-    printf -- '-j DROP\n' >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/chain.${family#*:}"
+    : >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
+    if [[ "${seed}" == "linked" ]]; then
+      printf '%s\n' "${family#*:}" >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/jumps"
+      printf -- '-j DROP\n' >"${EGRESS_SWAP_ROOT}/state/${family%%:*}/chain.${family#*:}"
+    fi
   done
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh" \
     --test-run-in-vm-capture-dir "${EGRESS_SWAP_ROOT}/capture" \
@@ -3126,6 +3130,16 @@ if run_egress_swap_case '127.0.0.1:443 unresolvable.test:443' ||
   [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS")" != "-j DROP" ]]; then
   cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
   echo "Expected allowlist apply to keep the old chain in force when endpoint resolution fails" >&2
+  exit 1
+fi
+# A first apply for a new profile starts with no chain and no jump. The apply
+# must link both chains; the default-deny check cannot hold before it does.
+if ! run_egress_swap_case '127.0.0.1:443 [::1]:443' unlinked ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/iptables/jumps")" != "WORKCELL_EGRESS" ]] ||
+  [[ "$(cat "${EGRESS_SWAP_ROOT}/state/ip6tables/jumps")" != "WORKCELL_EGRESS6" ]] ||
+  [[ "$(tail -n 1 "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS")" != "-j DROP" ]] ||
+  [[ "$(tail -n 1 "${EGRESS_SWAP_ROOT}/state/ip6tables/chain.WORKCELL_EGRESS6")" != "-j DROP" ]]; then
+  echo "Expected a first allowlist apply to link both DROP-terminated chains into DOCKER-USER" >&2
   exit 1
 fi
 rm -rf "${EGRESS_SWAP_ROOT}"
