@@ -67,6 +67,8 @@ fi
 # only the crate's own target paths under src/. Comment lines are skipped. Any
 # other line that uses a path or workspace key, or a backslash that could hide
 # a key, fails closed.
+# This is a line match, not a TOML parser, on purpose: a false positive is a loud
+# CI failure that names the line, while a parser bypass would leak runner files.
 odd_manifest="$(awk '
   /^[ \t]*#/ { next }
   /(^|[^A-Za-z0-9_-])(path|workspace)["'"'"']?[ \t]*[=.\]]/ || /\\/ {
