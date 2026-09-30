@@ -232,4 +232,35 @@ HOST_GO_BIN="` + racer + `"; GO_HOSTUTIL_BIN=""; go_hostutil hello`)
 	if code != 0 || strings.Contains(output, "private") {
 		t.Fatalf("failing find: exit=%d output=%q, want the path treated as not private", code, output)
 	}
+
+	// A failed temp-binary chmod removes the temp file and fails. A new source
+	// forces a build; the cache root must be owner-only again.
+	if err := os.Chmod(cacheRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before = len(binaries())
+	code, output = run(`printf 'package main\nimport "fmt"\nfunc main() { fmt.Println("v5") }\n' > "` + mainPath + `"
+chmod() { [[ "$2" == *"/.workcell-hostutil."* ]] && return 1; command chmod "$@"; }
+GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
+	leftovers, _ := filepath.Glob(filepath.Join(binDir, ".workcell-hostutil.*"))
+	if code != 7 || len(binaries()) != before || len(leftovers) != 0 {
+		t.Fatalf("failing temp chmod: exit=%d output=%q binaries=%v leftovers=%v, want refusal, no new binary, no temp file", code, output, binaries(), leftovers)
+	}
+
+	// A failing second build-ID lookup (nonzero after printing the right ID)
+	// is not a pass.
+	statusGo := filepath.Join(fixture, "statusgo.sh")
+	statusSrc := "#!/bin/bash\n\"" + realGo + "\" \"$@\"\nrc=$?\n" +
+		"if [[ \"$1\" == build ]]; then : > \"" + fixture + "/built\"; fi\n" +
+		"if [[ \"$1\" == list && -e \"" + fixture + "/built\" ]]; then exit 1; fi\nexit $rc\n"
+	if err := os.WriteFile(statusGo, []byte(statusSrc), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expectOutput("go_hostutil hello", "v5")
+	before = len(binaries())
+	code, output = run(`printf 'package main\nimport "fmt"\nfunc main() { fmt.Println("v6") }\n' > "` + mainPath + `"
+HOST_GO_BIN="` + statusGo + `"; GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
+	if code != 7 || len(binaries()) != before {
+		t.Fatalf("failing second lookup: exit=%d output=%q binaries=%v, want refusal and no new binary", code, output, binaries())
+	}
 }

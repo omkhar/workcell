@@ -73,7 +73,7 @@ go_tool_build_id() {
 go_tool_bin() {
   local tool="$1"
   local bin_dir="${WORKCELL_GO_CACHE_ROOT}/bin"
-  local build_id="" bin="" tmp=""
+  local build_id="" rebuilt_id="" bin="" tmp=""
 
   GO_TOOL_BIN=""
   [[ "${tool}" != workcell-hostutil ]] || GO_TOOL_BIN="${GO_HOSTUTIL_BIN}"
@@ -112,12 +112,15 @@ go_tool_bin() {
     fi
     # A source change between the key lookup and the build would store the
     # new binary under the old key; refuse it.
-    if [[ "$(go_tool_build_id "${tool}")" != "${build_id}" ]]; then
+    if ! rebuilt_id="$(go_tool_build_id "${tool}")" || [[ "${rebuilt_id}" != "${build_id}" ]]; then
       rm -f "${tmp}"
       echo "Go sources for ${tool} changed during the build; retry" >&2
       return 1
     fi
-    chmod 0700 "${tmp}"
+    if ! chmod 0700 "${tmp}"; then
+      rm -f "${tmp}"
+      return 1
+    fi
     # Flush the binary data before the rename and the new entry after it, so a
     # crash cannot leave a non-empty partial binary under the final name.
     sync
