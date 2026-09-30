@@ -6,6 +6,7 @@ package injection
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -453,5 +454,40 @@ func TestInstallSyntheticProbeEnvUnsetsHomeWhenOriginallyUnset(t *testing.T) {
 	cleanup()
 	if value, ok := os.LookupEnv("HOME"); ok {
 		t.Fatalf("installSyntheticProbeEnv leaked HOME after cleanup when originally unset: got %q, want unset", value)
+	}
+}
+
+func TestRejectWorkspaceCredentialSourcesRejectsSSHSources(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(workspace, "ssh-file")
+	if err := os.WriteFile(inside, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "ssh-file")
+	if err := os.WriteFile(outside, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ label, manifest string }{
+		{"ssh.config", `{"ssh":{"config":{"source":%q}}}`},
+		{"ssh.known_hosts", `{"ssh":{"known_hosts":{"source":%q}}}`},
+		{"ssh.identities[0]", `{"ssh":{"identities":[{"source":%q}]}}`},
+	} {
+		manifest := filepath.Join(root, "manifest.json")
+		for _, source := range []string{inside, outside} {
+			if err := os.WriteFile(manifest, []byte(fmt.Sprintf(tc.manifest, source)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := rejectWorkspaceCredentialSources(manifest, workspace, true)
+			if source == outside && err != nil {
+				t.Fatalf("%s outside workspace: unexpected error %v", tc.label, err)
+			}
+			if source == inside && (err == nil || !strings.Contains(err.Error(), tc.label+" source must be outside the mounted workspace")) {
+				t.Fatalf("%s inside workspace: error = %v, want workspace rejection", tc.label, err)
+			}
+		}
 	}
 }

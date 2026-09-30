@@ -19,7 +19,8 @@ Workcell rejects destination names that collide after NFC normalization and Unic
 Workcell writes no content at a destination path it rejects for invalid UTF-8 data.
 
 Store each credential source outside the mounted workspace. Workcell rejects a
-credential source inside the workspace.
+credential source or an SSH `config`, `known_hosts`, or identity source inside
+the workspace.
 
 Workcell does not pass host keychains into the runtime. A successful resolver
 runs on the host and writes a regular staged file.
@@ -170,9 +171,9 @@ The resolver removes `resolver` and `materialization`. It writes a staged
 | Key | Type | Required | Applies to | Default | Meaning |
 |---|---|---|---|---|---|
 | `enabled` | Boolean | No | All providers | Inferred | Explicit SSH injection switch. |
-| `config` | Path | No | All providers | None | SSH configuration file. |
-| `known_hosts` | Path | No | All providers | None | Known-hosts file. |
-| `identities` | Path array | No | All providers | None | Private-key identity files. |
+| `config` | Path | No | All providers | None | SSH configuration file outside the workspace. |
+| `known_hosts` | Path | No | All providers | None | Known-hosts file outside the workspace. |
+| `identities` | Path array | No | All providers | None | Private-key identity files outside the workspace. |
 | `providers` | Provider array | No | All providers | All providers | Provider selector. |
 | `modes` | Mode array | No | All providers | All modes | Mode selector. |
 | `allow_unsafe_config` | Boolean | No | All providers | `false` | Accept an SSH configuration with unsafe directives. |
@@ -187,6 +188,10 @@ It skips the SSH directive safety check. It permits `Include` to load
 other configuration. It permits `LocalCommand`, `PermitLocalCommand`, and
 `ProxyCommand` to run commands. It permits `PKCS11Provider` and
 `SecurityKeyProvider` to load provider libraries.
+
+The safety check reads directives as `ssh` reads them. It checks the
+`Keyword value`, `Keyword=value`, and quoted-keyword forms. It also checks the
+`Match !exec` and `Match exec=` forms.
 
 The session status reports lower-assurance unsafe SSH configuration.
 

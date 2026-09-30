@@ -338,25 +338,40 @@ func rejectWorkspaceCredentialSourcesWith(manifestPath, workspacePath string, re
 		Credentials map[string]struct {
 			Source string `json:"source"`
 		} `json:"credentials"`
+		SSH struct {
+			Config     struct{ Source string }   `json:"config"`
+			KnownHosts struct{ Source string }   `json:"known_hosts"`
+			Identities []struct{ Source string } `json:"identities"`
+		} `json:"ssh"`
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return err
 	}
+	sources := map[string]string{
+		"ssh.config":      manifest.SSH.Config.Source,
+		"ssh.known_hosts": manifest.SSH.KnownHosts.Source,
+	}
 	for key, entry := range manifest.Credentials {
-		if strings.TrimSpace(entry.Source) == "" {
+		sources["credentials."+key] = entry.Source
+	}
+	for index, entry := range manifest.SSH.Identities {
+		sources[fmt.Sprintf("ssh.identities[%d]", index)] = entry.Source
+	}
+	for label, raw := range sources {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		source, err := filepath.EvalSymlinks(entry.Source)
+		source, err := filepath.EvalSymlinks(raw)
 		if err != nil {
-			return fmt.Errorf("resolve credentials.%s source for workspace validation: %w", key, err)
+			return fmt.Errorf("resolve %s source for workspace validation: %w", label, err)
 		}
 		source = filepath.Clean(source)
 		inside, err := within(workspace, source)
 		if err != nil {
-			return fmt.Errorf("compare credentials.%s source with workspace: %w", key, err)
+			return fmt.Errorf("compare %s source with workspace: %w", label, err)
 		}
 		if inside {
-			return fmt.Errorf("credentials.%s source must be outside the mounted workspace: %s", key, source)
+			return fmt.Errorf("%s source must be outside the mounted workspace: %s", label, source)
 		}
 	}
 	return nil
