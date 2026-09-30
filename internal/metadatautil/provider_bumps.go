@@ -20,6 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/omkhar/workcell/internal/providerid"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -572,7 +573,11 @@ func holdCodexOnUnclassifiedCLISurface(selection ProviderBumpSelection, sources 
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
-	fixture, err := os.ReadFile(sources.CodexSubcommandFixturePath)
+	fixtureFD, err := unix.Open(sources.CodexSubcommandFixturePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return ProviderBumpSelection{}, fmt.Errorf("open Codex subcommand fixture: %w", err)
+	}
+	fixture, _, err := readRegularOpenFile(fixtureFD, sources.CodexSubcommandFixturePath, 1<<20)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}

@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -2468,5 +2469,25 @@ func mustWriteText(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+}
+
+func TestHoldCodexRejectsSymlinkedFixture(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real.txt")
+	link := filepath.Join(root, "codex-subcommands.txt")
+	mustWriteText(t, real, codexFixtureText("0.144.1", []string{"update"}))
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	sources := ProviderBumpSources{CodexCLISourceURLFmt: "http://codex.test/%s", CodexSubcommandFixturePath: link}
+	source := []byte(codexSubcommandSourceFixture)
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(githubContentsFile{Type: "file", Encoding: "base64", Content: base64.StdEncoding.EncodeToString(source), SHA: codexGitBlobObjectID(source)})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	_, err := holdCodexOnUnclassifiedCLISurface(ProviderBumpSelection{TargetVersion: "0.145.0"}, sources, client)
+	if err == nil || !strings.Contains(err.Error(), "open Codex subcommand fixture") {
+		t.Fatalf("error = %v, want symlink rejection", err)
 	}
 }
