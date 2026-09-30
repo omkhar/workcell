@@ -133,6 +133,21 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1 +1 @@\n\nnext\n",
 			wantErr: "unrecognized hunk line",
 		},
+		{
+			name:    "prefix-extended provider ARG",
+			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=1", "ARG CODEX_ATTACK_VERSION=1"),
+			wantErr: "line +ARG CODEX_ATTACK_VERSION=1",
+		},
+		{
+			name:    "top-level provider checksum ARG",
+			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=1", "ARG CODEX_SHA256=abc"),
+			wantErr: "line +ARG CODEX_SHA256=abc",
+		},
+		{
+			name:    "diagnostics are bounded",
+			patch:   "diff --git a/scripts/workcell b/scripts/workcell\n" + strings.Repeat("junk\n", 5000),
+			wantErr: "further problems omitted",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",

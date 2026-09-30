@@ -16,6 +16,8 @@ import (
 
 const scopeGuardMaxPatchBytes = 16 << 20
 
+const scopeGuardMaxProblems = 50
+
 const scopeGuardNoNewline = "\\ No newline at end of file"
 
 const scopeGuardDockerfilePath = "runtime/container/Dockerfile"
@@ -24,7 +26,7 @@ var (
 	// Dockerfile lines may change only when they are provider version ARG
 	// lines or the indented checksum assignments inside the provider RUN blocks.
 	scopeGuardDockerfileLineRE = regexp.MustCompile(
-		`^[-+](ARG (CLAUDE|CODEX|COPILOT|GEMINI)_[A-Z0-9_]*(VERSION|SHA256)=[A-Za-z0-9._+:@/-]*|\s+(CLAUDE|CODEX|COPILOT)_(CODE_MODE_HOST_)?(SHA256)="[0-9a-f]{64}"; \\)$`)
+		`^[-+](ARG (CLAUDE|CODEX|COPILOT)_VERSION=[A-Za-z0-9._+-]+|\s+(CLAUDE|CODEX|COPILOT)_(CODE_MODE_HOST_)?(SHA256)="[0-9a-f]{64}"; \\)$`)
 	scopeGuardPathRE = regexp.MustCompile(
 		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
@@ -59,6 +61,10 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		}
 	}
 	for _, line := range strings.Split(string(bytes.TrimSuffix(data, []byte("\n"))), "\n") {
+		if len(problems) >= scopeGuardMaxProblems {
+			problems = append(problems, "out of scope: further problems omitted")
+			break
+		}
 		fields := strings.Fields(line)
 		if remOld > 0 || remNew > 0 {
 			switch {
@@ -141,7 +147,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: unrecognized patch line %q", file, line)
 		}
 	}
-	closeSection()
+	if len(problems) < scopeGuardMaxProblems {
+		closeSection()
+	}
 	if !seen {
 		fail("empty patch")
 	}
