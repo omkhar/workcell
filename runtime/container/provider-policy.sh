@@ -72,7 +72,7 @@ codex_normalize_config_key() {
 # under a profile. Returns 0 (guarded) / 1 (not).
 codex_config_key_is_guarded() {
   case "$1" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | projects | projects.* | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
       return 0
       ;;
   esac
@@ -113,7 +113,7 @@ codex_config_override_is_blocked() {
     raw_value="${raw_value#"${raw_value%%[![:space:]]*}"}"
     if [[ "${raw_value}" == '{'* ]]; then
       case "${key_lower}" in
-        features | plugins | marketplaces | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
+        features | plugins | marketplaces | projects | mcp* | hooks | profiles | profiles.* | shell_environment_policy | sandbox_workspace_write)
           return 0
           ;;
       esac

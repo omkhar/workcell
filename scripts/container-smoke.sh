@@ -2461,6 +2461,17 @@ assert_codex_entrypoint_denied "expected Workcell entrypoint to reject a hooks.*
 
 assert_codex_entrypoint_denied "expected Workcell entrypoint to reject an inline-table override of the hooks namespace" "Workcell blocked unsafe Codex config override" --config 'hooks={trust=false}' --version
 
+# The projects table decides project trust, and a trusted project loads its own
+# .codex/config.toml above the managed profile layers. No legitimate managed -c
+# override sets it, so every spelling (dotted, glued, inline-table) is blocked.
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject a projects.* trust config override" "Workcell blocked unsafe Codex config override" --config 'projects./workspace/sub.trust_level="trusted"' --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject a quoted-path projects.* trust config override" "Workcell blocked unsafe Codex config override" --config 'projects."/workspace".trust_level="trusted"' --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject an inline-table override of the projects namespace" "Workcell blocked unsafe Codex config override" --config 'projects={"/workspace/sub"={trust_level="trusted"}}' --version
+
+assert_codex_entrypoint_denied "expected Workcell entrypoint to reject a glued-short-flag projects config override" "Workcell blocked unsafe Codex config override" -c'projects.x.trust_level="trusted"' --version
+
 # PROFILE-SCOPED CONFIG OVERRIDES (Codex P1 review). A `[profiles.<name>.…]` layer can
 # set ANY config key, so `-c profiles.<name>.features.remote_plugin=true` re-enables the
 # SAME surface the bare block rejects. The gate strips the `profiles.<name>.` prefix and
