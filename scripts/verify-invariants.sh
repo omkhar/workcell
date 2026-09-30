@@ -6610,6 +6610,17 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo/config' /tmp/workcell-commondir-config.out
 
+# A dangling .git/worktrees symlink can resolve inside the container.
+COMMONDIR_WTLINK_REPO="${COMMONDIR_ROOT}/worktrees-link-repo"
+git init -q -b master "${COMMONDIR_WTLINK_REPO}"
+git -C "${COMMONDIR_WTLINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+ln -s /workspace/admin "${COMMONDIR_WTLINK_REPO}/.git/worktrees"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WTLINK_REPO}" --dry-run >/tmp/workcell-commondir-wtlink.out 2>&1; then
+  echo "Expected repo with a dangling .git/worktrees symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/worktrees' /tmp/workcell-commondir-wtlink.out
+
 # A Git admin directory under a worktrees name outside the masked paths must be rejected.
 COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"
 git init -q -b master "${COMMONDIR_WT_REPO}"
