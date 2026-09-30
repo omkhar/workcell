@@ -56,6 +56,8 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		"later definition":    "\nrender_allowlist_apply_plan() {\n  echo unsafe\n}\n",
 		"function keyword":    "\nfunction render_allowlist_apply_plan {\n  echo unsafe\n}\n",
 		"spaced parentheses":  "\nrender_allowlist_apply_plan () { echo unsafe; }\n",
+		"tab after keyword":   "\nfunction\trender_allowlist_apply_plan { echo unsafe; }\n",
+		"continued keyword":   "\nfunction \\\nrender_allowlist_apply_plan { echo unsafe; }\n",
 		"indented definition": "\n  render_allowlist_apply_plan() { echo unsafe; }\n",
 	} {
 		t.Run(name, func(t *testing.T) {

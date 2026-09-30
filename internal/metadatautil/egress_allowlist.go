@@ -33,16 +33,22 @@ const applyPlanDigest = "4d197047a9c0328934ab648a274bd74264eb67141ea4e09a4efd023
 // scripts/verify-invariants.sh then checks the behavior of the reviewed plan.
 func ValidateColimaEgressAtomicSwap(script string) error {
 	// Bash runs the last definition of a name, so a reviewed copy kept as a
-	// decoy ahead of another definition would pass the checks below.
+	// decoy ahead of another definition would pass the checks below. Bash
+	// accepts many spellings of a definition, so the name may appear only in
+	// the one reviewed definition line and the one reviewed call.
 	definitions := 0
 	for line := range strings.Lines(script) {
-		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "function "))
-		if name, _, _ := strings.Cut(strings.Join(fields[:min(len(fields), 1)], ""), "("); name == "render_allowlist_apply_plan" {
+		switch text := strings.TrimSpace(line); {
+		case !strings.Contains(text, "render_allowlist_apply_plan"):
+		case strings.TrimSuffix(line, "\n") == "render_allowlist_apply_plan() {":
 			definitions++
+		case text == `run_in_vm "$(render_allowlist_apply_plan)"`:
+		default:
+			return errors.New("Expected exactly one render_allowlist_apply_plan definition and no other mention")
 		}
 	}
 	if definitions != 1 {
-		return errors.New("Expected exactly one render_allowlist_apply_plan definition")
+		return errors.New("Expected exactly one render_allowlist_apply_plan definition and no other mention")
 	}
 	plan, emitters := applyPlanText(script)
 	families := []struct{ name, chain string }{{"iptables", "WORKCELL_EGRESS"}, {"ip6tables", "WORKCELL_EGRESS6"}}
