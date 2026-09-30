@@ -8065,12 +8065,13 @@ prepare_workspace_control_plane_shadow() {
     #   volume opens COMMONDIR as commondir.
     # - A commondir counts only beside a HEAD file, so a branch or reflog
     #   named commondir is not a redirect.
-    # - A symlink counts unless it is a hooks, config or worktrees link that
-    #   resolves on the host, because the masks below cover that link. A link
-    #   that dangles on the host can resolve inside the container.
+    # - A symlink at a top-level control path or under modules counts. A
+    #   hooks, config or worktrees link is fine when it resolves on the host,
+    #   because the masks below cover it. A link that dangles on the host can
+    #   resolve inside the container.
     # - Bash drops the status of a process substitution, so capture the walk
     #   status: an unreadable Git directory must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -path ./worktrees -o \( -path './modules/*' -name worktrees \) \) -type d \) -prune -o \( -iname commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path ./worktrees -o -path './modules' -o -path './modules/*' \) -type l \( ! \( -name hooks -o -name config -o -name config.worktree -o -name worktrees \) -o ! -exec test -e {} \; \) -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -path ./worktrees -o \( -path './modules/*' -name worktrees \) \) -type d \) -prune -o \( -iname commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -path ./worktrees -o -path ./hooks -o -path ./config -o -path ./config.worktree -o -path './modules' -o -path './modules/*' \) -type l \( ! \( -name hooks -o -name config -o -name config.worktree -o -name worktrees \) -o ! -exec test -e {} \; \) -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi

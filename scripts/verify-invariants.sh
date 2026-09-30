@@ -6645,6 +6645,18 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'redirects Git config and hooks: .git/COMMONDIR' /tmp/workcell-commondir-case.out
 
+# A dangling top-level .git/config symlink can resolve inside the container.
+COMMONDIR_TOPCFG_REPO="${COMMONDIR_ROOT}/top-config-link-repo"
+git init -q -b master "${COMMONDIR_TOPCFG_REPO}"
+git -C "${COMMONDIR_TOPCFG_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+rm "${COMMONDIR_TOPCFG_REPO}/.git/config"
+ln -s /workspace/evil-config "${COMMONDIR_TOPCFG_REPO}/.git/config"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_TOPCFG_REPO}" --dry-run >/tmp/workcell-commondir-topcfg.out 2>&1; then
+  echo "Expected repo with a dangling top-level .git/config symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/config' /tmp/workcell-commondir-topcfg.out
+
 # A Git admin directory under refs can carry a redirect and must be rejected.
 COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
 git init -q -b master "${COMMONDIR_REFS_REPO}"
