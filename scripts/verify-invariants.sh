@@ -5847,7 +5847,7 @@ git init -q -b master "${BUILDVCS_FIXTURE}"
 cat <<'EOF' >"${BUILDVCS_FIXTURE}/go.mod"
 module example.com/workcell/buildvcsfixture
 
-go 1.25.0
+go 1.21.0
 EOF
 cat <<'EOF' >"${BUILDVCS_FIXTURE}/main.go"
 package main
@@ -5864,7 +5864,7 @@ EOF
 chmod +x "${BUILDVCS_FIXTURE}/fsmonitor.sh"
 BUILDVCS_OUTPUT="${BUILDVCS_FIXTURE}/fixture-bin"
 git -C "${BUILDVCS_FIXTURE}" config core.fsmonitor "${BUILDVCS_FIXTURE}/fsmonitor.sh"
-# The fixture go.mod is older than the repo toolchain; never download one.
+# The fixture go.mod allows any ambient toolchain; never download one.
 GOTOOLCHAIN=local build_go_tool_in_repo "${BUILDVCS_FIXTURE}" "${BUILDVCS_OUTPUT}" .
 [[ -x "${BUILDVCS_OUTPUT}" ]]
 if [[ -e "${BUILDVCS_MARKER}" ]]; then
