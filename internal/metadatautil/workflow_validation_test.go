@@ -1320,7 +1320,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - run: ./scripts/ci/upstream-refresh-scope-guard.sh patch
+      - run: |
+          ./scripts/ci/upstream-refresh-scope-guard.sh patch
   publish:
     needs: [refresh, scope-guard]
     environment:
@@ -1337,7 +1338,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
-        run: ./scripts/ci/upstream-refresh-publish.sh candidate "${SCOPE_GUARD_RESULT}" audit.md
+        run: |
+          ./scripts/ci/upstream-refresh-publish.sh candidate "${SCOPE_GUARD_RESULT}" audit.md
 `
 
 func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
@@ -1381,6 +1383,24 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateUpstreamRefreshWorkflowRejectsEvasions runs the shared evasion
+// corpus against the two commands the privileged split relies on, in the
+// canonical workflow. A comment, heredoc body or longer name must not satisfy them.
+func TestValidateUpstreamRefreshWorkflowRejectsEvasions(t *testing.T) {
+	t.Parallel()
+	workflow := upstreamRefreshWorkflowFixture
+	t.Run("scope guard", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/ci/upstream-refresh-scope-guard.sh patch",
+			"scope-guard job must run the scope guard", metadatautil.ValidateUpstreamRefreshWorkflow)
+	})
+	t.Run("publish script", func(t *testing.T) {
+		RequireRejectsAllEvasions(t, workflow,
+			"          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md",
+			"run the publish script once", metadatautil.ValidateUpstreamRefreshWorkflow)
+	})
 }
 
 func TestValidateHostedControlsWorkflowRequiresMainRef(t *testing.T) {

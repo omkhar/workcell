@@ -872,7 +872,11 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		return fmt.Errorf("%s refresh job must grant exactly contents: read, issues: write, pull-requests: read", path)
 	}
 	guard := document.Jobs["scope-guard"]
-	if !strings.Contains(workflowText, "./scripts/ci/upstream-refresh-scope-guard.sh") || len(guard.Permissions) != 1 || guard.Permissions["contents"] != "read" {
+	// Read the invocation the shell really runs, not a substring of the step text.
+	guardRuns := slices.ContainsFunc(guard.Steps, func(step workflowStep) bool {
+		return len(ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-scope-guard.sh")) > 0
+	})
+	if !guardRuns || len(guard.Permissions) != 1 || guard.Permissions["contents"] != "read" {
 		return fmt.Errorf("%s scope-guard job must run the scope guard with only contents: read", path)
 	}
 	publish := document.Jobs["publish"]
@@ -891,7 +895,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				return fmt.Errorf("%s publish job must mint the App token from the client-id secret", path)
 			}
 		}
-		if strings.Contains(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
+		if len(ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0 {
 			publishRuns++
 			if step.Env["SCOPE_GUARD_RESULT"] != "${{ needs.scope-guard.outputs.result }}" {
 				return fmt.Errorf("%s publish job must pass the scope-guard result to the publish script", path)

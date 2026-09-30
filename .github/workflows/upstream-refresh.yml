@@ -293,12 +293,12 @@ jobs:
         run: |
           # A failed guard is a result, not a job failure: publish then opens a
           # PR that needs human review.
-          if ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"; then
-            echo "result=passed" >> "${GITHUB_OUTPUT}"
-          else
+          result=passed
+          ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch" || result=failed
+          if [[ "${result}" != passed ]]; then
             echo "::warning::Scope guard did not pass. The PR will need human review."
-            echo "result=failed" >> "${GITHUB_OUTPUT}"
           fi
+          echo "result=${result}" >> "${GITHUB_OUTPUT}"
 
   publish:
     name: Publish upstream refresh PR

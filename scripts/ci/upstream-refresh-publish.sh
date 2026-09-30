@@ -67,8 +67,14 @@ fi
 git apply --index --binary "${patch}"
 [[ "$(git write-tree)" == "${tree_oid}" ]] || die "applied tree does not match candidate tree ${tree_oid}"
 
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+
 # Reject symlinks, submodules, and any mode change. createCommitOnBranch
-# writes regular files only.
+# writes regular files only. Capture each git listing and its exit status
+# before the loop, so a git failure cannot look like an empty change set.
+git diff --cached --raw --no-renames >"${work}/raw" || die "git diff --raw failed"
+git diff --cached --name-status --no-renames -z >"${work}/name-status" || die "git diff --name-status failed"
 while IFS=$' \t' read -r old_mode new_mode _ _ status_path; do
   old_mode="${old_mode#:}"
   for mode in "${old_mode}" "${new_mode}"; do
@@ -83,11 +89,9 @@ while IFS=$' \t' read -r old_mode new_mode _ _ status_path; do
   if [[ "${old_mode}" == 000000 && "${new_mode}" == 100755 ]]; then
     die "new executable file is not allowed: ${status_path}"
   fi
-done < <(git diff --cached --raw --no-renames)
+done <"${work}/raw"
 
 # Build the createCommitOnBranch file changes.
-work="$(mktemp -d)"
-trap 'rm -rf "${work}"' EXIT
 : >"${work}/additions"
 : >"${work}/deletions"
 while IFS= read -r -d '' status && IFS= read -r -d '' path; do
@@ -99,7 +103,7 @@ while IFS= read -r -d '' status && IFS= read -r -d '' path; do
       ;;
     *) die "unsupported change status ${status}: ${path}" ;;
   esac
-done < <(git diff --cached --name-status --no-renames -z)
+done <"${work}/name-status"
 
 branch="codex/upstream-refresh-${GITHUB_RUN_ID}"
 gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${base_sha}" >/dev/null

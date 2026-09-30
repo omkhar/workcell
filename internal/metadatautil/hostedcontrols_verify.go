@@ -483,7 +483,9 @@ func verifyHostedRulesetControls(inputs hostedControlInputs, reviewMode, ownerTy
 		return fmt.Errorf("no active rulesets found on %s", repo)
 	}
 	controls := classifyHostedRulesets(active)
-	if err := verifyHostedRulesetShape(controls, repo); err != nil {
+	branchReviewPolicy, _ := inputs.policy["branch_review"].(map[string]any)
+	expectedAppID, _ := branchReviewPolicy["upstream_refresh_app_id"].(int)
+	if err := verifyHostedRulesetShape(controls, expectedAppID, repo); err != nil {
 		return err
 	}
 	if err := verifyBranchReviewRuleset(controls.branchReview, inputs.repoMeta, reviewMode, ownerType, requireOwner, repo); err != nil {
@@ -579,7 +581,7 @@ func hostedRulesetRule(ruleset map[string]any, ruleType string) map[string]any {
 	return nil
 }
 
-func verifyHostedRulesetShape(controls hostedRulesetControls, repo string) error {
+func verifyHostedRulesetShape(controls hostedRulesetControls, expectedAppID int, repo string) error {
 	if controls.branchIntegrity == nil {
 		return fmt.Errorf("missing active default-branch integrity ruleset on %s with required_signatures, non_fast_forward, and deletion", repo)
 	}
@@ -589,20 +591,55 @@ func verifyHostedRulesetShape(controls hostedRulesetControls, repo string) error
 	if controls.branchStatusChecks == nil {
 		return fmt.Errorf("missing active default-branch status-check ruleset on %s with a required_status_checks rule", repo)
 	}
-	return verifyHostedRulesetBypasses(controls, repo)
+	return verifyHostedRulesetBypasses(controls, expectedAppID, repo)
 }
 
-func verifyHostedRulesetBypasses(controls hostedRulesetControls, repo string) error {
+// expectedAppID is the optional branch_review.upstream_refresh_app_id policy
+// value; zero means the policy does not pin the App.
+func verifyHostedRulesetBypasses(controls hostedRulesetControls, expectedAppID int, repo string) error {
 	if actors, _ := controls.branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
 		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
 	}
-	if err := requireHostedBypassShape(controls.branchReview, "RepositoryRole", "pull_request", false, repo); err != nil {
+	if err := requireReviewBypassShape(controls.branchReview, expectedAppID, repo); err != nil {
 		return err
+	}
+	if actors, _ := controls.branchStatusChecks["bypass_actors"].([]any); hasIntegrationActor(actors) {
+		return fmt.Errorf("default-branch status-check ruleset on %s must not declare Integration bypass actors", repo)
 	}
 	if controls.tagRelease == nil {
 		return fmt.Errorf("missing active release-tag ruleset on %s for refs/tags/v* with creation/update/deletion protection", repo)
 	}
 	return requireHostedBypassShape(controls.tagRelease, "RepositoryRole", "always", true, repo)
+}
+
+func hasIntegrationActor(actors []any) bool {
+	for _, raw := range actors {
+		if entry, _ := raw.(map[string]any); entry["actor_type"] == "Integration" {
+			return true
+		}
+	}
+	return false
+}
+
+// The review ruleset allows RepositoryRole/pull_request actors plus at most one
+// Integration/pull_request actor (the upstream-refresh App) with a positive id.
+func requireReviewBypassShape(ruleset map[string]any, expectedAppID int, repo string) error {
+	actors, _ := ruleset["bypass_actors"].([]any)
+	apps := 0
+	for _, raw := range actors {
+		if hostedBypassActorMatches(raw, "RepositoryRole", "pull_request") {
+			continue
+		}
+		if !hostedBypassActorMatches(raw, "Integration", "pull_request") {
+			return fmt.Errorf("ruleset %v on %s must only use RepositoryRole/pull_request or one Integration/pull_request bypass actor", ruleset["name"], repo)
+		}
+		apps++
+		id, _ := raw.(map[string]any)["actor_id"].(float64)
+		if apps > 1 || id <= 0 || id != float64(int(id)) || (expectedAppID > 0 && int(id) != expectedAppID) {
+			return fmt.Errorf("ruleset %v on %s allows at most one Integration bypass actor with the expected positive actor_id", ruleset["name"], repo)
+		}
+	}
+	return nil
 }
 
 func requireHostedBypassShape(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool, repo string) error {
