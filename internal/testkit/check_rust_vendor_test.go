@@ -81,6 +81,16 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.Remove(rootSum); err != nil {
 		t.Fatal(err)
 	}
+	// A directory with the checksum file name must fail, not be skipped.
+	if err := os.Mkdir(rootSum, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("checksum-named directory accepted: %s", out)
+	}
+	if err := os.Remove(rootSum); err != nil {
+		t.Fatal(err)
+	}
 	// A broken nested link must fail the scan, not read as an empty list.
 	if err := os.Symlink("missing", nested); err != nil {
 		t.Fatal(err)
@@ -117,6 +127,25 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 		}
 	}
 	if err := os.WriteFile(cfg, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A symlinked Rust root must be rejected before it is read.
+	rustDir := filepath.Dir(vendor)
+	moved := rustDir + ".real"
+	if err := os.Rename(rustDir, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, rustDir); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err == nil {
+		t.Fatalf("symlinked Rust root accepted: %s", out)
+	}
+	if err := os.Remove(rustDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(moved, rustDir); err != nil {
 		t.Fatal(err)
 	}
 
