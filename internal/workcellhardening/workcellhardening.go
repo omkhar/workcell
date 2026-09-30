@@ -3284,7 +3284,7 @@ var hostutilEgressRgChecks = []check{
 	},
 	{
 		kind:       kindRegexPresent,
-		regex:      `"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"`,
+		regex:      `"\$\{HOST_GO_BIN\}" build -buildvcs=false -o "\$\{tmp\}" "./cmd/\$\{tool\}"`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},

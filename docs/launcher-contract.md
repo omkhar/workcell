@@ -175,9 +175,24 @@ If the directory does not exist, it prints a diagnostic and exits with status
 binary and runs Go commands from the repository root in the clean host
 environment.
 
+### `go_tool_bin()`
+
+This function builds `cmd/<tool>` one time and keeps the binary in
+`${WORKCELL_GO_CACHE_ROOT}/bin`. The cache key is the Go build ID of the main
+package. Go calculates the build ID from the source content of the package and
+of all its dependencies, the build flags, and the toolchain version. A change to
+one of these inputs gives a new key, and the function builds again.
+
+The function refuses a cache directory that is a symlink or that the current
+user does not own. It sets the directory mode to `0700`. It does not run a
+cached binary that is a symlink, has a different owner, or is writable by group
+or other. It removes that binary and builds it again. It builds into a temporary
+file and renames the file into position.
+
 ### `go_hostutil()`
 
-This function runs `cmd/workcell-hostutil` with the selected arguments.
+This function runs the cached `cmd/workcell-hostutil` binary with the selected
+arguments.
 
 ### `run_go_hostutil_preserve_exit()`
 
@@ -191,7 +206,8 @@ GPG, SSH, XDG, and GitHub variables.
 
 ### `go_colimautil()`
 
-This function runs `cmd/workcell-colimautil` with the selected arguments.
+This function runs the cached `cmd/workcell-colimautil` binary with the selected
+arguments.
 
 ### Colima host input controls
 

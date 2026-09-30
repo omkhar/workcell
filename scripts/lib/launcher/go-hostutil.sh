@@ -6,8 +6,9 @@
 # scripts/lib/launcher/go-hostutil.sh — Go/Colima host-utility wrapper
 # module extracted from scripts/workcell as the next increment of the
 # launcher decomposition (roadmap item D4).  These helpers invoke the
-# workcell-hostutil and workcell-colimautil Go programs on the host via
-# `go run`, always routed through run_clean_host_command_in_dir so the
+# workcell-hostutil and workcell-colimautil Go programs on the host from a
+# cached build (go_tool_bin, below), always routed through
+# run_clean_host_command_in_dir so the
 # child executes from ${ROOT_DIR} under the sanitised host environment
 # (env -i with a pinned PATH/HOME and C locale) provided by
 # scripts/lib/launcher/host-exec.sh.  They depend only on
@@ -28,13 +29,90 @@
 
 HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go)"
 
+# Per-process memo of the cached hostutil path.  Assigned here so an
+# inherited environment value can never pre-seed it.
+GO_TOOL_BIN=""
+GO_HOSTUTIL_BIN=""
+
+# go_tool_bin_trusted accepts only a regular, non-symlink, executable file
+# owned by the current user and not writable by group or other.
+go_tool_bin_trusted() {
+  [[ -f "$1" && ! -L "$1" && -O "$1" && -x "$1" ]] &&
+    [[ -z "$(find "$1" \( -perm -020 -o -perm -002 \) -print)" ]]
+}
+
+# go_tool_bin sets GO_TOOL_BIN to a cached build of ./cmd/TOOL and builds it
+# on a miss.  The cache key is the main package's Go build ID.  Go derives it
+# from the content of every source file in the package's dependency graph
+# (in-module sources and the go.mod-selected module versions), the build
+# flags, and the toolchain version, so any change to those inputs selects a
+# new binary.  The cache directory is owner-only (0700); a cached binary that
+# fails go_tool_bin_trusted is removed and rebuilt; a build lands in a temp
+# file and is renamed into place so a reader never sees a partial binary.
+# ponytail: superseded binaries are not pruned (like GOCACHE entries); add an
+# age-based prune if the disk use matters.
+go_tool_bin() {
+  local tool="$1"
+  local bin_dir="${WORKCELL_GO_CACHE_ROOT}/bin"
+  local build_id="" bin="" tmp=""
+
+  GO_TOOL_BIN=""
+  [[ "${tool}" != workcell-hostutil ]] || GO_TOOL_BIN="${GO_HOSTUTIL_BIN}"
+  if [[ -n "${GO_TOOL_BIN}" ]] && go_tool_bin_trusted "${GO_TOOL_BIN}"; then
+    return 0
+  fi
+
+  build_id="$(run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    GOPATH="${GOPATH}" \
+    GOMODCACHE="${GOMODCACHE}" \
+    GOCACHE="${GOCACHE}" \
+    "${HOST_GO_BIN}" list -buildvcs=false -export -f '{{.BuildID}}' "./cmd/${tool}")" || return 1
+  if [[ ! "${build_id}" =~ ^[A-Za-z0-9_/-]+$ ]]; then
+    echo "Unexpected Go build ID for ${tool}: ${build_id}" >&2
+    return 1
+  fi
+  bin="${bin_dir}/${tool}-${build_id//\//.}"
+
+  mkdir -p "${bin_dir}"
+  if [[ -L "${WORKCELL_GO_CACHE_ROOT}" || ! -O "${WORKCELL_GO_CACHE_ROOT}" ||
+    -L "${bin_dir}" || ! -d "${bin_dir}" || ! -O "${bin_dir}" ]]; then
+    echo "Refusing untrusted Go tool cache: ${bin_dir}" >&2
+    return 1
+  fi
+  chmod 0700 "${bin_dir}"
+
+  if [[ -e "${bin}" || -L "${bin}" ]] && ! go_tool_bin_trusted "${bin}"; then
+    rm -f "${bin}"
+  fi
+  if [[ ! -e "${bin}" && ! -L "${bin}" ]]; then
+    tmp="$(mktemp "${bin_dir}/.${tool}.XXXXXX")" || return 1
+    if ! run_clean_host_command_in_dir "${ROOT_DIR}" env \
+      GOPATH="${GOPATH}" \
+      GOMODCACHE="${GOMODCACHE}" \
+      GOCACHE="${GOCACHE}" \
+      "${HOST_GO_BIN}" build -buildvcs=false -o "${tmp}" "./cmd/${tool}"; then
+      rm -f "${tmp}"
+      return 1
+    fi
+    chmod 0700 "${tmp}"
+    mv -f "${tmp}" "${bin}"
+  fi
+  if ! go_tool_bin_trusted "${bin}"; then
+    echo "Refusing untrusted cached Go tool: ${bin}" >&2
+    return 1
+  fi
+  [[ "${tool}" != workcell-hostutil ]] || GO_HOSTUTIL_BIN="${bin}"
+  GO_TOOL_BIN="${bin}"
+}
+
 go_hostutil() {
   ensure_go_run_env
+  go_tool_bin workcell-hostutil || return 1
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     GOPATH="${GOPATH}" \
     GOMODCACHE="${GOMODCACHE}" \
     GOCACHE="${GOCACHE}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+    "${GO_TOOL_BIN}" "$@"
 }
 
 run_go_hostutil_preserve_exit() {
@@ -90,16 +168,24 @@ go_hostutil_publish_pr() {
   [[ -n "${GH_HOST:-}" ]] && env_args+=("GH_HOST=${GH_HOST}")
   [[ -n "${GH_CONFIG_DIR:-}" ]] && env_args+=("GH_CONFIG_DIR=${GH_CONFIG_DIR}")
 
+  go_tool_bin workcell-hostutil || return 1
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     "${env_args[@]}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+    "${GO_TOOL_BIN}" "$@"
 }
 
 go_colimautil() {
   ensure_go_run_env
+  go_tool_bin workcell-colimautil || return 1
   run_clean_host_command_in_dir "${ROOT_DIR}" env \
     GOPATH="${GOPATH}" \
     GOMODCACHE="${GOMODCACHE}" \
     GOCACHE="${GOCACHE}" \
-    "${HOST_GO_BIN}" run ./cmd/workcell-colimautil "$@"
+    "${GO_TOOL_BIN}" "$@"
 }
+
+# Resolve the hostutil binary once in the sourcing shell.  Most go_hostutil
+# calls run in command substitutions, and a subshell cannot update the memo
+# for later calls.  The first go_hostutil call reports a failure here again.
+ensure_go_run_env
+go_tool_bin workcell-hostutil 2>/dev/null || true
