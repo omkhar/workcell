@@ -22,7 +22,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/go-hostutil.sh",
-      "sha256": "46443b1391b01eed011005e4174fb0d8b774800471bcecc1c8483bd164a0f17c"
+      "sha256": "420f35bd328a125a3c3e4b35ad8b27c1b71fffc16218f749055721328b7d817e"
     },
     {
       "repo_path": "scripts/lib/launcher/egress-endpoints.sh",

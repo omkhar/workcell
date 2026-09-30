@@ -80,13 +80,13 @@ go_tool_bin() {
   fi
   bin="${bin_dir}/${tool}-${build_id//\//.}"
 
-  mkdir -p "${bin_dir}"
+  mkdir -p "${bin_dir}" || return 1
   if [[ -L "${WORKCELL_GO_CACHE_ROOT}" || ! -O "${WORKCELL_GO_CACHE_ROOT}" ||
     -L "${bin_dir}" || ! -d "${bin_dir}" || ! -O "${bin_dir}" ]]; then
     echo "Refusing untrusted Go tool cache: ${bin_dir}" >&2
     return 1
   fi
-  chmod 0700 "${bin_dir}"
+  chmod 0700 "${bin_dir}" || return 1
 
   if [[ -e "${bin}" || -L "${bin}" ]] && ! go_tool_bin_trusted "${bin}"; then
     rm -f "${bin}"
@@ -112,7 +112,7 @@ go_tool_bin() {
     # Flush the binary data before the rename and the new entry after it, so a
     # crash cannot leave a non-empty partial binary under the final name.
     sync
-    mv -f "${tmp}" "${bin}"
+    mv -f "${tmp}" "${bin}" || return 1
     sync
   fi
   if ! go_tool_bin_trusted "${bin}"; then

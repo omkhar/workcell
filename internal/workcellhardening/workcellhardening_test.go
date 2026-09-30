@@ -4253,7 +4253,7 @@ func TestCheckValidatorWritableStateRealRepo(t *testing.T) {
 }
 
 // hostutilEgressRgHappyGoHostutil is a minimal scripts/lib/launcher/go-hostutil.sh
-// satisfying all five bootstrap-Go invariants: the escaped-literal patterns match
+// satisfying all six bootstrap-Go invariants: the escaped-literal patterns match
 // the literal ${ROOT_DIR}/${GOPATH}/${HOST_GO_BIN}/${tmp}/${tool} tokens.
 const hostutilEgressRgHappyGoHostutil = `#!/bin/bash
 set -euo pipefail
@@ -4262,6 +4262,7 @@ run_clean_host_command_in_dir "${ROOT_DIR}" env \
   GOMODCACHE="${GOMODCACHE}" \
   GOCACHE="${GOCACHE}" \
   "${HOST_GO_BIN}" build -buildvcs=false -o "${tmp}" "./cmd/${tool}"
+"${GO_TOOL_BIN}" "$@"
 `
 
 // hostutilEgressRgHappyEntrypoint is a minimal runtime/container/entrypoint.sh
@@ -4334,6 +4335,14 @@ func TestCheckHostutilEgressRg(t *testing.T) {
 			// invocation removed.
 			name:       "go-hostutil missing scrubbed bootstrap invocation",
 			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `run_clean_host_command_in_dir "${ROOT_DIR}" env`, `run_clean_host_command_in_dir env`, 1),
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		},
+		{
+			// The cached-binary exec line removed: the helper would no longer run.
+			name:       "go-hostutil missing GO_TOOL_BIN exec",
+			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `"${GO_TOOL_BIN}" "$@"`, `echo "$@"`, 1),
 			entrypoint: hostutilEgressRgHappyEntrypoint,
 			colima:     hostutilEgressRgHappyColima,
 			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
@@ -4470,7 +4479,7 @@ func TestCheckHostutilEgressRg(t *testing.T) {
 
 func TestCheckHostutilEgressRgCount(t *testing.T) {
 	got := len(hostutilEgressRgChecks)
-	const want = 21
+	const want = 22
 	if got != want {
 		t.Fatalf("hostutilEgressRgChecks has %d checks, want %d", got, want)
 	}

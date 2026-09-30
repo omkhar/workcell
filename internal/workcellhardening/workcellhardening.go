@@ -3256,7 +3256,7 @@ func CheckValidatorWritableState(rootDir string) error {
 // scripts/colima-egress-allowlist.sh (all via the per-check targetFile field).
 var hostutilEgressRgChecks = []check{
 	// Guard 1: go-hostutil.sh invokes the bootstrap Go helper from the repo
-	// root under a scrubbed environment with explicit Go caches (five ordered
+	// root under a scrubbed environment with explicit Go caches (six ordered
 	// `! rg -q` probes sharing one message).
 	{
 		kind:       kindRegexPresent,
@@ -3285,6 +3285,12 @@ var hostutilEgressRgChecks = []check{
 	{
 		kind:       kindRegexPresent,
 		regex:      `"\$\{HOST_GO_BIN\}" build -buildvcs=false -o "\$\{tmp\}" "./cmd/\$\{tool\}"`,
+		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		targetFile: goHostutilRelPath,
+	},
+	{
+		kind:       kindRegexPresent,
+		regex:      `"\$\{GO_TOOL_BIN\}" "\$@"`,
 		message:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		targetFile: goHostutilRelPath,
 	},

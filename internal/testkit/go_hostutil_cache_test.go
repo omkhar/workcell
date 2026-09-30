@@ -212,4 +212,11 @@ HOST_GO_BIN="` + racer + `"; GO_HOSTUTIL_BIN=""; go_hostutil hello`)
 	if code == 0 || !strings.Contains(output, "changed during the build") || len(binaries()) != before {
 		t.Fatalf("racing source change: exit=%d output=%q binaries=%v, want refusal and no new binary", code, output, binaries())
 	}
+
+	// A failed chmod of the cache directory is an error, not a pass: callers run
+	// go_tool_bin in an || list, where errexit is off.
+	code, output = run(`chmod() { return 1; }; GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
+	if code != 7 || strings.TrimSpace(output) != "refused" {
+		t.Fatalf("failing chmod: exit=%d output=%q, want the refusal path", code, output)
+	}
 }
