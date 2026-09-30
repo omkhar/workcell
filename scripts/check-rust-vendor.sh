@@ -64,19 +64,19 @@ fi
 
 # Cargo reads every path dependency before it checks the lock, and a parse
 # error prints file content. The root manifest has no path dependency, so allow
-# only the crate's own target paths under src/. Comment lines are skipped. Any
-# other line that uses a path or workspace key, or a backslash that could hide
-# a key, fails closed.
+# only the crate's own target paths under src/, with no .. component. Comment
+# lines are skipped. Any other line that uses a path, workspace, git or registry
+# key, or a backslash that could hide a key, fails closed.
 # This is a line match, not a TOML parser, on purpose: a false positive is a loud
 # CI failure that names the line, while a parser bypass would leak runner files.
 odd_manifest="$(awk '
   /^[ \t]*#/ { next }
-  /(^|[^A-Za-z0-9_-])(path|workspace)["'"'"']?[ \t]*[=.\]]/ || /\\/ {
-    if ($0 !~ /^path = "src\/[A-Za-z0-9_\/.-]+\.rs"$/) print
+  /(^|[^A-Za-z0-9_-])(path|workspace|git|registry|registry-index)["'"'"']?[ \t]*[=.\]]/ || /\\/ {
+    if ($0 !~ /^path = "src\/[A-Za-z0-9_\/.-]+\.rs"$/ || /\.\./) print
   }
 ' "${RUST_DIR}/Cargo.toml")"
 if [[ -n "${odd_manifest}" ]]; then
-  echo "Cargo.toml has a path, workspace or escape this check does not accept: ${odd_manifest}" >&2
+  echo "Cargo.toml has a path, workspace, git, registry or escape this check does not accept: ${odd_manifest}" >&2
   exit 1
 fi
 
