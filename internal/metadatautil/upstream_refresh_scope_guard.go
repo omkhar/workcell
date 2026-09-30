@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -60,7 +61,10 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: incomplete patch section (no hunk)", file)
 		}
 	}
-	for _, line := range strings.Split(string(bytes.TrimSuffix(data, []byte("\n"))), "\n") {
+	lines := bufio.NewScanner(bytes.NewReader(data))
+	lines.Split(scopeGuardSplitLF)
+	for lines.Scan() {
+		line := lines.Text()
 		if len(problems) >= scopeGuardMaxProblems {
 			problems = append(problems, "out of scope: further problems omitted")
 			break
@@ -147,6 +151,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: unrecognized patch line %q", file, line)
 		}
 	}
+	if err := lines.Err(); err != nil {
+		fail("unreadable patch: %v", err)
+	}
 	if len(problems) < scopeGuardMaxProblems {
 		closeSection()
 	}
@@ -165,4 +172,16 @@ func scopeGuardHunkCount(text string) int {
 	}
 	n, _ := strconv.Atoi(text) // the regexp bounds text to six digits
 	return n
+}
+
+// scopeGuardSplitLF splits on LF only. bufio.ScanLines would drop a trailing
+// CR that git keeps as part of the line.
+func scopeGuardSplitLF(data []byte, atEOF bool) (int, []byte, error) {
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		return i + 1, data[:i], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }

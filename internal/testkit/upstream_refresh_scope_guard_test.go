@@ -148,6 +148,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch:   "diff --git a/scripts/workcell b/scripts/workcell\n" + strings.Repeat("junk\n", 5000),
 			wantErr: "further problems omitted",
 		},
+		{
+			name:    "carriage return in a header",
+			patch:   strings.Replace(scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b"), "+++ b/tests/fixtures/flags/x.txt", "+++ b/tests/fixtures/flags/x.txt\r", 1),
+			wantErr: "file header does not match",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",
