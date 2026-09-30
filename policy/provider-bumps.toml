@@ -1,7 +1,5 @@
 version = 1
-# Every provider waits 48 hours after release before a bump is eligible. New
-# versions are auto-approved and auto-merged (no human review) only after this
-# cool-off, provenance checks, scope-guard, and all required checks pass.
+# Every provider waits 48 hours after release before a bump is eligible.
 cooloff_hours = 48
 
 [provider.codex]
