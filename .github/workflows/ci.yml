@@ -66,6 +66,10 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      # Image id of the validator image this job built.  The hostile-env legs
+      # load the image from an artifact and refuse any other id.
+      validator_image_id: ${{ steps.validator-image.outputs.id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +109,27 @@ jobs:
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
           WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-validate.sh --profile pr-parity
+
+      - name: Export validator image for hostile-env jobs
+        id: validator-image
+        env:
+          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+        run: |
+          image_id="$(docker image inspect --format '{{.Id}}' "${WORKCELL_VALIDATOR_IMAGE}")"
+          [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Unexpected validator image id: ${image_id}" >&2
+            exit 1
+          }
+          echo "id=${image_id}" >>"${GITHUB_OUTPUT}"
+          docker save "${WORKCELL_VALIDATOR_IMAGE}" | zstd -T0 -3 -o "${RUNNER_TEMP}/validator-image.tar.zst"
+
+      - name: Upload validator image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: workcell-validator-image
+          path: ${{ runner.temp }}/validator-image.tar.zst
+          compression-level: 0
+          retention-days: 1
 
       - name: Upload CI release install artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -154,9 +179,9 @@ jobs:
     #
     # Required merge gate: the four "Hostile environment (<axis>)" contexts are
     # listed in required_status_checks in policy/github-hosted-controls.toml, so
-    # a red axis fails the job and blocks the merge.  Gated on validate rather
-    # than pr-shape so the validator image layers are already in the shared
-    # buildx cache scope when these builds run.
+    # a red axis fails the job and blocks the merge.  Gated on validate because
+    # validate builds the validator image once and shares it as an artifact, so
+    # the four axes run in parallel without rebuilding it.
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -164,12 +189,6 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      # One axis at a time.  The first run of this matrix built the validator
-      # image four times at once and two of the four died with curl exit 22
-      # fetching the pinned Debian snapshot, so the lane reported an
-      # infrastructure failure rather than a repository result.  Serialized, the
-      # first build populates the shared buildx cache scope the rest read.
-      max-parallel: 1
       matrix:
         include:
           - axis: tmpdir
@@ -182,27 +201,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Download validator image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          cache-binary: true
-          driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
-          version: ${{ env.WORKCELL_BUILDX_VERSION }}
+          name: workcell-validator-image
+          path: ${{ runner.temp }}/validator-image
+
+      - name: Load validator image and verify its id
+        env:
+          WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
+          EXPECTED_IMAGE_ID: ${{ needs.validate.outputs.validator_image_id }}
+        run: |
+          # Never rebuild here: a missing or different image is a failure.
+          [[ "${EXPECTED_IMAGE_ID}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Validate job did not record a validator image id" >&2
+            exit 1
+          }
+          zstd -dc "${RUNNER_TEMP}/validator-image/validator-image.tar.zst" | docker load
+          actual_id="$(docker image inspect --format '{{.Id}}' "${WORKCELL_VALIDATOR_IMAGE}")"
+          if [[ "${actual_id}" != "${EXPECTED_IMAGE_ID}" ]]; then
+            echo "Validator image id mismatch: expected ${EXPECTED_IMAGE_ID}, got ${actual_id}" >&2
+            exit 1
+          fi
 
       - name: Validate repository under a hostile environment
         env:
           WORKCELL_VALIDATOR_IMAGE: workcell-validator:${{ github.sha }}
-          WORKCELL_VALIDATOR_BUILDX_CACHE_MODE: gha
-          WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
-          WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
           WORKCELL_VALIDATE_REPO_PROFILE: repo-core
           WORKCELL_HOSTILE_ENV: ${{ matrix.axis }}
-        run: |
-          built_image="$(./scripts/ci/build-validator-image.sh)"
-          if [[ "${built_image}" != "${WORKCELL_VALIDATOR_IMAGE}" ]]; then
-            echo "Validator image builder returned an unexpected reference" >&2
-            exit 1
-          fi
-          ./scripts/ci/run-validate-in-validator.sh
+        run: ./scripts/ci/run-validate-in-validator.sh
 
   release-asset-acl:
     name: Release asset ACL (Darwin)

@@ -54,6 +54,12 @@ Workcell keeps the workflow copy for seven days.
 The Apple Silicon install jobs use it during one CI run.
 Workcell keeps it for seven days.
 
+### CI validator image artifact
+
+`workcell-validator-image` contains a saved image of the validator.
+The hostile-environment jobs load it during one CI run.
+Workcell keeps it for one day.
+
 ### Benchmark artifact
 
 `exec-guard-bench-results` contains the benchmark report.

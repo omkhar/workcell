@@ -5,7 +5,8 @@
       "exec-guard-bench-results": 14
     },
     "ci.yml": {
-      "workcell-ci-install-candidate": 7
+      "workcell-ci-install-candidate": 7,
+      "workcell-validator-image": 1
     },
     "fuzz.yml": {
       "fuzz-reproducers": 14,
