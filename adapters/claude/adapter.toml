@@ -1,0 +1,41 @@
+# Workcell adapter manifest. Schema and loader: internal/adapters/manifest.go.
+# Nothing reads this file at runtime yet. The parity test in
+# internal/adapters/manifest_test.go keeps it equal to the current tables.
+
+schema = 1
+id = "claude"
+tier = "certified"
+binary = "claude"
+shared_credentials = true
+managed_document = true
+
+[install]
+method = "binary"
+version_arg = "CLAUDE_VERSION"
+provenance = "scripts/verify-upstream-claude-release.sh"
+
+[home]
+reserved_targets = [
+  "/state/agent-home/.claude",
+  "/state/agent-home/.config/claude-code",
+  "/state/agent-home/.claude/settings.json",
+  "/state/agent-home/.claude/CLAUDE.md",
+  "/state/agent-home/.claude/.claude.json",
+  "/state/agent-home/.claude.json",
+  "/state/agent-home/.claude/.credentials.json",
+  "/state/agent-home/.claude/workcell",
+  "/state/agent-home/.config/claude-code/auth.json",
+  "/state/agent-home/.mcp.json",
+]
+
+[credentials.claude_api_key]
+container_path = "/opt/workcell/host-inputs/credentials/claude-api-key.txt"
+
+[credentials.claude_auth]
+container_path = "/opt/workcell/host-inputs/credentials/claude-auth.json"
+
+[credentials.claude_mcp]
+container_path = "/opt/workcell/host-inputs/credentials/claude-mcp.json"
+
+[egress]
+endpoints = ["api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443"]

@@ -1,0 +1,34 @@
+# Workcell adapter manifest. Schema and loader: internal/adapters/manifest.go.
+# Nothing reads this file at runtime yet. The parity test in
+# internal/adapters/manifest_test.go keeps it equal to the current tables.
+
+schema = 1
+id = "codex"
+tier = "certified"
+binary = "codex"
+shared_credentials = true
+managed_document = true
+
+[install]
+method = "binary"
+version_arg = "CODEX_VERSION"
+provenance = "scripts/verify-upstream-codex-release.sh"
+
+[home]
+reserved_targets = [
+  "/state/agent-home/.codex",
+  "/state/agent-home/.codex/AGENTS.md",
+  "/state/agent-home/.codex/auth.json",
+  "/state/agent-home/.codex/config.toml",
+  "/state/agent-home/.codex/managed_config.toml",
+  "/state/agent-home/.codex/requirements.toml",
+  "/state/agent-home/.codex/agents",
+  "/state/agent-home/.codex/rules",
+  "/state/agent-home/.codex/mcp",
+]
+
+[credentials.codex_auth]
+container_path = "/opt/workcell/host-inputs/credentials/codex-auth.json"
+
+[egress]
+endpoints = ["api.openai.com:443", "auth.openai.com:443", "chatgpt.com:443"]

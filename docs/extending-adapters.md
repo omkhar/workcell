@@ -17,6 +17,9 @@ In `internal/adapters/data.go`:
 1. Add the key to the provider credential list.
 2. Add its mount path under `/opt/workcell/host-inputs/credentials/`.
 3. Add its provider-home destination to the reserved targets.
+4. Add the key, its mount path, and its reserved target to
+   `adapters/<provider>/adapter.toml`. The manifest parity test in
+   `internal/adapters/manifest_test.go` fails when the two differ.
 
 The reserved target stops a general copy rule that tries to replace a Workcell
 control file. See [Injection Policy explicit limits](injection-policy.md#explicit-limits).
