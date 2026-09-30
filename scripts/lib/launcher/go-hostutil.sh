@@ -51,12 +51,15 @@ go_tool_bin_trusted() {
     go_tool_path_private "$1"
 }
 
-# go_tool_path_private succeeds when $1 is not writable by group or other.  A
-# failed find is not a pass.
+# go_tool_path_private succeeds when $1 is not writable by group or other and,
+# on macOS, carries no extended ACL.  A failed find is not a pass.
 go_tool_path_private() {
-  local writable
+  local writable acl=""
   writable="$(find "$1" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print)" || return 1
-  [[ -z "${writable}" ]]
+  if [[ "$(uname -s)" == Darwin ]]; then
+    acl="$(find "$1" -maxdepth 0 -acl -print)" || return 1
+  fi
+  [[ -z "${writable}${acl}" ]]
 }
 
 # go_tool_build_id prints the Go build ID of ./cmd/TOOL.
@@ -104,6 +107,10 @@ go_tool_bin() {
     return 1
   fi
   chmod 0700 "${bin_dir}" || return 1
+  if ! go_tool_path_private "${bin_dir}"; then
+    echo "Refusing untrusted Go tool cache: ${bin_dir}" >&2
+    return 1
+  fi
 
   if [[ -e "${bin}" || -L "${bin}" ]] && ! go_tool_bin_trusted "${bin}"; then
     rm -f "${bin}"

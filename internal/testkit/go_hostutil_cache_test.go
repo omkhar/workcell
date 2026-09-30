@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -292,5 +293,16 @@ source "`+libDir+`/launcher/go-hostutil.sh"
 `, coldEnv)
 	if _, err := os.Stat(filepath.Join(coldRoot, "bin")); code != 0 || err == nil {
 		t.Fatalf("help sourcing: exit=%d output=%q stat err=%v, want no build", code, output, err)
+	}
+
+	// macOS only: an extended ACL on the cache root is refused even at mode 0700.
+	if runtime.GOOS == "darwin" {
+		code, output = run(`chmod +a "everyone allow write" "${WORKCELL_GO_CACHE_ROOT}"; GO_HOSTUTIL_BIN=""; go_tool_bin workcell-hostutil || { echo refused; exit 7; }`)
+		if code != 7 || !strings.Contains(output, "Refusing untrusted Go tool cache") {
+			t.Fatalf("ACL on cache root: exit=%d output=%q, want refusal", code, output)
+		}
+		if out, err := exec.Command("chmod", "-N", cacheRoot).CombinedOutput(); err != nil {
+			t.Fatalf("chmod -N: %v %s", err, out)
+		}
 	}
 }
