@@ -302,17 +302,28 @@ func rustTokens(src string) ([]string, error) {
 // LAUNCH_TARGETS table in the Rust source, as [match, name, invocation,
 // invocation]. It matches tokens, not text, so a copy in a comment, in any
 // literal, or outside the table does not count. It returns nil when the
-// source does not tokenize, has no single LAUNCH_TARGETS table, or has an
-// attribute or macro in the table.
+// source does not tokenize, has no single active top-level LAUNCH_TARGETS
+// table, or has an attribute or macro in the table.
 func rustLaunchTargets(source string) [][]string {
 	tokens, err := rustTokens(source)
 	if err != nil {
 		return nil
 	}
+	// Count only a top-level declaration with no attribute: nesting depth 0,
+	// and "const" starts the item (after ";", "}", or the file start). A copy
+	// in a function, a module, a macro, or under #[cfg(...)] does not count.
 	var start []int
-	for i := 1; i < len(tokens); i++ {
-		if tokens[i-1] == "const" && tokens[i] == "LAUNCH_TARGETS" {
-			start = append(start, i)
+	depth := 0
+	for i, token := range tokens {
+		switch token {
+		case "{", "(", "[":
+			depth++
+		case "}", ")", "]":
+			depth--
+		case "LAUNCH_TARGETS":
+			if depth == 0 && i > 0 && tokens[i-1] == "const" && (i == 1 || tokens[i-2] == ";" || tokens[i-2] == "}") {
+				start = append(start, i)
+			}
 		}
 	}
 	if len(start) != 1 {
@@ -475,7 +486,7 @@ func dockerUnquote(word string, escape byte) string {
 	return out.String()
 }
 
-const rustTableFixture = "struct LaunchTarget { name: &'static str }\nconst LAUNCH_TARGETS: &[LaunchTarget] = &[\n%s\n];\n"
+const rustTableFixture = "const LAUNCH_TARGETS: &[LaunchTarget] = &[\n%s\n];\n"
 
 const rustDemoTarget = `LaunchTarget {
     name: "demo",
@@ -490,6 +501,7 @@ func TestRustLaunchTargetsIgnoreDecoys(t *testing.T) {
 		want   int
 	}{
 		"live":                        {table(rustDemoTarget), 1},
+		"live after lifetime":         {"struct S { name: &'static str }\n" + table(rustDemoTarget), 1},
 		"live after char quote":       {"const Q: char = '\"';\n" + table(rustDemoTarget), 1},
 		"live after byte char":        {"const Q: u8 = b'\\'';\n" + table(rustDemoTarget), 1},
 		"live without trailing comma": {table(strings.TrimSuffix(rustDemoTarget, ",")), 1},
@@ -503,6 +515,10 @@ func TestRustLaunchTargetsIgnoreDecoys(t *testing.T) {
 		"outside the table":           {"const OTHER: &[LaunchTarget] = &[\n" + rustDemoTarget + "\n];\n" + table(""), 0},
 		"cfg attribute on entry":      {table("#[cfg(any())]\n" + rustDemoTarget), 0},
 		"macro in table":              {table("demo!(" + rustDemoTarget + ")"), 0},
+		"table in a function":         {"fn f() {\n" + table(rustDemoTarget) + "}\n", 0},
+		"table in a cfg module":       {"#[cfg(any())]\nmod m {\n" + table(rustDemoTarget) + "}\n", 0},
+		"cfg attribute on table":      {"#[cfg(any())]\n" + table(rustDemoTarget), 0},
+		"inactive copy beside live":   {"#[cfg(any())]\n" + table("") + table(rustDemoTarget), 1},
 		"two tables":                  {table(rustDemoTarget) + table(rustDemoTarget), 0},
 		"unterminated comment":        {table(rustDemoTarget) + "/* /* */", 0},
 		"unterminated raw string":     {table(rustDemoTarget) + `r#"x"`, 0},
@@ -521,7 +537,7 @@ func TestDockerfilePinnedArgsIgnoreDecoys(t *testing.T) {
 	}{
 		"live":                          {"ARG DEMO_VERSION=1.2.3\n", true},
 		"lower-case keyword":            {"arg DEMO_VERSION=1.2.3\n", true},
-		"second name on the line":       {"ARG OTHER=1 DEMO_VERSION=1.2.3\n", true},
+		"second name on the line":       {"ARG OTHER=1 DEMO_VERSION=1.2.3\n", true}, // BuildKit defines each name=value operand.
 		"comment":                       {"# ARG DEMO_VERSION=1.2.3\n", false},
 		"unpinned":                      {"ARG DEMO_VERSION\n", false},
 		"empty value":                   {"ARG DEMO_VERSION=\n", false},
