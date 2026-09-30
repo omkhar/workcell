@@ -250,7 +250,6 @@ fi
 if [[ "${host_os}" == "Linux" ]]; then
   require_markdownlint_node
   require_markdownlint_npm
-  require_cargo
 fi
 
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -270,9 +269,9 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   esac
 fi
 
+require_cargo
 require_markdownlint_node
 require_markdownlint_npm
-require_cargo
 echo "  npm ci --prefix ${MARKDOWNLINT_DIR} --ignore-scripts --omit=dev"
 npm ci --prefix "${MARKDOWNLINT_DIR}" --ignore-scripts --omit=dev
 install -m 0444 "${MARKDOWNLINT_DIR}/package-lock.json" "${MARKDOWNLINT_LOCK_STAMP}"
