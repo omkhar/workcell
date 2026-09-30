@@ -115,7 +115,6 @@ internal/publishpr/publish_pr_cli.go	os.Chmod	1
 internal/publishpr/publish_pr_cli.go	os.CreateTemp	1
 internal/publishpr/publish_pr_cli.go	os.Remove	3
 internal/publishpr/publish_pr_main.go	os.ReadFile	1
-internal/sessionctl/logs.go	os.Open	1
 internal/sessionctl/monitor.go	os.Open	1
 internal/sessionctl/monitor.go	os.Stat	1
 internal/supportbundle/collect.go	os.ReadDir	2

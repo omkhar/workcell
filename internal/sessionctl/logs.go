@@ -8,12 +8,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/omkhar/workcell/internal/cliexit"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/sessions"
 	"github.com/omkhar/workcell/internal/host/stateroot"
+	"github.com/omkhar/workcell/internal/rootio"
 )
+
+// resolveLogPath is a test seam for the path check that precedes the open.
+var resolveLogPath = hoststate.ResolveHostOutputCandidate
 
 // LogsMain implements `workcell session logs --id SESSION_ID --kind KIND`,
 // the Go translation of the bash session_logs_main function in
@@ -58,12 +65,12 @@ func logsMain(args []string, stdout io.Writer) error {
 		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("No %s log is recorded for session %s.", kind, sessionID)}
 	}
 
-	resolved, err := hoststate.ResolveHostOutputCandidate(logPath)
+	resolved, err := resolveLogPath(logPath)
 	if err != nil || resolved != logPath {
 		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Workcell blocked host output path after launch: %s", logPath)}
 	}
 
-	file, err := os.Open(resolved)
+	file, err := openLogNoFollow(resolved)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("No %s log is recorded for session %s.", kind, sessionID)}
@@ -73,6 +80,32 @@ func logsMain(args []string, stdout io.Writer) error {
 	defer file.Close()
 	_, err = io.Copy(stdout, file)
 	return err
+}
+
+// openLogNoFollow opens a recorded log through a verified parent handle and
+// refuses a symlink leaf or a non-regular file, so a swap after the path check
+// cannot redirect the read.
+func openLogNoFollow(path string) (*os.File, error) {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	name := filepath.Base(cleaned)
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), cleaned)
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("log must be a regular file: %s", name)
+	}
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 func parseLogsArgs(args []string) (sessionID, kind string, showHelp bool, err error) {
