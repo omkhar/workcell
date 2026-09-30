@@ -3094,6 +3094,13 @@ if [[ "$2" == "partial.test" ]]; then
   printf '192.0.2.20 STREAM partial.test\n'
   exit 1
 fi
+if [[ "$2" == "mixed.test" ]]; then
+  if [[ "$1" == "ahosts" ]]; then
+    printf '192.0.2.30 STREAM mixed.test\n'
+    exit 1
+  fi
+  printf '192.0.2.31 mixed.test\n'
+fi
 EOF
 printf '#!/bin/bash\nexec "$@"\n' >"${EGRESS_SWAP_ROOT}/bin/sudo"
 chmod +x "${EGRESS_SWAP_ROOT}/bin/"*
@@ -3140,6 +3147,13 @@ if ! run_egress_swap_case '127.0.0.1:443 [::1]:443 resolvable.test:443' ||
     '-j DROP')" ]]; then
   cat "${EGRESS_SWAP_ROOT}/state/violations" >&2 2>/dev/null || true
   echo "Expected allowlist apply to keep a DROP-terminated chain linked while it swaps in the new rules" >&2
+  exit 1
+fi
+# A failed primary lookup must not mix its output into the fallback result.
+if ! run_egress_swap_case '127.0.0.1:443 mixed.test:443' ||
+  ! grep -Fxq -- '-p tcp -d 192.0.2.31 --dport 443 -j ACCEPT' "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS" ||
+  grep -Fq -- '192.0.2.30' "${EGRESS_SWAP_ROOT}/state/iptables/chain.WORKCELL_EGRESS"; then
+  echo "Expected allowlist apply to discard the output of a failed primary lookup" >&2
   exit 1
 fi
 # A resolver that prints one address and then fails must not leave a partial chain.

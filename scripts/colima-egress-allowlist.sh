@@ -419,23 +419,22 @@ resolve_vm_endpoint_ips() {
   local host="$1"
   local ip=""
   local rest=""
+  local output=""
 
   if ! type getent >/dev/null 2>&1; then
     echo "Missing required VM resolver: getent" >&2
     return 1
   fi
 
-  if getent ahosts "${host}" 2>/dev/null | while read -r ip rest; do
-    [[ -n "${ip}" ]] || continue
-    printf '%s\n' "${ip}"
-  done; then
-    return 0
+  # Keep the output of a lookup only when that lookup succeeds: a failed
+  # lookup that printed an address must not mix into the fallback result.
+  if ! output="$(getent ahosts "${host}" 2>/dev/null)"; then
+    output="$(getent hosts "${host}" 2>/dev/null)" || return 1
   fi
-
-  getent hosts "${host}" 2>/dev/null | while read -r ip rest; do
+  while read -r ip rest; do
     [[ -n "${ip}" ]] || continue
     printf '%s\n' "${ip}"
-  done
+  done <<<"${output}"
 }
 
 add_vm_endpoint_rules() {
