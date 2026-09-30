@@ -43,6 +43,15 @@ go_tool_bin_trusted() {
     [[ -z "$(find "$1" \( -perm -020 -o -perm -002 \) -print)" ]]
 }
 
+# go_tool_build_id prints the Go build ID of ./cmd/TOOL.
+go_tool_build_id() {
+  run_clean_host_command_in_dir "${ROOT_DIR}" env \
+    GOPATH="${GOPATH}" \
+    GOMODCACHE="${GOMODCACHE}" \
+    GOCACHE="${GOCACHE}" \
+    "${HOST_GO_BIN}" list -buildvcs=false -export -f '{{.BuildID}}' "./cmd/$1"
+}
+
 # go_tool_bin sets GO_TOOL_BIN to a cached build of ./cmd/TOOL and builds it
 # on a miss.  The cache key is the main package's Go build ID.  Go derives it
 # from the content of every source file in the package's dependency graph
@@ -64,11 +73,7 @@ go_tool_bin() {
     return 0
   fi
 
-  build_id="$(run_clean_host_command_in_dir "${ROOT_DIR}" env \
-    GOPATH="${GOPATH}" \
-    GOMODCACHE="${GOMODCACHE}" \
-    GOCACHE="${GOCACHE}" \
-    "${HOST_GO_BIN}" list -buildvcs=false -export -f '{{.BuildID}}' "./cmd/${tool}")" || return 1
+  build_id="$(go_tool_build_id "${tool}")" || return 1
   if [[ ! "${build_id}" =~ ^[A-Za-z0-9_/-]+$ ]]; then
     echo "Unexpected Go build ID for ${tool}: ${build_id}" >&2
     return 1
@@ -96,8 +101,19 @@ go_tool_bin() {
       rm -f "${tmp}"
       return 1
     fi
+    # A source change between the key lookup and the build would store the
+    # new binary under the old key; refuse it.
+    if [[ "$(go_tool_build_id "${tool}")" != "${build_id}" ]]; then
+      rm -f "${tmp}"
+      echo "Go sources for ${tool} changed during the build; retry" >&2
+      return 1
+    fi
     chmod 0700 "${tmp}"
+    # Flush the binary data before the rename and the new entry after it, so a
+    # crash cannot leave a non-empty partial binary under the final name.
+    sync
     mv -f "${tmp}" "${bin}"
+    sync
   fi
   if ! go_tool_bin_trusted "${bin}"; then
     echo "Refusing untrusted cached Go tool: ${bin}" >&2

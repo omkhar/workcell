@@ -184,4 +184,32 @@ source "`+libDir+`/launcher/go-hostutil.sh"
 	if code == 0 || !strings.Contains(output, "Refusing untrusted Go tool cache") {
 		t.Fatalf("symlinked cache dir: exit=%d output=%q, want refusal", code, output)
 	}
+
+	// Source change during the build: the binary is not stored under the old key.
+	if err := os.Remove(binDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(binDir+".real", binDir); err != nil {
+		t.Fatal(err)
+	}
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	racer := filepath.Join(fixture, "racer.sh")
+	racerSrc := "#!/bin/bash\n\"" + realGo + "\" \"$@\"\nrc=$?\n" +
+		"if [[ \"$1\" == build ]]; then echo 'package main; func main() {}' > \"" + mainPath + "\"; fi\nexit $rc\n"
+	if err := os.WriteFile(racer, []byte(racerSrc), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeMain("v3")
+	expectOutput("go_hostutil hello", "v3 [hello]")
+	before := len(binaries())
+	// The launcher caches the path at source time, so edit the source and
+	// swap the go binary inside the call, then drop the memo.
+	code, output = run(`printf 'package main\nimport "fmt"\nfunc main() { fmt.Println("v4") }\n' > "` + mainPath + `"
+HOST_GO_BIN="` + racer + `"; GO_HOSTUTIL_BIN=""; go_hostutil hello`)
+	if code == 0 || !strings.Contains(output, "changed during the build") || len(binaries()) != before {
+		t.Fatalf("racing source change: exit=%d output=%q binaries=%v, want refusal and no new binary", code, output, binaries())
+	}
 }
