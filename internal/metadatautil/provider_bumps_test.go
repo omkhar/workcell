@@ -2472,6 +2472,18 @@ func mustWriteText(t *testing.T, path string, content string) {
 	}
 }
 
+func holdCodexWithFixturePath(t *testing.T, fixturePath string) error {
+	t.Helper()
+	sources := ProviderBumpSources{CodexCLISourceURLFmt: "http://codex.test/%s", CodexSubcommandFixturePath: fixturePath}
+	source := []byte(codexSubcommandSourceFixture)
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body, _ := json.Marshal(githubContentsFile{Type: "file", Encoding: "base64", Content: base64.StdEncoding.EncodeToString(source), SHA: codexGitBlobObjectID(source)})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
+	})}
+	_, err := holdCodexOnUnclassifiedCLISurface(ProviderBumpSelection{TargetVersion: "0.145.0"}, sources, client)
+	return err
+}
+
 func TestHoldCodexRejectsSymlinkedFixture(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(root, "real.txt")
@@ -2480,14 +2492,23 @@ func TestHoldCodexRejectsSymlinkedFixture(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	sources := ProviderBumpSources{CodexCLISourceURLFmt: "http://codex.test/%s", CodexSubcommandFixturePath: link}
-	source := []byte(codexSubcommandSourceFixture)
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		body, _ := json.Marshal(githubContentsFile{Type: "file", Encoding: "base64", Content: base64.StdEncoding.EncodeToString(source), SHA: codexGitBlobObjectID(source)})
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Header: http.Header{}}, nil
-	})}
-	_, err := holdCodexOnUnclassifiedCLISurface(ProviderBumpSelection{TargetVersion: "0.145.0"}, sources, client)
-	if err == nil || !strings.Contains(err.Error(), "open Codex subcommand fixture") {
+	if err := holdCodexWithFixturePath(t, link); err == nil || !strings.Contains(err.Error(), "read Codex subcommand fixture") {
 		t.Fatalf("error = %v, want symlink rejection", err)
+	}
+}
+
+func TestHoldCodexRejectsSymlinkedFixtureParent(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteText(t, filepath.Join(realDir, "codex-subcommands.txt"), codexFixtureText("0.144.1", []string{"update"}))
+	linkDir := filepath.Join(root, "fixtures")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := holdCodexWithFixturePath(t, filepath.Join(linkDir, "codex-subcommands.txt")); err == nil || !strings.Contains(err.Error(), "read Codex subcommand fixture") {
+		t.Fatalf("error = %v, want parent symlink rejection", err)
 	}
 }

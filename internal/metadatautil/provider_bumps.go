@@ -20,7 +20,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/omkhar/workcell/internal/providerid"
-	"golang.org/x/sys/unix"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 const (
@@ -573,13 +573,9 @@ func holdCodexOnUnclassifiedCLISurface(selection ProviderBumpSelection, sources 
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
-	fixtureFD, err := unix.Open(sources.CodexSubcommandFixturePath, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	fixture, err := rootio.ReadFileNoFollow(sources.CodexSubcommandFixturePath, "Codex subcommand fixture", 1<<20)
 	if err != nil {
-		return ProviderBumpSelection{}, fmt.Errorf("open Codex subcommand fixture: %w", err)
-	}
-	fixture, _, err := readRegularOpenFile(fixtureFD, sources.CodexSubcommandFixturePath, 1<<20)
-	if err != nil {
-		return ProviderBumpSelection{}, err
+		return ProviderBumpSelection{}, fmt.Errorf("read Codex subcommand fixture: %w", err)
 	}
 	_, err = updateCodexSubcommandFixture(selection.TargetVersion, fixture, subcommands)
 	var namespaceErr *codexNamespaceChangeError
