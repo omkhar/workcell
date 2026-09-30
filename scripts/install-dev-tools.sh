@@ -210,6 +210,12 @@ if ! command -v syft &>/dev/null; then
   # syft isn't packaged in apt repos by default; manual fallback.
   append_unique_apt syft
 fi
+# check-rust-vendor.sh runs cargo vendor on the host; it also looks in ~/.cargo/bin.
+if [[ ! -x "${HOME}/.cargo/bin/cargo" ]] && ! command -v cargo &>/dev/null; then
+  missing+=(cargo)
+  append_unique_brew rust
+  append_unique_apt cargo
+fi
 
 if [[ "${host_os}" == "Linux" ]]; then
   require_markdownlint_node

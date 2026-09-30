@@ -965,6 +965,8 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 	for _, want := range []string{
 		`command -v npm`,
 		`append_unique_brew node`,
+		`append_unique_brew rust`,
+		`append_unique_apt cargo`,
 		`if [[ "${host_os}" == "Linux" ]]; then`,
 		`require_markdownlint_node`,
 		`require_markdownlint_npm`,
