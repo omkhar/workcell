@@ -104,38 +104,74 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 	}
 }
 
-func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
-	// endpoints runs provider_endpoints under an xtrace that prefixes each
-	// executed command with its line number, so the trace names the case arm.
-	endpoints := func(id string) (out, trace string, code int) {
-		cmd := exec.Command("bash", "--noprofile", "--norc", "-c",
-			`source scripts/lib/launcher/egress-endpoints.sh && PS4='+$LINENO ' && set -x && provider_endpoints "$1"`, "bash", id)
-		cmd.Dir = repoRoot
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-		var stderr strings.Builder
-		cmd.Stderr = &stderr
-		stdout, err := cmd.Output()
-		var exitErr *exec.ExitError
-		if err != nil && !errors.As(err, &exitErr) {
-			t.Fatalf("provider_endpoints %s: %v", id, err)
-		}
-		return string(stdout), stderr.String(), cmd.ProcessState.ExitCode()
+// providerEndpoints runs provider_endpoints from script under an xtrace that
+// prefixes each executed command with its line number, so the trace names the
+// case arm that ran.
+func providerEndpoints(t *testing.T, script, id string) (out, trace string, code int) {
+	t.Helper()
+	cmd := exec.Command("bash", "--noprofile", "--norc", "-c",
+		`source "$1" && PS4='+$LINENO ' && set -x && provider_endpoints "$2"`, "bash", script, id)
+	cmd.Dir = repoRoot
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		t.Fatalf("provider_endpoints %s: %v", id, err)
 	}
+	return string(stdout), stderr.String(), cmd.ProcessState.ExitCode()
+}
+
+// endpointRowAbsent reports whether script has no provider_endpoints row for
+// id: id must run the same default arm as an unknown id, with exit 1 and no
+// output. An explicit arm, even one that only returns 1, traces other lines.
+func endpointRowAbsent(t *testing.T, script, id string) bool {
+	t.Helper()
 	const unknown = "no-such-provider"
-	unknownOut, unknownTrace, unknownCode := endpoints(unknown)
+	unknownOut, unknownTrace, unknownCode := providerEndpoints(t, script, unknown)
 	if unknownCode != 1 || unknownOut != "" || !strings.Contains(unknownTrace, "return 1") {
 		t.Fatalf("provider_endpoints probe cannot detect the default arm (exit %d, out %q): %s", unknownCode, unknownOut, unknownTrace)
 	}
+	out, trace, code := providerEndpoints(t, script, id)
+	return code == 1 && out == "" && strings.ReplaceAll(trace, id, unknown) == unknownTrace
+}
+
+func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
+	const script = "provider_endpoints() {\n  case \"$1\" in\n    codex)\n      echo api.openai.com:443\n      ;;\n%s    *)\n      return 1\n      ;;\n  esac\n}\n"
+	cases := map[string]struct {
+		arm  string
+		want bool
+	}{
+		"no row":             {"", true},
+		"other row":          {"    gemini)\n      return 1\n      ;;\n", true},
+		"return 1 arm":       {"    antigravity)\n      return 1\n      ;;\n", false},
+		"false arm":          {"    antigravity)\n      false\n      ;;\n", false},
+		"arm in a pattern":   {"    gemini | antigravity)\n      return 1\n      ;;\n", false},
+		"arm with a row":     {"    antigravity)\n      echo x:443\n      ;;\n", false},
+		"arm that returns 0": {"    antigravity)\n      return 0\n      ;;\n", false},
+	}
+	for name, c := range cases {
+		path := filepath.Join(t.TempDir(), "endpoints.sh")
+		if err := os.WriteFile(path, []byte(fmt.Sprintf(script, c.arm)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := endpointRowAbsent(t, path, providerid.Antigravity); got != c.want {
+			t.Errorf("%s: row absent = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
+	const script = "scripts/lib/launcher/egress-endpoints.sh"
 	for _, m := range loadRepoManifests(t) {
-		out, trace, code := endpoints(m.ID)
 		if m.Tier == "planned" {
-			// An absent row runs the default arm, as an unknown id does. An
-			// explicit arm, even one that only returns 1, traces other lines.
-			if code != 1 || out != "" || strings.ReplaceAll(trace, m.ID, unknown) != unknownTrace || len(m.EgressEndpoints) != 0 {
-				t.Errorf("%s: planned adapter must have no provider_endpoints row and no egress endpoints (exit %d, out %q):\n%s", m.ID, code, out, trace)
+			if !endpointRowAbsent(t, script, m.ID) || len(m.EgressEndpoints) != 0 {
+				t.Errorf("%s: planned adapter must have no provider_endpoints row and no egress endpoints", m.ID)
 			}
 			continue
 		}
+		out, trace, code := providerEndpoints(t, script, m.ID)
 		if code != 0 {
 			t.Fatalf("%s: provider_endpoints exit %d:\n%s", m.ID, code, trace)
 		}
@@ -179,6 +215,9 @@ func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
 }
 
 var (
+	// rustLaunchTable is the whole table: LaunchTarget entries with plain string
+	// fields and one or more invocations, and nothing else.
+	rustLaunchTable   = regexp.MustCompile(`^\[ (?:LaunchTarget \{ name : "[^"]*" , script_path : "[^"]*" , approved_invocations : & \[ "[^"]*" (?:, "[^"]*" )*(?:, )?\] (?:, )?\} (?:, )?)*\]$`)
 	rustLaunchBlock   = regexp.MustCompile(`(?:^| )LaunchTarget \{ name : "([a-z-]+)" , script_path : "/usr/local/libexec/workcell/provider-wrapper\.sh" , approved_invocations : & \[ "([^"]+)" , "([^"]+)" (?:, )?\] (?:, )?\}`)
 	dockerDirective   = regexp.MustCompile(`^#[ \t]*([a-zA-Z][a-zA-Z0-9]*)[ \t]*=[ \t]*(.+?)[ \t]*$`)
 	dockerHeredocWord = regexp.MustCompile(`^[0-9]*<<(-?)([^<]*)$`)
@@ -303,7 +342,7 @@ func rustTokens(src string) ([]string, error) {
 // invocation]. It matches tokens, not text, so a copy in a comment, in any
 // literal, or outside the table does not count. It returns nil when the
 // source does not tokenize, has no single active top-level LAUNCH_TARGETS
-// table, or has an attribute or macro in the table.
+// table, or has a table entry of another shape.
 func rustLaunchTargets(source string) [][]string {
 	tokens, err := rustTokens(source)
 	if err != nil {
@@ -346,13 +385,18 @@ func rustLaunchTargets(source string) [][]string {
 			depth--
 		}
 		if depth == 0 {
-			// An attribute (#[cfg(...)]) or a macro (!) can remove or rewrite
-			// an entry at compile time; the table has neither, so reject both.
-			table := tokens[i : j+1]
-			if slices.Contains(table, "#") || slices.Contains(table, "!") {
+			// Any other shape (an attribute, a macro, a const or escaped field, a
+			// provider row with other than two invocations) could hide a row, so
+			// reject it instead of skipping it.
+			table := strings.Join(tokens[i:j+1], " ")
+			if !rustLaunchTable.MatchString(table) {
 				return nil
 			}
-			return rustLaunchBlock.FindAllStringSubmatch(strings.Join(table, " "), -1)
+			targets := rustLaunchBlock.FindAllStringSubmatch(table, -1)
+			if strings.Count(table, `script_path : "/usr/local/libexec/workcell/provider-wrapper.sh"`) != len(targets) {
+				return nil
+			}
+			return targets
 		}
 	}
 	return nil
@@ -496,32 +540,38 @@ const rustDemoTarget = `LaunchTarget {
 
 func TestRustLaunchTargetsIgnoreDecoys(t *testing.T) {
 	table := func(entries string) string { return fmt.Sprintf(rustTableFixture, entries) }
+	// other is a valid row, so a check that skips a bad row still finds one.
+	other := strings.ReplaceAll(rustDemoTarget, "demo", "other") + "\n"
 	cases := map[string]struct {
 		source string
 		want   int
 	}{
-		"live":                        {table(rustDemoTarget), 1},
-		"live after lifetime":         {"struct S { name: &'static str }\n" + table(rustDemoTarget), 1},
-		"live after char quote":       {"const Q: char = '\"';\n" + table(rustDemoTarget), 1},
-		"live after byte char":        {"const Q: u8 = b'\\'';\n" + table(rustDemoTarget), 1},
-		"live without trailing comma": {table(strings.TrimSuffix(rustDemoTarget, ",")), 1},
-		"line comment":                {table("// " + strings.ReplaceAll(rustDemoTarget, "\n", "\n// ")), 0},
-		"block comment":               {table("/*\n" + rustDemoTarget + "\n*/"), 0},
-		"nested block comment":        {table("/* outer /* inner */\n" + rustDemoTarget + "\n*/"), 0},
-		"raw string":                  {table(`const D: &str = r#"` + rustDemoTarget + `"#;`), 0},
-		"raw string with hashes":      {table(`r##"x"# ` + rustDemoTarget + ` "##`), 0},
-		"byte raw string":             {table(`br"` + rustDemoTarget + `"`), 0},
-		"escaped string":              {table(`"\"` + strings.ReplaceAll(rustDemoTarget, `"`, `\"`) + `"`), 0},
-		"outside the table":           {"const OTHER: &[LaunchTarget] = &[\n" + rustDemoTarget + "\n];\n" + table(""), 0},
-		"cfg attribute on entry":      {table("#[cfg(any())]\n" + rustDemoTarget), 0},
-		"macro in table":              {table("demo!(" + rustDemoTarget + ")"), 0},
-		"table in a function":         {"fn f() {\n" + table(rustDemoTarget) + "}\n", 0},
-		"table in a cfg module":       {"#[cfg(any())]\nmod m {\n" + table(rustDemoTarget) + "}\n", 0},
-		"cfg attribute on table":      {"#[cfg(any())]\n" + table(rustDemoTarget), 0},
-		"inactive copy beside live":   {"#[cfg(any())]\n" + table("") + table(rustDemoTarget), 1},
-		"two tables":                  {table(rustDemoTarget) + table(rustDemoTarget), 0},
-		"unterminated comment":        {table(rustDemoTarget) + "/* /* */", 0},
-		"unterminated raw string":     {table(rustDemoTarget) + `r#"x"`, 0},
+		"live":                         {table(rustDemoTarget), 1},
+		"live after lifetime":          {"struct S { name: &'static str }\n" + table(rustDemoTarget), 1},
+		"live after char quote":        {"const Q: char = '\"';\n" + table(rustDemoTarget), 1},
+		"live after byte char":         {"const Q: u8 = b'\\'';\n" + table(rustDemoTarget), 1},
+		"live without trailing comma":  {table(strings.TrimSuffix(rustDemoTarget, ",")), 1},
+		"line comment":                 {table("// " + strings.ReplaceAll(rustDemoTarget, "\n", "\n// ")), 0},
+		"block comment":                {table("/*\n" + rustDemoTarget + "\n*/"), 0},
+		"nested block comment":         {table("/* outer /* inner */\n" + rustDemoTarget + "\n*/"), 0},
+		"raw string":                   {table(`const D: &str = r#"` + rustDemoTarget + `"#;`), 0},
+		"raw string with hashes":       {table(`r##"x"# ` + rustDemoTarget + ` "##`), 0},
+		"byte raw string":              {table(`br"` + rustDemoTarget + `"`), 0},
+		"escaped string":               {table(`"\"` + strings.ReplaceAll(rustDemoTarget, `"`, `\"`) + `"`), 0},
+		"outside the table":            {"const OTHER: &[LaunchTarget] = &[\n" + rustDemoTarget + "\n];\n" + table(""), 0},
+		"cfg attribute on entry":       {table("#[cfg(any())]\n" + rustDemoTarget), 0},
+		"macro in table":               {table("demo!(" + rustDemoTarget + ")"), 0},
+		"table in a function":          {"fn f() {\n" + table(rustDemoTarget) + "}\n", 0},
+		"table in a cfg module":        {"#[cfg(any())]\nmod m {\n" + table(rustDemoTarget) + "}\n", 0},
+		"cfg attribute on table":       {"#[cfg(any())]\n" + table(rustDemoTarget), 0},
+		"inactive copy beside live":    {"#[cfg(any())]\n" + table("") + table(rustDemoTarget), 1},
+		"provider row, one invocation": {table(other + strings.Replace(rustDemoTarget, `"/usr/local/bin/demo", `, "", 1)), 0},
+		"escaped script path":          {table(other + strings.Replace(rustDemoTarget, `wrapper.sh`, `wrapper\x2esh`, 1)), 0},
+		"const script path":            {table(other + strings.Replace(rustDemoTarget, `"/usr/local/libexec/workcell/provider-wrapper.sh"`, "WRAPPER", 1)), 0},
+		"other row beside provider":    {table(`LaunchTarget { name: "git", script_path: "/g.sh", approved_invocations: &["/a", "/b", "/c"] },` + "\n" + rustDemoTarget), 1},
+		"two tables":                   {table(rustDemoTarget) + table(rustDemoTarget), 0},
+		"unterminated comment":         {table(rustDemoTarget) + "/* /* */", 0},
+		"unterminated raw string":      {table(rustDemoTarget) + `r#"x"`, 0},
 	}
 	for name, c := range cases {
 		if got := rustLaunchTargets(c.source); len(got) != c.want {
@@ -716,6 +766,11 @@ func TestLoadManifestsFailsClosed(t *testing.T) {
 		"manifest is a directory": func(root string) {
 			os.MkdirAll(filepath.Join(root, "demo", "adapter.toml"), 0o700)
 		},
+		"adapter entry is a FIFO": func(root string) {
+			if err := unix.Mkfifo(filepath.Join(root, "demo"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
 	}
 	for name, prepare := range setup {
 		root := t.TempDir()
@@ -726,5 +781,22 @@ func TestLoadManifestsFailsClosed(t *testing.T) {
 	}
 	if _, err := LoadManifests(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("LoadManifests accepted a missing root")
+	}
+}
+
+func TestLoadManifestsSkipsRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "demo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "demo", "adapter.toml"), []byte("schema = 1\nid = \"demo\"\ntier = \"planned\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifests, err := LoadManifests(root)
+	if err != nil || len(manifests) != 1 || manifests[0].ID != "demo" {
+		t.Fatalf("LoadManifests = %v, %v; want the demo manifest only", manifests, err)
 	}
 }

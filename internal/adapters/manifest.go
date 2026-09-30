@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,9 +58,12 @@ var manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // LoadManifests loads every adapters/<id>/adapter.toml under root, in
 // directory-name order, and requires each id to match its directory. It fails
 // closed: a missing or unreadable root, a symlinked adapter directory, and a
-// directory without a regular adapter.toml are errors. Each adapter directory
-// and each manifest is opened with O_NOFOLLOW from the descriptor of its
-// parent, so a path swapped after the listing cannot redirect a read.
+// directory without a regular adapter.toml are errors. A regular root entry
+// (such as README.md) is skipped; any other non-directory entry is an error.
+// The listing reads names only. Each entry is classified by opening it with
+// O_NOFOLLOW from the root descriptor, and each manifest is opened the same
+// way from its adapter directory, so a path swapped after the listing cannot
+// redirect a read or drop an adapter.
 func LoadManifests(root string) ([]Manifest, error) {
 	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -69,21 +71,18 @@ func LoadManifests(root string) ([]Manifest, error) {
 	}
 	rootDir := os.NewFile(uintptr(rootFD), root)
 	defer rootDir.Close()
-	entries, err := rootDir.ReadDir(-1)
+	names, err := rootDir.Readdirnames(-1)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", root, err)
 	}
-	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	slices.Sort(names)
 	var out []Manifest
-	for _, entry := range entries {
-		path := filepath.Join(root, entry.Name(), "adapter.toml")
-		if entry.Type()&fs.ModeSymlink != 0 {
-			return nil, fmt.Errorf("%s: adapter entry must not be a symlink", filepath.Join(root, entry.Name()))
-		}
-		if !entry.IsDir() {
+	for _, name := range names {
+		path := filepath.Join(root, name, "adapter.toml")
+		content, err := readManifestFile(rootFD, name)
+		if errors.Is(err, errRegularFile) {
 			continue
 		}
-		content, err := readManifestFile(rootFD, entry.Name())
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
@@ -91,18 +90,30 @@ func LoadManifests(root string) ([]Manifest, error) {
 		if err != nil {
 			return nil, err
 		}
-		if m.ID != entry.Name() {
-			return nil, fmt.Errorf("%s: id %q does not match directory %q", path, m.ID, entry.Name())
+		if m.ID != name {
+			return nil, fmt.Errorf("%s: id %q does not match directory %q", path, m.ID, name)
 		}
 		out = append(out, m)
 	}
 	return out, nil
 }
 
+// errRegularFile marks a root entry that is a regular file, not an adapter.
+var errRegularFile = errors.New("regular file, not an adapter directory")
+
 // readManifestFile reads <dir>/adapter.toml below rootFD. O_NONBLOCK keeps a
-// FIFO swapped in for the file from blocking the open; the fstat then rejects it.
+// FIFO swapped in for either path from blocking the open; the fstat then
+// rejects it. When dir is not a directory, it returns errRegularFile only for
+// a regular file; a symlink or any other type is an error.
 func readManifestFile(rootFD int, dir string) ([]byte, error) {
-	dirFD, err := unix.Openat(rootFD, dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	dirFD, err := unix.Openat(rootFD, dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOTDIR) {
+		var st unix.Stat_t
+		if unix.Fstatat(rootFD, dir, &st, unix.AT_SYMLINK_NOFOLLOW) == nil && st.Mode&unix.S_IFMT == unix.S_IFREG {
+			return nil, errRegularFile
+		}
+		return nil, errors.New("adapter entry must be a directory")
+	}
 	if err != nil {
 		return nil, err
 	}
