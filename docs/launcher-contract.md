@@ -185,8 +185,8 @@ one of these inputs gives a new key, and the function builds again.
 
 The function refuses a cache directory that is a symlink or that the current
 user does not own. It sets the directory mode to `0700`. It does not run a
-cached binary that is a symlink, has a different owner, or is writable by group
-or other. It removes that binary and builds it again. It builds into a temporary
+cached binary that is empty, is a symlink, has a different owner, or is
+writable by group or other. It removes that binary and builds it again. It builds into a temporary
 file and renames the file into position.
 
 ### `go_hostutil()`

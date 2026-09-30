@@ -151,6 +151,12 @@ source "`+libDir+`/launcher/go-hostutil.sh"
 		t.Fatalf("group-writable cached binary was not rebuilt (err %v)", err)
 	}
 
+	// Truncated: an empty file at the binary path is replaced, not executed.
+	if err := os.Truncate(current, 0); err != nil {
+		t.Fatal(err)
+	}
+	expectOutput("go_hostutil hello", "v2 [hello]")
+
 	// Tampered: a symlink planted at the binary path is replaced, not followed.
 	evil := filepath.Join(fixture, "evil.sh")
 	if err := os.WriteFile(evil, []byte("#!/bin/sh\necho evil\n"), 0o700); err != nil {

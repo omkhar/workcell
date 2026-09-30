@@ -34,10 +34,12 @@ HOST_GO_BIN="$(resolve_fixed_host_tool go /opt/homebrew/bin/go /usr/local/go/bin
 GO_TOOL_BIN=""
 GO_HOSTUTIL_BIN=""
 
-# go_tool_bin_trusted accepts only a regular, non-symlink, executable file
-# owned by the current user and not writable by group or other.
+# go_tool_bin_trusted accepts only a regular, non-empty, non-symlink,
+# executable file owned by the current user and not writable by group or
+# other.  An empty file (a rename that a crash left without data) would
+# otherwise run as an empty shell script and exit 0.
 go_tool_bin_trusted() {
-  [[ -f "$1" && ! -L "$1" && -O "$1" && -x "$1" ]] &&
+  [[ -f "$1" && -s "$1" && ! -L "$1" && -O "$1" && -x "$1" ]] &&
     [[ -z "$(find "$1" \( -perm -020 -o -perm -002 \) -print)" ]]
 }
 
