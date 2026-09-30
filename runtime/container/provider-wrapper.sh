@@ -265,7 +265,7 @@ codex_first_subcommand() {
 # and --version/--help all accept it. Call codex_first_subcommand first.
 codex_managed_profile_applies() {
   case "${CODEX_FIRST_SUBCOMMAND}" in
-    login | logout | plugin | mcp-server | app-server | remote-control | \
+    login | logout | plugin | mcp-server | tcp-tunnel | app-server | remote-control | \
       completion | update | doctor | apply | a | cloud | cloud-tasks | \
       exec-server | execpolicy | migrate-rollouts | features | help | debug)
       return 1
