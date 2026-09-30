@@ -5,6 +5,7 @@ package adapters
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,8 +108,11 @@ func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 		out, err := cmd.Output()
 		if m.Tier == "planned" {
-			if err == nil || len(m.EgressEndpoints) != 0 {
-				t.Errorf("%s: planned adapter must have no provider_endpoints row and no egress endpoints", m.ID)
+			// An absent row is the function's own "return 1" with no output.
+			// Any other failure or output is not proof of absence.
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || len(out) != 0 || len(m.EgressEndpoints) != 0 {
+				t.Errorf("%s: planned adapter must have no provider_endpoints row and no egress endpoints (out %q, err %v)", m.ID, out, err)
 			}
 			continue
 		}
@@ -121,38 +125,36 @@ func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
 	}
 }
 
-func TestManifestsMatchLauncherAgentCase(t *testing.T) {
-	manifests := loadRepoManifests(t)
-	match := regexp.MustCompile(`(?m)^if \[\[ -n "\$\{AGENT\}" \]\]; then\n  case "\$\{AGENT\}" in\n    ([a-z| ]+)\) ;;\n    ([a-z]+)\)\n`).
-		FindStringSubmatch(readRepoFile(t, "scripts/workcell"))
-	if match == nil {
-		t.Fatal("scripts/workcell --agent case block not found")
-	}
-	supported := strings.Fields(strings.ReplaceAll(match[1], "|", " "))
-	certified := manifestIDs(manifests, func(m Manifest) bool { return m.Tier == "certified" })
-	if !slices.Equal(sorted(supported), certified) {
-		t.Errorf("scripts/workcell supported agents = %v, certified manifests = %v", supported, certified)
-	}
-	planned := manifestIDs(manifests, func(m Manifest) bool { return m.Tier == "planned" })
-	if !slices.Equal([]string{match[2]}, planned) {
-		t.Errorf("scripts/workcell planned agent = %s, planned manifests = %v", match[2], planned)
-	}
-}
-
-func TestManifestsMatchLauncherSupportedCredentialKeys(t *testing.T) {
-	match := regexp.MustCompile(`supported_credential_keys=([a-z_,]+)\\n`).
-		FindStringSubmatch(readRepoFile(t, "scripts/workcell"))
-	if match == nil {
-		t.Fatal("scripts/workcell supported_credential_keys line not found")
-	}
-	want := slices.Clone(sharedCredentialKeys)
-	for _, m := range loadRepoManifests(t) {
-		for _, c := range m.Credentials {
-			want = append(want, c.Key)
+// TestManifestsMatchLauncherAgentDispatch runs the launcher instead of reading
+// its source, so a decoy in a comment or heredoc cannot satisfy it.
+func TestManifestsMatchLauncherAgentDispatch(t *testing.T) {
+	probe := func(agent string) (string, int) {
+		cmd := exec.Command("bash", "--noprofile", "--norc", "scripts/workcell", "--auth-status", "--agent", agent, "--workspace", ".")
+		cmd.Dir = repoRoot
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
+		out, err := cmd.CombinedOutput()
+		var exitErr *exec.ExitError
+		if err != nil && !errors.As(err, &exitErr) {
+			t.Fatalf("launcher probe for %s: %v", agent, err)
 		}
+		return string(out), cmd.ProcessState.ExitCode()
 	}
-	if got := strings.Split(match[1], ","); !slices.Equal(sorted(got), sorted(want)) {
-		t.Errorf("supported_credential_keys = %v, manifests plus shared keys = %v", got, want)
+	const unsupported, planned = "Unsupported agent: ", "is a planned Workcell provider adapter"
+	if out, code := probe("no-such-agent"); code != 2 || !strings.Contains(out, unsupported+"no-such-agent") {
+		t.Fatalf("launcher probe cannot detect an unsupported agent (exit %d): %s", code, out)
+	}
+	for _, m := range loadRepoManifests(t) {
+		out, code := probe(m.ID)
+		switch m.Tier {
+		case "certified":
+			if code != 0 || strings.Contains(out, unsupported) || strings.Contains(out, planned) {
+				t.Errorf("%s: certified manifest but the launcher rejects --agent (exit %d): %s", m.ID, code, out)
+			}
+		case "planned":
+			if code != 2 || !strings.Contains(out, planned) {
+				t.Errorf("%s: planned manifest but the launcher does not report a planned adapter (exit %d): %s", m.ID, code, out)
+			}
+		}
 	}
 }
 
@@ -203,7 +205,7 @@ func TestManifestInstallPinsExist(t *testing.T) {
 	}
 }
 
-func TestLoadManifestRejectsInvalidInput(t *testing.T) {
+func TestParseManifestRejectsInvalidInput(t *testing.T) {
 	const valid = `schema = 1
 id = "demo"
 tier = "certified"
@@ -238,20 +240,12 @@ container_path = "/opt/demo.json"
 		"relative container path": strings.Replace(valid, `"/opt/demo.json"`, `"demo.json"`, 1),
 		"subset parser rejection": valid + "\n[[install]]\n",
 	}
-	dir := t.TempDir()
-	write := func(name, content string) string {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	if _, err := LoadManifest(write("valid.toml", valid)); err != nil {
+	if _, err := parseManifest("valid.toml", []byte(valid)); err != nil {
 		t.Fatalf("valid fixture rejected: %v", err)
 	}
 	for name, content := range cases {
-		if _, err := LoadManifest(write("case.toml", content)); err == nil {
-			t.Errorf("%s: LoadManifest accepted invalid input", name)
+		if _, err := parseManifest("case.toml", []byte(content)); err == nil {
+			t.Errorf("%s: parseManifest accepted invalid input", name)
 		}
 	}
 }
@@ -267,5 +261,41 @@ func TestLoadManifestsRejectsIDDirectoryMismatch(t *testing.T) {
 	}
 	if _, err := LoadManifests(root); err == nil {
 		t.Fatal("LoadManifests accepted an id that does not match its directory")
+	}
+}
+
+func TestLoadManifestsFailsClosed(t *testing.T) {
+	const planned = "schema = 1\nid = \"demo\"\ntier = \"planned\"\n"
+	outside := t.TempDir()
+	if err := os.Mkdir(filepath.Join(outside, "demo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "demo", "adapter.toml"), []byte(planned), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setup := map[string]func(root string){
+		"symlinked adapter directory": func(root string) {
+			os.Symlink(filepath.Join(outside, "demo"), filepath.Join(root, "demo"))
+		},
+		"symlinked manifest": func(root string) {
+			os.Mkdir(filepath.Join(root, "demo"), 0o700)
+			os.Symlink(filepath.Join(outside, "demo", "adapter.toml"), filepath.Join(root, "demo", "adapter.toml"))
+		},
+		"directory without manifest": func(root string) {
+			os.Mkdir(filepath.Join(root, "demo"), 0o700)
+		},
+		"manifest is a directory": func(root string) {
+			os.MkdirAll(filepath.Join(root, "demo", "adapter.toml"), 0o700)
+		},
+	}
+	for name, prepare := range setup {
+		root := t.TempDir()
+		prepare(root)
+		if _, err := LoadManifests(root); err == nil {
+			t.Errorf("%s: LoadManifests accepted the tree", name)
+		}
+	}
+	if _, err := LoadManifests(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("LoadManifests accepted a missing root")
 	}
 }

@@ -5,6 +5,8 @@ package adapters
 
 import (
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +16,7 @@ import (
 )
 
 // ManifestSchema is the only adapters/<id>/adapter.toml schema version that
-// LoadManifest accepts.
+// parseManifest accepts.
 const ManifestSchema = 1
 
 // Manifest is the declarative form of one adapter. The parity test in
@@ -51,33 +53,62 @@ type Credential struct {
 var manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // LoadManifests loads every adapters/<id>/adapter.toml under root, in
-// directory-name order, and requires each id to match its directory.
+// directory-name order, and requires each id to match its directory. It fails
+// closed: a missing or unreadable root, a symlinked adapter directory, and a
+// directory without a regular adapter.toml are errors. It reads through an
+// os.Root, so a symlink swapped in after the listing cannot redirect a read
+// outside root.
 func LoadManifests(root string) ([]Manifest, error) {
-	paths, err := filepath.Glob(filepath.Join(root, "*", "adapter.toml"))
+	tree, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Manifest, 0, len(paths))
-	for _, path := range paths {
-		m, err := LoadManifest(path)
+	defer tree.Close()
+	entries, err := fs.ReadDir(tree.FS(), ".")
+	if err != nil {
+		return nil, err
+	}
+	var out []Manifest
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name(), "adapter.toml")
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s: adapter entry must not be a symlink", filepath.Join(root, entry.Name()))
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		rel := filepath.Join(entry.Name(), "adapter.toml")
+		info, err := tree.Lstat(rel)
 		if err != nil {
 			return nil, err
 		}
-		if dir := filepath.Base(filepath.Dir(path)); m.ID != dir {
-			return nil, fmt.Errorf("%s: id %q does not match directory %q", path, m.ID, dir)
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s: adapter.toml must be a regular file", path)
+		}
+		file, err := tree.Open(rel)
+		if err != nil {
+			return nil, err
+		}
+		content, err := io.ReadAll(file)
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		m, err := parseManifest(path, content)
+		if err != nil {
+			return nil, err
+		}
+		if m.ID != entry.Name() {
+			return nil, fmt.Errorf("%s: id %q does not match directory %q", path, m.ID, entry.Name())
 		}
 		out = append(out, m)
 	}
 	return out, nil
 }
 
-// LoadManifest parses one adapter.toml with the strict TOML subset parser.
+// parseManifest parses one adapter.toml with the strict TOML subset parser.
 // It rejects unknown tables, unknown keys, and values of the wrong type.
-func LoadManifest(path string) (Manifest, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return Manifest{}, err
-	}
+func parseManifest(path string, content []byte) (Manifest, error) {
 	doc, err := tomlsubset.ParseDocument(string(content), path)
 	if err != nil {
 		return Manifest{}, err
