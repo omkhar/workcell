@@ -291,9 +291,9 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/egressproxy/allowlist.go",
-		original:     `syscall.O_NOFOLLOW`,
-		replacement:  `0`,
-		label:        "egress proxy allowlist refuses a symlink leaf",
+		original:     `rootio.ReadFileNoFollow(path, "egress allowlist", maxAllowlistBytes)`,
+		replacement:  `rootio.ReadFileNoFollow(path, "egress allowlist", 1<<62)`,
+		label:        "egress proxy allowlist size cap",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestLoadAllowlistRefusesSymlinkAndOversize", "-count=1"),
 	},
 	{

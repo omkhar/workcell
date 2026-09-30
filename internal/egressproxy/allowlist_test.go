@@ -98,11 +98,18 @@ func TestLoadAllowlistRefusesSymlinkAndOversize(t *testing.T) {
 	if _, err := LoadAllowlist(link); err == nil {
 		t.Error("LoadAllowlist(symlink) error = nil, want error")
 	}
+	linkDir := filepath.Join(t.TempDir(), "dirlink")
+	if err := os.Symlink(dir, linkDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadAllowlist(filepath.Join(linkDir, "real")); err == nil {
+		t.Error("LoadAllowlist(symlinked parent) error = nil, want error")
+	}
 	if _, err := LoadAllowlist(dir); err == nil {
 		t.Error("LoadAllowlist(directory) error = nil, want error")
 	}
 	big := filepath.Join(dir, "big")
-	if err := os.WriteFile(big, []byte("#"+strings.Repeat("x", maxAllowlistBytes)+"\napi.example.com:443\n"), 0o600); err != nil {
+	if err := os.WriteFile(big, []byte("#"+strings.Repeat("x", int(maxAllowlistBytes))+"\napi.example.com:443\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadAllowlist(big); err == nil {

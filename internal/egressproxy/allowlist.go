@@ -9,21 +9,19 @@ package egressproxy
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/omkhar/workcell/internal/injectionpolicy"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 const (
-	tlsPort           = 443
-	maxAllowlistBytes = 1 << 20
+	tlsPort                 = 443
+	maxAllowlistBytes int64 = 1 << 20
 )
 
 // Allowlist is the exact (host, port) set the proxy admits.
@@ -35,24 +33,9 @@ type Allowlist struct {
 // LoadAllowlist reads an allowlist file with one host:port entry per line.
 // Blank lines and text after '#' are ignored.
 func LoadAllowlist(path string) (*Allowlist, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	data, err := rootio.ReadFileNoFollow(path, "egress allowlist", maxAllowlistBytes)
 	if err != nil {
 		return nil, err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxAllowlistBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxAllowlistBytes {
-		return nil, fmt.Errorf("%s exceeds %d bytes", path, maxAllowlistBytes)
 	}
 	return parseAllowlist(string(data), path)
 }
