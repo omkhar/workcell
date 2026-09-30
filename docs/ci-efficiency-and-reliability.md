@@ -109,8 +109,8 @@ The job names that branch protection requires did not change.
 
 The `Host launcher invariants` job runs `scripts/verify-invariants.sh`.
 It runs in parallel with `Validate repository` and needs only `Pull request shape`.
-The hosted workflow sets `WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS=1` for `Validate repository`.
-`scripts/ci/job-validate.sh` honors the flag only when `GITHUB_ACTIONS=true`, so local parity always runs the script, even if the flag is exported in a shell.
+The hosted workflow passes `--skip-host-invariants` to `scripts/ci/job-validate.sh` for `Validate repository`.
+The skip is a flag, so no environment value can disable the local run.
 The job name is a required status check in `policy/github-hosted-controls.toml`.
 An administrator must add `Host launcher invariants` to the repository ruleset before this change merges.
 

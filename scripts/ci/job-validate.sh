@@ -27,17 +27,14 @@ ARTIFACT_DIR="${WORKCELL_CI_INSTALL_ARTIFACT_DIR:-}"
 KEEP_ARTIFACT_DIR=0
 SKIP_RELEASE_BUNDLE="${WORKCELL_CI_VALIDATE_SKIP_RELEASE_BUNDLE:-0}"
 # The hosted CI workflow runs verify-invariants.sh in its own parallel job and
-# sets this to 1.  The skip is honored only on a GitHub Actions runner, so a
-# value exported in a developer's shell cannot disable the check in local
-# parity (pre-merge.sh) or any other local caller.
+# passes --skip-host-invariants.  This is a command-line flag on purpose: an
+# environment variable is inherited from a developer's shell or a parent script
+# and could silently disable the check in local parity.
 SKIP_HOST_INVARIANTS=0
-if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-  SKIP_HOST_INVARIANTS="${WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS:-0}"
-fi
 
 usage() {
   cat <<'EOF'
-Usage: job-validate.sh [--profile repo-core|pr-parity|release-preflight]
+Usage: job-validate.sh [--profile repo-core|pr-parity|release-preflight] [--skip-host-invariants]
 
 Run the shared validator-backed repository validation job used by local parity
 and GitHub CI. The default profile mirrors the standard PR validate lane.
@@ -53,6 +50,10 @@ while [[ $# -gt 0 ]]; do
         exit 2
       }
       shift 2
+      ;;
+    --skip-host-invariants)
+      SKIP_HOST_INVARIANTS=1
+      shift
       ;;
     -h | --help)
       usage

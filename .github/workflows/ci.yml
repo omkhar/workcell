@@ -115,9 +115,6 @@ jobs:
           WORKCELL_VALIDATOR_BUILDX_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && format('validator-pr-{0}', github.event.pull_request.number) || 'validator-main' }}
           WORKCELL_VALIDATOR_BUILDX_CACHE_WRITE_MODE: ${{ github.event_name == 'push' && 'max' || 'min' }}
           WORKCELL_CI_INSTALL_ARTIFACT_DIR: dist/release-install
-          # The host launcher invariants run in the parallel "Host launcher
-          # invariants" job.
-          WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS: "1"
           WORKCELL_VALIDATOR_CACHE_DIR: ${{ runner.temp }}/workcell-validator-cache
           WORKCELL_CI_ARCHIVE_REF: ${{ github.sha }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -126,7 +123,7 @@ jobs:
           token_file="$(umask 077 && mktemp "${RUNNER_TEMP}/workcell-github-token.XXXXXX")"; trap 'rm -f "${token_file}"' EXIT
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-validate.sh --profile pr-parity
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/ci/job-validate.sh --profile pr-parity --skip-host-invariants
 
       - name: Save validator caches
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}

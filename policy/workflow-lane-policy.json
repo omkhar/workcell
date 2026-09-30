@@ -46,7 +46,7 @@
     "ci.yml/invariants": {
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "required parallel hosted job for scripts/verify-invariants.sh; local parity keeps running the same script inside scripts/ci/job-validate.sh, which only the hosted workflow skips through WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS"
+      "github_only_reason": "required parallel hosted job for scripts/verify-invariants.sh; local parity keeps running the same script inside scripts/ci/job-validate.sh, which only the hosted workflow skips through the --skip-host-invariants flag"
     },
     "ci.yml/install-verification[runner=macos-15,runner_label=macos-15]": {
       "profiles": ["pr-parity"],

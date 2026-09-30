@@ -48,7 +48,7 @@ func TestHostInvariantsRunInTheirOwnRequiredJob(t *testing.T) {
 	if strings.Contains(invariants, "\n    if:") || strings.Contains(invariants, "needs: validate") {
 		t.Fatal("invariants job must run on every event and not wait for validate")
 	}
-	if !strings.Contains(jobBlock(t, workflow, "validate"), `WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS: "1"`) {
+	if !strings.Contains(jobBlock(t, workflow, "validate"), "./scripts/ci/job-validate.sh --profile pr-parity --skip-host-invariants") {
 		t.Fatal("hosted validate must skip the invariants that their own job runs")
 	}
 	if !strings.Contains(readRepoFile(t, "policy", "github-hosted-controls.toml"), `"Host launcher invariants",`) {
@@ -58,8 +58,8 @@ func TestHostInvariantsRunInTheirOwnRequiredJob(t *testing.T) {
 	if !strings.Contains(validate, "if [[ \"${SKIP_HOST_INVARIANTS}\" != \"1\" ]]; then\n  echo \"[ci/validate] host launcher invariants\"\n  \"${ROOT_DIR}/scripts/verify-invariants.sh\"\nfi") {
 		t.Fatal("job-validate.sh must keep running verify-invariants.sh unless the skip flag is 1")
 	}
-	if !strings.Contains(validate, "if [[ \"${GITHUB_ACTIONS:-}\" == \"true\" ]]; then\n  SKIP_HOST_INVARIANTS=\"${WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS:-0}\"") {
-		t.Fatal("job-validate.sh must honor the skip flag only on a GitHub Actions runner")
+	if strings.Contains(validate, "WORKCELL_CI_VALIDATE_SKIP_HOST_INVARIANTS") {
+		t.Fatal("job-validate.sh must take the invariant skip from a flag, not an inherited environment variable")
 	}
 }
 
@@ -107,6 +107,7 @@ func TestValidatorCacheMountIsGatedOnHostUID(t *testing.T) {
 		`WORKCELL_VALIDATOR_CACHE_DIR must not be a symlink`,
 		`cd -P -- "${WORKCELL_VALIDATOR_CACHE_DIR}" && pwd -P`,
 		`! -O "${cache_dir}"`,
+		`"${cache_dir}" != "${cache_root}"/?*`,
 		`chmod 700 "${cache_dir}"`,
 		`-perm /077`,
 		`|| cache_unsafe_mode="find-failed"`,

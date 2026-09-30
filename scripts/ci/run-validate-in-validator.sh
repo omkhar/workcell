@@ -149,6 +149,15 @@ if [[ -n "${WORKCELL_VALIDATOR_CACHE_DIR:-}" && "${validator_uid}" == "$(id -u)"
     echo "WORKCELL_VALIDATOR_CACHE_DIR cannot be resolved" >&2
     exit 1
   }
+  # Confine the mount to a dedicated root: the cache must sit strictly below
+  # the runner temp directory, so a caller cannot expose $HOME or any other
+  # owned host directory read-write.  Outside a runner there is no root, and
+  # the cache mount is refused.
+  cache_root="$(cd -P -- "${RUNNER_TEMP:-/nonexistent}" 2>/dev/null && pwd -P)" || cache_root=""
+  if [[ -z "${cache_root}" || "${cache_dir}" != "${cache_root}"/?* ]]; then
+    echo "WORKCELL_VALIDATOR_CACHE_DIR must be below RUNNER_TEMP" >&2
+    exit 1
+  fi
   # Take the directory over as owner-only.  A directory that actions/cache or an
   # earlier run created with a looser mode is tightened first, but only when
   # this uid owns it, so an unowned directory still fails closed.
