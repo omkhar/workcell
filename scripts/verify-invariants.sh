@@ -6634,6 +6634,17 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'redirects Git config and hooks: .git/foo/worktrees/admin/commondir' /tmp/workcell-commondir-wt.out
 
+# A mixed-case COMMONDIR opens as commondir on a case-insensitive volume.
+COMMONDIR_CASE_REPO="${COMMONDIR_ROOT}/mixed-case-repo"
+git init -q -b master "${COMMONDIR_CASE_REPO}"
+git -C "${COMMONDIR_CASE_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_CASE_REPO}/.git/COMMONDIR"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_CASE_REPO}" --dry-run >/tmp/workcell-commondir-case.out 2>&1; then
+  echo "Expected repo with a mixed-case COMMONDIR to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/COMMONDIR' /tmp/workcell-commondir-case.out
+
 # A Git admin directory under refs can carry a redirect and must be rejected.
 COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
 git init -q -b master "${COMMONDIR_REFS_REPO}"
