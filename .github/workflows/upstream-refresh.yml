@@ -54,7 +54,7 @@ jobs:
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
           trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply | tee "${RUNNER_TEMP}/upstream-refresh-apply.log"
 
       - id: changes
         name: Detect refreshed content
@@ -180,6 +180,12 @@ jobs:
               echo
               echo "No upstream refresh changes were detected."
               echo
+              if grep -q 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log"; then
+                echo "Held for manual classification:"
+                echo
+                grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /'
+                echo
+              fi
               echo "- generated: \`${generated_at}\`"
               echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo "- base ref: ${GITHUB_REF}"

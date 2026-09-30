@@ -744,6 +744,12 @@ fi
 
 if [[ "${has_changes}" -eq 0 ]]; then
   echo "No pinned upstream updates found."
+  # A held release needs operator classification; do not hide it in a quiet run.
+  held_lines="$(grep 'unclassified-cli-surface' <<<"${provider_summary}" || [[ $? -eq 1 ]])"
+  if [[ -n "${held_lines}" ]]; then
+    printf '%s\n' "${held_lines}"
+    echo "::warning::Held Codex release needs command namespace classification."
+  fi
   exit 0
 fi
 
