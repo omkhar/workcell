@@ -101,6 +101,12 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,3 +1,3 @@\n-a\n+b\n",
 			wantErr: "truncated hunk",
 		},
+		{
+			name: "overflowing hunk count",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,99999999999999999999999 +1,99999999999999999999999 @@\n",
+			wantErr: "malformed hunk",
+		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",

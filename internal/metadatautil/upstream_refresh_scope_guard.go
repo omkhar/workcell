@@ -27,7 +27,7 @@ var (
 		`^(runtime/container/providers[^/]*/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
-	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
+	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d{1,6}))? \+\d+(?:,(\d{1,6}))? @@`)
 )
 
 // CheckUpstreamRefreshScope reads one git patch without following symlinks
@@ -149,9 +149,6 @@ func scopeGuardHunkCount(text string) int {
 	if text == "" {
 		return 1
 	}
-	n, err := strconv.Atoi(text)
-	if err != nil {
-		return 0
-	}
+	n, _ := strconv.Atoi(text) // the regexp bounds text to six digits
 	return n
 }
