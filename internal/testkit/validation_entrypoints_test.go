@@ -966,7 +966,8 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 		`command -v npm`,
 		`append_unique_brew node`,
 		`append_unique_brew rust`,
-		`append_unique_apt cargo`,
+		`require_cargo`,
+		`readonly CARGO_MINIMUM="1.85.0"`,
 		`if [[ "${host_os}" == "Linux" ]]; then`,
 		`require_markdownlint_node`,
 		`require_markdownlint_npm`,
@@ -980,6 +981,7 @@ func TestInstallDevToolsBootstrapsCommonHostPrereqs(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		"append_unique_apt nodejs npm",
+		"append_unique_apt cargo",
 		"python3 -m venv",
 		"python3-venv",
 		"pytest",

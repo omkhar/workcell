@@ -13,6 +13,8 @@ readonly MARKDOWNLINT_NODE_22_MINIMUM="22.22.2"
 readonly MARKDOWNLINT_NODE_24_MINIMUM="24.15.0"
 readonly MARKDOWNLINT_NODE_OPEN_MINIMUM="26.0.0"
 readonly MARKDOWNLINT_NODE_VERSION_REQUIREMENT="^${MARKDOWNLINT_NODE_22_MINIMUM} || ^${MARKDOWNLINT_NODE_24_MINIMUM} || >=${MARKDOWNLINT_NODE_OPEN_MINIMUM}"
+# Edition 2024 in runtime/container/rust/Cargo.toml needs Cargo 1.85 or newer.
+readonly CARGO_MINIMUM="1.85.0"
 
 append_unique_brew() {
   local candidate=""
@@ -131,6 +133,35 @@ require_markdownlint_node() {
   fi
 }
 
+cargo_bin() {
+  if [[ -x "${HOME}/.cargo/bin/cargo" ]]; then
+    printf '%s\n' "${HOME}/.cargo/bin/cargo"
+  elif command -v cargo &>/dev/null; then
+    command -v cargo
+  fi
+}
+
+require_cargo() {
+  local bin=""
+  local version=""
+
+  bin="$(cargo_bin)"
+  if [[ -n "${bin}" ]]; then
+    version="$("${bin}" --version | awk '{print $2}')"
+    version="${version%%-*}"
+    if version_at_least "${version}" "${CARGO_MINIMUM}"; then
+      return 0
+    fi
+  fi
+  cat >&2 <<EOF
+scripts/check-rust-vendor.sh requires Cargo ${CARGO_MINIMUM} or newer; found ${version:-none}.
+On macOS, Homebrew's rust package satisfies this requirement.
+On Linux, install a current toolchain with rustup (https://rustup.rs); Ubuntu 24.04's cargo apt package is too old.
+Then rerun scripts/install-dev-tools.sh.
+EOF
+  exit 1
+}
+
 require_markdownlint_npm() {
   if command -v npm &>/dev/null; then
     return 0
@@ -211,15 +242,15 @@ if ! command -v syft &>/dev/null; then
   append_unique_apt syft
 fi
 # check-rust-vendor.sh runs cargo vendor on the host; it also looks in ~/.cargo/bin.
-if [[ ! -x "${HOME}/.cargo/bin/cargo" ]] && ! command -v cargo &>/dev/null; then
+if [[ -z "$(cargo_bin)" && "${host_os}" == "Darwin" ]]; then
   missing+=(cargo)
   append_unique_brew rust
-  append_unique_apt cargo
 fi
 
 if [[ "${host_os}" == "Linux" ]]; then
   require_markdownlint_node
   require_markdownlint_npm
+  require_cargo
 fi
 
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -241,6 +272,7 @@ fi
 
 require_markdownlint_node
 require_markdownlint_npm
+require_cargo
 echo "  npm ci --prefix ${MARKDOWNLINT_DIR} --ignore-scripts --omit=dev"
 npm ci --prefix "${MARKDOWNLINT_DIR}" --ignore-scripts --omit=dev
 install -m 0444 "${MARKDOWNLINT_DIR}/package-lock.json" "${MARKDOWNLINT_LOCK_STAMP}"
