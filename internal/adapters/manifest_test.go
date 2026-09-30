@@ -104,13 +104,24 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 	}
 }
 
-// providerEndpoints runs provider_endpoints from script under an xtrace that
-// prefixes each executed command with its line number, so the trace names the
-// case arm that ran. The trace starts with the function as bash parsed it.
-func providerEndpoints(t *testing.T, script, id string) (out, trace string, code int) {
+// providerEndpoints runs provider_endpoints from script. It first rewrites
+// the function as bash parsed it (declare -f): each arm whose whole pattern
+// is "*)" prints "default-arm-N" to stderr. So arm names the lone wildcard
+// arm that ran, or is empty when another arm ran.
+func providerEndpoints(t *testing.T, script, id string) (out, arm string, code int) {
 	t.Helper()
-	cmd := exec.Command("bash", "--noprofile", "--norc", "-c",
-		`source "$1" && declare -f provider_endpoints >&2 && PS4='+$LINENO ' && set -x && provider_endpoints "$2"`, "bash", script, id)
+	const probe = `source "$1" || exit 3
+n=0 body=""
+while IFS= read -r line; do
+  body+="$line"$'\n'
+  if [[ "$line" =~ ^[[:space:]]*\*\)$ ]]; then
+    n=$((n + 1))
+    body+="echo default-arm-$n >&2"$'\n'
+  fi
+done < <(declare -f provider_endpoints)
+eval "$body" || exit 3
+provider_endpoints "$2"`
+	cmd := exec.Command("bash", "--noprofile", "--norc", "-c", probe, "bash", script, id)
 	cmd.Dir = repoRoot
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	var stderr strings.Builder
@@ -124,20 +135,15 @@ func providerEndpoints(t *testing.T, script, id string) (out, trace string, code
 }
 
 // endpointRowAbsent reports whether script has no provider_endpoints row for
-// id: id must run the same default arm as an unknown id, with exit 1 and no
-// output. An explicit arm, even one that only returns 1, traces other lines.
+// id: id must run the same lone "*)" arm as an unknown id, with exit 1 and no
+// output. An arm with any other pattern, even "id | *)" or a glob that also
+// matches the unknown id, is not marked, so it fails.
 func endpointRowAbsent(t *testing.T, script, id string) bool {
 	t.Helper()
-	const unknown = "no-such-provider"
-	unknownOut, unknownTrace, unknownCode := providerEndpoints(t, script, unknown)
-	if unknownCode != 1 || unknownOut != "" || !strings.Contains(unknownTrace, "return 1") {
-		t.Fatalf("provider_endpoints probe cannot detect the default arm (exit %d, out %q): %s", unknownCode, unknownOut, unknownTrace)
-	}
-	// A pattern list with the wildcard ("id | *)") runs the default arm too. The
-	// trace starts with the parsed function, so an id there also makes the
-	// replaced trace differ.
-	out, trace, code := providerEndpoints(t, script, id)
-	return code == 1 && out == "" && strings.ReplaceAll(trace, id, unknown) == unknownTrace
+	unknownOut, unknownArm, unknownCode := providerEndpoints(t, script, "no-such-provider")
+	out, arm, code := providerEndpoints(t, script, id)
+	return unknownCode == 1 && unknownOut == "" && regexp.MustCompile(`^default-arm-[0-9]+\n$`).MatchString(unknownArm) &&
+		code == 1 && out == "" && arm == unknownArm
 }
 
 func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
@@ -146,14 +152,16 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 		arm  string
 		want bool
 	}{
-		"no row":                {"", true},
-		"other row":             {"    gemini)\n      return 1\n      ;;\n", true},
-		"return 1 arm":          {"    antigravity)\n      return 1\n      ;;\n", false},
-		"false arm":             {"    antigravity)\n      false\n      ;;\n", false},
-		"arm in a pattern":      {"    gemini | antigravity)\n      return 1\n      ;;\n", false},
-		"wildcard pattern list": {"    antigravity | *)\n      return 1\n      ;;\n", false},
-		"arm with a row":        {"    antigravity)\n      echo x:443\n      ;;\n", false},
-		"arm that returns 0":    {"    antigravity)\n      return 0\n      ;;\n", false},
+		"no row":                    {"", true},
+		"other row":                 {"    gemini)\n      return 1\n      ;;\n", true},
+		"return 1 arm":              {"    antigravity)\n      return 1\n      ;;\n", false},
+		"false arm":                 {"    antigravity)\n      false\n      ;;\n", false},
+		"arm in a pattern":          {"    gemini | antigravity)\n      return 1\n      ;;\n", false},
+		"wildcard pattern list":     {"    antigravity | *)\n      return 1\n      ;;\n", false},
+		"glob matching both probes": {"    anti* | no-*)\n      return 1\n      ;;\n", false},
+		"nested wildcard arm":       {"    antigravity)\n      case x in\n        *)\n          return 1\n          ;;\n      esac\n      ;;\n", false},
+		"arm with a row":            {"    antigravity)\n      echo x:443\n      ;;\n", false},
+		"arm that returns 0":        {"    antigravity)\n      return 0\n      ;;\n", false},
 	}
 	for name, c := range cases {
 		path := filepath.Join(t.TempDir(), "endpoints.sh")
@@ -175,9 +183,9 @@ func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
 			}
 			continue
 		}
-		out, trace, code := providerEndpoints(t, script, m.ID)
+		out, stderr, code := providerEndpoints(t, script, m.ID)
 		if code != 0 {
-			t.Fatalf("%s: provider_endpoints exit %d:\n%s", m.ID, code, trace)
+			t.Fatalf("%s: provider_endpoints exit %d:\n%s", m.ID, code, stderr)
 		}
 		if got := strings.Fields(out); !slices.Equal(got, m.EgressEndpoints) {
 			t.Errorf("%s: provider_endpoints = %v, manifest egress.endpoints = %v", m.ID, got, m.EgressEndpoints)
