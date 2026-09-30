@@ -326,11 +326,11 @@ EOF
 clear_rules() {
   run_in_vm '
     set -euo pipefail
-    sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null || true
+    while sudo iptables -D DOCKER-USER -j WORKCELL_EGRESS 2>/dev/null; do :; done
     sudo iptables -F WORKCELL_EGRESS 2>/dev/null || true
     sudo iptables -X WORKCELL_EGRESS 2>/dev/null || true
     if type ip6tables >/dev/null 2>&1; then
-      sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null || true
+      while sudo ip6tables -D DOCKER-USER -j WORKCELL_EGRESS6 2>/dev/null; do :; done
       sudo ip6tables -F WORKCELL_EGRESS6 2>/dev/null || true
       sudo ip6tables -X WORKCELL_EGRESS6 2>/dev/null || true
     fi

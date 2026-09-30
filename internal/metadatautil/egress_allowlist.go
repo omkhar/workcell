@@ -17,7 +17,7 @@ import (
 // of render_allowlist_apply_plan and the lines of that function outside them,
 // as applyPlanDigestOf joins them. Regenerate it only after a review of the plan
 // and a pass of the replay in scripts/verify-invariants.sh.
-const applyPlanDigest = "bd1ac7911d49c33844f765b386af06e6749ad08aaee63bc65429b4c4886caeba"
+const applyPlanDigest = "0bf6987731321fbdd1706e58077d73a02d7135c103179743d43d682c345103c1"
 
 var (
 	commentStart   = regexp.MustCompile(`(^|\s)#`)
@@ -54,7 +54,7 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 	if definitions != 1 {
 		return errors.New("Expected exactly one render_allowlist_apply_plan definition")
 	}
-	plan, emitters := applyPlanText(script)
+	plan, stream := applyPlanText(script)
 	families := []struct{ name, chain string }{{"iptables", "WORKCELL_EGRESS"}, {"ip6tables", "WORKCELL_EGRESS6"}}
 	for _, family := range families {
 		if len(ShellInvocations(plan, "sudo "+family.name+"-restore --noflush")) == 0 {
@@ -67,21 +67,24 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 			return errors.New("Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete")
 		}
 	}
-	if got := applyPlanDigestOf(plan, emitters); got != applyPlanDigest {
+	if got := applyPlanDigestOf(stream); got != applyPlanDigest {
 		return fmt.Errorf("Expected dual-stack allowlist apply plan to equal the reviewed plan text (digest %s)", got)
 	}
 	return nil
 }
 
-func applyPlanDigestOf(plan string, emitters []string) string {
-	sum := sha256.Sum256([]byte(plan + "\n--\n" + strings.Join(emitters, "\n")))
+func applyPlanDigestOf(stream string) string {
+	sum := sha256.Sum256([]byte(stream))
 	return hex.EncodeToString(sum[:])
 }
 
-// applyPlanText returns the heredoc bodies inside render_allowlist_apply_plan
-// and the lines of that function outside any heredoc, which also emit plan text.
-func applyPlanText(script string) (plan string, emitters []string) {
-	var body []string
+// applyPlanText returns the heredoc bodies inside render_allowlist_apply_plan,
+// and the same lines interleaved with the function lines outside any heredoc
+// in the order bash runs them, each line tagged with where it came from. The
+// digest covers the second form, so moving text across a heredoc boundary
+// changes it.
+func applyPlanText(script string) (plan, stream string) {
+	var body, ordered []string
 	inFunction, inHeredoc := false, false
 	for line := range strings.Lines(script) {
 		line = strings.TrimSuffix(line, "\n")
@@ -89,17 +92,19 @@ func applyPlanText(script string) (plan string, emitters []string) {
 		case inHeredoc:
 			if line == "EOF" {
 				inHeredoc = false
+				ordered = append(ordered, "E:"+line)
 				continue
 			}
 			body = append(body, line)
+			ordered = append(ordered, "H:"+line)
 		case !inFunction:
 			inFunction = strings.HasPrefix(line, "render_allowlist_apply_plan()")
 		case line == "}":
-			return strings.Join(body, "\n"), emitters
+			return strings.Join(body, "\n"), strings.Join(ordered, "\n")
 		default:
-			emitters = append(emitters, strings.TrimSpace(line))
+			ordered = append(ordered, "F:"+strings.TrimSpace(line))
 			inHeredoc = strings.Contains(line, "<<'EOF'")
 		}
 	}
-	return strings.Join(body, "\n"), emitters
+	return strings.Join(body, "\n"), strings.Join(ordered, "\n")
 }

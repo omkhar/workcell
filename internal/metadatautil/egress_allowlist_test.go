@@ -82,6 +82,16 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		})
 	}
 
+	// Moving the endpoint loop across the first heredoc boundary keeps every
+	// line and changes the order bash runs them in.
+	moved := strings.Replace(string(script), "EOF\n  printf 'WORKCELL_ENDPOINTS=%q\\n' \"${ENDPOINTS}\"\n  cat <<'EOF'\n", "  printf 'WORKCELL_ENDPOINTS=%q\\n' \"${ENDPOINTS}\"\nEOF\n  cat <<'EOF'\n", 1)
+	if moved == string(script) {
+		t.Fatal("boundary edit left the script unchanged")
+	}
+	if err := metadatautil.ValidateColimaEgressAtomicSwap(moved); err == nil {
+		t.Fatal("validator accepted a plan with moved heredoc boundary")
+	}
+
 	// The emitted plan text and the restore payload are fixed, line for line.
 	for name, edit := range map[string][2]string{
 		"accept before drop": {"\\n%s-A WORKCELL_EGRESS -j DROP", "\\n-A WORKCELL_EGRESS -j ACCEPT\\n%s-A WORKCELL_EGRESS -j DROP"},
