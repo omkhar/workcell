@@ -15,11 +15,18 @@ import (
 // through the link guard. The plan is the heredoc text that
 // render_allowlist_apply_plan prints, so the parser reads that text and not the
 // whole script: a comment, a heredoc body, an unrun branch or a function that
-// nothing calls must not count as the swap. Plain iptables and ip6tables
-// invocations may only list (-L), check (-C) or insert (-I), so a delete or a
-// flush in any spelling fails closed.
+// nothing calls must not count as the swap.
+//
+// The required commands use the shared parser, which drops what bash may not
+// run. The deny rule must do the opposite, so it over-approximates: any
+// destructive iptables or ip6tables option on any plan line fails, including
+// one inside a conditional, a function body, a comment or a quoted spelling.
 func ValidateColimaEgressAtomicSwap(script string) error {
 	plan := applyPlanText(script)
+	const liveChain = "Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete"
+	if hasDestructiveNetfilterOption(plan) {
+		return errors.New(liveChain)
+	}
 	families := []string{"iptables", "ip6tables"}
 	for _, family := range families {
 		if len(ShellInvocations(plan, "sudo "+family+"-restore --noflush")) == 0 {
@@ -27,18 +34,43 @@ func ValidateColimaEgressAtomicSwap(script string) error {
 		}
 	}
 	for _, family := range families {
-		guarded := false
-		for _, invocation := range ShellInvocations(plan, "sudo "+family) {
-			if len(invocation.Args) == 0 || !slices.Contains([]string{"-L", "-C", "-I"}, invocation.Args[0]) {
-				return errors.New("Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete")
-			}
-			guarded = guarded || invocation.Args[0] == "-C"
-		}
-		if !guarded {
-			return errors.New("Expected dual-stack allowlist apply plan to keep the live chain linked and intact until the replacement is complete")
+		if !slices.ContainsFunc(ShellInvocations(plan, "sudo "+family), func(invocation Invocation) bool {
+			return len(invocation.Args) > 0 && invocation.Args[0] == "-C"
+		}) {
+			return errors.New(liveChain)
 		}
 	}
 	return nil
+}
+
+// hasDestructiveNetfilterOption reports whether any line of the plan names
+// iptables or ip6tables and also carries a delete, flush or delete-chain
+// option. Quotes and backslashes are removed first, so "-F" and -\F count, and
+// a continued line is joined. A short-option cluster counts when it holds D, F
+// or X, and a long option counts when it abbreviates --delete, --flush or
+// --delete-chain the way getopt accepts.
+func hasDestructiveNetfilterOption(plan string) bool {
+	plain := strings.NewReplacer("\\\n", " ", "\"", "", "'", "", "\\", "").Replace(plan)
+	for line := range strings.Lines(plain) {
+		words := strings.Fields(line)
+		if !slices.ContainsFunc(words, func(word string) bool {
+			return strings.HasPrefix(word, "iptables") || strings.HasPrefix(word, "ip6tables") ||
+				strings.HasSuffix(word, "/iptables") || strings.HasSuffix(word, "/ip6tables")
+		}) {
+			continue
+		}
+		if slices.ContainsFunc(words, func(word string) bool {
+			if strings.HasPrefix(word, "--") {
+				name, _, _ := strings.Cut(word, "=")
+				return len(name) >= 4 && (strings.HasPrefix("--delete", name) ||
+					strings.HasPrefix("--flush", name) || strings.HasPrefix("--delete-chain", name))
+			}
+			return strings.HasPrefix(word, "-") && strings.ContainsAny(word, "DFX")
+		}) {
+			return true
+		}
+	}
+	return false
 }
 
 // applyPlanText returns the heredoc bodies inside render_allowlist_apply_plan.

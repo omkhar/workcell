@@ -45,6 +45,12 @@ func TestValidateColimaEgressAtomicSwapRejectsEvasions(t *testing.T) {
 		"wait before flush":   "sudo iptables -w -F WORKCELL_EGRESS",
 		"long flush":          "sudo iptables --flush WORKCELL_EGRESS",
 		"flush without chain": "sudo ip6tables -F",
+		"escaped flush":       `sudo iptables -\F WORKCELL_EGRESS`,
+		"cluster flush":       "sudo iptables -wF WORKCELL_EGRESS",
+		"abbreviated flush":   "sudo iptables --fl WORKCELL_EGRESS",
+		"conditional flush":   "if type iptables; then sudo iptables -F WORKCELL_EGRESS; fi",
+		"function flush":      "flush_live() { sudo iptables -F WORKCELL_EGRESS; }",
+		"comment flush":       "# sudo iptables -F WORKCELL_EGRESS",
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := strings.Replace(string(script), "sudo iptables-restore --noflush <<<", hidden+"\nsudo iptables-restore --noflush <<<", 1)
