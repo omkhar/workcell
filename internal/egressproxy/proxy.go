@@ -74,6 +74,7 @@ func blockedAddr(a netip.Addr) bool {
 }
 
 // Proxy admits allowlisted connections and logs each denial as one JSONL line.
+// Overload refusals are best-effort and are dropped if the log writer stalls.
 type Proxy struct {
 	allow  *Allowlist
 	lookup func(ctx context.Context, host string) ([]netip.Addr, error)

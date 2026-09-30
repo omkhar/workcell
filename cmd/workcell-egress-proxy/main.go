@@ -3,7 +3,7 @@
 
 // Command workcell-egress-proxy runs the per-session egress proxy. It listens
 // on each allowlisted port and writes one JSONL line per denied connection to
-// stdout.
+// stdout. Overload refusals are best-effort: they are dropped if stdout stalls.
 package main
 
 import (
