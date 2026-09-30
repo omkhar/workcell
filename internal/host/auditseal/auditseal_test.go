@@ -702,3 +702,24 @@ func TestVerifySessionSealRejectsNULFoldedRecord(t *testing.T) {
 		})
 	}
 }
+
+// A NUL-folded record appended AFTER the sealed head must not verify: its
+// folded session_id still claims the session, and strict decode rejects it.
+func TestVerifySessionSealRejectsAppendedNULFoldedRecord(t *testing.T) {
+	_, signingDir, logPath, lines, seal := signedGenuine(t)
+	for name, appended := range map[string]string{
+		"ansi-c-octal": `session_id=$'sess-A\000event=x'`,
+		"raw-nul-byte": "session_id=sess-A\x00event=x",
+		"folded-after": "event=x\x00session_id=sess-A",
+	} {
+		t.Run(name, func(t *testing.T) {
+			mod := append(append([]string{}, lines...), appended)
+			if err := os.WriteFile(logPath, []byte(strings.Join(mod, "\n")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyA(signingDir, logPath, seal); err == nil {
+				t.Fatal("appended NUL-folded record must not verify")
+			}
+		})
+	}
+}

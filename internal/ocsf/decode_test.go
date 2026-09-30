@@ -117,3 +117,16 @@ func TestDecodeAuditLineStrictRejectsNUL(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditLineClaimsSessionSeesNULFoldedSessionID(t *testing.T) {
+	for name, line := range map[string]string{
+		"value-prefix": "session_id=s\x00event=exit",
+		"folded-after": "event=exit\x00session_id=s",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !AuditLineClaimsSession(line, "colima", "s") {
+				t.Fatal("NUL-folded session_id must still claim the session")
+			}
+		})
+	}
+}

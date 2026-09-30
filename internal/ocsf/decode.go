@@ -95,8 +95,12 @@ func AuditLineClaimsSession(line, targetProvider, sessionID string) bool {
 		tokens, _ = splitQuotedTokens(line)
 	}
 	for _, tok := range tokens {
-		if k, v, ok := strings.Cut(tok, "="); ok && k == "session_id" && v == sessionID {
-			return true
+		// A NUL-folded token holds several digest fields; test each segment so a
+		// folded session_id still claims and strict decode then rejects the line.
+		for _, seg := range strings.Split(tok, "\x00") {
+			if k, v, ok := strings.Cut(seg, "="); ok && k == "session_id" && v == sessionID {
+				return true
+			}
 		}
 	}
 	return false
