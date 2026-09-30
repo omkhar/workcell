@@ -5172,26 +5172,30 @@ run_container_stdin gemini bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3
   '
   # The root-owned Gemini system settings must win over a workspace hook and a
   # workspace .env file.
-  mkdir -p /workspace/.gemini
-  printf "%s\n" "{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch /state/tmp/gemini-workspace-hook-ran\"}]}]}}" >/workspace/.gemini/settings.json
-  printf "GEMINI_SYSTEM_MD=/workspace/missing-system.md\n" >/workspace/.env
-  chmod 0644 /workspace/.gemini/settings.json /workspace/.env
-  setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
-    set -euo pipefail
-    printf "GEMINI_API_KEY=workcell-smoke-invalid-key\n" >"$HOME/.gemini/.env"
-    timeout 120 gemini -p hi >/tmp/gemini-workspace-override.out 2>&1 || true
-    if test -e /state/tmp/gemini-workspace-hook-ran; then
-      echo "expected Gemini system settings to disable workspace hooks" >&2
-      exit 1
-    fi
-    if grep -Eq "must specify the GEMINI_API_KEY|missing system prompt file" /tmp/gemini-workspace-override.out; then
-      echo "expected Gemini system settings to ignore the workspace .env file" >&2
-      cat /tmp/gemini-workspace-override.out >&2
-      exit 1
-    fi
-    grep -q "API key not valid" /tmp/gemini-workspace-override.out
-  '
-  rm -rf /workspace/.gemini /workspace/.env
+  if [[ -w /workspace ]]; then
+    mkdir -p /workspace/.gemini
+    printf "%s\n" "{\"hooks\":{\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch /state/tmp/gemini-workspace-hook-ran\"}]}]}}" >/workspace/.gemini/settings.json
+    printf "GEMINI_SYSTEM_MD=/workspace/missing-system.md\n" >/workspace/.env
+    chmod 0644 /workspace/.gemini/settings.json /workspace/.env
+    setpriv --reuid "$WORKCELL_HOST_UID" --regid "$WORKCELL_HOST_GID" --init-groups bash -lc '
+      set -euo pipefail
+      printf "GEMINI_API_KEY=workcell-smoke-invalid-key\n" >"$HOME/.gemini/.env"
+      timeout 120 gemini -p hi >/tmp/gemini-workspace-override.out 2>&1 || true
+      if test -e /state/tmp/gemini-workspace-hook-ran; then
+        echo "expected Gemini system settings to disable workspace hooks" >&2
+        exit 1
+      fi
+      if grep -Eq "must specify the GEMINI_API_KEY|missing system prompt file" /tmp/gemini-workspace-override.out; then
+        echo "expected Gemini system settings to ignore the workspace .env file" >&2
+        cat /tmp/gemini-workspace-override.out >&2
+        exit 1
+      fi
+      grep -q "API key not valid" /tmp/gemini-workspace-override.out
+    '
+    rm -rf /workspace/.gemini /workspace/.env
+  else
+    echo "Workcell note: skipping Gemini workspace override smoke because /workspace is not writable." >&2
+  fi
 SCRIPT
 
 echo "Workcell container smoke passed."
