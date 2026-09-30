@@ -88,5 +88,22 @@ The expected result for an unlabeled pull request was:
 - `go test ./...` keeps the fuzz seed tests.
 - Pushes to `main` and the release workflow keep reproducible builds.
 
+## Shared Validator Image
+
+The `Validate repository` job builds the validator image once.
+It saves the image as a zstd archive and uploads it as the `workcell-validator-image` artifact.
+It also records the image ID as a job output.
+
+Each `Hostile environment` job downloads the archive and runs `docker load`.
+The job compares the loaded image ID with the recorded ID.
+A missing archive or a different ID fails the job.
+The job never rebuilds the image.
+
+An earlier version built the image in all four hostile jobs at the same time.
+Two of the four jobs failed with `curl` exit 22 when they fetched the pinned Debian snapshot.
+The workflow then used `max-parallel: 1`, and the four jobs ran one after the other.
+Now the four jobs run in parallel, because none of them builds the image.
+The job names that branch protection requires did not change.
+
 Use the CI cost report for current measured history. Do not present the recorded
 estimate as a current service-level objective.
