@@ -156,6 +156,16 @@ func TestCheckRustVendorRejectsTamper(t *testing.T) {
 	if err := os.WriteFile(manifest, []byte(cleanManifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Harmless manifest text that only mentions the words must still pass.
+	if err := os.WriteFile(manifest, []byte("# workspace and path note\n"+cleanManifest+"description = \"path handling\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run(); err != nil {
+		t.Fatalf("harmless manifest text rejected: %v: %s", err, out)
+	}
+	if err := os.WriteFile(manifest, []byte(cleanManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// A link outside vendor is copied for Cargo, so it must be rejected too.
 	srcLink := filepath.Join(filepath.Dir(vendor), "member-link")
 	if err := os.Symlink("/etc/hosts", srcLink); err != nil {

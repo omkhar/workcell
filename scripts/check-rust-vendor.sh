@@ -4,6 +4,13 @@
 # .cargo-checksum.json beside the code, so an edited crate with regenerated
 # hashes builds. crates.io serves each .crate by its Cargo.lock checksum, so
 # this comparison binds the committed bytes to the lock.
+#
+# Language-boundary justification (AGENTS.md): this is CI glue, not policy
+# logic. It runs cargo, tar, find and diff in a scratch directory and compares
+# the results; the few text checks guard the inputs to cargo vendor. It has no
+# runtime or host policy, no state, and no Go tool to dispatch to, and the other
+# validate-job checks are shell in the same way. A Go port would only re-invoke
+# the same external commands.
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 # shellcheck disable=SC2312 # repo-wide bootstrap; the path is the running script's own directory
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
@@ -57,10 +64,14 @@ fi
 
 # Cargo reads every path dependency before it checks the lock, and a parse
 # error prints file content. The root manifest has no path dependency, so allow
-# only the crate's own target paths under src/, and no workspace or escape
-# sequence that could hide a key.
+# only the crate's own target paths under src/. Comment lines are skipped. Any
+# other line that uses a path or workspace key, or a backslash that could hide
+# a key, fails closed.
 odd_manifest="$(awk '
-  /path|workspace|\\/ && !/^path = "src\/[A-Za-z0-9_\/.-]+\.rs"$/ { print }
+  /^[ \t]*#/ { next }
+  /(^|[^A-Za-z0-9_-])(path|workspace)"?[ \t]*[=.\]]/ || /\\/ {
+    if ($0 !~ /^path = "src\/[A-Za-z0-9_\/.-]+\.rs"$/) print
+  }
 ' "${RUST_DIR}/Cargo.toml")"
 if [[ -n "${odd_manifest}" ]]; then
   echo "Cargo.toml has a path, workspace or escape this check does not accept: ${odd_manifest}" >&2
