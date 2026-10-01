@@ -476,7 +476,7 @@ func TestServeShedsConnectionsOverTheLimit(t *testing.T) {
 func TestRouteRefusesUnicodeFoldedSNI(t *testing.T) {
 	p := New(&Allowlist{sni: map[string]bool{"k.example": true}}, io.Discard)
 	c, srv := net.Pipe()
-	go func() { _, _ = srv.Write(clientHello(t, "\u212a.example")); _ = srv.Close() }()
+	go func() { _, _ = srv.Write(clientHello(t, "\u212a.example")) }()
 	if _, _, got := p.route(c, 443); got != "sni_not_allowed" {
 		t.Fatalf("route reason = %q, want sni_not_allowed", got)
 	}
