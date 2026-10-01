@@ -8151,8 +8151,11 @@ prepare_workspace_control_plane_shadow() {
       fi
     fi
   done < <(
-    # -mindepth 1: a workspace root named .git or .GIT is not its Git directory.
-    find "${workspace}" -mindepth 1 -type d -iname .git -prune -print0 && printf '\0'
+    # -mindepth 1: a workspace root named .git or .GIT is not its Git
+    # directory. A .GIT directory counts, because a case-insensitive volume
+    # opens it as .git, but only .git is pruned: on a case-sensitive volume a
+    # .GIT directory can be a worktree whose own .git still needs masks.
+    find "${workspace}" -mindepth 1 -type d -iname .git \( -name .git -prune -o -true \) -print0 && printf '\0'
   )
   if [[ "${git_walk_complete}" -ne 1 ]]; then
     echo "Refusing git workspace: Workcell could not inventory the workspace for Git directories: ${workspace}" >&2
