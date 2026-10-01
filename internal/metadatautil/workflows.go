@@ -859,14 +859,9 @@ func upstreamRefreshReviewedUses(step workflowStep, checkout bool) bool {
 	return strings.HasPrefix(step.Uses, action) && step.Run == "" && len(step.Env) == 0 && maps.Equal(step.With, inputs)
 }
 
-// upstreamRefreshAppCredentialRE matches any reference to the App token step or
-// to a secret expression, in dot or bracket form.
-var upstreamRefreshAppCredentialRE = regexp.MustCompile(`app-token|(^|[^.\w])secrets\s*[.\[]|toJSON\(\s*secrets`)
-
-var upstreamRefreshPresenceEnv = map[string]string{
-	"APP_CLIENT_ID":   "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}",
-	"APP_PRIVATE_KEY": "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}",
-}
+// upstreamRefreshAppCredentialRE matches any reference to the steps context or
+// to secrets, in any form. Only the mint, presence, and publisher steps may use them.
+var upstreamRefreshAppCredentialRE = regexp.MustCompile(`\bsteps\b|(^|[^.\w])secrets\b`)
 
 // upstreamRefreshPresenceRun is the reviewed body of the presence check.
 const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
@@ -925,7 +920,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		!upstreamRefreshReviewedUses(guard.Steps[0], true) || !upstreamRefreshReviewedUses(guard.Steps[1], false) {
 		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
 	}
-	if step := guard.Steps[2]; step.ID != "guard" || step.ContinueOnError != true || step.Uses != "" || step.Shell != "" || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
+	if step := guard.Steps[2]; step.ID != "guard" || step.ContinueOnError != true || step.Uses != "" || step.Shell != upstreamRefreshPublishShell || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
 		return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
 	}
 	if guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
@@ -956,7 +951,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
 		usesToken := upstreamRefreshAppCredentialRE.MatchString(step.Run)
 		// The presence check may read exactly the two App secrets and nothing else.
-		presence := step.ID == "secrets" && step.Uses == "" && maps.Equal(step.Env, upstreamRefreshPresenceEnv) &&
+		presence := step.ID == "secrets" && step.Uses == "" && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
 			strings.TrimSpace(step.Run) == strings.TrimSpace(upstreamRefreshPresenceRun)
 		for _, group := range []map[string]string{step.Env, step.With} {
 			for _, value := range group {

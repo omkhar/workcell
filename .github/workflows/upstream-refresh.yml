@@ -295,6 +295,7 @@ jobs:
       # A failed guard is a result: publish then opens a PR for human review.
       - id: guard
         name: Run scope guard
+        shell: bash --noprofile --norc -euo pipefail {0}
         continue-on-error: true
         run: ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
 

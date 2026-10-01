@@ -223,7 +223,6 @@ If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-com
 Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible.
 The required checks still gate the merge.
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
-
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.
 Codex review of a bump PR is advisory.
 

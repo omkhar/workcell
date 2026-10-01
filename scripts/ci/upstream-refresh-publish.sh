@@ -50,7 +50,7 @@ audit_head() {
 audit_head
 
 branch="codex/upstream-refresh-${GITHUB_RUN_ID}"
-existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --json title,url,headRefName,headRefOid \
+existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --limit 1000 --json title,url,headRefName,headRefOid \
   --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0] // empty')"
 # A PR from this run means an earlier attempt stopped after it opened the PR.
 # Resume its disposition. The commit checks below still run against its head.
@@ -131,8 +131,10 @@ fail() {
 }
 if [[ "${resume}" == 0 ]]; then
   # A killed earlier attempt of this run can leave its branch. No open PR uses it.
-  if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" >/dev/null 2>&1; then
+  if lookup="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" 2>&1)"; then
     gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null
+  elif [[ "${lookup}" != *"HTTP 404"* ]]; then
+    die "cannot look up branch ${branch}: ${lookup}"
   fi
   gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${base_sha}" >/dev/null
   headline="^F Refresh pinned upstreams (upstream maintenance; auto-publish)"
