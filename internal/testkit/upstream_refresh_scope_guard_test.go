@@ -130,6 +130,18 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\ No newline at end of file\n",
 		},
 		{
+			name: "marker after a context line",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n\\ No newline at end of file\n",
+			wantErr: "misplaced no-newline marker",
+		},
+		{
+			name: "marker before any hunk line",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,2 +1,2 @@\n\\ No newline at end of file\n c\n-a\n+b\n",
+			wantErr: "misplaced no-newline marker",
+		},
+		{
 			name:    "invalid marker line",
 			patch:   scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\evil\n",
 			wantErr: "unrecognized patch line",

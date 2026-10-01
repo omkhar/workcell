@@ -62,7 +62,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		problems = append(problems, "out of scope: "+fmt.Sprintf(format, args...))
 	}
 	var file string
-	var seen, newFile bool
+	var seen, newFile, afterChange bool
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
 	var removedKeys, addedKeys []string
 	closeSection := func() {
@@ -89,13 +89,22 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		if remOld > 0 || remNew > 0 {
 			switch {
 			case line == scopeGuardNoNewline:
+				// git rejects a marker that does not directly follow a changed line.
+				if !afterChange {
+					fail("%s: misplaced no-newline marker", file)
+				}
+				afterChange = false
+				continue
 			case strings.HasPrefix(line, "-"):
 				remOld--
+				afterChange = true
 			case strings.HasPrefix(line, "+"):
 				remNew--
+				afterChange = true
 			case strings.HasPrefix(line, " "):
 				remOld--
 				remNew--
+				afterChange = false
 			default:
 				fail("%s: unrecognized hunk line %q", file, line)
 				remOld, remNew = 0, 0
@@ -175,6 +184,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				fail("%s: malformed hunk or not exactly one old and one new file header: %s", file, line)
 				continue
 			}
+			afterChange = false
 			remOld, remNew = scopeGuardHunkCount(m[1]), scopeGuardHunkCount(m[2])
 			if remOld == 0 && remNew == 0 {
 				fail("%s: zero-line hunk: %s", file, line)
@@ -182,6 +192,10 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			}
 			hunks++
 		case line == scopeGuardNoNewline && hunks > 0:
+			if !afterChange {
+				fail("%s: misplaced no-newline marker", file)
+			}
+			afterChange = false
 		default:
 			fail("%s: unrecognized patch line %q", file, line)
 		}
