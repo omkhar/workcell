@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "78c6c3c52bd53b096133b226870bb6f15f8d417e708d40e7b0701a6d89657329"
+      "sha256": "bbe58fb9854cc2c8e3677568bc823985d6a326853a49ac13e79ebe418ffba9e1"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",

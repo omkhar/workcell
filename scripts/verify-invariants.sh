@@ -6726,18 +6726,39 @@ mkdir -p "${COMMONDIR_HEADLINK_REPO}/.git/modules/child/refs/heads"
 ln -s refs/heads/master "${COMMONDIR_HEADLINK_REPO}/.git/modules/child/HEAD"
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_HEADLINK_REPO}" --dry-run >/tmp/workcell-commondir-headlink.out 2>&1
 
-# A Git admin directory under refs can carry a redirect and must be rejected.
-COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
+# Branches named topic/HEAD and topic/commondir are refs, not a redirect, and must launch.
+COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-branch-repo"
 git init -q -b master "${COMMONDIR_REFS_REPO}"
 git -C "${COMMONDIR_REFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
-mkdir -p "${COMMONDIR_REFS_REPO}/.git/refs/admin"
-printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_REFS_REPO}/.git/refs/admin/commondir"
-cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_REFS_REPO}/.git/refs/admin/HEAD"
-if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REFS_REPO}" --dry-run >/tmp/workcell-commondir-refs.out 2>&1; then
-  echo "Expected repo with a Git admin directory under refs to be rejected" >&2
+git -C "${COMMONDIR_REFS_REPO}" branch topic/HEAD
+git -C "${COMMONDIR_REFS_REPO}" branch topic/commondir
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REFS_REPO}" --dry-run >/tmp/workcell-commondir-refs.out 2>&1
+
+# Only the top-level refs are pruned: the same pair under a module admin directory is still rejected.
+COMMONDIR_MODREFS_REPO="${COMMONDIR_ROOT}/module-refs-repo"
+git init -q -b master "${COMMONDIR_MODREFS_REPO}"
+git -C "${COMMONDIR_MODREFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_MODREFS_REPO}/.git/modules/child/refs/admin"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_MODREFS_REPO}/.git/modules/child/refs/admin/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_MODREFS_REPO}/.git/modules/child/refs/admin/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODREFS_REPO}" --dry-run >/tmp/workcell-commondir-modrefs.out 2>&1; then
+  echo "Expected repo with a Git admin directory under module refs to be rejected" >&2
   exit 1
 fi
-grep -q 'redirects Git config and hooks: .git/refs/admin/commondir' /tmp/workcell-commondir-refs.out
+grep -q 'redirects Git config and hooks: .git/modules/child/refs/admin/commondir' /tmp/workcell-commondir-modrefs.out
+
+# Git accepts a dangling HEAD symlink to refs/, so a commondir beside one is a redirect.
+COMMONDIR_DANGLEHEAD_REPO="${COMMONDIR_ROOT}/dangling-head-repo"
+git init -q -b master "${COMMONDIR_DANGLEHEAD_REPO}"
+cp -R "${COMMONDIR_DANGLEHEAD_REPO}/.git" "${COMMONDIR_ROOT}/dangling-head-common"
+printf '../../dangling-head-common\n' >"${COMMONDIR_DANGLEHEAD_REPO}/.git/commondir"
+rm "${COMMONDIR_DANGLEHEAD_REPO}/.git/HEAD"
+ln -s refs/heads/unborn "${COMMONDIR_DANGLEHEAD_REPO}/.git/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_DANGLEHEAD_REPO}" --dry-run >/tmp/workcell-commondir-danglehead.out 2>&1; then
+  echo "Expected repo with a commondir beside a dangling HEAD symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir-danglehead.out
 
 # A module symlink that dangles on the host can resolve inside the container.
 COMMONDIR_DANGLE_REPO="${COMMONDIR_ROOT}/dangling-link-repo"
