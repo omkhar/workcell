@@ -314,6 +314,7 @@ jobs:
     steps:
       - id: secrets
         name: Check App credentials
+        shell: bash --noprofile --norc -euo pipefail {0}
         env:
           APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}
           APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}

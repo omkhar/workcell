@@ -861,7 +861,6 @@ func upstreamRefreshReviewedUses(step workflowStep, checkout bool) bool {
 // to secrets, in any form. Only the mint, presence, and publisher steps may use them.
 var upstreamRefreshAppCredentialRE = regexp.MustCompile(`\bsteps\b|(^|[^.\w])secrets\b`)
 
-// upstreamRefreshPresenceRun is the reviewed body of the presence check.
 const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
   echo "present=false" >> "${GITHUB_OUTPUT}"
   echo "::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md."
@@ -869,7 +868,6 @@ const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRI
 fi
 echo "present=true" >> "${GITHUB_OUTPUT}"`
 
-// commandRuns reads the commands the shell really runs, so continuations, comments, and heredocs cannot fake one.
 func commandRuns(run, command string) []Invocation { return ShellInvocations(run, command) }
 
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
@@ -948,11 +946,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	publishRuns := 0
 	stray, beforePublisher := "", true
 	for _, step := range publish.Steps {
-		// Only the publisher step may hold the App token, and it runs one command.
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
 		usesToken := upstreamRefreshAppCredentialRE.MatchString(step.Run)
-		// The presence check may read exactly the two App secrets and nothing else.
-		presence := step.ID == "secrets" && step.Uses == "" && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
+		presence := step.ID == "secrets" && step.Uses == "" && step.Shell == upstreamRefreshPublishShell && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
 			strings.TrimSpace(step.Run) == strings.TrimSpace(upstreamRefreshPresenceRun)
 		for _, group := range []map[string]string{step.Env, step.With} {
 			for _, value := range group {
@@ -974,7 +970,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		}
 		if mint {
 			appTokenSteps++
-			if step.ID != "app-token" || !maps.Equal(step.With, upstreamRefreshAppTokenInputs) {
+			if step.ID != "app-token" || len(step.Env) != 0 || !maps.Equal(step.With, upstreamRefreshAppTokenInputs) {
 				return fmt.Errorf("%s publish job must mint the App token as step app-token from the client-id secret and private-key secret with only contents and pull-requests write", path)
 			}
 		}

@@ -210,6 +210,7 @@ It checks the commit tree and the signature, and then opens the PR.
 
 It skips a candidate that is stale against `main`. It skips when a refresh PR from another run is open.
 If an earlier attempt of the same run opened the PR, `publish` resumes that PR. It checks the PR head commit and then applies the merge or label step.
+If a run stops after it opens the PR, rerun that run or close the PR.
 The job output `result` is `passed` only when the guard step exits 0.
 
 The scope guard allows only these changes:
