@@ -6657,6 +6657,36 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'redirects Git config and hooks: .git/config' /tmp/workcell-commondir-topcfg.out
 
+# A dangling mixed-case CONFIG or MODULES symlink opens as config or modules on a case-insensitive volume.
+COMMONDIR_UPCFG_REPO="${COMMONDIR_ROOT}/upper-config-link-repo"
+git init -q -b master "${COMMONDIR_UPCFG_REPO}"
+git -C "${COMMONDIR_UPCFG_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+rm "${COMMONDIR_UPCFG_REPO}/.git/config"
+ln -s /workspace/evil-config "${COMMONDIR_UPCFG_REPO}/.git/CONFIG"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPCFG_REPO}" --dry-run >/tmp/workcell-commondir-upcfg.out 2>&1; then
+  echo "Expected repo with a dangling mixed-case CONFIG symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/CONFIG' /tmp/workcell-commondir-upcfg.out
+COMMONDIR_UPMOD_REPO="${COMMONDIR_ROOT}/upper-modules-link-repo"
+git init -q -b master "${COMMONDIR_UPMOD_REPO}"
+git -C "${COMMONDIR_UPMOD_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+ln -s /workspace/admin "${COMMONDIR_UPMOD_REPO}/.git/MODULES"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPMOD_REPO}" --dry-run >/tmp/workcell-commondir-upmod.out 2>&1; then
+  echo "Expected repo with a dangling mixed-case MODULES symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/MODULES' /tmp/workcell-commondir-upmod.out
+
+# A resolving HEAD symlink in a module admin directory is valid Git and must pass.
+COMMONDIR_HEADLINK_REPO="${COMMONDIR_ROOT}/head-link-repo"
+git init -q -b master "${COMMONDIR_HEADLINK_REPO}"
+git -C "${COMMONDIR_HEADLINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_HEADLINK_REPO}/.git/modules/child/refs/heads"
+: >"${COMMONDIR_HEADLINK_REPO}/.git/modules/child/refs/heads/master"
+ln -s refs/heads/master "${COMMONDIR_HEADLINK_REPO}/.git/modules/child/HEAD"
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_HEADLINK_REPO}" --dry-run >/tmp/workcell-commondir-headlink.out 2>&1
+
 # A Git admin directory under refs can carry a redirect and must be rejected.
 COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-admin-repo"
 git init -q -b master "${COMMONDIR_REFS_REPO}"

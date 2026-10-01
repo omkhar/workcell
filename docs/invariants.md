@@ -95,6 +95,10 @@ read config and hooks from a directory that the masks do not cover.
 - A top-level or module `hooks`, `config`, `config.worktree` or `worktrees`
   symlink dangles on the host. The launcher masks these links only when they resolve on the host.
 
+The control names match in any letter case, because a case-insensitive volume
+opens `CONFIG` as `config`. A `HEAD` symlink under `.git/modules` is allowed when
+it resolves on the host.
+
 Workcell also refuses the workspace when it cannot list the workspace or a Git
 directory. The checks run at launch. They do not stop a file that is created
 after launch.
