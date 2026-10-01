@@ -1403,6 +1403,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish job env holds the private key", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at workflow or job level"},
 		{"workflow env holds the private key", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at workflow or job level"},
 		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - env:", "must run only the publish script"},
+		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "must not run other steps before the publish script"},
 		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
 		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
 		{"publish App token from wrong secret", "client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}", "client-id: ${{ secrets.OTHER }}", "client-id secret"},

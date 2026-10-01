@@ -287,14 +287,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: upstream-refresh-candidate
           path: ${{ runner.temp }}/candidate
 
-      # A failed guard is a result, not a job failure: publish then opens a PR
-      # that needs human review.
+      # A failed guard is a result: publish then opens a PR for human review.
       - id: guard
         name: Run scope guard
         continue-on-error: true
@@ -325,18 +323,15 @@ jobs:
             exit 0
           fi
           echo "present=true" >> "${GITHUB_OUTPUT}"
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.secrets.outputs.present == 'true'
         with:
           persist-credentials: false
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         if: steps.secrets.outputs.present == 'true'
         with:
           name: upstream-refresh-candidate
           path: ${{ runner.temp }}/candidate
-
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         if: steps.secrets.outputs.present == 'true'
@@ -345,7 +340,6 @@ jobs:
           private-key: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-
       - id: publish
         name: Publish candidate
         shell: bash --noprofile --norc -euo pipefail {0}
@@ -354,7 +348,6 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
         run: ./scripts/ci/upstream-refresh-publish.sh "${RUNNER_TEMP}/candidate" "${SCOPE_GUARD_RESULT}" "${RUNNER_TEMP}/audit.md"
-
       - name: Post audit comment
         if: always() && steps.secrets.outputs.present == 'true'
         env:

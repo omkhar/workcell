@@ -850,7 +850,12 @@ var upstreamRefreshAppTokenInputs = map[string]string{
 	"permission-pull-requests": "write",
 }
 
-func upstreamRefreshGuardUses(step workflowStep, action string, inputs map[string]string) bool {
+// upstreamRefreshReviewedUses accepts only the reviewed checkout or candidate download step.
+func upstreamRefreshReviewedUses(step workflowStep, checkout bool) bool {
+	action, inputs := "actions/download-artifact@", map[string]string{"name": "upstream-refresh-candidate", "path": "${{ runner.temp }}/candidate"}
+	if checkout {
+		action, inputs = "actions/checkout@", map[string]string{"persist-credentials": "false"}
+	}
 	return strings.HasPrefix(step.Uses, action) && step.Run == "" && len(step.Env) == 0 && maps.Equal(step.With, inputs)
 }
 
@@ -917,8 +922,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	// guard step. No other step can replace the script, write the result, or
 	// mask a failure, so the guard step outcome is the guard's real exit status.
 	if len(guard.Steps) != 3 ||
-		!upstreamRefreshGuardUses(guard.Steps[0], "actions/checkout@", map[string]string{"persist-credentials": "false"}) ||
-		!upstreamRefreshGuardUses(guard.Steps[1], "actions/download-artifact@", map[string]string{"name": "upstream-refresh-candidate", "path": "${{ runner.temp }}/candidate"}) {
+		!upstreamRefreshReviewedUses(guard.Steps[0], true) || !upstreamRefreshReviewedUses(guard.Steps[1], false) {
 		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
 	}
 	if step := guard.Steps[2]; step.ID != "guard" || step.ContinueOnError != true || step.Uses != "" || step.Shell != "" || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
@@ -946,10 +950,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	appTokenSteps := 0
 	publishRuns := 0
-	strayToken := false
+	stray, beforePublisher := "", true
 	for _, step := range publish.Steps {
-		// Only the publisher step may hold the App token, and that step runs
-		// exactly one command.
+		// Only the publisher step may hold the App token, and it runs one command.
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
 		usesToken := upstreamRefreshAppCredentialRE.MatchString(step.Run)
 		// The presence check may read exactly the two App secrets and nothing else.
@@ -961,7 +964,14 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 			}
 		}
 		mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@")
-		strayToken = strayToken || usesToken && !publisher && !mint
+		// Only reviewed steps may precede the publisher, or they could replace its script.
+		if beforePublisher && !(publisher || mint || presence || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false)) {
+			stray = "must not run other steps before the publish script"
+		}
+		if usesToken && !publisher && !mint {
+			stray = "must use the App token only in the publish script step"
+		}
+		beforePublisher = beforePublisher && !publisher
 		run := strings.TrimSpace(step.Run)
 		if publisher && (step.Shell != upstreamRefreshPublishShell || len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
 			return fmt.Errorf("%s publish job step must run only the publish script", path)
@@ -974,8 +984,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		}
 		for _, run := range commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
 			publishRuns++
-			// The second argument is the guard result; a literal would pass an
-			// out-of-scope candidate.
+			// A literal second argument would pass an out-of-scope candidate.
 			if len(run.Args) != 3 || run.Args[1] != "${SCOPE_GUARD_RESULT}" {
 				return fmt.Errorf("%s publish job must pass \"${SCOPE_GUARD_RESULT}\" as the second publish script argument", path)
 			}
@@ -991,8 +1000,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if appTokenSteps != 1 || publishRuns != 1 {
 		return fmt.Errorf("%s publish job must mint one App token and run the publish script once", path)
 	}
-	if strayToken {
-		return fmt.Errorf("%s publish job must use the App token only in the publish script step", path)
+	if stray != "" {
+		return fmt.Errorf("%s publish job %s", path, stray)
 	}
 	return nil
 }
