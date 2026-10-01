@@ -282,6 +282,7 @@ func helperSubcommands() []helperSubcommand {
 		{"session-timeline", 0, -1, runHelperSessionTimeline},
 		{"audit-digest", 2, -1, cmdHelperAuditDigest},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
+		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
 		{"resolve-host-output-directory-candidate", 1, 1, cmdHelperResolveHostOutputDirectoryCandidate},
 		{"cleanup-stale-injection-bundles", 1, 1, cmdHelperCleanupStaleInjectionBundles},
@@ -695,6 +696,10 @@ func cmdHelperAuditDigest(args []string) error {
 func cmdHelperDirectMountCacheKey(args []string) error {
 	fmt.Println(hoststate.DirectMountCacheKey(args[0], args[1]))
 	return nil
+}
+
+func cmdHelperPublishSessionCaptureFile(args []string) error {
+	return hoststate.PublishSessionCaptureFile(args[0], args[1])
 }
 
 func cmdHelperResolveHostOutputCandidate(args []string) error {

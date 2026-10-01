@@ -1709,7 +1709,8 @@ existing_file_trace_capture_output="$(
     printf "preexisting-watch-start\n" >"${FILE_TRACE_LOG_PATH}"
     revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
     run_profile_docker_command() { return 1; }
-    capture_session_file_trace "workcell-session-fixture"
+    append_audit_record() { :; }
+    capture_session_file_trace "workcell-session-fixture" 2>/dev/null
     cat "${FILE_TRACE_LOG_PATH}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}/preexisting.file-trace.log"
 )"
@@ -3784,6 +3785,7 @@ capture_probe_output="$(
       echo "ambient-docker-client" >>"${STUB_RECORD}"
       return 99
     }
+    append_audit_record() { printf "audit-record|%s\n" "$*" >>"${STUB_RECORD}"; }
     capture_session_audit_state "workcell-session-fixture"
     capture_session_file_trace "workcell-session-fixture"
     printf "audit=%s\n" "$(cat "${SESSION_AUDIT_STATE_FILE}")"
@@ -3802,6 +3804,10 @@ grep -q '^wcl-detached-fixture|cp|workcell-session-fixture:/var/lib/workcell/ses
 grep -q '^wcl-detached-fixture|cp|workcell-session-fixture:/var/tmp/workcell-file-trace.log|' "${DETACHED_CAPTURE_RECORD}"
 if grep -q 'ambient-docker-client' "${DETACHED_CAPTURE_RECORD}"; then
   echo "Detached artifact capture unexpectedly used the ambient host docker client" >&2
+  exit 1
+fi
+if grep -q '^audit-record|' "${DETACHED_CAPTURE_RECORD}"; then
+  echo "Successful session capture recorded a capture failure" >&2
   exit 1
 fi
 
@@ -3828,8 +3834,9 @@ bash -lc '
     rm -f "$4"
     ln -s "${VICTIM}" "$4"
   }
+  append_audit_record() { :; }
   capture_session_audit_state "workcell-session-fixture"
-  capture_session_file_trace "workcell-session-fixture"
+  capture_session_file_trace "workcell-session-fixture" 2>/dev/null
 ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SYMLINK_CAPTURE_DIR}"
 if [[ -L "${SYMLINK_CAPTURE_DIR}/audit/session-assurance" || -L "${SYMLINK_CAPTURE_DIR}/trace.log" ]]; then
   echo "Session capture published a container-planted symlink on the host" >&2
@@ -3842,6 +3849,63 @@ fi
 grep -qx 'preexisting-trace' "${SYMLINK_CAPTURE_DIR}/trace.log"
 if [[ -n "$(find "${SYMLINK_CAPTURE_DIR}" -name '.workcell-cp.*')" ]]; then
   echo "Session capture left a staging directory behind" >&2
+  exit 1
+fi
+
+# The capture destination itself may be a link or a directory. On copy failure
+# the launcher must not append to or chmod it. Publication replaces a link at
+# the destination and never follows it, and it fails on a directory. Each
+# failure is recorded in the audit log.
+LINKED_DEST_DIR="${DETACHED_STATE_DIR}/linked-capture-destination"
+mkdir -p "${LINKED_DEST_DIR}/victim-dir" "${LINKED_DEST_DIR}/trace-dir.log"
+: >"${LINKED_DEST_DIR}/victim"
+chmod 0755 "${LINKED_DEST_DIR}/victim"
+ln -s "${LINKED_DEST_DIR}/victim" "${LINKED_DEST_DIR}/trace-file-link.log"
+ln -s "${LINKED_DEST_DIR}/victim-dir" "${LINKED_DEST_DIR}/trace-dir-link.log"
+linked_capture_output="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    COLIMA_PROFILE="wcl-detached-fixture"
+    SESSION_ID="session-fixture"
+    SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
+    STAGED_RECORD="$3"
+    revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
+    append_audit_record() { printf "audit-record|%s\n" "$*"; }
+    run_profile_docker_command() { return 1; }
+    FILE_TRACE_LOG_PATH="$2/trace-file-link.log"
+    capture_session_file_trace "workcell-session-fixture" 2>/dev/null
+    run_profile_docker_command() {
+      printf "%s\n" "$4" >>"${STAGED_RECORD}"
+      printf "container-trace\n" >"$4"
+    }
+    FILE_TRACE_LOG_PATH="$2/trace-dir-link.log"
+    capture_session_file_trace "workcell-session-fixture" 2>/dev/null
+    FILE_TRACE_LOG_PATH="$2/trace-dir.log"
+    capture_session_file_trace "workcell-session-fixture" 2>/dev/null
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${LINKED_DEST_DIR}" "${DETACHED_STATE_DIR}/linked-capture-staged.record"
+)"
+if [[ -s "${LINKED_DEST_DIR}/victim" ]] || [[ -z "$(find "${LINKED_DEST_DIR}/victim" -perm 0755)" ]]; then
+  echo "Session capture wrote through or changed the mode of a linked destination" >&2
+  exit 1
+fi
+if [[ -n "$(find "${LINKED_DEST_DIR}/victim-dir" "${LINKED_DEST_DIR}/trace-dir.log" -mindepth 1)" ]]; then
+  echo "Session capture moved a file into a directory at or behind the destination" >&2
+  exit 1
+fi
+if [[ -L "${LINKED_DEST_DIR}/trace-dir-link.log" ]] || ! grep -qx 'container-trace' "${LINKED_DEST_DIR}/trace-dir-link.log"; then
+  echo "Session capture did not replace a linked destination with the captured file" >&2
+  exit 1
+fi
+if [[ "$(wc -l <"${DETACHED_STATE_DIR}/linked-capture-staged.record")" -ne 2 ]] ||
+  grep -qF "${LINKED_DEST_DIR}" "${DETACHED_STATE_DIR}/linked-capture-staged.record"; then
+  echo "Session capture staged a container copy next to the destination" >&2
+  exit 1
+fi
+if [[ "$(grep -c '^audit-record|wcl-detached-fixture event=file-trace-capture-failed session_id=session-fixture container=workcell-session-fixture container_path=/var/tmp/workcell-file-trace.log$' <<<"${linked_capture_output}")" -ne 2 ]]; then
+  echo "Session capture failure was not recorded in the audit log" >&2
+  printf '%s\n' "${linked_capture_output}" >&2
   exit 1
 fi
 

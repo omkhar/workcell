@@ -573,3 +573,96 @@ func TestCleanupStaleInjectionBundlesConservativelyHandlesStandaloneCopilotToken
 		t.Fatalf("recent standalone Copilot token handoff should remain: %v", err)
 	}
 }
+
+func TestPublishSessionCaptureFileNeverFollowsLinks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "staged")
+	if err := os.WriteFile(source, []byte("trace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	victimDir := filepath.Join(dir, "victim-dir")
+	victim := filepath.Join(dir, "victim")
+	if err := os.Mkdir(victimDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(victim, []byte("victim\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A link at the destination leaf is replaced, never followed.
+	for _, target := range []string{victim, victimDir} {
+		destination := filepath.Join(dir, "dest-"+filepath.Base(target))
+		if err := os.Symlink(target, destination); err != nil {
+			t.Fatal(err)
+		}
+		if err := PublishSessionCaptureFile(source, destination); err != nil {
+			t.Fatalf("publish over link to %s: %v", target, err)
+		}
+		info, err := os.Lstat(destination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			t.Fatalf("destination mode = %v, want regular 0600", info.Mode())
+		}
+		if got, _ := os.ReadFile(destination); string(got) != "trace\n" {
+			t.Fatalf("destination content = %q", got)
+		}
+	}
+	if entries, _ := os.ReadDir(victimDir); len(entries) != 0 {
+		t.Fatalf("publish wrote into a linked directory: %v", entries)
+	}
+	if info, _ := os.Stat(victim); info.Mode().Perm() != 0o755 {
+		t.Fatalf("victim mode changed to %v", info.Mode().Perm())
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "victim\n" {
+		t.Fatalf("victim content changed to %q", got)
+	}
+
+	// A directory at the destination, a linked source, and a linked parent fail.
+	linkedSource := filepath.Join(dir, "linked-source")
+	if err := os.Symlink(victim, linkedSource); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(dir, "linked-parent")
+	if err := os.Symlink(victimDir, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range map[string][2]string{
+		"directory destination": {source, victimDir},
+		"linked source":         {linkedSource, filepath.Join(dir, "dest-new")},
+		"linked parent":         {source, filepath.Join(linkedParent, "trace.log")},
+	} {
+		if err := PublishSessionCaptureFile(args[0], args[1]); err == nil {
+			t.Fatalf("%s: publish succeeded, want an error", name)
+		}
+	}
+	if entries, _ := os.ReadDir(victimDir); len(entries) != 0 {
+		t.Fatalf("failed publish left files in the target directory: %v", entries)
+	}
+}
+
+func TestPublishSessionCaptureFileAcceptsLargeTrace(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "staged")
+	const size = 160 << 20 // above the former 128 MiB in-memory bound
+	f, err := os.Create(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, "trace.log")
+	if err := PublishSessionCaptureFile(source, destination); err != nil {
+		t.Fatalf("publish large capture: %v", err)
+	}
+	if info, err := os.Stat(destination); err != nil || info.Size() != size {
+		t.Fatalf("destination = %v, %v; want %d bytes", info, err, size)
+	}
+}

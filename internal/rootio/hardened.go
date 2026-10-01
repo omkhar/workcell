@@ -95,7 +95,13 @@ func MkdirAllSyncedAt(parent *os.File, relative string, mode os.FileMode) error 
 // StageAndCreateAt publishes the same way but refuses to replace an existing
 // name.
 func StageAndPublishAt(parent *os.File, name string, data []byte, mode os.FileMode, tempPrefix string) error {
-	return stageAndPublish(parent, name, data, mode, tempPrefix, false)
+	return stageAndPublish(parent, name, bytes.NewReader(data), mode, tempPrefix, false)
+}
+
+// StageAndPublishReaderAt is StageAndPublishAt for content read from source,
+// so a large file does not sit in memory.
+func StageAndPublishReaderAt(parent *os.File, name string, source io.Reader, mode os.FileMode, tempPrefix string) error {
+	return stageAndPublish(parent, name, source, mode, tempPrefix, false)
 }
 
 // StageAndCreateAt writes data to name under parent and fails when name
@@ -105,7 +111,7 @@ func StageAndPublishAt(parent *os.File, name string, data []byte, mode os.FileMo
 // callers that both find the name absent cannot both report success. A plain
 // renameat would replace a name that appeared after the absence check.
 func StageAndCreateAt(parent *os.File, name string, data []byte, mode os.FileMode, tempPrefix string) error {
-	return stageAndPublish(parent, name, data, mode, tempPrefix, true)
+	return stageAndPublish(parent, name, bytes.NewReader(data), mode, tempPrefix, true)
 }
 
 // stageAndPublish writes a uniquely named sibling with O_EXCL, sets its mode,
@@ -117,7 +123,7 @@ func StageAndCreateAt(parent *os.File, name string, data []byte, mode os.FileMod
 // the descriptor so a restrictive umask cannot publish an unreadable file. The
 // contents are synced before publication and the parent is synced after it, so
 // a crash cannot leave a name that points at unwritten bytes.
-func stageAndPublish(parent *os.File, name string, data []byte, mode os.FileMode, tempPrefix string, createOnce bool) error {
+func stageAndPublish(parent *os.File, name string, data io.Reader, mode os.FileMode, tempPrefix string, createOnce bool) error {
 	if err := validateLeafName(name); err != nil {
 		return err
 	}
@@ -168,7 +174,7 @@ func stageAndPublish(parent *os.File, name string, data []byte, mode os.FileMode
 
 // writeStagedFile fills, chmods, syncs and closes the staged descriptor,
 // unlinking it on any failure so a partial file is never left behind.
-func writeStagedFile(parentFD, fd int, temporary, path string, data []byte, mode os.FileMode) error {
+func writeStagedFile(parentFD, fd int, temporary, path string, data io.Reader, mode os.FileMode) error {
 	file := os.NewFile(uintptr(fd), path)
 	if file == nil {
 		_ = unix.Close(fd)
@@ -180,7 +186,7 @@ func writeStagedFile(parentFD, fd int, temporary, path string, data []byte, mode
 		_ = unix.Unlinkat(parentFD, temporary, 0)
 		return err
 	}
-	if _, err := io.Copy(file, bytes.NewReader(data)); err != nil {
+	if _, err := io.Copy(file, data); err != nil {
 		return fail(err)
 	}
 	// O_CREAT applies the umask, so a restrictive one would publish a file the
