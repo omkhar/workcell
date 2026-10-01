@@ -25,7 +25,7 @@ mode = "review-gated"
 # Optional: numeric ID of the upstream-refresh GitHub App. The review ruleset may
 # list at most one Integration/pull_request bypass actor. That actor's actor_id
 # must equal this key. Without this key, no Integration bypass actor is allowed.
-# upstream_refresh_app_id = 123456
+upstream_refresh_app_id = 5150266
 
 [release_environment]
 # Valid modes:
