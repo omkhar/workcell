@@ -238,13 +238,14 @@ func scopeGuardHunkCount(text string) int {
 }
 
 // scopeGuardSplitLF splits on LF only. bufio.ScanLines would drop a trailing
-// CR that git keeps as part of the line.
+// CR that git keeps as part of the line. git rejects an unterminated last
+// line, so the splitter does too.
 func scopeGuardSplitLF(data []byte, atEOF bool) (int, []byte, error) {
 	if i := bytes.IndexByte(data, '\n'); i >= 0 {
 		return i + 1, data[:i], nil
 	}
 	if atEOF && len(data) > 0 {
-		return len(data), data, nil
+		return 0, nil, errors.New("final patch line has no newline")
 	}
 	return 0, nil, nil
 }

@@ -147,6 +147,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "replaced one for one",
 		},
 		{
+			name:    "unterminated final line",
+			patch:   strings.TrimSuffix(scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b"), "\n"),
+			wantErr: "final patch line has no newline",
+		},
+		{
 			name: "context-only hunk",
 			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
 				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n context\n",
