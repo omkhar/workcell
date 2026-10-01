@@ -17,6 +17,7 @@ const usageText = `Usage: workcell session start [launch-options] [-- provider-a
        workcell session diff --id SESSION_ID [--output PATH]
        workcell session export --id SESSION_ID [--format json|ocsf] [--output PATH]
        workcell session verify --id SESSION_ID
+       workcell session snapshot --id SESSION_ID
 
 Commands:
   start
@@ -77,6 +78,9 @@ Commands:
   verify
     --id SESSION_ID           Verify a session's signed, tamper-evident audit records
 
+  snapshot
+    --id SESSION_ID           Capture the session workspace into the host-owned snapshot store
+
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
   - records are durable host-side metadata for detached, completed, or aborted launches.
@@ -97,6 +101,9 @@ Notes:
     profile log and verifies the host-side signature over the chain head. It is
     read-only and fails closed on any tampered, reordered, dropped, or unsigned
     record. Signing is boundary/host-side, not agent-side.
+  - ` + "`" + `session snapshot` + "`" + ` pauses a running detached session, records the workspace
+    tree as a commit on the recorded git head in a host-owned store that no
+    container mounts, and appends a session_snapshot audit record.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.

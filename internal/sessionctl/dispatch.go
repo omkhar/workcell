@@ -19,7 +19,7 @@ import (
 //
 // session_main is a wide case statement that fans the user-facing
 // subcommand list (start, attach, send, stop, list, show, delete, logs,
-// timeline, diff, export, monitor) out to a matching per-subcommand
+// timeline, diff, export, verify, snapshot, monitor) out to a matching per-subcommand
 // handler.  The bulk of the per-subcommand work (option parsing for
 // list/show/diff/export, the env -i re-exec for start, the docker
 // transport for attach/send/stop, etc.) still depends on sourced bash
@@ -34,7 +34,7 @@ import (
 //
 // where <name> is one of the canonical subcommand tokens (start,
 // attach, send, stop, list, show, delete, logs, timeline, diff,
-// export, monitor) or `usage` for the empty/help branches.  Any other
+// export, verify, snapshot, monitor) or `usage` for the empty/help branches.  Any other
 // subcommand returns an ExitCodeError with code 2 carrying the bash
 // "Unsupported workcell session command: <name>" diagnostic so the
 // helper exits with the historical bash status.
@@ -67,7 +67,7 @@ func dispatchMain(args []string, stdout io.Writer) error {
 // `monitor` is the internal supervisor verb that `session start`
 // invokes against itself, not a user-facing subcommand — `man
 // workcell.1` and `README.md` document the user surface as
-// start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify.
+// start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|snapshot.
 // A fresh slice is returned on every call so callers may mutate it
 // freely.
 func CanonicalSubcommands() []string {
@@ -84,6 +84,7 @@ func CanonicalSubcommands() []string {
 		"diff",
 		"export",
 		"verify",
+		"snapshot",
 		"monitor",
 	}
 }

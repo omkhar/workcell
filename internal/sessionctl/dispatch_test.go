@@ -28,6 +28,7 @@ func TestResolveSessionSubcommandAcceptsCanonical(t *testing.T) {
 		"diff",
 		"export",
 		"verify",
+		"snapshot",
 		"monitor",
 	}
 	for _, name := range cases {
@@ -94,6 +95,7 @@ func TestDispatchMainEmitsCanonicalRoute(t *testing.T) {
 		"diff":     "subcommand=diff\n",
 		"export":   "subcommand=export\n",
 		"verify":   "subcommand=verify\n",
+		"snapshot": "subcommand=snapshot\n",
 		"monitor":  "subcommand=monitor\n",
 	}
 	for name, want := range cases {

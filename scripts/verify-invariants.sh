@@ -6185,6 +6185,24 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   exit 1
 fi
 
+# Invariant snapshot-store-host-owned: no workspace mount may contain or sit
+# inside the host-owned snapshot store.
+for snapshot_store_workspace in \
+  "${REAL_HOME}/Library" \
+  "${REAL_HOME}/library/caches/Colima" \
+  "${REAL_HOME}/Library/Caches/colima/workcell-snapshots/origin.git"; do
+  if run_workcell_verify \
+    --agent codex \
+    --workspace "${snapshot_store_workspace}" \
+    --allow-nongit-workspace \
+    --no-default-injection-policy \
+    --dry-run >/tmp/workcell-snapshot-store-workspace.out 2>&1; then
+    echo "Expected snapshot-store workspace rejection for ${snapshot_store_workspace}" >&2
+    exit 1
+  fi
+  grep -q 'Refusing workspace mount that overlaps the host-owned snapshot store' /tmp/workcell-snapshot-store-workspace.out
+done
+
 PROVIDER_HOME_FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/workcell-provider-home.XXXXXX")"
 for provider_home_entry in \
   "codex:.codex" \

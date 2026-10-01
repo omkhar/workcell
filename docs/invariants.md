@@ -43,6 +43,11 @@ The managed Colima VM mounts these roots as read-only. These mounts do not give
 the runtime durable write access outside the selected workspace. GitHub
 publication remains a separate host action.
 
+Invariant `snapshot-store-host-owned`: `workcell session snapshot` writes to
+`~/Library/Caches/colima/workcell-snapshots`. No container mounts this store.
+Workcell refuses a workspace that contains the store or is inside it.
+`scripts/verify-invariants.sh` checks this with dry runs.
+
 ## 2a. Host path reads go through the hardened primitives
 
 A host path that an operator or a provider controls can change between the
