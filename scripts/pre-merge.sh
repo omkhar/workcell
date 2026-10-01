@@ -24,6 +24,10 @@ PARITY_BASE_REF=""
 PARITY_BASE_OID=""
 LIVE_LANE_PID=""
 LIVE_LANE_LOG=""
+START_SECONDS="${SECONDS}"
+LANE_NAME=""
+LANE_START=0
+LANE_TIMINGS=()
 
 usage() {
   cat <<EOF
@@ -242,6 +246,45 @@ collect_selected_repro_platforms() {
   ' <<<"${plan_json}" | sort -u | paste -sd, -
 }
 
+lane_begin() {
+  LANE_NAME="${1##*/}"
+  LANE_NAME="${LANE_NAME%.sh}"
+  LANE_START="${SECONDS}"
+}
+
+lane_end() {
+  local rc="$1"
+  local elapsed=0
+
+  [[ -n "${LANE_NAME}" ]] || return 0
+  elapsed=$((SECONDS - LANE_START))
+  echo "[pre-merge] lane=${LANE_NAME} seconds=${elapsed} rc=${rc}"
+  LANE_TIMINGS[${#LANE_TIMINGS[@]}]="${LANE_NAME}"$'\t'"${elapsed}"$'\t'"${rc}"
+  LANE_NAME=""
+}
+
+# Reports the lane that was running when the script exited, then the total.
+report_timing_on_exit() {
+  local rc=$?
+
+  trap - EXIT
+  stop_live_invariants_lane
+  lane_end "${rc}"
+  echo "[pre-merge] total seconds=$((SECONDS - START_SECONDS)) rc=${rc}"
+  exit "${rc}"
+}
+
+timings_json() {
+  local lanes_json="[]"
+
+  if ((${#LANE_TIMINGS[@]} > 0)); then
+    lanes_json="$(printf '%s\n' "${LANE_TIMINGS[@]}" |
+      jq -R 'split("\t") | {lane: .[0], seconds: (.[1] | tonumber), rc: (.[2] | tonumber)}' | jq -s .)"
+  fi
+  jq -n --argjson lanes "${lanes_json}" --argjson total "$((SECONDS - START_SECONDS))" \
+    '{total_seconds: $total, lanes: $lanes}'
+}
+
 write_pr_parity_evidence() {
   local plan_json="$1"
   local tree_oid=""
@@ -249,6 +292,7 @@ write_pr_parity_evidence() {
   local evidence_path=""
   local tmp_path=""
   local labels_json="[]"
+  local timings=""
 
   verify_pr_parity_end_state
   tree_oid="${PARITY_START_TREE_OID}"
@@ -259,6 +303,8 @@ write_pr_parity_evidence() {
   if ((${#LABELS[@]} > 0)); then
     labels_json="$(printf '%s\n' "${LABELS[@]}" | jq -R . | jq -s .)"
   fi
+
+  timings="$(timings_json)"
 
   jq -n \
     --arg profile "${PROFILE}" \
@@ -273,6 +319,7 @@ write_pr_parity_evidence() {
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson labels "${labels_json}" \
     --argjson plan "${plan_json}" \
+    --argjson timings "${timings}" \
     '{
       version: 1,
       profile: $profile,
@@ -286,7 +333,8 @@ write_pr_parity_evidence() {
       tree_oid: $tree_oid,
       status_sha256: $status_sha256,
       generated_at: $generated_at,
-      plan: $plan
+      plan: $plan,
+      timings: $timings
     }' >"${tmp_path}"
   mv "${tmp_path}" "${evidence_path}"
   echo "[pre-merge] wrote PR parity evidence to ${evidence_path}"
@@ -359,6 +407,7 @@ execute_plan() {
   fi
 
   for script in "${selected_scripts[@]}"; do
+    lane_begin "${script}"
     case "${script}" in
       scripts/check-workflows.sh)
         echo "[pre-merge] workflow lint and policy analysis"
@@ -398,6 +447,7 @@ execute_plan() {
         ;;
       scripts/verify-reproducible-build.sh)
         if [[ "${RUN_REPRO}" -eq 0 ]]; then
+          LANE_NAME=""
           continue
         fi
         repro_platforms="$(collect_selected_repro_platforms "${plan_json}")"
@@ -413,6 +463,7 @@ execute_plan() {
         exit 2
         ;;
     esac
+    lane_end 0
   done
 
   finish_live_invariants_lane
@@ -577,7 +628,7 @@ echo "${plan_json}" | jq -r '
 '
 
 capture_pr_parity_start_state
-trap stop_live_invariants_lane EXIT
+trap report_timing_on_exit EXIT
 execute_plan "${plan_json}"
 
 if [[ "${PROFILE}" == "pr-parity" ]]; then

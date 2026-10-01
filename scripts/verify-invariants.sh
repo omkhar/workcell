@@ -4871,6 +4871,10 @@ done
 test "$(grep -c '^verify-invariants.sh ' "${PREMERGE_LOG}")" = 2
 grep -q '^live-lane-output$' /tmp/workcell-premerge-local-snapshot.out
 grep -q '^\[pre-merge\] live invariants lane passed$' /tmp/workcell-premerge-local-snapshot.out
+for lane in check-workflows job-pr-shape job-validate job-docs container-smoke verify-reproducible-build; do
+  grep -Eq "^\[pre-merge\] lane=${lane} seconds=[0-9]+ rc=0$" /tmp/workcell-premerge-local-snapshot.out
+done
+grep -Eq '^\[pre-merge\] total seconds=[0-9]+ rc=0$' /tmp/workcell-premerge-local-snapshot.out
 PREMERGE_EXPECTED_DISPATCH=$'scripts/check-workflows.sh\nscripts/ci/job-pr-shape.sh\nscripts/ci/job-validate.sh\nscripts/ci/job-docs.sh\nscripts/container-smoke.sh\nscripts/verify-reproducible-build.sh'
 if [[ "$(cat "${PREMERGE_DISPATCH_LOG}")" != "${PREMERGE_EXPECTED_DISPATCH}" ]]; then
   echo "Expected pre-merge to execute each selected local script once in local_order without sharing dispatcher stdin" >&2
@@ -4888,6 +4892,11 @@ for expected in \
   '"status_sha256":'; do
   grep -q "${expected}" "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 done
+jq -e '
+  (.timings.total_seconds | type == "number") and
+  (.timings.lanes | map(.lane) == ["check-workflows", "job-pr-shape", "job-validate", "job-docs", "container-smoke", "verify-reproducible-build"]) and
+  (.timings.lanes | all(.rc == 0 and (.seconds | type == "number")))
+' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" >/dev/null
 
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
@@ -4983,6 +4992,7 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'validation changed the publishable tree' /tmp/workcell-premerge-mutated-tree.out
+grep -Eq '^\[pre-merge\] total seconds=[0-9]+ rc=2$' /tmp/workcell-premerge-mutated-tree.out
 test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
 : >"${PREMERGE_LOG}"
