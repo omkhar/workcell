@@ -22,7 +22,6 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 	t.Parallel()
 
 	inScope := scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=0.153.2", "ARG CODEX_VERSION=0.154.0") +
-		scopeGuardFilePatch("runtime/container/providers/package-lock.json", `"version": "1"`, `"version": "2"`) +
 		scopeGuardFilePatch("tests/fixtures/flags/claude.txt", "--old", "--new") +
 		scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "old", "new") +
 		scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "old", "new")
@@ -165,7 +164,7 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
 		{
 			name:  "updater checksum assignment",
-			patch: scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      CODEX_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
+			patch: scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_CODE_MODE_HOST_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      CODEX_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
 		},
 		{
 			name: "new file mode with a path old header",
@@ -195,6 +194,22 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			name:    "extra package.json dependency",
 			patch:   scopeGuardFilePatch("runtime/container/providers/package.json", `    "@google/gemini-cli": "0.58.0"`, `    "evil-pkg": "1.0.0"`),
 			wantErr: `line +    "evil-pkg": "1.0.0"`,
+		},
+		{
+			name:    "lockfile resolution change",
+			patch:   scopeGuardFilePatch("runtime/container/providers/package-lock.json", `"resolved": "a"`, `"resolved": "b"`),
+			wantErr: "path runtime/container/providers/package-lock.json",
+		},
+		{
+			name: "duplicate provider assignment added",
+			patch: "diff --git a/runtime/container/Dockerfile b/runtime/container/Dockerfile\n" + scopeGuardIndex +
+				"--- a/runtime/container/Dockerfile\n+++ b/runtime/container/Dockerfile\n@@ -1,2 +1,3 @@\n ctx\n+ARG CLAUDE_VERSION=9.9.9\n ARG CLAUDE_VERSION=1.0.0\n",
+			wantErr: "replaced one for one",
+		},
+		{
+			name:    "provider assignment swapped to another key",
+			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=1", "ARG CLAUDE_VERSION=1"),
+			wantErr: "replaced one for one",
 		},
 		{
 			name:    "cross-product checksum name",

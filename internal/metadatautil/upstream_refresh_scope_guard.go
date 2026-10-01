@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -35,7 +36,7 @@ var (
 	// npm ci installs every dependency that file declares.
 	scopeGuardPackageJSONLineRE = regexp.MustCompile(`^[-+]\s+"@google/gemini-cli": "[A-Za-z0-9._+-]+",?$`)
 	scopeGuardPathRE            = regexp.MustCompile(
-		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
+		`^(runtime/container/providers/package\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
 	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d{1,6}))? \+\d+(?:,(\d{1,6}))? @@`)
@@ -58,6 +59,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 	var file string
 	var seen, newFile bool
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
+	var removedKeys, addedKeys []string
 	closeSection := func() {
 		switch {
 		case file == "":
@@ -65,6 +67,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: truncated hunk", file)
 		case hunks == 0:
 			fail("%s: incomplete patch section (no hunk)", file)
+		case file == scopeGuardDockerfilePath && !slices.Equal(removedKeys, addedKeys):
+			// Docker and the shell use the last assignment, the updater reads the first.
+			fail("%s: provider assignments must be replaced one for one, not added, removed, or reordered", file)
 		}
 	}
 	lines := bufio.NewScanner(bytes.NewReader(data))
@@ -100,12 +105,21 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 					file == scopeGuardPackageJSONPath && !scopeGuardPackageJSONLineRE.MatchString(line)) {
 				fail("%s: line %s", file, line)
 			}
+			if file == scopeGuardDockerfilePath {
+				key, _, _ := strings.Cut(strings.TrimSpace(line[1:]), "=")
+				if line[0] == '-' {
+					removedKeys = append(removedKeys, key)
+				} else if line[0] == '+' {
+					addedKeys = append(addedKeys, key)
+				}
+			}
 			continue
 		}
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
 			file, newFile, oldHeaders, newHeaders, hunks = "", false, 0, 0, 0
+			removedKeys, addedKeys = nil, nil
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
 				continue
