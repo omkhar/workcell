@@ -7,6 +7,12 @@ The GitHub Releases page contains old details that are not in this file.
 
 ## Unreleased
 
+### Added
+
+- `--egress-proxy` routes strict Colima egress only through a per-session SNI
+  proxy sidecar on an internal network. The launch summary reports
+  `egress_enforcement=proxy`.
+
 ### Security hardening
 
 The X1 baseline audit produced 10 items.

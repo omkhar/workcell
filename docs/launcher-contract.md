@@ -301,8 +301,8 @@ still launch when the session endpoint set is not empty.
 
 ### `egress_enforcement_label()`
 
-`egress_enforcement_label` returns `allowlist` only for a Colima target with the
-allowlist policy. It returns `none` for Docker Desktop and the blocked remote
+`egress_enforcement_label` returns `proxy` for an `--egress-proxy` launch. It
+returns `allowlist` for another Colima target with the allowlist policy. It returns `none` for Docker Desktop and the blocked remote
 preview targets.
 
 ### `build_runtime_host_aliases()`
@@ -311,6 +311,19 @@ preview targets.
 Docker `--add-host` arguments. It does nothing when the network policy is not
 `allowlist`. These aliases support deterministic resolution. The rule set in
 the Colima VM supplies the actual managed egress enforcement.
+
+With `--egress-proxy`, it calls `egress_proxy_agent_network_args`. The agent
+gets `--network wc-<session> --dns 127.0.0.1`, and each host maps to the token
+`egress-proxy-ip`. No host resolves on the host side.
+
+### `start_egress_proxy()` / `stop_egress_proxy()`
+
+`start_egress_proxy` creates the internal network `wc-<session>`. It runs the
+sidecar `wc-egress-<session>` from the verified image ID, and connects the
+sidecar to the bridge network. Then it replaces the `egress-proxy-ip` token in
+the agent command with the sidecar address. A failure stops the launch.
+`stop_egress_proxy` removes the sidecar and the network. The launcher cleanup
+calls it, and the detached session monitor calls it after the agent exits.
 
 ## Change Rule
 

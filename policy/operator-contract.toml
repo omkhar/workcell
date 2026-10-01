@@ -494,3 +494,13 @@ docs = ["docs/invariants.md", "man/workcell.1"]
 evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh"]
 requirements = ["functional.FR-009"]
 target_state = "retain"
+
+[workflows.launch_egress_proxy]
+title = "Per-session egress proxy for strict Colima"
+support = "supported"
+canonical = "--egress-proxy"
+discoverability = ["top-level-help", "manpage"]
+docs = ["docs/injection-policy.md", "docs/invariants.md", "man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-assurance-dry-run.sh", "tests/scenarios/shared/test-egress-proxy-smoke.sh", "scripts/verify-invariants.sh"]
+requirements = ["nonfunctional.NFR-001"]
+target_state = "retain"

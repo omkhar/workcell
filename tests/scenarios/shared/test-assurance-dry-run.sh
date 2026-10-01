@@ -376,6 +376,22 @@ if [[ "${weaken_rc}" -eq 0 ]]; then
 fi
 grep -q 'unsupported keys' "${TMP_DIR}/network-weaken.stderr"
 
+# --egress-proxy: the agent joins only the per-session internal network with no
+# resolver, and every --add-host value points at the proxy, never at a resolved
+# upstream address. Other modes and targets fail closed.
+run_dry_run "egress-proxy-codex" --agent codex --egress-proxy
+grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/egress-proxy-codex.stderr"
+grep -Eq -- '--network wc-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+ --dns 127\.0\.0\.1 ' "${TMP_DIR}/egress-proxy-codex.stdout"
+grep -q -- '--add-host api.openai.com:egress-proxy-ip ' "${TMP_DIR}/egress-proxy-codex.stdout"
+if tr ' ' '\n' <"${TMP_DIR}/egress-proxy-codex.stdout" | grep -A1 -x -- '--add-host' | grep -v -x -e '--add-host' -e '--' | grep -v ':egress-proxy-ip$'; then
+  echo "--egress-proxy mapped a host to an address other than the proxy" >&2
+  exit 1
+fi
+run_dry_run_expect_failure 2 "egress-proxy-development" --agent codex --egress-proxy --mode development
+grep -q '^--egress-proxy supports only --target colima with --mode strict\.$' "${TMP_DIR}/egress-proxy-development.stderr"
+run_dry_run_expect_failure 2 "egress-proxy-docker-desktop" --agent codex --egress-proxy --target docker-desktop
+grep -q '^--egress-proxy supports only --target colima with --mode strict\.$' "${TMP_DIR}/egress-proxy-docker-desktop.stderr"
+
 version_output="$(HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" "${ROOT_DIR}/scripts/workcell" --version)"
 if [[ ! "${version_output}" =~ ^workcell\ v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   echo "unexpected --version output: ${version_output}" >&2

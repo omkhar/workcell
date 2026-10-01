@@ -19,7 +19,10 @@
 # `INJECTION_CREDENTIAL_KEYS`, `NETWORK_POLICY`, and `TARGET_BACKEND`, and the
 # `RUNTIME_NETWORK_ARGS` array `build_runtime_host_aliases` populates — every
 # dependency is defined before the first call site in the main launch path — so
-# they are a self-contained, behaviour-preserving unit.  See
+# they are a self-contained, behaviour-preserving unit.  The --egress-proxy
+# helpers also read `EGRESS_PROXY`, `SESSION_ID`, `ALLOW_ENDPOINTS`,
+# `HOST_DOCKER_BIN` and `DOCKER_RUN`, and call the launcher's
+# `run_workcell_docker_client_command` and `run_profile_docker_command`.  See
 # docs/launcher-contract.md for the module contract.
 
 target_broker_endpoints() {
@@ -100,7 +103,9 @@ fail_empty_egress_after_deny() {
 # aws-ec2-ssm, gcp-vm) relies on its own network controls, so this prints
 # 'none' to make the parity gap explicit on the launch summary.
 egress_enforcement_label() {
-  if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+  if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+    printf 'proxy\n'
+  elif [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
     printf 'allowlist\n'
   else
     printf 'none\n'
@@ -114,6 +119,10 @@ build_runtime_host_aliases() {
 
   RUNTIME_NETWORK_ARGS=()
   [[ "${NETWORK_POLICY}" == "allowlist" ]] || return 0
+  if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+    egress_proxy_agent_network_args "${endpoint_list}"
+    return 0
+  fi
 
   while IFS=$'\t' read -r host ip; do
     [[ -n "${host}" ]] || continue
@@ -124,4 +133,72 @@ build_runtime_host_aliases() {
     fi
   done < <(go_hostutil helper resolve-endpoints "${endpoint_list}")
 
+}
+
+# --- Egress proxy (--egress-proxy, strict Colima only) ---
+#
+# The agent joins only the per-session internal network wc-<session>, with no
+# resolver. Each allowlisted host maps to the sidecar proxy, which peeks at the
+# SNI and is the only route out. The proxy IP is known only after the sidecar
+# starts, so the --add-host values carry EGRESS_PROXY_IP_TOKEN until
+# start_egress_proxy replaces it in DOCKER_RUN.
+EGRESS_PROXY_IP_TOKEN="egress-proxy-ip"
+
+egress_proxy_agent_network_args() {
+  local endpoint=""
+
+  EGRESS_PROXY_NETWORK="wc-${SESSION_ID}"
+  EGRESS_PROXY_CONTAINER="wc-egress-${SESSION_ID}"
+  RUNTIME_NETWORK_ARGS=(--network "${EGRESS_PROXY_NETWORK}" --dns 127.0.0.1)
+  for endpoint in ${1}; do
+    RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")
+  done
+}
+
+# start_egress_proxy creates the internal network and runs the sidecar from the
+# verified image with the agent's conformance flags. Then it puts the sidecar's
+# internal IP into the agent's --add-host values. Any failure stops the launch;
+# cleanup and the detached monitor remove what was created.
+start_egress_proxy() {
+  local image_id="$1"
+  local ip=""
+  local i=""
+
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" create \
+    --name "${EGRESS_PROXY_CONTAINER}" \
+    --network "${EGRESS_PROXY_NETWORK}" \
+    --user 65532:65532 \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --read-only \
+    --pids-limit 256 \
+    --memory 256m \
+    --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+    --entrypoint /usr/local/libexec/workcell/workcell-egress-proxy \
+    "${image_id}" -allow "${ALLOW_ENDPOINTS}" >/dev/null || return 1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network connect bridge "${EGRESS_PROXY_CONTAINER}" || return 1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" start "${EGRESS_PROXY_CONTAINER}" >/dev/null || return 1
+  ip="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" inspect \
+    -f "{{if .State.Running}}{{(index .NetworkSettings.Networks \"${EGRESS_PROXY_NETWORK}\").IPAddress}}{{end}}" \
+    "${EGRESS_PROXY_CONTAINER}")" || return 1
+  if [[ ! "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "workcell: the egress proxy sidecar did not start on ${EGRESS_PROXY_NETWORK}." >&2
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" logs "${EGRESS_PROXY_CONTAINER}" >&2 || true
+    return 1
+  fi
+  for i in "${!DOCKER_RUN[@]}"; do
+    [[ "${DOCKER_RUN[i]}" == *":${EGRESS_PROXY_IP_TOKEN}" ]] || continue
+    DOCKER_RUN[i]="${DOCKER_RUN[i]%:"${EGRESS_PROXY_IP_TOKEN}"}:${ip}"
+  done
+}
+
+# stop_egress_proxy removes the sidecar, then the network. It is best effort:
+# it runs on every exit path, including after a failed start.
+stop_egress_proxy() {
+  local profile="$1"
+
+  [[ -n "${EGRESS_PROXY_CONTAINER:-}" ]] || return 0
+  run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 || true
+  run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || true
 }

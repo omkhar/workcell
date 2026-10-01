@@ -158,6 +158,8 @@ SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
 FINAL_SESSION_ASSURANCE=""
 SESSION_ID=""
 SESSION_RECORD_PATH=""
+EGRESS_PROXY=0
+EGRESS_PROXY_STARTED=0
 SUPPORT_MATRIX_HOST_OS=""
 SUPPORT_MATRIX_HOST_ARCH=""
 SUPPORT_MATRIX_HOST_DISTRO=""
@@ -270,6 +272,7 @@ Options:
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
+  --egress-proxy                Route strict Colima egress only through a per-session SNI proxy sidecar
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
   --vm-memory GIB               Colima VM memory in GiB (default: profile value)
@@ -1135,6 +1138,9 @@ cleanup() {
 
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
+    stop_egress_proxy "${COLIMA_PROFILE}"
   fi
 
   cleanup_runtime_builder || true
@@ -2484,6 +2490,8 @@ write_session_monitor_env_file() {
     CONTAINER_MUTABILITY
     CONTAINER_NAME
     DEBUG_LOG_PATH
+    EGRESS_PROXY_CONTAINER
+    EGRESS_PROXY_NETWORK
     EXECUTION_PATH
     FILE_TRACE_LOG_PATH
     INJECTION_CREDENTIAL_KEYS
@@ -4815,6 +4823,7 @@ session_monitor_main() {
   capture_session_file_trace "${CONTAINER_NAME}"
   finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
   run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  stop_egress_proxy "${COLIMA_PROFILE}"
   if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -d "${SESSION_AUDIT_DIR}" ]]; then
     chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
     rm -rf "${SESSION_AUDIT_DIR}"
@@ -8741,6 +8750,10 @@ while [[ $# -gt 0 ]]; do
       ALLOW_ARBITRARY_COMMAND=1
       shift
       ;;
+    --egress-proxy)
+      EGRESS_PROXY=1
+      shift
+      ;;
     --ack-breakglass)
       ACK_BREAKGLASS=1
       shift
@@ -8807,6 +8820,10 @@ validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
+if [[ "${EGRESS_PROXY}" -eq 1 ]] && { [[ "${TARGET_BACKEND}" != "colima" ]] || [[ "${MODE}" != "strict" ]]; }; then
+  echo "--egress-proxy supports only --target colima with --mode strict." >&2
+  exit 2
+fi
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
   echo "--target-id only supports --target aws-ec2-ssm or --target gcp-vm." >&2
   exit 2
@@ -9238,6 +9255,7 @@ fi
 prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}" "${WORKSPACE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
 prepare_copilot_token_handoff_mount "$@"
+[[ "${EGRESS_PROXY}" -eq 0 ]] || [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
 build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   prepare_session_audit_state "${COLIMA_PROFILE}"
@@ -9625,6 +9643,10 @@ fi
 
 DOCKER_STATUS=0
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+  EGRESS_PROXY_STARTED=1
+  start_egress_proxy "${CURRENT_IMAGE_ID}" || exit 1
+fi
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   detached_status="running"
   detached_live_status="running"
