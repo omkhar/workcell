@@ -6732,6 +6732,25 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'redirects Git config and hooks: \.[Gg][Ii][Tt]/commondir' /tmp/workcell-commondir-upgit.out
 
+# A workspace root named .GIT is not its own Git directory: its .git child must still be masked.
+COMMONDIR_ROOTGIT_REPO="${COMMONDIR_ROOT}/root-named/.GIT"
+git init -q -b master "${COMMONDIR_ROOTGIT_REPO}"
+COMMONDIR_ROOTGIT_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_ROOTGIT_REPO}" --dry-run 2>/dev/null)"
+commondir_rootgit_masked=0
+commondir_rootgit_prev=""
+while IFS= read -r line; do
+  # Docker reads tokens after the image as the container command.
+  [[ "${line}" == workcell:local ]] && break
+  if [[ "${commondir_rootgit_prev}" == -v && "${line}" == ?*:/workspace/.git/config:ro ]]; then
+    commondir_rootgit_masked=1
+  fi
+  commondir_rootgit_prev="${line}"
+done < <(printf '%s\n' "${COMMONDIR_ROOTGIT_OUT}" | xargs -n1 printf '%s\n')
+if [[ "${commondir_rootgit_masked}" -ne 1 ]]; then
+  echo "Expected a workspace named .GIT to get a readonly .git/config mask" >&2
+  exit 1
+fi
+
 # A resolving HEAD symlink in a module admin directory is valid Git and must pass.
 COMMONDIR_HEADLINK_REPO="${COMMONDIR_ROOT}/head-link-repo"
 git init -q -b master "${COMMONDIR_HEADLINK_REPO}"

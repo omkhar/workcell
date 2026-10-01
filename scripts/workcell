@@ -8151,7 +8151,8 @@ prepare_workspace_control_plane_shadow() {
       fi
     fi
   done < <(
-    find "${workspace}" -type d -iname .git -prune -print0 && printf '\0'
+    # -mindepth 1: a workspace root named .git or .GIT is not its Git directory.
+    find "${workspace}" -mindepth 1 -type d -iname .git -prune -print0 && printf '\0'
   )
   if [[ "${git_walk_complete}" -ne 1 ]]; then
     echo "Refusing git workspace: Workcell could not inventory the workspace for Git directories: ${workspace}" >&2
