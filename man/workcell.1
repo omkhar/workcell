@@ -86,6 +86,16 @@ that no container mounts, and appends a
 .B session_snapshot
 audit record with the snapshot id, tree, and commit. It never reads or writes
 the workspace git config or index.
+Snapshots are kept until the operator removes them. Workcell never prunes the
+store, and
+.B session delete
+does not remove a session's snapshots. Each snapshot is the ref
+.I refs/workcell/snapshots/SESSION_ID/SNAPSHOT_ID
+in the bare repository for the workspace origin. Remove one with
+.B git update-ref -d
+and
+.BR "git gc --prune=now" ,
+or remove the whole store directory.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.

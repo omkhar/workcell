@@ -47,6 +47,12 @@ Invariant `snapshot-store-host-owned`: `workcell session snapshot` writes to
 `~/Library/Caches/colima/workcell-snapshots`. No container mounts this store.
 Workcell refuses a workspace that contains the store or is inside it.
 `scripts/verify-invariants.sh` checks this with dry runs.
+Workcell opens the store through no-follow descriptors, runs git only while the
+store path still names the opened directory, and fsyncs the new objects, the ref,
+and each directory that gained an entry before it appends the audit record.
+Snapshots stay until the operator removes them. Workcell does not prune the
+store, and `workcell session delete` does not remove snapshots. The manual page
+gives the removal commands.
 
 ## 2a. Host path reads go through the hardened primitives
 

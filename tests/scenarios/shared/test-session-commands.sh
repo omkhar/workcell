@@ -4302,14 +4302,20 @@ run_paused_snapshot_fixture() {
     sanitize_host_docker_env() { :; }
     session_run_cli_with_roots() {
       printf "session_id=snapshot-fixture\nprofile=wcl-snapshot-fixture\ncontainer_name=workcell-snapshot-fixture\n"
-      printf "workspace=%s\ngit_head=%s\norigin_hash=fixture\npause=1\n" "${WORKSPACE}" "${GIT_HEAD}"
+      printf "workspace=%s\ngit_head=%s\norigin_hash=0000000000000000000000000000000000000000000000000000000000000001\npause=1\n" "${WORKSPACE}" "${GIT_HEAD}"
     }
     session_snapshot_store_root() { printf "%s\n" "${STORE_ROOT}"; }
     load_session_runtime_metadata() { :; }
-    run_profile_docker_command() { printf "docker|%s|%s\n" "$2" "$3" >>"${LOG}"; }
+    run_profile_docker_command() {
+      printf "docker|%s|%s\n" "$2" "$3" >>"${LOG}"
+      [[ "$2" != pause || -z "${SNAPSHOT_FIXTURE_PAUSE_FAILS:-}" ]]
+    }
     append_session_control_audit_record() { printf "audit|%s\n" "$3" >>"${LOG}"; }
-    eval "real_$(declare -f session_snapshot_capture)"
-    session_snapshot_capture() { printf "capture\n" >>"${LOG}"; real_session_snapshot_capture "$@"; }
+    eval "real_$(declare -f run_go_hostutil_preserve_exit)"
+    run_go_hostutil_preserve_exit() {
+      if [[ "$1" == "session-snapshot-capture-cli" ]]; then printf "capture\n" >>"${LOG}"; fi
+      real_run_go_hostutil_preserve_exit "$@"
+    }
     session_snapshot_main --id snapshot-fixture
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${log}" "${WORKSPACE_A}" "${git_head}" "${TMP_DIR}/paused-snapshot-store"
 }
@@ -4322,6 +4328,14 @@ if run_paused_snapshot_fixture "0000000000000000000000000000000000000000" "${PAU
   exit 1
 fi
 [[ "$(cat "${PAUSED_SNAPSHOT_FAIL_LOG}")" == "$(printf 'docker|pause|workcell-snapshot-fixture\ncapture\ndocker|unpause|workcell-snapshot-fixture')" ]]
+# A pause request that reports failure may still have been applied, so cleanup
+# unpauses and never captures.
+PAUSED_SNAPSHOT_AMBIGUOUS_LOG="${TMP_DIR}/paused-snapshot-ambiguous.log"
+if SNAPSHOT_FIXTURE_PAUSE_FAILS=1 run_paused_snapshot_fixture "${GIT_BASE}" "${PAUSED_SNAPSHOT_AMBIGUOUS_LOG}" >/dev/null 2>&1; then
+  echo "session snapshot succeeded after a failed pause" >&2
+  exit 1
+fi
+[[ "$(cat "${PAUSED_SNAPSHOT_AMBIGUOUS_LOG}")" == "$(printf 'docker|pause|workcell-snapshot-fixture\ndocker|unpause|workcell-snapshot-fixture')" ]]
 
 missing_output="$(
   "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true

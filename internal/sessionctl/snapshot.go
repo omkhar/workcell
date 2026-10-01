@@ -26,9 +26,9 @@ var gitObjectIDPattern = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 // SnapshotMain implements the option-parsing and record-validation half of
 // `workcell session snapshot --id SESSION_ID`.
 //
-// The bash shim (session_snapshot_main in scripts/workcell) owns the side
-// effects: docker pause/unpause, the git capture into the host-owned
-// snapshot store, and the signed audit append. SnapshotMain emits the plan:
+// The bash shim (session_snapshot_main in scripts/workcell) owns the
+// docker pause/unpause and the signed audit append. SnapshotCaptureMain
+// owns the git capture and the store publish. SnapshotMain emits the plan:
 //
 //	session_id=<id>
 //	profile=<profile>

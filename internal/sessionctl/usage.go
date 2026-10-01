@@ -103,7 +103,8 @@ Notes:
     record. Signing is boundary/host-side, not agent-side.
   - ` + "`" + `session snapshot` + "`" + ` pauses a running detached session, records the workspace
     tree as a commit on the recorded git head in a host-owned store that no
-    container mounts, and appends a session_snapshot audit record.
+    container mounts, and appends a session_snapshot audit record. Snapshots stay
+    until the operator removes them; see the manual page.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.
