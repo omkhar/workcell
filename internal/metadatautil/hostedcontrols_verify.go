@@ -612,10 +612,10 @@ func UpstreamRefreshAppID(policy map[string]any) (int, error) {
 }
 
 // hostedBypassActors returns the ruleset's bypass actors. A missing key means
-// none; a non-array value or a non-object entry is malformed and fails closed.
+// none; null, a non-array value or a non-object entry is malformed and fails closed.
 func hostedBypassActors(ruleset map[string]any, repo string) ([]any, error) {
 	raw, ok := ruleset["bypass_actors"]
-	if !ok || raw == nil {
+	if !ok {
 		return nil, nil
 	}
 	actors, isArray := raw.([]any)

@@ -83,7 +83,7 @@ func TestClassifyHostedRulesetsFlagsDuplicateDefaultBranchRulesets(t *testing.T)
 func TestVerifyHostedRulesetBypassesRejectsMalformedActorLists(t *testing.T) {
 	role := bypassActor("RepositoryRole", "pull_request", 5)
 	for _, field := range []string{"branchIntegrity", "branchReview", "branchStatusChecks", "tagRelease"} {
-		for name, bad := range map[string]any{"string": "x", "object": map[string]any{}, "entry": []any{"x"}} {
+		for name, bad := range map[string]any{"null": nil, "string": "x", "object": map[string]any{}, "entry": []any{"x"}} {
 			controls := bypassControls([]any{role}, nil)
 			ruleset := map[string]any{"name": field, "bypass_actors": bad}
 			switch field {
