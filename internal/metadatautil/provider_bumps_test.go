@@ -2512,3 +2512,60 @@ func TestHoldCodexRejectsSymlinkedFixtureParent(t *testing.T) {
 		t.Fatalf("error = %v, want parent symlink rejection", err)
 	}
 }
+
+// A pin adopted under a shorter cool-off must hold, not move back to the
+// newest cooled-off release, when the cool-off grows (12 h -> 48 h).
+func TestProviderResolversNeverDowngradeBelowCurrentPin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gemini-registry":
+			writeRegistryMetadata(w, "0.62.0", map[string]string{
+				"0.62.0": "2026-09-30T00:00:00Z",
+				"0.61.0": "2026-09-20T00:00:00Z",
+			})
+		case "/codex-registry":
+			writeRegistryMetadata(w, "0.158.0", map[string]string{
+				"0.158.0": "2026-09-30T00:00:00Z",
+				"0.157.0": "2026-09-20T00:00:00Z",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	sources := ProviderBumpSources{
+		GeminiRegistryURL:     server.URL + "/gemini-registry",
+		CodexRegistryURL:      server.URL + "/codex-registry",
+		CodexReleaseAPIURLFmt: server.URL + "/codex-release/rust-v%s",
+	}
+	cutoff := time.Date(2026, time.October, 1, 12, 0, 0, 0, time.UTC).Add(-48 * time.Hour)
+	held := func(version string) []ProviderBumpSkippedRelease {
+		return []ProviderBumpSkippedRelease{{Version: version, PublishedAt: "2026-09-20T00:00:00Z", Reason: "current-newer-than-cooled-candidate"}}
+	}
+
+	gemini, err := selectGeminiStable("0.62.0", cutoff, sources, server.Client())
+	if err != nil {
+		t.Fatalf("selectGeminiStable() error = %v", err)
+	}
+	if gemini.TargetVersion != "0.62.0" || gemini.Changed || !reflect.DeepEqual(gemini.SkippedReleases, held("0.61.0")) {
+		t.Fatalf("Gemini selection = %#v, want held at 0.62.0", gemini)
+	}
+
+	codex, err := selectCodexStable("0.158.0", cutoff, "", sources, server.Client())
+	if err != nil {
+		t.Fatalf("selectCodexStable() error = %v", err)
+	}
+	if codex.TargetVersion != "0.158.0" || codex.Changed || !reflect.DeepEqual(codex.SkippedReleases, held("0.157.0")) {
+		t.Fatalf("Codex selection = %#v, want held at 0.158.0", codex)
+	}
+
+	// Negative control: an older current pin still moves forward to the
+	// cooled-off release and records no hold.
+	gemini, err = selectGeminiStable("0.60.0", cutoff, sources, server.Client())
+	if err != nil {
+		t.Fatalf("selectGeminiStable() error = %v", err)
+	}
+	if gemini.TargetVersion != "0.61.0" || !gemini.Changed || len(gemini.SkippedReleases) != 0 {
+		t.Fatalf("Gemini selection = %#v, want bump to 0.61.0", gemini)
+	}
+}

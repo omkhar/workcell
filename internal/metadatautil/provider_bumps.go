@@ -529,7 +529,7 @@ func selectCodexStable(currentVersion string, cutoff time.Time, maxVersion strin
 	}
 	for _, candidate := range candidates {
 		if hasCurrentVersion && compareStableVersions(candidate, current) < 0 {
-			break
+			return keepNewerCurrentPin(currentVersion, candidate, skipped), nil
 		}
 		if candidate.Raw == currentVersion {
 			return currentSelection(candidate.Source), nil
@@ -706,7 +706,7 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 	}
 	for _, candidate := range candidates {
 		if hasCurrentVersion && compareStableVersions(candidate.version, current) < 0 {
-			break
+			return keepNewerCurrentPin(currentVersion, candidate.version, skipped), nil
 		}
 		if candidate.version.Raw == currentVersion {
 			return currentSelection(candidate.version.Source), nil
@@ -744,24 +744,41 @@ func selectCopilotStable(currentVersion string, cutoff time.Time, maxVersion str
 }
 
 func selectGeminiStable(currentVersion string, cutoff time.Time, sources ProviderBumpSources, client *http.Client) (ProviderBumpSelection, error) {
-	version, publishedAt, err := selectNewestStableFromRegistry(sources.GeminiRegistryURL, cutoff, client)
+	candidates, _, err := stableCandidatesFromRegistry(sources.GeminiRegistryURL, cutoff, "", client)
 	if err != nil {
 		return ProviderBumpSelection{}, err
 	}
-	if version == "" {
+	if len(candidates) == 0 {
 		return ProviderBumpSelection{
 			Channel:        "stable",
 			CurrentVersion: currentVersion,
 			TargetVersion:  currentVersion,
 		}, nil
 	}
+	newest := candidates[0]
+	if current, ok := parseStableVersion(currentVersion); ok && compareStableVersions(newest, current) < 0 {
+		return keepNewerCurrentPin(currentVersion, newest, nil), nil
+	}
 	return ProviderBumpSelection{
 		Channel:        "stable",
 		CurrentVersion: currentVersion,
-		TargetVersion:  version,
-		PublishedAt:    publishedAt.Format(time.RFC3339),
-		Changed:        version != currentVersion,
+		TargetVersion:  newest.Raw,
+		PublishedAt:    newest.Source.Format(time.RFC3339),
+		Changed:        newest.Raw != currentVersion,
 	}, nil
+}
+
+// keepNewerCurrentPin holds the current pin when the newest cooled-off
+// candidate is older than it. The cool-off never moves a pin backwards; a
+// pin adopted under a shorter cool-off stays until a newer release cools off.
+// Every provider resolver routes this case through here.
+func keepNewerCurrentPin(currentVersion string, cooled stableVersion, skipped []ProviderBumpSkippedRelease) ProviderBumpSelection {
+	return ProviderBumpSelection{
+		Channel:         "stable",
+		CurrentVersion:  currentVersion,
+		TargetVersion:   currentVersion,
+		SkippedReleases: appendSkippedProviderRelease(skipped, cooled, "current-newer-than-cooled-candidate"),
+	}
 }
 
 // claudeSelectionForCandidate fetches and validates the Claude release manifest
@@ -856,11 +873,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 			if !currentPresentInCandidates {
 				return ProviderBumpSelection{}, fmt.Errorf("current Claude version %s is not present in the registry metadata", currentVersion)
 			}
-			return ProviderBumpSelection{
-				Channel:        "stable",
-				CurrentVersion: currentVersion,
-				TargetVersion:  currentVersion,
-			}, nil
+			return keepNewerCurrentPin(currentVersion, selectedVersion, nil), nil
 		}
 		return *selected, nil
 	}
@@ -875,17 +888,6 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 		CurrentVersion: currentVersion,
 		TargetVersion:  currentVersion,
 	}, nil
-}
-
-func selectNewestStableFromRegistry(registryURL string, cutoff time.Time, client *http.Client) (string, time.Time, error) {
-	candidates, _, err := stableCandidatesFromRegistry(registryURL, cutoff, "", client)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	if len(candidates) == 0 {
-		return "", time.Time{}, nil
-	}
-	return candidates[0].Raw, candidates[0].Source, nil
 }
 
 func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
