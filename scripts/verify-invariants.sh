@@ -6686,10 +6686,20 @@ mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
 printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
 ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
 COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
-if ! echo "${COMMONDIR_UPLINK_OUT}" | grep -q -- '/workspace/.git/modules/foo/CONFIG:ro'; then
+# The mount must appear exactly once, as a whole read-only token.
+if [[ "$(echo "${COMMONDIR_UPLINK_OUT}" | grep -o -- '/workspace/\.git/modules/foo/CONFIG[^[:space:]]*')" != '/workspace/.git/modules/foo/CONFIG:ro' ]]; then
   echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
   exit 1
 fi
+
+# Linked-worktree metadata under a mixed-case WORKTREES directory is masked, so it must pass.
+COMMONDIR_UPWT_REPO="${COMMONDIR_ROOT}/upper-worktrees-repo"
+git init -q -b master "${COMMONDIR_UPWT_REPO}"
+git -C "${COMMONDIR_UPWT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked/HEAD"
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPWT_REPO}" --dry-run >/tmp/workcell-commondir-upwt.out 2>&1
 
 # A resolving HEAD symlink in a module admin directory is valid Git and must pass.
 COMMONDIR_HEADLINK_REPO="${COMMONDIR_ROOT}/head-link-repo"

@@ -8073,7 +8073,7 @@ prepare_workspace_control_plane_shadow() {
     # - Control names match in any letter case, like commondir.
     # - Bash drops the status of a process substitution, so capture the walk
     #   status: an unreadable Git directory must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -path ./worktrees -o \( -path './modules/*' -name worktrees \) \) -type d \) -prune -o \( -iname commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -ipath ./worktrees -o \( -ipath './modules/*' -iname worktrees \) \) -type d \) -prune -o \( -iname commondir ! -type d -execdir test -e HEAD \; -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi
