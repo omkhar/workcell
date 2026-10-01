@@ -6758,7 +6758,15 @@ git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git
 git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic/commondir"
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPREFS_REPO}" --dry-run >/tmp/workcell-commondir-uprefs.out 2>&1
 
-# Only the top-level refs are pruned: the same pair under a module admin directory is still rejected.
+# Branches named topic/HEAD and topic/commondir in a module Git directory are refs, not a redirect.
+COMMONDIR_MODBRANCH_REPO="${COMMONDIR_ROOT}/module-branch-repo"
+git init -q -b master "${COMMONDIR_MODBRANCH_REPO}"
+git -C "${COMMONDIR_MODBRANCH_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+git init -q --bare -b master "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child"
+git -C "${COMMONDIR_MODBRANCH_REPO}" push -q "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child" master:topic/HEAD master:topic/commondir
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODBRANCH_REPO}" --dry-run >/tmp/workcell-commondir-modbranch.out 2>&1
+
+# Refs are pruned only inside a Git directory. Module child has no objects or HEAD, so its refs can be a submodule Git directory and must be scanned.
 COMMONDIR_MODREFS_REPO="${COMMONDIR_ROOT}/module-refs-repo"
 git init -q -b master "${COMMONDIR_MODREFS_REPO}"
 git -C "${COMMONDIR_MODREFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init

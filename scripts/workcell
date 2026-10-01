@@ -8069,11 +8069,13 @@ prepare_workspace_control_plane_shadow() {
     # A commondir file, or a symlink at worktrees or under modules, makes Git
     # read config and hooks from a directory that the masks below do not cover.
     # A standard clone has none. Notes on the walk:
-    # - It prunes the real worktrees directories that the masks replace, and
-    #   the top-level refs, logs and objects in any letter case. Git keeps
+    # - It prunes the real worktrees directories that the masks replace.
+    # - It prunes refs, logs and objects, in any letter case, inside a Git
+    #   directory: one with objects, refs and a HEAD file or link. Git keeps
     #   branch and reflog files there, so branches named topic/HEAD and
-    #   topic/commondir are not a redirect. Git reaches an admin directory
-    #   there only through a nested .git file, which these checks do not cover.
+    #   topic/commondir are not a redirect. Git refuses to put a submodule
+    #   Git directory inside another Git directory, so only a nested .git file
+    #   reaches an admin directory there, and these checks do not cover that.
     # - A commondir counts in any letter case, because a case-insensitive
     #   volume opens COMMONDIR as commondir.
     # - A commondir counts only beside a HEAD file or HEAD symlink. Git
@@ -8087,7 +8089,7 @@ prepare_workspace_control_plane_shadow() {
     # - Control names match in any letter case, like commondir.
     # - Bash drops the status of a process substitution, so capture the walk
     #   status: an unreadable Git directory must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -ipath ./worktrees -o \( -ipath './modules/*' -iname worktrees \) -o -ipath ./refs -o -ipath ./logs -o -ipath ./objects \) -type d \) -prune -o \( -iname commondir ! -type d \( -execdir test -e HEAD \; -o -execdir test -L HEAD \; \) -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -ipath ./worktrees -o \( -ipath './modules/*' -iname worktrees \) \) -type d \) -prune -o \( \( -iname refs -o -iname logs -o -iname objects \) -type d -execdir sh -c 'test -d objects && test -d refs && { test -e HEAD || test -L HEAD; }' \; \) -prune -o \( -iname commondir ! -type d \( -execdir test -e HEAD \; -o -execdir test -L HEAD \; \) -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi
