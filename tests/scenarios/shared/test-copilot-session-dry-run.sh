@@ -111,7 +111,7 @@ EOF_DOCKER
   DIRECT_SOURCE_MOUNTS=(-v "${token_source}:/opt/workcell/host-inputs/credentials/copilot-github-token.txt:ro")
 
   prepare_copilot_token_handoff_mount copilot -p smoke
-  expected_handoff_parent="$(resolve_host_path "$(workcell_colima_cache_root)/colima/workcell-token-handoff")"
+  expected_handoff_parent="$(resolve_host_path "${real_home}/Library/Caches/colima/workcell-token-handoff")"
   if [[ -e "${token_source}" ]]; then
     echo "Copilot handoff did not remove the staged direct-mount token copy" >&2
     exit 1
