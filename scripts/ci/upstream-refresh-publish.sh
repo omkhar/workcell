@@ -49,13 +49,6 @@ audit_head() {
 }
 audit_head
 
-# A newer main makes the candidate stale. The next scheduled run rebuilds it.
-remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
-if [[ "${remote_main}" != "${base_sha}" ]]; then
-  echo "- result: skipped, candidate base ${base_sha} is stale against main ${remote_main}" >>"${audit_file}"
-  echo "::notice::Candidate is stale. The next run will rebuild it."
-  exit 0
-fi
 branch="codex/upstream-refresh-${GITHUB_RUN_ID}"
 existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --json title,url,headRefName,headRefOid \
   --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0] // empty')"
@@ -69,6 +62,17 @@ if [[ -n "${existing_pr}" ]]; then
     commit_oid="$(jq -r .headRefOid <<<"${existing_pr}")"
   else
     echo "- result: skipped, refresh PR already open: $(jq -r .url <<<"${existing_pr}")" >>"${audit_file}"
+    exit 0
+  fi
+fi
+
+# A newer main makes a new candidate stale. The next scheduled run rebuilds it.
+# A resumed PR is already published, so staleness does not apply to it.
+if [[ "${resume}" == 0 ]]; then
+  remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+  if [[ "${remote_main}" != "${base_sha}" ]]; then
+    echo "- result: skipped, candidate base ${base_sha} is stale against main ${remote_main}" >>"${audit_file}"
+    echo "::notice::Candidate is stale. The next run will rebuild it."
     exit 0
   fi
 fi
@@ -184,7 +188,10 @@ body_file="${work}/pr-body.md"
   echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 } >"${body_file}"
 if [[ "${resume}" == 0 ]]; then
-  pr_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${branch}" --title "Refresh pinned upstreams" --body-file "${body_file}")"
+  pr_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${branch}" --title "Refresh pinned upstreams" --body-file "${body_file}")" || {
+    cleanup_branch
+    die "gh pr create failed"
+  }
 fi
 
 if [[ "${scope_result}" == passed ]]; then

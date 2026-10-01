@@ -859,6 +859,14 @@ var upstreamRefreshPresenceEnv = map[string]string{
 	"APP_PRIVATE_KEY": "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}",
 }
 
+// upstreamRefreshPresenceRun is the reviewed body of the presence check.
+const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
+  echo "present=false" >> "${GITHUB_OUTPUT}"
+  echo "::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md."
+  exit 0
+fi
+echo "present=true" >> "${GITHUB_OUTPUT}"`
+
 // commandRuns returns each execution of command in run. It reads the commands
 // the shell really runs, so a line continuation, comment or heredoc cannot hide
 // or fake one.
@@ -943,7 +951,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
 		usesToken := upstreamRefreshAppCredentialRE.MatchString(step.Run)
 		// The presence check may read exactly the two App secrets and nothing else.
-		presence := step.ID == "secrets" && step.Uses == "" && maps.Equal(step.Env, upstreamRefreshPresenceEnv)
+		presence := step.ID == "secrets" && step.Uses == "" && maps.Equal(step.Env, upstreamRefreshPresenceEnv) &&
+			strings.TrimSpace(step.Run) == strings.TrimSpace(upstreamRefreshPresenceRun)
 		for _, group := range []map[string]string{step.Env, step.With} {
 			for _, value := range group {
 				usesToken = usesToken || !presence && upstreamRefreshAppCredentialRE.MatchString(value)

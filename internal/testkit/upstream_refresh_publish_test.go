@@ -118,7 +118,8 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"  *git/refs\\ *) ;;\n" +
 		"  \"api graphql\"*) echo \"${FAKE_COMMIT}\" ;;\n" +
 		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE}\" ;;\n" +
-		"  \"pr create\"*) echo https://example.invalid/pr/1 ;;\n" +
+		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; echo https://example.invalid/pr/1 ;;\n" +
+		"  \"api -X DELETE\"*) ;;\n" +
 		"  \"pr merge\"*) ;;\n" +
 		"  \"pr edit\"*) ;;\n" +
 		"  *) echo \"unexpected gh call: $*\" >&2; exit 97 ;;\n" +
@@ -295,6 +296,32 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		log := readLog(t, f)
 		if strings.Contains(log, "label create") || strings.Contains(log, "pr merge") || !strings.Contains(log, "--add-label needs-human-review") {
 			t.Fatalf("gh calls = %q, want label add only", log)
+		}
+	})
+
+	t.Run("rerun resumes even when main moved", func(t *testing.T) {
+		t.Parallel()
+		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
+		commit := strings.Repeat("d", 40)
+		pr := `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-42","headRefOid":"` + commit + `"}`
+		out, err := f.run(t, strings.Repeat("a", 40), "FAKE_ALLOW_WRITES=1", "FAKE_TREE="+f.tree, "FAKE_EXISTING_PR="+pr)
+		if err != nil {
+			t.Fatalf("resume against a moved main failed: %v\n%s", err, out)
+		}
+		if !strings.Contains(readLog(t, f), "--match-head-commit "+commit) {
+			t.Fatalf("resume skipped the disposition:\n%s", readLog(t, f))
+		}
+	})
+
+	t.Run("failed PR creation deletes the branch", func(t *testing.T) {
+		t.Parallel()
+		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
+		out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+strings.Repeat("c", 40), "FAKE_TREE="+f.tree, "FAKE_PR_CREATE_FAIL=1")
+		if err == nil {
+			t.Fatalf("publish ignored a PR creation failure:\n%s", out)
+		}
+		if !strings.Contains(readLog(t, f), "api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42") {
+			t.Fatalf("branch was not cleaned up:\n%s", readLog(t, f))
 		}
 	})
 }
