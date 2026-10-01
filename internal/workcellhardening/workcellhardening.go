@@ -1377,7 +1377,7 @@ var shadowEnumEgressChecks = []check{
 		// -name .git -prune -print0"` is fixed-string containment of the
 		// literal .git enumeration.
 		kind:    kindPresent,
-		pattern: `find "${workspace}" -type d -name .git -prune -print0`,
+		pattern: `find "${workspace}" -type d -iname .git -prune -print0`,
 		message: "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories",
 	},
 	{

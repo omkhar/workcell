@@ -1234,7 +1234,7 @@ const shadowEnumEgressHappyLauncher = `#!/bin/bash
 set -euo pipefail
 
 prepare_workspace_control_plane_shadow() {
-  find "${workspace}" -type d -name .git -prune -print0
+  find "${workspace}" -type d -iname .git -prune -print0
   find "${workspace}/${git_rel}/modules" \
     \( -type f -o -type l \) -iname hooks \
     -o \( -type f -o -type l \) \( -iname config -o -iname config.worktree \) \
@@ -1295,7 +1295,7 @@ func TestCheckShadowEnumEgress(t *testing.T) {
 		{
 			// kindPresent: the whole-file .git enumeration removed.
 			name:     "missing git enumeration",
-			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `find "${workspace}" -type d -name .git -prune -print0`, `find "${workspace}" -print0`, 1),
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `find "${workspace}" -type d -iname .git -prune -print0`, `find "${workspace}" -print0`, 1),
 			colima:   shadowEnumEgressHappyColima,
 			wantErr:  "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories",
 		},

@@ -6705,6 +6705,19 @@ printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKT
 cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked/HEAD"
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPWT_REPO}" --dry-run >/tmp/workcell-commondir-upwt.out 2>&1
 
+# An uppercase .GIT admin directory opens as .git on a case-insensitive volume.
+COMMONDIR_UPGIT_REPO="${COMMONDIR_ROOT}/upper-git-repo"
+git init -q -b master "${COMMONDIR_UPGIT_REPO}"
+git -C "${COMMONDIR_UPGIT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPGIT_REPO}/.GIT"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_UPGIT_REPO}/.GIT/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_UPGIT_REPO}/.GIT/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPGIT_REPO}" --dry-run >/tmp/workcell-commondir-upgit.out 2>&1; then
+  echo "Expected repo with an uppercase .GIT admin directory to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: \.[Gg][Ii][Tt]/commondir' /tmp/workcell-commondir-upgit.out
+
 # A resolving HEAD symlink in a module admin directory is valid Git and must pass.
 COMMONDIR_HEADLINK_REPO="${COMMONDIR_ROOT}/head-link-repo"
 git init -q -b master "${COMMONDIR_HEADLINK_REPO}"
