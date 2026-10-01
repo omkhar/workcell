@@ -1377,7 +1377,7 @@ var shadowEnumEgressChecks = []check{
 		// -name .git -prune -print0"` is fixed-string containment of the
 		// literal .git enumeration.
 		kind:    kindPresent,
-		pattern: `find "${workspace}" -type d -name .git -prune -print0`,
+		pattern: `find "${workspace}" -mindepth 1 -type d -iname .git \( -name .git -prune -o -true \) -print0`,
 		message: "Expected prepare_workspace_control_plane_shadow to enumerate only real .git directories",
 	},
 	{
@@ -1391,20 +1391,20 @@ var shadowEnumEgressChecks = []check{
 	{
 		// Needle 2 of the former loop.
 		kind:    kindPresent,
-		pattern: `-type l \) -name hooks`,
-		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name hooks`,
+		pattern: `-type l \) -iname hooks`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -iname hooks`,
 	},
 	{
 		// Needle 3 of the former loop.
 		kind:    kindPresent,
-		pattern: `-type l \) \( -name config -o -name config.worktree \)`,
-		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -name config -o -name config.worktree \)`,
+		pattern: `-type l \) \( -iname config -o -iname config.worktree \)`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -iname config -o -iname config.worktree \)`,
 	},
 	{
 		// Needle 4 of the former loop.
 		kind:    kindPresent,
-		pattern: `-type l \) -name worktrees`,
-		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
+		pattern: `-type l \) -iname worktrees`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -iname worktrees`,
 	},
 	{
 		// kindAbsent against scripts/colima-egress-allowlist.sh: silently

@@ -58,6 +58,9 @@ This category covers instructions that change an agent goal or plan.
 
 By default, Workcell masks the root control files for each provider in non-breakglass mode.
 It also masks Git hooks and paths that can change Git configuration.
+
+It refuses a workspace whose `.git` directory has a `commondir` redirect or a symlink that can bypass these masks.
+This check does not cover a nested `.git` file or symlink that points to an admin directory elsewhere.
 These controls stop workspace content from directly replacing the managed control plane.
 
 The acknowledged `--allow-control-plane-vcs` path exposes selected paths read-only.
@@ -153,6 +156,9 @@ The default strict target uses a dedicated Colima VM and a hardened container.
 It does not mount `docker.sock` or host credential stores.
 By default, Workcell masks control-plane files in the workspace.
 It also masks Git hooks and paths that can change Git configuration.
+
+It refuses a workspace whose `.git` directory has a `commondir` redirect or a symlink that can bypass these masks.
+This check does not cover a nested `.git` file or symlink that points to an admin directory elsewhere.
 Host staging roots are read-only, except for the narrow Copilot handoff.
 
 This masking does not apply to `breakglass`.

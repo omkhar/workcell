@@ -2,6 +2,14 @@
 # shellcheck shell=bash
 set -euo pipefail
 
+# Language boundary: the workspace Git scans and shadow masks are path-based
+# checks at launch. Bash cannot hold a directory descriptor for openat or
+# O_NOFOLLOW use. A process that writes to the workspace between the scan and
+# the Docker bind mount can add Git control state that no scan saw. Examples
+# are a host process or another session that mounts the same workspace. That
+# race is the residual risk.
+# The fix is a port of these checks to descriptor-relative code.
+
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
 scrub_host_process_env() {
@@ -8038,7 +8046,9 @@ prepare_workspace_control_plane_shadow() {
   # the source when they are the same (direct/in-place workspace).
   local session_workspace="${3:-$1}"
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
-  local rel path git_dir git_rel
+  local rel path git_dir git_rel commondir_hits
+  local git_walk_complete=0
+  local module_walk_complete=0
 
   SHADOW_MOUNTS=()
   SHADOW_DEST_PATHS=()
@@ -8049,7 +8059,50 @@ prepare_workspace_control_plane_shadow() {
   CONTROL_PLANE_SHADOW_ROOT="$(mktemp -d "${shadow_parent}/shadow.XXXXXX")"
 
   while IFS= read -r -d '' git_dir; do
+    # A lone NUL after a successful walk is the completion sentinel: bash
+    # drops the status of the process substitution below.
+    if [[ -z "${git_dir}" ]]; then
+      git_walk_complete=1
+      continue
+    fi
     git_rel="${git_dir#"${workspace}/"}"
+    # A commondir file, or a symlink at worktrees or under modules, makes Git
+    # read config and hooks from a directory that the masks below do not cover.
+    # A standard clone has none. Notes on the walk:
+    # - It prunes the real worktrees directories that the masks replace, and
+    #   the top-level refs, logs and objects in any letter case. Git keeps
+    #   branch and reflog files there, so branches named topic/HEAD and
+    #   topic/commondir are not a redirect. Git reaches an admin directory
+    #   there only through a nested .git file, which these checks do not cover.
+    #   Module refs, logs and objects are not pruned: Git can make submodules
+    #   named x/refs, and a hand-made HEAD in x then makes x look like a Git
+    #   directory. Such branch pairs in a module fail closed.
+    # - A commondir counts in any letter case, because a case-insensitive
+    #   volume opens COMMONDIR as commondir.
+    # - A commondir counts only beside a HEAD file or HEAD symlink. Git
+    #   accepts a dangling HEAD symlink to refs/, so test -e alone is not
+    #   enough. A branch or reflog named commondir is not a redirect.
+    # - A symlink at a top-level control path or under modules counts. A
+    #   hooks, config or worktrees link is fine when it resolves on the host,
+    #   because the masks below cover it. A link that dangles on the host can
+    #   resolve inside the container. A resolving HEAD link under modules is
+    #   Git's supported form and holds no config.
+    # - Control names match in any letter case, like commondir.
+    # - Bash drops the status of a process substitution, so capture the walk
+    #   status: an unreadable Git directory must not pass as "no redirect".
+    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -ipath ./worktrees -o \( -ipath './modules/*' -iname worktrees \) -o -ipath ./refs -o -ipath ./logs -o -ipath ./objects \) -type d \) -prune -o \( -iname commondir ! -type d \( -execdir test -e HEAD \; -o -execdir test -L HEAD \; \) -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
+      echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
+      exit 2
+    fi
+    if [[ -n "${commondir_hits}" ]]; then
+      commondir_hits="${commondir_hits%%$'\n'*}"
+      commondir_hits="${git_rel}/${commondir_hits#./}"
+      echo "Refusing git workspace with admin state outside the mounted workspace: ${workspace}" >&2
+      echo "This workspace has a Git commondir file or symlinked module path that redirects Git config and hooks: ${commondir_hits}" >&2
+      echo "To use this workspace on the safe path, create a standard clone at the same location instead." >&2
+      echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with this workspace." >&2
+      exit 2
+    fi
     for rel in "${git_rel}/hooks" "${git_rel}/config" "${git_rel}/config.worktree"; do
       add_shadow_git_path_if_present "${workspace}" "${rel}"
     done
@@ -8057,28 +8110,57 @@ prepare_workspace_control_plane_shadow() {
       add_shadow_dir_mount "${workspace}" "${git_rel}/worktrees"
     fi
     if [[ -d "${workspace}/${git_rel}/modules" ]]; then
+      # A lone NUL after a successful walk is the completion sentinel. Bash
+      # drops the status of a process substitution, so a failed walk must not
+      # pass as "no more mounts".
+      module_walk_complete=0
       while IFS= read -r -d '' path; do
+        if [[ -z "${path}" ]]; then
+          module_walk_complete=1
+          continue
+        fi
         rel="${path#"${workspace}/"}"
         add_shadow_git_path_if_present "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
           \( \
-          \( \( -type d -o -type l \) -name hooks \) -o \
-          \( \( -type f -o -type l \) \( -name config -o -name config.worktree \) \) \
+          \( \( -type d -o -type l \) -iname hooks \) -o \
+          \( \( -type f -o -type l \) \( -iname config -o -iname config.worktree \) \) \
           \) \
-          -print0
+          -print0 && printf '\0'
       )
+      if [[ "${module_walk_complete}" -ne 1 ]]; then
+        echo "Refusing git workspace: Workcell could not inventory the module Git directories: ${git_dir}" >&2
+        exit 2
+      fi
+      module_walk_complete=0
       while IFS= read -r -d '' path; do
+        if [[ -z "${path}" ]]; then
+          module_walk_complete=1
+          continue
+        fi
         rel="${path#"${workspace}/"}"
         add_shadow_dir_mount "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
-          \( \( -type d -o -type l \) -name worktrees \) -print0
+          \( \( -type d -o -type l \) -iname worktrees \) -print0 && printf '\0'
       )
+      if [[ "${module_walk_complete}" -ne 1 ]]; then
+        echo "Refusing git workspace: Workcell could not inventory the module worktrees: ${git_dir}" >&2
+        exit 2
+      fi
     fi
   done < <(
-    find "${workspace}" -type d -name .git -prune -print0
+    # -mindepth 1: a workspace root named .git or .GIT is not its Git
+    # directory. A .GIT directory counts, because a case-insensitive volume
+    # opens it as .git, but only .git is pruned: on a case-sensitive volume a
+    # .GIT directory can be a worktree whose own .git still needs masks.
+    find "${workspace}" -mindepth 1 -type d -iname .git \( -name .git -prune -o -true \) -print0 && printf '\0'
   )
+  if [[ "${git_walk_complete}" -ne 1 ]]; then
+    echo "Refusing git workspace: Workcell could not inventory the workspace for Git directories: ${workspace}" >&2
+    exit 2
+  fi
 
   if [[ "${ALLOW_CONTROL_PLANE_VCS}" -eq 1 ]]; then
     while IFS= read -r -d '' path; do

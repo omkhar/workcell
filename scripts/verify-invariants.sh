@@ -6565,6 +6565,324 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
   exit 1
 fi
 
+COMMONDIR_ROOT="${BARRIER_VERIFY_ROOT}/commondir-root"
+COMMONDIR_REPO="${COMMONDIR_ROOT}/repo"
+COMMONDIR_ALT="${COMMONDIR_ROOT}/alt"
+git init -q -b master "${COMMONDIR_REPO}"
+git -C "${COMMONDIR_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_ALT}/hooks"
+cp -R "${COMMONDIR_REPO}/.git/objects" "${COMMONDIR_REPO}/.git/refs" "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_REPO}/.git/config" "${COMMONDIR_ALT}/"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_REPO}/.git/commondir"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REPO}" --dry-run >/tmp/workcell-commondir.out 2>&1; then
+  echo "Expected repo with a redirecting .git/commondir to be rejected" >&2
+  exit 1
+fi
+grep -q 'This workspace has a Git commondir file or symlinked module path that redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir.out
+
+# A branch named commondir is a ref, not a redirect, and must still launch.
+COMMONDIR_BRANCH_REPO="${COMMONDIR_ROOT}/branch-repo"
+git init -q -b master "${COMMONDIR_BRANCH_REPO}"
+git -C "${COMMONDIR_BRANCH_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+git -C "${COMMONDIR_BRANCH_REPO}" branch commondir
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_BRANCH_REPO}" --dry-run >/tmp/workcell-commondir-branch.out 2>&1
+
+# A symlinked module admin directory can carry a redirect and must be rejected.
+COMMONDIR_LINK_REPO="${COMMONDIR_ROOT}/link-repo"
+git init -q -b master "${COMMONDIR_LINK_REPO}"
+git -C "${COMMONDIR_LINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_LINK_REPO}/.git/modules" "${COMMONDIR_ROOT}/linked-admin"
+ln -s ../../../linked-admin "${COMMONDIR_LINK_REPO}/.git/modules/foo"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_LINK_REPO}" --dry-run >/tmp/workcell-commondir-link.out 2>&1; then
+  echo "Expected repo with a symlinked module admin directory to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-link.out
+
+# A dangling module config symlink can resolve inside the container.
+COMMONDIR_CONFIG_REPO="${COMMONDIR_ROOT}/config-link-repo"
+git init -q -b master "${COMMONDIR_CONFIG_REPO}"
+git -C "${COMMONDIR_CONFIG_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_CONFIG_REPO}/.git/modules/foo"
+ln -s /workspace/evil-config "${COMMONDIR_CONFIG_REPO}/.git/modules/foo/config"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_CONFIG_REPO}" --dry-run >/tmp/workcell-commondir-config.out 2>&1; then
+  echo "Expected repo with a dangling module config symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo/config' /tmp/workcell-commondir-config.out
+
+# A dangling .git/worktrees symlink can resolve inside the container.
+COMMONDIR_WTLINK_REPO="${COMMONDIR_ROOT}/worktrees-link-repo"
+git init -q -b master "${COMMONDIR_WTLINK_REPO}"
+git -C "${COMMONDIR_WTLINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+ln -s /workspace/admin "${COMMONDIR_WTLINK_REPO}/.git/worktrees"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WTLINK_REPO}" --dry-run >/tmp/workcell-commondir-wtlink.out 2>&1; then
+  echo "Expected repo with a dangling .git/worktrees symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/worktrees' /tmp/workcell-commondir-wtlink.out
+
+# A Git admin directory under a worktrees name outside the masked paths must be rejected.
+COMMONDIR_WT_REPO="${COMMONDIR_ROOT}/worktrees-admin-repo"
+git init -q -b master "${COMMONDIR_WT_REPO}"
+git -C "${COMMONDIR_WT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_WT_REPO}/.git/foo/worktrees/admin"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_WT_REPO}/.git/foo/worktrees/admin/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_WT_REPO}/.git/foo/worktrees/admin/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WT_REPO}" --dry-run >/tmp/workcell-commondir-wt.out 2>&1; then
+  echo "Expected repo with a Git admin directory under foo/worktrees to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/foo/worktrees/admin/commondir' /tmp/workcell-commondir-wt.out
+
+# A mixed-case COMMONDIR opens as commondir on a case-insensitive volume.
+COMMONDIR_CASE_REPO="${COMMONDIR_ROOT}/mixed-case-repo"
+git init -q -b master "${COMMONDIR_CASE_REPO}"
+git -C "${COMMONDIR_CASE_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_CASE_REPO}/.git/COMMONDIR"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_CASE_REPO}" --dry-run >/tmp/workcell-commondir-case.out 2>&1; then
+  echo "Expected repo with a mixed-case COMMONDIR to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/COMMONDIR' /tmp/workcell-commondir-case.out
+
+# A dangling top-level .git/config symlink can resolve inside the container.
+COMMONDIR_TOPCFG_REPO="${COMMONDIR_ROOT}/top-config-link-repo"
+git init -q -b master "${COMMONDIR_TOPCFG_REPO}"
+git -C "${COMMONDIR_TOPCFG_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+rm "${COMMONDIR_TOPCFG_REPO}/.git/config"
+ln -s /workspace/evil-config "${COMMONDIR_TOPCFG_REPO}/.git/config"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_TOPCFG_REPO}" --dry-run >/tmp/workcell-commondir-topcfg.out 2>&1; then
+  echo "Expected repo with a dangling top-level .git/config symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/config' /tmp/workcell-commondir-topcfg.out
+
+# A dangling mixed-case CONFIG or MODULES symlink opens as config or modules on a case-insensitive volume.
+COMMONDIR_UPCFG_REPO="${COMMONDIR_ROOT}/upper-config-link-repo"
+git init -q -b master "${COMMONDIR_UPCFG_REPO}"
+git -C "${COMMONDIR_UPCFG_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+rm "${COMMONDIR_UPCFG_REPO}/.git/config"
+ln -s /workspace/evil-config "${COMMONDIR_UPCFG_REPO}/.git/CONFIG"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPCFG_REPO}" --dry-run >/tmp/workcell-commondir-upcfg.out 2>&1; then
+  echo "Expected repo with a dangling mixed-case CONFIG symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/CONFIG' /tmp/workcell-commondir-upcfg.out
+COMMONDIR_UPMOD_REPO="${COMMONDIR_ROOT}/upper-modules-link-repo"
+git init -q -b master "${COMMONDIR_UPMOD_REPO}"
+git -C "${COMMONDIR_UPMOD_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+ln -s /workspace/admin "${COMMONDIR_UPMOD_REPO}/.git/MODULES"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPMOD_REPO}" --dry-run >/tmp/workcell-commondir-upmod.out 2>&1; then
+  echo "Expected repo with a dangling mixed-case MODULES symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/MODULES' /tmp/workcell-commondir-upmod.out
+
+# A resolving mixed-case module CONFIG link must get a readonly shadow mount.
+COMMONDIR_UPLINK_REPO="${COMMONDIR_ROOT}/upper-resolving-link-repo"
+git init -q -b master "${COMMONDIR_UPLINK_REPO}"
+git -C "${COMMONDIR_UPLINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
+printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
+ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
+COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
+# The dry-run output is printf %q text, so xargs decodes it into argv tokens.
+# The destination must appear in exactly one token, and that token must be a
+# whole SOURCE:DESTINATION:ro value of a -v option before the image token.
+# Docker reads tokens after the image as the container command.
+COMMONDIR_UPLINK_ARGV=()
+while IFS= read -r line; do
+  COMMONDIR_UPLINK_ARGV+=("${line}")
+done < <(printf '%s\n' "${COMMONDIR_UPLINK_OUT}" | xargs -n1 printf '%s\n')
+commondir_uplink_hits=0
+commondir_uplink_masked=0
+commondir_uplink_options=1
+for ((i = 0; i < ${#COMMONDIR_UPLINK_ARGV[@]}; i++)); do
+  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == workcell:local ]] && commondir_uplink_options=0
+  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == *'/workspace/.git/modules/foo/CONFIG'* ]] || continue
+  commondir_uplink_hits=$((commondir_uplink_hits + 1))
+  if [[ "${commondir_uplink_options}" -eq 1 && "${i}" -gt 0 && "${COMMONDIR_UPLINK_ARGV[i - 1]}" == -v && "${COMMONDIR_UPLINK_ARGV[i]}" == ?*:/workspace/.git/modules/foo/CONFIG:ro ]]; then
+    commondir_uplink_masked=1
+  fi
+done
+if [[ "${commondir_uplink_hits}" -ne 1 || "${commondir_uplink_masked}" -ne 1 ]]; then
+  echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
+  exit 1
+fi
+
+# Linked-worktree metadata under a mixed-case WORKTREES directory is masked, so it must pass.
+COMMONDIR_UPWT_REPO="${COMMONDIR_ROOT}/upper-worktrees-repo"
+git init -q -b master "${COMMONDIR_UPWT_REPO}"
+git -C "${COMMONDIR_UPWT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_UPWT_REPO}/.git/modules/foo/WORKTREES/linked/HEAD"
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPWT_REPO}" --dry-run >/tmp/workcell-commondir-upwt.out 2>&1
+
+# An uppercase .GIT admin directory opens as .git on a case-insensitive volume.
+COMMONDIR_UPGIT_REPO="${COMMONDIR_ROOT}/upper-git-repo"
+git init -q -b master "${COMMONDIR_UPGIT_REPO}"
+git -C "${COMMONDIR_UPGIT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPGIT_REPO}/.GIT"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_UPGIT_REPO}/.GIT/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_UPGIT_REPO}/.GIT/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPGIT_REPO}" --dry-run >/tmp/workcell-commondir-upgit.out 2>&1; then
+  echo "Expected repo with an uppercase .GIT admin directory to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: \.[Gg][Ii][Tt]/commondir' /tmp/workcell-commondir-upgit.out
+
+# A workspace root named .GIT is not its own Git directory: its .git child must still be masked.
+# A nested worktree named .GIT must not hide its own .git either.
+COMMONDIR_ROOTGIT_REPO="${COMMONDIR_ROOT}/root-named/.GIT"
+git init -q -b master "${COMMONDIR_ROOTGIT_REPO}"
+git init -q -b master "${COMMONDIR_ROOTGIT_REPO}/nested/.GIT"
+COMMONDIR_ROOTGIT_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_ROOTGIT_REPO}" --dry-run 2>/dev/null)"
+commondir_rootgit_masked=0
+commondir_rootgit_nested=0
+commondir_rootgit_prev=""
+while IFS= read -r line; do
+  # Docker reads tokens after the image as the container command.
+  [[ "${line}" == workcell:local ]] && break
+  if [[ "${commondir_rootgit_prev}" == -v && "${line}" == ?*:/workspace/.git/config:ro ]]; then
+    commondir_rootgit_masked=1
+  fi
+  if [[ "${commondir_rootgit_prev}" == -v && "${line}" == ?*:/workspace/nested/.GIT/.git/config:ro ]]; then
+    commondir_rootgit_nested=1
+  fi
+  commondir_rootgit_prev="${line}"
+done < <(printf '%s\n' "${COMMONDIR_ROOTGIT_OUT}" | xargs -n1 printf '%s\n')
+if [[ "${commondir_rootgit_masked}" -ne 1 || "${commondir_rootgit_nested}" -ne 1 ]]; then
+  echo "Expected a workspace named .GIT and a nested .GIT worktree to get readonly .git/config masks" >&2
+  exit 1
+fi
+
+# A resolving HEAD symlink in a module admin directory is valid Git and must pass.
+COMMONDIR_HEADLINK_REPO="${COMMONDIR_ROOT}/head-link-repo"
+git init -q -b master "${COMMONDIR_HEADLINK_REPO}"
+git -C "${COMMONDIR_HEADLINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_HEADLINK_REPO}/.git/modules/child/refs/heads"
+: >"${COMMONDIR_HEADLINK_REPO}/.git/modules/child/refs/heads/master"
+ln -s refs/heads/master "${COMMONDIR_HEADLINK_REPO}/.git/modules/child/HEAD"
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_HEADLINK_REPO}" --dry-run >/tmp/workcell-commondir-headlink.out 2>&1
+
+# Branches named topic/HEAD and topic/commondir are refs, not a redirect, and must launch.
+COMMONDIR_REFS_REPO="${COMMONDIR_ROOT}/refs-branch-repo"
+git init -q -b master "${COMMONDIR_REFS_REPO}"
+git -C "${COMMONDIR_REFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+git -C "${COMMONDIR_REFS_REPO}" branch topic/HEAD
+git -C "${COMMONDIR_REFS_REPO}" branch topic/commondir
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REFS_REPO}" --dry-run >/tmp/workcell-commondir-refs.out 2>&1
+
+# A case-insensitive volume opens REFS as refs, so the top-level prune matches any letter case.
+COMMONDIR_UPREFS_REPO="${COMMONDIR_ROOT}/upper-refs-branch-repo"
+git init -q -b master "${COMMONDIR_UPREFS_REPO}"
+git -C "${COMMONDIR_UPREFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic"
+git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic/HEAD"
+git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic/commondir"
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPREFS_REPO}" --dry-run >/tmp/workcell-commondir-uprefs.out 2>&1
+
+# Module refs are scanned even when the module is a full Git directory: Git can make a
+# submodule named child/refs/x first, and a later HEAD in child does not hide it.
+COMMONDIR_MODGIT_REPO="${COMMONDIR_ROOT}/module-gitdir-repo"
+git init -q -b master "${COMMONDIR_MODGIT_REPO}"
+git -C "${COMMONDIR_MODGIT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+git init -q --bare -b master "${COMMONDIR_MODGIT_REPO}/.git/modules/child"
+mkdir -p "${COMMONDIR_MODGIT_REPO}/.git/modules/child/refs/x"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_MODGIT_REPO}/.git/modules/child/refs/x/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_MODGIT_REPO}/.git/modules/child/refs/x/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODGIT_REPO}" --dry-run >/tmp/workcell-commondir-modgit.out 2>&1; then
+  echo "Expected repo with a redirect under the refs of a module Git directory to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/modules/child/refs/x/commondir' /tmp/workcell-commondir-modgit.out
+
+# Only the top-level refs are pruned: an admin directory under module refs is still rejected.
+COMMONDIR_MODREFS_REPO="${COMMONDIR_ROOT}/module-refs-repo"
+git init -q -b master "${COMMONDIR_MODREFS_REPO}"
+git -C "${COMMONDIR_MODREFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_MODREFS_REPO}/.git/modules/child/refs/admin"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_MODREFS_REPO}/.git/modules/child/refs/admin/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_MODREFS_REPO}/.git/modules/child/refs/admin/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODREFS_REPO}" --dry-run >/tmp/workcell-commondir-modrefs.out 2>&1; then
+  echo "Expected repo with a Git admin directory under module refs to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/modules/child/refs/admin/commondir' /tmp/workcell-commondir-modrefs.out
+
+# Git accepts a dangling HEAD symlink to refs/, so a commondir beside one is a redirect.
+COMMONDIR_DANGLEHEAD_REPO="${COMMONDIR_ROOT}/dangling-head-repo"
+git init -q -b master "${COMMONDIR_DANGLEHEAD_REPO}"
+cp -R "${COMMONDIR_DANGLEHEAD_REPO}/.git" "${COMMONDIR_ROOT}/dangling-head-common"
+printf '../../dangling-head-common\n' >"${COMMONDIR_DANGLEHEAD_REPO}/.git/commondir"
+rm "${COMMONDIR_DANGLEHEAD_REPO}/.git/HEAD"
+ln -s refs/heads/unborn "${COMMONDIR_DANGLEHEAD_REPO}/.git/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_DANGLEHEAD_REPO}" --dry-run >/tmp/workcell-commondir-danglehead.out 2>&1; then
+  echo "Expected repo with a commondir beside a dangling HEAD symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/commondir' /tmp/workcell-commondir-danglehead.out
+
+# A module symlink that dangles on the host can resolve inside the container.
+COMMONDIR_DANGLE_REPO="${COMMONDIR_ROOT}/dangling-link-repo"
+git init -q -b master "${COMMONDIR_DANGLE_REPO}"
+git -C "${COMMONDIR_DANGLE_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_DANGLE_REPO}/.git/modules"
+ln -s /workspace/admin "${COMMONDIR_DANGLE_REPO}/.git/modules/foo"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_DANGLE_REPO}" --dry-run >/tmp/workcell-commondir-dangle.out 2>&1; then
+  echo "Expected repo with a dangling module symlink to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules/foo' /tmp/workcell-commondir-dangle.out
+
+# An unreadable directory in the workspace must fail the Git directory inventory closed.
+if [[ "$(id -u)" -ne 0 ]]; then
+  COMMONDIR_OUTER_REPO="${COMMONDIR_ROOT}/outer-walk-repo"
+  git init -q -b master "${COMMONDIR_OUTER_REPO}"
+  git -C "${COMMONDIR_OUTER_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+  mkdir "${COMMONDIR_OUTER_REPO}/unreadable"
+  chmod 000 "${COMMONDIR_OUTER_REPO}/unreadable"
+  outer_status=0
+  run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_OUTER_REPO}" --dry-run >/tmp/workcell-commondir-outer.out 2>&1 || outer_status=$?
+  chmod 755 "${COMMONDIR_OUTER_REPO}/unreadable"
+  if [[ "${outer_status}" -eq 0 ]]; then
+    echo "Expected repo with an unreadable workspace directory to be rejected" >&2
+    exit 1
+  fi
+  grep -q 'could not inventory the workspace for Git directories' /tmp/workcell-commondir-outer.out
+fi
+
+# A symlinked .git/modules parent must be rejected too.
+COMMONDIR_PARENT_REPO="${COMMONDIR_ROOT}/parent-link-repo"
+git init -q -b master "${COMMONDIR_PARENT_REPO}"
+git -C "${COMMONDIR_PARENT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_ROOT}/linked-modules"
+ln -s ../../linked-modules "${COMMONDIR_PARENT_REPO}/.git/modules"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_PARENT_REPO}" --dry-run >/tmp/workcell-commondir-parent.out 2>&1; then
+  echo "Expected repo with a symlinked .git/modules to be rejected" >&2
+  exit 1
+fi
+grep -q 'symlinked module path that redirects Git config and hooks: .git/modules' /tmp/workcell-commondir-parent.out
+
+# An unreadable Git directory must fail the commondir inventory closed. Root
+# ignores directory modes, so the probe runs only for a non-root user.
+if [[ "$(id -u)" -ne 0 ]]; then
+  COMMONDIR_WALK_REPO="${COMMONDIR_ROOT}/walk-repo"
+  git init -q -b master "${COMMONDIR_WALK_REPO}"
+  git -C "${COMMONDIR_WALK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+  mkdir "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  chmod 000 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  walk_status=0
+  run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_WALK_REPO}" --dry-run >/tmp/workcell-commondir-walk.out 2>&1 || walk_status=$?
+  chmod 755 "${COMMONDIR_WALK_REPO}/.git/unreadable"
+  if [[ "${walk_status}" -eq 0 ]]; then
+    echo "Expected repo with an unreadable Git directory to be rejected" >&2
+    exit 1
+  fi
+  grep -q 'could not inventory the Git directory for a commondir file' /tmp/workcell-commondir-walk.out
+fi
+
 if ! grep -q 'WORKCELL_PROVIDER_E2E_RESTORE_ENV_FILE' "${ROOT_DIR}/scripts/provider-e2e.sh"; then
   echo "Expected provider-e2e secret preservation to use a restore env file" >&2
   exit 1
