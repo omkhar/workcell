@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/omkhar/workcell/internal/adapters"
 	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
@@ -57,6 +59,8 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "adapters":
+		return runAdapters(args[1:])
 	case "path":
 		return runPath(args[1:])
 	case "release":
@@ -112,6 +116,24 @@ func run(args []string) error {
 	default:
 		return usage()
 	}
+}
+
+// runAdapters dispatches `adapters gen TARGET REPO_ROOT OUTPUT`, which renders
+// one generated Go file from REPO_ROOT/adapters/*/adapter.toml. The
+// scripts/generate-adapters-*.sh wrappers own the targets and output paths.
+func runAdapters(args []string) error {
+	if len(args) != 4 || args[0] != "gen" || adapters.GenTargets[args[1]] == nil {
+		return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil adapters gen <data|providerid> REPO_ROOT OUTPUT"}
+	}
+	manifests, err := adapters.LoadManifests(filepath.Join(args[2], "adapters"))
+	if err != nil {
+		return err
+	}
+	content, err := adapters.GenTargets[args[1]](manifests)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(args[3], content, 0o644)
 }
 
 func cmdHelperSupportBundleCli(args []string) error {
@@ -1068,7 +1090,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli> [args...]"}
 }
 
 func pathUsage() error {

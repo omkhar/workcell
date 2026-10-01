@@ -4,7 +4,10 @@ Use this page for a new credential type or provider adapter. Read
 [Invariants](invariants.md), [Threat Model](threat-model.md), and the
 [Adapter Porting Workflow](../workflows/adapter-porting.md) first.
 
-The provider registry is data in `internal/adapters/data.go`. A registry change
+The provider registry is data in `adapters/<provider>/adapter.toml`.
+`scripts/generate-adapters-data.sh` generates `internal/adapters/data_gen.go`
+from it, and `scripts/generate-adapters-providerid.sh` generates
+`internal/providerid/providerid_gen.go`. A registry change
 is only one part of an adapter change. Runtime dispatch, policy, seed logic,
 validation, and documents must change together.
 
@@ -12,14 +15,13 @@ validation, and documents must change together.
 
 ### 1. Register the credential
 
-In `internal/adapters/data.go`:
+In `adapters/<provider>/adapter.toml`:
 
-1. Add the key to the provider credential list.
-2. Add its mount path under `/opt/workcell/host-inputs/credentials/`.
-3. Add its provider-home destination to the reserved targets.
-4. Add the key, its mount path, and its reserved target to
-   `adapters/<provider>/adapter.toml`. The manifest parity test in
-   `internal/adapters/manifest_test.go` fails when the two differ.
+1. Add a `[credentials.<key>]` table.
+2. Set its `container_path` under `/opt/workcell/host-inputs/credentials/`.
+3. Add its provider-home destination to `[home] reserved_targets`.
+4. Run `scripts/generate-adapters-data.sh` and commit `data_gen.go`. The
+   generated-artifact check fails when the committed file is stale.
 
 The reserved target stops a general copy rule that tries to replace a Workcell
 control file. See [Injection Policy explicit limits](injection-policy.md#explicit-limits).

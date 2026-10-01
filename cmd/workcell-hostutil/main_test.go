@@ -27,6 +27,8 @@ func TestUsageReturnsExitCode2(t *testing.T) {
 		{"path"},
 		{"release"},
 		{"helper"},
+		{"adapters"},
+		{"adapters", "gen", "no-such-target", "/", "/dev/null"},
 	} {
 		err := run(args)
 		ec, ok := cliexit.IsExitCodeError(err)
@@ -710,4 +712,24 @@ func mustReadTestFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// TestAdaptersGenWritesCommittedFile runs the dispatch end to end against the
+// repository manifests: the output must equal the committed data_gen.go.
+func TestAdaptersGenWritesCommittedFile(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "data_gen.go")
+	if err := run([]string{"adapters", "gen", "data", "../..", out}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile("../../internal/adapters/data_gen.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("adapters gen data output differs from internal/adapters/data_gen.go")
+	}
 }

@@ -23,9 +23,10 @@ import (
 // parseManifest accepts.
 const ManifestSchema = 1
 
-// Manifest is the declarative form of one adapter. The parity test in
-// manifest_test.go keeps it equal to the hand-written registry in data.go,
-// the providerid lists, the launcher shell tables, and the Rust launcher.
+// Manifest is the declarative form of one adapter. gen.go renders the
+// registry in data_gen.go and the providerid lists from it. The parity test in
+// manifest_test.go keeps it equal to the launcher shell tables and the Rust
+// launcher.
 type Manifest struct {
 	ID                string
 	Tier              string // certified | uncertified | planned

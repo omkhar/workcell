@@ -59,7 +59,7 @@ var goHelperMutations = []mutationCase{
 		command:      goCmd("test", "./internal/injection"),
 	},
 	{
-		relativePath: "internal/adapters/data.go",
+		relativePath: "internal/adapters/data_gen.go",
 		original:     `				"claude_mcp",`,
 		replacement:  `				// "claude_mcp",`,
 		label:        "claude mcp credential support",

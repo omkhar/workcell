@@ -226,6 +226,8 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-homebrew-formula.sh"
   "${ROOT_DIR}/scripts/generate-build-input-manifest.sh"
   "${ROOT_DIR}/scripts/generate-workflow-lane-manifest.sh"
+  "${ROOT_DIR}/scripts/generate-adapters-data.sh"
+  "${ROOT_DIR}/scripts/generate-adapters-providerid.sh"
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/install-release.sh"
   "${ROOT_DIR}/scripts/install-workcell.sh"
