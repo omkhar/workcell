@@ -1,0 +1,35 @@
+# Workcell adapter manifest (not read at runtime yet); see adapters/README.md.
+
+schema = 1
+id = "copilot"
+tier = "certified"
+binary = "copilot"
+# Copilot uses only copilot_github_token, so host gh auth is never implicit.
+shared_credentials = false
+# Managed Copilot custom instructions are disabled.
+managed_document = false
+
+[install]
+method = "binary"
+version_arg = "COPILOT_VERSION"
+provenance = "scripts/verify-upstream-copilot-release.sh"
+
+[home]
+reserved_targets = [
+  "/state/agent-home/.copilot",
+  "/state/agent-home/.copilot/AGENTS.md",
+  "/state/agent-home/.copilot/logs",
+  "/state/agent-home/.cache/github-copilot",
+  "/state/agent-home/.config/github-copilot",
+]
+
+[credentials.copilot_github_token]
+container_path = "/opt/workcell/host-inputs/credentials/copilot-github-token.txt"
+
+[egress]
+endpoints = [
+  "api.githubcopilot.com:443",
+  "api.individual.githubcopilot.com:443",
+  "api.github.com:443",
+  "github.com:443",
+]

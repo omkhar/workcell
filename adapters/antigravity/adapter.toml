@@ -1,0 +1,5 @@
+# Workcell adapter manifest (not read at runtime yet); see adapters/README.md.
+# Planned, fail-closed scaffold: no install, credentials, or egress.
+schema = 1
+id = "antigravity"
+tier = "planned"

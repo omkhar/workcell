@@ -1,0 +1,41 @@
+# Workcell adapter manifest (not read at runtime yet); see adapters/README.md.
+
+schema = 1
+id = "gemini"
+tier = "certified"
+binary = "gemini"
+shared_credentials = true
+managed_document = true
+
+[install]
+method = "npm"
+package = "@google/gemini-cli"
+provenance = "scripts/verify-upstream-gemini-release.sh"
+
+[home]
+reserved_targets = [
+  "/state/agent-home/.gemini",
+  "/state/agent-home/.config/gcloud",
+  "/state/agent-home/.gemini/settings.json",
+  "/state/agent-home/.gemini/GEMINI.md",
+  "/state/agent-home/.gemini/.env",
+  "/state/agent-home/.gemini/oauth_creds.json",
+  "/state/agent-home/.gemini/projects.json",
+  "/state/agent-home/.gemini/trustedFolders.json",
+  "/state/agent-home/.config/gcloud/application_default_credentials.json",
+]
+
+[credentials.gemini_env]
+container_path = "/opt/workcell/host-inputs/credentials/gemini.env"
+
+[credentials.gemini_oauth]
+container_path = "/opt/workcell/host-inputs/credentials/gemini-oauth.json"
+
+[credentials.gemini_projects]
+container_path = "/opt/workcell/host-inputs/credentials/gemini-projects.json"
+
+[credentials.gcloud_adc]
+container_path = "/opt/workcell/host-inputs/credentials/gcloud-adc.json"
+
+[egress]
+endpoints = ["generativelanguage.googleapis.com:443", "ai.google.dev:443"]
