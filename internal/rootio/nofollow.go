@@ -69,13 +69,11 @@ func ReadFileNoFollow(path, label string, limit int64) ([]byte, error) {
 	return ReadFileAtNoFollow(parent, filepath.Base(cleaned), label, limit)
 }
 
-// ReadFileAtNoFollow reads one regular leaf from an already trusted parent.
-func ReadFileAtNoFollow(parent *os.File, name, label string, limit int64) ([]byte, error) {
+// OpenRegularFileAtNoFollow opens one regular leaf from an already trusted
+// parent without following a symlink. The caller closes the file.
+func OpenRegularFileAtNoFollow(parent *os.File, name, label string) (*os.File, error) {
 	if err := validateLeafName(name); err != nil {
 		return nil, err
-	}
-	if limit < 0 {
-		return nil, fmt.Errorf("%s has an invalid byte limit", label)
 	}
 	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -86,14 +84,28 @@ func ReadFileAtNoFollow(parent *os.File, name, label string, limit int64) ([]byt
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("open %s: %s", label, name)
 	}
-	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
+		_ = file.Close()
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
+		_ = file.Close()
 		return nil, fmt.Errorf("%s must be a regular file: %s", label, name)
 	}
+	return file, nil
+}
+
+// ReadFileAtNoFollow reads one regular leaf from an already trusted parent.
+func ReadFileAtNoFollow(parent *os.File, name, label string, limit int64) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("%s has an invalid byte limit", label)
+	}
+	file, err := OpenRegularFileAtNoFollow(parent, name, label)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, limit))
 	if err != nil {
 		return nil, err

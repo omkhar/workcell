@@ -642,3 +642,27 @@ func TestPublishSessionCaptureFileNeverFollowsLinks(t *testing.T) {
 		t.Fatalf("failed publish left files in the target directory: %v", entries)
 	}
 }
+
+func TestPublishSessionCaptureFileAcceptsLargeTrace(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "staged")
+	const size = 160 << 20 // above the former 128 MiB in-memory bound
+	f, err := os.Create(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(dir, "trace.log")
+	if err := PublishSessionCaptureFile(source, destination); err != nil {
+		t.Fatalf("publish large capture: %v", err)
+	}
+	if info, err := os.Stat(destination); err != nil || info.Size() != size {
+		t.Fatalf("destination = %v, %v; want %d bytes", info, err, size)
+	}
+}
