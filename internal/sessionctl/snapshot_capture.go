@@ -110,22 +110,18 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", fmt.Errorf("session snapshot requires a self-contained git workspace: %s", opts.Workspace)
 	}
 
-	scratch, err := os.MkdirTemp("", "workcell-snapshot.")
+	scratch, err := os.MkdirTemp("", "workcell-snapshot.") // hardened-fs-exempt: this creates a fresh owner-only directory with O_EXCL semantics
 	if err != nil {
 		return "", "", err
 	}
-	defer func() { _ = os.RemoveAll(scratch) }()
+	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
 
 	// The scratch dir is the git dir, so its index is the temporary index and
 	// its config is the only repository config git reads. The workspace
 	// .git/config and .git/index are never read or written. The workspace
 	// object store is an alternate for reads only; the store fetch below
 	// rehashes every object, so a forged workspace object fails closed.
-	if err := os.MkdirAll(filepath.Join(scratch, "objects", "info"), 0o700); err != nil {
-		return "", "", err
-	}
-	if err := os.WriteFile(filepath.Join(scratch, "objects", "info", "alternates"),
-		[]byte(filepath.Join(gitDir, "objects")+"\n"), 0o600); err != nil {
+	if err := writeSnapshotAlternates(scratch, filepath.Join(gitDir, "objects")); err != nil {
 		return "", "", err
 	}
 	scratchGit := func(args ...string) (string, error) {
@@ -155,6 +151,25 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", err
 	}
 	return tree, commit, nil
+}
+
+// writeSnapshotAlternates makes the workspace object store a read-only
+// alternate of the scratch git dir.
+func writeSnapshotAlternates(scratch, objects string) error {
+	scratchFile, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(scratch, "anchor"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = scratchFile.Close() }()
+	if err := rootio.MkdirAllSyncedAt(scratchFile, "objects/info", 0o700); err != nil {
+		return err
+	}
+	infoFile, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(scratch, "objects", "info", "alternates"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = infoFile.Close() }()
+	return rootio.StageAndPublishAt(infoFile, "alternates", []byte(objects+"\n"), 0o600, ".alternates-")
 }
 
 // publishSnapshot fetches the scratch ref into the host-owned store. The
@@ -217,7 +232,7 @@ func requireSameDirectory(dir *os.File, path string) error {
 	if err != nil {
 		return err
 	}
-	now, err := os.Stat(path)
+	now, err := os.Stat(path) // hardened-fs-exempt: this stats the path by name on purpose, to prove it still names the directory the descriptor holds
 	if err != nil {
 		return fmt.Errorf("the snapshot store path changed: %w", err)
 	}
