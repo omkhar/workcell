@@ -3238,8 +3238,9 @@ ensure_session_audit_state() {
 # under the launcher's TMPDIR, never next to the destination: a parent of the
 # destination can change after validation. The Go helper then accepts only a
 # regular file and renames it over the destination through a no-follow parent
-# descriptor, so no link at the source or destination is followed. On failure
-# the destination does not change; callers must not fall back to writing it.
+# descriptor, so no link at the source or destination is followed. A failure
+# before the rename leaves the destination unchanged; a failed directory fsync
+# after it does not. Callers must never fall back to writing the destination.
 copy_container_regular_file() {
   local container_name="$1"
   local container_path="$2"
@@ -3276,7 +3277,7 @@ capture_session_file_trace() {
     return 0
   fi
   if ! copy_container_regular_file "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" "${file_trace_log_path}"; then
-    echo "Workcell: warning: could not collect the file-trace log from ${container_name}; the host log is unchanged." >&2
+    echo "Workcell: warning: could not collect the file-trace log from ${container_name}." >&2
     append_audit_record "${COLIMA_PROFILE}" \
       "event=file-trace-capture-failed" \
       "session_id=${SESSION_ID}" \
