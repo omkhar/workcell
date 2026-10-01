@@ -111,7 +111,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"case \"$*\" in\n" +
 		"  *git/refs\\ *) ;;\n" +
 		"  \"api graphql\"*) echo \"${FAKE_COMMIT}\" ;;\n" +
-		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE}\" ;;\n" +
+		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"parents\":[{\"sha\":\"%s\"}],\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE}\" \"${FAKE_PARENT}\" ;;\n" +
 		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; echo https://example.invalid/pr/1 ;;\n" +
 		"  \"api -X DELETE\"*) ;;\n" +
 		"  *git/ref/heads/codex*) [ -n \"${FAKE_ORPHAN}\" ] || { echo \"${FAKE_REF_ERROR:-gh: Not Found (HTTP 404)}\" >&2; exit 1; } ;;\n" +
@@ -146,7 +146,7 @@ func (f publishFixture) run(t *testing.T, mainSHA string, env ...string) (string
 	cmd.Dir = f.checkout
 	cmd.Env = append(append(os.Environ(),
 		"PATH="+f.path+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"GH_TOKEN=unused", "GITHUB_REPOSITORY=o/r", "GITHUB_RUN_ID=42", "FAKE_MAIN_SHA="+mainSHA,
+		"GH_TOKEN=unused", "GITHUB_REPOSITORY=o/r", "GITHUB_RUN_ID=42", "FAKE_MAIN_SHA="+mainSHA, "FAKE_PARENT="+f.base,
 		"FAKE_GH_LOG="+filepath.Join(filepath.Dir(f.path), "gh.log")), env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -212,10 +212,9 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		{name: "stale base skips without writing", moved: true, forbid: []string{"git/refs", "pr create"}},
 		{name: "passed guard pins auto-merge to the published commit", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit},
 			want: []string{"pr merge --repo o/r --auto --merge --match-head-commit " + commit + " "}},
-		{name: "rerun resumes the PR this run opened", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)},
+		{name: "rerun resumes the PR this run opened even when main moved", moved: true, env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)},
 			want: []string{"--match-head-commit " + resumed + " https://example.invalid/pr/9"}, forbid: []string{"pr create", "git/refs", "graphql"}},
-		{name: "rerun resumes even when main moved", moved: true, env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)},
-			want: []string{"--match-head-commit " + resumed}},
+		{name: "resumed PR on another parent fails closed", moved: true, env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_PARENT=" + resumed, "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)}, wantErr: true, forbid: []string{"pr merge"}},
 		{name: "PR from another run skips", env: []string{"FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "7", resumed)}, forbid: []string{"pr merge", "pr create"}},
 		{name: "orphan branch from a killed attempt is replaced", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_ORPHAN=1"},
 			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42", "pr merge"}},

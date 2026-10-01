@@ -100,8 +100,7 @@ The refresh job has no content-write or release-publication scope.
 
 The upstream-refresh publish job uses the `upstream-refresh` environment.
 It mints a GitHub App token with `contents: write` and `pull-requests: write`.
-It uses that token to create a signed branch commit and the bump PR.
-If the scope guard passes, it enables auto-merge for that commit only.
+It uses that token to create a signed branch commit and the bump PR. If the scope guard passes, it enables auto-merge for that commit only.
 
 The release environment protects registry publication, signing, and attestation.
 The environment requires maintainer approval and does not permit administrator bypass.

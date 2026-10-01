@@ -39,6 +39,7 @@ type workflowJob struct {
 	Name        string            `yaml:"name"`
 	Env         map[string]string `yaml:"env"`
 	Container   yaml.Node         `yaml:"container"`
+	RunsOn      yaml.Node         `yaml:"runs-on"`
 	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
 		Name string `yaml:"name"`
@@ -53,6 +54,7 @@ type workflowStep struct {
 	ID              string            `yaml:"id"`
 	Name            string            `yaml:"name"`
 	Shell           string            `yaml:"shell"`
+	WorkDir         string            `yaml:"working-directory"`
 	If              yaml.Node         `yaml:"if"`
 	ContinueOnError any               `yaml:"continue-on-error"`
 	Uses            string            `yaml:"uses"`
@@ -859,7 +861,7 @@ func upstreamRefreshReviewedUses(step workflowStep, checkout bool) bool {
 
 // upstreamRefreshAppCredentialRE matches any reference to the steps context or
 // to secrets, in any form. Only the mint, presence, and publisher steps may use them.
-var upstreamRefreshAppCredentialRE = regexp.MustCompile(`\bsteps\b|(^|[^.\w])secrets\b`)
+var upstreamRefreshAppCredentialRE = regexp.MustCompile(`(?i)\bsteps\b|(^|[^.\w])secrets\b`)
 
 const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
   echo "present=false" >> "${GITHUB_OUTPUT}"
@@ -897,8 +899,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				}
 			}
 		}
-		if job.Container.Kind != 0 {
-			return fmt.Errorf("%s %s job must not run in a container", path, name)
+		if job.Container.Kind != 0 || job.RunsOn.Kind != yaml.ScalarNode || job.RunsOn.Value != "ubuntu-latest" {
+			return fmt.Errorf("%s %s job must run on ubuntu-latest and must not run in a container", path, name)
 		}
 		if name != "publish" && job.Environment.Name != "" {
 			return fmt.Errorf("%s %s job must not bind an environment", path, name)
@@ -935,18 +937,18 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
 		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
 	}
-	if len(publish.Env) != 0 || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
-		return fmt.Errorf("%s publish job must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION (NODE_OPTIONS or BASH_ENV would reach the App token)", path)
+	if len(publish.Env)+len(guard.Env) != 0 || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
+		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION (NODE_OPTIONS or BASH_ENV would reach the guard or the App token)", path)
 	}
 	appTokenSteps := 0
 	publishRuns := 0
 	stray, beforePublisher := "", true
 	for _, step := range publish.Steps {
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
-		usesToken := upstreamRefreshAppCredentialRE.MatchString(step.Run)
+		usesToken := false
 		presence := step.ID == "secrets" && step.Uses == "" && step.Shell == upstreamRefreshPublishShell && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
 			strings.TrimSpace(step.Run) == strings.TrimSpace(upstreamRefreshPresenceRun)
-		for _, group := range []map[string]string{step.Env, step.With} {
+		for _, group := range []map[string]string{step.Env, step.With, {"name": step.Name, "run": step.Run, "shell": step.Shell, "working-directory": step.WorkDir}} {
 			for _, value := range group {
 				usesToken = usesToken || !presence && upstreamRefreshAppCredentialRE.MatchString(value)
 			}

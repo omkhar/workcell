@@ -50,8 +50,8 @@ audit_head() {
 audit_head
 
 branch="codex/upstream-refresh-${GITHUB_RUN_ID}"
-existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --limit 1000 --json title,url,headRefName,headRefOid \
-  --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0] // empty')"
+existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --limit 1000 --json title,url,headRefName,headRefOid,isCrossRepository \
+  --jq 'map(select(.isCrossRepository | not) | select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0] // empty')"
 # A PR from this run means an earlier attempt stopped after it opened the PR.
 # Resume its disposition. The commit checks below still run against its head.
 resume=0
@@ -156,6 +156,7 @@ fi
 
 commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${commit_oid}")"
 [[ "$(jq -r .tree.sha <<<"${commit_json}")" == "${tree_oid}" ]] || fail "GitHub commit tree does not match candidate tree ${tree_oid}"
+[[ "$(jq -r '.parents | map(.sha) | join(" ")' <<<"${commit_json}")" == "${base_sha}" ]] || fail "GitHub commit parent is not candidate base ${base_sha}"
 [[ "$(jq -r .verification.verified <<<"${commit_json}")" == true ]] || fail "GitHub did not sign commit ${commit_oid}"
 
 body_file="${work}/pr-body.md"

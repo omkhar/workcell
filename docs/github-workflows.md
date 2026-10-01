@@ -190,8 +190,6 @@ It checks these pin groups:
 A Codex change also checks the classified command inventory.
 The workflow stops if the command set changes.
 
-The workflow has three jobs.
-
 | Job | Environment | Token | Purpose |
 | --- | --- | --- | --- |
 | `refresh` | none | `contents: read`, `issues: write`, `pull-requests: read` | Builds the candidate bundle and updates the tracking issue. |
@@ -199,12 +197,9 @@ The workflow has three jobs.
 | `publish` | `upstream-refresh` | GitHub App token | Opens the PR with `scripts/ci/upstream-refresh-publish.sh`. |
 
 The `refresh` job uploads a candidate bundle.
-That bundle contains `patch`, `diffstat`, `metadata.json`, and `provider-summary`.
-`provider-summary` is the provider bump plan from before the refresh.
+That bundle contains `patch`, `diffstat`, `metadata.json`, and `provider-summary`, the provider bump plan.
 
-The `publish` job applies the patch to `base_sha`.
-It stops if the tree differs from `tree_oid`.
-It stops on a symlink, a submodule, a mode change, or a new executable file.
+The `publish` job applies the patch to `base_sha`. It stops if the tree differs from `tree_oid`. It stops on a symlink, a submodule, a mode change, or a new executable file.
 It commits with the GraphQL `createCommitOnBranch` mutation, so GitHub signs the commit.
 It checks the commit tree and the signature, and then opens the PR.
 
@@ -212,6 +207,8 @@ It skips a candidate that is stale against `main`. It skips when a refresh PR fr
 If an earlier attempt of the same run opened the PR, `publish` resumes that PR. It checks the PR head commit and then applies the merge or label step.
 If a run stops after it opens the PR, rerun that run or close the PR.
 The job output `result` is `passed` only when the guard step exits 0.
+
+The App has no Workflows permission, so `publish` cannot commit a candidate that changes `.github/workflows/`. Publish that candidate on the host.
 
 The scope guard allows only these changes:
 
@@ -221,8 +218,7 @@ The scope guard allows only these changes:
 - `runtime/container/control-plane-manifest.json`
 
 If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` with the signed commit.
-Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible.
-The required checks still gate the merge.
+Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible. The required checks still gate the merge.
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.
 Codex review of a bump PR is advisory.
@@ -238,9 +234,8 @@ The comment lists the PR, the commit, the merge decision, the cool-off policy, a
    Install it on this repository only.
 2. Add two secrets to the `upstream-refresh` environment:
    `WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID` and `WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY`.
-3. Add the App to the pull-request review bypass list of the `main` ruleset.
-   Add no other actor.
-   A bot cannot approve its own PR, so this bypass replaces the approval.
+3. Set `upstream_refresh_app_id` under `[branch_review]` in `policy/github-hosted-controls.toml` to the App ID. Add the App to the pull-request review bypass list of the `main` ruleset.
+   Add no other actor. A bot cannot approve its own PR, so this bypass replaces the approval.
 
 Without the bypass, auto-merge waits for a human review.
 The hosted-controls audit requires these two secrets and no others in this environment.

