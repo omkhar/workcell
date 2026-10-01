@@ -99,8 +99,11 @@ The control names match in any letter case, because a case-insensitive volume
 opens `CONFIG` as `config`. A `HEAD` symlink under `.git/modules` is allowed when
 it resolves on the host.
 
-Workcell also refuses the workspace when it cannot list the workspace or a Git
-directory. The checks run at launch. They do not stop a file that is created
+These checks cover real `.git` directories. They do not cover a nested `.git` file
+or symlink that points to an admin directory elsewhere.
+
+Workcell also refuses the workspace when it cannot list the workspace, a Git
+directory, or its modules. The checks run at launch. They do not stop a file that is created
 after launch.
 
 The Copilot adapter also masks Copilot settings, instructions, MCP files,

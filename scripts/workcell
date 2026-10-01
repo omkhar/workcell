@@ -8040,6 +8040,7 @@ prepare_workspace_control_plane_shadow() {
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
   local rel path git_dir git_rel commondir_hits
   local git_walk_complete=0
+  local module_walk_complete=0
 
   SHADOW_MOUNTS=()
   SHADOW_DEST_PATHS=()
@@ -8093,7 +8094,15 @@ prepare_workspace_control_plane_shadow() {
       add_shadow_dir_mount "${workspace}" "${git_rel}/worktrees"
     fi
     if [[ -d "${workspace}/${git_rel}/modules" ]]; then
+      # A lone NUL after a successful walk is the completion sentinel. Bash
+      # drops the status of a process substitution, so a failed walk must not
+      # pass as "no more mounts".
+      module_walk_complete=0
       while IFS= read -r -d '' path; do
+        if [[ -z "${path}" ]]; then
+          module_walk_complete=1
+          continue
+        fi
         rel="${path#"${workspace}/"}"
         add_shadow_git_path_if_present "${workspace}" "${rel}"
       done < <(
@@ -8102,15 +8111,28 @@ prepare_workspace_control_plane_shadow() {
           \( \( -type d -o -type l \) -iname hooks \) -o \
           \( \( -type f -o -type l \) \( -iname config -o -iname config.worktree \) \) \
           \) \
-          -print0
+          -print0 && printf '\0'
       )
+      if [[ "${module_walk_complete}" -ne 1 ]]; then
+        echo "Refusing git workspace: Workcell could not inventory the module Git directories: ${git_dir}" >&2
+        exit 2
+      fi
+      module_walk_complete=0
       while IFS= read -r -d '' path; do
+        if [[ -z "${path}" ]]; then
+          module_walk_complete=1
+          continue
+        fi
         rel="${path#"${workspace}/"}"
         add_shadow_dir_mount "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
-          \( \( -type d -o -type l \) -iname worktrees \) -print0
+          \( \( -type d -o -type l \) -iname worktrees \) -print0 && printf '\0'
       )
+      if [[ "${module_walk_complete}" -ne 1 ]]; then
+        echo "Refusing git workspace: Workcell could not inventory the module worktrees: ${git_dir}" >&2
+        exit 2
+      fi
     fi
   done < <(
     find "${workspace}" -type d -name .git -prune -print0 && printf '\0'
