@@ -159,6 +159,18 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "final patch line has no newline",
 		},
 		{
+			name: "duplicate gemini pin added",
+			patch: "diff --git a/runtime/container/providers/package.json b/runtime/container/providers/package.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/providers/package.json\n+++ b/runtime/container/providers/package.json\n@@ -1,2 +1,3 @@\n ctx\n+    \"@google/gemini-cli\": \"0.58.0\",\n     \"@google/gemini-cli\": \"0.58.0\"\n",
+			wantErr: "replaced one for one",
+		},
+		{
+			name: "new file hunk with old lines",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n-a\n+b\n",
+			wantErr: "new file hunk must have no old lines",
+		},
+		{
 			name: "context-only hunk",
 			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
 				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n context\n",

@@ -77,7 +77,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: hunk without an added or removed line", file)
 		case file == scopeGuardCodexFixture && (len(addedVersions) != 2 || addedVersions[0] != addedVersions[1]):
 			fail("%s: the version stamp and source tag must both change to the same version", file)
-		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture) && !slices.Equal(removedKeys, addedKeys):
+		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || file == scopeGuardPackageJSONPath) && !slices.Equal(removedKeys, addedKeys):
 			// Docker and the shell use the last assignment, the updater reads the first.
 			fail("%s: provider assignments must be replaced one for one, not added, removed, or reordered", file)
 		}
@@ -125,8 +125,11 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 					file == scopeGuardCodexFixture && !scopeGuardCodexStampLineRE.MatchString(line)) {
 				fail("%s: line %s", file, line)
 			}
-			if file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture {
+			if file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || file == scopeGuardPackageJSONPath {
 				key, _, _ := strings.Cut(strings.TrimSpace(line[1:]), "=")
+				if file == scopeGuardPackageJSONPath {
+					key = "gemini pin" // the line regexp admits only that pin
+				}
 				if file == scopeGuardCodexFixture {
 					key = scopeGuardSemverRE.ReplaceAllString(line[1:], "V")
 					if line[0] == '+' {
@@ -200,6 +203,11 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			}
 			afterChange, hunkChanged = false, false
 			remOld, remNew = scopeGuardHunkCount(m[1]), scopeGuardHunkCount(m[2])
+			if newFile && remOld != 0 {
+				fail("%s: new file hunk must have no old lines: %s", file, line)
+				remOld, remNew = 0, 0
+				continue
+			}
 			if remOld == 0 && remNew == 0 {
 				fail("%s: zero-line hunk: %s", file, line)
 				continue
