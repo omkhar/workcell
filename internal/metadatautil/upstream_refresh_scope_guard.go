@@ -21,14 +21,20 @@ const scopeGuardMaxProblems = 50
 
 const scopeGuardNoNewline = "\\ No newline at end of file"
 
-const scopeGuardDockerfilePath = "runtime/container/Dockerfile"
+const (
+	scopeGuardDockerfilePath  = "runtime/container/Dockerfile"
+	scopeGuardPackageJSONPath = "runtime/container/providers/package.json"
+)
 
 var (
 	// Dockerfile lines may change only when they are provider version ARG
 	// lines or the indented checksum assignments inside the provider RUN blocks.
 	scopeGuardDockerfileLineRE = regexp.MustCompile(
 		`^[-+](ARG (CLAUDE|CODEX|COPILOT)_VERSION=[A-Za-z0-9._+-]+|\s+(CLAUDE_SHA256|CODEX_SHA256|CODEX_CODE_MODE_HOST_SHA256|COPILOT_SHA256)="[0-9a-f]{64}"; \\)$`)
-	scopeGuardPathRE = regexp.MustCompile(
+	// package.json may change only the pinned Gemini CLI version, because
+	// npm ci installs every dependency that file declares.
+	scopeGuardPackageJSONLineRE = regexp.MustCompile(`^[-+]\s+"@google/gemini-cli": "[A-Za-z0-9._+-]+",?$`)
+	scopeGuardPathRE            = regexp.MustCompile(
 		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
@@ -89,7 +95,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				fail("%s: hunk longer than its header", file)
 				remOld, remNew = 0, 0
 			}
-			if file == scopeGuardDockerfilePath && (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) && !scopeGuardDockerfileLineRE.MatchString(line) {
+			if (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) &&
+				(file == scopeGuardDockerfilePath && !scopeGuardDockerfileLineRE.MatchString(line) ||
+					file == scopeGuardPackageJSONPath && !scopeGuardPackageJSONLineRE.MatchString(line)) {
 				fail("%s: line %s", file, line)
 			}
 			continue

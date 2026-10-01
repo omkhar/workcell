@@ -14,6 +14,9 @@ if [[ $# -ne 1 ]]; then
   exit 2
 fi
 
+# The Go command runs from the repo root, so resolve the patch path first.
+[[ $1 == /* ]] || set -- "${PWD}/$1"
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"

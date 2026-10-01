@@ -119,6 +119,10 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "zero-line hunk",
 		},
 		{
+			name:  "package.json gemini version bump",
+			patch: scopeGuardFilePatch("runtime/container/providers/package.json", `    "@google/gemini-cli": "0.58.0"`, `    "@google/gemini-cli": "0.62.0"`),
+		},
+		{
 			name: "new file with dev-null old header",
 			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\n" + scopeGuardIndex +
 				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
@@ -174,6 +178,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
 				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
 			wantErr: "file header does not match the diff path",
+		},
+		{
+			name:    "extra package.json dependency",
+			patch:   scopeGuardFilePatch("runtime/container/providers/package.json", `    "@google/gemini-cli": "0.58.0"`, `    "evil-pkg": "1.0.0"`),
+			wantErr: `line +    "evil-pkg": "1.0.0"`,
 		},
 		{
 			name:    "cross-product checksum name",
@@ -232,5 +241,19 @@ func TestUpstreamRefreshScopeGuardRejectsSymlinkedPatch(t *testing.T) {
 	script := filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-scope-guard.sh")
 	if out, err := exec.Command(script, link).CombinedOutput(); err == nil {
 		t.Fatalf("scope-guard followed a symlinked patch:\n%s", out)
+	}
+}
+
+func TestUpstreamRefreshScopeGuardResolvesRelativePatchFromCallerDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "patch"), []byte(scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-scope-guard.sh"), "patch")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("relative patch path was not resolved against the caller directory: %v\n%s", err, out)
 	}
 }
