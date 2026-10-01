@@ -8047,16 +8047,6 @@ prepare_workspace_control_plane_shadow() {
   local session_workspace="${3:-$1}"
   local shadow_parent="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
   local rel path git_dir git_rel commondir_hits
-  # Prune refs, logs and objects inside a Git directory: Git keeps branch,
-  # reflog and object files there, never config, hooks or a submodule Git
-  # directory. Like Git, a Git directory has objects, refs and a HEAD that is
-  # a regular file or a link to refs/. A HEAD directory does not count,
-  # because Git can make x/HEAD, x/refs and x/objects submodules.
-  local -a git_data_prune=(
-    \( \( -iname refs -o -iname logs -o -iname objects \) -type d
-    -execdir sh -c 'test -d objects && test -d refs && if test -L HEAD; then readlink HEAD | grep -q "^refs/"; else test -f HEAD; fi' \;
-    \) -prune
-  )
   local git_walk_complete=0
   local module_walk_complete=0
 
@@ -8079,11 +8069,14 @@ prepare_workspace_control_plane_shadow() {
     # A commondir file, or a symlink at worktrees or under modules, makes Git
     # read config and hooks from a directory that the masks below do not cover.
     # A standard clone has none. Notes on the walk:
-    # - It prunes the real worktrees directories that the masks replace.
-    # - It applies git_data_prune, so branches named topic/HEAD and
-    #   topic/commondir are not a redirect. Git refuses to put a submodule
-    #   Git directory inside another Git directory, so only a nested .git file
-    #   reaches an admin directory there, and these checks do not cover that.
+    # - It prunes the real worktrees directories that the masks replace, and
+    #   the top-level refs, logs and objects in any letter case. Git keeps
+    #   branch and reflog files there, so branches named topic/HEAD and
+    #   topic/commondir are not a redirect. Git reaches an admin directory
+    #   there only through a nested .git file, which these checks do not cover.
+    #   Module refs, logs and objects are not pruned: Git can make submodules
+    #   named x/refs, and a hand-made HEAD in x then makes x look like a Git
+    #   directory. Such branch pairs in a module fail closed.
     # - A commondir counts in any letter case, because a case-insensitive
     #   volume opens COMMONDIR as commondir.
     # - A commondir counts only beside a HEAD file or HEAD symlink. Git
@@ -8097,7 +8090,7 @@ prepare_workspace_control_plane_shadow() {
     # - Control names match in any letter case, like commondir.
     # - Bash drops the status of a process substitution, so capture the walk
     #   status: an unreadable Git directory must not pass as "no redirect".
-    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -ipath ./worktrees -o \( -ipath './modules/*' -iname worktrees \) \) -type d \) -prune -o "${git_data_prune[@]}" -o \( -iname commondir ! -type d \( -execdir test -e HEAD \; -o -execdir test -L HEAD \; \) -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
+    if ! commondir_hits="$(cd "${git_dir}" && find . \( \( -ipath ./worktrees -o \( -ipath './modules/*' -iname worktrees \) -o -ipath ./refs -o -ipath ./logs -o -ipath ./objects \) -type d \) -prune -o \( -iname commondir ! -type d \( -execdir test -e HEAD \; -o -execdir test -L HEAD \; \) -print \) -o \( \( -ipath ./worktrees -o -ipath ./hooks -o -ipath ./config -o -ipath ./config.worktree -o -ipath './modules' -o -ipath './modules/*' \) -type l \( ! \( -iname hooks -o -iname config -o -iname config.worktree -o -iname worktrees -o -iname HEAD \) -o ! -exec test -e {} \; \) -print \))"; then
       echo "Refusing git workspace: Workcell could not inventory the Git directory for a commondir file: ${git_dir}" >&2
       exit 2
     fi
@@ -8130,7 +8123,6 @@ prepare_workspace_control_plane_shadow() {
         add_shadow_git_path_if_present "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
-          "${git_data_prune[@]}" -o \
           \( \
           \( \( -type d -o -type l \) -iname hooks \) -o \
           \( \( -type f -o -type l \) \( -iname config -o -iname config.worktree \) \) \
@@ -8151,8 +8143,7 @@ prepare_workspace_control_plane_shadow() {
         add_shadow_dir_mount "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
-          "${git_data_prune[@]}" -o \
-          \( \( -type d -o -type l \) -iname worktrees -print0 \) && printf '\0'
+          \( \( -type d -o -type l \) -iname worktrees \) -print0 && printf '\0'
       )
       if [[ "${module_walk_complete}" -ne 1 ]]; then
         echo "Refusing git workspace: Workcell could not inventory the module worktrees: ${git_dir}" >&2

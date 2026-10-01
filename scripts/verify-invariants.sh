@@ -6758,34 +6758,22 @@ git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git
 git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic/commondir"
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPREFS_REPO}" --dry-run >/tmp/workcell-commondir-uprefs.out 2>&1
 
-# Branches named topic/HEAD and topic/commondir in a module Git directory are refs, not a redirect.
-# Branches named CONFIG and worktrees/t are refs too, so the module mask walks must not mount them.
-COMMONDIR_MODBRANCH_REPO="${COMMONDIR_ROOT}/module-branch-repo"
-git init -q -b master "${COMMONDIR_MODBRANCH_REPO}"
-git -C "${COMMONDIR_MODBRANCH_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
-git init -q --bare -b master "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child"
-git -C "${COMMONDIR_MODBRANCH_REPO}" push -q "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child" master:topic/HEAD master:topic/commondir master:CONFIG master:worktrees/t
-run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODBRANCH_REPO}" --dry-run >/tmp/workcell-commondir-modbranch.out 2>&1
-grep -q -- '/workspace/\.git/modules/child/config:ro' /tmp/workcell-commondir-modbranch.out
-if grep -q -- '/workspace/\.git/modules/child/refs/' /tmp/workcell-commondir-modbranch.out; then
-  echo "Expected module branches named CONFIG and worktrees/t to stay unmasked" >&2
+# Module refs are scanned even when the module is a full Git directory: Git can make a
+# submodule named child/refs/x first, and a later HEAD in child does not hide it.
+COMMONDIR_MODGIT_REPO="${COMMONDIR_ROOT}/module-gitdir-repo"
+git init -q -b master "${COMMONDIR_MODGIT_REPO}"
+git -C "${COMMONDIR_MODGIT_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+git init -q --bare -b master "${COMMONDIR_MODGIT_REPO}/.git/modules/child"
+mkdir -p "${COMMONDIR_MODGIT_REPO}/.git/modules/child/refs/x"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_MODGIT_REPO}/.git/modules/child/refs/x/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_MODGIT_REPO}/.git/modules/child/refs/x/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODGIT_REPO}" --dry-run >/tmp/workcell-commondir-modgit.out 2>&1; then
+  echo "Expected repo with a redirect under the refs of a module Git directory to be rejected" >&2
   exit 1
 fi
+grep -q 'redirects Git config and hooks: .git/modules/child/refs/x/commondir' /tmp/workcell-commondir-modgit.out
 
-# Git can make submodules x/HEAD, x/refs and x/objects, so a HEAD directory does not make x a Git directory.
-COMMONDIR_HEADDIR_REPO="${COMMONDIR_ROOT}/head-dir-repo"
-git init -q -b master "${COMMONDIR_HEADDIR_REPO}"
-git -C "${COMMONDIR_HEADDIR_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
-mkdir -p "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/HEAD" "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/objects" "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/refs"
-printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_HEADDIR_REPO}/.git/modules/x/refs/commondir"
-cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/refs/HEAD"
-if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_HEADDIR_REPO}" --dry-run >/tmp/workcell-commondir-headdir.out 2>&1; then
-  echo "Expected repo with a redirect in module x/refs beside a HEAD directory to be rejected" >&2
-  exit 1
-fi
-grep -q 'redirects Git config and hooks: .git/modules/x/refs/commondir' /tmp/workcell-commondir-headdir.out
-
-# Refs are pruned only inside a Git directory. Module child has no objects or HEAD, so its refs can be a submodule Git directory and must be scanned.
+# Only the top-level refs are pruned: an admin directory under module refs is still rejected.
 COMMONDIR_MODREFS_REPO="${COMMONDIR_ROOT}/module-refs-repo"
 git init -q -b master "${COMMONDIR_MODREFS_REPO}"
 git -C "${COMMONDIR_MODREFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
