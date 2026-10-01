@@ -11,7 +11,7 @@ The GitHub Releases page contains old details that are not in this file.
 
 The X1 baseline audit found 13 confirmed findings.
 The fixes are below.
-`docs/security/audit-2026-10.md` lists scope, severity, and open findings.
+`docs/security/audit-2026-10.md` lists scope, severity, and the open finding.
 
 - Session capture no longer follows container symbolic links on the host (#750).
 - The SSH config check parses `Keyword=value` syntax and rejects SSH sources in the workspace (#743).
@@ -20,6 +20,9 @@ The fixes are below.
 - Codex requirements and Gemini system settings now use provider system scope (#751).
 - CI now verifies vendored Rust crates against crates.io (#745).
 - `session logs` now refuses a symbolic link when it opens the log file (#740).
+- Session capture now fails closed when it cannot copy a container file (#761).
+- Provider wrappers now trust only root-owned runtime state files (#749).
+- The decoder for audit records now rejects NUL bytes (#739).
 
 ## v1.0.2 - 2026-08-05
 
