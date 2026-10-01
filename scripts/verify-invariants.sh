@@ -6759,12 +6759,18 @@ git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPREFS_REPO}" --dry-run >/tmp/workcell-commondir-uprefs.out 2>&1
 
 # Branches named topic/HEAD and topic/commondir in a module Git directory are refs, not a redirect.
+# Branches named CONFIG and worktrees/t are refs too, so the module mask walks must not mount them.
 COMMONDIR_MODBRANCH_REPO="${COMMONDIR_ROOT}/module-branch-repo"
 git init -q -b master "${COMMONDIR_MODBRANCH_REPO}"
 git -C "${COMMONDIR_MODBRANCH_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
 git init -q --bare -b master "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child"
-git -C "${COMMONDIR_MODBRANCH_REPO}" push -q "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child" master:topic/HEAD master:topic/commondir
+git -C "${COMMONDIR_MODBRANCH_REPO}" push -q "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child" master:topic/HEAD master:topic/commondir master:CONFIG master:worktrees/t
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODBRANCH_REPO}" --dry-run >/tmp/workcell-commondir-modbranch.out 2>&1
+grep -q -- '/workspace/\.git/modules/child/config:ro' /tmp/workcell-commondir-modbranch.out
+if grep -q -- '/workspace/\.git/modules/child/refs/' /tmp/workcell-commondir-modbranch.out; then
+  echo "Expected module branches named CONFIG and worktrees/t to stay unmasked" >&2
+  exit 1
+fi
 
 # Git can make submodules x/HEAD, x/refs and x/objects, so a HEAD directory does not make x a Git directory.
 COMMONDIR_HEADDIR_REPO="${COMMONDIR_ROOT}/head-dir-repo"
