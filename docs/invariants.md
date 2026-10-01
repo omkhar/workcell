@@ -89,10 +89,10 @@ its submodules. These paths are `hooks`, `config`, `config.worktree`, and
 Workcell refuses a safe-path workspace in these cases. Each case can make Git
 read config and hooks from a directory that the masks do not cover.
 
-- A Git `commondir` file is beside a `HEAD` file or `HEAD` symlink outside
-  `worktrees`, and outside the `refs`, `logs` and `objects` of a Git directory
-  (one with `objects`, `refs` and `HEAD`). A dangling `HEAD` symlink counts,
-  because Git accepts one that names `refs/`.
+- A Git `commondir` file is beside a `HEAD` file or `HEAD` symlink. The scan
+  skips `worktrees`. It also skips `refs`, `logs` and `objects` inside a Git
+  directory, which has `objects`, `refs` and a `HEAD` file or `refs/` link. A
+  dangling `HEAD` symlink counts, because Git accepts one that names `refs/`.
 - `.git/modules` is a symlink, or a symlink under `.git/modules` is not a
   `hooks`, `config`, `config.worktree`, `worktrees` or `HEAD` link.
 - A top-level or module `hooks`, `config`, `config.worktree` or `worktrees`

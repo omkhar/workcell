@@ -6766,6 +6766,19 @@ git init -q --bare -b master "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child"
 git -C "${COMMONDIR_MODBRANCH_REPO}" push -q "${COMMONDIR_MODBRANCH_REPO}/.git/modules/child" master:topic/HEAD master:topic/commondir
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_MODBRANCH_REPO}" --dry-run >/tmp/workcell-commondir-modbranch.out 2>&1
 
+# Git can make submodules x/HEAD, x/refs and x/objects, so a HEAD directory does not make x a Git directory.
+COMMONDIR_HEADDIR_REPO="${COMMONDIR_ROOT}/head-dir-repo"
+git init -q -b master "${COMMONDIR_HEADDIR_REPO}"
+git -C "${COMMONDIR_HEADDIR_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/HEAD" "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/objects" "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/refs"
+printf '%s\n' "${COMMONDIR_ALT}" >"${COMMONDIR_HEADDIR_REPO}/.git/modules/x/refs/commondir"
+cp "${COMMONDIR_REPO}/.git/HEAD" "${COMMONDIR_HEADDIR_REPO}/.git/modules/x/refs/HEAD"
+if run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_HEADDIR_REPO}" --dry-run >/tmp/workcell-commondir-headdir.out 2>&1; then
+  echo "Expected repo with a redirect in module x/refs beside a HEAD directory to be rejected" >&2
+  exit 1
+fi
+grep -q 'redirects Git config and hooks: .git/modules/x/refs/commondir' /tmp/workcell-commondir-headdir.out
+
 # Refs are pruned only inside a Git directory. Module child has no objects or HEAD, so its refs can be a submodule Git directory and must be scanned.
 COMMONDIR_MODREFS_REPO="${COMMONDIR_ROOT}/module-refs-repo"
 git init -q -b master "${COMMONDIR_MODREFS_REPO}"
