@@ -281,7 +281,7 @@ ARG CLAUDE_VERSION=2.1.285
 # consumes the signed, statically linked musl Linux CLI and code-mode host.
 # To update manually, verify all four GitHub release asset digests. Then
 # refresh both checksum values for arm64 and amd64 below.
-ARG CODEX_VERSION=0.153.2
+ARG CODEX_VERSION=0.158.0
 # GitHub Copilot CLI native binary version and SHA256 checksums for each Linux
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
@@ -399,13 +399,13 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CODEX_ARCH="aarch64-unknown-linux-musl"; \
-      CODEX_SHA256="878693f9b370320ea21793f99ea1f5687b7d9aa1f2c733de693d9ec0baa4e62a"; \
-      CODEX_CODE_MODE_HOST_SHA256="70fe485e6919a038b75f70be71aa5782a19a5f36ee85597301e90bd1c9bcbf07"; \
+      CODEX_SHA256="91e3fafe5ff845a8f685a05d04919146fb30fdc9245af1a42a2f7f239959e90c"; \
+      CODEX_CODE_MODE_HOST_SHA256="541bebec84765ad0d21a3591bed18e251dc1cf164cef203e05002fb045ab1cec"; \
       ;; \
     amd64) \
       CODEX_ARCH="x86_64-unknown-linux-musl"; \
-      CODEX_SHA256="e8cd1160071f725d2a10cab81073dd6818fc8b096372125d27ef6e66fdf0979e"; \
-      CODEX_CODE_MODE_HOST_SHA256="177a4507b9cc7f97f113ac034697b39f6a71a876a8bd508ff6d7f52f342ebe4a"; \
+      CODEX_SHA256="af9f5aa6e6662accf9d707cef0d9ca083880a173a9c2b6c22947edb7830e5778"; \
+      CODEX_CODE_MODE_HOST_SHA256="5455c64be4ba371444710895aff6d74d653985a3bfc454a8b7fe42d6e6d11e3d"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
