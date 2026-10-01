@@ -1711,7 +1711,7 @@ func TestCheckPinnedInputsRejectsNonPositiveAppIDPin(t *testing.T) {
 	t.Parallel()
 	cfg := writePinnedInputsFixture(t)
 	rewriteFile(t, filepath.Join(filepath.Dir(cfg.ProviderBumpPolicyPath), "github-hosted-controls.toml"), func(content string) string {
-		return strings.Replace(content, "[branch_review]\n", "[branch_review]\nupstream_refresh_app_id = \"x\"\n", 1)
+		return regexp.MustCompile(`(?m)^upstream_refresh_app_id = .*$`).ReplaceAllString(content, `upstream_refresh_app_id = "x"`)
 	})
 	err := metadatautil.CheckPinnedInputs(cfg)
 	if err == nil || !strings.Contains(err.Error(), "upstream_refresh_app_id must be a positive integer") {
