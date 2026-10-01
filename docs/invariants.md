@@ -91,7 +91,7 @@ read config and hooks from a directory that the masks do not cover.
 
 - A Git `commondir` file is beside a `HEAD` file outside `worktrees`.
 - `.git/modules` is a symlink, or a symlink under `.git/modules` is not a
-  `hooks`, `config`, `config.worktree` or `worktrees` link.
+  `hooks`, `config`, `config.worktree`, `worktrees` or `HEAD` link.
 - A top-level or module `hooks`, `config`, `config.worktree` or `worktrees`
   symlink dangles on the host. The launcher masks these links only when they resolve on the host.
 
