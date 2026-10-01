@@ -24,6 +24,12 @@ The fixes are below.
 - Provider wrappers now trust only root-owned runtime state files (#749).
 - The decoder for audit records now rejects NUL bytes (#739).
 
+### Fixed
+
+- The provider pin updater no longer moves a pin back to an older release when
+  the cool-off window grows. It keeps the current pin and reports the older
+  candidate as held (`current-newer-than-cooled-candidate`).
+
 ## v1.0.2 - 2026-08-05
 
 This release is the first published 1.0 release. The `v1.0.0` and
