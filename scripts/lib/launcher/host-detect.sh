@@ -33,6 +33,19 @@ support_matrix_host_override_allowed() {
   return 1
 }
 
+# Per-host cache root: ~/Library/Caches on macOS, XDG cache dir elsewhere.
+# Callers append colima/..., workcell/... themselves.  Needs REAL_HOME.
+workcell_colima_cache_root() {
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin)
+      printf '%s\n' "${REAL_HOME}/Library/Caches"
+      ;;
+    *)
+      printf '%s\n' "${XDG_CACHE_HOME:-${REAL_HOME}/.cache}"
+      ;;
+  esac
+}
+
 detected_host_os() {
   local host_os=""
 

@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "b7e805cdfe5e93fab750b409e9abdea0486ca940e4f8c030b01a0effcd537fba"
+      "sha256": "2683a6c88d544371664e7a92e8988763094deef2db4193bb2819b07e248321a0"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -14,7 +14,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/host-detect.sh",
-      "sha256": "318ac47025849d41e98b775e8d0d4209ae4ba80e1eeebfa393244ebc24d36fbe"
+      "sha256": "1715b9d347eacac32fca54246994f96ee67f2ffbd8c2f089b0cadaf7db50cb4a"
     },
     {
       "repo_path": "scripts/lib/launcher/host-exec.sh",

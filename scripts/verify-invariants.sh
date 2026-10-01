@@ -254,11 +254,14 @@ fi
 REAL_HOME="$(
   printf '%s\n' ~
 )"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 CODEX_VERIFY_HOME="$(mktemp -d)"
 BARRIER_VERIFY_ROOT="$(mktemp -d)"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
 INSTALL_VERIFY_HOME="$(mktemp -d)"
+INSTALL_VERIFY_COLIMA_CACHE="$(REAL_HOME="${INSTALL_VERIFY_HOME}" XDG_CACHE_HOME="" workcell_colima_cache_root)/colima"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
@@ -1163,13 +1166,13 @@ mkdir -p \
   "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile" \
   "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock" \
   "${INSTALL_VERIFY_HOME}/.colima/_store" \
-  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs" \
-  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow" \
-  "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
-mkdir -p "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks"
-printf '#!/bin/sh\n' >"${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
-chmod 0555 "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks"
-chmod 0444 "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
+  "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-host-inputs" \
+  "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-shadow" \
+  "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-token-handoff"
+mkdir -p "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-shadow/shadow.readonly/git/.git/hooks"
+printf '#!/bin/sh\n' >"${INSTALL_VERIFY_COLIMA_CACHE}/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
+chmod 0555 "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-shadow/shadow.readonly/git/.git/hooks"
+chmod 0444 "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-shadow/shadow.readonly/git/.git/hooks/pre-commit"
 printf '%s\n' "${ROOT_DIR}" >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.managed"
 printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.image-ready"
 printf '{}\n' >"${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-verify-profile.json"
@@ -1200,9 +1203,9 @@ test ! -e "${INSTALL_VERIFY_HOME}/.colima/_lima/colima-workcell-verify-profile"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/locks/workcell-verify-profile.lock"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-verify-profile.json"
 test ! -e "${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-store-only-profile.json"
-test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs"
-test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
-test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
+test ! -e "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-host-inputs"
+test ! -e "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-shadow"
+test ! -e "${INSTALL_VERIFY_COLIMA_CACHE}/workcell-token-handoff"
 test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 test ! -e "/tmp/workcell-uninstall-verify.log.$$"
 test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
@@ -1683,7 +1686,7 @@ if [[ "${INJECTION_DRY_RUN_OUTPUT}" == *"${INJECTION_POLICY_FIXTURE_ROOT}/codex-
   exit 1
 fi
 
-STALE_INJECTION_BUNDLE="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections.verify-stale.$$"
+STALE_INJECTION_BUNDLE="$(workcell_colima_cache_root)/colima/workcell-host-inputs/workcell-injections.verify-stale.$$"
 STALE_INJECTION_SIDECAR="${STALE_INJECTION_BUNDLE}.mounts.json"
 mkdir -p "$(dirname "${STALE_INJECTION_BUNDLE}")"
 mkdir -p "${STALE_INJECTION_BUNDLE}"
@@ -2204,6 +2207,8 @@ WORKCELL_START_RETRY_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-retry-harnes
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" workcell_colima_cache_root
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
@@ -2220,6 +2225,8 @@ WORKCELL_START_TIMEOUT_CLEANUP_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-start-ti
 {
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
+  printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" workcell_colima_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
   printf '\n'
@@ -4116,12 +4123,12 @@ STAGING_PROBE_OUTPUT="$("${ROOT_DIR}/scripts/workcell" \
   "${STAGING_PROBE_WORKSPACE}" \
   "${AUTH_STATUS_ROOT}/policy.toml" \
   strict)"
-if [[ "${STAGING_PROBE_OUTPUT}" != *"injection_bundle_root=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections."* ]]; then
+if [[ "${STAGING_PROBE_OUTPUT}" != *"injection_bundle_root=$(workcell_colima_cache_root)/colima/workcell-host-inputs/workcell-injections."* ]]; then
   echo "Expected staging probe to keep rendered injection bundles under the real Colima-visible cache root" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if [[ "${STAGING_PROBE_OUTPUT}" != *"shadow_root=${REAL_HOME}/Library/Caches/colima/workcell-shadow/shadow."* ]]; then
+if [[ "${STAGING_PROBE_OUTPUT}" != *"shadow_root=$(workcell_colima_cache_root)/colima/workcell-shadow/shadow."* ]]; then
   echo "Expected staging probe to keep workspace control-plane shadows under the real Colima-visible cache root" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
@@ -4131,7 +4138,7 @@ if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/gemin
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if ! printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq "^direct_mount=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$"; then
+if ! printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq "^direct_mount=$(workcell_colima_cache_root)/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$"; then
   echo "Expected staging probe to restage direct credential mounts under the injection bundle root" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
@@ -4164,6 +4171,8 @@ SYMLINK_STAGING_HARNESS="$(mktemp)"
   printf 'set -euo pipefail\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_host_path_components
   printf '\n'
+  extract_top_level_bash_function "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh" workcell_colima_cache_root
+  printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" colima_staging_cache_root
   printf '\n'
   extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" reject_symlinked_colima_staging_cache_roots
@@ -4175,24 +4184,28 @@ run_reject() {
   local expected="$2"
   local home="${SYMLINK_STAGING_HOME}-${case_name}"
   local target="${SYMLINK_STAGING_TARGET}-${case_name}"
+  local cache_base=""
+
+  unset XDG_CACHE_HOME
+  cache_base="$(REAL_HOME="${home}" workcell_colima_cache_root)"
 
   rm -rf "${home}" "${target}"
   case "${case_name}" in
     colima)
-      mkdir -p "${home}/Library/Caches" "${target}/colima"
-      ln -s "${target}/colima" "${home}/Library/Caches/colima"
+      mkdir -p "${cache_base}" "${target}/colima"
+      ln -s "${target}/colima" "${cache_base}/colima"
       ;;
     host_inputs)
-      mkdir -p "${home}/Library/Caches/colima" "${target}/host-inputs"
-      ln -s "${target}/host-inputs" "${home}/Library/Caches/colima/workcell-host-inputs"
+      mkdir -p "${cache_base}/colima" "${target}/host-inputs"
+      ln -s "${target}/host-inputs" "${cache_base}/colima/workcell-host-inputs"
       ;;
     shadow)
-      mkdir -p "${home}/Library/Caches/colima/workcell-host-inputs" "${target}/shadow"
-      ln -s "${target}/shadow" "${home}/Library/Caches/colima/workcell-shadow"
+      mkdir -p "${cache_base}/colima/workcell-host-inputs" "${target}/shadow"
+      ln -s "${target}/shadow" "${cache_base}/colima/workcell-shadow"
       ;;
     token_handoff)
-      mkdir -p "${home}/Library/Caches/colima/workcell-host-inputs" "${home}/Library/Caches/colima/workcell-shadow" "${target}/token-handoff"
-      ln -s "${target}/token-handoff" "${home}/Library/Caches/colima/workcell-token-handoff"
+      mkdir -p "${cache_base}/colima/workcell-host-inputs" "${cache_base}/colima/workcell-shadow" "${target}/token-handoff"
+      ln -s "${target}/token-handoff" "${cache_base}/colima/workcell-token-handoff"
       ;;
   esac
 

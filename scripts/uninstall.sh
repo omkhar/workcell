@@ -4,6 +4,10 @@ set -euo pipefail
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
+
 DRY_RUN=0
 
 usage() {
@@ -86,9 +90,10 @@ COLIMA_HOME="${REAL_HOME}/.colima"
 INSTALL_PATH="${REAL_HOME}/.local/bin/workcell"
 MAN_PATH="${REAL_HOME}/.local/share/man/man1/workcell.1"
 STATE_ROOT="${REAL_HOME}/.local/state/workcell"
-INJECTION_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-host-inputs"
-SHADOW_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-shadow"
-TOKEN_HANDOFF_ROOT="${REAL_HOME}/Library/Caches/colima/workcell-token-handoff"
+COLIMA_CACHE_ROOT="$(workcell_colima_cache_root)/colima"
+INJECTION_ROOT="${COLIMA_CACHE_ROOT}/workcell-host-inputs"
+SHADOW_ROOT="${COLIMA_CACHE_ROOT}/workcell-shadow"
+TOKEN_HANDOFF_ROOT="${COLIMA_CACHE_ROOT}/workcell-token-handoff"
 MACOS_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell"
 XDG_WORKCELL_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell"
 
