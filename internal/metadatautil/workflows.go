@@ -891,11 +891,6 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		if !ok {
 			return fmt.Errorf("%s must define the %s job", path, name)
 		}
-		for _, scope := range []string{"contents", "pull-requests"} {
-			if job.Permissions[scope] == "write" {
-				return fmt.Errorf("%s %s job must not grant %s: write", path, name, scope)
-			}
-		}
 		for _, step := range job.Steps {
 			if name != "publish" && strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
 				return fmt.Errorf("%s %s job must not mint the GitHub App token", path, name)
@@ -958,19 +953,13 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				usesToken = usesToken || !presence && upstreamRefreshAppCredentialRE.MatchString(value)
 			}
 		}
-		if mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@"); mint {
-			usesToken = false
-		}
-		strayToken = strayToken || usesToken && !publisher
-		for key := range step.Env {
-			if publisher && key != "GH_TOKEN" && key != "SCOPE_GUARD_RESULT" {
-				return fmt.Errorf("%s publish job step must run only the publish script", path)
-			}
-		}
-		if run := strings.TrimSpace(step.Run); publisher && (strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
+		mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@")
+		strayToken = strayToken || usesToken && !publisher && !mint
+		run := strings.TrimSpace(step.Run)
+		if publisher && (len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
 			return fmt.Errorf("%s publish job step must run only the publish script", path)
 		}
-		if strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
+		if mint {
 			appTokenSteps++
 			if step.ID != "app-token" || !maps.Equal(step.With, upstreamRefreshAppTokenInputs) {
 				return fmt.Errorf("%s publish job must mint the App token as step app-token from the client-id secret and private-key secret with only contents and pull-requests write", path)

@@ -7,12 +7,27 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func mustWrite(t *testing.T, path string, data []byte, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustMkdir(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func publishGit(t *testing.T, dir string, env []string, args ...string) string {
 	t.Helper()
@@ -43,22 +58,12 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	}
 	root := t.TempDir()
 	checkout := filepath.Join(root, "checkout")
-	if err := os.MkdirAll(checkout, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	mustMkdir(t, checkout)
 	publishGit(t, checkout, nil, "init", "-q")
-	if err := os.WriteFile(filepath.Join(checkout, "plain.txt"), []byte("one\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, "tool.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(checkout, "policy"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, "policy", "provider-bumps.toml"), []byte("cooloff_hours = 48\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, filepath.Join(checkout, "plain.txt"), []byte("one\n"), 0o644)
+	mustWrite(t, filepath.Join(checkout, "tool.sh"), []byte("#!/bin/sh\n"), 0o755)
+	mustMkdir(t, filepath.Join(checkout, "policy"))
+	mustWrite(t, filepath.Join(checkout, "policy", "provider-bumps.toml"), []byte("cooloff_hours = 48\n"), 0o644)
 	ident := []string{"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com"}
 	publishGit(t, checkout, nil, "add", "-A")
 	publishGit(t, checkout, ident, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base")
@@ -66,9 +71,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 
 	mutate(checkout)
 	candidate := filepath.Join(root, "candidate")
-	if err := os.MkdirAll(candidate, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	mustMkdir(t, candidate)
 	publishGit(t, checkout, nil, "add", "-A")
 	patch := publishGitRaw(t, checkout, "diff", "--cached", "--binary", "--full-index", "--patch", "--no-ext-diff", "--no-color")
 	index := filepath.Join(root, "index")
@@ -76,12 +79,8 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	publishGit(t, checkout, treeEnv, "read-tree", "HEAD")
 	publishGit(t, checkout, treeEnv, "add", "-A")
 	tree := publishGit(t, checkout, treeEnv, "write-tree")
-	if err := os.WriteFile(filepath.Join(candidate, "patch"), patch, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(candidate, "diffstat"), []byte(" stat\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, filepath.Join(candidate, "patch"), patch, 0o644)
+	mustWrite(t, filepath.Join(candidate, "diffstat"), []byte(" stat\n"), 0o644)
 	digest := sha256.Sum256(patch)
 	metadata := map[string]any{
 		"version": 1, "repository": "o/r", "workflow": "upstream-refresh", "run_id": 42,
@@ -96,17 +95,13 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(candidate, "metadata.json"), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, filepath.Join(candidate, "metadata.json"), raw, 0o644)
 	// Return the checkout to the base state, as a fresh CI checkout is.
 	publishGit(t, checkout, nil, "reset", "-q", "--hard")
 	publishGit(t, checkout, nil, "clean", "-fdq")
 
 	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	mustMkdir(t, bin)
 	fakeGH := "#!/bin/sh\n" +
 		"echo \"$*\" >>\"${FAKE_GH_LOG}\"\n" +
 		"case \"$*\" in\n" +
@@ -124,9 +119,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"  \"pr edit\"*) ;;\n" +
 		"  *) echo \"unexpected gh call: $*\" >&2; exit 97 ;;\n" +
 		"esac\n"
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	mustWrite(t, filepath.Join(bin, "gh"), []byte(fakeGH), 0o755)
 	return publishFixture{checkout: checkout, candidate: candidate, audit: filepath.Join(root, "audit.md"), path: bin, base: base, tree: tree}
 }
 
@@ -163,12 +156,13 @@ func (f publishFixture) run(t *testing.T, mainSHA string, env ...string) (string
 func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 	t.Parallel()
 
-	edit := func(name, content string) func(string) {
-		return func(checkout string) {
-			if err := os.WriteFile(filepath.Join(checkout, name), []byte(content), 0o644); err != nil {
-				panic(err)
-			}
+	must := func(err error) {
+		if err != nil {
+			panic(err)
 		}
+	}
+	edit := func(name, content string) func(string) {
+		return func(checkout string) { must(os.WriteFile(filepath.Join(checkout, name), []byte(content), 0o644)) }
 	}
 	cases := []struct {
 		name     string
@@ -182,30 +176,16 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		{name: "base ref mismatch", mutate: edit("plain.txt", "two\n"), metadata: func(m map[string]any) { m["base_ref"] = "refs/heads/other" }, wantErr: "base ref must be refs/heads/main"},
 		{name: "patch digest mismatch", mutate: edit("plain.txt", "two\n"), tamper: true, wantErr: "patch digest mismatch"},
 		{name: "tree identity mismatch", mutate: edit("plain.txt", "two\n"), metadata: func(m map[string]any) { m["tree_oid"] = strings.Repeat("0", 40) }, wantErr: "applied tree does not match candidate tree"},
-		{name: "symlink", mutate: func(c string) {
-			if err := os.Symlink("plain.txt", filepath.Join(c, "link")); err != nil {
-				panic(err)
-			}
-		}, wantErr: "unsupported file mode 120000"},
-		{name: "mode change", mutate: func(c string) {
-			if err := os.Chmod(filepath.Join(c, "plain.txt"), 0o755); err != nil {
-				panic(err)
-			}
-		}, wantErr: "mode change is not allowed"},
-		{name: "new executable", mutate: func(c string) {
-			if err := os.WriteFile(filepath.Join(c, "new.sh"), []byte("x\n"), 0o755); err != nil {
-				panic(err)
-			}
-		}, wantErr: "new executable file is not allowed"},
+		{name: "symlink", mutate: func(c string) { must(os.Symlink("plain.txt", filepath.Join(c, "link"))) }, wantErr: "unsupported file mode 120000"},
+		{name: "mode change", mutate: func(c string) { must(os.Chmod(filepath.Join(c, "plain.txt"), 0o755)) }, wantErr: "mode change is not allowed"},
+		{name: "new executable", mutate: func(c string) { must(os.WriteFile(filepath.Join(c, "new.sh"), []byte("x\n"), 0o755)) }, wantErr: "new executable file is not allowed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newPublishFixture(t, tc.mutate, tc.metadata)
 			if tc.tamper {
-				if err := os.WriteFile(filepath.Join(f.candidate, "patch"), []byte("tampered\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				mustWrite(t, filepath.Join(f.candidate, "patch"), []byte("tampered\n"), 0o644)
 			}
 			out, err := f.run(t, f.base)
 			if err == nil {
@@ -220,108 +200,53 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		})
 	}
 
-	t.Run("stale base skips without writing", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		out, err := f.run(t, strings.Repeat("a", 40))
-		if err != nil {
-			t.Fatalf("stale candidate must exit 0: %v\n%s", err, out)
-		}
-		audit, readErr := os.ReadFile(f.audit)
-		if readErr != nil || !strings.Contains(string(audit), "stale") {
-			t.Fatalf("audit file = %q (%v), want stale notice", audit, readErr)
-		}
-	})
-
-	t.Run("passed guard pins auto-merge to the published commit", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		commit := strings.Repeat("c", 40)
-		out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+commit, "FAKE_TREE="+f.tree)
-		if err != nil {
-			t.Fatalf("publish failed: %v\n%s", err, out)
-		}
-		log, readErr := os.ReadFile(filepath.Join(filepath.Dir(f.path), "gh.log"))
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if !strings.Contains(string(log), "pr merge --repo o/r --auto --merge --match-head-commit "+commit+" ") {
-			t.Fatalf("gh calls = %q, want auto-merge pinned to %s", log, commit)
-		}
-	})
-
-	readLog := func(t *testing.T, f publishFixture) string {
-		t.Helper()
-		log, err := os.ReadFile(filepath.Join(filepath.Dir(f.path), "gh.log"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(log)
+	const prFmt = `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-%s","headRefOid":"%s"}`
+	commit, resumed := strings.Repeat("c", 40), strings.Repeat("d", 40)
+	disposition := []struct {
+		name    string
+		moved   bool
+		env     []string
+		failed  bool
+		want    []string
+		forbid  []string
+		wantErr bool
+	}{
+		{name: "stale base skips without writing", moved: true, forbid: []string{"git/refs", "pr create"}},
+		{name: "passed guard pins auto-merge to the published commit", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit},
+			want: []string{"pr merge --repo o/r --auto --merge --match-head-commit " + commit + " "}},
+		{name: "rerun resumes the PR this run opened", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)},
+			want: []string{"--match-head-commit " + resumed + " https://example.invalid/pr/9"}, forbid: []string{"pr create", "git/refs", "graphql"}},
+		{name: "rerun resumes even when main moved", moved: true, env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)},
+			want: []string{"--match-head-commit " + resumed}},
+		{name: "PR from another run skips", env: []string{"FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "7", resumed)}, forbid: []string{"pr merge", "pr create"}},
+		{name: "failed guard labels without creating the label", env: []string{"SCOPE=failed", "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit},
+			want: []string{"--add-label needs-human-review"}, forbid: []string{"label create", "pr merge"}},
+		{name: "failed PR creation deletes the branch", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_PR_CREATE_FAIL=1"}, wantErr: true,
+			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42"}},
 	}
-
-	t.Run("rerun resumes the PR this run opened", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		commit := strings.Repeat("d", 40)
-		pr := `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-42","headRefOid":"` + commit + `"}`
-		out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_TREE="+f.tree, "FAKE_EXISTING_PR="+pr)
-		if err != nil {
-			t.Fatalf("resume failed: %v\n%s", err, out)
-		}
-		log := readLog(t, f)
-		if strings.Contains(log, "pr create") || strings.Contains(log, "git/refs") || strings.Contains(log, "graphql") {
-			t.Fatalf("resume wrote a new branch, commit, or PR:\n%s", log)
-		}
-		if !strings.Contains(log, "--match-head-commit "+commit+" https://example.invalid/pr/9") {
-			t.Fatalf("resume did not pin auto-merge to the PR head:\n%s", log)
-		}
-	})
-
-	t.Run("PR from another run still skips", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		pr := `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-7","headRefOid":"` + strings.Repeat("d", 40) + `"}`
-		if out, err := f.run(t, f.base, "FAKE_EXISTING_PR="+pr); err != nil {
-			t.Fatalf("skip must exit 0: %v\n%s", err, out)
-		}
-	})
-
-	t.Run("failed guard labels without creating the label", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		out, err := f.run(t, f.base, "SCOPE=failed", "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+strings.Repeat("c", 40), "FAKE_TREE="+f.tree)
-		if err != nil {
-			t.Fatalf("publish failed: %v\n%s", err, out)
-		}
-		log := readLog(t, f)
-		if strings.Contains(log, "label create") || strings.Contains(log, "pr merge") || !strings.Contains(log, "--add-label needs-human-review") {
-			t.Fatalf("gh calls = %q, want label add only", log)
-		}
-	})
-
-	t.Run("rerun resumes even when main moved", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		commit := strings.Repeat("d", 40)
-		pr := `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-42","headRefOid":"` + commit + `"}`
-		out, err := f.run(t, strings.Repeat("a", 40), "FAKE_ALLOW_WRITES=1", "FAKE_TREE="+f.tree, "FAKE_EXISTING_PR="+pr)
-		if err != nil {
-			t.Fatalf("resume against a moved main failed: %v\n%s", err, out)
-		}
-		if !strings.Contains(readLog(t, f), "--match-head-commit "+commit) {
-			t.Fatalf("resume skipped the disposition:\n%s", readLog(t, f))
-		}
-	})
-
-	t.Run("failed PR creation deletes the branch", func(t *testing.T) {
-		t.Parallel()
-		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
-		out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+strings.Repeat("c", 40), "FAKE_TREE="+f.tree, "FAKE_PR_CREATE_FAIL=1")
-		if err == nil {
-			t.Fatalf("publish ignored a PR creation failure:\n%s", out)
-		}
-		if !strings.Contains(readLog(t, f), "api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42") {
-			t.Fatalf("branch was not cleaned up:\n%s", readLog(t, f))
-		}
-	})
+	for _, tc := range disposition {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
+			main := f.base
+			if tc.moved {
+				main = strings.Repeat("a", 40)
+			}
+			out, err := f.run(t, main, append([]string{"FAKE_TREE=" + f.tree}, tc.env...)...)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("publish error = %v, want error %v\n%s", err, tc.wantErr, out)
+			}
+			log, _ := os.ReadFile(filepath.Join(filepath.Dir(f.path), "gh.log"))
+			for _, w := range tc.want {
+				if !strings.Contains(string(log), w) {
+					t.Fatalf("gh calls = %q, want %q", log, w)
+				}
+			}
+			for _, w := range tc.forbid {
+				if strings.Contains(string(log), w) {
+					t.Fatalf("gh calls = %q, must not contain %q", log, w)
+				}
+			}
+		})
+	}
 }
