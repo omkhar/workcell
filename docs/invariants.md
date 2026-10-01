@@ -39,6 +39,8 @@ Workcell uses these host staging roots:
 - `~/Library/Caches/colima/workcell-host-inputs`
 - `~/Library/Caches/colima/workcell-shadow`
 
+On Linux hosts, these roots sit under `${XDG_CACHE_HOME:-~/.cache}/colima`.
+
 The managed Colima VM mounts these roots as read-only. These mounts do not give
 the runtime durable write access outside the selected workspace. GitHub
 publication remains a separate host action.
