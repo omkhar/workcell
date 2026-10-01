@@ -22,7 +22,7 @@ defaults:
 
 env:
   WORKCELL_BUILDKIT_IMAGE: moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
-  WORKCELL_BUILDX_VERSION: v0.37.0
+  WORKCELL_BUILDX_VERSION: v0.37.2
   # Dated nightly so a new upstream nightly cannot silently change or break the
   # only lane that builds the Rust fuzz targets. Bump deliberately (and refresh
   # fuzz/Cargo.lock if needed); see docs/fuzzing.md.
