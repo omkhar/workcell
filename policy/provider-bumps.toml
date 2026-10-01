@@ -1,5 +1,6 @@
 version = 1
-cooloff_hours = 12
+# A bump waits 48 hours after the release timestamp that each provider updater reads.
+cooloff_hours = 48
 
 [provider.codex]
 channel = "stable"
