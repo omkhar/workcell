@@ -438,9 +438,11 @@ mod tests {
         launcher_common::set_env_var("SSL_CERT_FILE", "/tmp/cert.pem");
         launcher_common::set_env_var("SSL_CERT_DIR", "/tmp/certs");
         launcher_common::set_env_var("WORKCELL_COPILOT_AUTH_REQUIRED", "0");
+        launcher_common::set_env_var("BASH_FUNC_true%%", "() { printf build; }");
 
         launcher_common::sanitize_env();
 
+        assert!(env::var_os("BASH_FUNC_true%%").is_none());
         assert!(env::var_os("BASH_ENV").is_none());
         assert_eq!(
             env::var_os("LD_PRELOAD").as_deref(),
