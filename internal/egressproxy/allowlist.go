@@ -37,10 +37,11 @@ func LoadAllowlist(path string) (*Allowlist, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseAllowlist(string(data), path)
+	return ParseAllowlist(string(data), path)
 }
 
-func parseAllowlist(text, label string) (*Allowlist, error) {
+// ParseAllowlist parses allowlist text; label names its source in errors.
+func ParseAllowlist(text, label string) (*Allowlist, error) {
 	a := &Allowlist{sni: map[string]bool{}, forward: map[uint16]string{}}
 	for _, line := range strings.Split(text, "\n") {
 		line, _, _ = strings.Cut(line, "#")
