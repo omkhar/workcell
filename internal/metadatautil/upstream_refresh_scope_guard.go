@@ -39,7 +39,8 @@ var (
 	// The Codex fixture may change only its comment header, which carries the
 	// version stamp and source tag. A bump that needs new subcommand tokens is
 	// held for human review.
-	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+]#.*[0-9]+\.[0-9]+\.[0-9]+`)
+	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+](# codex-version: |#.*openai/codex tag rust-v)[0-9]+\.[0-9]+\.[0-9]+(\D|$)`)
+	scopeGuardSemverRE         = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
 	scopeGuardPathRE           = regexp.MustCompile(
 		`^(runtime/container/providers/package\.json|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
@@ -64,7 +65,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 	var file string
 	var seen, newFile, afterChange, hunkChanged bool
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
-	var removedKeys, addedKeys []string
+	var removedKeys, addedKeys, addedVersions []string
 	closeSection := func() {
 		switch {
 		case file == "":
@@ -74,7 +75,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: incomplete patch section (no hunk)", file)
 		case !hunkChanged:
 			fail("%s: hunk without an added or removed line", file)
-		case file == scopeGuardDockerfilePath && !slices.Equal(removedKeys, addedKeys):
+		case file == scopeGuardCodexFixture && len(slices.Compact(slices.Clone(addedVersions))) > 1:
+			fail("%s: the version stamp and source tag must name the same version", file)
+		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture) && !slices.Equal(removedKeys, addedKeys):
 			// Docker and the shell use the last assignment, the updater reads the first.
 			fail("%s: provider assignments must be replaced one for one, not added, removed, or reordered", file)
 		}
@@ -122,8 +125,14 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 					file == scopeGuardCodexFixture && !scopeGuardCodexStampLineRE.MatchString(line)) {
 				fail("%s: line %s", file, line)
 			}
-			if file == scopeGuardDockerfilePath {
+			if file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture {
 				key, _, _ := strings.Cut(strings.TrimSpace(line[1:]), "=")
+				if file == scopeGuardCodexFixture {
+					key = scopeGuardSemverRE.ReplaceAllString(line[1:], "V")
+					if line[0] == '+' {
+						addedVersions = append(addedVersions, scopeGuardSemverRE.FindString(line))
+					}
+				}
 				if line[0] == '-' {
 					removedKeys = append(removedKeys, key)
 				} else if line[0] == '+' {
@@ -136,7 +145,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
 			file, newFile, hunkChanged, oldHeaders, newHeaders, hunks = "", false, false, 0, 0, 0
-			removedKeys, addedKeys = nil, nil
+			removedKeys, addedKeys, addedVersions = nil, nil, nil
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
 				continue

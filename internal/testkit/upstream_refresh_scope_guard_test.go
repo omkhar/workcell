@@ -130,6 +130,23 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\ No newline at end of file\n",
 		},
 		{
+			name:    "codex fixture header replaced by another versioned comment",
+			patch:   scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# codex-version: 0.153.2", "# something 0.154.0"),
+			wantErr: "line +# something 0.154.0",
+		},
+		{
+			name: "codex fixture stamp and source tag disagree",
+			patch: "diff --git a/tests/fixtures/codex-subcommands.txt b/tests/fixtures/codex-subcommands.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/codex-subcommands.txt\n+++ b/tests/fixtures/codex-subcommands.txt\n@@ -1,2 +1,2 @@\n" +
+				"-# codex-version: 0.153.2\n-# (openai/codex tag rust-v0.153.2, x)\n+# codex-version: 0.154.0\n+# (openai/codex tag rust-v0.155.0, x)\n",
+			wantErr: "must name the same version",
+		},
+		{
+			name:    "codex fixture source tag comment rewritten",
+			patch:   scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# (openai/codex tag rust-v0.153.2, x)", "# (openai/codex tag rust-v0.154.0, evil)"),
+			wantErr: "replaced one for one",
+		},
+		{
 			name: "context-only hunk",
 			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
 				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n context\n",
