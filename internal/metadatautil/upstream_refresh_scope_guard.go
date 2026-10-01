@@ -36,11 +36,12 @@ var (
 	// package.json may change only the pinned Gemini CLI version, because
 	// npm ci installs every dependency that file declares.
 	scopeGuardPackageJSONLineRE = regexp.MustCompile(`^[-+]\s+"@google/gemini-cli": "[A-Za-z0-9._+-]+",?$`)
-	// The Codex fixture may change only its version stamp. A bump that needs
-	// new subcommand tokens is held for human review.
-	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+]# codex-version: [0-9]+\.[0-9]+\.[0-9]+$`)
+	// The Codex fixture may change only its comment header, which carries the
+	// version stamp and source tag. A bump that needs new subcommand tokens is
+	// held for human review.
+	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+]#.*[0-9]+\.[0-9]+\.[0-9]+`)
 	scopeGuardPathRE           = regexp.MustCompile(
-		`^(runtime/container/providers/package\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
+		`^(runtime/container/providers/package\.json|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
 	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d{1,6}))? \+\d+(?:,(\d{1,6}))? @@`)

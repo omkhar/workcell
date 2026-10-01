@@ -22,7 +22,6 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 	t.Parallel()
 
 	inScope := scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=0.153.2", "ARG CODEX_VERSION=0.154.0") +
-		scopeGuardFilePatch("tests/fixtures/flags/claude.txt", "--old", "--new") +
 		scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# codex-version: 0.153.2", "# codex-version: 0.154.0") +
 		scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "old", "new")
 
@@ -54,34 +53,34 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name:    "mode change",
-			patch:   "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nold mode 100644\nnew mode 100755\n",
+			patch:   "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nold mode 100644\nnew mode 100755\n",
 			wantErr: "old mode 100644",
 		},
 		{
 			name:    "new symlink",
-			patch:   "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 120000\nindex 0000000000000000000000000000000000000000..2222222222222222222222222222222222222222\n",
+			patch:   "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nnew file mode 120000\nindex 0000000000000000000000000000000000000000..2222222222222222222222222222222222222222\n",
 			wantErr: "new file mode 120000",
 		},
 		{
 			name:    "rename into scope",
-			patch:   "diff --git a/scripts/workcell b/tests/fixtures/flags/x.txt\nsimilarity index 100%\nrename from scripts/workcell\nrename to tests/fixtures/flags/x.txt\n",
+			patch:   "diff --git a/scripts/workcell b/runtime/container/control-plane-manifest.json\nsimilarity index 100%\nrename from scripts/workcell\nrename to runtime/container/control-plane-manifest.json\n",
 			wantErr: "unsupported diff header",
 		},
 		{
 			name:    "truncated section",
-			patch:   inScope + "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n",
+			patch:   inScope + "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n",
 			wantErr: "incomplete patch section",
 		},
 		{
 			name: "file headers name another path",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
 				"--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
 			wantErr: "file header does not match the diff path",
 		},
 		{
 			name: "duplicate file headers",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n--- a/scripts/workcell\n+++ b/scripts/workcell\n@@ -1 +1 @@\n-old\n+new\n",
 			wantErr: "file header does not match the diff path",
 		},
 		{
@@ -91,19 +90,19 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name:    "hunk longer than its header",
-			patch:   scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "+extra\n",
+			patch:   scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "+extra\n",
 			wantErr: "unrecognized patch line",
 		},
 		{
 			name: "hunk shorter than its header",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,3 +1,3 @@\n-a\n+b\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,3 +1,3 @@\n-a\n+b\n",
 			wantErr: "truncated hunk",
 		},
 		{
 			name: "overflowing hunk count",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,99999999999999999999999 +1,99999999999999999999999 @@\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,99999999999999999999999 +1,99999999999999999999999 @@\n",
 			wantErr: "malformed hunk",
 		},
 		{
@@ -113,8 +112,8 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name: "zero-line hunk",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1,0 +1,0 @@\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,0 +1,0 @@\n",
 			wantErr: "zero-line hunk",
 		},
 		{
@@ -123,22 +122,22 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name: "new file with dev-null old header",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\n" + scopeGuardIndex +
-				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/runtime/container/control-plane-manifest.json\n@@ -0,0 +1 @@\n+new\n",
 		},
 		{
 			name:  "no-newline marker",
-			patch: scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "\\ No newline at end of file\n",
+			patch: scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\ No newline at end of file\n",
 		},
 		{
 			name:    "invalid marker line",
-			patch:   scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "\\evil\n",
+			patch:   scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\evil\n",
 			wantErr: "unrecognized patch line",
 		},
 		{
 			name: "unprefixed blank line in hunk",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1 +1 @@\n\nnext\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n\nnext\n",
 			wantErr: "unrecognized hunk line",
 		},
 		{
@@ -158,7 +157,7 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name:    "carriage return in a header",
-			patch:   strings.Replace(scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b"), "+++ b/tests/fixtures/flags/x.txt", "+++ b/tests/fixtures/flags/x.txt\r", 1),
+			patch:   strings.Replace(scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b"), "+++ b/runtime/container/control-plane-manifest.json", "+++ b/runtime/container/control-plane-manifest.json\r", 1),
 			wantErr: "file header does not match",
 		},
 		{name: "empty patch", patch: "", wantErr: "empty patch"},
@@ -168,26 +167,26 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name: "new file mode with a path old header",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -0,0 +1 @@\n+new\n",
 			wantErr: "file header does not match the diff path",
 		},
 		{
 			name: "new file mode after the file headers",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\nnew file mode 100644\n@@ -0,0 +1 @@\n+new\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\nnew file mode 100644\n@@ -0,0 +1 @@\n+new\n",
 			wantErr: "new file mode must be the first",
 		},
 		{
 			name: "duplicate new file mode",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\nnew file mode 100644\n" + scopeGuardIndex +
-				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nnew file mode 100644\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/runtime/container/control-plane-manifest.json\n@@ -0,0 +1 @@\n+new\n",
 			wantErr: "new file mode must be the first",
 		},
 		{
 			name: "dev-null old header without new file mode",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
-				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/runtime/container/control-plane-manifest.json\n@@ -0,0 +1 @@\n+new\n",
 			wantErr: "file header does not match the diff path",
 		},
 		{
@@ -202,9 +201,18 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		},
 		{
 			name: "four-field index header",
-			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nindex 1111111..2222222 120000 junk\n" +
-				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1 +1 @@\n-a\n+b\n",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\nindex 1111111..2222222 120000 junk\n" +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n-a\n+b\n",
 			wantErr: "index 1111111..2222222 120000 junk",
+		},
+		{
+			name:    "flags fixture directory file",
+			patch:   scopeGuardFilePatch("tests/fixtures/flags/evil_test.go", "old", "new"),
+			wantErr: "path tests/fixtures/flags/evil_test.go",
+		},
+		{
+			name:  "codex fixture source tag line",
+			patch: scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# (openai/codex tag rust-v0.153.2, codex-rs/cli/src/main.rs), NOT x", "# (openai/codex tag rust-v0.154.0, codex-rs/cli/src/main.rs), NOT x"),
 		},
 		{
 			name:    "lockfile resolution change",
@@ -269,7 +277,7 @@ func TestUpstreamRefreshScopeGuardRejectsSymlinkedPatch(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
-	if err := os.WriteFile(target, []byte(scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b")), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "patch")
@@ -286,7 +294,7 @@ func TestUpstreamRefreshScopeGuardResolvesRelativePatchFromCallerDirectory(t *te
 	t.Parallel()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "patch"), []byte(scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "patch"), []byte(scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-scope-guard.sh"), "patch")
