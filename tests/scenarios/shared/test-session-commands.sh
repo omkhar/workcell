@@ -3852,11 +3852,12 @@ if [[ -n "$(find "${SYMLINK_CAPTURE_DIR}" -name '.workcell-cp.*')" ]]; then
   exit 1
 fi
 
-# The capture destination itself may be a link. On copy failure the launcher
-# must not append to or chmod it, and a successful copy must not move the file
-# through a link to a directory. It records the failure in the audit log.
+# The capture destination itself may be a link or a directory. On copy failure
+# the launcher must not append to or chmod it. Publication replaces a link at
+# the destination and never follows it, and it fails on a directory. Each
+# failure is recorded in the audit log.
 LINKED_DEST_DIR="${DETACHED_STATE_DIR}/linked-capture-destination"
-mkdir -p "${LINKED_DEST_DIR}/victim-dir"
+mkdir -p "${LINKED_DEST_DIR}/victim-dir" "${LINKED_DEST_DIR}/trace-dir.log"
 : >"${LINKED_DEST_DIR}/victim"
 chmod 0755 "${LINKED_DEST_DIR}/victim"
 ln -s "${LINKED_DEST_DIR}/victim" "${LINKED_DEST_DIR}/trace-file-link.log"
@@ -3877,14 +3878,20 @@ linked_capture_output="$(
     run_profile_docker_command() { printf "container-trace\n" >"$4"; }
     FILE_TRACE_LOG_PATH="$2/trace-dir-link.log"
     capture_session_file_trace "workcell-session-fixture" 2>/dev/null
+    FILE_TRACE_LOG_PATH="$2/trace-dir.log"
+    capture_session_file_trace "workcell-session-fixture" 2>/dev/null
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${LINKED_DEST_DIR}"
 )"
 if [[ -s "${LINKED_DEST_DIR}/victim" ]] || [[ -z "$(find "${LINKED_DEST_DIR}/victim" -perm 0755)" ]]; then
   echo "Session capture wrote through or changed the mode of a linked destination" >&2
   exit 1
 fi
-if [[ -n "$(ls -A "${LINKED_DEST_DIR}/victim-dir")" ]]; then
-  echo "Session capture moved a file through a link to a directory" >&2
+if [[ -n "$(find "${LINKED_DEST_DIR}/victim-dir" "${LINKED_DEST_DIR}/trace-dir.log" -mindepth 1)" ]]; then
+  echo "Session capture moved a file into a directory at or behind the destination" >&2
+  exit 1
+fi
+if [[ -L "${LINKED_DEST_DIR}/trace-dir-link.log" ]] || ! grep -qx 'container-trace' "${LINKED_DEST_DIR}/trace-dir-link.log"; then
+  echo "Session capture did not replace a linked destination with the captured file" >&2
   exit 1
 fi
 if [[ "$(grep -c '^audit-record|wcl-detached-fixture event=file-trace-capture-failed session_id=session-fixture container=workcell-session-fixture container_path=/var/tmp/workcell-file-trace.log$' <<<"${linked_capture_output}")" -ne 2 ]]; then

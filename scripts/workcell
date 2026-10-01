@@ -3234,11 +3234,11 @@ ensure_session_audit_state() {
 }
 
 # docker cp without -L copies an in-container symlink as a host symlink, and
-# container content is agent-controlled. Stage the copy in a private directory,
-# accept only a regular file, set its mode there, then rename it over the
-# destination. The destination must be absent or a regular file: mv onto a
-# directory, or onto a link to one, moves the file into its target. On failure
-# the destination is left untouched; callers must not fall back to writing it.
+# container content is agent-controlled. Copy into a private staging directory
+# next to the destination, then let the Go helper publish it: it accepts only a regular file and renames
+# it over the destination through a no-follow parent descriptor, so no link at
+# the source or destination is followed. On failure the destination does not
+# change; callers must not fall back to writing it.
 copy_container_regular_file() {
   local container_name="$1"
   local container_path="$2"
@@ -3246,14 +3246,9 @@ copy_container_regular_file() {
   local staged_dir=""
   local status=1
 
-  if [[ -L "${destination}" ]] || { [[ -e "${destination}" ]] && [[ ! -f "${destination}" ]]; }; then
-    return 1
-  fi
   staged_dir="$(mktemp -d "$(dirname "${destination}")/.workcell-cp.XXXXXX")" || return 1
   if run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${container_path}" "${staged_dir}/file" >/dev/null 2>&1 &&
-    [[ -f "${staged_dir}/file" && ! -L "${staged_dir}/file" ]] &&
-    chmod 0600 "${staged_dir}/file" &&
-    mv -f "${staged_dir}/file" "${destination}"; then
+    go_hostutil helper publish-session-capture-file "${staged_dir}/file" "${destination}" >/dev/null 2>&1; then
     status=0
   fi
   rm -rf "${staged_dir}"

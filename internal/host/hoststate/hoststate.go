@@ -43,6 +43,30 @@ func WorkspaceCacheKey(workspace string) (string, error) {
 	return hex.EncodeToString(sum[:8]), nil
 }
 
+// maxSessionCaptureBytes bounds one file copied out of a stopped container.
+// ponytail: whole file in memory; stream through the stager if traces outgrow this.
+const maxSessionCaptureBytes int64 = 128 * 1024 * 1024
+
+// PublishSessionCaptureFile publishes the regular file at source as
+// destination with mode 0600. Container content chose source, and destination
+// may sit in a directory that another session can write. Both paths are walked
+// one descriptor at a time with O_NOFOLLOW, so a symlink at any component is
+// refused. The new file is staged next to destination and renamed over its
+// leaf through the pinned parent: the rename replaces a link and never
+// follows it, and it fails on a directory.
+func PublishSessionCaptureFile(source, destination string) error {
+	data, err := rootio.ReadFileNoFollow(source, "captured container file", maxSessionCaptureBytes)
+	if err != nil {
+		return err
+	}
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(destination)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return rootio.StageAndPublishAt(parent, filepath.Base(cleaned), data, 0o600, ".workcell-capture-")
+}
+
 func ResolveHostOutputCandidate(raw string) (string, error) {
 	return resolveHostOutputCandidate(raw, false)
 }
