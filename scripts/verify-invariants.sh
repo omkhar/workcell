@@ -6686,8 +6686,11 @@ mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
 printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
 ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
 COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
-# The mount must appear exactly once, as a whole read-only token.
-if [[ "$(echo "${COMMONDIR_UPLINK_OUT}" | grep -o -- '/workspace/\.git/modules/foo/CONFIG[^[:space:]]*')" != '/workspace/.git/modules/foo/CONFIG:ro' ]]; then
+# Split the dry-run command into argv tokens. The destination must appear in
+# exactly one token, and that token must be a whole SOURCE:DESTINATION:ro mount.
+COMMONDIR_UPLINK_TOKENS="$(echo "${COMMONDIR_UPLINK_OUT}" | tr ' ' '\n')"
+if [[ "$(echo "${COMMONDIR_UPLINK_TOKENS}" | grep -c -- '/workspace/\.git/modules/foo/CONFIG')" != 1 ]] ||
+  [[ "$(echo "${COMMONDIR_UPLINK_TOKENS}" | grep -cE -- '^/[^:]+:/workspace/\.git/modules/foo/CONFIG:ro$')" != 1 ]]; then
   echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
   exit 1
 fi
