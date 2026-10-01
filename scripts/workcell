@@ -2,6 +2,14 @@
 # shellcheck shell=bash
 set -euo pipefail
 
+# Language boundary: the workspace Git scans and shadow masks are path-based
+# checks at launch. Bash cannot hold a directory descriptor for openat or
+# O_NOFOLLOW use. A process that writes to the workspace between the scan and
+# the Docker bind mount can add Git control state that no scan saw. Examples
+# are a host process or another session that mounts the same workspace. That
+# race is the residual risk.
+# The fix is a port of these checks to descriptor-relative code.
+
 readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
 export PATH="${TRUSTED_HOST_PATH}"
 scrub_host_process_env() {

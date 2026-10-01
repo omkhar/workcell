@@ -6686,11 +6686,26 @@ mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
 printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
 ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
 COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
-# The dry-run output is printf %q text, so a source path can hold escaped
-# spaces. The destination must appear exactly once, and it must follow a -v
-# option as a whole SOURCE:DESTINATION:ro mount.
-if [[ "$(echo "${COMMONDIR_UPLINK_OUT}" | grep -o -- '/workspace/\.git/modules/foo/CONFIG' | wc -l | tr -d ' ')" != 1 ]] ||
-  [[ "$(echo "${COMMONDIR_UPLINK_OUT}" | grep -Eo -- '(^| )-v (\\.|[^ \\])+:/workspace/\.git/modules/foo/CONFIG:ro( |$)' | wc -l | tr -d ' ')" != 1 ]]; then
+# The dry-run output is printf %q text, so xargs decodes it into argv tokens.
+# The destination must appear in exactly one token, and that token must be a
+# whole SOURCE:DESTINATION:ro value of a -v option before the image token.
+# Docker reads tokens after the image as the container command.
+COMMONDIR_UPLINK_ARGV=()
+while IFS= read -r line; do
+  COMMONDIR_UPLINK_ARGV+=("${line}")
+done < <(printf '%s\n' "${COMMONDIR_UPLINK_OUT}" | xargs -n1 printf '%s\n')
+commondir_uplink_hits=0
+commondir_uplink_masked=0
+commondir_uplink_options=1
+for ((i = 0; i < ${#COMMONDIR_UPLINK_ARGV[@]}; i++)); do
+  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == workcell:local ]] && commondir_uplink_options=0
+  [[ "${COMMONDIR_UPLINK_ARGV[i]}" == *'/workspace/.git/modules/foo/CONFIG'* ]] || continue
+  commondir_uplink_hits=$((commondir_uplink_hits + 1))
+  if [[ "${commondir_uplink_options}" -eq 1 && "${i}" -gt 0 && "${COMMONDIR_UPLINK_ARGV[i - 1]}" == -v && "${COMMONDIR_UPLINK_ARGV[i]}" == ?*:/workspace/.git/modules/foo/CONFIG:ro ]]; then
+    commondir_uplink_masked=1
+  fi
+done
+if [[ "${commondir_uplink_hits}" -ne 1 || "${commondir_uplink_masked}" -ne 1 ]]; then
   echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
   exit 1
 fi
