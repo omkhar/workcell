@@ -3235,10 +3235,11 @@ ensure_session_audit_state() {
 
 # docker cp without -L copies an in-container symlink as a host symlink, and
 # container content is agent-controlled. Copy into a private staging directory
-# next to the destination, then let the Go helper publish it: it accepts only a regular file and renames
-# it over the destination through a no-follow parent descriptor, so no link at
-# the source or destination is followed. On failure the destination does not
-# change; callers must not fall back to writing it.
+# under the launcher's TMPDIR, never next to the destination: a parent of the
+# destination can change after validation. The Go helper then accepts only a
+# regular file and renames it over the destination through a no-follow parent
+# descriptor, so no link at the source or destination is followed. On failure
+# the destination does not change; callers must not fall back to writing it.
 copy_container_regular_file() {
   local container_name="$1"
   local container_path="$2"
@@ -3246,7 +3247,7 @@ copy_container_regular_file() {
   local staged_dir=""
   local status=1
 
-  staged_dir="$(mktemp -d "$(dirname "${destination}")/.workcell-cp.XXXXXX")" || return 1
+  staged_dir="$(mktemp -d "${TMPDIR:-/tmp}/workcell-cp.XXXXXX")" || return 1
   if run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${container_path}" "${staged_dir}/file" >/dev/null 2>&1 &&
     go_hostutil helper publish-session-capture-file "${staged_dir}/file" "${destination}" >/dev/null 2>&1; then
     status=0

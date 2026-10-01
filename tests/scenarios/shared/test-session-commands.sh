@@ -3870,17 +3870,21 @@ linked_capture_output="$(
     COLIMA_PROFILE="wcl-detached-fixture"
     SESSION_ID="session-fixture"
     SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
+    STAGED_RECORD="$3"
     revalidate_recorded_host_output_path() { printf "%s\n" "$1"; }
     append_audit_record() { printf "audit-record|%s\n" "$*"; }
     run_profile_docker_command() { return 1; }
     FILE_TRACE_LOG_PATH="$2/trace-file-link.log"
     capture_session_file_trace "workcell-session-fixture" 2>/dev/null
-    run_profile_docker_command() { printf "container-trace\n" >"$4"; }
+    run_profile_docker_command() {
+      printf "%s\n" "$4" >>"${STAGED_RECORD}"
+      printf "container-trace\n" >"$4"
+    }
     FILE_TRACE_LOG_PATH="$2/trace-dir-link.log"
     capture_session_file_trace "workcell-session-fixture" 2>/dev/null
     FILE_TRACE_LOG_PATH="$2/trace-dir.log"
     capture_session_file_trace "workcell-session-fixture" 2>/dev/null
-  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${LINKED_DEST_DIR}"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${LINKED_DEST_DIR}" "${DETACHED_STATE_DIR}/linked-capture-staged.record"
 )"
 if [[ -s "${LINKED_DEST_DIR}/victim" ]] || [[ -z "$(find "${LINKED_DEST_DIR}/victim" -perm 0755)" ]]; then
   echo "Session capture wrote through or changed the mode of a linked destination" >&2
@@ -3892,6 +3896,11 @@ if [[ -n "$(find "${LINKED_DEST_DIR}/victim-dir" "${LINKED_DEST_DIR}/trace-dir.l
 fi
 if [[ -L "${LINKED_DEST_DIR}/trace-dir-link.log" ]] || ! grep -qx 'container-trace' "${LINKED_DEST_DIR}/trace-dir-link.log"; then
   echo "Session capture did not replace a linked destination with the captured file" >&2
+  exit 1
+fi
+if [[ "$(wc -l <"${DETACHED_STATE_DIR}/linked-capture-staged.record")" -ne 2 ]] ||
+  grep -qF "${LINKED_DEST_DIR}" "${DETACHED_STATE_DIR}/linked-capture-staged.record"; then
+  echo "Session capture staged a container copy next to the destination" >&2
   exit 1
 fi
 if [[ "$(grep -c '^audit-record|wcl-detached-fixture event=file-trace-capture-failed session_id=session-fixture container=workcell-session-fixture container_path=/var/tmp/workcell-file-trace.log$' <<<"${linked_capture_output}")" -ne 2 ]]; then
