@@ -101,3 +101,32 @@ func TestDecodeAuditLineStrictRejectsBareTokenPercentProvider(t *testing.T) {
 		t.Fatal("bare token must be rejected under percent-path encoding")
 	}
 }
+
+func TestDecodeAuditLineStrictRejectsNUL(t *testing.T) {
+	// The record digest joins fields with NUL, so a NUL inside a value would let
+	// adjacent fields merge while the digest stays the same. A writer never emits one.
+	for name, tc := range map[string]struct{ line, provider string }{
+		"ansi-c-octal": {`timestamp=t session_id=$'s\000event=exit' record_digest=d`, "colima"},
+		"raw-byte":     {"timestamp=t session_id=s\x00event=exit record_digest=d", "colima"},
+		"percent-path": {"timestamp=t session_id=s\x00event=exit record_digest=d", "apple-container"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DecodeAuditLineStrict(tc.line, tc.provider); err == nil {
+				t.Fatal("NUL byte in a record must be rejected")
+			}
+		})
+	}
+}
+
+func TestAuditLineClaimsSessionSeesNULFoldedSessionID(t *testing.T) {
+	for name, line := range map[string]string{
+		"value-prefix": "session_id=s\x00event=exit",
+		"folded-after": "event=exit\x00session_id=s",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !AuditLineClaimsSession(line, "colima", "s") {
+				t.Fatal("NUL-folded session_id must still claim the session")
+			}
+		})
+	}
+}
