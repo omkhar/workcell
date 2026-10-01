@@ -270,8 +270,8 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/egressproxy/proxy.go",
-		original:     `	if !p.allow.sni[sni] {`,
-		replacement:  `	if false && !p.allow.sni[sni] {`,
+		original:     `	if len(lower) != len(sni) || !p.allow.sni[lower] {`,
+		replacement:  `	if len(lower) != len(sni) {`,
 		label:        "egress proxy SNI allowlist",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestProxyTLSEndToEnd", "-count=1"),
 	},

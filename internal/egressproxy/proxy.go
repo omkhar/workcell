@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
@@ -183,24 +184,12 @@ func (p *Proxy) route(client net.Conn, port uint16) (host string, replay []byte,
 	if !ok || client.SetReadDeadline(time.Time{}) != nil {
 		return "", nil, "no_sni"
 	}
-	sni = asciiLower(sni)
-	if !p.allow.sni[sni] {
+	// ToLower maps the Kelvin sign (U+212A) to "k"; a length change marks a non-ASCII fold.
+	lower := strings.ToLower(sni)
+	if len(lower) != len(sni) || !p.allow.sni[lower] {
 		return sni, nil, "sni_not_allowed"
 	}
-	return sni, replay, ""
-}
-
-// asciiLower folds only A-Z. strings.ToLower is Unicode-aware: it maps the
-// Kelvin sign (U+212A) to "k", so a non-ASCII SNI would match an ASCII
-// allowlist entry while the replayed ClientHello keeps the other name.
-func asciiLower(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
+	return lower, replay, ""
 }
 
 // connect resolves host itself and dials a resolved address, so a later DNS
