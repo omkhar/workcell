@@ -130,6 +130,17 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "\\ No newline at end of file\n",
 		},
 		{
+			name: "context-only hunk",
+			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
+				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1 +1 @@\n context\n",
+			wantErr: "hunk without an added or removed line",
+		},
+		{
+			name:    "context-only second hunk",
+			patch:   scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "a", "b") + "@@ -9 +9 @@\n context\n",
+			wantErr: "hunk without an added or removed line",
+		},
+		{
 			name: "marker after a context line",
 			patch: "diff --git a/runtime/container/control-plane-manifest.json b/runtime/container/control-plane-manifest.json\n" + scopeGuardIndex +
 				"--- a/runtime/container/control-plane-manifest.json\n+++ b/runtime/container/control-plane-manifest.json\n@@ -1,2 +1,2 @@\n-a\n+b\n c\n\\ No newline at end of file\n",

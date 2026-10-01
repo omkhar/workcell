@@ -62,7 +62,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		problems = append(problems, "out of scope: "+fmt.Sprintf(format, args...))
 	}
 	var file string
-	var seen, newFile, afterChange bool
+	var seen, newFile, afterChange, hunkChanged bool
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
 	var removedKeys, addedKeys []string
 	closeSection := func() {
@@ -72,6 +72,8 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: truncated hunk", file)
 		case hunks == 0:
 			fail("%s: incomplete patch section (no hunk)", file)
+		case !hunkChanged:
+			fail("%s: hunk without an added or removed line", file)
 		case file == scopeGuardDockerfilePath && !slices.Equal(removedKeys, addedKeys):
 			// Docker and the shell use the last assignment, the updater reads the first.
 			fail("%s: provider assignments must be replaced one for one, not added, removed, or reordered", file)
@@ -97,10 +99,10 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				continue
 			case strings.HasPrefix(line, "-"):
 				remOld--
-				afterChange = true
+				afterChange, hunkChanged = true, true
 			case strings.HasPrefix(line, "+"):
 				remNew--
-				afterChange = true
+				afterChange, hunkChanged = true, true
 			case strings.HasPrefix(line, " "):
 				remOld--
 				remNew--
@@ -133,7 +135,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
-			file, newFile, oldHeaders, newHeaders, hunks = "", false, 0, 0, 0
+			file, newFile, hunkChanged, oldHeaders, newHeaders, hunks = "", false, false, 0, 0, 0
 			removedKeys, addedKeys = nil, nil
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
@@ -184,7 +186,10 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				fail("%s: malformed hunk or not exactly one old and one new file header: %s", file, line)
 				continue
 			}
-			afterChange = false
+			if hunks > 0 && !hunkChanged {
+				fail("%s: hunk without an added or removed line", file)
+			}
+			afterChange, hunkChanged = false, false
 			remOld, remNew = scopeGuardHunkCount(m[1]), scopeGuardHunkCount(m[2])
 			if remOld == 0 && remNew == 0 {
 				fail("%s: zero-line hunk: %s", file, line)
