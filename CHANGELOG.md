@@ -9,7 +9,7 @@ The GitHub Releases page contains old details that are not in this file.
 
 ### Security hardening
 
-The X1 baseline audit found 13 confirmed findings.
+The X1 baseline audit produced 10 items.
 The fixes are below.
 `docs/security/audit-2026-10.md` lists scope, severity, and the open finding.
 
