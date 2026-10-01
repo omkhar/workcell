@@ -119,6 +119,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		case scopeGuardHeaderOnlyRE.MatchString(line):
 			fail("%s: %s", file, line)
 		case strings.HasPrefix(line, "new file mode "):
+			if newFile || oldHeaders > 0 || newHeaders > 0 || hunks > 0 {
+				fail("%s: new file mode must be the first and only mode line, before the file headers: %s", file, line)
+			}
 			newFile = true
 			if len(fields) < 4 || fields[3] != "100644" {
 				fail("%s: %s", file, line)

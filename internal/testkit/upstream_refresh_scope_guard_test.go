@@ -174,6 +174,18 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "file header does not match the diff path",
 		},
 		{
+			name: "new file mode after the file headers",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\nnew file mode 100644\n@@ -0,0 +1 @@\n+new\n",
+			wantErr: "new file mode must be the first",
+		},
+		{
+			name: "duplicate new file mode",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			wantErr: "new file mode must be the first",
+		},
+		{
 			name: "dev-null old header without new file mode",
 			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
 				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
