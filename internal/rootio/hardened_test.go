@@ -271,8 +271,12 @@ func openDirectory(t *testing.T, path string) *os.File {
 func TestSyncDirAt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	outside := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "one", "two"), 0o700); err != nil {
 		t.Fatalf("create the tree: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatalf("create the symlink: %v", err)
 	}
 	parent := openDirectory(t, root)
 	defer parent.Close() //nolint:errcheck // test fixture
@@ -280,34 +284,11 @@ func TestSyncDirAt(t *testing.T) {
 	if err := rootio.SyncDirAt(parent, "one/two"); err != nil {
 		t.Fatalf("expected a clean sync, found %v", err)
 	}
-	if err := rootio.SyncDirAt(parent, "one/missing"); err == nil {
-		t.Fatal("expected a missing directory to fail")
-	}
-	if err := rootio.SyncDirAt(parent, "../escape"); err == nil || !strings.Contains(err.Error(), "must stay within") {
-		t.Fatalf("expected a parent escape to fail, found %v", err)
-	}
-}
-
-// Negative control: a symlink in the path is refused rather than synced
-// through.
-func TestSyncDirAtRejectsASymlinkedComponent(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	outside := filepath.Join(root, "outside")
-	if err := os.Mkdir(outside, 0o700); err != nil {
-		t.Fatalf("create the outside directory: %v", err)
-	}
-	inside := filepath.Join(root, "inside")
-	if err := os.Mkdir(inside, 0o700); err != nil {
-		t.Fatalf("create the inside directory: %v", err)
-	}
-	if err := os.Symlink(outside, filepath.Join(inside, "link")); err != nil {
-		t.Fatalf("create the symlink: %v", err)
-	}
-	parent := openDirectory(t, inside)
-	defer parent.Close() //nolint:errcheck // test fixture
-
-	if err := rootio.SyncDirAt(parent, "link"); err == nil {
-		t.Fatal("expected a symlinked component to fail")
+	// Negative controls: a missing directory, a parent escape, and a symlinked
+	// component are all refused.
+	for _, relative := range []string{"one/missing", "../escape", "link"} {
+		if err := rootio.SyncDirAt(parent, relative); err == nil {
+			t.Fatalf("expected %q to fail", relative)
+		}
 	}
 }

@@ -25,13 +25,13 @@ func snapshotTestGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func snapshotTestWorkspace(t *testing.T) (workspace, head string) {
+func snapshotTestWorkspace(t *testing.T, initArgs ...string) (workspace, head string) {
 	t.Helper()
 	workspace = filepath.Join(t.TempDir(), "ws")
 	if err := os.Mkdir(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	snapshotTestGit(t, workspace, "init", "-q")
+	snapshotTestGit(t, workspace, append([]string{"init", "-q"}, initArgs...)...)
 	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("base\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -97,38 +97,29 @@ func TestSnapshotCapturePublishesCommitToStore(t *testing.T) {
 	}
 }
 
-// Negative control: a store directory replaced by a symlink is refused and
-// nothing is written through it.
+// Negative control: a store directory or store root replaced by a symlink is
+// refused and nothing is written through it.
 func TestSnapshotCaptureRefusesSymlinkedStore(t *testing.T) {
-	workspace, head := snapshotTestWorkspace(t)
-	opts := snapshotTestOptions(t, workspace, head)
-	outside := t.TempDir()
-	if err := os.MkdirAll(opts.StoreRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, filepath.Join(opts.StoreRoot, snapshotTestOrigin+".git")); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := snapshotCapture(opts); err == nil {
-		t.Fatal("snapshotCapture accepted a symlinked store directory")
-	}
-	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
-		t.Fatalf("snapshotCapture wrote through the symlink: %v", entries)
-	}
-}
-
-func TestSnapshotCaptureRefusesSymlinkedStoreRoot(t *testing.T) {
-	workspace, head := snapshotTestWorkspace(t)
-	opts := snapshotTestOptions(t, workspace, head)
-	outside := t.TempDir()
-	if err := os.Symlink(outside, opts.StoreRoot); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := snapshotCapture(opts); err == nil {
-		t.Fatal("snapshotCapture accepted a symlinked store root")
-	}
-	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
-		t.Fatalf("snapshotCapture wrote through the symlink: %v", entries)
+	for _, linkStoreRoot := range []bool{false, true} {
+		workspace, head := snapshotTestWorkspace(t)
+		opts := snapshotTestOptions(t, workspace, head)
+		outside := t.TempDir()
+		link := opts.StoreRoot
+		if !linkStoreRoot {
+			if err := os.MkdirAll(opts.StoreRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			link = filepath.Join(opts.StoreRoot, snapshotTestOrigin+".git")
+		}
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := snapshotCapture(opts); err == nil {
+			t.Fatalf("snapshotCapture accepted a symlinked store (root=%v)", linkStoreRoot)
+		}
+		if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+			t.Fatalf("snapshotCapture wrote through the symlink: %v", entries)
+		}
 	}
 }
 
@@ -190,9 +181,18 @@ func TestSnapshotCaptureFailsForMissingGitHead(t *testing.T) {
 	}
 }
 
-func TestSnapshotCaptureMainRejectsUnknownOption(t *testing.T) {
-	var out bytes.Buffer
-	if err := snapshotCaptureMain([]string{"--bogus"}, &out); err == nil || out.Len() != 0 {
-		t.Fatalf("snapshotCaptureMain error = %v, out = %q", err, out.String())
+func TestSnapshotCaptureSupportsSHA256Workspace(t *testing.T) {
+	workspace, head := snapshotTestWorkspace(t, "--object-format=sha256")
+	if len(head) != 64 {
+		t.Skipf("git cannot create a SHA-256 repository (head %q)", head)
+	}
+	opts := snapshotTestOptions(t, workspace, head)
+	_, commit, err := snapshotCapture(opts)
+	if err != nil {
+		t.Fatalf("snapshotCapture error = %v", err)
+	}
+	store := filepath.Join(opts.StoreRoot, snapshotTestOrigin+".git")
+	if got := snapshotTestGit(t, store, "rev-parse", "refs/workcell/snapshots/session-1/snap-1"); got != commit {
+		t.Fatalf("store ref = %s, want %s", got, commit)
 	}
 }

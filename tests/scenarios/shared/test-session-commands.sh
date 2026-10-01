@@ -52,7 +52,7 @@ cleanup() {
   fi
   cleanup_workcell_trusted_docker_client
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
-  rm -rf "${SNAPSHOT_STORE_A:-}" "${SNAPSHOT_STORE_POISON:-}"
+  rm -rf "${SNAPSHOT_STORE_A:-}" "${SNAPSHOT_STORE_POISON:-}" "${SNAPSHOT_TARGET_STATE_DIR:-}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets/local_vm/colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
@@ -427,16 +427,24 @@ fi
 
 # session snapshot: a terminal detached session is captured without docker into
 # the host-owned store. The workspace index and filter drivers stay untouched.
+# The snapshot sessions use their own profile so the audit chain holds only real
+# records. The shared scenario log has hand-written records that the re-sign
+# step correctly refuses.
+SNAPSHOT_PROFILE="wcl-snapshot-scenario-$$"
+SNAPSHOT_TARGET_STATE_DIR="${WORKCELL_STATE_ROOT}/targets/local_vm/colima/${SNAPSHOT_PROFILE}"
+SNAPSHOT_SESSIONS_DIR="${SNAPSHOT_TARGET_STATE_DIR}/sessions"
+SNAPSHOT_AUDIT_LOG="${SNAPSHOT_TARGET_STATE_DIR}/workcell.audit.log"
+mkdir -p "${SNAPSHOT_SESSIONS_DIR}"
 snapshot_record() {
   local session_id="$1"
   local workspace="$2"
   local git_head="$3"
 
-  cat >"${SESSIONS_DIR}/${session_id}.json" <<EOF_JSON
+  cat >"${SNAPSHOT_SESSIONS_DIR}/${session_id}.json" <<EOF_JSON
 {
   "version": 1,
   "session_id": "${session_id}",
-  "profile": "${PROFILE}",
+  "profile": "${SNAPSHOT_PROFILE}",
   "agent": "codex",
   "mode": "strict",
   "status": "exited",
@@ -446,7 +454,7 @@ snapshot_record() {
   "monitor_pid": "999999",
   "session_audit_dir": "${TMP_DIR}/${session_id}.audit",
   "git_head": "${git_head}",
-  "audit_log_path": "${AUDIT_LOG}",
+  "audit_log_path": "${SNAPSHOT_AUDIT_LOG}",
   "started_at": "2026-04-08T15:00:00Z",
   "finished_at": "2026-04-08T15:05:00Z",
   "exit_status": "0",
@@ -475,7 +483,8 @@ test ! -e "${FILTER_MARKER}"
 [[ "$(git --git-dir="${SNAPSHOT_STORE_A}" show "${snapshot_tree}:tracked.txt")" == "updated" ]]
 [[ "$(git --git-dir="${SNAPSHOT_STORE_A}" show "${snapshot_tree}:new.txt")" == "new file" ]]
 git --git-dir="${SNAPSHOT_STORE_A}" fsck --strict --no-dangling >/dev/null
-grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT} source=host-cli snapshot_id=${snapshot_id} tree=${snapshot_tree} commit=${snapshot_commit}" "${AUDIT_LOG}"
+[[ "$("${ROOT_DIR}/scripts/workcell" session verify --id "${SESSION_SNAPSHOT}" | sed -n 's/^session_verify=//p')" == "verified" ]]
+grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT} source=host-cli snapshot_id=${snapshot_id} tree=${snapshot_tree} commit=${snapshot_commit}" "${SNAPSHOT_AUDIT_LOG}"
 
 # Negative control: a forged workspace object fails the store fetch, so no
 # snapshot ref and no audit record land.
@@ -500,8 +509,33 @@ if [[ -n "$(git --git-dir="${SNAPSHOT_STORE_POISON}" for-each-ref 2>/dev/null)" 
   echo "session snapshot stored a ref for a forged workspace object" >&2
   exit 1
 fi
-if grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT_POISON}" "${AUDIT_LOG}"; then
+if grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT_POISON}" "${SNAPSHOT_AUDIT_LOG}"; then
   echo "session snapshot audited a failed capture" >&2
+  exit 1
+fi
+
+# Negative control: a record made before the store rule existed can name a
+# workspace that contains the store. The snapshot command refuses it before it
+# touches docker or the store.
+SESSION_SNAPSHOT_OVERLAP="20260408T150700Z-66888888-$$"
+snapshot_record "${SESSION_SNAPSHOT_OVERLAP}" "${REAL_HOME}/Library/Caches" "${GIT_BASE}"
+if "${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT_OVERLAP}" >/dev/null 2>"${TMP_DIR}/snapshot-overlap.err"; then
+  echo "session snapshot accepted a workspace that contains the store" >&2
+  exit 1
+fi
+grep -q 'Refusing workspace mount that overlaps the host-owned snapshot store' "${TMP_DIR}/snapshot-overlap.err"
+if grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT_OVERLAP}" "${SNAPSHOT_AUDIT_LOG}"; then
+  echo "session snapshot audited a refused workspace" >&2
+  exit 1
+fi
+
+# A terminal snapshot that cannot re-sign the audit chain must fail, or it would
+# hide a session that `session verify` now rejects. A corrupt record forces it.
+SESSION_SNAPSHOT_BAD_CHAIN="20260408T150800Z-66999999-$$"
+printf 'corrupt\n' >>"${SNAPSHOT_AUDIT_LOG}"
+snapshot_record "${SESSION_SNAPSHOT_BAD_CHAIN}" "${WORKSPACE_A}" "${GIT_BASE}"
+if "${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT_BAD_CHAIN}" >/dev/null 2>"${TMP_DIR}/snapshot-bad-chain.err"; then
+  echo "session snapshot succeeded without a re-signed audit chain" >&2
   exit 1
 fi
 

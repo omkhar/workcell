@@ -38,40 +38,23 @@ type snapshotCaptureOptions struct {
 	SnapshotID string
 }
 
-// SnapshotCaptureMain implements the capture half of
-// `workcell session snapshot`: it builds the snapshot commit in a scratch git
-// dir, then publishes it into the host-owned store with descriptor-anchored,
-// fsynced writes. The bash shim only pauses the container around this call and
-// appends the audit record after it succeeds.
-//
-// Output:
-//
-//	tree=<object id>
-//	commit=<object id>
+// SnapshotCaptureMain is the capture half of `workcell session snapshot`. It
+// builds the snapshot commit in a scratch git dir and publishes it into the
+// host-owned store with anchored, fsynced writes. Output: tree= and commit=.
 func SnapshotCaptureMain(args []string) error {
 	return snapshotCaptureMain(args, os.Stdout)
 }
 
 func snapshotCaptureMain(args []string, stdout io.Writer) error {
 	opts := snapshotCaptureOptions{}
+	targets := map[string]*string{
+		"--git-bin": &opts.GitBin, "--store-root": &opts.StoreRoot, "--workspace": &opts.Workspace,
+		"--git-head": &opts.GitHead, "--origin-hash": &opts.OriginHash,
+		"--session-id": &opts.SessionID, "--snapshot-id": &opts.SnapshotID,
+	}
 	for i := 0; i < len(args); i++ {
-		var target *string
-		switch args[i] {
-		case "--git-bin":
-			target = &opts.GitBin
-		case "--store-root":
-			target = &opts.StoreRoot
-		case "--workspace":
-			target = &opts.Workspace
-		case "--git-head":
-			target = &opts.GitHead
-		case "--origin-hash":
-			target = &opts.OriginHash
-		case "--session-id":
-			target = &opts.SessionID
-		case "--snapshot-id":
-			target = &opts.SnapshotID
-		default:
+		target, ok := targets[args[i]]
+		if !ok {
 			return unsupportedOption("session snapshot capture", args[i])
 		}
 		v, ni, err := optionValueOrErrorStrict(args, i, args[i])
@@ -103,10 +86,9 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 		return "", "", errors.New("the session or snapshot id is not a safe name")
 	}
 	gitDir := filepath.Join(opts.Workspace, ".git")
-	if info, statErr := os.Lstat(filepath.Join(gitDir, "objects")); statErr != nil || !info.IsDir() {
-		return "", "", fmt.Errorf("session snapshot requires a self-contained git workspace: %s", opts.Workspace)
-	}
-	if info, statErr := os.Lstat(gitDir); statErr != nil || info.Mode()&os.ModeSymlink != 0 {
+	objectsInfo, objErr := os.Lstat(filepath.Join(gitDir, "objects"))
+	gitDirInfo, gitErr := os.Lstat(gitDir)
+	if objErr != nil || gitErr != nil || !objectsInfo.IsDir() || gitDirInfo.Mode()&os.ModeSymlink != 0 {
 		return "", "", fmt.Errorf("session snapshot requires a self-contained git workspace: %s", opts.Workspace)
 	}
 
@@ -116,25 +98,23 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 	}
 	defer func() { _ = os.RemoveAll(scratch) }() // hardened-fs-exempt: this removes the directory created above, and RemoveAll does not follow symlinks
 
-	// The scratch dir is the git dir, so its index is the temporary index and
-	// its config is the only repository config git reads. The workspace
-	// .git/config and .git/index are never read or written. The workspace
-	// object store is an alternate for reads only; the store fetch below
-	// rehashes every object, so a forged workspace object fails closed.
-	if err := writeSnapshotAlternates(scratch, filepath.Join(gitDir, "objects")); err != nil {
-		return "", "", err
-	}
+	// The scratch dir is the git dir: its index is the temporary index and its
+	// config is the only config git reads, so the workspace .git/config and
+	// .git/index are untouched. The workspace objects are a read-only
+	// alternate; the store fetch rehashes them, so a forged object fails closed.
 	scratchGit := func(args ...string) (string, error) {
 		return runSnapshotGit(opts, scratch, append([]string{"--git-dir=" + scratch, "--work-tree=" + opts.Workspace}, args...)...)
 	}
-	if _, err := runSnapshotGit(opts, scratch, "init", "--quiet", "--bare", "--template=", scratch); err != nil {
+	if _, err := runSnapshotGit(opts, scratch, snapshotInitArgs(opts.GitHead, scratch)...); err != nil {
 		return "", "", err
 	}
-	if _, err := scratchGit("read-tree", opts.GitHead); err != nil {
+	if err := writeSnapshotAlternates(scratch, filepath.Join(gitDir, "objects")); err != nil {
 		return "", "", err
 	}
-	if _, err := scratchGit("add", "-A"); err != nil {
-		return "", "", err
+	for _, step := range [][]string{{"read-tree", opts.GitHead}, {"add", "-A"}} {
+		if _, err := scratchGit(step...); err != nil {
+			return "", "", err
+		}
 	}
 	if tree, err = scratchGit("write-tree"); err != nil {
 		return "", "", err
@@ -156,14 +136,6 @@ func snapshotCapture(opts snapshotCaptureOptions) (tree, commit string, err erro
 // writeSnapshotAlternates makes the workspace object store a read-only
 // alternate of the scratch git dir.
 func writeSnapshotAlternates(scratch, objects string) error {
-	scratchFile, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(scratch, "anchor"))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = scratchFile.Close() }()
-	if err := rootio.MkdirAllSyncedAt(scratchFile, "objects/info", 0o700); err != nil {
-		return err
-	}
 	infoFile, _, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(scratch, "objects", "info", "alternates"))
 	if err != nil {
 		return err
@@ -172,11 +144,10 @@ func writeSnapshotAlternates(scratch, objects string) error {
 	return rootio.StageAndPublishAt(infoFile, "alternates", []byte(objects+"\n"), 0o600, ".alternates-")
 }
 
-// publishSnapshot fetches the scratch ref into the host-owned store. The
-// store directory is opened through a no-follow descriptor chain, git runs
-// only while that path still names the same directory, and the new objects,
-// ref, and every directory that gained an entry are fsynced before the caller
-// may record the snapshot.
+// publishSnapshot fetches the scratch ref into the host-owned store through a
+// no-follow descriptor chain. Git runs only while the store path still names
+// the opened directory, and everything new is fsynced before the caller records
+// the snapshot.
 func publishSnapshot(opts snapshotCaptureOptions, scratch string) error {
 	relative := filepath.Join(filepath.Base(opts.StoreRoot), opts.OriginHash+".git")
 	rootParent, _, err := rootio.OpenParentDirectoryNoFollow(opts.StoreRoot)
@@ -199,7 +170,7 @@ func publishSnapshot(opts snapshotCaptureOptions, scratch string) error {
 	if err := check(); err != nil {
 		return err
 	}
-	if _, err := runSnapshotGit(opts, storePath, "init", "--quiet", "--bare", "--template=", storePath); err != nil {
+	if _, err := runSnapshotGit(opts, storePath, snapshotInitArgs(opts.GitHead, storePath)...); err != nil {
 		return err
 	}
 	if err := check(); err != nil {
@@ -224,6 +195,17 @@ func publishSnapshot(opts snapshotCaptureOptions, scratch string) error {
 	return nil
 }
 
+// snapshotInitArgs initializes a bare repository with the object format the
+// recorded head implies, so a SHA-256 workspace gets a SHA-256 scratch
+// repository and store.
+func snapshotInitArgs(gitHead, dir string) []string {
+	format := "sha1"
+	if len(gitHead) == 64 {
+		format = "sha256"
+	}
+	return []string{"init", "--quiet", "--bare", "--template=", "--object-format=" + format, dir}
+}
+
 // requireSameDirectory fails when path no longer names the directory the
 // descriptor holds, so a store component swapped for a symlink or another
 // directory during a git run is detected before the result is trusted.
@@ -242,9 +224,8 @@ func requireSameDirectory(dir *os.File, path string) error {
 	return nil
 }
 
-// runSnapshotGit runs git with a scrubbed environment: no system or global
-// config, no hooks, no fsmonitor, no external diff, and a pinned PATH, HOME,
-// and locale.
+// runSnapshotGit runs git with a scrubbed environment and no hooks, system or
+// global config, fsmonitor, or external diff.
 func runSnapshotGit(opts snapshotCaptureOptions, dir string, args ...string) (string, error) {
 	home := os.Getenv("HOME")
 	if home == "" {
@@ -271,16 +252,7 @@ func runSnapshotGit(opts snapshotCaptureOptions, dir string, args ...string) (st
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", firstGitVerb(args), err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("git: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil
-}
-
-func firstGitVerb(args []string) string {
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && !strings.Contains(arg, "=") {
-			return arg
-		}
-	}
-	return "command"
 }
