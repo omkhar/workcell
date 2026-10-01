@@ -115,6 +115,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE}\" ;;\n" +
 		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; echo https://example.invalid/pr/1 ;;\n" +
 		"  \"api -X DELETE\"*) ;;\n" +
+		"  *git/ref/heads/codex*) [ -n \"${FAKE_ORPHAN}\" ] || exit 1 ;;\n" +
 		"  \"pr merge\"*) ;;\n" +
 		"  \"pr edit\"*) ;;\n" +
 		"  *) echo \"unexpected gh call: $*\" >&2; exit 97 ;;\n" +
@@ -219,6 +220,8 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		{name: "rerun resumes even when main moved", moved: true, env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)},
 			want: []string{"--match-head-commit " + resumed}},
 		{name: "PR from another run skips", env: []string{"FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "7", resumed)}, forbid: []string{"pr merge", "pr create"}},
+		{name: "orphan branch from a killed attempt is replaced", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_ORPHAN=1"},
+			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42", "pr merge"}},
 		{name: "failed guard labels without creating the label", env: []string{"SCOPE=failed", "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit},
 			want: []string{"--add-label needs-human-review"}, forbid: []string{"label create", "pr merge"}},
 		{name: "failed PR creation deletes the branch", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_PR_CREATE_FAIL=1"}, wantErr: true,

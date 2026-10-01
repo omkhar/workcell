@@ -49,14 +49,16 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
-	ID    string            `yaml:"id"`
-	Name  string            `yaml:"name"`
-	Shell string            `yaml:"shell"`
-	If    yaml.Node         `yaml:"if"`
-	Uses  string            `yaml:"uses"`
-	Env   map[string]string `yaml:"env"`
-	Run   string            `yaml:"run"`
-	With  map[string]string `yaml:"with"`
+	ID    string    `yaml:"id"`
+	Name  string    `yaml:"name"`
+	Shell string    `yaml:"shell"`
+	If    yaml.Node `yaml:"if"`
+	// ContinueOnError is a bool or an expression, so it stays untyped.
+	ContinueOnError any               `yaml:"continue-on-error"`
+	Uses            string            `yaml:"uses"`
+	Env             map[string]string `yaml:"env"`
+	Run             string            `yaml:"run"`
+	With            map[string]string `yaml:"with"`
 }
 
 // This digest covers the complete parsed sign-release job plus the workflow-level
@@ -921,7 +923,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		!upstreamRefreshGuardUses(guard.Steps[1], "actions/download-artifact@", map[string]string{"name": "upstream-refresh-candidate", "path": "${{ runner.temp }}/candidate"}) {
 		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
 	}
-	if step := guard.Steps[2]; step.ID != "guard" || step.Uses != "" || step.Shell != "" || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
+	if step := guard.Steps[2]; step.ID != "guard" || step.ContinueOnError != true || step.Uses != "" || step.Shell != "" || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
 		return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
 	}
 	if guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
@@ -936,6 +938,11 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
 		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
+	}
+	for _, value := range publish.Env {
+		if upstreamRefreshAppCredentialRE.MatchString(value) {
+			return fmt.Errorf("%s publish job must not set App credentials at job level", path)
+		}
 	}
 	appTokenSteps := 0
 	publishRuns := 0

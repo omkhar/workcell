@@ -125,11 +125,16 @@ done <"${work}/name-status"
 cleanup_branch() {
   [[ "${resume}" == 1 ]] || gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null 2>&1 || true
 }
+fail() {
+  cleanup_branch
+  die "$*"
+}
 if [[ "${resume}" == 0 ]]; then
+  # A killed earlier attempt of this run can leave its branch. No open PR uses it.
+  if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" >/dev/null 2>&1; then
+    gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null
+  fi
   gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${base_sha}" >/dev/null
-fi
-
-if [[ "${resume}" == 0 ]]; then
   headline="^F Refresh pinned upstreams (upstream maintenance; auto-publish)"
   jq -n \
     --arg repo "${GITHUB_REPOSITORY}" --arg branch "${branch}" --arg base "${base_sha}" --arg headline "${headline}" \
@@ -144,54 +149,39 @@ if [[ "${resume}" == 0 ]]; then
         fileChanges: {additions: $additions, deletions: $deletions}
       }}
     }' >"${work}/request.json"
-  commit_oid="$(gh api graphql --input "${work}/request.json" --jq .data.createCommitOnBranch.commit.oid)" || {
-    cleanup_branch
-    die "createCommitOnBranch failed"
-  }
-  [[ -n "${commit_oid}" && "${commit_oid}" != null ]] || {
-    cleanup_branch
-    die "createCommitOnBranch returned no commit"
-  }
+  commit_oid="$(gh api graphql --input "${work}/request.json" --jq .data.createCommitOnBranch.commit.oid)" || fail "createCommitOnBranch failed"
+  [[ -n "${commit_oid}" && "${commit_oid}" != null ]] || fail "createCommitOnBranch returned no commit"
 fi
 
 commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${commit_oid}")"
-if [[ "$(jq -r .tree.sha <<<"${commit_json}")" != "${tree_oid}" ]]; then
-  cleanup_branch
-  die "GitHub commit tree does not match candidate tree ${tree_oid}"
-fi
-if [[ "$(jq -r .verification.verified <<<"${commit_json}")" != true ]]; then
-  cleanup_branch
-  die "GitHub did not sign commit ${commit_oid}"
-fi
+[[ "$(jq -r .tree.sha <<<"${commit_json}")" == "${tree_oid}" ]] || fail "GitHub commit tree does not match candidate tree ${tree_oid}"
+[[ "$(jq -r .verification.verified <<<"${commit_json}")" == true ]] || fail "GitHub did not sign commit ${commit_oid}"
 
 body_file="${work}/pr-body.md"
-{
-  echo "## Summary"
-  echo
-  echo "- apply the exact upstream refresh candidate from the reviewed workflow"
-  echo "- the commit is signed by GitHub and its tree equals the candidate tree"
-  echo
-  echo "## Candidate"
-  echo
-  echo "- run: $(meta .run_url)"
-  echo "- base sha: \`${base_sha}\`"
-  echo "- patch sha256: \`$(meta .patch_sha256)\`"
-  echo "- tree oid: \`${tree_oid}\`"
-  echo "- scope guard: ${scope_result}"
-  echo
-  echo "## Diffstat"
-  echo
-  echo '```'
-  cat "${candidate_dir}/diffstat"
-  echo '```'
-  echo
-  echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-} >"${body_file}"
+cat >"${body_file}" <<EOF
+## Summary
+
+- apply the exact upstream refresh candidate from the reviewed workflow
+- the commit is signed by GitHub and its tree equals the candidate tree
+
+## Candidate
+
+- run: $(meta .run_url)
+- base sha: \`${base_sha}\`
+- patch sha256: \`$(meta .patch_sha256)\`
+- tree oid: \`${tree_oid}\`
+- scope guard: ${scope_result}
+
+## Diffstat
+
+\`\`\`
+$(cat "${candidate_dir}/diffstat")
+\`\`\`
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
 if [[ "${resume}" == 0 ]]; then
-  pr_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${branch}" --title "Refresh pinned upstreams" --body-file "${body_file}")" || {
-    cleanup_branch
-    die "gh pr create failed"
-  }
+  pr_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${branch}" --title "Refresh pinned upstreams" --body-file "${body_file}")" || fail "gh pr create failed"
 fi
 
 if [[ "${scope_result}" == passed ]]; then
