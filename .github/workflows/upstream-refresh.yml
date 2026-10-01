@@ -18,7 +18,7 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false # A canceled publish could leave an open PR with no merge decision.
 
 jobs:
   refresh:
@@ -26,9 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     timeout-minutes: 20
-    environment:
-      name: upstream-refresh
-      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    outputs:
+      candidate: ${{ steps.candidate.outputs.dir != '' }}
     permissions:
       contents: read # Read the reviewed tree to compute the candidate bundle.
       issues: write # Update the rolling tracking issue with the latest candidate status.
@@ -45,6 +44,17 @@ jobs:
 
       - name: Expose cosign in trusted system path
         run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
+
+      - name: Summarize provider bumps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          mkdir -p "${RUNNER_TEMP}/upstream-refresh-candidate"
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh >"${RUNNER_TEMP}/upstream-refresh-candidate/provider-summary"
 
       - name: Refresh pinned upstreams
         env:
@@ -154,6 +164,7 @@ jobs:
             ${{ steps.candidate.outputs.dir }}/patch
             ${{ steps.candidate.outputs.dir }}/diffstat
             ${{ steps.candidate.outputs.dir }}/metadata.json
+            ${{ steps.candidate.outputs.dir }}/provider-summary
           retention-days: 7
 
       - name: Update tracking issue
@@ -168,8 +179,12 @@ jobs:
           tracking_title="Upstream refresh candidate"
           issue_body="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-issue.XXXXXX.md")"
 
-          if [[ "$(gh label list --json name --jq 'map(select(.name == "upstream-refresh-candidate")) | length')" == "0" ]]; then
+          if [[ "$(gh label list --limit 1000 --json name --jq 'map(select(.name == "upstream-refresh-candidate")) | length')" == "0" ]]; then
             gh label create "${tracking_label}" --color "0E8A16" --description "Latest upstream refresh candidate tracking issue"
+          fi
+          # The publish job cannot create labels with its App token.
+          if [[ "$(gh label list --limit 1000 --json name --jq 'map(select(.name == "needs-human-review")) | length')" == "0" ]]; then
+            gh label create needs-human-review --color "D93F0B" --description "Human review required before merge"
           fi
 
           generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -256,3 +271,91 @@ jobs:
             gh issue reopen "${issue_number}" >/dev/null
           fi
           gh issue edit "${issue_number}" --title "${tracking_title}" --body-file "${issue_body}" --add-label "${tracking_label}" >/dev/null
+
+  scope-guard:
+    name: Check bump scope
+    needs: refresh
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
+    timeout-minutes: 5
+    outputs:
+      # The guard step outcome is the guard's real exit status.
+      result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}
+    permissions:
+      contents: read # Read the reviewed scope-guard script.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
+
+      # A failed guard is a result: publish then opens a PR for human review.
+      - id: guard
+        name: Run scope guard
+        shell: bash --noprofile --norc -euo pipefail {0}
+        continue-on-error: true
+        run: ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
+
+  publish:
+    name: Publish upstream refresh PR
+    needs: [refresh, scope-guard]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
+    timeout-minutes: 15
+    environment:
+      name: upstream-refresh
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    permissions:
+      contents: read # Check out the candidate base. The App token does all writes.
+      issues: write # Post the audit comment on the tracking issue.
+    steps:
+      - id: secrets
+        name: Check App credentials
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md."
+            exit 0
+          fi
+          echo "present=true" >> "${GITHUB_OUTPUT}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - id: publish
+        name: Publish candidate
+        shell: bash --noprofile --norc -euo pipefail {0}
+        if: steps.secrets.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
+        run: ./scripts/ci/upstream-refresh-publish.sh "${RUNNER_TEMP}/candidate" "${SCOPE_GUARD_RESULT}" "${RUNNER_TEMP}/audit.md"
+      - name: Post audit comment
+        if: always() && steps.secrets.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ -s "${RUNNER_TEMP}/audit.md" ]] || exit 0
+          issue_number="$(gh issue list --state all --label upstream-refresh-candidate --limit 1 --json number --jq '.[0].number // empty')"
+          [[ -n "${issue_number}" ]] || exit 0
+          gh issue comment "${issue_number}" --body-file "${RUNNER_TEMP}/audit.md"

