@@ -6749,6 +6749,15 @@ git -C "${COMMONDIR_REFS_REPO}" branch topic/HEAD
 git -C "${COMMONDIR_REFS_REPO}" branch topic/commondir
 run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_REFS_REPO}" --dry-run >/tmp/workcell-commondir-refs.out 2>&1
 
+# A case-insensitive volume opens REFS as refs, so the top-level prune matches any letter case.
+COMMONDIR_UPREFS_REPO="${COMMONDIR_ROOT}/upper-refs-branch-repo"
+git init -q -b master "${COMMONDIR_UPREFS_REPO}"
+git -C "${COMMONDIR_UPREFS_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic"
+git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic/HEAD"
+git -C "${COMMONDIR_UPREFS_REPO}" rev-parse HEAD >"${COMMONDIR_UPREFS_REPO}/.git/REFS/heads/topic/commondir"
+run_workcell_verify --agent codex --no-default-injection-policy --workspace "${COMMONDIR_UPREFS_REPO}" --dry-run >/tmp/workcell-commondir-uprefs.out 2>&1
+
 # Only the top-level refs are pruned: the same pair under a module admin directory is still rejected.
 COMMONDIR_MODREFS_REPO="${COMMONDIR_ROOT}/module-refs-repo"
 git init -q -b master "${COMMONDIR_MODREFS_REPO}"
