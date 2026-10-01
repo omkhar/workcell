@@ -18,7 +18,7 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false # A canceled publish could leave an open PR with no merge decision.
 
 jobs:
   refresh:

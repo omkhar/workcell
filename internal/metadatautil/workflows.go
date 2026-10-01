@@ -38,6 +38,7 @@ type workflowNodeDocument struct {
 type workflowJob struct {
 	Name        string            `yaml:"name"`
 	Env         map[string]string `yaml:"env"`
+	Container   yaml.Node         `yaml:"container"`
 	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
 		Name string `yaml:"name"`
@@ -49,11 +50,10 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
-	ID    string    `yaml:"id"`
-	Name  string    `yaml:"name"`
-	Shell string    `yaml:"shell"`
-	If    yaml.Node `yaml:"if"`
-	// ContinueOnError is a bool or an expression, so it stays untyped.
+	ID              string            `yaml:"id"`
+	Name            string            `yaml:"name"`
+	Shell           string            `yaml:"shell"`
+	If              yaml.Node         `yaml:"if"`
 	ContinueOnError any               `yaml:"continue-on-error"`
 	Uses            string            `yaml:"uses"`
 	Env             map[string]string `yaml:"env"`
@@ -837,7 +837,6 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 }
 
 const (
-	// The publisher sets its own shell, so a workflow default cannot wrap it.
 	upstreamRefreshPublishShell     = "bash --noprofile --norc -euo pipefail {0}"
 	upstreamRefreshScopeGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"`
 	upstreamRefreshScopeGuardResult = "${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}"
@@ -850,7 +849,6 @@ var upstreamRefreshAppTokenInputs = map[string]string{
 	"permission-pull-requests": "write",
 }
 
-// upstreamRefreshReviewedUses accepts only the reviewed checkout or candidate download step.
 func upstreamRefreshReviewedUses(step workflowStep, checkout bool) bool {
 	action, inputs := "actions/download-artifact@", map[string]string{"name": "upstream-refresh-candidate", "path": "${{ runner.temp }}/candidate"}
 	if checkout {
@@ -900,6 +898,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 					return fmt.Errorf("%s %s job must not contain %q", path, name, command)
 				}
 			}
+		}
+		if job.Container.Kind != 0 {
+			return fmt.Errorf("%s %s job must not run in a container", path, name)
 		}
 		if name != "publish" && job.Environment.Name != "" {
 			return fmt.Errorf("%s %s job must not bind an environment", path, name)

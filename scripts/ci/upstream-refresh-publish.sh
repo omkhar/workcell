@@ -130,7 +130,6 @@ fail() {
   die "$*"
 }
 if [[ "${resume}" == 0 ]]; then
-  # A killed earlier attempt of this run can leave its branch. No open PR uses it.
   if lookup="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" 2>&1)"; then
     gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null
   elif [[ "${lookup}" != *"HTTP 404"* ]]; then
