@@ -23,7 +23,9 @@ import (
 type workflowDocument struct {
 	Env  map[string]string      `yaml:"env"`
 	Jobs map[string]workflowJob `yaml:"jobs"`
+	Def  workflowDefaults       `yaml:"defaults"`
 }
+type workflowDefaults struct{ Run map[string]string }
 
 type workflowNodeDocument struct {
 	Env      map[string]string    `yaml:"env"`
@@ -39,6 +41,8 @@ type workflowJob struct {
 	Name        string            `yaml:"name"`
 	Env         map[string]string `yaml:"env"`
 	Container   yaml.Node         `yaml:"container"`
+	Services    yaml.Node         `yaml:"services"`
+	Defaults    yaml.Node         `yaml:"defaults"`
 	RunsOn      yaml.Node         `yaml:"runs-on"`
 	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
@@ -899,8 +903,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				}
 			}
 		}
-		if job.Container.Kind != 0 || job.RunsOn.Kind != yaml.ScalarNode || job.RunsOn.Value != "ubuntu-latest" {
-			return fmt.Errorf("%s %s job must run on ubuntu-latest and must not run in a container", path, name)
+		if job.Container.Kind+job.Services.Kind != 0 || job.RunsOn.Kind != yaml.ScalarNode || job.RunsOn.Value != "ubuntu-latest" {
+			return fmt.Errorf("%s %s job must run on ubuntu-latest and must not run in a container or services", path, name)
 		}
 		if name != "publish" && job.Environment.Name != "" {
 			return fmt.Errorf("%s %s job must not bind an environment", path, name)
@@ -921,7 +925,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		!upstreamRefreshReviewedUses(guard.Steps[0], true) || !upstreamRefreshReviewedUses(guard.Steps[1], false) {
 		return fmt.Errorf("%s scope-guard job must be the reviewed checkout, candidate download, and guard steps", path)
 	}
-	if step := guard.Steps[2]; step.ID != "guard" || step.ContinueOnError != true || step.Uses != "" || step.Shell != upstreamRefreshPublishShell || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
+	if step := guard.Steps[2]; step.ID != "guard" || step.WorkDir != "" || step.ContinueOnError != true || step.Uses != "" || step.Shell != upstreamRefreshPublishShell || len(step.Env) != 0 || strings.TrimSpace(step.Run) != upstreamRefreshScopeGuardRun {
 		return fmt.Errorf("%s scope-guard job must run the scope guard as its only run step: %q", path, upstreamRefreshScopeGuardRun)
 	}
 	if guard.Outputs["result"] != upstreamRefreshScopeGuardResult {
@@ -937,8 +941,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
 		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
 	}
-	if len(publish.Env)+len(guard.Env) != 0 || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
-		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION (NODE_OPTIONS or BASH_ENV would reach the guard or the App token)", path)
+	if len(publish.Env)+len(guard.Env) != 0 || publish.Defaults.Kind+guard.Defaults.Kind != 0 || document.Def.Run["working-directory"] != "" || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
+		return fmt.Errorf("%s scope-guard and publish jobs must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION, job defaults, or a default working-directory (NODE_OPTIONS, BASH_ENV, or a moved directory would reach the guard or the App token)", path)
 	}
 	appTokenSteps := 0
 	publishRuns := 0
@@ -963,7 +967,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		}
 		beforePublisher = beforePublisher && !publisher
 		run := strings.TrimSpace(step.Run)
-		if publisher && (step.Shell != upstreamRefreshPublishShell || len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
+		if publisher && (step.Shell != upstreamRefreshPublishShell || step.WorkDir != "" || len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
 			return fmt.Errorf("%s publish job step must run only the publish script", path)
 		}
 		if mint {

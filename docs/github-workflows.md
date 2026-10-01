@@ -208,7 +208,7 @@ If an earlier attempt of the same run opened the PR, `publish` resumes that PR. 
 If a run stops after it opens the PR, rerun that run or close the PR.
 The job output `result` is `passed` only when the guard step exits 0.
 
-The App has no Workflows permission, so `publish` cannot commit a candidate that changes `.github/workflows/`. Publish that candidate on the host.
+`publish` fails closed on a candidate that changes `.github/workflows/`, because the App has no Workflows permission. It also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails. Publish such a candidate on the host.
 
 The scope guard allows only these changes:
 
@@ -238,7 +238,7 @@ The comment lists the PR, the commit, the merge decision, the cool-off policy, a
    Add no other actor. A bot cannot approve its own PR, so this bypass replaces the approval.
 
 Without the bypass, auto-merge waits for a human review.
-The hosted-controls audit requires these two secrets and no others in this environment.
+The hosted-controls audit permits these two secrets and no others in this environment.
 It accepts the App as a bypass actor on the review ruleset only.
 
 An operator can still use `./scripts/publish-upstream-refresh-pr.sh` for host publication.
