@@ -670,6 +670,10 @@ func (check *pinnedInputsCheck) validateCodeownersAndHostedPolicy() error {
 			return err
 		},
 		func() error {
+			_, err := UpstreamRefreshAppID(check.hostedControlsPolicy)
+			return err
+		},
+		func() error {
 			return ValidateCanonicalRepositoryVariables(check.hostedControlsPolicy, "policy/github-hosted-controls.toml")
 		},
 		func() error {

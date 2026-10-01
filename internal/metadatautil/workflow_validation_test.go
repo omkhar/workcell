@@ -1945,6 +1945,11 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsInvalidReleas
 			want:    "must not declare secrets for workflow_environment.release",
 		},
 		{
+			name:    "unexpected optional secrets",
+			release: map[string]any{"optional_secrets": []any{"RELEASE_TOKEN"}, "allow_admin_bypass": false, "deployment_branches": []any{"main"}},
+			want:    "must not declare optional secrets for workflow_environment.release",
+		},
+		{
 			name:    "unexpected variables",
 			release: map[string]any{"variables": map[string]any{"RELEASE_REGION": "north"}, "allow_admin_bypass": false, "deployment_branches": []any{"main"}},
 			want:    "must not declare public variables for workflow_environment.release",
@@ -2026,7 +2031,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsRejectsUnexpectedUps
 	if err == nil {
 		t.Fatal("metadatautil.ValidateCanonicalWorkflowEnvironments() unexpectedly succeeded")
 	}
-	if !strings.Contains(err.Error(), "must not declare secrets") {
+	if !strings.Contains(err.Error(), "must not require secrets") {
 		t.Fatalf("metadatautil.ValidateCanonicalWorkflowEnvironments() error = %v, want upstream-refresh secret rejection", err)
 	}
 }
@@ -2046,6 +2051,7 @@ func TestValidateCanonicalHostedControlsWorkflowEnvironmentsAcceptsCanonicalValu
 				"deployment_tags":     []any{"v*"},
 			},
 			"upstream-refresh": map[string]any{
+				"optional_secrets":    []any{"WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID", "WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY"},
 				"allow_admin_bypass":  false,
 				"deployment_branches": []any{"main"},
 			},
@@ -2070,5 +2076,25 @@ func TestHostedControlsEnvironmentArtifactNameEscapesReservedCharacters(t *testi
 
 	if got := metadatautil.EnvironmentArtifactName("prod+east:blue&green=1"); got != "prod%2Beast%3Ablue%26green%3D1" {
 		t.Fatalf("metadatautil.EnvironmentArtifactName() = %q, want %q", got, "prod%2Beast%3Ablue%26green%3D1")
+	}
+}
+
+func TestValidateCanonicalWorkflowEnvironmentsRejectsAuditOptionalSecrets(t *testing.T) {
+	t.Parallel()
+	policy := map[string]any{
+		"workflow_environment": map[string]any{
+			"release": map[string]any{"allow_admin_bypass": false, "deployment_branches": []any{"main"}},
+			"hosted-controls-audit": map[string]any{
+				"required_secrets":    []any{"WORKCELL_HOSTED_CONTROLS_TOKEN"},
+				"optional_secrets":    []any{"EXTRA"},
+				"allow_admin_bypass":  false,
+				"deployment_branches": []any{"main"},
+				"deployment_tags":     []any{"v*"},
+			},
+		},
+	}
+	err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
+	if err == nil || !strings.Contains(err.Error(), "must not declare optional secrets for workflow_environment.hosted-controls-audit") {
+		t.Fatalf("error = %v, want optional-secret rejection", err)
 	}
 }
