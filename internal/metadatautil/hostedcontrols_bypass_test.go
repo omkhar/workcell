@@ -79,3 +79,43 @@ func TestClassifyHostedRulesetsFlagsDuplicateDefaultBranchRulesets(t *testing.T)
 		t.Fatal("one ruleset holding both rule types is not a duplicate")
 	}
 }
+
+func TestVerifyHostedRulesetBypassesRejectsMalformedActorLists(t *testing.T) {
+	role := bypassActor("RepositoryRole", "pull_request", 5)
+	for _, field := range []string{"branchIntegrity", "branchReview", "branchStatusChecks", "tagRelease"} {
+		for name, bad := range map[string]any{"string": "x", "object": map[string]any{}, "entry": []any{"x"}} {
+			controls := bypassControls([]any{role}, nil)
+			ruleset := map[string]any{"name": field, "bypass_actors": bad}
+			switch field {
+			case "branchIntegrity":
+				controls.branchIntegrity = ruleset
+			case "branchReview":
+				controls.branchReview = ruleset
+			case "branchStatusChecks":
+				controls.branchStatusChecks = ruleset
+			case "tagRelease":
+				controls.tagRelease = ruleset
+			}
+			if err := verifyHostedRulesetBypasses(controls, 0, "o/r"); err == nil {
+				t.Fatalf("%s with malformed %s bypass_actors must fail", field, name)
+			}
+		}
+	}
+}
+
+func TestUpstreamRefreshAppID(t *testing.T) {
+	pol := func(v any) map[string]any {
+		return map[string]any{"branch_review": map[string]any{"upstream_refresh_app_id": v}}
+	}
+	if id, err := UpstreamRefreshAppID(map[string]any{}); err != nil || id != 0 {
+		t.Fatalf("unset = %d, %v", id, err)
+	}
+	if id, err := UpstreamRefreshAppID(pol(42)); err != nil || id != 42 {
+		t.Fatalf("42 = %d, %v", id, err)
+	}
+	for _, bad := range []any{0, -1, "42", 1.5} {
+		if _, err := UpstreamRefreshAppID(pol(bad)); err == nil {
+			t.Fatalf("%v must be rejected", bad)
+		}
+	}
+}

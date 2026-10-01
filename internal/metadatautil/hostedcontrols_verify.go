@@ -485,13 +485,9 @@ func verifyHostedRulesetControls(inputs hostedControlInputs, reviewMode, ownerTy
 		return fmt.Errorf("no active rulesets found on %s", repo)
 	}
 	controls := classifyHostedRulesets(active)
-	branchReviewPolicy, _ := inputs.policy["branch_review"].(map[string]any)
-	expectedAppID := 0
-	if raw, ok := branchReviewPolicy["upstream_refresh_app_id"]; ok {
-		if id, isInt := raw.(int); !isInt || id <= 0 {
-			return errors.New("branch_review.upstream_refresh_app_id must be a positive integer when set")
-		}
-		expectedAppID = raw.(int)
+	expectedAppID, err := UpstreamRefreshAppID(inputs.policy)
+	if err != nil {
+		return err
 	}
 	if err := verifyHostedRulesetShape(controls, expectedAppID, repo); err != nil {
 		return err
@@ -600,6 +596,40 @@ func hostedRulesetRule(ruleset map[string]any, ruleType string) map[string]any {
 	return nil
 }
 
+// UpstreamRefreshAppID returns branch_review.upstream_refresh_app_id, or zero
+// when unset. A set value must be a positive integer.
+func UpstreamRefreshAppID(policy map[string]any) (int, error) {
+	branchReviewPolicy, _ := policy["branch_review"].(map[string]any)
+	raw, ok := branchReviewPolicy["upstream_refresh_app_id"]
+	if !ok {
+		return 0, nil
+	}
+	id, isInt := raw.(int)
+	if !isInt || id <= 0 {
+		return 0, errors.New("branch_review.upstream_refresh_app_id must be a positive integer when set")
+	}
+	return id, nil
+}
+
+// hostedBypassActors returns the ruleset's bypass actors. A missing key means
+// none; a non-array value or a non-object entry is malformed and fails closed.
+func hostedBypassActors(ruleset map[string]any, repo string) ([]any, error) {
+	raw, ok := ruleset["bypass_actors"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	actors, isArray := raw.([]any)
+	if !isArray {
+		return nil, fmt.Errorf("ruleset %v on %s has malformed bypass_actors; expected an array", ruleset["name"], repo)
+	}
+	for _, actor := range actors {
+		if _, isObject := actor.(map[string]any); !isObject {
+			return nil, fmt.Errorf("ruleset %v on %s has a malformed bypass actor entry", ruleset["name"], repo)
+		}
+	}
+	return actors, nil
+}
+
 func verifyHostedRulesetShape(controls hostedRulesetControls, expectedAppID int, repo string) error {
 	if controls.duplicate != "" {
 		return fmt.Errorf("more than one active default-branch %s ruleset on %s", controls.duplicate, repo)
@@ -619,13 +649,21 @@ func verifyHostedRulesetShape(controls hostedRulesetControls, expectedAppID int,
 // expectedAppID is the optional branch_review.upstream_refresh_app_id policy
 // value; zero means no pin, and then no Integration bypass actor is allowed.
 func verifyHostedRulesetBypasses(controls hostedRulesetControls, expectedAppID int, repo string) error {
-	if actors, _ := controls.branchIntegrity["bypass_actors"].([]any); len(actors) > 0 {
+	integrityActors, err := hostedBypassActors(controls.branchIntegrity, repo)
+	if err != nil {
+		return err
+	}
+	if len(integrityActors) > 0 {
 		return fmt.Errorf("default-branch integrity ruleset on %s must not declare bypass actors", repo)
 	}
 	if err := requireReviewBypassShape(controls.branchReview, expectedAppID, repo); err != nil {
 		return err
 	}
-	if actors, _ := controls.branchStatusChecks["bypass_actors"].([]any); hasIntegrationActor(actors) {
+	statusActors, err := hostedBypassActors(controls.branchStatusChecks, repo)
+	if err != nil {
+		return err
+	}
+	if hasIntegrationActor(statusActors) {
 		return fmt.Errorf("default-branch status-check ruleset on %s must not declare Integration bypass actors", repo)
 	}
 	if controls.tagRelease == nil {
@@ -646,7 +684,10 @@ func hasIntegrationActor(actors []any) bool {
 // The review ruleset allows RepositoryRole/pull_request actors plus at most one
 // Integration/pull_request actor (the upstream-refresh App) with a positive id.
 func requireReviewBypassShape(ruleset map[string]any, expectedAppID int, repo string) error {
-	actors, _ := ruleset["bypass_actors"].([]any)
+	actors, err := hostedBypassActors(ruleset, repo)
+	if err != nil {
+		return err
+	}
 	apps := 0
 	for _, raw := range actors {
 		if hostedBypassActorMatches(raw, "RepositoryRole", "pull_request") {
@@ -665,7 +706,10 @@ func requireReviewBypassShape(ruleset map[string]any, expectedAppID int, repo st
 }
 
 func requireHostedBypassShape(ruleset map[string]any, actorType, bypassMode string, requireNonEmpty bool, repo string) error {
-	actors, _ := ruleset["bypass_actors"].([]any)
+	actors, err := hostedBypassActors(ruleset, repo)
+	if err != nil {
+		return err
+	}
 	if requireNonEmpty && len(actors) == 0 {
 		return fmt.Errorf("ruleset %v on %s must declare an explicit bypass actor", ruleset["name"], repo)
 	}
