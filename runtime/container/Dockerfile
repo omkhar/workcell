@@ -1,13 +1,13 @@
 # Node.js LTS base image (v24 trixie-slim). Pin includes digest for reproducibility.
 # To update: fetch new digest with `docker pull node:24-trixie-slim` and update both
 # the tag and @sha256: digest. Then re-run verify-reproducible-build.sh.
-ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:50c3b2f6988dfc307b86e5301d69611af31f4789bdf232863b07d3b02fe55ae0
+ARG NODE_BASE_IMAGE=node:24-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe
 
 # Unix epoch timestamp for reproducible build artifact normalization.
 # Set to 0 to use epoch; set to a specific date for release builds.
 ARG SOURCE_DATE_EPOCH=0
 
-ARG RUST_TOOLCHAIN_IMAGE=rust:1.97.1-slim-trixie@sha256:69153971349358535be9821190190f026a761f690c6b58c68a914d14ab2d610a
+ARG RUST_TOOLCHAIN_IMAGE=rust:1.98.1-slim-trixie@sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7
 
 FROM ${RUST_TOOLCHAIN_IMAGE} AS rust-toolchain
 
@@ -274,7 +274,7 @@ FROM runtime-base AS runtime-builder
 # from the public release bucket, verify the per-platform checksums in the
 # corresponding manifest.json, update CLAUDE_VERSION, and refresh the
 # CLAUDE_SHA256 values below.
-ARG CLAUDE_VERSION=2.1.260
+ARG CLAUDE_VERSION=2.1.285
 # OpenAI Codex CLI version and SHA256 checksums for each architecture.
 # Workcell follows the stable npm channel and matching non-prerelease Rust
 # release after the cool-off in policy/provider-bumps.toml. The runtime
@@ -286,11 +286,11 @@ ARG CODEX_VERSION=0.153.2
 # architecture. Workcell pins the non-prerelease GitHub release asset and keeps
 # token auth explicit through copilot_github_token instead of host GitHub CLI
 # state.
-ARG COPILOT_VERSION=1.0.82
+ARG COPILOT_VERSION=1.0.89
 ARG CODEX_RELEASE_URL=
 ARG CODEX_CODE_MODE_HOST_RELEASE_URL=
 ARG COPILOT_RELEASE_URL=
-ARG RUST_VERSION=1.97.1
+ARG RUST_VERSION=1.98.1
 ARG TARGETARCH
 ARG BUILDKIT_MULTI_PLATFORM=1
 ARG SOURCE_DATE_EPOCH
@@ -363,11 +363,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       CLAUDE_PLATFORM="linux-arm64"; \
-      CLAUDE_SHA256="9811afb5f97224c2c5d3d0ee1e8c316117d298d5ec3e095d5ff0c1dd0e889ca5"; \
+      CLAUDE_SHA256="24fac77749bed3d91365d6b6915aa4b824e14318ecb6bc17adbc192f01c9173d"; \
       ;; \
     amd64) \
       CLAUDE_PLATFORM="linux-x64"; \
-      CLAUDE_SHA256="7a2fdc74b6836ea3d183f665b869f0ee3baebc9713cbebffe5838da4ea7bd82e"; \
+      CLAUDE_SHA256="33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; \
@@ -467,11 +467,11 @@ RUN TARGET_ARCH="${TARGETARCH:-}" \
   && case "${TARGET_ARCH}" in \
     arm64) \
       COPILOT_PLATFORM="linux-arm64"; \
-      COPILOT_SHA256="86c4c77a91b1ff5dd7313cbea9f861699a2cdceb4696f3864f3f0584e9684e0f"; \
+      COPILOT_SHA256="8406c9e0bbfd0cb868b2a3e9488d500b76401685afdb5d71149233df1d36921b"; \
       ;; \
     amd64) \
       COPILOT_PLATFORM="linux-x64"; \
-      COPILOT_SHA256="37fa67686a9e4ed8d46dcd6a9c80ab524dea840ecaa0a3f7edf8d09f961b97a9"; \
+      COPILOT_SHA256="c5c234ccba6fae2b7a9eae462caf628e86c21b5e6240ec2e885727fc148a1dcc"; \
       ;; \
     *) \
       echo "Unsupported TARGETARCH: ${TARGET_ARCH}" >&2; \
