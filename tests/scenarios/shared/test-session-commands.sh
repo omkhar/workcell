@@ -16,6 +16,8 @@ SESSION_DELETE="20260408T113000Z-22666666-$$"
 SESSION_DELETE_RUNNING="20260408T113500Z-22777777-$$"
 SESSION_DIRTY="20260408T120000Z-33333333-$$"
 SESSION_TAMPERED="20260408T140000Z-55555555-$$"
+SESSION_SNAPSHOT="20260408T150000Z-66666666-$$"
+SESSION_SNAPSHOT_POISON="20260408T150500Z-66777777-$$"
 CLI_SESSION_FIXTURE_IMAGE="workcell-session-cli-fixture:test-$$"
 CLI_SESSION_FIXTURE_BUILD_DIR="${TMP_DIR}/session-cli-fixture-build"
 WORKCELL_FUNCTIONS_COPY="${ROOT_DIR}/scripts/.workcell-test-functions-$$"
@@ -50,6 +52,7 @@ cleanup() {
   fi
   cleanup_workcell_trusted_docker_client
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
+  rm -rf "${SNAPSHOT_STORE_A:-}" "${SNAPSHOT_STORE_POISON:-}" "${SNAPSHOT_TARGET_STATE_DIR:-}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets/local_vm/colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
@@ -419,6 +422,120 @@ grep -q "\"uid\":\"${SESSION_TWO}\"" "${OCSF_EXPORT_PATH}"
 # JSONL, never the indented default bundle (whose object opens a bare-brace line).
 if grep -qx '{' "${OCSF_EXPORT_PATH}"; then
   echo "ocsf export emitted indented JSON, not JSONL" >&2
+  exit 1
+fi
+
+# session snapshot: a terminal detached session is captured without docker into
+# the host-owned store. The workspace index and filter drivers stay untouched.
+# The snapshot sessions use their own profile so the audit chain holds only real
+# records. The shared scenario log has hand-written records that the re-sign
+# step correctly refuses.
+SNAPSHOT_PROFILE="wcl-snapshot-scenario-$$"
+SNAPSHOT_TARGET_STATE_DIR="${WORKCELL_STATE_ROOT}/targets/local_vm/colima/${SNAPSHOT_PROFILE}"
+SNAPSHOT_SESSIONS_DIR="${SNAPSHOT_TARGET_STATE_DIR}/sessions"
+SNAPSHOT_AUDIT_LOG="${SNAPSHOT_TARGET_STATE_DIR}/workcell.audit.log"
+mkdir -p "${SNAPSHOT_SESSIONS_DIR}"
+snapshot_record() {
+  local session_id="$1"
+  local workspace="$2"
+  local git_head="$3"
+
+  cat >"${SNAPSHOT_SESSIONS_DIR}/${session_id}.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${session_id}",
+  "profile": "${SNAPSHOT_PROFILE}",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "workspace": "${workspace}",
+  "container_name": "workcell-${session_id}",
+  "monitor_pid": "999999",
+  "session_audit_dir": "${TMP_DIR}/${session_id}.audit",
+  "git_head": "${git_head}",
+  "audit_log_path": "${SNAPSHOT_AUDIT_LOG}",
+  "started_at": "2026-04-08T15:00:00Z",
+  "finished_at": "2026-04-08T15:05:00Z",
+  "exit_status": "0",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable",
+  "workspace_control_plane": "masked"
+}
+EOF_JSON
+}
+snapshot_store_for() {
+  printf '%s/Library/Caches/colima/workcell-snapshots/%s.git\n' "${REAL_HOME}" "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)"
+}
+SNAPSHOT_STORE_A="$(snapshot_store_for "${WORKSPACE_A}")"
+SNAPSHOT_INDEX_BEFORE="${TMP_DIR}/snapshot-index.before"
+cp "${WORKSPACE_A}/.git/index" "${SNAPSHOT_INDEX_BEFORE}"
+snapshot_record "${SESSION_SNAPSHOT}" "${WORKSPACE_A}" "${GIT_BASE}"
+snapshot_output="$("${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT}")"
+snapshot_id="$(sed -n 's/^snapshot_id=//p' <<<"${snapshot_output}")"
+snapshot_tree="$(sed -n 's/^tree=//p' <<<"${snapshot_output}")"
+snapshot_commit="$(sed -n 's/^commit=//p' <<<"${snapshot_output}")"
+[[ -n "${snapshot_id}" && -n "${snapshot_tree}" && -n "${snapshot_commit}" ]]
+cmp -s "${SNAPSHOT_INDEX_BEFORE}" "${WORKSPACE_A}/.git/index"
+test ! -e "${FILTER_MARKER}"
+[[ "$(git --git-dir="${SNAPSHOT_STORE_A}" rev-parse "refs/workcell/snapshots/${SESSION_SNAPSHOT}/${snapshot_id}")" == "${snapshot_commit}" ]]
+[[ "$(git --git-dir="${SNAPSHOT_STORE_A}" rev-parse "${snapshot_commit}^")" == "${GIT_BASE}" ]]
+[[ "$(git --git-dir="${SNAPSHOT_STORE_A}" show "${snapshot_tree}:tracked.txt")" == "updated" ]]
+[[ "$(git --git-dir="${SNAPSHOT_STORE_A}" show "${snapshot_tree}:new.txt")" == "new file" ]]
+git --git-dir="${SNAPSHOT_STORE_A}" fsck --strict --no-dangling >/dev/null
+[[ "$("${ROOT_DIR}/scripts/workcell" session verify --id "${SESSION_SNAPSHOT}" | sed -n 's/^session_verify=//p')" == "verified" ]]
+grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT} source=host-cli snapshot_id=${snapshot_id} tree=${snapshot_tree} commit=${snapshot_commit}" "${SNAPSHOT_AUDIT_LOG}"
+
+# Negative control: a forged workspace object fails the store fetch, so no
+# snapshot ref and no audit record land.
+SNAPSHOT_POISON_WS="${TMP_DIR}/snapshot-poison"
+git init -q "${SNAPSHOT_POISON_WS}"
+printf 'genuine\n' >"${SNAPSHOT_POISON_WS}/kept.txt"
+git -C "${SNAPSHOT_POISON_WS}" add kept.txt
+git -C "${SNAPSHOT_POISON_WS}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -qm initial
+genuine_oid="$(git -C "${SNAPSHOT_POISON_WS}" rev-parse HEAD:kept.txt)"
+forged_oid="$(printf 'forged\n' | git -C "${SNAPSHOT_POISON_WS}" hash-object -w --stdin)"
+chmod u+w "${SNAPSHOT_POISON_WS}/.git/objects/${genuine_oid:0:2}/${genuine_oid:2}"
+cp "${SNAPSHOT_POISON_WS}/.git/objects/${forged_oid:0:2}/${forged_oid:2}" \
+  "${SNAPSHOT_POISON_WS}/.git/objects/${genuine_oid:0:2}/${genuine_oid:2}"
+snapshot_record "${SESSION_SNAPSHOT_POISON}" "${SNAPSHOT_POISON_WS}" "$(git -C "${SNAPSHOT_POISON_WS}" rev-parse HEAD)"
+SNAPSHOT_STORE_POISON="$(snapshot_store_for "${SNAPSHOT_POISON_WS}")"
+if "${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT_POISON}" >/dev/null 2>"${TMP_DIR}/snapshot-poison.err"; then
+  echo "session snapshot accepted a forged workspace object" >&2
+  exit 1
+fi
+grep -q "session snapshot failed: ${SESSION_SNAPSHOT_POISON}" "${TMP_DIR}/snapshot-poison.err"
+if [[ -n "$(git --git-dir="${SNAPSHOT_STORE_POISON}" for-each-ref 2>/dev/null)" ]]; then
+  echo "session snapshot stored a ref for a forged workspace object" >&2
+  exit 1
+fi
+if grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT_POISON}" "${SNAPSHOT_AUDIT_LOG}"; then
+  echo "session snapshot audited a failed capture" >&2
+  exit 1
+fi
+
+# Negative control: a record made before the store rule existed can name a
+# workspace that contains the store. The snapshot command refuses it before it
+# touches docker or the store.
+SESSION_SNAPSHOT_OVERLAP="20260408T150700Z-66888888-$$"
+snapshot_record "${SESSION_SNAPSHOT_OVERLAP}" "${REAL_HOME}/Library/Caches" "${GIT_BASE}"
+if "${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT_OVERLAP}" >/dev/null 2>"${TMP_DIR}/snapshot-overlap.err"; then
+  echo "session snapshot accepted a workspace that contains the store" >&2
+  exit 1
+fi
+grep -q 'Refusing workspace mount that overlaps the host-owned snapshot store' "${TMP_DIR}/snapshot-overlap.err"
+if grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT_OVERLAP}" "${SNAPSHOT_AUDIT_LOG}"; then
+  echo "session snapshot audited a refused workspace" >&2
+  exit 1
+fi
+
+# A terminal snapshot that cannot re-sign the audit chain must fail, or it would
+# hide a session that `session verify` now rejects. A corrupt record forces it.
+SESSION_SNAPSHOT_BAD_CHAIN="20260408T150800Z-66999999-$$"
+printf 'corrupt\n' >>"${SNAPSHOT_AUDIT_LOG}"
+snapshot_record "${SESSION_SNAPSHOT_BAD_CHAIN}" "${WORKSPACE_A}" "${GIT_BASE}"
+if "${ROOT_DIR}/scripts/workcell" session snapshot --id "${SESSION_SNAPSHOT_BAD_CHAIN}" >/dev/null 2>"${TMP_DIR}/snapshot-bad-chain.err"; then
+  echo "session snapshot succeeded without a re-signed audit chain" >&2
   exit 1
 fi
 
@@ -4199,6 +4316,60 @@ grep -q "event=command session_id=${DETACHED_SESSION} timeline_seq=2 command=pla
 grep -q 'debug-log: detached session observability fixture' "${DETACHED_DEBUG_LOG}"
 grep -q 'file-trace: detached session observability fixture' "${DETACHED_FILE_TRACE_LOG}"
 grep -q 'transcript: detached session observability fixture' "${DETACHED_TRANSCRIPT_LOG}"
+
+# session snapshot on a running session: the capture runs between docker pause
+# and docker unpause, and a failed capture still unpauses and audits nothing.
+run_paused_snapshot_fixture() {
+  local git_head="$1"
+  local log="$2"
+
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    LOG="$2"
+    WORKSPACE="$3"
+    GIT_HEAD="$4"
+    STORE_ROOT="$5"
+    HOST_GIT_BIN="$(command -v git)"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    session_run_cli_with_roots() {
+      printf "session_id=snapshot-fixture\nprofile=wcl-snapshot-fixture\ncontainer_name=workcell-snapshot-fixture\n"
+      printf "workspace=%s\ngit_head=%s\norigin_hash=0000000000000000000000000000000000000000000000000000000000000001\npause=1\n" "${WORKSPACE}" "${GIT_HEAD}"
+    }
+    session_snapshot_store_root() { printf "%s\n" "${STORE_ROOT}"; }
+    load_session_runtime_metadata() { :; }
+    run_profile_docker_command() {
+      printf "docker|%s|%s\n" "$2" "$3" >>"${LOG}"
+      [[ "$2" != pause || -z "${SNAPSHOT_FIXTURE_PAUSE_FAILS:-}" ]]
+    }
+    append_session_control_audit_record() { printf "audit|%s\n" "$3" >>"${LOG}"; }
+    eval "real_$(declare -f run_go_hostutil_preserve_exit)"
+    run_go_hostutil_preserve_exit() {
+      if [[ "$1" == "session-snapshot-capture-cli" ]]; then printf "capture\n" >>"${LOG}"; fi
+      real_run_go_hostutil_preserve_exit "$@"
+    }
+    session_snapshot_main --id snapshot-fixture
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${log}" "${WORKSPACE_A}" "${git_head}" "${TMP_DIR}/paused-snapshot-store"
+}
+PAUSED_SNAPSHOT_LOG="${TMP_DIR}/paused-snapshot.log"
+run_paused_snapshot_fixture "${GIT_BASE}" "${PAUSED_SNAPSHOT_LOG}" >/dev/null
+[[ "$(cat "${PAUSED_SNAPSHOT_LOG}")" == "$(printf 'docker|pause|workcell-snapshot-fixture\ncapture\ndocker|unpause|workcell-snapshot-fixture\naudit|session_snapshot')" ]]
+PAUSED_SNAPSHOT_FAIL_LOG="${TMP_DIR}/paused-snapshot-fail.log"
+if run_paused_snapshot_fixture "0000000000000000000000000000000000000000" "${PAUSED_SNAPSHOT_FAIL_LOG}" >/dev/null 2>&1; then
+  echo "session snapshot succeeded with a missing git head" >&2
+  exit 1
+fi
+[[ "$(cat "${PAUSED_SNAPSHOT_FAIL_LOG}")" == "$(printf 'docker|pause|workcell-snapshot-fixture\ncapture\ndocker|unpause|workcell-snapshot-fixture')" ]]
+# A pause request that reports failure may still have been applied, so cleanup
+# unpauses and never captures.
+PAUSED_SNAPSHOT_AMBIGUOUS_LOG="${TMP_DIR}/paused-snapshot-ambiguous.log"
+if SNAPSHOT_FIXTURE_PAUSE_FAILS=1 run_paused_snapshot_fixture "${GIT_BASE}" "${PAUSED_SNAPSHOT_AMBIGUOUS_LOG}" >/dev/null 2>&1; then
+  echo "session snapshot succeeded after a failed pause" >&2
+  exit 1
+fi
+[[ "$(cat "${PAUSED_SNAPSHOT_AMBIGUOUS_LOG}")" == "$(printf 'docker|pause|workcell-snapshot-fixture\ndocker|unpause|workcell-snapshot-fixture')" ]]
 
 missing_output="$(
   "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true

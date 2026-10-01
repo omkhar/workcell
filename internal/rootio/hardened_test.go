@@ -267,3 +267,28 @@ func openDirectory(t *testing.T, path string) *os.File {
 	}
 	return file
 }
+
+func TestSyncDirAt(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "one", "two"), 0o700); err != nil {
+		t.Fatalf("create the tree: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatalf("create the symlink: %v", err)
+	}
+	parent := openDirectory(t, root)
+	defer parent.Close() //nolint:errcheck // test fixture
+
+	if err := rootio.SyncDirAt(parent, "one/two"); err != nil {
+		t.Fatalf("expected a clean sync, found %v", err)
+	}
+	// Negative controls: a missing directory, a parent escape, and a symlinked
+	// component are all refused.
+	for _, relative := range []string{"one/missing", "../escape", "link"} {
+		if err := rootio.SyncDirAt(parent, relative); err == nil {
+			t.Fatalf("expected %q to fail", relative)
+		}
+	}
+}

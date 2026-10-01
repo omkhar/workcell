@@ -273,3 +273,35 @@ func relativeComponents(relative string) ([]string, error) {
 	}
 	return components, nil
 }
+
+// SyncDirAt fsyncs the directory at relative under parent, and every directory
+// on the way to it, without following a symlink.
+//
+// MkdirAllSyncedAt syncs the directory that gained each entry, so the last
+// component it names is never synced itself. A caller that created a file in
+// that directory, or let another tool do it, calls SyncDirAt to make the new
+// entry durable.
+func SyncDirAt(parent *os.File, relative string) error {
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return err
+	}
+	current, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(current) }()
+	for _, component := range components {
+		next, err := unix.Openat(current, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return fmt.Errorf("open %s under %s: %w", component, parent.Name(), err)
+		}
+		if err := unix.Fsync(next); err != nil {
+			_ = unix.Close(next)
+			return fmt.Errorf("sync %s under %s: %w", component, parent.Name(), err)
+		}
+		_ = unix.Close(current)
+		current = next
+	}
+	return nil
+}

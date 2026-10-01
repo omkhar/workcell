@@ -75,6 +75,27 @@ and fails closed on any tampered, reordered, dropped, duplicate-key, or unsigned
 record. The signature is boundary/host-signed, not agent-signed; see
 .B docs/signed-session-audit-records.md
 for the trust model.
+.B workcell session snapshot
+.RB ( --id
+.IR SESSION_ID )
+captures the session workspace as a git commit on the recorded launch head. It
+pauses a running detached session container for the capture, writes the commit
+to a host-owned store under
+.I ~/Library/Caches/colima/workcell-snapshots
+that no container mounts, and appends a
+.B session_snapshot
+audit record with the snapshot id, tree, and commit. It never reads or writes
+the workspace git config or index.
+Snapshots are kept until the operator removes them. Workcell never prunes the
+store, and
+.B session delete
+does not remove a session's snapshots. Each snapshot is the ref
+.I refs/workcell/snapshots/SESSION_ID/SNAPSHOT_ID
+in the bare repository for the workspace origin. Remove one with
+.B git update-ref -d
+and
+.BR "git gc --prune=now" ,
+or remove the whole store directory.
 .TP
 .B workcell policy show|validate|diff
 Inspect the merged host-side injection policy without starting the runtime.
@@ -786,6 +807,7 @@ workcell session stop --id SESSION_ID
 workcell session show --id SESSION_ID
 workcell session show --id SESSION_ID --text
 workcell session verify --id SESSION_ID
+workcell session snapshot --id SESSION_ID
 workcell session delete --id SESSION_ID
 .EE
 .PP
