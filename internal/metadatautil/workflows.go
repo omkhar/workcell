@@ -850,6 +850,15 @@ func upstreamRefreshGuardUses(step workflowStep, action string, inputs map[strin
 	return strings.HasPrefix(step.Uses, action) && step.Run == "" && len(step.Env) == 0 && maps.Equal(step.With, inputs)
 }
 
+// upstreamRefreshAppCredentialRE matches any reference to the App token step or
+// to a secret expression, in dot or bracket form.
+var upstreamRefreshAppCredentialRE = regexp.MustCompile(`app-token|(^|[^.\w])secrets\s*[.\[]|toJSON\(\s*secrets`)
+
+var upstreamRefreshPresenceEnv = map[string]string{
+	"APP_CLIENT_ID":   "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}",
+	"APP_PRIVATE_KEY": "${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}",
+}
+
 // commandRuns returns each execution of command in run. It reads the commands
 // the shell really runs, so a line continuation, comment or heredoc cannot hide
 // or fake one.
@@ -894,11 +903,11 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		}
 	}
 	refresh := document.Jobs["refresh"]
-	if refresh.Permissions["contents"] != "read" || refresh.Permissions["issues"] != "write" || refresh.Permissions["pull-requests"] != "read" {
+	if !maps.Equal(refresh.Permissions, map[string]string{"contents": "read", "issues": "write", "pull-requests": "read"}) {
 		return fmt.Errorf("%s refresh job must grant exactly contents: read, issues: write, pull-requests: read", path)
 	}
 	guard := document.Jobs["scope-guard"]
-	if len(guard.Permissions) != 1 || guard.Permissions["contents"] != "read" {
+	if !maps.Equal(guard.Permissions, map[string]string{"contents": "read"}) {
 		return fmt.Errorf("%s scope-guard job must run the scope guard with only contents: read", path)
 	}
 	// The job is exactly the reviewed checkout, the candidate download, and the
@@ -916,6 +925,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		return fmt.Errorf("%s scope-guard job must export result from the guard step outcome: %q", path, upstreamRefreshScopeGuardResult)
 	}
 	publish := document.Jobs["publish"]
+	if !maps.Equal(publish.Permissions, map[string]string{"contents": "read", "issues": "write"}) {
+		return fmt.Errorf("%s publish job must grant exactly contents: read, issues: write", path)
+	}
 	if publish.Environment.Name != "upstream-refresh" {
 		return fmt.Errorf("%s publish job must bind the upstream-refresh environment", path)
 	}
@@ -929,13 +941,23 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		// Only the publisher step may hold the App token, and that step runs
 		// exactly one command.
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
-		usesToken := strings.Contains(step.Run, "steps.app-token")
+		usesToken := upstreamRefreshAppCredentialRE.MatchString(step.Run)
+		// The presence check may read exactly the two App secrets and nothing else.
+		presence := step.ID == "secrets" && step.Uses == "" && maps.Equal(step.Env, upstreamRefreshPresenceEnv)
 		for _, group := range []map[string]string{step.Env, step.With} {
 			for _, value := range group {
-				usesToken = usesToken || strings.Contains(value, "steps.app-token")
+				usesToken = usesToken || !presence && upstreamRefreshAppCredentialRE.MatchString(value)
 			}
 		}
+		if mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@"); mint {
+			usesToken = false
+		}
 		strayToken = strayToken || usesToken && !publisher
+		for key := range step.Env {
+			if publisher && key != "GH_TOKEN" && key != "SCOPE_GUARD_RESULT" {
+				return fmt.Errorf("%s publish job step must run only the publish script", path)
+			}
+		}
 		if run := strings.TrimSpace(step.Run); publisher && (strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
 			return fmt.Errorf("%s publish job step must run only the publish script", path)
 		}

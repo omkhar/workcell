@@ -6,7 +6,7 @@
 # Run from a checkout of the candidate base_sha, with GH_TOKEN set to the
 # upstream-refresh GitHub App token. SCOPE_GUARD_RESULT is "passed" or
 # anything else. A passed scope guard enables auto-merge. Any other value
-# labels the PR needs-human-review. AUDIT_FILE receives the tracking-issue
+# labels the PR needs-human-review. The refresh job creates that label. AUDIT_FILE receives the tracking-issue
 # audit text.
 set -euo pipefail
 
@@ -56,11 +56,21 @@ if [[ "${remote_main}" != "${base_sha}" ]]; then
   echo "::notice::Candidate is stale. The next run will rebuild it."
   exit 0
 fi
-existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --json title,url,headRefName \
-  --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0].url // ""')"
+branch="codex/upstream-refresh-${GITHUB_RUN_ID}"
+existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --json title,url,headRefName,headRefOid \
+  --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0] // empty')"
+# A PR from this run means an earlier attempt stopped after it opened the PR.
+# Resume its disposition. The commit checks below still run against its head.
+resume=0
 if [[ -n "${existing_pr}" ]]; then
-  echo "- result: skipped, refresh PR already open: ${existing_pr}" >>"${audit_file}"
-  exit 0
+  if [[ "$(jq -r .headRefName <<<"${existing_pr}")" == "${branch}" ]]; then
+    resume=1
+    pr_url="$(jq -r .url <<<"${existing_pr}")"
+    commit_oid="$(jq -r .headRefOid <<<"${existing_pr}")"
+  else
+    echo "- result: skipped, refresh PR already open: $(jq -r .url <<<"${existing_pr}")" >>"${audit_file}"
+    exit 0
+  fi
 fi
 
 # Apply the patch and prove it is the candidate tree.
@@ -108,32 +118,37 @@ while IFS= read -r -d '' status && IFS= read -r -d '' path; do
   esac
 done <"${work}/name-status"
 
-branch="codex/upstream-refresh-${GITHUB_RUN_ID}"
-gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${base_sha}" >/dev/null
-cleanup_branch() { gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null 2>&1 || true; }
+cleanup_branch() {
+  [[ "${resume}" == 1 ]] || gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" >/dev/null 2>&1 || true
+}
+if [[ "${resume}" == 0 ]]; then
+  gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${base_sha}" >/dev/null
+fi
 
-headline="^F Refresh pinned upstreams (upstream maintenance; auto-publish)"
-jq -n \
-  --arg repo "${GITHUB_REPOSITORY}" --arg branch "${branch}" --arg base "${base_sha}" --arg headline "${headline}" \
-  --arg body "Apply the exact upstream refresh candidate from run ${GITHUB_RUN_ID}." \
-  --slurpfile additions "${work}/additions" --slurpfile deletions "${work}/deletions" \
-  '{
-    query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
-    variables: {input: {
-      branch: {repositoryNameWithOwner: $repo, branchName: $branch},
-      message: {headline: $headline, body: $body},
-      expectedHeadOid: $base,
-      fileChanges: {additions: $additions, deletions: $deletions}
-    }}
-  }' >"${work}/request.json"
-commit_oid="$(gh api graphql --input "${work}/request.json" --jq .data.createCommitOnBranch.commit.oid)" || {
-  cleanup_branch
-  die "createCommitOnBranch failed"
-}
-[[ -n "${commit_oid}" && "${commit_oid}" != null ]] || {
-  cleanup_branch
-  die "createCommitOnBranch returned no commit"
-}
+if [[ "${resume}" == 0 ]]; then
+  headline="^F Refresh pinned upstreams (upstream maintenance; auto-publish)"
+  jq -n \
+    --arg repo "${GITHUB_REPOSITORY}" --arg branch "${branch}" --arg base "${base_sha}" --arg headline "${headline}" \
+    --arg body "Apply the exact upstream refresh candidate from run ${GITHUB_RUN_ID}." \
+    --slurpfile additions "${work}/additions" --slurpfile deletions "${work}/deletions" \
+    '{
+      query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+      variables: {input: {
+        branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+        message: {headline: $headline, body: $body},
+        expectedHeadOid: $base,
+        fileChanges: {additions: $additions, deletions: $deletions}
+      }}
+    }' >"${work}/request.json"
+  commit_oid="$(gh api graphql --input "${work}/request.json" --jq .data.createCommitOnBranch.commit.oid)" || {
+    cleanup_branch
+    die "createCommitOnBranch failed"
+  }
+  [[ -n "${commit_oid}" && "${commit_oid}" != null ]] || {
+    cleanup_branch
+    die "createCommitOnBranch returned no commit"
+  }
+fi
 
 commit_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${commit_oid}")"
 if [[ "$(jq -r .tree.sha <<<"${commit_json}")" != "${tree_oid}" ]]; then
@@ -168,15 +183,15 @@ body_file="${work}/pr-body.md"
   echo
   echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 } >"${body_file}"
-pr_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${branch}" --title "Refresh pinned upstreams" --body-file "${body_file}")"
+if [[ "${resume}" == 0 ]]; then
+  pr_url="$(gh pr create --repo "${GITHUB_REPOSITORY}" --base main --head "${branch}" --title "Refresh pinned upstreams" --body-file "${body_file}")"
+fi
 
 if [[ "${scope_result}" == passed ]]; then
   # Enable auto-merge only for the commit that passed the scope guard and tree check.
   gh pr merge --repo "${GITHUB_REPOSITORY}" --auto --merge --match-head-commit "${commit_oid}" "${pr_url}"
   merge_line="auto-merge enabled (scope guard passed)"
 else
-  gh label create needs-human-review --repo "${GITHUB_REPOSITORY}" --color D93F0B \
-    --description "Human review required before merge" >/dev/null 2>&1 || true
   gh pr edit "${pr_url}" --repo "${GITHUB_REPOSITORY}" --add-label needs-human-review >/dev/null
   merge_line="labeled needs-human-review (scope guard did not pass)"
 fi

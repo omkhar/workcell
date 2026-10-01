@@ -111,7 +111,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"echo \"$*\" >>\"${FAKE_GH_LOG}\"\n" +
 		"case \"$*\" in\n" +
 		"  *git/ref/heads/main*) echo \"${FAKE_MAIN_SHA}\"; exit 0 ;;\n" +
-		"  \"pr list\"*) echo \"\"; exit 0 ;;\n" +
+		"  \"pr list\"*) echo \"${FAKE_EXISTING_PR}\"; exit 0 ;;\n" +
 		"esac\n" +
 		"[ \"${FAKE_ALLOW_WRITES}\" = 1 ] || { echo \"unexpected gh call: $*\" >&2; exit 97; }\n" +
 		"case \"$*\" in\n" +
@@ -120,6 +120,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE}\" ;;\n" +
 		"  \"pr create\"*) echo https://example.invalid/pr/1 ;;\n" +
 		"  \"pr merge\"*) ;;\n" +
+		"  \"pr edit\"*) ;;\n" +
 		"  *) echo \"unexpected gh call: $*\" >&2; exit 97 ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o755); err != nil {
@@ -142,7 +143,13 @@ func publishGitRaw(t *testing.T, dir string, args ...string) []byte {
 
 func (f publishFixture) run(t *testing.T, mainSHA string, env ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-publish.sh"), f.candidate, "passed", f.audit)
+	scope := "passed"
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "SCOPE="); ok {
+			scope = v
+		}
+	}
+	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "ci", "upstream-refresh-publish.sh"), f.candidate, scope, f.audit)
 	cmd.Dir = f.checkout
 	cmd.Env = append(append(os.Environ(),
 		"PATH="+f.path+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -239,6 +246,55 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		}
 		if !strings.Contains(string(log), "pr merge --repo o/r --auto --merge --match-head-commit "+commit+" ") {
 			t.Fatalf("gh calls = %q, want auto-merge pinned to %s", log, commit)
+		}
+	})
+
+	readLog := func(t *testing.T, f publishFixture) string {
+		t.Helper()
+		log, err := os.ReadFile(filepath.Join(filepath.Dir(f.path), "gh.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(log)
+	}
+
+	t.Run("rerun resumes the PR this run opened", func(t *testing.T) {
+		t.Parallel()
+		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
+		commit := strings.Repeat("d", 40)
+		pr := `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-42","headRefOid":"` + commit + `"}`
+		out, err := f.run(t, f.base, "FAKE_ALLOW_WRITES=1", "FAKE_TREE="+f.tree, "FAKE_EXISTING_PR="+pr)
+		if err != nil {
+			t.Fatalf("resume failed: %v\n%s", err, out)
+		}
+		log := readLog(t, f)
+		if strings.Contains(log, "pr create") || strings.Contains(log, "git/refs") || strings.Contains(log, "graphql") {
+			t.Fatalf("resume wrote a new branch, commit, or PR:\n%s", log)
+		}
+		if !strings.Contains(log, "--match-head-commit "+commit+" https://example.invalid/pr/9") {
+			t.Fatalf("resume did not pin auto-merge to the PR head:\n%s", log)
+		}
+	})
+
+	t.Run("PR from another run still skips", func(t *testing.T) {
+		t.Parallel()
+		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
+		pr := `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-7","headRefOid":"` + strings.Repeat("d", 40) + `"}`
+		if out, err := f.run(t, f.base, "FAKE_EXISTING_PR="+pr); err != nil {
+			t.Fatalf("skip must exit 0: %v\n%s", err, out)
+		}
+	})
+
+	t.Run("failed guard labels without creating the label", func(t *testing.T) {
+		t.Parallel()
+		f := newPublishFixture(t, edit("plain.txt", "two\n"), nil)
+		out, err := f.run(t, f.base, "SCOPE=failed", "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT="+strings.Repeat("c", 40), "FAKE_TREE="+f.tree)
+		if err != nil {
+			t.Fatalf("publish failed: %v\n%s", err, out)
+		}
+		log := readLog(t, f)
+		if strings.Contains(log, "label create") || strings.Contains(log, "pr merge") || !strings.Contains(log, "--add-label needs-human-review") {
+			t.Fatalf("gh calls = %q, want label add only", log)
 		}
 	})
 }
