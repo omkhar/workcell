@@ -924,7 +924,21 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	appTokenSteps := 0
 	publishRuns := 0
+	strayToken := false
 	for _, step := range publish.Steps {
+		// Only the publisher step may hold the App token, and that step runs
+		// exactly one command.
+		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
+		usesToken := strings.Contains(step.Run, "steps.app-token")
+		for _, group := range []map[string]string{step.Env, step.With} {
+			for _, value := range group {
+				usesToken = usesToken || strings.Contains(value, "steps.app-token")
+			}
+		}
+		strayToken = strayToken || usesToken && !publisher
+		if run := strings.TrimSpace(step.Run); publisher && (strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
+			return fmt.Errorf("%s publish job step must run only the publish script", path)
+		}
 		if strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
 			appTokenSteps++
 			if step.ID != "app-token" || !maps.Equal(step.With, upstreamRefreshAppTokenInputs) {
@@ -949,6 +963,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	if appTokenSteps != 1 || publishRuns != 1 {
 		return fmt.Errorf("%s publish job must mint one App token and run the publish script once", path)
+	}
+	if strayToken {
+		return fmt.Errorf("%s publish job must use the App token only in the publish script step", path)
 	}
 	return nil
 }

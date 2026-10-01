@@ -98,7 +98,10 @@ while IFS= read -r -d '' status && IFS= read -r -d '' path; do
   case "${status}" in
     D) jq -n --arg path "${path}" '{path: $path}' >>"${work}/deletions" ;;
     A | M)
-      base64 <"${path}" | tr -d '\n' >"${work}/content"
+      # Read the staged blob, not the workspace path, so a swapped file
+      # cannot reach GitHub before the tree check.
+      git cat-file blob ":${path}" >"${work}/blob" || die "cannot read staged blob: ${path}"
+      base64 <"${work}/blob" | tr -d '\n' >"${work}/content"
       jq -n --arg path "${path}" --rawfile contents "${work}/content" '{path: $path, contents: $contents}' >>"${work}/additions"
       ;;
     *) die "unsupported change status ${status}: ${path}" ;;
