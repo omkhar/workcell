@@ -8099,8 +8099,8 @@ prepare_workspace_control_plane_shadow() {
       done < <(
         find "${workspace}/${git_rel}/modules" \
           \( \
-          \( \( -type d -o -type l \) -name hooks \) -o \
-          \( \( -type f -o -type l \) \( -name config -o -name config.worktree \) \) \
+          \( \( -type d -o -type l \) -iname hooks \) -o \
+          \( \( -type f -o -type l \) \( -iname config -o -iname config.worktree \) \) \
           \) \
           -print0
       )
@@ -8109,7 +8109,7 @@ prepare_workspace_control_plane_shadow() {
         add_shadow_dir_mount "${workspace}" "${rel}"
       done < <(
         find "${workspace}/${git_rel}/modules" \
-          \( \( -type d -o -type l \) -name worktrees \) -print0
+          \( \( -type d -o -type l \) -iname worktrees \) -print0
       )
     fi
   done < <(

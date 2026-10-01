@@ -6678,6 +6678,19 @@ if run_workcell_verify --agent codex --no-default-injection-policy --workspace "
 fi
 grep -q 'redirects Git config and hooks: .git/MODULES' /tmp/workcell-commondir-upmod.out
 
+# A resolving mixed-case module CONFIG link must get a readonly shadow mount.
+COMMONDIR_UPLINK_REPO="${COMMONDIR_ROOT}/upper-resolving-link-repo"
+git init -q -b master "${COMMONDIR_UPLINK_REPO}"
+git -C "${COMMONDIR_UPLINK_REPO}" -c user.name="Workcell Verify" -c user.email=workcell-verify@example.com commit -q --allow-empty -m init
+mkdir -p "${COMMONDIR_UPLINK_REPO}/.git/modules/foo"
+printf '[core]\n' >"${COMMONDIR_UPLINK_REPO}/external-config"
+ln -s ../../../external-config "${COMMONDIR_UPLINK_REPO}/.git/modules/foo/CONFIG"
+COMMONDIR_UPLINK_OUT="$(run_workcell_verify --agent codex --no-default-injection-policy --mode strict --workspace "${COMMONDIR_UPLINK_REPO}" --dry-run 2>/dev/null)"
+if ! echo "${COMMONDIR_UPLINK_OUT}" | grep -q -- '/workspace/.git/modules/foo/CONFIG:ro'; then
+  echo "Expected a resolving mixed-case module CONFIG link to be masked by a readonly shadow mount" >&2
+  exit 1
+fi
+
 # A resolving HEAD symlink in a module admin directory is valid Git and must pass.
 COMMONDIR_HEADLINK_REPO="${COMMONDIR_ROOT}/head-link-repo"
 git init -q -b master "${COMMONDIR_HEADLINK_REPO}"

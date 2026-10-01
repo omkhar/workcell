@@ -1236,9 +1236,9 @@ set -euo pipefail
 prepare_workspace_control_plane_shadow() {
   find "${workspace}" -type d -name .git -prune -print0
   find "${workspace}/${git_rel}/modules" \
-    \( -type f -o -type l \) -name hooks \
-    -o \( -type f -o -type l \) \( -name config -o -name config.worktree \) \
-    -o \( -type f -o -type l \) -name worktrees
+    \( -type f -o -type l \) -iname hooks \
+    -o \( -type f -o -type l \) \( -iname config -o -iname config.worktree \) \
+    -o \( -type f -o -type l \) -iname worktrees
 }
 `
 
@@ -1310,24 +1310,24 @@ func TestCheckShadowEnumEgress(t *testing.T) {
 		{
 			// kindPresent (needle 2): the hooks find snippet removed.
 			name:     "missing hooks needle",
-			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -name hooks`, `-type l \) -name other`, 1),
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -iname hooks`, `-type l \) -name other`, 1),
 			colima:   shadowEnumEgressHappyColima,
-			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name hooks`,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -iname hooks`,
 		},
 		{
 			// kindPresent (needle 3): the config/config.worktree find snippet
 			// removed.
 			name:     "missing config needle",
-			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) \( -name config -o -name config.worktree \)`, `-type l \) \( -name other \)`, 1),
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) \( -iname config -o -iname config.worktree \)`, `-type l \) \( -name other \)`, 1),
 			colima:   shadowEnumEgressHappyColima,
-			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -name config -o -name config.worktree \)`,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -iname config -o -iname config.worktree \)`,
 		},
 		{
 			// kindPresent (needle 4): the worktrees find snippet removed.
 			name:     "missing worktrees needle",
-			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -name worktrees`, `-type l \) -name other`, 1),
+			launcher: strings.Replace(shadowEnumEgressHappyLauncher, `-type l \) -iname worktrees`, `-type l \) -name other`, 1),
 			colima:   shadowEnumEgressHappyColima,
-			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
+			wantErr:  `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -iname worktrees`,
 		},
 		{
 			// kindAbsent against the colima helper: silently disabling IPv6 as a

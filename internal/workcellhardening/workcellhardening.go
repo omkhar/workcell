@@ -1391,20 +1391,20 @@ var shadowEnumEgressChecks = []check{
 	{
 		// Needle 2 of the former loop.
 		kind:    kindPresent,
-		pattern: `-type l \) -name hooks`,
-		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name hooks`,
+		pattern: `-type l \) -iname hooks`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -iname hooks`,
 	},
 	{
 		// Needle 3 of the former loop.
 		kind:    kindPresent,
-		pattern: `-type l \) \( -name config -o -name config.worktree \)`,
-		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -name config -o -name config.worktree \)`,
+		pattern: `-type l \) \( -iname config -o -iname config.worktree \)`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) \( -iname config -o -iname config.worktree \)`,
 	},
 	{
 		// Needle 4 of the former loop.
 		kind:    kindPresent,
-		pattern: `-type l \) -name worktrees`,
-		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -name worktrees`,
+		pattern: `-type l \) -iname worktrees`,
+		message: `Expected prepare_workspace_control_plane_shadow to match snippet: -type l \) -iname worktrees`,
 	},
 	{
 		// kindAbsent against scripts/colima-egress-allowlist.sh: silently
