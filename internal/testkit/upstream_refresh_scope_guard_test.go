@@ -18,11 +18,18 @@ func scopeGuardFilePatch(path string, removed, added string) string {
 		"--- a/" + path + "\n+++ b/" + path + "\n@@ -1,2 +1,2 @@\n context\n-" + removed + "\n+" + added + "\n"
 }
 
+func scopeGuardCodexFixturePatch(oldVersion, newVersion string) string {
+	return "diff --git a/tests/fixtures/codex-subcommands.txt b/tests/fixtures/codex-subcommands.txt\n" + scopeGuardIndex +
+		"--- a/tests/fixtures/codex-subcommands.txt\n+++ b/tests/fixtures/codex-subcommands.txt\n@@ -1,2 +1,2 @@\n" +
+		"-# codex-version: " + oldVersion + "\n-# (openai/codex tag rust-v" + oldVersion + ", x)\n" +
+		"+# codex-version: " + newVersion + "\n+# (openai/codex tag rust-v" + newVersion + ", x)\n"
+}
+
 func TestUpstreamRefreshScopeGuard(t *testing.T) {
 	t.Parallel()
 
 	inScope := scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=0.153.2", "ARG CODEX_VERSION=0.154.0") +
-		scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# codex-version: 0.153.2", "# codex-version: 0.154.0") +
+		scopeGuardCodexFixturePatch("0.153.2", "0.154.0") +
 		scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "old", "new")
 
 	cases := []struct {
@@ -139,11 +146,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			patch: "diff --git a/tests/fixtures/codex-subcommands.txt b/tests/fixtures/codex-subcommands.txt\n" + scopeGuardIndex +
 				"--- a/tests/fixtures/codex-subcommands.txt\n+++ b/tests/fixtures/codex-subcommands.txt\n@@ -1,2 +1,2 @@\n" +
 				"-# codex-version: 0.153.2\n-# (openai/codex tag rust-v0.153.2, x)\n+# codex-version: 0.154.0\n+# (openai/codex tag rust-v0.155.0, x)\n",
-			wantErr: "must name the same version",
+			wantErr: "must both change to the same version",
 		},
 		{
 			name:    "codex fixture source tag comment rewritten",
-			patch:   scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# (openai/codex tag rust-v0.153.2, x)", "# (openai/codex tag rust-v0.154.0, evil)"),
+			patch:   strings.Replace(scopeGuardCodexFixturePatch("0.153.2", "0.154.0"), "+# (openai/codex tag rust-v0.154.0, x)", "+# (openai/codex tag rust-v0.154.0, evil)", 1),
 			wantErr: "replaced one for one",
 		},
 		{
@@ -256,8 +263,14 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "path tests/fixtures/flags/evil_test.go",
 		},
 		{
-			name:  "codex fixture source tag line",
-			patch: scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# (openai/codex tag rust-v0.153.2, codex-rs/cli/src/main.rs), NOT x", "# (openai/codex tag rust-v0.154.0, codex-rs/cli/src/main.rs), NOT x"),
+			name:    "codex fixture source tag changed alone",
+			patch:   scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# (openai/codex tag rust-v0.153.2, x)", "# (openai/codex tag rust-v0.154.0, x)"),
+			wantErr: "both change to the same version",
+		},
+		{
+			name:    "codex fixture stamp changed alone",
+			patch:   scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# codex-version: 0.153.2", "# codex-version: 0.154.0"),
+			wantErr: "both change to the same version",
 		},
 		{
 			name:    "lockfile resolution change",

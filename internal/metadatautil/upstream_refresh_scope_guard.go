@@ -75,8 +75,8 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: incomplete patch section (no hunk)", file)
 		case !hunkChanged:
 			fail("%s: hunk without an added or removed line", file)
-		case file == scopeGuardCodexFixture && len(slices.Compact(slices.Clone(addedVersions))) > 1:
-			fail("%s: the version stamp and source tag must name the same version", file)
+		case file == scopeGuardCodexFixture && (len(addedVersions) != 2 || addedVersions[0] != addedVersions[1]):
+			fail("%s: the version stamp and source tag must both change to the same version", file)
 		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture) && !slices.Equal(removedKeys, addedKeys):
 			// Docker and the shell use the last assignment, the updater reads the first.
 			fail("%s: provider assignments must be replaced one for one, not added, removed, or reordered", file)
