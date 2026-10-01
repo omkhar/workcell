@@ -216,9 +216,9 @@ The workflow validator requires the guard step to be the only run step in the jo
 
 The scope guard allows only these changes:
 
-- `ARG` lines in `runtime/container/Dockerfile` for `CLAUDE`, `CODEX`, `COPILOT`, and `GEMINI` versions and SHA-256 values
-- `runtime/container/providers*/package.json` and `package-lock.json`
-- `tests/fixtures/flags/*` and `tests/fixtures/codex-subcommands.txt`
+- Provider version `ARG` lines and SHA-256 assignments in `runtime/container/Dockerfile`
+- The pinned Gemini CLI version line in `runtime/container/providers/package.json`
+- The version stamp and source tag in the header of `tests/fixtures/codex-subcommands.txt`
 - `runtime/container/control-plane-manifest.json`
 
 If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` with the signed commit.
