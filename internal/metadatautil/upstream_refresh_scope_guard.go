@@ -50,7 +50,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		problems = append(problems, "out of scope: "+fmt.Sprintf(format, args...))
 	}
 	var file string
-	var seen bool
+	var seen, newFile bool
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
 	closeSection := func() {
 		switch {
@@ -97,7 +97,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
-			file, oldHeaders, newHeaders, hunks = "", 0, 0, 0
+			file, newFile, oldHeaders, newHeaders, hunks = "", false, 0, 0, 0
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
 				continue
@@ -111,6 +111,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		case scopeGuardHeaderOnlyRE.MatchString(line):
 			fail("%s: %s", file, line)
 		case strings.HasPrefix(line, "new file mode "):
+			newFile = true
 			if len(fields) < 4 || fields[3] != "100644" {
 				fail("%s: %s", file, line)
 			}
@@ -128,10 +129,13 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				newHeaders++
 			} else {
 				oldHeaders++
+				if newFile {
+					want = "--- /dev/null"
+				}
 			}
 			if hunks > 0 {
 				fail("%s: file header after a hunk: %s", file, line)
-			} else if line != want && line != "--- /dev/null" {
+			} else if line != want {
 				fail("%s: file header does not match the diff path: %s", file, line)
 			}
 		case strings.HasPrefix(line, "@@ "):

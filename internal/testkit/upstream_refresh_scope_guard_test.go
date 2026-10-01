@@ -119,6 +119,11 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "zero-line hunk",
 		},
 		{
+			name: "new file with dev-null old header",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+		},
+		{
 			name:  "no-newline marker",
 			patch: scopeGuardFilePatch("tests/fixtures/flags/x.txt", "a", "b") + "\\ No newline at end of file\n",
 		},
@@ -157,6 +162,18 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 		{
 			name:  "updater checksum assignment",
 			patch: scopeGuardFilePatch("runtime/container/Dockerfile", `      CODEX_SHA256="`+strings.Repeat("a", 64)+`"; \`, `      CODEX_CODE_MODE_HOST_SHA256="`+strings.Repeat("b", 64)+`"; \`),
+		},
+		{
+			name: "new file mode with a path old header",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nnew file mode 100644\n" + scopeGuardIndex +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			wantErr: "file header does not match the diff path",
+		},
+		{
+			name: "dev-null old header without new file mode",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\n" + scopeGuardIndex +
+				"--- /dev/null\n+++ b/tests/fixtures/flags/x.txt\n@@ -0,0 +1 @@\n+new\n",
+			wantErr: "file header does not match the diff path",
 		},
 		{
 			name:    "cross-product checksum name",
