@@ -5,7 +5,9 @@ package testkit
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -78,5 +80,83 @@ func TestRuntimeUserKeepsNoShellBrokerState(t *testing.T) {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("runtime-user.sh still carries shell broker state: %q", forbidden)
 		}
+	}
+}
+
+// runtimeStateValue runs the real workcell_runtime_state_value from
+// runtime-user.sh against one mode-state file and returns its output and
+// whether it succeeded.
+func runtimeStateValue(t *testing.T, stateFile string, extraEnv ...string) (string, bool) {
+	t.Helper()
+
+	source := runtimeUserSource(t)
+	start := strings.Index(source, "\nworkcell_runtime_state_value() {\n")
+	if start < 0 {
+		t.Fatal("runtime-user.sh no longer defines workcell_runtime_state_value")
+	}
+	end := strings.Index(source[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("workcell_runtime_state_value has no closing brace")
+	}
+	script := source[start:start+end+3] +
+		"WORKCELL_RUNTIME_MODE_FILE=\"$1\"\nworkcell_runtime_state_value WORKCELL_MODE\n"
+
+	// The function reads /dev/fd through GNU stat, which only a Linux host
+	// reports with the device number that the path check compares.
+	if runtime.GOOS != "linux" {
+		t.Skip("needs Linux /dev/fd and GNU stat")
+	}
+	cmd := exec.Command("bash", "-c", script, "bash", stateFile)
+	cmd.Env = append(os.Environ(), extraEnv...)
+	out, err := cmd.Output()
+	return string(out), err == nil
+}
+
+// In a readonly session /run/workcell is a tmpfs that the mapped agent uid
+// owns, and no root phase writes the state files. The provider wrappers prefer
+// a state file over the PID1 environment, so a planted file must not be
+// trusted: only root writes real session state.
+func TestRuntimeStateValueRejectsNonRootOwnedFile(t *testing.T) {
+	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("needs a non-root uid to plant a non-root-owned state file")
+	}
+	planted := filepath.Join(t.TempDir(), "mode")
+	if err := os.WriteFile(planted, []byte("build\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if out, ok := runtimeStateValue(t, planted); ok || out != "" {
+		t.Fatalf("planted state file was trusted: ok=%v out=%q", ok, out)
+	}
+
+	// A missing path and a directory are refused, not read.
+	for _, p := range []string{filepath.Join(t.TempDir(), "absent"), t.TempDir()} {
+		if out, ok := runtimeStateValue(t, p); ok || out != "" {
+			t.Fatalf("non-file state path was trusted: %s ok=%v out=%q", p, ok, out)
+		}
+	}
+
+	// A symlink to a root-owned file is refused: the target is root-owned, but
+	// the state entry is the attacker's link.
+	link := filepath.Join(t.TempDir(), "mode")
+	if err := os.Symlink("/etc/profile", link); err != nil {
+		t.Fatal(err)
+	}
+	if out, ok := runtimeStateValue(t, link); ok || out != "" {
+		t.Fatalf("symlinked state entry was trusted: ok=%v out=%q", ok, out)
+	}
+
+	// An exported bash function named stat or head must not stand in for the
+	// real tool: the planted file stays refused when the functions claim root.
+	fake := []string{"BASH_FUNC_stat%%=() { echo 0; }", "BASH_FUNC_head%%=() { echo build; }", "BASH_FUNC_exit%%=() { :; }", "BASH_FUNC_exec%%=() { :; }", "BASH_FUNC_return%%=() { :; }", "BASH_FUNC_local%%=() { echo yolo; }"}
+	if out, ok := runtimeStateValue(t, planted, fake...); ok || out != "" {
+		t.Fatalf("imported function shadowed a state check: ok=%v out=%q", ok, out)
+	}
+
+	// Negative control: a root-owned file is still read. /etc/passwd is not used
+	// because the validator container bind-mounts it with the runner's owner.
+	if out, ok := runtimeStateValue(t, "/etc/profile"); !ok || out == "" {
+		t.Fatalf("root-owned state file was refused: ok=%v out=%q", ok, out)
 	}
 }

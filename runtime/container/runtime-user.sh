@@ -3,6 +3,14 @@
 # also run as plain `/bin/bash <script>`, so clear them for every child bash.
 # A startup file that already ran can pin either one readonly, which makes the
 # unset fail while errexit is still off, so refuse to run while one survives.
+# Language-boundary justification: workcell_runtime_state_value cannot open
+# /run/workcell state with O_NOFOLLOW and a parent descriptor, because bash has
+# no openat. It opens once, then checks type, owner, no-link and the device and
+# inode of that descriptor against the path. Threat model: in a readonly
+# session the mapped uid owns /run/workcell and can add, remove or rename
+# entries there. It cannot hardlink a root-owned file or place an entry on
+# another mount, so no replacement entry matches the opened inode. Residual
+# risk: none known for this directory. A Go port is a separate change.
 unset BASH_ENV ENV
 [[ -z "${BASH_ENV+set}${ENV+set}" ]] || {
   echo 'Workcell refuses a pinned BASH_ENV or ENV startup file.' >&2
@@ -307,33 +315,47 @@ workcell_write_runtime_state() {
   fi
 }
 
+# This function uses no builtin but the case and [[ keywords: local, return,
+# exit and exec are builtins that an exported bash function of the same name
+# could replace, so variables are plain globals and failure is an exit status.
 workcell_runtime_state_value() {
-  local key="$1"
-  local path=""
-
-  case "${key}" in
+  case "$1" in
     WORKCELL_CONTAINER_MUTABILITY)
-      path="${WORKCELL_RUNTIME_MUTABILITY_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_MUTABILITY_FILE}"
       ;;
     WORKCELL_MODE)
-      path="${WORKCELL_RUNTIME_MODE_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_MODE_FILE}"
       ;;
     CODEX_PROFILE)
-      path="${WORKCELL_RUNTIME_PROFILE_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_PROFILE_FILE}"
       ;;
     WORKCELL_AGENT_AUTONOMY)
-      path="${WORKCELL_RUNTIME_AUTONOMY_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_AUTONOMY_FILE}"
       ;;
     WORKCELL_SESSION_ASSURANCE)
-      path="${WORKCELL_RUNTIME_ASSURANCE_FILE}"
+      WORKCELL_STATE_ENTRY="${WORKCELL_RUNTIME_ASSURANCE_FILE}"
       ;;
     *)
-      return 1
+      # An empty entry makes the open below fail.
+      WORKCELL_STATE_ENTRY=""
       ;;
   esac
+  WORKCELL_STATE_CHECK="${WORKCELL_STATE_ENTRY}"
 
-  [[ -r "${path}" ]] || return 1
-  head -n1 "${path}"
+  # Only root writes session state. A readonly session mounts this directory
+  # as the mapped uid, so a file that root does not own is a planted value.
+  # Open the file once, then check and read that same descriptor, so a swap of
+  # the directory entry cannot change the inode after the owner check. The
+  # open follows a final symlink, so the path must also be no link and name that
+  # same device and inode: a link, even to a root-owned file, is refused. The
+  # mapped uid cannot hardlink a root-owned file or place an entry on another
+  # mount, so no replacement can match after the open. The tools run by absolute
+  # path, because the wrappers inherit exported bash functions that shadow names.
+  {
+    [[ -f "/dev/fd/${WORKCELL_STATE_FD}" && ! -L "${WORKCELL_STATE_CHECK}" && "$(/usr/bin/stat -L -c %u -- "/dev/fd/${WORKCELL_STATE_FD}")" == "0" &&
+    "$(/usr/bin/stat -L -c %d:%i -- "/dev/fd/${WORKCELL_STATE_FD}")" == "$(/usr/bin/stat -c %d:%i -- "${WORKCELL_STATE_CHECK}")" ]] &&
+      /usr/bin/head -n1 <&"${WORKCELL_STATE_FD}"
+  } 2>/dev/null {WORKCELL_STATE_FD}<"${WORKCELL_STATE_ENTRY}"
 }
 
 workcell_reexec_as_runtime_user() {

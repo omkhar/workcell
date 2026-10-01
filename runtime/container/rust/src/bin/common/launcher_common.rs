@@ -57,6 +57,16 @@ pub fn sanitize_env() {
         // SAFETY: called during single-threaded launcher startup before any thread or child is spawned; no concurrent env access.
         unsafe { env::remove_var(key) };
     }
+    // Bash imports every BASH_FUNC_* variable as a function before the wrapper
+    // runs, so a caller could shadow builtins such as true or local. Drop them all.
+    let functions: Vec<OsString> = env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| key.as_bytes().starts_with(b"BASH_FUNC_"))
+        .collect();
+    for key in functions {
+        // SAFETY: called during single-threaded launcher startup before any thread or child is spawned; no concurrent env access.
+        unsafe { env::remove_var(key) };
+    }
     // Restore only the immutable Workcell guard after removing caller-controlled
     // loader state, so every descendant exec inherits the interposer the guard
     // itself now requires.
