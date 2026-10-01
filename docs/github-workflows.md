@@ -213,7 +213,6 @@ It skips when a refresh PR from another run is open.
 If an earlier attempt of the same run opened the PR, `publish` resumes that PR. It checks the PR head commit and then applies the merge or label step.
 
 The job output `result` is `passed` only when the guard step exits 0.
-The workflow validator requires the guard step to be the only run step in the job.
 
 The scope guard allows only these changes:
 
@@ -223,7 +222,6 @@ The scope guard allows only these changes:
 - `runtime/container/control-plane-manifest.json`
 
 If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` with the signed commit.
-Auto-merge applies only to that commit.
 Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible.
 The required checks still gate the merge.
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.

@@ -837,6 +837,8 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 }
 
 const (
+	// The publisher sets its own shell, so a workflow default cannot wrap it.
+	upstreamRefreshPublishShell     = "bash --noprofile --norc -euo pipefail {0}"
 	upstreamRefreshScopeGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"`
 	upstreamRefreshScopeGuardResult = "${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}"
 )
@@ -869,12 +871,8 @@ const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRI
 fi
 echo "present=true" >> "${GITHUB_OUTPUT}"`
 
-// commandRuns returns each execution of command in run. It reads the commands
-// the shell really runs, so a line continuation, comment or heredoc cannot hide
-// or fake one.
-func commandRuns(run, command string) []Invocation {
-	return ShellInvocations(run, command)
-}
+// commandRuns reads the commands the shell really runs, so continuations, comments, and heredocs cannot fake one.
+func commandRuns(run, command string) []Invocation { return ShellInvocations(run, command) }
 
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
 // the environment and the GitHub App token. No job token may write contents or
@@ -939,9 +937,11 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
 		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
 	}
-	for _, value := range publish.Env {
-		if upstreamRefreshAppCredentialRE.MatchString(value) {
-			return fmt.Errorf("%s publish job must not set App credentials at job level", path)
+	for _, env := range []map[string]string{document.Env, publish.Env} {
+		for _, value := range env {
+			if upstreamRefreshAppCredentialRE.MatchString(value) {
+				return fmt.Errorf("%s publish job must not set App credentials at workflow or job level", path)
+			}
 		}
 	}
 	appTokenSteps := 0
@@ -963,7 +963,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@")
 		strayToken = strayToken || usesToken && !publisher && !mint
 		run := strings.TrimSpace(step.Run)
-		if publisher && (len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
+		if publisher && (step.Shell != upstreamRefreshPublishShell || len(step.Env) > 2 || strings.ContainsAny(run, ";&|`\n") || strings.Contains(run, "$(")) {
 			return fmt.Errorf("%s publish job step must run only the publish script", path)
 		}
 		if mint {

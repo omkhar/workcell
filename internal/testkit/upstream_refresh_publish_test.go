@@ -41,9 +41,8 @@ func publishGit(t *testing.T, dir string, env []string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// publishFixture builds a checkout at base, a candidate directory that mutate
-// produced, and a fake gh that answers the two read-only queries. It answers the
-// write calls only when FAKE_ALLOW_WRITES=1, and logs each gh call to FAKE_GH_LOG.
+// publishFixture builds a checkout, a candidate, and a fake gh that logs each
+// call to FAKE_GH_LOG. The fake answers write calls only when FAKE_ALLOW_WRITES=1.
 type publishFixture struct {
 	checkout, candidate, audit, path string
 	base, tree                       string
@@ -116,8 +115,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; echo https://example.invalid/pr/1 ;;\n" +
 		"  \"api -X DELETE\"*) ;;\n" +
 		"  *git/ref/heads/codex*) [ -n \"${FAKE_ORPHAN}\" ] || exit 1 ;;\n" +
-		"  \"pr merge\"*) ;;\n" +
-		"  \"pr edit\"*) ;;\n" +
+		"  \"pr merge\"* | \"pr edit\"*) ;;\n" +
 		"  *) echo \"unexpected gh call: $*\" >&2; exit 97 ;;\n" +
 		"esac\n"
 	mustWrite(t, filepath.Join(bin, "gh"), []byte(fakeGH), 0o755)
@@ -207,7 +205,6 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		name    string
 		moved   bool
 		env     []string
-		failed  bool
 		want    []string
 		forbid  []string
 		wantErr bool

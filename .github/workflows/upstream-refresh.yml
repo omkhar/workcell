@@ -182,8 +182,7 @@ jobs:
           if [[ "$(gh label list --json name --jq 'map(select(.name == "upstream-refresh-candidate")) | length')" == "0" ]]; then
             gh label create "${tracking_label}" --color "0E8A16" --description "Latest upstream refresh candidate tracking issue"
           fi
-          # The publish job labels out-of-scope candidates with this label. Its
-          # App token cannot create labels, so create it here.
+          # The publish job cannot create labels with its App token.
           if [[ "$(gh label list --json name --jq 'map(select(.name == "needs-human-review")) | length')" == "0" ]]; then
             gh label create needs-human-review --color "D93F0B" --description "Human review required before merge"
           fi
@@ -349,6 +348,7 @@ jobs:
 
       - id: publish
         name: Publish candidate
+        shell: bash --noprofile --norc -euo pipefail {0}
         if: steps.secrets.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
