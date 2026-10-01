@@ -41,6 +41,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("workcell-egress-proxy", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	allowPath := flags.String("allowlist", "", "file with one host:port entry per line")
+	allowText := flags.String("allow", "", "space-separated host:port entries, in place of -allowlist")
 	listenHost := flags.String("listen", "0.0.0.0", "address to listen on")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -51,13 +52,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return usageError(fmt.Errorf("unexpected argument: %q", flags.Arg(0)))
 	}
-	if *allowPath == "" {
-		return usageError(errors.New("-allowlist is required"))
+	if (*allowPath == "") == (*allowText == "") {
+		return usageError(errors.New("exactly one of -allowlist or -allow is required"))
 	}
 	if _, err := netip.ParseAddr(*listenHost); err != nil {
 		return usageError(fmt.Errorf("-listen must be an IP address: %q", *listenHost))
 	}
-	allow, err := egressproxy.LoadAllowlist(*allowPath)
+	var allow *egressproxy.Allowlist
+	var err error
+	if *allowText != "" {
+		allow, err = egressproxy.ParseAllowlist(*allowText, "-allow")
+	} else {
+		allow, err = egressproxy.LoadAllowlist(*allowPath)
+	}
 	if err != nil {
 		return usageError(err)
 	}
