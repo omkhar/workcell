@@ -23,7 +23,7 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 
 	inScope := scopeGuardFilePatch("runtime/container/Dockerfile", "ARG CODEX_VERSION=0.153.2", "ARG CODEX_VERSION=0.154.0") +
 		scopeGuardFilePatch("tests/fixtures/flags/claude.txt", "--old", "--new") +
-		scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "old", "new") +
+		scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# codex-version: 0.153.2", "# codex-version: 0.154.0") +
 		scopeGuardFilePatch("runtime/container/control-plane-manifest.json", "old", "new")
 
 	cases := []struct {
@@ -194,6 +194,17 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			name:    "extra package.json dependency",
 			patch:   scopeGuardFilePatch("runtime/container/providers/package.json", `    "@google/gemini-cli": "0.58.0"`, `    "evil-pkg": "1.0.0"`),
 			wantErr: `line +    "evil-pkg": "1.0.0"`,
+		},
+		{
+			name:    "codex fixture token added",
+			patch:   scopeGuardFilePatch("tests/fixtures/codex-subcommands.txt", "# codex-version: 0.153.2", "newsubcommand"),
+			wantErr: "line +newsubcommand",
+		},
+		{
+			name: "four-field index header",
+			patch: "diff --git a/tests/fixtures/flags/x.txt b/tests/fixtures/flags/x.txt\nindex 1111111..2222222 120000 junk\n" +
+				"--- a/tests/fixtures/flags/x.txt\n+++ b/tests/fixtures/flags/x.txt\n@@ -1 +1 @@\n-a\n+b\n",
+			wantErr: "index 1111111..2222222 120000 junk",
 		},
 		{
 			name:    "lockfile resolution change",

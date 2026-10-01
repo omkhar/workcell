@@ -25,6 +25,7 @@ const scopeGuardNoNewline = "\\ No newline at end of file"
 const (
 	scopeGuardDockerfilePath  = "runtime/container/Dockerfile"
 	scopeGuardPackageJSONPath = "runtime/container/providers/package.json"
+	scopeGuardCodexFixture    = "tests/fixtures/codex-subcommands.txt"
 )
 
 var (
@@ -35,7 +36,10 @@ var (
 	// package.json may change only the pinned Gemini CLI version, because
 	// npm ci installs every dependency that file declares.
 	scopeGuardPackageJSONLineRE = regexp.MustCompile(`^[-+]\s+"@google/gemini-cli": "[A-Za-z0-9._+-]+",?$`)
-	scopeGuardPathRE            = regexp.MustCompile(
+	// The Codex fixture may change only its version stamp. A bump that needs
+	// new subcommand tokens is held for human review.
+	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+]# codex-version: [0-9]+\.[0-9]+\.[0-9]+$`)
+	scopeGuardPathRE           = regexp.MustCompile(
 		`^(runtime/container/providers/package\.json|tests/fixtures/flags/[^/]+|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
@@ -102,7 +106,8 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			}
 			if (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) &&
 				(file == scopeGuardDockerfilePath && !scopeGuardDockerfileLineRE.MatchString(line) ||
-					file == scopeGuardPackageJSONPath && !scopeGuardPackageJSONLineRE.MatchString(line)) {
+					file == scopeGuardPackageJSONPath && !scopeGuardPackageJSONLineRE.MatchString(line) ||
+					file == scopeGuardCodexFixture && !scopeGuardCodexStampLineRE.MatchString(line)) {
 				fail("%s: line %s", file, line)
 			}
 			if file == scopeGuardDockerfilePath {
@@ -143,7 +148,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		case strings.HasPrefix(line, "GIT binary patch") || strings.HasPrefix(line, "Binary files "):
 			fail("%s: binary change", file)
 		case strings.HasPrefix(line, "index "):
-			if len(fields) == 3 && fields[2] != "100644" {
+			if len(fields) > 3 || len(fields) < 2 || len(fields) == 3 && fields[2] != "100644" {
 				fail("%s: %s", file, line)
 			}
 		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
