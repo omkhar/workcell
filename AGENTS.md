@@ -246,6 +246,12 @@ argument again. Do not start another review round to settle them.
   its addressed threads; and require a clean marker for the current head before
   merge. Repeat the loop after every push. When available, use the Codex PR
   review loop skill for the exact response and SHA checks.
+- Exception: upstream-refresh bump PRs. The upstream-refresh workflow may
+  publish these PRs from CI through the upstream-refresh GitHub App, with
+  commits signed by GitHub (web-flow) instead of the maintainer key. Codex
+  review is advisory for these PRs. They auto-merge after the 48 h cool-off
+  when scope-guard and all required checks pass. All other PRs keep the
+  host-side publication, maintainer signing, and Codex loop rules.
 - Actionable comments must be addressed or explicitly dispositioned before
   merge.
 - Re-check comments and review threads after CI turns green and immediately
