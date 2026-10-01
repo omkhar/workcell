@@ -87,7 +87,7 @@ grep -q '^ip_literal=blocked$' "${TMP_DIR}/probe.stdout"
 grep -q '^dns=blocked$' "${TMP_DIR}/probe.stdout"
 assert_no_proxy_residue "an attached run"
 
-"${ROOT_DIR}/scripts/workcell" session start --agent codex --workspace "${WORKSPACE}" \
+"${ROOT_DIR}/scripts/workcell" session start --session-workspace direct --agent codex --workspace "${WORKSPACE}" \
   --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy \
   --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
   -- sleep 600 >"${TMP_DIR}/detached.stdout" 2>"${TMP_DIR}/detached.stderr"
