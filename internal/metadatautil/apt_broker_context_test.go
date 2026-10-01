@@ -14,6 +14,7 @@ func TestCheckPinnedInputsRejectsMissingAptBrokerContextInput(t *testing.T) {
 		"!go.mod", "!go.sum", "!internal/", "!internal/aptbroker/", "!internal/aptbroker/**",
 		"!cmd/", "!cmd/workcell-apt-broker-client/", "!cmd/workcell-apt-broker-client/**",
 		"!cmd/workcell-apt-broker-server/", "!cmd/workcell-apt-broker-server/**",
+		"!internal/egressproxy/**", "!internal/rootio/**", "!cmd/workcell-egress-proxy/**",
 	} {
 		t.Run(line, func(t *testing.T) {
 			cfg := writePinnedInputsFixture(t)

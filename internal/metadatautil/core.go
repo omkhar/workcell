@@ -995,6 +995,8 @@ func runtimeBuildContextPaths(rootDir string, requireTracked bool) ([]string, er
 	for _, directory := range []string{
 		"adapters", "runtime/container", "internal/aptbroker",
 		"cmd/workcell-apt-broker-client", "cmd/workcell-apt-broker-server",
+		"internal/cliexit", "internal/egressproxy", "internal/injectionpolicy",
+		"internal/rootio", "internal/tomlsubset", "cmd/workcell-egress-proxy",
 	} {
 		files, err := walkFiles(rootDir, filepath.FromSlash(directory), "node_modules", "target")
 		if err != nil {
