@@ -3236,7 +3236,9 @@ ensure_session_audit_state() {
 # docker cp without -L copies an in-container symlink as a host symlink, and
 # container content is agent-controlled. Stage the copy in a private directory,
 # accept only a regular file, set its mode there, then rename it over the
-# destination (rename replaces a link; it never follows one).
+# destination. The destination must be absent or a regular file: mv onto a
+# directory, or onto a link to one, moves the file into its target. On failure
+# the destination is left untouched; callers must not fall back to writing it.
 copy_container_regular_file() {
   local container_name="$1"
   local container_path="$2"
@@ -3244,6 +3246,9 @@ copy_container_regular_file() {
   local staged_dir=""
   local status=1
 
+  if [[ -L "${destination}" ]] || { [[ -e "${destination}" ]] && [[ ! -f "${destination}" ]]; }; then
+    return 1
+  fi
   staged_dir="$(mktemp -d "$(dirname "${destination}")/.workcell-cp.XXXXXX")" || return 1
   if run_profile_docker_command "${COLIMA_PROFILE}" cp "${container_name}:${container_path}" "${staged_dir}/file" >/dev/null 2>&1 &&
     [[ -f "${staged_dir}/file" && ! -L "${staged_dir}/file" ]] &&
@@ -3259,10 +3264,7 @@ capture_session_audit_state() {
   local container_name="$1"
 
   [[ -n "${SESSION_AUDIT_STATE_FILE}" ]] || return 0
-  if [[ -r "${SESSION_AUDIT_STATE_FILE}" ]]; then
-    chmod 0600 "${SESSION_AUDIT_STATE_FILE}" 2>/dev/null || true
-    return 0
-  fi
+  [[ -r "${SESSION_AUDIT_STATE_FILE}" ]] && return 0
   mkdir -p "$(dirname "${SESSION_AUDIT_STATE_FILE}")"
   if ! copy_container_regular_file "${container_name}" "${SESSION_AUDIT_CONTAINER_FILE}" "${SESSION_AUDIT_STATE_FILE}"; then
     copy_container_regular_file "${container_name}" "/run/workcell/session-assurance" "${SESSION_AUDIT_STATE_FILE}" || true
@@ -3278,11 +3280,12 @@ capture_session_file_trace() {
     return 0
   fi
   if ! copy_container_regular_file "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" "${file_trace_log_path}"; then
-    if [[ ! -s "${file_trace_log_path}" ]]; then
-      printf '%s\tevent=host-collect-missing\tcontainer=%s\tcontainer_path=%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${container_name}" "${SESSION_FILE_TRACE_CONTAINER_FILE}" >>"${file_trace_log_path}"
-    fi
-    chmod 0600 "${file_trace_log_path}" 2>/dev/null || true
+    echo "Workcell: warning: could not collect the file-trace log from ${container_name}; the host log is unchanged." >&2
+    append_audit_record "${COLIMA_PROFILE}" \
+      "event=file-trace-capture-failed" \
+      "session_id=${SESSION_ID}" \
+      "container=${container_name}" \
+      "container_path=${SESSION_FILE_TRACE_CONTAINER_FILE}" || true
   fi
 }
 

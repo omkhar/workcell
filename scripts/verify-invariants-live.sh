@@ -562,8 +562,9 @@ EOF
       cat "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" >&2
       exit 1
     fi
-    if ! grep -Eq 'event=watch-start|event=host-collect-missing' "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}"; then
-      echo "Expected detached session file-trace retrieval to include watcher activity or an explicit host collection fallback" >&2
+    if ! grep -q 'event=watch-start' "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" &&
+      ! grep -q "event=file-trace-capture-failed session_id=${DETACHED_SESSION_ID}" "${DETACHED_SESSION_LOGS_AUDIT_OUT}"; then
+      echo "Expected detached session file-trace retrieval to include watcher activity or an audit record of the capture failure" >&2
       cat "${DETACHED_SESSION_LOGS_FILE_TRACE_OUT}" >&2
       exit 1
     fi
