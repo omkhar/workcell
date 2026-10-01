@@ -179,11 +179,11 @@ jobs:
           tracking_title="Upstream refresh candidate"
           issue_body="$(mktemp "${RUNNER_TEMP}/workcell-upstream-refresh-issue.XXXXXX.md")"
 
-          if [[ "$(gh label list --json name --jq 'map(select(.name == "upstream-refresh-candidate")) | length')" == "0" ]]; then
+          if [[ "$(gh label list --limit 1000 --json name --jq 'map(select(.name == "upstream-refresh-candidate")) | length')" == "0" ]]; then
             gh label create "${tracking_label}" --color "0E8A16" --description "Latest upstream refresh candidate tracking issue"
           fi
           # The publish job cannot create labels with its App token.
-          if [[ "$(gh label list --json name --jq 'map(select(.name == "needs-human-review")) | length')" == "0" ]]; then
+          if [[ "$(gh label list --limit 1000 --json name --jq 'map(select(.name == "needs-human-review")) | length')" == "0" ]]; then
             gh label create needs-human-review --color "D93F0B" --description "Human review required before merge"
           fi
 

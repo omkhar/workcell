@@ -935,12 +935,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if !needsExactly(publish.Needs, []string{"refresh", "scope-guard"}) {
 		return fmt.Errorf("%s publish job must need exactly refresh and scope-guard", path)
 	}
-	for _, env := range []map[string]string{document.Env, publish.Env} {
-		for _, value := range env {
-			if upstreamRefreshAppCredentialRE.MatchString(value) {
-				return fmt.Errorf("%s publish job must not set App credentials at workflow or job level", path)
-			}
-		}
+	if len(publish.Env) != 0 || len(document.Env) != 1 || !regexp.MustCompile(`^v[0-9.]+$`).MatchString(document.Env["WORKCELL_COSIGN_VERSION"]) {
+		return fmt.Errorf("%s publish job must not inherit workflow or job env other than WORKCELL_COSIGN_VERSION (NODE_OPTIONS or BASH_ENV would reach the App token)", path)
 	}
 	appTokenSteps := 0
 	publishRuns := 0
