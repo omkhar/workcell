@@ -4253,15 +4253,16 @@ func TestCheckValidatorWritableStateRealRepo(t *testing.T) {
 }
 
 // hostutilEgressRgHappyGoHostutil is a minimal scripts/lib/launcher/go-hostutil.sh
-// satisfying all five bootstrap-Go invariants: the escaped-literal patterns match
-// the literal ${ROOT_DIR}/${GOPATH}/${HOST_GO_BIN}/"$@" tokens.
+// satisfying all six bootstrap-Go invariants: the escaped-literal patterns match
+// the literal ${ROOT_DIR}/${GOPATH}/${HOST_GO_BIN}/${tmp}/${tool} tokens.
 const hostutilEgressRgHappyGoHostutil = `#!/bin/bash
 set -euo pipefail
 run_clean_host_command_in_dir "${ROOT_DIR}" env \
   GOPATH="${GOPATH}" \
   GOMODCACHE="${GOMODCACHE}" \
   GOCACHE="${GOCACHE}" \
-  "${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"
+  "${HOST_GO_BIN}" build -buildvcs=false -o "${tmp}" "./cmd/${tool}"
+"${GO_TOOL_BIN}" "$@"
 `
 
 // hostutilEgressRgHappyEntrypoint is a minimal runtime/container/entrypoint.sh
@@ -4339,10 +4340,18 @@ func TestCheckHostutilEgressRg(t *testing.T) {
 			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
 		},
 		{
+			// The cached-binary exec line removed: the helper would no longer run.
+			name:       "go-hostutil missing GO_TOOL_BIN exec",
+			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `"${GO_TOOL_BIN}" "$@"`, `echo "$@"`, 1),
+			entrypoint: hostutilEgressRgHappyEntrypoint,
+			colima:     hostutilEgressRgHappyColima,
+			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
+		},
+		{
 			// kindRegexPresent, escaped-literal "$@" pattern (fifth probe of the
-			// shared-message guard): the HOST_GO_BIN run line removed.
-			name:       "go-hostutil missing HOST_GO_BIN run",
-			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `"${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"`, `go run ./cmd/workcell-hostutil "$@"`, 1),
+			// shared-message guard): the HOST_GO_BIN build line removed.
+			name:       "go-hostutil missing HOST_GO_BIN build",
+			goHostutil: strings.Replace(hostutilEgressRgHappyGoHostutil, `"${HOST_GO_BIN}" build -buildvcs=false -o "${tmp}" "./cmd/${tool}"`, `go build -buildvcs=false -o "${tmp}" "./cmd/${tool}"`, 1),
 			entrypoint: hostutilEgressRgHappyEntrypoint,
 			colima:     hostutilEgressRgHappyColima,
 			wantErr:    "Expected scripts/lib/launcher/go-hostutil.sh to invoke the bootstrap Go helper from the repo root under a scrubbed environment with explicit Go caches",
@@ -4470,23 +4479,23 @@ func TestCheckHostutilEgressRg(t *testing.T) {
 
 func TestCheckHostutilEgressRgCount(t *testing.T) {
 	got := len(hostutilEgressRgChecks)
-	const want = 21
+	const want = 22
 	if got != want {
 		t.Fatalf("hostutilEgressRgChecks has %d checks, want %d", got, want)
 	}
 }
 
 // TestCheckHostutilEgressRgLineParity proves the per-line evaluator does not let
-// an escaped-literal pattern match across a newline: the HOST_GO_BIN run pattern
+// an escaped-literal pattern match across a newline: the HOST_GO_BIN build pattern
 // matches its intact single line but must NOT match when split by a newline,
 // mirroring ripgrep's default (non-multiline) behaviour.
 func TestCheckHostutilEgressRgLineParity(t *testing.T) {
-	pat := `"\$\{HOST_GO_BIN\}" run ./cmd/workcell-hostutil "\$@"`
-	if !regexMatchesAnyLine(pat, `"${HOST_GO_BIN}" run ./cmd/workcell-hostutil "$@"`) {
-		t.Fatalf("expected the intact HOST_GO_BIN run line to match")
+	pat := `"\$\{HOST_GO_BIN\}" build -buildvcs=false -o "\$\{tmp\}" "./cmd/\$\{tool\}"`
+	if !regexMatchesAnyLine(pat, `"${HOST_GO_BIN}" build -buildvcs=false -o "${tmp}" "./cmd/${tool}"`) {
+		t.Fatalf("expected the intact HOST_GO_BIN build line to match")
 	}
-	if regexMatchesAnyLine(pat, "\"${HOST_GO_BIN}\" run ./cmd/workcell-hostutil\n\"$@\"") {
-		t.Fatalf("a HOST_GO_BIN run split across a newline must NOT match (rg is line-oriented)")
+	if regexMatchesAnyLine(pat, "\"${HOST_GO_BIN}\" build -buildvcs=false -o \"${tmp}\"\n\"./cmd/${tool}\"") {
+		t.Fatalf("a HOST_GO_BIN build split across a newline must NOT match (rg is line-oriented)")
 	}
 }
 
