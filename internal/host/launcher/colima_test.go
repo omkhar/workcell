@@ -45,7 +45,7 @@ func TestValidateColimaStatusOutputDetectsMissingVZ(t *testing.T) {
 
 func TestValidateColimaStatusOutputDetectsMissingVirtiofs(t *testing.T) {
 	t.Parallel()
-	status := "Virtualization.Framework\nruntime: docker\n"
+	status := "Using Virtualization.Framework\nruntime: docker\n"
 	err := ValidateColimaStatusOutput(status, "workcell-test", "vz", "virtiofs")
 	if err == nil {
 		t.Fatal("ValidateColimaStatusOutput() err = nil, want missing virtiofs error")
@@ -57,7 +57,7 @@ func TestValidateColimaStatusOutputDetectsMissingVirtiofs(t *testing.T) {
 
 func TestValidateColimaStatusOutputDetectsMissingDockerRuntime(t *testing.T) {
 	t.Parallel()
-	status := "Virtualization.Framework\nmountType: virtiofs\nruntime: containerd\n"
+	status := "Using Virtualization.Framework\nmountType: virtiofs\nruntime: containerd\n"
 	err := ValidateColimaStatusOutput(status, "workcell-test", "vz", "virtiofs")
 	if err == nil {
 		t.Fatal("ValidateColimaStatusOutput() err = nil, want missing docker runtime error")
@@ -86,6 +86,9 @@ func TestValidateColimaStatusOutputMatchesSelectedVMType(t *testing.T) {
 		{qemu, "vz", "virtiofs", "Virtualization.Framework"},
 		{strings.Replace(qemu, "9p", "reverse-sshfs", 1), "qemu", "9p", "9p"},
 		{strings.Replace(qemu, "9p", "9p-bogus", 1), "qemu", "9p", "9p"},
+		{strings.Replace(qemu, "mountType: 9p", "warning: mountType: 9p", 1), "qemu", "9p", "9p"},
+		{strings.Replace(qemu, "QEMU", "QEMU-bogus", 1), "qemu", "9p", "QEMU"},
+		{strings.Replace(qemu, "runtime: docker", "runtime: docker-bogus", 1), "qemu", "9p", "Docker runtime"},
 		{qemu, "krunkit", "9p", "unsupported vm type"},
 	} {
 		err := ValidateColimaStatusOutput(tc.status, "wcl", tc.vmType, tc.mountType)
