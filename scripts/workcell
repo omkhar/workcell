@@ -133,6 +133,9 @@ source "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"
 # likewise defined before any launch-time invocation.
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/launcher/egress-endpoints.sh"
+# Adapter data generated from adapters/*/adapter.toml (function definitions only).
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/generated-adapters.sh"
 
 HOST_GIT_BIN=""
 HOST_COLIMA_BIN=""
@@ -5969,7 +5972,7 @@ print_injection_status() {
   if [[ -z "${INJECTION_POLICY_SHA256}" ]]; then
     printf 'injection_policy=none\n'
     printf 'default_injection_policy_path=%s\n' "$(default_injection_policy_path)"
-    printf 'supported_credential_keys=codex_auth,claude_api_key,claude_auth,claude_mcp,copilot_github_token,gemini_env,gemini_oauth,gemini_projects,gcloud_adc,github_config,github_hosts\n'
+    printf 'supported_credential_keys=%s,github_config,github_hosts\n' "$(workcell_adapter_credential_keys)"
     printf 'credential_keys=none\n'
     printf 'credential_input_kinds=none\n'
     printf 'credential_resolvers=none\n'
@@ -8883,9 +8886,8 @@ if [[ -z "${AGENT}" ]] && { [[ "${DOCTOR}" -eq 1 ]] || [[ "${INSPECT}" -eq 1 ]] 
   exit 2
 fi
 
-if [[ -n "${AGENT}" ]]; then
+if [[ -n "${AGENT}" ]] && ! workcell_supported_agent "${AGENT}"; then
   case "${AGENT}" in
-    codex | claude | copilot | gemini) ;;
     antigravity)
       planned_provider_name="Google Antigravity CLI"
       planned_missing_support_detail="No Antigravity runtime, auth handoff, or live certification evidence is shipped in this build."

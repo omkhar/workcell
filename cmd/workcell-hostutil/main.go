@@ -120,11 +120,11 @@ func run(args []string) error {
 }
 
 // runAdapters dispatches `adapters gen TARGET REPO_ROOT OUTPUT`, which renders
-// one generated Go file from REPO_ROOT/adapters/*/adapter.toml. The
+// one generated file from REPO_ROOT/adapters/*/adapter.toml. The
 // scripts/generate-adapters-*.sh wrappers own the targets and output paths.
 func runAdapters(args []string) error {
 	if len(args) != 4 || args[0] != "gen" || adapters.GenTargets[args[1]] == nil {
-		return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil adapters gen <data|providerid> REPO_ROOT OUTPUT"}
+		return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil adapters gen <data|providerid|launcher-shell|runtime-shell> REPO_ROOT OUTPUT"}
 	}
 	manifests, err := adapters.LoadManifests(filepath.Join(args[2], "adapters"))
 	if err != nil {

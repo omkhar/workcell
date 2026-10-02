@@ -185,7 +185,7 @@ func TestEndpointRowAbsentRejectsExplicitArms(t *testing.T) {
 }
 
 func TestManifestsMatchLauncherProviderEndpoints(t *testing.T) {
-	const script = "scripts/lib/launcher/egress-endpoints.sh"
+	const script = "scripts/lib/launcher/generated-adapters.sh"
 	for _, m := range loadRepoManifests(t) {
 		if m.Tier == "planned" {
 			if !endpointRowAbsent(t, script, m.ID) || len(m.EgressEndpoints) != 0 {
@@ -697,8 +697,16 @@ container_path = "/opt/demo.json"
 		"missing provenance":      strings.Replace(valid, "provenance = \"scripts/verify-demo.sh\"\n", "", 1),
 		"relative container path": strings.Replace(valid, `"/opt/demo.json"`, `"demo.json"`, 1),
 		"subset parser rejection": valid + "\n[[install]]\n",
+		"quoted credential key":   strings.Replace(valid, "[credentials.demo_auth]", "[credentials.\"demo'auth\"]", 1),
+		"upper-case credential":   strings.Replace(valid, "[credentials.demo_auth]", "[credentials.Demo_auth]", 1),
+		"endpoint without port":   valid + "\n[egress]\nendpoints = [\"demo.example\"]\n",
+		"endpoint with shell":     valid + "\n[egress]\nendpoints = [\"$(id).example:443\"]\n",
+		"endpoint with a quote":   valid + "\n[egress]\nendpoints = [\"demo\\\".example:443\"]\n",
+		"endpoint port too big":   valid + "\n[egress]\nendpoints = [\"api.example:99999\"]\n",
+		"endpoint port zero":      valid + "\n[egress]\nendpoints = [\"api.example:0\"]\n",
+		"endpoint empty label":    valid + "\n[egress]\nendpoints = [\"api..example:443\"]\n",
 	}
-	if _, err := parseManifest("valid.toml", []byte(valid)); err != nil {
+	if _, err := parseManifest("valid.toml", []byte(valid+"\n[egress]\nendpoints = [\"api.demo-1.example:443\"]\n")); err != nil {
 		t.Fatalf("valid fixture rejected: %v", err)
 	}
 	for name, content := range cases {

@@ -43,10 +43,12 @@ Adapter rules:
 
 Each adapter directory has an `adapter.toml` manifest (strict schema and
 loader: `internal/adapters/manifest.go`). The manifest is the source of the
-per-provider credential keys, container paths, and reserved targets. Run
-`scripts/generate-adapters-data.sh` and `scripts/generate-adapters-providerid.sh`
-to generate `internal/adapters/data_gen.go` and
-`internal/providerid/providerid_gen.go` from the manifests. Do not edit the
+per-provider credential keys, container paths, reserved targets, and egress
+endpoints. Run the four `scripts/generate-adapters-*.sh` generators to
+generate `internal/adapters/data_gen.go`,
+`internal/providerid/providerid_gen.go`,
+`scripts/lib/launcher/generated-adapters.sh`, and
+`runtime/container/generated-adapters.sh` from the manifests. Do not edit the
 generated files by hand. Also add the provider configuration tree under
 `adapters/<name>/`.
 
@@ -54,9 +56,10 @@ These registry changes do not make a provider supported. Support also requires
 launcher, auth, policy, tests, documents, and live certification. A provider
 directory with a planned manifest is a fail-closed scaffold.
 
-The parity test in `internal/adapters/manifest_test.go` compares each manifest
-with the generated tables, the launcher shell tables, and the Rust launcher
-table.
+The golden test in `internal/adapters/gen_test.go` compares the generated
+files with the generator output. The parity test in
+`internal/adapters/manifest_test.go` compares each manifest with the generated
+tables, the launcher `--agent` dispatch, and the Rust launcher table.
 
 The file `internal/adapters/adapters.go` contains the public API. Injection,
 policy, and runtime code use this API.

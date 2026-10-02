@@ -76,7 +76,8 @@ forbidden = []
 #
 # Regenerating this inventory: the runtime egress set is the union of the
 # `*_endpoints()` helpers in scripts/lib/launcher/egress-endpoints.sh
-# (provider/target/credential) plus scripts/workcell's
+# (target/credential) and scripts/lib/launcher/generated-adapters.sh (provider,
+# generated from adapters/*/adapter.toml) plus scripts/workcell's
 # `provider_auth_recovery_extra_endpoints` and `ephemeral_extra_endpoints`; the
 # rebuild/prepare egress set is scripts/workcell's `bootstrap_endpoints()`. When
 # any of those emit a new host:port, add it to the matching section below and to
@@ -84,7 +85,7 @@ forbidden = []
 # catches up.
 
 [egress_provider_endpoints]
-target = "scripts/lib/launcher/egress-endpoints.sh"
+target = "scripts/lib/launcher/generated-adapters.sh"
 block = "provider_endpoints"
 exact_endpoints = true
 required = [

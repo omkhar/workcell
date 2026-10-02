@@ -7,7 +7,12 @@ Use this page for a new credential type or provider adapter. Read
 The provider registry is data in `adapters/<provider>/adapter.toml`.
 `scripts/generate-adapters-data.sh` generates `internal/adapters/data_gen.go`
 from it, and `scripts/generate-adapters-providerid.sh` generates
-`internal/providerid/providerid_gen.go`. A registry change
+`internal/providerid/providerid_gen.go`.
+`scripts/generate-adapters-launcher-shell.sh` generates
+`scripts/lib/launcher/generated-adapters.sh`, and
+`scripts/generate-adapters-runtime-shell.sh` generates
+`runtime/container/generated-adapters.sh`. Run all four generators after a
+manifest change. A registry change
 is only one part of an adapter change. Runtime dispatch, policy, seed logic,
 validation, and documents must change together.
 
@@ -20,9 +25,9 @@ In `adapters/<provider>/adapter.toml`:
 1. Add a `[credentials.<key>]` table.
 2. Set its `container_path` under `/opt/workcell/host-inputs/credentials/`.
 3. Add its provider-home destination to `[home] reserved_targets`.
-4. Run `scripts/generate-adapters-data.sh` and
-   `scripts/generate-adapters-providerid.sh`, and commit both generated files.
-   The generated-artifact check fails when a committed file is stale.
+4. Run the four `scripts/generate-adapters-*.sh` generators, and commit the
+   generated files. The generated-artifact check fails when a committed file
+   is stale.
 
 The reserved target stops a general copy rule that tries to replace a Workcell
 control file. See [Injection Policy explicit limits](injection-policy.md#explicit-limits).
@@ -67,7 +72,8 @@ layer:
 - Destinations for staged authentication.
 - Status order and bootstrap summaries.
 - Resolver allowlist, resolution, and readiness.
-- Launcher `supported_credential_keys` output for the no-policy state.
+- Launcher `supported_credential_keys` output for the no-policy state. The
+  generators supply the adapter keys. The launcher adds the shared GitHub keys.
 - Provider-home seed logic for the runtime.
 - [Credential keys](injection-policy.md#credential-keys).
 - [Provider Bootstrap Matrix](provider-bootstrap-matrix.md#current-matrix).
@@ -104,14 +110,17 @@ For a new provider:
    `tier = "planned"`. A planned manifest cannot declare more, and it stays
    outside `AllProviders`.
 3. When the adapter is ready, change the tier. Add the binary, install method,
-   credential keys, paths, and reserved targets to the manifest. Then run
-   `scripts/generate-adapters-data.sh` and
-   `scripts/generate-adapters-providerid.sh`. Do not edit
-   `CredentialMetadataProviders`, `AllProviders`, or the registry rows by hand.
-4. Add launcher validation and help output.
-5. Add runtime entry-point and wrapper dispatch.
+   credential keys, paths, reserved targets, and egress endpoints to the
+   manifest. Then run the four `scripts/generate-adapters-*.sh` generators. Do
+   not edit `CredentialMetadataProviders`, `AllProviders`, the registry rows,
+   `provider_endpoints`, or `workcell_supported_agent` by hand.
+4. Add launcher help output. The generated `workcell_supported_agent` supplies
+   the launcher `--agent` validation.
+5. Add runtime entry-point and wrapper dispatch. The generated
+   `workcell_supported_agent` supplies the provider wrapper target check.
 6. Add the provider binary to each applicable exec-guard and protected-runtime
-   list for development mode.
+   list for development mode. The generated `workcell_supported_agent`
+   supplies the direct provider command block.
 7. Add the provider binary and wrapper links to the runtime image.
 8. Add the provider allowlist, credential setup, and probe cases to
    `scripts/provider-e2e.sh`.

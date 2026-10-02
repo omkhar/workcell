@@ -7,10 +7,11 @@
 # extracted from scripts/workcell as the next increment of the launcher
 # decomposition (roadmap item D4, "wrapper assembly").  These helpers compute
 # the per-session network egress allowlist and translate it into the container
-# runtime's `--add-host` arguments: they map each provider/target/credential to
-# its fixed set of `host:port` endpoints, dedupe and deny-subtract the combined
-# list (via the workcell-hostutil Go helper), fail closed when a deny rule
-# empties the allowlist, label whether the launch actually enforces the
+# runtime's `--add-host` arguments: they map each target/credential to its
+# fixed set of `host:port` endpoints (provider_endpoints is generated into
+# scripts/lib/launcher/generated-adapters.sh), dedupe and deny-subtract the
+# combined list (via the workcell-hostutil Go helper), fail closed when a deny
+# rule empties the allowlist, label whether the launch actually enforces the
 # allowlist, and resolve the surviving endpoints into `--add-host` runtime
 # args.  They depend only on `csv_contains_value` (defined in scripts/workcell),
 # `go_hostutil` (scripts/lib/launcher/go-hostutil.sh, sourced before this
@@ -20,26 +21,6 @@
 # dependency is defined before the first call site in the main launch path — so
 # they are a self-contained, behaviour-preserving unit.  See
 # docs/launcher-contract.md for the module contract.
-
-provider_endpoints() {
-  case "$1" in
-    codex)
-      echo "api.openai.com:443 auth.openai.com:443 chatgpt.com:443"
-      ;;
-    claude)
-      echo "api.anthropic.com:443 claude.ai:443 console.anthropic.com:443"
-      ;;
-    copilot)
-      echo "api.githubcopilot.com:443 api.individual.githubcopilot.com:443 api.github.com:443 github.com:443"
-      ;;
-    gemini)
-      echo "generativelanguage.googleapis.com:443 ai.google.dev:443"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
 
 target_broker_endpoints() {
   case "$1" in

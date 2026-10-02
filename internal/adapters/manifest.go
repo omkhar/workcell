@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -55,7 +56,13 @@ type Credential struct {
 	ContainerPath string
 }
 
-var manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+var (
+	manifestIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	// The generated shell files embed credential keys and endpoints as text,
+	// so each must be a plain token.
+	credentialKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+	endpointPattern      = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?:[0-9]{1,5}$`)
+)
 
 // LoadManifests loads every <root>/<id>/adapter.toml in name order; each id must
 // match its directory. It fails closed: only a regular file whose name cannot be
@@ -231,6 +238,9 @@ func validateManifest(m Manifest, schema int) error {
 		return fmt.Errorf("invalid id %q", m.ID)
 	}
 	for _, c := range m.Credentials {
+		if !credentialKeyPattern.MatchString(c.Key) {
+			return fmt.Errorf("invalid credential key %q", c.Key)
+		}
 		if !filepath.IsAbs(c.ContainerPath) {
 			return fmt.Errorf("credential %q container_path must be absolute", c.Key)
 		}
@@ -245,6 +255,15 @@ func validateManifest(m Manifest, schema int) error {
 		return nil
 	default:
 		return fmt.Errorf("invalid tier %q", m.Tier)
+	}
+	for _, e := range m.EgressEndpoints {
+		if !endpointPattern.MatchString(e) {
+			return fmt.Errorf("invalid egress endpoint %q", e)
+		}
+		// The runtime allowlist grammar owns host and port semantics.
+		if err := injectionpolicy.ValidateEgressEndpoint(e, "egress endpoint"); err != nil {
+			return err
+		}
 	}
 	if m.Binary == "" {
 		return fmt.Errorf("binary is required for tier %q", m.Tier)

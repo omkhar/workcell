@@ -125,12 +125,9 @@ workcell_provider_parent_is_launcher() {
 }
 
 require_managed_provider_launch() {
-  case "${AGENT_NAME}" in
-    codex | claude | copilot | gemini) ;;
-    *)
-      workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"
-      ;;
-  esac
+  if ! workcell_supported_agent "${AGENT_NAME}"; then
+    workcell_die "Unsupported provider wrapper target: ${AGENT_NAME}"
+  fi
 
   if [[ "${WORKCELL_PROVIDER_LAUNCHER_AUTHORITY:-0}" != "1" ]] ||
     ! workcell_provider_parent_is_launcher; then
@@ -170,6 +167,8 @@ emit_codex_rules_mutability_notice() {
 
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
+# shellcheck source=runtime/container/generated-adapters.sh
+source /usr/local/libexec/workcell/generated-adapters.sh
 # shellcheck source=runtime/container/provider-policy.sh
 source /usr/local/libexec/workcell/provider-policy.sh
 # shellcheck source=runtime/container/home-control-plane.sh
