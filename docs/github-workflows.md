@@ -273,6 +273,17 @@ Codex review of a bump PR is advisory.
 `publish` posts an audit comment on the tracking issue.
 The comment lists each PR, its commit, the merge decision, the cool-off policy, and the bumped versions.
 
+### Accepted risk: writer push after auto-merge
+
+A repository writer can push to the bump branch after `publish` arms auto-merge.
+A `pull_request` job cannot stop a writer who can rewrite that job.
+The base-trusted fix is `pull_request_target`.
+That fix would widen a repository security contract.
+
+The repository has one writer, so the owner accepted this risk.
+Auto-merge stays bound to the guarded commit with `--match-head-commit`.
+Revisit this risk when a second maintainer gets write access.
+
 ### Upstream refresh administrator steps
 
 `publish` skips with a notice until an administrator does these steps:
