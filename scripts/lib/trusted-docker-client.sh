@@ -203,8 +203,11 @@ setup_workcell_trusted_docker_client() {
   # Stage under a name that scripts/uninstall.sh does not match. Write the owner
   # marker, then rename into the cleanup namespace, so uninstall never sees a
   # sandbox without its marker.
-  staging="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker-stage.XXXXXX")"
-  (umask 077 && printf '%s\n' "$$" >"${staging}/owner.pid")
+  staging="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker-stage.XXXXXX")" || return 1
+  if ! (umask 077 && printf '%s\n' "$$" >"${staging}/owner.pid"); then
+    rm -rf "${staging:?}"
+    return 1
+  fi
   WORKCELL_DOCKER_SANDBOX_ROOT="${staging%/*}/workcell-docker.${staging##*.}"
   if ! mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"; then
     rm -rf "${staging:?}"

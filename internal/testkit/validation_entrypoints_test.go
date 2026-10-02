@@ -1460,6 +1460,28 @@ stat -f %Lp "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid" 2>/dev/null || stat -c %
 	}
 }
 
+// TestTrustedDockerSandboxFailsClosedWhenMarkerWriteFails shims printf so the
+// owner marker write fails, and runs setup where bash suppresses errexit.
+func TestTrustedDockerSandboxFailsClosedWhenMarkerWriteFails(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	tempRoot := t.TempDir()
+	cmd := exec.Command("bash", "-c", `set -uo pipefail
+source "$1/scripts/lib/trusted-docker-client.sh"
+printf() { if [[ "${2:-}" == "$$" ]]; then return 1; fi; builtin printf "$@"; }
+if setup_workcell_trusted_docker_client; then echo setup-accepted; exit 0; fi
+echo setup-refused`, "_", root)
+	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "setup-refused") {
+		t.Fatalf("setup continued after a failed marker write: %v\n%s", err, out)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(tempRoot, "workcell-docker*")); len(entries) != 0 {
+		t.Fatalf("sandbox or staging directory leaked: %v", entries)
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 
