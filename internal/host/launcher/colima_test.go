@@ -92,11 +92,12 @@ func TestValidateColimaStatusOutputMatchesSelectedVMType(t *testing.T) {
 		t.Fatal("logfmt status with a mount type extension: err = nil, want rejection")
 	}
 	for name, bad := range map[string]string{
-		"warning level":  strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "level=warning msg=\"runtime: docker\"", 1),
-		"unknown level":  strings.Replace(logfmt, "level=info msg=\"mountType: virtiofs\"", "level=bogus msg=\"mountType: virtiofs\"", 1),
-		"split record":   strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "\nlevel=info msg=\"runtime: docker\"", 1),
-		"truncated msg":  strings.Replace(logfmt, "msg=\"mountType: virtiofs\"", "msg=\"mountType: virtiofs", 1),
-		"multiline time": strings.Replace(logfmt, "time=\"2026-10-02T16:29:51-04:00\" level=info msg=\"runtime: docker\"", "time=\"x\nlevel=info msg=\"runtime: docker\"", 1),
+		"warning level":               strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "level=warning msg=\"runtime: docker\"", 1),
+		"unknown level":               strings.Replace(logfmt, "level=info msg=\"mountType: virtiofs\"", "level=bogus msg=\"mountType: virtiofs\"", 1),
+		"bare marker in continuation": logfmt + "time=\"x\" level=info msg=\"\nruntime: docker\n\"\n",
+		"split record":                strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "\nlevel=info msg=\"runtime: docker\"", 1),
+		"truncated msg":               strings.Replace(logfmt, "msg=\"mountType: virtiofs\"", "msg=\"mountType: virtiofs", 1),
+		"multiline time":              strings.Replace(logfmt, "time=\"2026-10-02T16:29:51-04:00\" level=info msg=\"runtime: docker\"", "time=\"x\nlevel=info msg=\"runtime: docker\"", 1),
 	} {
 		if err := ValidateColimaStatusOutput(bad, "wcl", "vz", "virtiofs"); err == nil {
 			t.Fatalf("malformed logfmt status (%s): err = nil, want rejection", name)

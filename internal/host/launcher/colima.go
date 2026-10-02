@@ -91,6 +91,8 @@ func runHostColimaWithContext(ctx context.Context, inv HostColimaInvocation) (in
 	return colimaRunResult(result.runErr)
 }
 
+var unterminatedLogfmt = regexp.MustCompile(`(?m)^time="(?:[^"\n]*$|[^"\n]*"[ \t]+level=\w+[ \t]+msg="[^"\n]*$)`)
+
 // ValidateColimaStatusOutput checks that the textual output of
 // `colima status --profile <profile>` advertises the configuration
 // invariants workcell expects for the selected host VM type (vz on macOS,
@@ -116,6 +118,11 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 	}
 	field := func(text string) *regexp.Regexp {
 		return regexp.MustCompile(statusLine(regexp.QuoteMeta(text)))
+	}
+	// A logfmt record that opens a quote and does not close it on the same line
+	// can hide a bare marker on its continuation line, so reject it up front.
+	if unterminatedLogfmt.MatchString(status) {
+		return errors.New("Colima status output has an unterminated logfmt record.")
 	}
 	checks := []struct {
 		pattern *regexp.Regexp
