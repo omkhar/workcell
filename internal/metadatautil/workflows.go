@@ -794,7 +794,6 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 	for _, needle := range []string{
 		"name: Upstream refresh",
 		"workflow_dispatch:",
-		"./scripts/update-upstream-pins.sh --apply",
 		"./scripts/update-upstream-pins.sh --check",
 		"./scripts/check-pinned-inputs.sh",
 		"GITHUB_TOKEN: ${{ github.token }}",
@@ -802,8 +801,10 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 		`(umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")`,
 		"unset GITHUB_TOKEN GH_TOKEN",
 		`trap 'rm -f "${token_file}"' EXIT`,
-		`WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply`,
 		`WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check`,
+		`WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh --apply`,
+		`./scripts/ci/upstream-refresh-candidate.sh provider "${RUNNER_TEMP}/upstream-refresh-candidate"`,
+		`./scripts/ci/upstream-refresh-candidate.sh toolchain "${RUNNER_TEMP}/upstream-refresh-candidate"`,
 		"actions/upload-artifact@",
 		"name: upstream-refresh-candidate",
 		"metadata.json",
@@ -844,7 +845,7 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 
 const (
 	upstreamRefreshPublishShell     = "bash --noprofile --norc -euo pipefail {0}"
-	upstreamRefreshScopeGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"`
+	upstreamRefreshScopeGuardRun    = `./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/provider/patch"`
 	upstreamRefreshScopeGuardResult = "${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}"
 )
 
@@ -913,6 +914,27 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	refresh := document.Jobs["refresh"]
 	if !maps.Equal(refresh.Permissions, map[string]string{"contents": "read", "issues": "write", "pull-requests": "read"}) {
 		return fmt.Errorf("%s refresh job must grant exactly contents: read, issues: write, pull-requests: read", path)
+	}
+	// The provider updater owns the provider pins. A full upstream refresh
+	// would put them in the toolchain candidate too, and the two candidates
+	// would no longer apply to main alone.
+	// ShellInvocations reads no assignment prefix, so match the token-file
+	// form the workflow uses as well as the bare command.
+	toolchainApplies := 0
+	for _, step := range refresh.Steps {
+		for _, command := range []string{"./scripts/update-upstream-pins.sh", "WORKCELL_GITHUB_API_TOKEN_FILE=${token_file} ./scripts/update-upstream-pins.sh"} {
+			for _, run := range ShellInvocations(step.Run, command) {
+				if !slices.Contains(run.Args, "--toolchain-only") {
+					return fmt.Errorf("%s refresh job must run ./scripts/update-upstream-pins.sh only with --toolchain-only", path)
+				}
+				if slices.Contains(run.Args, "--apply") {
+					toolchainApplies++
+				}
+			}
+		}
+	}
+	if toolchainApplies != 1 {
+		return fmt.Errorf("%s refresh job must run ./scripts/update-upstream-pins.sh --apply --toolchain-only once", path)
 	}
 	guard := document.Jobs["scope-guard"]
 	if !maps.Equal(guard.Permissions, map[string]string{"contents": "read"}) {

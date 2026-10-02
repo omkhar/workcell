@@ -41,12 +41,16 @@ func publishGit(t *testing.T, dir string, env []string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// publishFixture builds a checkout, a candidate, and a fake gh that logs each
-// call to FAKE_GH_LOG. The fake answers write calls only when FAKE_ALLOW_WRITES=1.
+// publishFixture builds a checkout, a candidate root with one provider
+// candidate, and a fake gh that logs each call to FAKE_GH_LOG. The fake answers
+// write calls only when FAKE_ALLOW_WRITES=1.
 type publishFixture struct {
 	checkout, candidate, audit, path string
 	base, tree                       string
 }
+
+// candidateDir is the directory of the one candidate the fixture wrote.
+func (f publishFixture) candidateDir() string { return filepath.Join(f.candidate, "provider") }
 
 func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata func(m map[string]any)) publishFixture {
 	t.Helper()
@@ -70,7 +74,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 
 	mutate(checkout)
 	candidate := filepath.Join(root, "candidate")
-	mustMkdir(t, candidate)
+	mustMkdir(t, filepath.Join(candidate, "provider"))
 	publishGit(t, checkout, nil, "add", "-A")
 	patch := publishGitRaw(t, checkout, "diff", "--cached", "--binary", "--full-index", "--patch", "--no-ext-diff", "--no-color")
 	index := filepath.Join(root, "index")
@@ -78,12 +82,12 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	publishGit(t, checkout, treeEnv, "read-tree", "HEAD")
 	publishGit(t, checkout, treeEnv, "add", "-A")
 	tree := publishGit(t, checkout, treeEnv, "write-tree")
-	mustWrite(t, filepath.Join(candidate, "patch"), patch, 0o644)
-	mustWrite(t, filepath.Join(candidate, "diffstat"), []byte(" stat\n"), 0o644)
+	mustWrite(t, filepath.Join(candidate, "provider", "patch"), patch, 0o644)
+	mustWrite(t, filepath.Join(candidate, "provider", "diffstat"), []byte(" stat\n"), 0o644)
 	digest := sha256.Sum256(patch)
 	metadata := map[string]any{
 		"version": 1, "repository": "o/r", "workflow": "upstream-refresh", "run_id": 42,
-		"run_url": "https://example.invalid/run", "artifact_name": "upstream-refresh-candidate",
+		"run_url": "https://example.invalid/run", "artifact_name": "upstream-refresh-candidate", "candidate": "provider",
 		"base_ref": "refs/heads/main", "base_sha": base, "patch_sha256": hex.EncodeToString(digest[:]),
 		"tree_oid": tree, "changed_files": []string{},
 	}
@@ -94,11 +98,20 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(candidate, "metadata.json"), raw, 0o644)
+	mustWrite(t, filepath.Join(candidate, "provider", "metadata.json"), raw, 0o644)
 	// Return the checkout to the base state, as a fresh CI checkout is.
 	publishGit(t, checkout, nil, "reset", "-q", "--hard")
 	publishGit(t, checkout, nil, "clean", "-fdq")
 
+	bin := writePublishFakeGH(t, root)
+	return publishFixture{checkout: checkout, candidate: candidate, audit: filepath.Join(root, "audit.md"), path: bin, base: base, tree: tree}
+}
+
+// writePublishFakeGH writes a fake gh under root/bin and returns that
+// directory. Without FAKE_TREE, the commit lookup reports the tree that the
+// publish script staged when it asked for the commit, as GitHub would.
+func writePublishFakeGH(t *testing.T, root string) string {
+	t.Helper()
 	bin := filepath.Join(root, "bin")
 	mustMkdir(t, bin)
 	fakeGH := "#!/bin/sh\n" +
@@ -110,8 +123,8 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"[ \"${FAKE_ALLOW_WRITES}\" = 1 ] || { echo \"unexpected gh call: $*\" >&2; exit 97; }\n" +
 		"case \"$*\" in\n" +
 		"  *git/refs\\ *) ;;\n" +
-		"  \"api graphql\"*) echo \"${FAKE_COMMIT}\" ;;\n" +
-		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"parents\":[{\"sha\":\"%s\"}],\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE}\" \"${FAKE_PARENT}\" ;;\n" +
+		"  \"api graphql\"*) git write-tree >\"${FAKE_GH_LOG}.tree\"; echo \"${FAKE_COMMIT}\" ;;\n" +
+		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"parents\":[{\"sha\":\"%s\"}],\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE:-$(cat \"${FAKE_GH_LOG}.tree\")}\" \"${FAKE_PARENT}\" ;;\n" +
 		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; echo https://example.invalid/pr/1 ;;\n" +
 		"  \"api -X DELETE\"*) ;;\n" +
 		"  *git/ref/heads/codex*) [ -n \"${FAKE_ORPHAN}\" ] || { echo \"${FAKE_REF_ERROR:-gh: Not Found (HTTP 404)}\" >&2; exit 1; } ;;\n" +
@@ -119,7 +132,7 @@ func newPublishFixture(t *testing.T, mutate func(checkout string), editMetadata 
 		"  *) echo \"unexpected gh call: $*\" >&2; exit 97 ;;\n" +
 		"esac\n"
 	mustWrite(t, filepath.Join(bin, "gh"), []byte(fakeGH), 0o755)
-	return publishFixture{checkout: checkout, candidate: candidate, audit: filepath.Join(root, "audit.md"), path: bin, base: base, tree: tree}
+	return bin
 }
 
 func publishGitRaw(t *testing.T, dir string, args ...string) []byte {
@@ -171,6 +184,7 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		wantErr  string
 	}{
 		{name: "repository mismatch", mutate: edit("plain.txt", "two\n"), metadata: func(m map[string]any) { m["repository"] = "evil/r" }, wantErr: "candidate repository mismatch"},
+		{name: "candidate kind mismatch", mutate: edit("plain.txt", "two\n"), metadata: func(m map[string]any) { m["candidate"] = "toolchain" }, wantErr: "candidate kind mismatch"},
 		{name: "run id mismatch", mutate: edit("plain.txt", "two\n"), metadata: func(m map[string]any) { m["run_id"] = 7 }, wantErr: "candidate run id mismatch"},
 		{name: "base ref mismatch", mutate: edit("plain.txt", "two\n"), metadata: func(m map[string]any) { m["base_ref"] = "refs/heads/other" }, wantErr: "base ref must be refs/heads/main"},
 		{name: "patch digest mismatch", mutate: edit("plain.txt", "two\n"), tamper: true, wantErr: "patch digest mismatch"},
@@ -184,7 +198,7 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 			t.Parallel()
 			f := newPublishFixture(t, tc.mutate, tc.metadata)
 			if tc.tamper {
-				mustWrite(t, filepath.Join(f.candidate, "patch"), []byte("tampered\n"), 0o644)
+				mustWrite(t, filepath.Join(f.candidateDir(), "patch"), []byte("tampered\n"), 0o644)
 			}
 			out, err := f.run(t, f.base)
 			if err == nil {
@@ -199,7 +213,7 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		})
 	}
 
-	const prFmt = `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-%s","headRefOid":"%s"}`
+	const prFmt = `{"title":"Refresh pinned upstreams (provider)","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-provider-%s","headRefOid":"%s"}`
 	commit, resumed := strings.Repeat("c", 40), strings.Repeat("d", 40)
 	disposition := []struct {
 		name    string
@@ -217,12 +231,12 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		{name: "resumed PR on another parent fails closed", moved: true, env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_PARENT=" + resumed, "FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "42", resumed)}, wantErr: true, forbid: []string{"pr merge"}},
 		{name: "PR from another run skips", env: []string{"FAKE_EXISTING_PR=" + fmt.Sprintf(prFmt, "7", resumed)}, forbid: []string{"pr merge", "pr create"}},
 		{name: "orphan branch from a killed attempt is replaced", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_ORPHAN=1"},
-			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42", "pr merge"}},
+			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-provider-42", "pr merge"}},
 		{name: "ref lookup error fails closed", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_REF_ERROR=gh: HTTP 502"}, wantErr: true, forbid: []string{"git/refs ", "pr create"}},
 		{name: "failed guard labels without creating the label", env: []string{"SCOPE=failed", "FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit},
 			want: []string{"--add-label needs-human-review"}, forbid: []string{"label create", "pr merge"}},
 		{name: "failed PR creation deletes the branch", env: []string{"FAKE_ALLOW_WRITES=1", "FAKE_COMMIT=" + commit, "FAKE_PR_CREATE_FAIL=1"}, wantErr: true,
-			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-42"}},
+			want: []string{"api -X DELETE repos/o/r/git/refs/heads/codex/upstream-refresh-provider-42"}},
 	}
 	for _, tc := range disposition {
 		t.Run(tc.name, func(t *testing.T) {

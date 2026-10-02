@@ -197,27 +197,56 @@ It checks these pin groups:
 - Go, Rust, Hadolint, and release tools
 
 A Codex change also checks the classified command inventory.
-The workflow stops if the command set changes.
+If the command set changes, the updater holds that Codex release.
+
+The workflow makes two candidates. Each candidate starts from the same `main` commit, and each one applies to `main` alone:
+
+| Candidate | Updater | Contents | Result |
+| --- | --- | --- | --- |
+| `provider` | `update-provider-pins.sh --apply` | Provider pins only | Scope guard, then auto-merge |
+| `toolchain` | `update-upstream-pins.sh --apply --toolchain-only` | All other pins | PR for human review |
+
+The `provider` candidate contains only these changes:
+
+- Provider `ARG` lines and SHA-256 assignments in `runtime/container/Dockerfile`
+- The Gemini CLI pin in `runtime/container/providers/package.json` and `package-lock.json`
+- The Codex command inventory in `tests/fixtures/codex-subcommands.txt`
+
+The `toolchain` candidate contains the base images, the Debian snapshot, the Go and Rust toolchains, and the CI and release tools.
+Both candidates can change `runtime/container/Dockerfile`, but they do not change the same lines.
 
 | Job | Environment | Token | Purpose |
 | --- | --- | --- | --- |
-| `refresh` | none | `contents: read`, `issues: write`, `pull-requests: read` | Builds the candidate bundle and updates the tracking issue. |
-| `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the candidate patch. |
-| `publish` | `upstream-refresh` | GitHub App token | Opens the PR with `scripts/ci/upstream-refresh-publish.sh`. |
+| `refresh` | none | `contents: read`, `issues: write`, `pull-requests: read` | Builds the candidates and updates the tracking issue. |
+| `scope-guard` | none | `contents: read` | Runs `scripts/ci/upstream-refresh-scope-guard.sh` on the `provider` patch. |
+| `publish` | `upstream-refresh` | GitHub App token | Opens the PRs with `scripts/ci/upstream-refresh-publish.sh`. |
 
-The `refresh` job uploads a candidate bundle.
-That bundle contains `patch`, `diffstat`, `metadata.json`, and `provider-summary`, the provider bump plan.
+`scripts/ci/upstream-refresh-candidate.sh` writes each candidate and then resets the tree to `HEAD`.
+An open refresh PR of one kind stops a new candidate of that kind only.
 
-The `publish` job applies the patch to `base_sha`. It stops if the tree differs from `tree_oid`. It stops on a symlink, a submodule, a mode change, or a new executable file.
+The `refresh` job uploads one artifact, `upstream-refresh-candidate`.
+It contains a `provider` directory and a `toolchain` directory. Each directory contains `patch`, `diffstat`, and `metadata.json`. The `candidate` field in `metadata.json` names the kind.
+The artifact also contains `provider-summary`, the provider bump plan.
+
+The `publish` job publishes each candidate alone.
+It applies the patch to `base_sha`. It stops if the tree differs from `tree_oid`. It stops on a symlink, a submodule, a mode change, or a new executable file.
 It commits with the GraphQL `createCommitOnBranch` mutation, so GitHub signs the commit.
-It checks the commit tree and the signature, and then opens the PR.
+It checks the commit tree and the signature, and then opens the PR on branch `codex/upstream-refresh-<kind>-<run id>`.
 
-It skips a candidate that is stale against `main`. It skips when a refresh PR from another run is open.
+It skips a candidate that is stale against `main`. It skips a candidate when a refresh PR of the same kind from another run is open.
 If an earlier attempt of the same run opened the PR, `publish` resumes that PR. It checks the PR head commit and then applies the merge or label step.
 If a run stops after it opens the PR, rerun that run or close the PR.
 The job output `result` is `passed` only when the guard step exits 0.
 
-`publish` fails closed on a candidate that changes `.github/workflows/`, because the App has no Workflows permission. It also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails. Publish such a candidate on the host.
+The App has no Workflows permission, and it must not get one.
+`publish` does not publish a candidate that changes `.github/workflows/`.
+The tracking issue and the audit comment then show the host command for that candidate:
+
+```bash
+./scripts/publish-upstream-refresh-pr.sh --run-id <run id> --candidate toolchain
+```
+
+`publish` also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails. Publish such a candidate on the host.
 
 The scope guard allows only these changes:
 
@@ -227,14 +256,18 @@ The scope guard allows only these changes:
 - The version stamp and source tag in the header of `tests/fixtures/codex-subcommands.txt`
 - `runtime/container/control-plane-manifest.json`
 
-If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` with the signed commit.
+A lockfile change to any other package, for example a new transitive dependency, fails the guard.
+
+If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` on the signed `provider` commit.
 Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible. The required checks still gate the merge.
+
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.
+The `toolchain` PR always gets the `needs-human-review` label.
 Codex review of a bump PR is advisory.
 
 `publish` posts an audit comment on the tracking issue.
-The comment lists the PR, the commit, the merge decision, the cool-off policy, and the bumped versions.
+The comment lists each PR, its commit, the merge decision, the cool-off policy, and the bumped versions.
 
 ### Upstream refresh administrator steps
 
@@ -251,7 +284,8 @@ Without the bypass, auto-merge waits for a human review.
 The hosted-controls audit permits these two secrets and no others in this environment.
 It accepts the App as a bypass actor on the review ruleset only.
 
-An operator can still use `./scripts/publish-upstream-refresh-pr.sh` for host publication.
+An operator can still use `./scripts/publish-upstream-refresh-pr.sh --candidate <kind>` for host publication.
+The default kind is `toolchain`.
 
 The candidate artifact and issue are operator signals.
 They are not integrity evidence.

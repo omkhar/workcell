@@ -1296,7 +1296,10 @@ jobs:
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
           trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh --apply | tee provider.log
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+          ./scripts/ci/upstream-refresh-candidate.sh provider "${RUNNER_TEMP}/upstream-refresh-candidate"
       - env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -1304,8 +1307,10 @@ jobs:
           (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
           unset GITHUB_TOKEN GH_TOKEN
           trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check --toolchain-only
           ./scripts/check-pinned-inputs.sh
+          ./scripts/ci/upstream-refresh-candidate.sh toolchain "${RUNNER_TEMP}/upstream-refresh-candidate"
       - run: |
           jq -n '{version:1}' > metadata.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1335,7 +1340,7 @@ jobs:
         shell: bash --noprofile --norc -euo pipefail {0}
         continue-on-error: true
         run: |
-          ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
+          ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/provider/patch"
   publish:
     runs-on: ubuntu-latest
     needs: [refresh, scope-guard]
@@ -1381,7 +1386,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"refresh job mints App token", "      - run: |\n          jq -n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - run: |\n          jq -n", "must not mint the GitHub App token"},
 		{"scope-guard extra permission", "      contents: read\n    steps:\n      - uses: actions/checkout", "      contents: read\n      issues: write\n    steps:\n      - uses: actions/checkout", "scope-guard job must run the scope guard"},
 		{"scope-guard result forged", "result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}", "result: passed", "must export result from the guard step outcome"},
-		{"scope-guard failure masked", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\"", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/patch\" || true\n          echo result=passed >> \"${GITHUB_OUTPUT}\"", "scope-guard job must run the scope guard as its only run step"},
+		{"scope-guard failure masked", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/provider/patch\"", "          ./scripts/ci/upstream-refresh-scope-guard.sh \"${RUNNER_TEMP}/candidate/provider/patch\" || true\n          echo result=passed >> \"${GITHUB_OUTPUT}\"", "scope-guard job must run the scope guard as its only run step"},
 		{"scope-guard shell override", "        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error", "        shell: sh -c 'exit 0' {0}\n        continue-on-error", "scope-guard job must run the scope guard as its only run step"},
 		{"scope-guard second run step", "      - id: guard\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-scope-guard.sh\n      - id: guard\n", "reviewed checkout, candidate download"},
 		{"scope-guard renamed step", "      - id: guard\n", "      - id: check\n", "scope-guard job must run the scope guard as its only run step"},
@@ -1417,6 +1422,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"publish App token extra permission", "          permission-pull-requests: write\n", "          permission-pull-requests: write\n          permission-workflows: write\n", "only contents and pull-requests write"},
 		{"publish App token renamed step", "      - id: app-token\n", "      - id: token\n", "as step app-token"},
 		{"publish with a PAT", "GH_TOKEN: ${{ steps.app-token.outputs.token }}", "GH_TOKEN: ${{ secrets.OTHER_PAT }}", "must pass the App token as GH_TOKEN"},
+		{"toolchain refresh drops --toolchain-only", "./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log", "./scripts/update-upstream-pins.sh --apply | tee apply.log", "only with --toolchain-only"},
+		{"second full refresh in the provider step", "          ./scripts/ci/upstream-refresh-candidate.sh provider", "          ./scripts/update-upstream-pins.sh --apply\n          ./scripts/ci/upstream-refresh-candidate.sh provider", "only with --toolchain-only"},
+		{"toolchain refresh runs twice", "          ./scripts/ci/upstream-refresh-candidate.sh toolchain", "          ./scripts/update-upstream-pins.sh --apply --toolchain-only\n          ./scripts/ci/upstream-refresh-candidate.sh toolchain", "--apply --toolchain-only once"},
 		{"hosted signing input", "      - env:\n          GH_TOKEN: ${{ github.token }}\n        run: |\n          gh issue create", "      - env:\n          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}\n        run: |\n          gh issue create", "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
 	}
 	for _, mutation := range mutations {
@@ -1443,6 +1451,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsEvasions(t *testing.T) {
 	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
 		"          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md",
 		"run the publish script once", metadatautil.ValidateUpstreamRefreshWorkflow)
+	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
+		"          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" ./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log",
+		"--apply --toolchain-only once", metadatautil.ValidateUpstreamRefreshWorkflow)
 }
 
 func TestValidateHostedControlsWorkflowRequiresMainRef(t *testing.T) {

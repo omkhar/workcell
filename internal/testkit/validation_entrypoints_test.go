@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1566,6 +1567,19 @@ func TestSafePathDocDocumentsRepoPublishWrapperBeforeLowerLevelHelper(t *testing
 	}
 }
 
+func TestPublishUpstreamRefreshPRRejectsUnknownCandidate(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"bogus", ""} {
+		cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "publish-upstream-refresh-pr.sh"), "--run-id", "1", "--candidate", kind)
+		out, err := cmd.CombinedOutput()
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 || !strings.Contains(string(out), "--candidate requires provider or toolchain") {
+			t.Fatalf("--candidate %q: err = %v, output = %q, want exit 2 and a usage error", kind, err, out)
+		}
+	}
+}
+
 func TestPublishUpstreamRefreshPRRequiresCleanWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -1613,7 +1627,7 @@ func TestPublishUpstreamRefreshPRMetadataSupportsTimestampOnlyCandidate(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadataStart := strings.Index(string(content), `title="Refresh pinned upstreams"`)
+	metadataStart := strings.Index(string(content), `title="Refresh pinned upstreams (${CANDIDATE_KIND})"`)
 	if metadataStart < 0 {
 		t.Fatalf("%s does not contain refresh metadata", scriptPath)
 	}

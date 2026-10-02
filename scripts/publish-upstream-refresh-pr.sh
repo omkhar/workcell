@@ -12,15 +12,18 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_BRANCH="main"
 RUN_ID=""
 ISSUE_NUMBER=""
+CANDIDATE_KIND="toolchain"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/publish-upstream-refresh-pr.sh --run-id RUN_ID [--issue-number NUMBER] [--base main]
+Usage: scripts/publish-upstream-refresh-pr.sh --run-id RUN_ID [--candidate toolchain|provider] [--issue-number NUMBER] [--base main]
 
 Downloads an upstream-refresh candidate artifact from GitHub Actions, recreates
 the refresh locally from the latest selected base branch, verifies the
 candidate identity exactly, runs local PR-parity validation, and publishes a
 signed draft PR through the repo-local parity-enforcing publication wrapper.
+
+--candidate selects the toolchain candidate (default) or the provider candidate.
 
 Run this from a clean worktree. The disposable publication workspace is created
 from the latest available tip of the selected base branch, not the caller's
@@ -93,6 +96,17 @@ while [[ $# -gt 0 ]]; do
         echo "--run-id requires a value." >&2
         exit 2
       }
+      shift 2
+      ;;
+    --candidate)
+      CANDIDATE_KIND="${2:-}"
+      case "${CANDIDATE_KIND}" in
+        provider | toolchain) ;;
+        *)
+          echo "--candidate requires provider or toolchain." >&2
+          exit 2
+          ;;
+      esac
       shift 2
       ;;
     --issue-number)
@@ -187,23 +201,24 @@ trap cleanup EXIT
 
 gh run download "${RUN_ID}" --repo "${REPO}" --name upstream-refresh-candidate --dir "${artifact_root}" >/dev/null
 
-metadata_path="$(find "${artifact_root}" -type f -name metadata.json -print | head -n 1)"
-patch_path="$(find "${artifact_root}" -type f -name patch -print | head -n 1)"
-diffstat_path="$(find "${artifact_root}" -type f -name diffstat -print | head -n 1)"
-if [[ -z "${metadata_path}" || -z "${patch_path}" || -z "${diffstat_path}" ]]; then
-  echo "Run ${RUN_ID} does not contain a complete upstream-refresh candidate artifact." >&2
+metadata_path="${artifact_root}/${CANDIDATE_KIND}/metadata.json"
+patch_path="${artifact_root}/${CANDIDATE_KIND}/patch"
+diffstat_path="${artifact_root}/${CANDIDATE_KIND}/diffstat"
+if [[ ! -f "${metadata_path}" || ! -f "${patch_path}" || ! -f "${diffstat_path}" ]]; then
+  echo "Run ${RUN_ID} does not contain a complete upstream-refresh ${CANDIDATE_KIND} candidate." >&2
   exit 2
 fi
 
 candidate_repository="$(jq -r '.repository // ""' "${metadata_path}")"
 candidate_workflow="$(jq -r '.workflow // ""' "${metadata_path}")"
+candidate_kind="$(jq -r '.candidate // ""' "${metadata_path}")"
 candidate_run_id="$(jq -r '.run_id // ""' "${metadata_path}")"
 candidate_base_ref="$(jq -r '.base_ref // ""' "${metadata_path}")"
 candidate_base_sha="$(jq -r '.base_sha // ""' "${metadata_path}")"
 candidate_patch_sha256="$(jq -r '.patch_sha256 // ""' "${metadata_path}")"
 candidate_tree_oid="$(jq -r '.tree_oid // ""' "${metadata_path}")"
 candidate_changed_files="$(jq -c '.changed_files // []' "${metadata_path}")"
-if [[ "${candidate_repository}" != "${REPO}" || "${candidate_workflow}" != "upstream-refresh" || "${candidate_run_id}" != "${RUN_ID}" ]]; then
+if [[ "${candidate_repository}" != "${REPO}" || "${candidate_workflow}" != "upstream-refresh" || "${candidate_run_id}" != "${RUN_ID}" || "${candidate_kind}" != "${CANDIDATE_KIND}" ]]; then
   echo "Run ${RUN_ID} candidate metadata does not match the requested repository or workflow." >&2
   exit 2
 fi
@@ -250,10 +265,10 @@ existing_pr_url="$(
     --state open \
     --base "${BASE_BRANCH}" \
     --json title,url,headRefName \
-    --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0].url // ""'
+    --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | test("^codex/upstream-refresh-([0-9]+$|'"${CANDIDATE_KIND}"'-)")))) | .[0].url // ""'
 )"
 if [[ -n "${existing_pr_url}" ]]; then
-  echo "Refusing to publish while an upstream refresh PR is already open: ${existing_pr_url}" >&2
+  echo "Refusing to publish while an upstream ${CANDIDATE_KIND} refresh PR is already open: ${existing_pr_url}" >&2
   exit 2
 fi
 
@@ -262,12 +277,18 @@ git -C "${worktree_root}" remote set-url origin "${origin_url}"
 git -C "${worktree_root}" fetch --no-tags origin "${BASE_BRANCH}" >/dev/null
 git -C "${worktree_root}" checkout --detach "${base_sha}" >/dev/null
 
-"${worktree_root}/scripts/update-upstream-pins.sh" --apply
+# Recreate the candidate with the updater that owns its pins.
+if [[ "${CANDIDATE_KIND}" == provider ]]; then
+  refresh_command=("${worktree_root}/scripts/update-provider-pins.sh")
+else
+  refresh_command=("${worktree_root}/scripts/update-upstream-pins.sh" --toolchain-only)
+fi
+"${refresh_command[@]}" --apply
 if git -C "${worktree_root}" diff --quiet --exit-code; then
   echo "Local upstream refresh produced no changes; candidate ${RUN_ID} is stale or mismatched." >&2
   exit 2
 fi
-"${worktree_root}/scripts/update-upstream-pins.sh" --check
+"${refresh_command[@]}" --check
 "${worktree_root}/scripts/check-pinned-inputs.sh"
 
 local_patch_path="$(mktemp "${TMPDIR:-/tmp}/workcell-upstream-refresh-patch.XXXXXX")"
@@ -290,8 +311,8 @@ fi
 
 "${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty
 
-title="Refresh pinned upstreams"
-branch_name="codex/upstream-refresh-${RUN_ID}"
+title="Refresh pinned upstreams (${CANDIDATE_KIND})"
+branch_name="codex/upstream-refresh-${CANDIDATE_KIND}-${RUN_ID}"
 
 printf '%s\n' "${title}" >"${title_file}"
 cat >"${body_file}" <<EOF
@@ -310,7 +331,7 @@ cat >"${body_file}" <<EOF
 
 ## Validation
 
-- \`./scripts/update-upstream-pins.sh --check\`
+- \`./${refresh_command[*]#"${worktree_root}/"} --check\`
 - \`./scripts/check-pinned-inputs.sh\`
 - \`./scripts/pre-merge.sh --profile pr-parity --allow-dirty\`
 
