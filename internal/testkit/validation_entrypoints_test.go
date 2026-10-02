@@ -1421,6 +1421,45 @@ echo setup-refused`, "_", root)
 	}
 }
 
+// TestTrustedDockerSandboxFailsClosedWhenRenameFails runs setup inside an if
+// condition, where bash suppresses errexit, with a failing mv. The owner marker
+// must also be owner-only.
+func TestTrustedDockerSandboxFailsClosedWhenRenameFails(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	tempRoot := t.TempDir()
+	shimDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shimDir, "mv"), []byte("#!/bin/bash\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", `set -uo pipefail
+source "$1/scripts/lib/trusted-docker-client.sh"
+umask 022
+if setup_workcell_trusted_docker_client; then echo setup-accepted; exit 0; fi
+echo setup-refused`, "_", root)
+	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "PATH=" + shimDir + ":" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "setup-refused") {
+		t.Fatalf("setup continued after a failed rename: %v\n%s", err, out)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(tempRoot, "workcell-docker*")); len(entries) != 0 {
+		t.Fatalf("sandbox or staging directory leaked: %v", entries)
+	}
+
+	// Marker mode: let mv succeed and inspect owner.pid under umask 022.
+	cmd = exec.Command("bash", "-c", `set -euo pipefail
+source "$1/scripts/lib/trusted-docker-client.sh"
+umask 022
+setup_workcell_trusted_docker_client
+stat -f %Lp "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid" 2>/dev/null || stat -c %a "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"`, "_", root)
+	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "PATH=" + os.Getenv("PATH")}
+	out, err = cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "600" {
+		t.Fatalf("owner marker mode is not 0600: %v\n%s", err, out)
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 

@@ -204,9 +204,13 @@ setup_workcell_trusted_docker_client() {
   # marker, then rename into the cleanup namespace, so uninstall never sees a
   # sandbox without its marker.
   staging="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker-stage.XXXXXX")"
-  printf '%s\n' "$$" >"${staging}/owner.pid"
+  (umask 077 && printf '%s\n' "$$" >"${staging}/owner.pid")
   WORKCELL_DOCKER_SANDBOX_ROOT="${staging%/*}/workcell-docker.${staging##*.}"
-  mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"
+  if ! mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"; then
+    rm -rf "${staging:?}"
+    unset WORKCELL_DOCKER_SANDBOX_ROOT
+    return 1
+  fi
   # mv nests the staged directory when the destination already exists. Fail
   # closed instead of trusting a destination another process created.
   nested="${WORKCELL_DOCKER_SANDBOX_ROOT}/${staging##*/}"
