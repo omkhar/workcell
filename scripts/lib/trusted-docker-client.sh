@@ -208,7 +208,13 @@ setup_workcell_trusted_docker_client() {
     rm -rf "${staging:?}"
     return 1
   fi
-  WORKCELL_DOCKER_SANDBOX_ROOT="${staging%/*}/workcell-docker.${staging##*.}"
+  # Pick the destination name with its own random suffix. A name derived from
+  # the staging directory would let another process pre-create the destination.
+  if ! WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -u "${TMPDIR:-/tmp}/workcell-docker.XXXXXXXXXX")"; then
+    rm -rf "${staging:?}"
+    unset WORKCELL_DOCKER_SANDBOX_ROOT
+    return 1
+  fi
   if ! mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"; then
     rm -rf "${staging:?}"
     unset WORKCELL_DOCKER_SANDBOX_ROOT

@@ -1366,6 +1366,7 @@ for entry in "$TEMP_ROOT"/workcell-docker.*; do
   [[ -e "${entry}" ]] && { echo "exposed:${entry}" >>"$RECORD"; exit 1; }
 done
 [[ -s "$1/owner.pid" ]] || { echo "no-marker:$1" >>"$RECORD"; exit 1; }
+[[ "${1##*.}" != "${2##*.}" ]] || { echo "derived-name:$2" >>"$RECORD"; exit 1; }
 echo staged-ok >>"$RECORD"
 exec "$REAL_MV" "$@"
 `
