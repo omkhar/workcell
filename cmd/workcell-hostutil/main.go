@@ -28,6 +28,7 @@ import (
 	"github.com/omkhar/workcell/internal/injection"
 	"github.com/omkhar/workcell/internal/ocsf"
 	"github.com/omkhar/workcell/internal/publishpr"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/sessionctl"
 	"github.com/omkhar/workcell/internal/supportbundle"
 	"github.com/omkhar/workcell/internal/transcript"
@@ -133,7 +134,12 @@ func runAdapters(args []string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(args[3], content, 0o644)
+	parent, output, err := rootio.OpenParentDirectoryNoFollow(args[3])
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(output), content, 0o644, ".adapters-gen-")
 }
 
 func cmdHelperSupportBundleCli(args []string) error {

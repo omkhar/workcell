@@ -99,11 +99,12 @@ For a new provider:
 
 1. Define the identifier in `internal/providerid`. A planned identifier can stay
    outside `AllProviders` and fail closed during implementation.
-2. Add the identifier to `CredentialMetadataProviders` when the adapter registry
-   supplies its credential metadata. A planned provider can stay outside
+2. Add `adapters/<provider>/adapter.toml` with credential keys, paths, and
+   reserved targets. Set `tier = "planned"` to keep the provider outside
    `AllProviders` during this step.
-3. Add the adapter registry row with credential keys, paths, and reserved
-   targets.
+3. Run `scripts/generate-adapters-data.sh` and
+   `scripts/generate-adapters-providerid.sh`. Do not edit
+   `CredentialMetadataProviders`, `AllProviders`, or the registry rows by hand.
 4. Add launcher validation and help output.
 5. Add runtime entry-point and wrapper dispatch.
 6. Add the provider binary to each applicable exec-guard and protected-runtime
@@ -111,7 +112,8 @@ For a new provider:
 7. Add the provider binary and wrapper links to the runtime image.
 8. Add the provider allowlist, credential setup, and probe cases to
    `scripts/provider-e2e.sh`.
-9. Add the identifier to `AllProviders` so that validation can select it.
+9. Change the manifest tier from `planned` and run both generators again so
+   that `AllProviders` includes the identifier and validation can select it.
 10. Run the deterministic tests for the final supported-provider set.
 11. Complete live provider certification before you sign the support-claim
    commit.

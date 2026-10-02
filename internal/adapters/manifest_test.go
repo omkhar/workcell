@@ -89,8 +89,9 @@ func TestManifestsMatchProviderRegistry(t *testing.T) {
 			id:                       m.ID,
 			sharedCredentialsEnabled: m.SharedCredentials,
 			tables: providerTables{
+				credentialKeys:           []string{},
 				credentialContainerPaths: map[string]string{},
-				reservedTargets:          m.ReservedTargets,
+				reservedTargets:          append([]string{}, m.ReservedTargets...),
 			},
 		}
 		for _, c := range m.Credentials {
