@@ -281,9 +281,12 @@ func splitCommandWords(anchor string) string {
 	continues := false
 	for index, line := range lines {
 		name, rest, found := strings.Cut(strings.TrimLeft(line, " \t"), " ")
-		if !continues && found && len(name) > 1 {
+		if !continues && len(name) > 1 {
+			if found {
+				rest = " " + rest
+			}
 			lines[index] = indentOf(line) + "'" + name[:1] + "\\\n" +
-				indentOf(anchor) + name[1:] + "' " + rest
+				indentOf(anchor) + name[1:] + "'" + rest
 		}
 		continues = strings.HasSuffix(strings.TrimSpace(line), "\\")
 	}

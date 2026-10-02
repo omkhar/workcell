@@ -4518,7 +4518,14 @@ if "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to launched sessions.' /tmp/workcell-nonlaunch-debug-log.out
 
-if ! "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
+# The live lane runs in parallel and writes the shared Go cache under REAL_HOME.
+# --gc cannot use another home: Workcell reads the home from the account
+# identity before it reads HOME. A threshold of 3000000 minutes (5.7 years)
+# stays below the age of the 2020 fixtures, so they stay stale. It stays above
+# the age of any cache root that a tool first released in 2026 can own, so --gc
+# does not remove the cache root while the live lane writes it.
+GC_FIXTURE_STALE_MINUTES=3000000
+if ! WORKCELL_GC_STALE_MINUTES="${GC_FIXTURE_STALE_MINUTES}" "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
   echo "Expected --gc to succeed" >&2
   exit 1
 fi
@@ -4526,7 +4533,7 @@ grep -q 'Cleaned stale Workcell injection, session-audit, broken latest-log poin
 test ! -f "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
 test ! -e "${GC_TEMP_FIXTURE}"
 test ! -e "${GC_TEMP_TREE_FIXTURE}"
-if ! "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
+if ! WORKCELL_GC_STALE_MINUTES="${GC_FIXTURE_STALE_MINUTES}" "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
   echo "Expected gc subcommand alias to succeed" >&2
   exit 1
 fi
