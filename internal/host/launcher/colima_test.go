@@ -91,6 +91,15 @@ func TestValidateColimaStatusOutputMatchesSelectedVMType(t *testing.T) {
 	if err := ValidateColimaStatusOutput(strings.Replace(logfmt, "virtiofs\"", "virtiofs-bogus\"", 1), "wcl", "vz", "virtiofs"); err == nil {
 		t.Fatal("logfmt status with a mount type extension: err = nil, want rejection")
 	}
+	for name, bad := range map[string]string{
+		"split record":   strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "\nlevel=info msg=\"runtime: docker\"", 1),
+		"truncated msg":  strings.Replace(logfmt, "msg=\"mountType: virtiofs\"", "msg=\"mountType: virtiofs", 1),
+		"multiline time": strings.Replace(logfmt, "time=\"2026-10-02T16:29:51-04:00\" level=info msg=\"runtime: docker\"", "time=\"x\nlevel=info msg=\"runtime: docker\"", 1),
+	} {
+		if err := ValidateColimaStatusOutput(bad, "wcl", "vz", "virtiofs"); err == nil {
+			t.Fatalf("malformed logfmt status (%s): err = nil, want rejection", name)
+		}
+	}
 	for _, tc := range []struct{ status, vmType, mountType, want string }{
 		{vz, "qemu", "9p", "QEMU"},
 		{qemu, "vz", "virtiofs", "Virtualization.Framework"},

@@ -1482,6 +1482,34 @@ echo setup-refused`, "_", root)
 	}
 }
 
+// TestUninstallKeepsSandboxWithUnreadableOwnerMarker: when ownership cannot be
+// read, uninstall keeps the sandbox.
+func TestUninstallKeepsSandboxWithUnreadableOwnerMarker(t *testing.T) {
+	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("root reads mode 0 files")
+	}
+	home := t.TempDir()
+	tempRoot := t.TempDir()
+	sandbox := filepath.Join(tempRoot, "workcell-docker.unreadable")
+	if err := os.MkdirAll(sandbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sandbox, "owner.pid"), []byte("1\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", filepath.Join(repoRoot(t), "scripts", "uninstall.sh"))
+	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "WORKCELL_UNINSTALL_TEMP_ROOT=" + tempRoot}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("uninstall.sh failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(sandbox); err != nil {
+		t.Fatalf("uninstall removed a sandbox with an unreadable marker: %v\n%s", err, out)
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 

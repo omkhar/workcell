@@ -391,7 +391,8 @@ temp_entry_owner_is_alive() {
   local owner_pid=""
 
   [[ -f "$1/owner.pid" ]] || return 1
-  read -r owner_pid <"$1/owner.pid" 2>/dev/null || true
+  # An unreadable marker leaves ownership unknown, so keep the sandbox.
+  owner_pid="$(head -n 1 "$1/owner.pid" 2>/dev/null)" || return 0
   [[ "${owner_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
   kill -0 "${owner_pid}" 2>/dev/null
 }
