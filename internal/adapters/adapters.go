@@ -3,7 +3,8 @@
 
 // Package adapters aggregates per-provider table data so the injection,
 // policy, and runtime paths can iterate over them without hard-coding
-// provider names.  New adapters add a row to providers in data.go.
+// provider names.  New adapters add adapters/<id>/adapter.toml and regenerate
+// data_gen.go.
 package adapters
 
 // AgentScopedCredentialKeys maps each providerid to the set of credential

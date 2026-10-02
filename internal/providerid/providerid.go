@@ -22,15 +22,9 @@ const (
 	CommonDocument = "common"
 )
 
-// AllProviders is the canonical iteration order for Workcell adapters.
-// Many call sites (validators, manifests, sort orders) depend on a stable
-// order; use this slice instead of declaring a local one.
-var AllProviders = []string{Claude, Codex, Copilot, Gemini}
-
-// CredentialMetadataProviders is the canonical order for provider credential
-// metadata tables. Membership here is not a support-tier claim; planned
-// providers can appear here before they enter AllProviders.
-var CredentialMetadataProviders = []string{Claude, Codex, Copilot, Gemini}
+// AllProviders and CredentialMetadataProviders are generated into
+// providerid_gen.go from adapters/<id>/adapter.toml by
+// scripts/generate-adapters-providerid.sh.
 
 // DocumentKeys is the canonical rendering/validation order for managed
 // document injection. Copilot is deliberately absent because managed Copilot
