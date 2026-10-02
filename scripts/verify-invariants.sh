@@ -245,6 +245,14 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 )
 REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit"
+# --live-lane-only runs only the Darwin live-Colima lane, with its own fixtures.
+# --skip-live-lane runs every other check. scripts/pre-merge.sh runs the two in
+# parallel. A run without these options runs both, in order.
+VERIFY_INVARIANTS_LANES="all"
+case "${1:-}" in
+  --live-lane-only) VERIFY_INVARIANTS_LANES="live" ;;
+  --skip-live-lane) VERIFY_INVARIANTS_LANES="static" ;;
+esac
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "verify-invariants-entrypoint-ok"
@@ -507,6 +515,87 @@ verify_profile_target_state_dir() {
   printf '%s/.local/state/workcell/targets/local_vm/colima/%s\n' "${REAL_HOME}" "${profile_name}"
 }
 
+# Writes the reviewed auth-status credential fixture and its policy.toml into
+# the given directory. The static lane and the live lane each write their own.
+write_auth_status_fixture() {
+  local fixture_root="$1"
+
+  mkdir -p "${fixture_root}"
+  printf '{}\n' >"${fixture_root}/auth.json"
+  chmod 0600 "${fixture_root}/auth.json"
+  printf '{"token":"claude-auth"}\n' >"${fixture_root}/claude-auth.json"
+  chmod 0600 "${fixture_root}/claude-auth.json"
+  printf 'claude-key\n' >"${fixture_root}/claude-api-key.txt"
+  chmod 0600 "${fixture_root}/claude-api-key.txt"
+  printf 'copilot-token\n' >"${fixture_root}/copilot-github-token.txt"
+  chmod 0600 "${fixture_root}/copilot-github-token.txt"
+  printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${fixture_root}/gemini.env"
+  chmod 0600 "${fixture_root}/gemini.env"
+  printf '{"type":"authorized_user"}\n' >"${fixture_root}/gcloud-adc.json"
+  chmod 0600 "${fixture_root}/gcloud-adc.json"
+  printf '{"projects":{"verify":{"path":"/workspace"}}}\n' >"${fixture_root}/gemini-projects.json"
+  chmod 0600 "${fixture_root}/gemini-projects.json"
+  printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${fixture_root}/gemini-invalid.env"
+  chmod 0600 "${fixture_root}/gemini-invalid.env"
+  printf '[]\n' >"${fixture_root}/gemini-invalid-oauth.json"
+  chmod 0600 "${fixture_root}/gemini-invalid-oauth.json"
+  printf '{}\n' >"${fixture_root}/gcloud-adc-invalid.json"
+  chmod 0600 "${fixture_root}/gcloud-adc-invalid.json"
+  printf '{"projects":[]}\n' >"${fixture_root}/gemini-projects-invalid.json"
+  chmod 0600 "${fixture_root}/gemini-projects-invalid.json"
+  printf 'GOOGLE_GENAI_USE_GCA=true\n' >"${fixture_root}/gemini-gca.env"
+  chmod 0600 "${fixture_root}/gemini-gca.env"
+  cat >"${fixture_root}/gemini-vertex-comment.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=verify-project
+GOOGLE_CLOUD_LOCATION="us-central1" # comment
+EOF
+  chmod 0600 "${fixture_root}/gemini-vertex-comment.env"
+  cat >"${fixture_root}/hosts.yml" <<'EOF'
+github.com:
+  oauth_token: test-token
+EOF
+  chmod 0600 "${fixture_root}/hosts.yml"
+  cat >"${fixture_root}/ssh-config" <<'EOF'
+ProxyCommand nc %h %p
+EOF
+  chmod 0600 "${fixture_root}/ssh-config"
+  cat >"${fixture_root}/policy.toml" <<'EOF'
+version = 1
+[credentials]
+codex_auth = "auth.json"
+claude_auth = "claude-auth.json"
+claude_api_key = "claude-api-key.txt"
+gemini_env = "gemini.env"
+gemini_projects = "gemini-projects.json"
+gcloud_adc = "gcloud-adc.json"
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
+[credentials.github_hosts]
+source = "hosts.yml"
+providers = ["codex", "claude", "gemini"]
+[ssh]
+enabled = true
+config = "ssh-config"
+allow_unsafe_config = true
+EOF
+  cat >"${fixture_root}/gemini.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_API_KEY=verify-google-key
+EOF
+  chmod 0600 "${fixture_root}/gemini.env"
+}
+
+host_tool_exists() {
+  local candidate
+  for candidate in "$@"; do
+    if [[ -x "${candidate}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 terminate_verify_process_tree_by_pid() {
   local target_pid="$1"
   local child_pid=""
@@ -668,6 +757,11 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+if [[ "${VERIFY_INVARIANTS_LANES}" == "live" ]]; then
+  source "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+  exit 0
+fi
 
 if [[ -d "${ROOT_DRY_RUN_PROFILE_DIR}" ]] && [[ ! -f "${ROOT_DRY_RUN_PROFILE_DIR}/workcell.managed" ]]; then
   rm -rf "${ROOT_DRY_RUN_PROFILE_DIR}" "${ROOT_DRY_RUN_LIMA_DIR}"
@@ -3788,70 +3882,7 @@ grep -q 'sample transcript line' /tmp/workcell-logs-transcript-missing-workspace
 rm -rf "${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}" "${REAL_HOME}/.colima/${TRANSCRIPT_LOG_PROFILE}"
 
 AUTH_STATUS_ROOT="${BARRIER_VERIFY_ROOT}/auth-status"
-mkdir -p "${AUTH_STATUS_ROOT}"
-printf '{}\n' >"${AUTH_STATUS_ROOT}/auth.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/auth.json"
-printf '{"token":"claude-auth"}\n' >"${AUTH_STATUS_ROOT}/claude-auth.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/claude-auth.json"
-printf 'claude-key\n' >"${AUTH_STATUS_ROOT}/claude-api-key.txt"
-chmod 0600 "${AUTH_STATUS_ROOT}/claude-api-key.txt"
-printf 'copilot-token\n' >"${AUTH_STATUS_ROOT}/copilot-github-token.txt"
-chmod 0600 "${AUTH_STATUS_ROOT}/copilot-github-token.txt"
-printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${AUTH_STATUS_ROOT}/gemini.env"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
-printf '{"type":"authorized_user"}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc.json"
-printf '{"projects":{"verify":{"path":"/workspace"}}}\n' >"${AUTH_STATUS_ROOT}/gemini-projects.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-projects.json"
-printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${AUTH_STATUS_ROOT}/gemini-invalid.env"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-invalid.env"
-printf '[]\n' >"${AUTH_STATUS_ROOT}/gemini-invalid-oauth.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-invalid-oauth.json"
-printf '{}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc-invalid.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc-invalid.json"
-printf '{"projects":[]}\n' >"${AUTH_STATUS_ROOT}/gemini-projects-invalid.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-projects-invalid.json"
-printf 'GOOGLE_GENAI_USE_GCA=true\n' >"${AUTH_STATUS_ROOT}/gemini-gca.env"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-gca.env"
-cat >"${AUTH_STATUS_ROOT}/gemini-vertex-comment.env" <<'EOF'
-GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_CLOUD_PROJECT=verify-project
-GOOGLE_CLOUD_LOCATION="us-central1" # comment
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-vertex-comment.env"
-cat >"${AUTH_STATUS_ROOT}/hosts.yml" <<'EOF'
-github.com:
-  oauth_token: test-token
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/hosts.yml"
-cat >"${AUTH_STATUS_ROOT}/ssh-config" <<'EOF'
-ProxyCommand nc %h %p
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/ssh-config"
-cat >"${AUTH_STATUS_ROOT}/policy.toml" <<'EOF'
-version = 1
-[credentials]
-codex_auth = "auth.json"
-claude_auth = "claude-auth.json"
-claude_api_key = "claude-api-key.txt"
-gemini_env = "gemini.env"
-gemini_projects = "gemini-projects.json"
-gcloud_adc = "gcloud-adc.json"
-[credentials.copilot_github_token]
-source = "copilot-github-token.txt"
-[credentials.github_hosts]
-source = "hosts.yml"
-providers = ["codex", "claude", "gemini"]
-[ssh]
-enabled = true
-config = "ssh-config"
-allow_unsafe_config = true
-EOF
-cat >"${AUTH_STATUS_ROOT}/gemini.env" <<'EOF'
-GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_API_KEY=verify-google-key
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
+write_auth_status_fixture "${AUTH_STATUS_ROOT}"
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
@@ -6439,16 +6470,6 @@ if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
   fi
 fi
 
-host_tool_exists() {
-  local candidate
-  for candidate in "$@"; do
-    if [[ -x "${candidate}" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
   if run_workcell_verify \
     HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
@@ -6481,7 +6502,9 @@ for agent in claude gemini; do
   fi
 done
 
-source "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+if [[ "${VERIFY_INVARIANTS_LANES}" == "all" ]]; then
+  source "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
 mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"
