@@ -319,7 +319,7 @@ func TestWorkcellForwardsColimaStartTimeoutThroughDetachedSessionHandoff(t *test
 	for _, expected := range []string{
 		`WORKCELL_COLIMA_START_TIMEOUT_SECONDS`,
 		`monitor_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
-		`session_start_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
+		`SESSION_START_ENV+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")`,
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("%s must preserve detached-session Colima start timeout setting %q", scriptPath, expected)
