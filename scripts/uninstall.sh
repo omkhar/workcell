@@ -20,6 +20,7 @@ Remove Workcell-owned local install links and managed host state:
   - ~/Library/Caches/colima/workcell-shadow
   - ~/Library/Caches/colima/workcell-token-handoff
   - /tmp/workcell-docker.*, /tmp/workcell-provider-e2e.*, and /tmp/workcell-*.log/failed scratch
+    (a workcell-docker.* sandbox stays while the process that owns it runs)
 
 Preserved on purpose:
   - ~/.config/workcell/*
@@ -383,6 +384,18 @@ collect_profiles() {
   fi
 }
 
+# A trusted Docker client sandbox records its owner PID (see
+# scripts/lib/trusted-docker-client.sh). Never delete a sandbox that a running
+# process still uses.
+temp_entry_owner_is_alive() {
+  local owner_pid=""
+
+  [[ -f "$1/owner.pid" ]] || return 1
+  read -r owner_pid <"$1/owner.pid" 2>/dev/null || true
+  [[ "${owner_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+  kill -0 "${owner_pid}" 2>/dev/null
+}
+
 cleanup_temp_root() {
   local temp_root="$1"
   local candidate=""
@@ -412,6 +425,10 @@ cleanup_temp_root() {
   for pattern in "${patterns[@]}"; do
     for candidate in "${temp_root}"/${pattern}; do
       [[ -O "${candidate}" ]] || continue
+      if temp_entry_owner_is_alive "${candidate}"; then
+        log_action "Kept in-use" "${candidate}"
+        continue
+      fi
       remove_path_best_effort "${candidate}"
     done
   done
@@ -441,8 +458,14 @@ remove_path "${TOKEN_HANDOFF_ROOT}"
 remove_path "${MACOS_CACHE_ROOT}"
 remove_path "${XDG_WORKCELL_CACHE_ROOT}"
 
-append_unique_temp_root "/tmp"
-append_unique_temp_root "${TMPDIR:-}"
+# WORKCELL_UNINSTALL_TEMP_ROOT replaces /tmp and $TMPDIR with one root, so a
+# test can clean only the scratch it created.
+if [[ -n "${WORKCELL_UNINSTALL_TEMP_ROOT:-}" ]]; then
+  append_unique_temp_root "${WORKCELL_UNINSTALL_TEMP_ROOT}"
+else
+  append_unique_temp_root "/tmp"
+  append_unique_temp_root "${TMPDIR:-}"
+fi
 if [[ ${#TEMP_ROOTS[@]} -gt 0 ]]; then
   for temp_root in "${TEMP_ROOTS[@]}"; do
     cleanup_temp_root "${temp_root}"

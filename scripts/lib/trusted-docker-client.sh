@@ -204,6 +204,8 @@ setup_workcell_trusted_docker_client() {
   WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"
   WORKCELL_DOCKER_CONFIG="${WORKCELL_DOCKER_SANDBOX_ROOT}/config"
   mkdir -p "${WORKCELL_DOCKER_HOME}" "${WORKCELL_DOCKER_CONFIG}"
+  # scripts/uninstall.sh keeps a sandbox while this owner process is alive.
+  printf '%s\n' "$$" >"${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"
 
   copy_workcell_docker_state_tree "${real_home}/.docker/contexts" "${WORKCELL_DOCKER_CONFIG}/contexts"
   copy_workcell_docker_state_tree "${real_home}/.docker/buildx" "${WORKCELL_DOCKER_CONFIG}/buildx"

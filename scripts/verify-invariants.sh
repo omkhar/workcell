@@ -1270,10 +1270,18 @@ printf '%s\n' "${ROOT_DIR}" >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-pro
 printf 'image_tag=workcell:local\nimage_id=sha256:test\nsource_date_epoch=0\n' >"${INSTALL_VERIFY_HOME}/.colima/workcell-verify-profile/workcell.image-ready"
 printf '{}\n' >"${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-verify-profile.json"
 printf '{}\n' >"${INSTALL_VERIFY_HOME}/.colima/_store/colima-workcell-store-only-profile.json"
-printf 'tmp\n' >"/tmp/workcell-uninstall-verify.log.$$"
-mkdir -p "/tmp/workcell-docker.verify-uninstall.$$"
+# Uninstall runs against its own temp root, so it can only delete scratch that
+# this test created. Parallel lanes keep live Docker homes under /tmp.
+UNINSTALL_TEMP_ROOT="${INSTALL_VERIFY_HOME}/uninstall-tmp"
+UNINSTALL_TMP_SIBLING="/tmp/workcell-docker.verify-uninstall-sibling.$$"
+mkdir -p "${UNINSTALL_TEMP_ROOT}" "${UNINSTALL_TMP_SIBLING}"
+printf 'tmp\n' >"${UNINSTALL_TEMP_ROOT}/workcell-uninstall-verify.log.$$"
+mkdir -p "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall.$$"
+# A sandbox whose owner process is alive must survive uninstall.
+mkdir -p "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$"
+printf '%s\n' "$$" >"${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$/owner.pid"
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" --help >/tmp/workcell-uninstall-help.out 2>&1; then
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" WORKCELL_UNINSTALL_TEMP_ROOT="${UNINSTALL_TEMP_ROOT}" "${ROOT_DIR}/scripts/uninstall.sh" --help >/tmp/workcell-uninstall-help.out 2>&1; then
   echo "Expected scripts/uninstall.sh --help to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-uninstall-help.out >&2
   exit 1
@@ -1282,7 +1290,7 @@ grep -q 'matching _store metadata' /tmp/workcell-uninstall-help.out
 grep -q 'A user-selected log path is not exempt from removal targets.' /tmp/workcell-uninstall-help.out
 grep -Fq "The uninstaller removes a log directly under /tmp or \$TMPDIR if the current user owns the log and its name matches a Workcell cleanup pattern." /tmp/workcell-uninstall-help.out
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall.out 2>&1; then
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" WORKCELL_UNINSTALL_TEMP_ROOT="${UNINSTALL_TEMP_ROOT}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall.out 2>&1; then
   echo "Expected scripts/uninstall.sh to succeed in a clean temporary HOME" >&2
   cat /tmp/workcell-uninstall.out >&2
   exit 1
@@ -1300,8 +1308,12 @@ test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-host-inputs"
 test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-shadow"
 test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
 test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
-test ! -e "/tmp/workcell-uninstall-verify.log.$$"
-test ! -e "/tmp/workcell-docker.verify-uninstall.$$"
+test ! -e "${UNINSTALL_TEMP_ROOT}/workcell-uninstall-verify.log.$$"
+test ! -e "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall.$$"
+test -f "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$/owner.pid"
+grep -Fq "Kept in-use ${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$" /tmp/workcell-uninstall.out
+test -d "${UNINSTALL_TMP_SIBLING}"
+rmdir "${UNINSTALL_TMP_SIBLING}"
 grep -q 'Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles.' /tmp/workcell-uninstall.out
 grep -q 'User-selected log paths are not exempt from removal targets.' /tmp/workcell-uninstall.out
 grep -Fq "The uninstaller removes logs directly under /tmp or \$TMPDIR if the current user owns them and their names match Workcell cleanup patterns." /tmp/workcell-uninstall.out
@@ -1417,7 +1429,7 @@ if grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only 
   exit 1
 fi
 
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-debug.out 2>&1; then
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" WORKCELL_UNINSTALL_TEMP_ROOT="${UNINSTALL_TEMP_ROOT}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-debug.out 2>&1; then
   echo "Expected scripts/uninstall.sh to remove the debug installer wrapper cleanly" >&2
   cat /tmp/workcell-uninstall-debug.out >&2
   exit 1
@@ -1461,7 +1473,7 @@ if [[ "${INSTALLED_DEBUG_LAUNCH_BLOCKED}" -eq 1 ]]; then
 else
   grep -q "debug_log=${CUSTOM_DEBUG_DIR_REAL}/latest-debug.log" /tmp/workcell-installed-custom-debug-dry-run.out
 fi
-if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-custom-debug.out 2>&1; then
+if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" WORKCELL_UNINSTALL_TEMP_ROOT="${UNINSTALL_TEMP_ROOT}" "${ROOT_DIR}/scripts/uninstall.sh" >/tmp/workcell-uninstall-custom-debug.out 2>&1; then
   echo "Expected scripts/uninstall.sh to remove the custom debug installer wrapper cleanly" >&2
   cat /tmp/workcell-uninstall-custom-debug.out >&2
   exit 1
