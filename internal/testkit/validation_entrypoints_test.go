@@ -1275,18 +1275,15 @@ func TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes(t *tes
 	if err := dead.Run(); err != nil {
 		t.Fatal(err)
 	}
+	// The owner PID is part of the sandbox name.
+	self, gone := strconv.Itoa(os.Getpid()), strconv.Itoa(dead.Process.Pid)
 	stale := filepath.Join(tempRoot, "workcell-docker.stale")
-	nonDocker := filepath.Join(tempRoot, "workcell-provider-e2e.live-marker")
-	live := filepath.Join(tempRoot, "workcell-docker.live")
-	deadOwner := filepath.Join(tempRoot, "workcell-docker.dead-owner")
-	for dir, pid := range map[string]int{stale: 0, live: os.Getpid(), deadOwner: dead.Process.Pid, nonDocker: os.Getpid()} {
+	nonDocker := filepath.Join(tempRoot, "workcell-provider-e2e."+self+".live")
+	live := filepath.Join(tempRoot, "workcell-docker."+self+".live")
+	deadOwner := filepath.Join(tempRoot, "workcell-docker."+gone+".dead")
+	for _, dir := range []string{stale, live, deadOwner, nonDocker} {
 		if err := os.MkdirAll(filepath.Join(dir, "home"), 0o700); err != nil {
 			t.Fatal(err)
-		}
-		if pid != 0 {
-			if err := os.WriteFile(filepath.Join(dir, "owner.pid"), []byte(strconv.Itoa(pid)+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
 
@@ -1326,7 +1323,7 @@ func TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes(t *tes
 }
 
 // TestUninstallKeepsTrustedDockerSandboxOfRunningProcess links the producer
-// (trusted-docker-client.sh writes owner.pid) to the consumer (uninstall.sh).
+// (trusted-docker-client.sh names the sandbox after its owner PID) to the consumer (uninstall.sh).
 func TestUninstallKeepsTrustedDockerSandboxOfRunningProcess(t *testing.T) {
 	t.Parallel()
 
@@ -1343,172 +1340,6 @@ echo sandbox-survived`, "_", root, home, tempRoot)
 	out, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "sandbox-survived") {
 		t.Fatalf("uninstall removed the sandbox of a running process: %v\n%s", err, out)
-	}
-}
-
-// TestTrustedDockerSandboxIsStagedBeforeItEntersTheCleanupNamespace shims mv to
-// check the state at the instant the sandbox is renamed into the namespace
-// that scripts/uninstall.sh matches: nothing matches yet, and the staged
-// directory already holds its owner marker.
-func TestTrustedDockerSandboxIsStagedBeforeItEntersTheCleanupNamespace(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	tempRoot := t.TempDir()
-	shimDir := t.TempDir()
-	record := filepath.Join(t.TempDir(), "record")
-	realMv, err := exec.LookPath("mv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	shim := `#!/bin/bash
-set -euo pipefail
-for entry in "$TEMP_ROOT"/workcell-docker.*; do
-  [[ -e "${entry}" ]] && { echo "exposed:${entry}" >>"$RECORD"; exit 1; }
-done
-[[ -s "$1/owner.pid" ]] || { echo "no-marker:$1" >>"$RECORD"; exit 1; }
-[[ "${1##*.}" != "${2##*.}" ]] || { echo "derived-name:$2" >>"$RECORD"; exit 1; }
-echo staged-ok >>"$RECORD"
-exec "$REAL_MV" "$@"
-`
-	if err := os.WriteFile(filepath.Join(shimDir, "mv"), []byte(shim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("bash", "-c", `set -euo pipefail
-source "$1/scripts/lib/trusted-docker-client.sh"
-setup_workcell_trusted_docker_client
-test -s "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"`, "_", root)
-	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "TEMP_ROOT=" + tempRoot, "RECORD=" + record,
-		"REAL_MV=" + realMv, "PATH=" + shimDir + ":" + os.Getenv("PATH")}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("sandbox setup failed: %v\n%s", err, out)
-	}
-	got, err := os.ReadFile(record)
-	if err != nil || strings.TrimSpace(string(got)) != "staged-ok" {
-		t.Fatalf("sandbox was not staged before rename: record=%q err=%v", got, err)
-	}
-}
-
-// TestTrustedDockerSandboxRejectsPreexistingDestination plants the rename
-// destination just before mv runs, as another local process could.
-func TestTrustedDockerSandboxRejectsPreexistingDestination(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	tempRoot := t.TempDir()
-	shimDir := t.TempDir()
-	realMv, err := exec.LookPath("mv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	shim := `#!/bin/bash
-mkdir -p "$2/home" "$2/config"
-exec "$REAL_MV" "$@"
-`
-	if err := os.WriteFile(filepath.Join(shimDir, "mv"), []byte(shim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("bash", "-c", `set -uo pipefail
-source "$1/scripts/lib/trusted-docker-client.sh"
-if setup_workcell_trusted_docker_client; then echo setup-accepted; exit 0; fi
-echo setup-refused`, "_", root)
-	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "REAL_MV=" + realMv, "PATH=" + shimDir + ":" + os.Getenv("PATH")}
-	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "setup-refused") {
-		t.Fatalf("setup trusted a pre-existing destination: %v\n%s", err, out)
-	}
-	if entries, _ := filepath.Glob(filepath.Join(tempRoot, "workcell-docker-stage.*")); len(entries) != 0 {
-		t.Fatalf("staging directory leaked: %v", entries)
-	}
-}
-
-// TestTrustedDockerSandboxFailsClosedWhenRenameFails runs setup inside an if
-// condition, where bash suppresses errexit, with a failing mv. The owner marker
-// must also be owner-only.
-func TestTrustedDockerSandboxFailsClosedWhenRenameFails(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	tempRoot := t.TempDir()
-	shimDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(shimDir, "mv"), []byte("#!/bin/bash\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("bash", "-c", `set -uo pipefail
-source "$1/scripts/lib/trusted-docker-client.sh"
-umask 022
-if setup_workcell_trusted_docker_client; then echo setup-accepted; exit 0; fi
-echo setup-refused`, "_", root)
-	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "PATH=" + shimDir + ":" + os.Getenv("PATH")}
-	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "setup-refused") {
-		t.Fatalf("setup continued after a failed rename: %v\n%s", err, out)
-	}
-	if entries, _ := filepath.Glob(filepath.Join(tempRoot, "workcell-docker*")); len(entries) != 0 {
-		t.Fatalf("sandbox or staging directory leaked: %v", entries)
-	}
-
-	// Marker mode: let mv succeed and inspect owner.pid under umask 022.
-	cmd = exec.Command("bash", "-c", `set -euo pipefail
-source "$1/scripts/lib/trusted-docker-client.sh"
-umask 022
-setup_workcell_trusted_docker_client
-stat -f %Lp "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid" 2>/dev/null || stat -c %a "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"`, "_", root)
-	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "PATH=" + os.Getenv("PATH")}
-	out, err = cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "600" {
-		t.Fatalf("owner marker mode is not 0600: %v\n%s", err, out)
-	}
-}
-
-// TestTrustedDockerSandboxFailsClosedWhenMarkerWriteFails shims printf so the
-// owner marker write fails, and runs setup where bash suppresses errexit.
-func TestTrustedDockerSandboxFailsClosedWhenMarkerWriteFails(t *testing.T) {
-	t.Parallel()
-
-	root := repoRoot(t)
-	tempRoot := t.TempDir()
-	cmd := exec.Command("bash", "-c", `set -uo pipefail
-source "$1/scripts/lib/trusted-docker-client.sh"
-printf() { if [[ "${2:-}" == "$$" ]]; then return 1; fi; builtin printf "$@"; }
-if setup_workcell_trusted_docker_client; then echo setup-accepted; exit 0; fi
-echo setup-refused`, "_", root)
-	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "PATH=" + os.Getenv("PATH")}
-	out, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "setup-refused") {
-		t.Fatalf("setup continued after a failed marker write: %v\n%s", err, out)
-	}
-	if entries, _ := filepath.Glob(filepath.Join(tempRoot, "workcell-docker*")); len(entries) != 0 {
-		t.Fatalf("sandbox or staging directory leaked: %v", entries)
-	}
-}
-
-// TestUninstallKeepsSandboxWithUnreadableOwnerMarker: when ownership cannot be
-// read, uninstall keeps the sandbox.
-func TestUninstallKeepsSandboxWithUnreadableOwnerMarker(t *testing.T) {
-	t.Parallel()
-
-	if os.Geteuid() == 0 {
-		t.Skip("root reads mode 0 files")
-	}
-	home := t.TempDir()
-	tempRoot := t.TempDir()
-	sandbox := filepath.Join(tempRoot, "workcell-docker.unreadable")
-	if err := os.MkdirAll(sandbox, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(sandbox, "owner.pid"), []byte("1\n"), 0o000); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("bash", filepath.Join(repoRoot(t), "scripts", "uninstall.sh"))
-	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "WORKCELL_UNINSTALL_TEMP_ROOT=" + tempRoot}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("uninstall.sh failed: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(sandbox); err != nil {
-		t.Fatalf("uninstall removed a sandbox with an unreadable marker: %v\n%s", err, out)
 	}
 }
 

@@ -182,7 +182,7 @@ select_workcell_trusted_buildx() {
 }
 
 setup_workcell_trusted_docker_client() {
-  local real_home staging nested
+  local real_home
 
   # Launch, inspect, and doctor flows can all sanitize the host Docker
   # environment more than once in a single process. Reuse the in-process
@@ -200,33 +200,11 @@ setup_workcell_trusted_docker_client() {
   fi
 
   real_home="$(resolve_workcell_real_home)"
-  # Stage under a name that scripts/uninstall.sh does not match. Write the owner
-  # marker, then rename into the cleanup namespace, so uninstall never sees a
-  # sandbox without its marker.
-  staging="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker-stage.XXXXXX")" || return 1
-  if ! (umask 077 && printf '%s\n' "$$" >"${staging}/owner.pid"); then
-    rm -rf "${staging:?}"
-    return 1
-  fi
-  # Pick the destination name with its own random suffix. A name derived from
-  # the staging directory would let another process pre-create the destination.
-  if ! WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -u "${TMPDIR:-/tmp}/workcell-docker.XXXXXXXXXX")"; then
-    rm -rf "${staging:?}"
+  # The owner PID is part of the name, so scripts/uninstall.sh can tell a live
+  # sandbox from a stale one the moment mktemp creates it. No marker file or
+  # rename is needed.
+  if ! WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker.$$.XXXXXX")"; then
     unset WORKCELL_DOCKER_SANDBOX_ROOT
-    return 1
-  fi
-  if ! mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"; then
-    rm -rf "${staging:?}"
-    unset WORKCELL_DOCKER_SANDBOX_ROOT
-    return 1
-  fi
-  # mv nests the staged directory when the destination already exists. Fail
-  # closed instead of trusting a destination another process created.
-  nested="${WORKCELL_DOCKER_SANDBOX_ROOT}/${staging##*/}"
-  if [[ -e "${nested}" ]]; then
-    rm -rf "${nested:?}"
-    unset WORKCELL_DOCKER_SANDBOX_ROOT
-    echo "Docker sandbox destination already existed; refusing to use it." >&2
     return 1
   fi
   WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"

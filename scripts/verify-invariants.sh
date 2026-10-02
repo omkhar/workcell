@@ -1278,8 +1278,7 @@ mkdir -p "${UNINSTALL_TEMP_ROOT}" "${UNINSTALL_TMP_SIBLING}"
 printf 'tmp\n' >"${UNINSTALL_TEMP_ROOT}/workcell-uninstall-verify.log.$$"
 mkdir -p "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall.$$"
 # A sandbox whose owner process is alive must survive uninstall.
-mkdir -p "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$"
-printf '%s\n' "$$" >"${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$/owner.pid"
+mkdir -p "${UNINSTALL_TEMP_ROOT}/workcell-docker.$$.verify-uninstall-live"
 
 if ! env -i HOME="${INSTALL_VERIFY_HOME}" PATH="${TRUSTED_HOST_PATH}" WORKCELL_UNINSTALL_TEMP_ROOT="${UNINSTALL_TEMP_ROOT}" "${ROOT_DIR}/scripts/uninstall.sh" --help >/tmp/workcell-uninstall-help.out 2>&1; then
   echo "Expected scripts/uninstall.sh --help to succeed in a clean temporary HOME" >&2
@@ -1310,8 +1309,8 @@ test ! -e "${INSTALL_VERIFY_HOME}/Library/Caches/colima/workcell-token-handoff"
 test -e "${INSTALL_VERIFY_HOME}/.config/workcell/injection-policy.toml"
 test ! -e "${UNINSTALL_TEMP_ROOT}/workcell-uninstall-verify.log.$$"
 test ! -e "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall.$$"
-test -f "${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$/owner.pid"
-grep -Fq "Kept in-use ${UNINSTALL_TEMP_ROOT}/workcell-docker.verify-uninstall-live.$$" /tmp/workcell-uninstall.out
+test -d "${UNINSTALL_TEMP_ROOT}/workcell-docker.$$.verify-uninstall-live"
+grep -Fq "Kept in-use ${UNINSTALL_TEMP_ROOT}/workcell-docker.$$.verify-uninstall-live" /tmp/workcell-uninstall.out
 test -d "${UNINSTALL_TMP_SIBLING}"
 rmdir "${UNINSTALL_TMP_SIBLING}"
 grep -q 'Preserved ~/.config/workcell, shared host packages, and unrelated Colima profiles.' /tmp/workcell-uninstall.out

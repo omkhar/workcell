@@ -384,17 +384,12 @@ collect_profiles() {
   fi
 }
 
-# A trusted Docker client sandbox records its owner PID (see
-# scripts/lib/trusted-docker-client.sh). Never delete a sandbox that a running
-# process still uses.
+# A trusted Docker client sandbox is named workcell-docker.<owner pid>.<random>
+# (see scripts/lib/trusted-docker-client.sh). Never delete a sandbox that a
+# running process still uses. Any other name has no owner and counts as stale.
 temp_entry_owner_is_alive() {
-  local owner_pid=""
-
-  [[ -f "$1/owner.pid" ]] || return 1
-  # An unreadable marker leaves ownership unknown, so keep the sandbox.
-  owner_pid="$(head -n 1 "$1/owner.pid" 2>/dev/null)" || return 0
-  [[ "${owner_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
-  kill -0 "${owner_pid}" 2>/dev/null
+  [[ "${1##*/}" =~ ^workcell-docker\.([1-9][0-9]*)\..+$ ]] || return 1
+  kill -0 "${BASH_REMATCH[1]}" 2>/dev/null
 }
 
 cleanup_temp_root() {
@@ -426,7 +421,7 @@ cleanup_temp_root() {
   for pattern in "${patterns[@]}"; do
     for candidate in "${temp_root}"/${pattern}; do
       [[ -O "${candidate}" ]] || continue
-      if [[ "${pattern}" == "workcell-docker.*" ]] && temp_entry_owner_is_alive "${candidate}"; then
+      if temp_entry_owner_is_alive "${candidate}"; then
         log_action "Kept in-use" "${candidate}"
         continue
       fi
