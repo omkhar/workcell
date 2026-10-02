@@ -4518,7 +4518,11 @@ if "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to launched sessions.' /tmp/workcell-nonlaunch-debug-log.out
 
-if ! "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
+# The live lane runs in parallel and writes the shared Go cache under REAL_HOME.
+# A stale-threshold above the fixture age keeps --gc from removing that cache
+# while the live lane writes it. The 2020 fixtures stay stale.
+GC_FIXTURE_STALE_MINUTES=1000000
+if ! WORKCELL_GC_STALE_MINUTES="${GC_FIXTURE_STALE_MINUTES}" "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
   echo "Expected --gc to succeed" >&2
   exit 1
 fi
@@ -4526,7 +4530,7 @@ grep -q 'Cleaned stale Workcell injection, session-audit, broken latest-log poin
 test ! -f "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
 test ! -e "${GC_TEMP_FIXTURE}"
 test ! -e "${GC_TEMP_TREE_FIXTURE}"
-if ! "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
+if ! WORKCELL_GC_STALE_MINUTES="${GC_FIXTURE_STALE_MINUTES}" "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
   echo "Expected gc subcommand alias to succeed" >&2
   exit 1
 fi
