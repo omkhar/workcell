@@ -121,8 +121,8 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 	}
 	// A line with an odd number of quotes opens a value that it does not close.
 	// Its continuation line could hide a bare marker, so reject it up front, in
-	// any key order.
-	if unterminatedQuote.MatchString(status) {
+	// any key order. An escaped quote would defeat the count, so reject it too.
+	if strings.Contains(status, `\"`) || unterminatedQuote.MatchString(status) {
 		return errors.New("Colima status output has an unterminated quoted value.")
 	}
 	checks := []struct {
