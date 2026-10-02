@@ -83,6 +83,45 @@ func TestValidatePairPinsStrictIsolationIdentity(t *testing.T) {
 	}
 }
 
+func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
+	workspace, commit := newGitRepo(t)
+	c := testCertifier(t, workspace)
+	a := newIsolatedRecord(t, workspace, commit, "session-a", "workcell-a")
+	b := newIsolatedRecord(t, workspace, commit, "session-b", "workcell-b")
+	marker := ".workcell-c3-session-a"
+	newChild := func(id string) *evidence {
+		record := newIsolatedRecord(t, workspace, commit, id, "workcell-"+id)
+		record.ParentSessionID = "session-a"
+		mustNoError(t, os.WriteFile(filepath.Join(record.WorktreePath, marker), []byte("session-a-only\n"), 0o600))
+		return &evidence{record: record}
+	}
+	children := []*evidence{newChild("child-1"), newChild("child-2")}
+	if err := c.validateFork(context.Background(), a, b, children, commit); err != nil {
+		t.Fatalf("validateFork error = %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*evidence)
+		want   string
+	}{
+		{"parent", func(e *evidence) { e.record.ParentSessionID = "session-b" }, "parent_session_id"},
+		{"marker missing", func(e *evidence) { mustNoError(t, os.Remove(filepath.Join(e.record.WorktreePath, marker))) }, "status"},
+		{"sibling marker", func(e *evidence) {
+			mustNoError(t, os.WriteFile(filepath.Join(e.record.WorktreePath, ".workcell-c3-session-b"), nil, 0o600))
+		}, "status"},
+		{"shared container", func(e *evidence) { e.record.ContainerName = a.ContainerName }, "containers"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))
+			tc.mutate(bad)
+			err := c.validateFork(context.Background(), a, b, []*evidence{children[0], bad}, commit)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateFork error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestStartTimeoutAdoptsOwnedRecord(t *testing.T) {
 	workspace, commit := newGitRepo(t)
 	c := testCertifier(t, workspace)

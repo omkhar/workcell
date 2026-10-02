@@ -88,32 +88,51 @@ func SignSessionHead(signingDir, auditLogPath, targetProvider, sessionID, signed
 // seal.KeyID. Fail-closed on any parse error, chain break, head mismatch, unknown
 // key, or signature mismatch; returns the recomputed head on success.
 func VerifySessionSeal(signingDir, auditLogPath, targetProvider, sessionID string, seal Seal) (string, error) {
-	if seal.Version != sealVersion {
-		return "", fmt.Errorf("auditseal: unsupported seal version %d", seal.Version)
-	}
-	if seal.Algorithm != Algorithm {
-		return "", fmt.Errorf("auditseal: unsupported seal algorithm %q", seal.Algorithm)
-	}
-	if seal.SessionID != sessionID {
-		return "", fmt.Errorf("auditseal: seal session id %q does not match %q", seal.SessionID, sessionID)
-	}
-	sig, err := base64.StdEncoding.DecodeString(seal.Signature)
-	if err != nil {
-		return "", fmt.Errorf("auditseal: decode signature: %w", err)
+	if err := checkSealHeader(sessionID, seal); err != nil {
+		return "", err
 	}
 	head, err := recomputeSessionHead(auditLogPath, targetProvider, sessionID)
 	if err != nil {
 		return "", err
 	}
+	if err := verifySealSignature(signingDir, sessionID, head, seal); err != nil {
+		return "", err
+	}
+	return head, nil
+}
+
+func checkSealHeader(sessionID string, seal Seal) error {
+	if seal.Version != sealVersion {
+		return fmt.Errorf("auditseal: unsupported seal version %d", seal.Version)
+	}
+	if seal.Algorithm != Algorithm {
+		return fmt.Errorf("auditseal: unsupported seal algorithm %q", seal.Algorithm)
+	}
+	if seal.SessionID != sessionID {
+		return fmt.Errorf("auditseal: seal session id %q does not match %q", seal.SessionID, sessionID)
+	}
+	return nil
+}
+
+// verifySealSignature checks seal.Signature over head with the pinned key that
+// seal.KeyID names.
+func verifySealSignature(signingDir, sessionID, head string, seal Seal) error {
+	if err := checkSealHeader(sessionID, seal); err != nil {
+		return err
+	}
+	sig, err := base64.StdEncoding.DecodeString(seal.Signature)
+	if err != nil {
+		return fmt.Errorf("auditseal: decode signature: %w", err)
+	}
 	pub, err := keystore.LoadPublicKey(signingDir, seal.KeyID)
 	if err != nil {
-		return "", err
+		return err
 	}
 	digest := sha256.Sum256(signedMessage(sessionID, head))
 	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
-		return "", errors.New("auditseal: signature does not verify against the pinned host key")
+		return errors.New("auditseal: signature does not verify against the pinned host key")
 	}
-	return head, nil
+	return nil
 }
 
 type chainRecord struct {
@@ -123,11 +142,55 @@ type chainRecord struct {
 	args         []string
 }
 
+// sessionMatch is one record that claims the session, with the chain head and
+// chain verdict at that record.
+type sessionMatch struct {
+	head   string
+	err    error
+	fields []ocsf.AuditField
+}
+
 // recomputeSessionHead returns this session's head digest (its last record) after
 // verifying the chain up to that head. Only records up to the head are verified
 // (a LATER unrelated session's line never affects it); earlier interleaved
 // records ARE verified, each decoded strictly.
 func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (string, error) {
+	matches, err := walkSessionChain(auditLogPath, targetProvider, sessionID)
+	if err != nil {
+		return "", err
+	}
+	last := matches[len(matches)-1]
+	return last.head, last.err
+}
+
+// SealedSessionRecords verifies seal over the head it names and returns the
+// session's records up to and including that head, in log order. Records that
+// the session appended after the seal are not returned, so a running session
+// whose chain grew after the last seal still yields its signed prefix.
+// Fail-closed on a bad signature, an unknown key, a broken chain before the
+// sealed head, or a sealed head that no session record carries.
+func SealedSessionRecords(signingDir, auditLogPath, targetProvider, sessionID string, seal Seal) ([][]ocsf.AuditField, error) {
+	if err := verifySealSignature(signingDir, sessionID, seal.HeadDigest, seal); err != nil {
+		return nil, err
+	}
+	matches, err := walkSessionChain(auditLogPath, targetProvider, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(matches) - 1; i >= 0; i-- {
+		if matches[i].err != nil || matches[i].head != seal.HeadDigest {
+			continue
+		}
+		records := make([][]ocsf.AuditField, 0, i+1)
+		for _, match := range matches[:i+1] {
+			records = append(records, match.fields)
+		}
+		return records, nil
+	}
+	return nil, fmt.Errorf("auditseal: no verified record of session %s carries the sealed head", sessionID)
+}
+
+func walkSessionChain(auditLogPath, targetProvider, sessionID string) ([]sessionMatch, error) {
 	// Verify the chain in one bounded stream. Reopening the path for separate
 	// passes could combine records from different file states during an append.
 	// Keep the verdict at each matching record, so unrelated later records retain
@@ -144,10 +207,8 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 	expectedPrev := ""
 	chainHead := ""
 	started := false
-	matched := false
-	matchedHead := ""
+	var matches []sessionMatch
 	var chainErr error
-	var matchedErr error
 	logicalLine := 0
 	err := auditlog.ForEachLine(auditLogPath, func(rawLine string, _ int) error {
 		line := strings.TrimSpace(rawLine)
@@ -206,28 +267,24 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 			}
 		}
 		if claimsSession {
-			matched = true
-			matchedHead = chainHead
-			matchedErr = chainErr
-			if matchedErr == nil && !started {
-				matchedErr = ErrUnsupportedAuditChain
+			match := sessionMatch{head: chainHead, err: chainErr, fields: fields}
+			if match.err == nil && !started {
+				match.err = ErrUnsupportedAuditChain
 			}
+			matches = append(matches, match)
 		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("auditseal: no audit log for session %s", sessionID)
+			return nil, fmt.Errorf("auditseal: no audit log for session %s", sessionID)
 		}
-		return "", err
+		return nil, err
 	}
-	if !matched {
-		return "", fmt.Errorf("auditseal: no audit records for session %s", sessionID)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("auditseal: no audit records for session %s", sessionID)
 	}
-	if matchedErr != nil {
-		return "", matchedErr
-	}
-	return matchedHead, nil
+	return matches, nil
 }
 
 // HasSignableChain reports whether a session's audit records form a signable

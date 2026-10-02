@@ -341,42 +341,59 @@ func (c *certifier) waitRunning(ctx context.Context, id string) (sessions.Sessio
 }
 func (c *certifier) validatePair(ctx context.Context, a, b sessions.SessionRecord, workloadCommit string) error {
 	for _, record := range []sessions.SessionRecord{a, b} {
-		if !safeID.MatchString(record.SessionID) {
-			return fmt.Errorf("certify-c3: invalid session id: %q", record.SessionID)
+		if err := c.validateIdentity(record, "lower-assurance-debug-command", ""); err != nil {
+			return err
 		}
-		for _, check := range []struct{ name, got, want string }{
-			{"target_kind", record.TargetKind, "local_vm"},
-			{"target_provider", record.TargetProvider, "colima"},
-			{"target_assurance_class", record.TargetAssuranceClass, "strict"},
-			{"profile", record.Profile, c.profile},
-			{"mode", record.Mode, "strict"},
-			{"workspace_transport", record.WorkspaceTransport, "isolated-worktree-mount"},
-			{"assurance", sessions.SessionAssuranceSummary(record), "managed-mutable"},
-			{"execution_path", record.ExecutionPath, "lower-assurance-debug-command"},
-			{"workspace_origin", record.WorkspaceOrigin, c.launchRoot},
-		} {
-			if check.got != check.want {
-				return fmt.Errorf("certify-c3: session %s %s = %q, want %q",
-					record.SessionID, check.name, check.got, check.want)
-			}
-		}
-		if err := c.validateGitIdentity(ctx, record, workloadCommit); err != nil {
+		if err := c.validateGitIdentity(ctx, record, workloadCommit, ""); err != nil {
 			return err
 		}
 	}
-	for _, check := range []struct{ name, a, b string }{
-		{"session ids", a.SessionID, b.SessionID},
-		{"containers", a.ContainerName, b.ContainerName},
-		{"worktrees", a.WorktreePath, b.WorktreePath},
-		{"branches", a.GitBranch, b.GitBranch},
+	return requireDistinct(a, b)
+}
+func (c *certifier) validateIdentity(record sessions.SessionRecord, executionPath, parent string) error {
+	if !safeID.MatchString(record.SessionID) {
+		return fmt.Errorf("certify-c3: invalid session id: %q", record.SessionID)
+	}
+	for _, check := range []struct{ name, got, want string }{
+		{"target_kind", record.TargetKind, "local_vm"},
+		{"target_provider", record.TargetProvider, "colima"},
+		{"target_assurance_class", record.TargetAssuranceClass, "strict"},
+		{"profile", record.Profile, c.profile},
+		{"mode", record.Mode, "strict"},
+		{"workspace_transport", record.WorkspaceTransport, "isolated-worktree-mount"},
+		{"assurance", sessions.SessionAssuranceSummary(record), "managed-mutable"},
+		{"execution_path", record.ExecutionPath, executionPath},
+		{"workspace_origin", record.WorkspaceOrigin, c.launchRoot},
+		{"parent_session_id", record.ParentSessionID, parent},
 	} {
-		if check.a == "" || check.b == "" || check.a == check.b {
-			return fmt.Errorf("certify-c3: %s are missing or not distinct", check.name)
+		if check.got != check.want {
+			return fmt.Errorf("certify-c3: session %s %s = %q, want %q",
+				record.SessionID, check.name, check.got, check.want)
 		}
 	}
 	return nil
 }
-func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.SessionRecord, commit string) error {
+func requireDistinct(records ...sessions.SessionRecord) error {
+	for i, a := range records {
+		for _, b := range records[i+1:] {
+			for _, check := range []struct{ name, a, b string }{
+				{"session ids", a.SessionID, b.SessionID},
+				{"containers", a.ContainerName, b.ContainerName},
+				{"worktrees", a.WorktreePath, b.WorktreePath},
+				{"branches", a.GitBranch, b.GitBranch},
+			} {
+				if check.a == "" || check.b == "" || check.a == check.b {
+					return fmt.Errorf("certify-c3: %s are missing or not distinct", check.name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateGitIdentity proves the session-owned clone, branch, and commit. Its
+// porcelain status must equal wantStatus ("" for a clean worktree).
+func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.SessionRecord, commit, wantStatus string) error {
 	expected, err := c.expectedWorktree(ctx, record.SessionID)
 	if err != nil {
 		return err
@@ -401,8 +418,40 @@ func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.Ses
 		return fmt.Errorf("certify-c3: isolated worktree does not match workload commit: %s", record.SessionID)
 	}
 	status, err := c.gitCommand(ctx, expected, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-	if err != nil || len(bytes.TrimSpace(status)) != 0 {
-		return fmt.Errorf("certify-c3: isolated worktree is not clean: %s", record.SessionID)
+	if err != nil || string(bytes.TrimSpace(status)) != wantStatus {
+		return fmt.Errorf("certify-c3: isolated worktree status does not match %q: %s", wantStatus, record.SessionID)
+	}
+	return nil
+}
+
+// validateFork proves each child records the parent, starts on the workload
+// commit with the parent's marker as its only uncommitted change, stays
+// distinct from every other session, and groups under the shared origin.
+func (c *certifier) validateFork(ctx context.Context, parent, sibling sessions.SessionRecord, children []*evidence, commit string) error {
+	parentMarker, siblingMarker := ".workcell-c3-"+parent.SessionID, ".workcell-c3-"+sibling.SessionID
+	all := []sessions.SessionRecord{parent, sibling}
+	for _, child := range children {
+		record := child.record
+		if err := c.validateIdentity(record, record.ExecutionPath, parent.SessionID); err != nil {
+			return err
+		}
+		if err := c.validateGitIdentity(ctx, record, commit, "?? "+parentMarker); err != nil {
+			return err
+		}
+		if err := proveHostMarkerPair(record.WorktreePath, sibling.WorktreePath, parentMarker, "session-a-only\n"); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(filepath.Join(record.WorktreePath, siblingMarker)); !errors.Is(err, os.ErrNotExist) {
+			return errors.New("certify-c3: session B marker appeared in a fork child")
+		}
+		all = append(all, record)
+	}
+	if err := requireDistinct(all...); err != nil {
+		return err
+	}
+	groups := sessions.GroupParallelSessions(all)
+	if len(groups) != 1 || groups[0].OriginKey != c.launchRoot || len(groups[0].Members) != len(all) {
+		return errors.New("certify-c3: fork children did not group with sessions A and B under one origin")
 	}
 	return nil
 }

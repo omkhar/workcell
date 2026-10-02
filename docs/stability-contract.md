@@ -197,7 +197,7 @@ See [Injection policy](injection-policy.md) for each table schema.
 `file_trace_log_path`, `transcript_log_path`, `started_at`, `observed_at`,
 `finished_at`, `exit_status`, `initial_assurance`, `current_assurance`,
 `final_assurance`, `workspace_control_plane`, `workspace_repo_mcp`,
-`bootstrap_id`, `image_ref`.
+`bootstrap_id`, `image_ref`, `parent_session_id`.
 
 `SessionExport` contains these stable fields:
 

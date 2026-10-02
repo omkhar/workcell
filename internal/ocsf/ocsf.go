@@ -316,6 +316,7 @@ func sessionEvent(rec sessions.SessionRecord, redact func(string) string, logged
 	unmapped.putStr("session.final_assurance", rec.FinalAssurance, redact)
 	unmapped.putStr("session.bootstrap_id", rec.BootstrapID, redact)
 	unmapped.putStr("session.image_ref", rec.ImageRef, redact)
+	unmapped.putStr("session.parent_session_id", rec.ParentSessionID, redact)
 	unmapped.putStr("session.container_name", rec.ContainerName, redact)
 	unmapped.putStr("session.monitor_pid", rec.MonitorPID, redact)
 	unmapped.putStr("session.session_audit_dir", rec.SessionAuditDir, redact)
