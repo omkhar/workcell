@@ -110,6 +110,7 @@ type updaterFixtureOptions struct {
 	RelativeTokenFile bool
 	ProviderPlan      string
 	ProviderPlanCode  int
+	ExtraArgs         []string
 }
 
 func defaultUpdaterFixtureOptions() updaterFixtureOptions {
@@ -259,6 +260,43 @@ func TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUpdateUpstreamPinsToolchainOnlyLeavesProviderPins proves the toolchain
+// half of the refresh split. A pending provider bump is not a change, and
+// apply does not run the provider updater.
+func TestUpdateUpstreamPinsToolchainOnlyLeavesProviderPins(t *testing.T) {
+	t.Parallel()
+
+	pins := readUpdaterFixturePins(t)
+	plan := updaterTargetDebianPlan()
+	toolsRoot := t.TempDir()
+	citoolsPath := buildUpdaterFixtureCITools(t, toolsRoot)
+	goWrapperPath := writeUpdaterFixtureGoWrapper(t, toolsRoot)
+	providerPending := defaultUpdaterFixtureOptions()
+	providerPending.ProviderPlan = `{"has_changes":true}`
+	toolchainOnly := providerPending
+	toolchainOnly.ExtraArgs = []string{"--toolchain-only"}
+
+	cleanRoot := writeUpdaterFixture(t, updaterManifestFromPlan(plan), 0o640)
+	// Negative control: without the option, the provider bump is a change.
+	if run := runUpdaterFixtureWithOptions(t, cleanRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, "--check", providerPending); run.Code != 1 {
+		t.Fatalf("--check with a pending provider bump exit code = %d, want 1\n%s", run.Code, run.Output)
+	}
+	if run := runUpdaterFixtureWithOptions(t, cleanRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, "--check", toolchainOnly); run.Code != 0 {
+		t.Fatalf("--check --toolchain-only with only a provider bump exit code = %d, want 0\n%s", run.Code, run.Output)
+	}
+
+	driftedRoot := writeUpdaterFixture(t, updaterDriftedManifest(t, plan.Snapshot), 0o640)
+	before := snapshotUpdaterFixtureFiles(t, driftedRoot)
+	run := runUpdaterFixtureWithOptions(t, driftedRoot, t.TempDir(), citoolsPath, goWrapperPath, pins, plan, "--apply", toolchainOnly)
+	if run.Code != 0 {
+		t.Fatalf("--apply --toolchain-only exit code = %d, want 0\n%s", run.Code, run.Output)
+	}
+	if want := []string{"summary", "json"}; !reflect.DeepEqual(run.ProviderLog, want) {
+		t.Fatalf("provider updater command log = %q, want %q (no apply)", run.ProviderLog, want)
+	}
+	assertOnlyUpdaterManifestChanged(t, before, snapshotUpdaterFixtureFiles(t, driftedRoot))
 }
 
 func TestUpdateUpstreamPinsCredentialedRequestsKeepTokensOffArgv(t *testing.T) {
@@ -656,7 +694,7 @@ func runUpdaterFixtureWithOptions(t *testing.T, fixtureRoot, scratchRoot, citool
 	hostileHome := t.TempDir()
 	const hostileCurlConfig = "output = \"/dev/null\"\n"
 	writeUpdaterFixtureFile(t, hostileHome, ".curlrc", hostileCurlConfig, 0o600)
-	cmd := exec.Command("/bin/bash", "-p", "-c", updaterFixtureHarness, "workcell-updater-fixture", filepath.Join(fixtureRoot, "scripts", "update-upstream-pins.sh"), mode)
+	cmd := exec.Command("/bin/bash", append([]string{"-p", "-c", updaterFixtureHarness, "workcell-updater-fixture", filepath.Join(fixtureRoot, "scripts", "update-upstream-pins.sh"), mode}, options.ExtraArgs...)...)
 	// Invoke the absolute updater path from outside the fixture repository so
 	// every repo-local tool dispatch must anchor itself to ROOT_DIR.
 	cmd.Dir = scratchRoot
@@ -1409,5 +1447,5 @@ shasum() {
   printf '%s  -\n' "${WORKCELL_FIXTURE_ZIZMOR_SHA}"
 }
 
-source "$1" "$2"
+source "$1" "${@:2}"
 `
