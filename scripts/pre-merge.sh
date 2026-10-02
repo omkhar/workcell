@@ -29,6 +29,7 @@ START_SECONDS="${SECONDS}"
 LANE_NAME=""
 LANE_START=0
 LANE_TIMINGS=()
+TOTAL_SECONDS=""
 
 usage() {
   cat <<EOF
@@ -272,7 +273,7 @@ report_timing_on_exit() {
   trap - EXIT
   lane_end "${rc}"
   stop_live_invariants_lane
-  echo "[pre-merge] total seconds=$((SECONDS - START_SECONDS)) rc=${rc}" || true
+  echo "[pre-merge] total seconds=${TOTAL_SECONDS:-$((SECONDS - START_SECONDS))} rc=${rc}" || true
   exit "${rc}"
 }
 
@@ -283,7 +284,7 @@ timings_json() {
     lanes_json="$(printf '%s\n' "${LANE_TIMINGS[@]}" |
       jq -R 'split("\t") | {lane: .[0], seconds: (.[1] | tonumber), rc: (.[2] | tonumber)}' | jq -s .)"
   fi
-  jq -n --argjson lanes "${lanes_json}" --argjson total "$((SECONDS - START_SECONDS))" \
+  jq -n --argjson lanes "${lanes_json}" --argjson total "${TOTAL_SECONDS}" \
     '{total_seconds: $total, lanes: $lanes}'
 }
 
@@ -306,6 +307,8 @@ write_pr_parity_evidence() {
     labels_json="$(printf '%s\n' "${LABELS[@]}" | jq -R . | jq -s .)"
   fi
 
+  # One sample feeds both the evidence file and the exit report.
+  TOTAL_SECONDS=$((SECONDS - START_SECONDS))
   timings="$(timings_json)"
 
   jq -n \

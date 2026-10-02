@@ -4897,6 +4897,8 @@ jq -e '
   (.timings.lanes | map(.lane) == ["check-workflows", "job-pr-shape", "job-validate", "job-docs", "container-smoke", "verify-reproducible-build", "live-invariants"]) and
   (.timings.lanes | all(.rc == 0 and (.seconds | type == "number")))
 ' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" >/dev/null
+test "$(jq -r '.timings.total_seconds' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json")" = \
+  "$(sed -n 's/^\[pre-merge\] total seconds=\([0-9]*\) rc=0$/\1/p' /tmp/workcell-premerge-local-snapshot.out)"
 
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
