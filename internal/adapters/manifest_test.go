@@ -702,6 +702,9 @@ container_path = "/opt/demo.json"
 		"endpoint without port":   valid + "\n[egress]\nendpoints = [\"demo.example\"]\n",
 		"endpoint with shell":     valid + "\n[egress]\nendpoints = [\"$(id).example:443\"]\n",
 		"endpoint with a quote":   valid + "\n[egress]\nendpoints = [\"demo\\\".example:443\"]\n",
+		"endpoint port too big":   valid + "\n[egress]\nendpoints = [\"api.example:99999\"]\n",
+		"endpoint port zero":      valid + "\n[egress]\nendpoints = [\"api.example:0\"]\n",
+		"endpoint empty label":    valid + "\n[egress]\nendpoints = [\"api..example:443\"]\n",
 	}
 	if _, err := parseManifest("valid.toml", []byte(valid+"\n[egress]\nendpoints = [\"api.demo-1.example:443\"]\n")); err != nil {
 		t.Fatalf("valid fixture rejected: %v", err)

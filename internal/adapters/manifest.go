@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omkhar/workcell/internal/injectionpolicy"
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
 
@@ -258,6 +259,10 @@ func validateManifest(m Manifest, schema int) error {
 	for _, e := range m.EgressEndpoints {
 		if !endpointPattern.MatchString(e) {
 			return fmt.Errorf("invalid egress endpoint %q", e)
+		}
+		// The runtime allowlist grammar owns host and port semantics.
+		if err := injectionpolicy.ValidateEgressEndpoint(e, "egress endpoint"); err != nil {
+			return err
 		}
 	}
 	if m.Binary == "" {
