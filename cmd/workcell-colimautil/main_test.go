@@ -68,6 +68,8 @@ func TestRunRejectsWrongArity(t *testing.T) {
 	for _, args := range [][]string{
 		{"validate-runtime-mounts", "only-one"},
 		{"validate-profile-config", "a", "b"},
+		{"validate-runtime-mounts", "lima.yaml", "ws", "profile"},
+		{"validate-profile-config", "c", "w", "4", "8", "100"},
 	} {
 		err := run(args)
 		if err == nil || !strings.Contains(err.Error(), "usage:") {

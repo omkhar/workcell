@@ -10,7 +10,7 @@ set -euo pipefail
 # race is the residual risk.
 # The fix is a port of these checks to descriptor-relative code.
 
-readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin"
+readonly TRUSTED_HOST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin"
 export PATH="${TRUSTED_HOST_PATH}"
 scrub_host_process_env() {
   local env_name
@@ -22,6 +22,7 @@ scrub_host_process_env() {
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO
     unset WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION
+    unset WORKCELL_TEST_KVM_DEVICE
   fi
   unset PYTHONPATH PYTHONHOME PYTHONSAFEPATH PYTHONSTARTUP
   unset RUBYOPT RUBYLIB GEM_HOME GEM_PATH
@@ -2175,12 +2176,26 @@ emit_preview_remote_vm_dry_run() {
     "${WORKSPACE}"
 }
 
+# Returns 1 and names the cause when the selected Colima VM type is qemu and
+# /dev/kvm is not usable.  There is no QEMU TCG fallback.
+check_colima_kvm() {
+  local kvm_status=""
+
+  [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "$(colima_vm_type)" == "qemu" ]] || return 0
+  kvm_status="$(host_kvm_status)"
+  [[ "${kvm_status}" == "ready" ]] && return 0
+  echo "Workcell strict Colima on Linux needs KVM, but /dev/kvm is ${kvm_status}." >&2
+  echo "Workcell does not fall back to QEMU TCG emulation. Enable KVM and give this user read-write access to /dev/kvm." >&2
+  return 1
+}
+
 fail_for_unsupported_launch_target() {
   if support_matrix_launch_allowed || preview_remote_vm_dry_run_allowed; then
     return 0
   fi
 
   echo "Workcell launch is not supported for ${SUPPORT_MATRIX_HOST_OS}/${SUPPORT_MATRIX_HOST_ARCH}/${SUPPORT_MATRIX_HOST_DISTRO}/${SUPPORT_MATRIX_HOST_DISTRO_VERSION} on target $(current_target_kind)/$(current_target_provider)/$(current_target_assurance_class)." >&2
+  check_colima_kvm || true
   if [[ "${SUPPORT_MATRIX_STATUS}" == "validation-host-only" ]] && [[ "${SUPPORT_MATRIX_VALIDATION_LANE}" != "none" ]]; then
     echo "This combination is reserved for the reviewed validation-host lane: ${SUPPORT_MATRIX_VALIDATION_LANE}." >&2
   fi
@@ -7094,7 +7109,7 @@ validate_colima_runtime_mounts() {
     exit 2
   }
 
-  go_colimautil validate-runtime-mounts "${lima_path}" "${workspace}" "${profile}"
+  go_colimautil validate-runtime-mounts "${lima_path}" "${workspace}" "${profile}" "$(colima_mount_type)"
 }
 
 workspace_runtime_probe_path() {
@@ -7145,7 +7160,7 @@ validate_colima_profile_config() {
     exit 2
   }
 
-  go_colimautil validate-profile-config "${config_path}" "${workspace}" "${expected_cpu}" "${expected_memory}" "${expected_disk}"
+  go_colimautil validate-profile-config "${config_path}" "${workspace}" "${expected_cpu}" "${expected_memory}" "${expected_disk}" "$(colima_vm_type)" "$(colima_mount_type)"
 }
 
 validate_colima_profile() {
@@ -7156,7 +7171,7 @@ validate_colima_profile() {
     local -a pipe_status=()
     set +e
     run_host_colima status --profile "${profile}" 2>&1 |
-      run_go_hostutil_preserve_exit helper validate-colima-status "${profile}"
+      run_go_hostutil_preserve_exit helper validate-colima-status "${profile}" "$(colima_vm_type)" "$(colima_mount_type)"
     pipe_status=("${PIPESTATUS[@]}")
     ((pipe_status[0] == 0 && pipe_status[1] == 0))
   ); then
@@ -7189,12 +7204,12 @@ start_managed_profile() {
     if run_command_with_debug_log colima-start \
       run_host_colima start \
       --profile "${COLIMA_PROFILE}" \
-      --vm-type vz \
+      --vm-type "$(colima_vm_type)" \
       --mount "${workspace_mount}:w" \
       --mount "${host_inputs_root}" \
       --mount "${shadow_root}" \
       --mount "${token_handoff_root}:w" \
-      --mount-type virtiofs \
+      --mount-type "$(colima_mount_type)" \
       --runtime docker \
       --cpu "${COLIMA_CPU}" \
       --memory "${COLIMA_MEMORY}" \
@@ -7265,6 +7280,8 @@ is_trusted_host_tool_path() {
     /opt/homebrew/Caskroom/google-cloud-sdk
     /opt/homebrew/share/google-cloud-sdk
     /Applications/Docker.app/Contents/Resources/bin
+    /home/linuxbrew/.linuxbrew/bin
+    /home/linuxbrew/.linuxbrew/Cellar
   )
   local prefix
 
@@ -9063,6 +9080,15 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
   printf 'doctor_profile_state=%s\n' "${profile_state}"
   printf 'doctor_workspace_binding=%s\n' "${PROFILE_MARKER_WORKSPACE:-none}"
   printf 'doctor_prepared_image=%s\n' "${prepared_image}"
+  if [[ "${TARGET_BACKEND}" == "colima" ]]; then
+    printf 'doctor_colima_vm_type=%s\n' "$(colima_vm_type)"
+    printf 'doctor_colima_mount_type=%s\n' "$(colima_mount_type)"
+    if [[ "$(colima_vm_type)" == "qemu" ]]; then
+      printf 'doctor_kvm=%s\n' "$(host_kvm_status)"
+    else
+      printf 'doctor_kvm=not-required\n'
+    fi
+  fi
   if ! support_matrix_launch_allowed; then
     if [[ "${SUPPORT_MATRIX_STATUS}" == "preview-only" ]] && target_backend_is_remote_vm_preview "${TARGET_BACKEND}"; then
       if [[ "${HOST_TOOL_MISSING_CSV}" != "none" ]]; then
@@ -9096,6 +9122,10 @@ if [[ "${DOCTOR}" -eq 1 ]]; then
 fi
 
 fail_for_unsupported_launch_target
+if ! check_colima_kvm; then
+  echo "Run workcell --agent ${AGENT} --doctor --workspace ${WORKSPACE} to inspect the doctor_kvm state on this host." >&2
+  exit 2
+fi
 
 fail_fast_for_missing_gemini_auth "$@"
 fail_fast_for_missing_copilot_auth "$@"

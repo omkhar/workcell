@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -92,23 +93,36 @@ func runHostColimaWithContext(ctx context.Context, inv HostColimaInvocation) (in
 
 // ValidateColimaStatusOutput checks that the textual output of
 // `colima status --profile <profile>` advertises the configuration
-// invariants workcell expects (virtualization framework, virtiofs
-// mount, docker runtime).  It returns nil when the status text meets
-// every requirement, or an error describing the first missing marker.
-func ValidateColimaStatusOutput(status, profile string) error {
+// invariants workcell expects for the selected host VM type (vz on macOS,
+// qemu on Linux): the matching driver, the selected mount type, and the
+// docker runtime.  It returns nil when the status text meets every
+// requirement, or an error describing the first missing marker.
+func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error {
 	if profile == "" {
 		return errors.New("ValidateColimaStatusOutput: profile name is required")
 	}
+	drivers := map[string]string{"vz": "Virtualization.Framework", "qemu": "QEMU"}
+	driver, ok := drivers[vmType]
+	if !ok || mountType == "" {
+		return fmt.Errorf("ValidateColimaStatusOutput: unsupported vm type %q or mount type %q", vmType, mountType)
+	}
+	// Every marker must be a complete status line, optionally behind the
+	// logrus "INFO[0000] " prefix, so "9p-bogus", "QEMU-bogus", and
+	// "warning: mountType: 9p" never satisfy a check.
+	const linePrefix = `(?m)^(?:[A-Za-z]+\[\d+\]\s+)?`
+	field := func(text string) *regexp.Regexp {
+		return regexp.MustCompile(linePrefix + regexp.QuoteMeta(text) + `\s*$`)
+	}
 	checks := []struct {
-		needle  string
+		pattern *regexp.Regexp
 		message string
 	}{
-		{"Virtualization.Framework", "Colima profile " + profile + " is not using Virtualization.Framework."},
-		{"mountType: virtiofs", "Colima profile " + profile + " is not using virtiofs."},
-		{"runtime: docker", "Colima profile " + profile + " is not using Docker runtime."},
+		{regexp.MustCompile(`(?i)` + linePrefix + `(?:colima \[profile=\S+\] is running )?using (?:macOS )?` + regexp.QuoteMeta(driver) + `\s*$`), "Colima profile " + profile + " is not using " + driver + "."},
+		{field("mountType: " + mountType), "Colima profile " + profile + " is not using " + mountType + "."},
+		{field("runtime: docker"), "Colima profile " + profile + " is not using Docker runtime."},
 	}
 	for _, check := range checks {
-		if !strings.Contains(status, check.needle) {
+		if !check.pattern.MatchString(status) {
 			return errors.New(check.message)
 		}
 	}

@@ -136,6 +136,17 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/linux-colima-qemu-dry-run",
+      "description": "Linux hosts select the Colima qemu VM type with 9p mounts, the doctor names the /dev/kvm state, and launch fails closed without KVM instead of falling back to QEMU TCG",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "developer",
+      "test_file": "shared/test-linux-colima-qemu-dry-run.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/aws-remote-vm-dry-run",
       "description": "AWS remote VM preview target selection keeps the brokered target metadata, support boundary, and certification-only live gate explicit while allowing deterministic dry-run planning",
       "lane": "secretless",
