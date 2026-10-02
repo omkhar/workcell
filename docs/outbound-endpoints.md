@@ -149,6 +149,8 @@ The tables do not list other host names that use an allowed IP address.
 The fixed source functions are in these files:
 
 - `scripts/lib/launcher/egress-endpoints.sh`
+- `scripts/lib/launcher/generated-adapters.sh` (generated from
+  `adapters/<id>/adapter.toml`)
 - `scripts/workcell`
 
 The credential-derived endpoint source is

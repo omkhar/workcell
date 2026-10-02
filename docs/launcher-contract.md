@@ -244,7 +244,10 @@ also supplies list and host-alias helpers.
 ### `provider_endpoints()`
 
 This function returns the fixed service endpoints for Codex, Claude, Copilot,
-or Gemini.
+or Gemini. It is in
+[`generated-adapters.sh`](../scripts/lib/launcher/generated-adapters.sh).
+`scripts/generate-adapters-launcher-shell.sh` generates that file from the
+`[egress] endpoints` of each `adapters/<id>/adapter.toml`. Do not edit it.
 
 ### `target_broker_endpoints()`
 

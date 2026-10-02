@@ -211,6 +211,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"
   "${ROOT_DIR}/scripts/lib/launcher/go-hostutil.sh"
   "${ROOT_DIR}/scripts/lib/launcher/egress-endpoints.sh"
+  "${ROOT_DIR}/scripts/lib/launcher/generated-adapters.sh"
   "${ROOT_DIR}/scripts/lib/trusted-entrypoint.sh"
   "${ROOT_DIR}/scripts/lib/manage_injection_policy"
   "${ROOT_DIR}/scripts/lib/pty_transcript"
@@ -228,6 +229,8 @@ shell_files=(
   "${ROOT_DIR}/scripts/generate-workflow-lane-manifest.sh"
   "${ROOT_DIR}/scripts/generate-adapters-data.sh"
   "${ROOT_DIR}/scripts/generate-adapters-providerid.sh"
+  "${ROOT_DIR}/scripts/generate-adapters-launcher-shell.sh"
+  "${ROOT_DIR}/scripts/generate-adapters-runtime-shell.sh"
   "${ROOT_DIR}/scripts/install.sh"
   "${ROOT_DIR}/scripts/install-release.sh"
   "${ROOT_DIR}/scripts/install-workcell.sh"
@@ -275,6 +278,7 @@ shell_files=(
   "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
   "${ROOT_DIR}/runtime/container/detached-stdin-wrapper.sh"
   "${ROOT_DIR}/runtime/container/assurance.sh"
+  "${ROOT_DIR}/runtime/container/generated-adapters.sh"
   "${ROOT_DIR}/runtime/container/development-wrapper.sh"
   "${ROOT_DIR}/runtime/container/bin/git"
   "${ROOT_DIR}/runtime/container/bin/node"
@@ -294,8 +298,11 @@ shell_files=(
 )
 
 # These scripts are linted but are not executable in the tree. The container
-# image sets the mode on copy, and the parity library is sourced, not run.
+# image sets the mode on copy, and the parity library and the generated adapter
+# files are sourced, not run.
 non_executable_shell_files=(
+  "${ROOT_DIR}/runtime/container/generated-adapters.sh"
+  "${ROOT_DIR}/scripts/lib/launcher/generated-adapters.sh"
   "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
   "${ROOT_DIR}/runtime/container/detached-stdin-wrapper.sh"
   "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"

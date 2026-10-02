@@ -103,6 +103,8 @@ sanitize_development_env() {
 
 # shellcheck source=runtime/container/assurance.sh
 source /usr/local/libexec/workcell/assurance.sh
+# shellcheck source=runtime/container/generated-adapters.sh
+source /usr/local/libexec/workcell/generated-adapters.sh
 # shellcheck source=runtime/container/home-control-plane.sh
 source /usr/local/libexec/workcell/home-control-plane.sh
 # shellcheck source=runtime/container/runtime-user.sh
@@ -141,11 +143,9 @@ reject_protected_runtime_launch() {
   [[ -n "${command_path}" ]] || return 0
   command_name="${command_path##*/}"
 
-  case "${command_name}" in
-    codex | claude | copilot | gemini)
-      workcell_die "Workcell blocked direct provider command in development mode: ${command_name} (run through the managed provider entrypoint)."
-      ;;
-  esac
+  if workcell_supported_agent "${command_name}"; then
+    workcell_die "Workcell blocked direct provider command in development mode: ${command_name} (run through the managed provider entrypoint)."
+  fi
 
   if [[ "${command_path}" == */* ]]; then
     protected_match="$(development_wrapper_protected_runtime_match "${command_path}" || true)"

@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "1910083665f7a22c7d5fb2d28007eec023064128e63df18d7dd08370c9c03d30"
+      "sha256": "bc4abbb7fbbb22eee9a2b5201d86e483dbf90b6adcfe842e0874cd64e34929f5"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -26,7 +26,11 @@
     },
     {
       "repo_path": "scripts/lib/launcher/egress-endpoints.sh",
-      "sha256": "c2f135454657eeb47f23163002aebf1bfdb68bf61ffca929ef7bc2dfbcc4ccb7"
+      "sha256": "1e2e97aa55b44cec41fbadd5e29fee83548e4894b37b4f01b800c707dc87e75f"
+    },
+    {
+      "repo_path": "scripts/lib/launcher/generated-adapters.sh",
+      "sha256": "336f5a46197eb22c068c12d5745a24321277296dfa2489731b5a313c9ab69504"
     },
     {
       "repo_path": "scripts/lib/render_injection_bundle",
@@ -218,13 +222,19 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/development-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/development-wrapper.sh",
-      "sha256": "8984c4e56f2d69758933d4eba3a247dce06e3e81a721f882179f38f25e50f151"
+      "sha256": "9638b5a93232584536854dd25bd1a700e87b472f3c6844f2702d91b834f1ecbf"
     },
     {
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/entrypoint.sh",
       "runtime_path": "/usr/local/libexec/workcell/entrypoint.sh",
       "sha256": "afac9a84e26c6ec3378cfafc6f9fe7172ce59be4a5f3730dd3e5df96441aba5f"
+    },
+    {
+      "kind": "runtime-control-plane",
+      "repo_path": "runtime/container/generated-adapters.sh",
+      "runtime_path": "/usr/local/libexec/workcell/generated-adapters.sh",
+      "sha256": "97b1be3634ac2a0d99606b9b6069d7010ca361585d36c773c97b36ed27eca325"
     },
     {
       "kind": "runtime-control-plane",
@@ -254,7 +264,7 @@
       "kind": "runtime-control-plane",
       "repo_path": "runtime/container/provider-wrapper.sh",
       "runtime_path": "/usr/local/libexec/workcell/provider-wrapper.sh",
-      "sha256": "10987f463dbedfe2d1e5856bc4dc31377e40ea135928adbcc97853512b98c9bd"
+      "sha256": "59a0f23d4d25b1599ba78203d0223313bd2cd3628fd5f400435a21d184686c0f"
     },
     {
       "kind": "runtime-control-plane",
