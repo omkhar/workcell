@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
 const containerSmokeInputCommand = "bash -c 'exec 3<&0; exec </dev/null; source /dev/fd/3' <<'SCRIPT'"
@@ -178,9 +180,8 @@ func validateContainerSmokeHarness(source string) error {
 	}
 
 	// A per-commit epoch invalidates every cached runtime-image RUN layer.
-	require("smoke build epoch", source, `SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"`+"\n")
-	if strings.Contains(source, "log -1 --pretty=%ct") {
-		problems = append(problems, "smoke build epoch still follows the HEAD commit time")
+	if err := metadatautil.ValidateContainerSmokeBuildEpoch(source); err != nil {
+		problems = append(problems, err.Error())
 	}
 
 	if len(problems) != 0 {
