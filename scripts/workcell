@@ -119,14 +119,8 @@ source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"
 REAL_HOME="$(resolve_workcell_real_home)"
-case "$(uname -s 2>/dev/null || true)" in
-  Darwin)
-    export WORKCELL_GO_CACHE_ROOT="${REAL_HOME}/Library/Caches/workcell/go"
-    ;;
-  *)
-    export WORKCELL_GO_CACHE_ROOT="${XDG_CACHE_HOME:-${REAL_HOME}/.cache}/workcell/go"
-    ;;
-esac
+HOST_CACHE_ROOT="$(workcell_host_cache_root)"
+export WORKCELL_GO_CACHE_ROOT="${HOST_CACHE_ROOT}/workcell/go"
 # Sourced after REAL_HOME and WORKCELL_GO_CACHE_ROOT are established so the
 # go_hostutil/go_colimautil wrappers this module defines can never be invoked
 # with an unsanitised host home or Go cache root (security ordering invariant;

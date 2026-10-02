@@ -2343,6 +2343,34 @@ go_verify_citools workcell-check-batch "${ROOT_DIR}" \
   workcell-git-index-shadow \
   workcell-doc-scan-go-vcs || exit 1
 
+# workcell_host_cache_root: macOS stays under ~/Library/Caches; any other host
+# honours XDG_CACHE_HOME, then ~/.cache.  The launcher pins PATH, so a fake
+# uname on PATH is the only seam a macOS runner can drive the helper as Linux.
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
+CACHE_ROOT_UNAME_SHIM="$(mktemp -d)"
+for cache_root_os in Darwin Linux; do
+  mkdir -p "${CACHE_ROOT_UNAME_SHIM}/${cache_root_os}"
+  printf '#!/bin/sh\necho %s\n' "${cache_root_os}" >"${CACHE_ROOT_UNAME_SHIM}/${cache_root_os}/uname"
+  chmod 0755 "${CACHE_ROOT_UNAME_SHIM}/${cache_root_os}/uname"
+done
+cache_root_as() {
+  PATH="${CACHE_ROOT_UNAME_SHIM}/$1:${PATH}" XDG_CACHE_HOME="$2" REAL_HOME=/h workcell_host_cache_root
+}
+[[ "$(cache_root_as Darwin /xdg)" == "/h/Library/Caches" ]] || {
+  echo "Expected workcell_host_cache_root to keep ~/Library/Caches on macOS" >&2
+  exit 1
+}
+[[ "$(cache_root_as Linux /xdg)" == "/xdg" ]] || {
+  echo "Expected workcell_host_cache_root to honour XDG_CACHE_HOME on Linux" >&2
+  exit 1
+}
+[[ "$(cache_root_as Linux '')" == "/h/.cache" ]] || {
+  echo "Expected workcell_host_cache_root to fall back to ~/.cache on Linux" >&2
+  exit 1
+}
+rm -rf "${CACHE_ROOT_UNAME_SHIM}"
+
 go_cache_root_expected=""
 case "$(uname -s)" in
   Darwin)
