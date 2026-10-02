@@ -245,6 +245,14 @@ HOST_GATE_SCRIPTS=(
   "${ROOT_DIR}/scripts/verify-upstream-gemini-release.sh"
 )
 REPO_PRECOMMIT_HOOK="${ROOT_DIR}/.githooks/pre-commit"
+# --live-lane-only runs only the Darwin live-Colima lane, with its own fixtures.
+# --skip-live-lane runs every other check. scripts/pre-merge.sh runs the two in
+# parallel. A run without these options runs both, in order.
+VERIFY_INVARIANTS_LANES="all"
+case "${1:-}" in
+  --live-lane-only) VERIFY_INVARIANTS_LANES="live" ;;
+  --skip-live-lane) VERIFY_INVARIANTS_LANES="static" ;;
+esac
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "verify-invariants-entrypoint-ok"
@@ -507,6 +515,87 @@ verify_profile_target_state_dir() {
   printf '%s/.local/state/workcell/targets/local_vm/colima/%s\n' "${REAL_HOME}" "${profile_name}"
 }
 
+# Writes the reviewed auth-status credential fixture and its policy.toml into
+# the given directory. The static lane and the live lane each write their own.
+write_auth_status_fixture() {
+  local fixture_root="$1"
+
+  mkdir -p "${fixture_root}"
+  printf '{}\n' >"${fixture_root}/auth.json"
+  chmod 0600 "${fixture_root}/auth.json"
+  printf '{"token":"claude-auth"}\n' >"${fixture_root}/claude-auth.json"
+  chmod 0600 "${fixture_root}/claude-auth.json"
+  printf 'claude-key\n' >"${fixture_root}/claude-api-key.txt"
+  chmod 0600 "${fixture_root}/claude-api-key.txt"
+  printf 'copilot-token\n' >"${fixture_root}/copilot-github-token.txt"
+  chmod 0600 "${fixture_root}/copilot-github-token.txt"
+  printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${fixture_root}/gemini.env"
+  chmod 0600 "${fixture_root}/gemini.env"
+  printf '{"type":"authorized_user"}\n' >"${fixture_root}/gcloud-adc.json"
+  chmod 0600 "${fixture_root}/gcloud-adc.json"
+  printf '{"projects":{"verify":{"path":"/workspace"}}}\n' >"${fixture_root}/gemini-projects.json"
+  chmod 0600 "${fixture_root}/gemini-projects.json"
+  printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${fixture_root}/gemini-invalid.env"
+  chmod 0600 "${fixture_root}/gemini-invalid.env"
+  printf '[]\n' >"${fixture_root}/gemini-invalid-oauth.json"
+  chmod 0600 "${fixture_root}/gemini-invalid-oauth.json"
+  printf '{}\n' >"${fixture_root}/gcloud-adc-invalid.json"
+  chmod 0600 "${fixture_root}/gcloud-adc-invalid.json"
+  printf '{"projects":[]}\n' >"${fixture_root}/gemini-projects-invalid.json"
+  chmod 0600 "${fixture_root}/gemini-projects-invalid.json"
+  printf 'GOOGLE_GENAI_USE_GCA=true\n' >"${fixture_root}/gemini-gca.env"
+  chmod 0600 "${fixture_root}/gemini-gca.env"
+  cat >"${fixture_root}/gemini-vertex-comment.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=verify-project
+GOOGLE_CLOUD_LOCATION="us-central1" # comment
+EOF
+  chmod 0600 "${fixture_root}/gemini-vertex-comment.env"
+  cat >"${fixture_root}/hosts.yml" <<'EOF'
+github.com:
+  oauth_token: test-token
+EOF
+  chmod 0600 "${fixture_root}/hosts.yml"
+  cat >"${fixture_root}/ssh-config" <<'EOF'
+ProxyCommand nc %h %p
+EOF
+  chmod 0600 "${fixture_root}/ssh-config"
+  cat >"${fixture_root}/policy.toml" <<'EOF'
+version = 1
+[credentials]
+codex_auth = "auth.json"
+claude_auth = "claude-auth.json"
+claude_api_key = "claude-api-key.txt"
+gemini_env = "gemini.env"
+gemini_projects = "gemini-projects.json"
+gcloud_adc = "gcloud-adc.json"
+[credentials.copilot_github_token]
+source = "copilot-github-token.txt"
+[credentials.github_hosts]
+source = "hosts.yml"
+providers = ["codex", "claude", "gemini"]
+[ssh]
+enabled = true
+config = "ssh-config"
+allow_unsafe_config = true
+EOF
+  cat >"${fixture_root}/gemini.env" <<'EOF'
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_API_KEY=verify-google-key
+EOF
+  chmod 0600 "${fixture_root}/gemini.env"
+}
+
+host_tool_exists() {
+  local candidate
+  for candidate in "$@"; do
+    if [[ -x "${candidate}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 terminate_verify_process_tree_by_pid() {
   local target_pid="$1"
   local child_pid=""
@@ -643,6 +732,8 @@ cleanup() {
   [[ "${VERIFY_INVARIANTS_CLEANUP_ACTIVE}" -eq 0 ]] || return 0
   VERIFY_INVARIANTS_CLEANUP_ACTIVE=1
   trap - EXIT ERR
+  # A second stop signal must not cut the Colima profile deletion short.
+  trap '' INT TERM HUP
   set +e
 
   cleanup_detached_attach_probe
@@ -668,6 +759,11 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+if [[ "${VERIFY_INVARIANTS_LANES}" == "live" ]]; then
+  source "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+  exit 0
+fi
 
 if [[ -d "${ROOT_DRY_RUN_PROFILE_DIR}" ]] && [[ ! -f "${ROOT_DRY_RUN_PROFILE_DIR}/workcell.managed" ]]; then
   rm -rf "${ROOT_DRY_RUN_PROFILE_DIR}" "${ROOT_DRY_RUN_LIMA_DIR}"
@@ -3788,70 +3884,7 @@ grep -q 'sample transcript line' /tmp/workcell-logs-transcript-missing-workspace
 rm -rf "${REAL_HOME}/.colima/${DEBUG_LOG_PROFILE}" "${REAL_HOME}/.colima/${TRANSCRIPT_LOG_PROFILE}"
 
 AUTH_STATUS_ROOT="${BARRIER_VERIFY_ROOT}/auth-status"
-mkdir -p "${AUTH_STATUS_ROOT}"
-printf '{}\n' >"${AUTH_STATUS_ROOT}/auth.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/auth.json"
-printf '{"token":"claude-auth"}\n' >"${AUTH_STATUS_ROOT}/claude-auth.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/claude-auth.json"
-printf 'claude-key\n' >"${AUTH_STATUS_ROOT}/claude-api-key.txt"
-chmod 0600 "${AUTH_STATUS_ROOT}/claude-api-key.txt"
-printf 'copilot-token\n' >"${AUTH_STATUS_ROOT}/copilot-github-token.txt"
-chmod 0600 "${AUTH_STATUS_ROOT}/copilot-github-token.txt"
-printf 'GEMINI_API_KEY=verify-gemini-key\n' >"${AUTH_STATUS_ROOT}/gemini.env"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
-printf '{"type":"authorized_user"}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc.json"
-printf '{"projects":{"verify":{"path":"/workspace"}}}\n' >"${AUTH_STATUS_ROOT}/gemini-projects.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-projects.json"
-printf 'GOOGLE_GENAI_USE_VERTEXAI true\n' >"${AUTH_STATUS_ROOT}/gemini-invalid.env"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-invalid.env"
-printf '[]\n' >"${AUTH_STATUS_ROOT}/gemini-invalid-oauth.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-invalid-oauth.json"
-printf '{}\n' >"${AUTH_STATUS_ROOT}/gcloud-adc-invalid.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gcloud-adc-invalid.json"
-printf '{"projects":[]}\n' >"${AUTH_STATUS_ROOT}/gemini-projects-invalid.json"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-projects-invalid.json"
-printf 'GOOGLE_GENAI_USE_GCA=true\n' >"${AUTH_STATUS_ROOT}/gemini-gca.env"
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-gca.env"
-cat >"${AUTH_STATUS_ROOT}/gemini-vertex-comment.env" <<'EOF'
-GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_CLOUD_PROJECT=verify-project
-GOOGLE_CLOUD_LOCATION="us-central1" # comment
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini-vertex-comment.env"
-cat >"${AUTH_STATUS_ROOT}/hosts.yml" <<'EOF'
-github.com:
-  oauth_token: test-token
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/hosts.yml"
-cat >"${AUTH_STATUS_ROOT}/ssh-config" <<'EOF'
-ProxyCommand nc %h %p
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/ssh-config"
-cat >"${AUTH_STATUS_ROOT}/policy.toml" <<'EOF'
-version = 1
-[credentials]
-codex_auth = "auth.json"
-claude_auth = "claude-auth.json"
-claude_api_key = "claude-api-key.txt"
-gemini_env = "gemini.env"
-gemini_projects = "gemini-projects.json"
-gcloud_adc = "gcloud-adc.json"
-[credentials.copilot_github_token]
-source = "copilot-github-token.txt"
-[credentials.github_hosts]
-source = "hosts.yml"
-providers = ["codex", "claude", "gemini"]
-[ssh]
-enabled = true
-config = "ssh-config"
-allow_unsafe_config = true
-EOF
-cat >"${AUTH_STATUS_ROOT}/gemini.env" <<'EOF'
-GOOGLE_GENAI_USE_VERTEXAI=true
-GOOGLE_API_KEY=verify-google-key
-EOF
-chmod 0600 "${AUTH_STATUS_ROOT}/gemini.env"
+write_auth_status_fixture "${AUTH_STATUS_ROOT}"
 if ! "${ROOT_DIR}/scripts/workcell" \
   --agent codex \
   --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-auth-status" \
@@ -4558,9 +4591,30 @@ fi
 if [[ "$(basename "$0")" == "job-validate.sh" && "${WORKCELL_PREMERGE_TEST_CONSUME_STDIN:-0}" == "1" ]]; then
   cat >/dev/null
 fi
+if [[ "$(basename "$0")" == "${WORKCELL_PREMERGE_TEST_FAIL_LANE:-}" ]]; then
+  sleep "${WORKCELL_PREMERGE_TEST_FAIL_LANE_DELAY:-0}"
+  exit 9
+fi
 EOF
   chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/ci/${stub}"
 done
+# The live-lane stub records its start, and records its cleanup when a stop
+# signal reaches it, as the EXIT trap of verify-invariants.sh does.
+cat >"${PREMERGE_HARNESS_ROOT}/scripts/verify-invariants.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'verify-invariants.sh %s\n' "$*" >>"${PREMERGE_LOG}"
+[[ "${1-}" == "--live-lane-only" ]] || exit 0
+printf 'live-lane colima-start-timeout=%s\n' "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS-}" >>"${PREMERGE_LOG}"
+if [[ "${WORKCELL_PREMERGE_TEST_LIVE_HANG:-0}" == "1" ]]; then
+  trap 'printf "live-lane-cleanup pid=%s\n" "$$" >>"${PREMERGE_LOG}"; exit 143' TERM
+  printf 'live-lane-running pid=%s\n' "$$" >>"${PREMERGE_LOG}"
+  while :; do sleep 0.1; done
+fi
+printf 'live-lane-output\n'
+exit "${WORKCELL_PREMERGE_TEST_LIVE_STATUS:-0}"
+EOF
+chmod 0755 "${PREMERGE_HARNESS_ROOT}/scripts/verify-invariants.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/verify-reproducible-build.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4798,12 +4852,18 @@ for expected in \
   'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
   'check-workflows.sh ' \
   'ci/job-pr-shape.sh --base main' \
-  'ci/job-validate.sh --profile pr-parity' \
+  'ci/job-validate.sh --profile pr-parity --skip-host-invariants' \
+  'verify-invariants.sh --live-lane-only' \
+  'live-lane colima-start-timeout=360' \
+  'verify-invariants.sh --skip-live-lane' \
   'ci/job-docs.sh ' \
   'container-smoke.sh ' \
   'verify-reproducible-build.sh env WORKCELL_REPRO_PLATFORMS=linux/amd64,linux/arm64'; do
-  grep -q "${expected}" "${PREMERGE_LOG}"
+  grep -q -- "${expected}" "${PREMERGE_LOG}"
 done
+test "$(grep -c '^verify-invariants.sh ' "${PREMERGE_LOG}")" = 2
+grep -q '^live-lane-output$' /tmp/workcell-premerge-local-snapshot.out
+grep -q '^\[pre-merge\] live invariants lane passed$' /tmp/workcell-premerge-local-snapshot.out
 PREMERGE_EXPECTED_DISPATCH=$'scripts/check-workflows.sh\nscripts/ci/job-pr-shape.sh\nscripts/ci/job-validate.sh\nscripts/ci/job-docs.sh\nscripts/container-smoke.sh\nscripts/verify-reproducible-build.sh'
 if [[ "$(cat "${PREMERGE_DISPATCH_LOG}")" != "${PREMERGE_EXPECTED_DISPATCH}" ]]; then
   echo "Expected pre-merge to execute each selected local script once in local_order without sharing dispatcher stdin" >&2
@@ -4824,6 +4884,75 @@ done
 
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
+
+# A failed live lane fails the gate after the other lanes, with no evidence.
+: >"${PREMERGE_LOG}"
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_PREMERGE_TEST_LIVE_STATUS=7 \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" >/tmp/workcell-premerge-live-fail.out 2>&1; then
+  echo "Expected pre-merge to fail when the live invariants lane fails" >&2
+  exit 1
+fi
+grep -q 'live invariants lane failed with status 7' /tmp/workcell-premerge-live-fail.out
+grep -q 'verify-reproducible-build.sh env' "${PREMERGE_LOG}"
+test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+
+# A failed lane stops the running live lane and waits for its cleanup.
+: >"${PREMERGE_LOG}"
+if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
+  WORKCELL_PREMERGE_TEST_FAIL_LANE=job-docs.sh \
+  WORKCELL_PREMERGE_TEST_FAIL_LANE_DELAY=1 \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" >/tmp/workcell-premerge-live-stop.out 2>&1; then
+  echo "Expected pre-merge to fail when a lane fails" >&2
+  exit 1
+fi
+grep -q 'stopping the live invariants lane' /tmp/workcell-premerge-live-stop.out
+PREMERGE_LIVE_PID="$(sed -n 's/^live-lane-running pid=//p' "${PREMERGE_LOG}")"
+grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
+if kill -0 "${PREMERGE_LIVE_PID}" 2>/dev/null; then
+  echo "Expected the live invariants lane to exit before pre-merge" >&2
+  exit 1
+fi
+test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+
+# A stop signal to pre-merge also stops the live lane and waits for its cleanup.
+: >"${PREMERGE_LOG}"
+# pre-merge runs in its own process group, as under a terminal, and the signal
+# goes to that group. The live lane has its own group, so only the pre-merge
+# EXIT trap can stop it.
+set -m
+PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
+  WORKCELL_PREMERGE_TEST_FAIL_LANE=job-docs.sh \
+  WORKCELL_PREMERGE_TEST_FAIL_LANE_DELAY=30 \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" >/tmp/workcell-premerge-live-signal.out 2>&1 &
+PREMERGE_SIGNAL_PID=$!
+set +m
+for _ in $(seq 1 100); do
+  grep -q '^live-lane-running ' "${PREMERGE_LOG}" && grep -q '^ci/job-docs.sh ' "${PREMERGE_LOG}" && break
+  sleep 0.1
+done
+grep -q '^ci/job-docs.sh ' "${PREMERGE_LOG}"
+PREMERGE_LIVE_PID="$(sed -n 's/^live-lane-running pid=//p' "${PREMERGE_LOG}")"
+kill -TERM -- "-${PREMERGE_SIGNAL_PID}"
+PREMERGE_SIGNAL_STATUS=0
+wait "${PREMERGE_SIGNAL_PID}" 2>/dev/null || PREMERGE_SIGNAL_STATUS=$?
+test "${PREMERGE_SIGNAL_STATUS}" -ne 0
+grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
+if kill -0 "${PREMERGE_LIVE_PID}" 2>/dev/null; then
+  echo "Expected the live invariants lane to exit when pre-merge is stopped" >&2
+  exit 1
+fi
+test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+
+: >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
@@ -4898,7 +5027,9 @@ for expected in \
   'ci-plan.sh --profile release-preflight --event pull_request --base main --format json' \
   'check-workflows.sh ' \
   'ci/job-pr-shape.sh --base main' \
-  'ci/job-validate.sh --profile release-preflight' \
+  'ci/job-validate.sh --profile release-preflight --skip-host-invariants' \
+  'verify-invariants.sh --live-lane-only' \
+  'verify-invariants.sh --skip-live-lane' \
   'ci/job-docs.sh ' \
   'ci/job-pin-hygiene.sh ' \
   'container-smoke.sh ' \
@@ -6439,16 +6570,6 @@ if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
   fi
 fi
 
-host_tool_exists() {
-  local candidate
-  for candidate in "$@"; do
-    if [[ -x "${candidate}" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 if [[ -d "${REAL_HOME}/Library/Application Support" ]]; then
   if run_workcell_verify \
     HOME="${BARRIER_VERIFY_ROOT}/fake-home" \
@@ -6481,7 +6602,9 @@ for agent in claude gemini; do
   fi
 done
 
-source "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+if [[ "${VERIFY_INVARIANTS_LANES}" == "all" ]]; then
+  source "${ROOT_DIR}/scripts/verify-invariants-live.sh"
+fi
 
 UNMANAGED_PROFILE_NAME="workcell-unmanaged-verify-$$"
 mkdir -p "${REAL_HOME}/.colima/${UNMANAGED_PROFILE_NAME}"

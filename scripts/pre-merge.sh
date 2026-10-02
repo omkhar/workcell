@@ -22,6 +22,8 @@ PARITY_START_HEAD_OID=""
 PARITY_START_STATUS_SHA256=""
 PARITY_BASE_REF=""
 PARITY_BASE_OID=""
+LIVE_LANE_PID=""
+LIVE_LANE_LOG=""
 
 usage() {
   cat <<EOF
@@ -290,6 +292,51 @@ write_pr_parity_evidence() {
   echo "[pre-merge] wrote PR parity evidence to ${evidence_path}"
 }
 
+# The Darwin live-Colima invariant lane uses its own Colima VMs, Docker
+# daemons, and image tags, so it runs in parallel with the other lanes. It
+# starts in its own process group, so a stop signal reaches the lane and its
+# children, and its EXIT trap then deletes its Colima profiles.
+start_live_invariants_lane() {
+  LIVE_LANE_LOG="$(mktemp "${TMPDIR:-/tmp}/workcell-premerge-live.XXXXXX")"
+  echo "[pre-merge] live invariants lane started in parallel (log: ${LIVE_LANE_LOG})"
+  # A cold managed-profile boot took 131 s of the 180 s launcher default on a
+  # serial run. The parallel lanes load the same host, so this lane gets
+  # twice the default unless the caller sets a value.
+  set -m
+  WORKCELL_COLIMA_START_TIMEOUT_SECONDS="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-360}" \
+    "${ROOT_DIR}/scripts/verify-invariants.sh" --live-lane-only </dev/null >"${LIVE_LANE_LOG}" 2>&1 &
+  LIVE_LANE_PID=$!
+  set +m
+}
+
+finish_live_invariants_lane() {
+  local status=0
+
+  [[ -n "${LIVE_LANE_PID}" ]] || return 0
+  echo "[pre-merge] waiting for the live invariants lane"
+  wait "${LIVE_LANE_PID}" || status=$?
+  LIVE_LANE_PID=""
+  cat "${LIVE_LANE_LOG}"
+  rm -f "${LIVE_LANE_LOG}"
+  if [[ "${status}" -ne 0 ]]; then
+    echo "[pre-merge] live invariants lane failed with status ${status}" >&2
+    exit "${status}"
+  fi
+  echo "[pre-merge] live invariants lane passed"
+}
+
+# EXIT trap: a failed lane or a signal stops the live lane and waits for its
+# cleanup, so no managed Colima VM outlives the run.
+stop_live_invariants_lane() {
+  [[ -n "${LIVE_LANE_PID}" ]] || return 0
+  echo "[pre-merge] stopping the live invariants lane and waiting for its cleanup" >&2
+  kill -TERM -- "-${LIVE_LANE_PID}" 2>/dev/null || kill -TERM "${LIVE_LANE_PID}" 2>/dev/null || true
+  wait "${LIVE_LANE_PID}" 2>/dev/null || true
+  LIVE_LANE_PID=""
+  cat "${LIVE_LANE_LOG}" >&2 || true
+  rm -f "${LIVE_LANE_LOG}"
+}
+
 execute_plan() {
   local plan_json="$1"
   local selected_script_records=""
@@ -306,6 +353,10 @@ execute_plan() {
     selected_scripts[${#selected_scripts[@]}]="${script}"
   done 3<<<"${selected_script_records}"
   ((${#selected_scripts[@]} > 0)) || return 0
+
+  if [[ " ${selected_scripts[*]} " == *" scripts/ci/job-validate.sh "* ]]; then
+    start_live_invariants_lane
+  fi
 
   for script in "${selected_scripts[@]}"; do
     case "${script}" in
@@ -328,7 +379,9 @@ execute_plan() {
           WORKCELL_CI_VALIDATE_PROFILE="${PROFILE}" \
           WORKCELL_CI_VALIDATE_SKIP_RELEASE_BUNDLE="$([[ "${RUN_RELEASE_BUNDLE}" -eq 0 ]] && printf '1' || printf '0')" \
           SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
-          "${ROOT_DIR}/${script}" --profile "${PROFILE}"
+          "${ROOT_DIR}/${script}" --profile "${PROFILE}" --skip-host-invariants
+        echo "[pre-merge] host launcher invariants (the live lane runs in parallel)"
+        "${ROOT_DIR}/scripts/verify-invariants.sh" --skip-live-lane
         ;;
       scripts/ci/job-docs.sh)
         echo "[pre-merge] docs parity"
@@ -361,6 +414,8 @@ execute_plan() {
         ;;
     esac
   done
+
+  finish_live_invariants_lane
 }
 
 build_plan_args() {
@@ -522,6 +577,7 @@ echo "${plan_json}" | jq -r '
 '
 
 capture_pr_parity_start_state
+trap stop_live_invariants_lane EXIT
 execute_plan "${plan_json}"
 
 if [[ "${PROFILE}" == "pr-parity" ]]; then

@@ -120,3 +120,45 @@ func TestValidatorCacheMountIsGatedOnHostUID(t *testing.T) {
 		}
 	}
 }
+
+// The live-Colima lane writes its own fixtures, so it can run alone with
+// --live-lane-only (in parallel with the static lane) and still run in order
+// in a full verify-invariants.sh run.
+func TestLiveInvariantsLaneRunsAloneWithItsOwnFixtures(t *testing.T) {
+	t.Parallel()
+
+	live := readRepoFile(t, "scripts", "verify-invariants-live.sh")
+	for _, staticFixture := range []string{"${AUTH_STATUS_ROOT}", "${FILE_TRACE_CAPTURE}", "${NONGIT_WORKSPACE}"} {
+		if strings.Contains(live, staticFixture) {
+			t.Fatalf("live lane reads the static-lane fixture %s", staticFixture)
+		}
+	}
+	for _, want := range []string{
+		`write_auth_status_fixture "${LIVE_AUTH_STATUS_ROOT}"`,
+		`mkdir -p "${BARRIER_VERIFY_ROOT}/debug"`,
+		`printf '# marker\n' >"${LIVE_NONGIT_WORKSPACE}/AGENTS.md"`,
+	} {
+		if !strings.Contains(live, want) {
+			t.Fatalf("live lane does not write its own fixture: %q", want)
+		}
+	}
+
+	invariants := readRepoFile(t, "scripts", "verify-invariants.sh")
+	source := `  source "${ROOT_DIR}/scripts/verify-invariants-live.sh"`
+	if strings.Count(invariants, source) != 2 {
+		t.Fatal("verify-invariants.sh must source the live lane once for --live-lane-only and once for a full run")
+	}
+	for _, want := range []string{
+		"  --live-lane-only) VERIFY_INVARIANTS_LANES=\"live\" ;;\n  --skip-live-lane) VERIFY_INVARIANTS_LANES=\"static\" ;;\n",
+		"trap cleanup EXIT\n\nif [[ \"${VERIFY_INVARIANTS_LANES}\" == \"live\" ]]; then\n" + source + "\n  exit 0\nfi\n",
+		"if [[ \"${VERIFY_INVARIANTS_LANES}\" == \"all\" ]]; then\n" + source + "\nfi\n",
+		`write_auth_status_fixture "${AUTH_STATUS_ROOT}"`,
+	} {
+		if !strings.Contains(invariants, want) {
+			t.Fatalf("verify-invariants.sh lacks %q", want)
+		}
+	}
+	if strings.Index(invariants, "\nhost_tool_exists() {") > strings.Index(invariants, "\ntrap cleanup EXIT\n") {
+		t.Fatal("host_tool_exists must be defined before the --live-lane-only branch")
+	}
+}

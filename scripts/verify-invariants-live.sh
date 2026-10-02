@@ -1,10 +1,12 @@
 # shellcheck shell=bash
-# Darwin live-Colima verification lane. This file is sourced by
-# scripts/verify-invariants.sh only; it is not a standalone entrypoint. It
-# inherits the parent's sanitized environment, ERR and EXIT traps, helper
-# functions, and PID (the Colima profile names embed the parent's $$, and the
-# parent's cleanup trap reads the LIVE_* / *_PROFILE_NAME / DETACHED_*
-# variables this lane sets).
+# Darwin live-Colima verification lane. scripts/verify-invariants.sh sources
+# this file: in a full run after the static checks, or alone with
+# --live-lane-only. It is not an entrypoint of its own. It inherits the
+# sanitized environment, ERR and EXIT traps, helper functions, and PID of
+# verify-invariants.sh (the Colima profile names embed that $$, and the cleanup
+# trap reads the LIVE_* / *_PROFILE_NAME / DETACHED_* variables this lane
+# sets). It writes its own fixtures under BARRIER_VERIFY_ROOT, so it does not
+# depend on state from the static checks.
 #
 # VERIFY_INVARIANTS_EXPECTED_FAILURE is set here but read only by the parent's
 # ERR trap, so a standalone scan of this fragment flags it as unused.
@@ -40,6 +42,14 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
     echo "Cannot run live-debug audit verification on Darwin: host filesystem has less than 5 GiB free." >&2
     exit 1
   else
+    mkdir -p "${BARRIER_VERIFY_ROOT}/debug"
+    LIVE_AUTH_STATUS_ROOT="${BARRIER_VERIFY_ROOT}/live-auth-status"
+    write_auth_status_fixture "${LIVE_AUTH_STATUS_ROOT}"
+    LIVE_FILE_TRACE_CAPTURE="${BARRIER_VERIFY_ROOT}/debug/live-session.file-trace.log"
+    LIVE_NONGIT_WORKSPACE="${BARRIER_VERIFY_ROOT}/live-nongit-workspace"
+    mkdir -p "${LIVE_NONGIT_WORKSPACE}"
+    LIVE_NONGIT_WORKSPACE="$(cd "${LIVE_NONGIT_WORKSPACE}" && pwd -P)"
+    printf '# marker\n' >"${LIVE_NONGIT_WORKSPACE}/AGENTS.md"
     LIVE_DEBUG_PROFILE_NAME="workcell-live-debug-$$"
     LIVE_DETACHED_PROFILE_NAME="wcl-live-det-$$"
     delete_verify_colima_profile "${LIVE_DEBUG_PROFILE_NAME}"
@@ -59,7 +69,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --workspace "${ROOT_DIR}" \
       --vm-memory 6 \
       --vm-disk 80 \
-      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --debug-log "${LIVE_DEBUG_LOG}" >"${LIVE_DEBUG_PREPARE_OUT}" 2>&1; then
       echo "Expected audit verification prepare run to seed a managed image" >&2
@@ -78,16 +88,16 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       --vm-disk 80 \
       --no-default-injection-policy \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
-      --file-trace-log "${FILE_TRACE_CAPTURE}" \
+      --file-trace-log "${LIVE_FILE_TRACE_CAPTURE}" \
       --agent-arg --version >"${LIVE_DEBUG_FILE_TRACE_OUT}" 2>&1; then
       echo "Expected launched session with --file-trace-log to succeed" >&2
       cat "${LIVE_DEBUG_FILE_TRACE_OUT}" >&2
       exit 1
     fi
-    test -s "${FILE_TRACE_CAPTURE}"
-    grep -q 'event=provider-launch' "${FILE_TRACE_CAPTURE}"
-    grep -q 'event=watch-start' "${FILE_TRACE_CAPTURE}"
-    grep -q 'event=provider-exit' "${FILE_TRACE_CAPTURE}"
+    test -s "${LIVE_FILE_TRACE_CAPTURE}"
+    grep -q 'event=provider-launch' "${LIVE_FILE_TRACE_CAPTURE}"
+    grep -q 'event=watch-start' "${LIVE_FILE_TRACE_CAPTURE}"
+    grep -q 'event=provider-exit' "${LIVE_FILE_TRACE_CAPTURE}"
     if ! run_workcell_verify \
       --logs file-trace \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_LOGS_FILE_TRACE_OUT}" 2>&1; then
@@ -108,7 +118,7 @@ if [[ "$(uname -s)" == "Darwin" ]] &&
       cat "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}" >&2
       exit 1
     fi
-    grep -q "latest_file_trace_log=${FILE_TRACE_CAPTURE}" "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}"
+    grep -q "latest_file_trace_log=${LIVE_FILE_TRACE_CAPTURE}" "${LIVE_DEBUG_INSPECT_FILE_TRACE_OUT}"
     if ! run_workcell_verify \
       --logs debug \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" >"${LIVE_DEBUG_LOGS_DEBUG_OUT}" 2>&1; then
@@ -608,7 +618,7 @@ EOF
       --workspace "${ROOT_DIR}" \
       --vm-memory 7 \
       --vm-disk 80 \
-      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
       "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
@@ -648,7 +658,7 @@ EOF
       --workspace "${ROOT_DIR}" \
       --vm-memory 7 \
       --vm-disk 80 \
-      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
       "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
@@ -671,7 +681,7 @@ EOF
       --workspace "${ROOT_DIR}" \
       --vm-memory 7 \
       --vm-disk 80 \
-      --injection-policy "${AUTH_STATUS_ROOT}/policy.toml" \
+      --injection-policy "${LIVE_AUTH_STATUS_ROOT}/policy.toml" \
       --colima-profile "${LIVE_DEBUG_PROFILE_NAME}" \
       --allow-arbitrary-command \
       "--ack-arbitrary-command=${ACK_BREAKGLASS_TODAY_UTC}" \
@@ -701,7 +711,7 @@ EOF
     AUDIT_RESTORE_LIMA_DIR="${REAL_HOME}/.colima/_lima/colima-${AUDIT_RESTORE_PROFILE_NAME}"
     AUDIT_RESTORE_LOG="${AUDIT_RESTORE_STATE_DIR}/workcell.audit.log"
     mkdir -p "${AUDIT_RESTORE_DIR}" "${AUDIT_RESTORE_STATE_DIR}" "${AUDIT_RESTORE_LIMA_DIR}"
-    printf '%s\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
+    printf '%s\n' "${LIVE_NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_DIR}/workcell.managed"
     cat >"${AUDIT_RESTORE_LIMA_DIR}/lima.yaml" <<'EOF'
 cpu: 4
 memory: 8
@@ -710,14 +720,14 @@ runtime: docker
 vmType: vz
 mountType: virtiofs
 EOF
-    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
+    printf 'timestamp=test event=launch workspace=%q\n' "${LIVE_NONGIT_WORKSPACE}" >"${AUDIT_RESTORE_LOG}"
     if run_workcell_verify \
       --test-fail-after-profile-refresh \
       --agent codex \
       --no-default-injection-policy \
       --prepare \
       --allow-nongit-workspace \
-      --workspace "${NONGIT_WORKSPACE}" \
+      --workspace "${LIVE_NONGIT_WORKSPACE}" \
       --no-default-injection-policy \
       --colima-profile "${AUDIT_RESTORE_PROFILE_NAME}" \
       --agent-arg --version >/tmp/workcell-audit-restore.out 2>&1; then
@@ -733,7 +743,7 @@ EOF
     STRICT_REFRESH_DIR="${REAL_HOME}/.colima/${STRICT_REFRESH_PROFILE_NAME}"
     STRICT_REFRESH_STATE_DIR="$(verify_profile_target_state_dir "${STRICT_REFRESH_PROFILE_NAME}")"
     mkdir -p "${STRICT_REFRESH_DIR}" "${STRICT_REFRESH_STATE_DIR}"
-    printf '%s\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
+    printf '%s\n' "${LIVE_NONGIT_WORKSPACE}" >"${STRICT_REFRESH_DIR}/workcell.managed"
     cat >"${STRICT_REFRESH_DIR}/colima.yaml" <<'EOF'
 cpu: 4
 memory: 7
@@ -747,7 +757,7 @@ image_tag=workcell:local
 image_id=sha256:strict-refresh-fixture
 source_date_epoch=0
 EOF
-    printf 'timestamp=test event=launch workspace=%q\n' "${NONGIT_WORKSPACE}" >"${STRICT_REFRESH_STATE_DIR}/workcell.audit.log"
+    printf 'timestamp=test event=launch workspace=%q\n' "${LIVE_NONGIT_WORKSPACE}" >"${STRICT_REFRESH_STATE_DIR}/workcell.audit.log"
     VERIFY_INVARIANTS_EXPECTED_FAILURE=1
     set +e
     run_workcell_verify \
@@ -755,7 +765,7 @@ EOF
       --agent codex \
       --no-default-injection-policy \
       --allow-nongit-workspace \
-      --workspace "${NONGIT_WORKSPACE}" \
+      --workspace "${LIVE_NONGIT_WORKSPACE}" \
       --no-default-injection-policy \
       --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
       --agent-arg --version >/tmp/workcell-strict-refresh-preflight.out 2>&1
@@ -782,7 +792,7 @@ EOF
       --no-default-injection-policy \
       --prepare \
       --allow-nongit-workspace \
-      --workspace "${NONGIT_WORKSPACE}" \
+      --workspace "${LIVE_NONGIT_WORKSPACE}" \
       --no-default-injection-policy \
       --colima-profile "${STRICT_REFRESH_PROFILE_NAME}" \
       --agent-arg --version >/tmp/workcell-strict-refresh-prepare.out 2>&1
