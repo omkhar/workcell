@@ -91,6 +91,33 @@ func runHostColimaWithContext(ctx context.Context, inv HostColimaInvocation) (in
 	return colimaRunResult(result.runErr)
 }
 
+// colimaLogfmtRecord is the one quoted shape Colima 0.10 prints:
+// time="..." level=<level> msg="...". Quotes and backslashes never appear
+// inside a value, so a record cannot continue on another line.
+var colimaLogfmtRecord = regexp.MustCompile(`^time="[^"\\\r]*"[ \t]+level=(\w+)[ \t]+msg="([^"\\\r]*)"[ \t]*$`)
+
+// normalizeColimaStatus turns each logfmt record into its message and drops
+// non-info records. A line that holds a quote but is not a complete record is
+// malformed, so the whole output fails closed instead of letting a later line
+// stand in for a marker.
+func normalizeColimaStatus(status string) (string, error) {
+	lines := strings.Split(status, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, `"`) {
+			continue
+		}
+		m := colimaLogfmtRecord.FindStringSubmatch(line)
+		if m == nil {
+			return "", errors.New("Colima status output has a malformed quoted record.")
+		}
+		lines[i] = ""
+		if m[1] == "info" {
+			lines[i] = m[2]
+		}
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
 // ValidateColimaStatusOutput checks that the textual output of
 // `colima status --profile <profile>` advertises the configuration
 // invariants workcell expects for the selected host VM type (vz on macOS,
@@ -106,6 +133,10 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 	if !ok || mountType == "" {
 		return fmt.Errorf("ValidateColimaStatusOutput: unsupported vm type %q or mount type %q", vmType, mountType)
 	}
+	status, err := normalizeColimaStatus(status)
+	if err != nil {
+		return err
+	}
 	// Every marker must be a complete status line, optionally behind the
 	// logrus "INFO[0000] " prefix, so "9p-bogus", "QEMU-bogus", and
 	// "warning: mountType: 9p" never satisfy a check.
@@ -117,7 +148,7 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 		pattern *regexp.Regexp
 		message string
 	}{
-		{regexp.MustCompile(`(?i)` + linePrefix + `(?:colima \[profile=\S+\] is running )?using (?:macOS )?` + regexp.QuoteMeta(driver) + `\s*$`), "Colima profile " + profile + " is not using " + driver + "."},
+		{regexp.MustCompile(`(?i)` + linePrefix + `(?:colima (?:\[profile=\S+\] )?is running )?using (?:macOS )?` + regexp.QuoteMeta(driver) + `\s*$`), "Colima profile " + profile + " is not using " + driver + "."},
 		{field("mountType: " + mountType), "Colima profile " + profile + " is not using " + mountType + "."},
 		{field("runtime: docker"), "Colima profile " + profile + " is not using Docker runtime."},
 	}

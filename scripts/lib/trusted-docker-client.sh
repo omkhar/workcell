@@ -200,7 +200,13 @@ setup_workcell_trusted_docker_client() {
   fi
 
   real_home="$(resolve_workcell_real_home)"
-  WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker.XXXXXX")"
+  # The owner PID is part of the name, so scripts/uninstall.sh can tell a live
+  # sandbox from a stale one the moment mktemp creates it. No marker file or
+  # rename is needed.
+  if ! WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker.$$.XXXXXX")"; then
+    unset WORKCELL_DOCKER_SANDBOX_ROOT
+    return 1
+  fi
   WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"
   WORKCELL_DOCKER_CONFIG="${WORKCELL_DOCKER_SANDBOX_ROOT}/config"
   mkdir -p "${WORKCELL_DOCKER_HOME}" "${WORKCELL_DOCKER_CONFIG}"

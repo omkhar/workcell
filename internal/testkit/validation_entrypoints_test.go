@@ -1257,6 +1257,92 @@ func TestUninstallRemovesWorkcellStateWithoutRequiringGo(t *testing.T) {
 	}
 }
 
+// TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes runs
+// the real uninstaller. The dry run comes first and fails the test before the
+// real run if the uninstaller would touch scratch outside the test roots.
+func TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	tempRoot := t.TempDir()
+	sibling, err := os.MkdirTemp("/tmp", "workcell-docker.go-uninstall-sibling.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sibling) })
+
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	// The owner PID is part of the sandbox name.
+	self, gone := strconv.Itoa(os.Getpid()), strconv.Itoa(dead.Process.Pid)
+	stale := filepath.Join(tempRoot, "workcell-docker.stale")
+	nonDocker := filepath.Join(tempRoot, "workcell-provider-e2e."+self+".live")
+	live := filepath.Join(tempRoot, "workcell-docker."+self+".live")
+	deadOwner := filepath.Join(tempRoot, "workcell-docker."+gone+".dead")
+	for _, dir := range []string{stale, live, deadOwner, nonDocker} {
+		if err := os.MkdirAll(filepath.Join(dir, "home"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	script := filepath.Join(repoRoot(t), "scripts", "uninstall.sh")
+	run := func(args ...string) string {
+		cmd := exec.Command("bash", append([]string{script}, args...)...)
+		cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "WORKCELL_UNINSTALL_TEMP_ROOT=" + tempRoot}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("uninstall.sh %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	dryRun := run("--dry-run")
+	for _, line := range strings.Split(dryRun, "\n") {
+		target, ok := strings.CutPrefix(line, "Would remove ")
+		if ok && !strings.HasPrefix(target, home) && !strings.HasPrefix(target, tempRoot) {
+			t.Fatalf("uninstall dry run targets a path outside the test roots: %s\n%s", target, dryRun)
+		}
+	}
+
+	out := run()
+	if !strings.Contains(out, "Kept in-use "+live+"\n") {
+		t.Fatalf("uninstall did not report the live sandbox as kept:\n%s", out)
+	}
+	for _, kept := range []string{sibling, live} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("uninstall removed %s: %v\n%s", kept, err, out)
+		}
+	}
+	for _, removed := range []string{stale, deadOwner, nonDocker} {
+		if _, err := os.Stat(removed); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("uninstall kept %s (err=%v)\n%s", removed, err, out)
+		}
+	}
+}
+
+// TestUninstallKeepsTrustedDockerSandboxOfRunningProcess links the producer
+// (trusted-docker-client.sh names the sandbox after its owner PID) to the consumer (uninstall.sh).
+func TestUninstallKeepsTrustedDockerSandboxOfRunningProcess(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	home := t.TempDir()
+	tempRoot := t.TempDir()
+	cmd := exec.Command("bash", "-c", `set -euo pipefail
+source "$1/scripts/lib/trusted-docker-client.sh"
+setup_workcell_trusted_docker_client
+HOME="$2" WORKCELL_UNINSTALL_TEMP_ROOT="$3" bash "$1/scripts/uninstall.sh"
+test -d "${WORKCELL_DOCKER_HOME}"
+echo sandbox-survived`, "_", root, home, tempRoot)
+	cmd.Env = []string{"HOME=" + home, "TMPDIR=" + tempRoot, "PATH=" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "sandbox-survived") {
+		t.Fatalf("uninstall removed the sandbox of a running process: %v\n%s", err, out)
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 
