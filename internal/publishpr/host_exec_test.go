@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,11 +20,35 @@ func TestIsTrustedHostToolPathAcceptsAllowedPrefix(t *testing.T) {
 		"/usr/bin/git",
 		"/opt/homebrew/bin/gh",
 		"/Applications/Docker.app/Contents/Resources/bin/docker",
+		"/home/linuxbrew/.linuxbrew/bin/gh",
+		"/home/linuxbrew/.linuxbrew/Cellar/gh/2.0/bin/gh",
 	}
 	for _, p := range cases {
 		if !IsTrustedHostToolPath(p, ctx) {
 			t.Errorf("IsTrustedHostToolPath(%q) = false, want true", p)
 		}
+	}
+}
+
+// The Go table must list exactly the prefixes in scripts/workcell
+// is_trusted_host_tool_path().
+func TestTrustedHostToolPrefixesMatchLauncherTable(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "workcell"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, ok := strings.Cut(string(data), "local trusted_prefixes=(\n")
+	if !ok {
+		t.Fatal("trusted_prefixes table not found in scripts/workcell")
+	}
+	block, _, _ := strings.Cut(rest, "\n  )")
+	var bash []string
+	for _, line := range strings.Split(block, "\n") {
+		bash = append(bash, strings.TrimSpace(line))
+	}
+	if !reflect.DeepEqual(bash, trustedHostToolPrefixes) {
+		t.Fatalf("scripts/workcell prefixes %q != Go prefixes %q", bash, trustedHostToolPrefixes)
 	}
 }
 

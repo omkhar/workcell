@@ -65,6 +65,8 @@ var trustedHostToolPrefixes = []string{
 	"/opt/homebrew/Caskroom/google-cloud-sdk",
 	"/opt/homebrew/share/google-cloud-sdk",
 	"/Applications/Docker.app/Contents/Resources/bin",
+	"/home/linuxbrew/.linuxbrew/bin",
+	"/home/linuxbrew/.linuxbrew/Cellar",
 }
 
 // IsTrustedHostToolPath mirrors scripts/workcell is_trusted_host_tool_path:

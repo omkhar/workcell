@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -106,15 +107,16 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 		return fmt.Errorf("ValidateColimaStatusOutput: unsupported vm type %q or mount type %q", vmType, mountType)
 	}
 	checks := []struct {
-		needle  string
+		pattern *regexp.Regexp
 		message string
 	}{
-		{driver, "Colima profile " + profile + " is not using " + driver + "."},
-		{"mountType: " + mountType, "Colima profile " + profile + " is not using " + mountType + "."},
-		{"runtime: docker", "Colima profile " + profile + " is not using Docker runtime."},
+		{regexp.MustCompile(regexp.QuoteMeta(driver)), "Colima profile " + profile + " is not using " + driver + "."},
+		// Anchor the mount type to a complete field so "9p-bogus" never matches "9p".
+		{regexp.MustCompile(`(?m)(?:^|\s)mountType: ` + regexp.QuoteMeta(mountType) + `\s*$`), "Colima profile " + profile + " is not using " + mountType + "."},
+		{regexp.MustCompile(`runtime: docker`), "Colima profile " + profile + " is not using Docker runtime."},
 	}
 	for _, check := range checks {
-		if !strings.Contains(status, check.needle) {
+		if !check.pattern.MatchString(status) {
 			return errors.New(check.message)
 		}
 	}

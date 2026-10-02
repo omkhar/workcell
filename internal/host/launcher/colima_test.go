@@ -85,6 +85,7 @@ func TestValidateColimaStatusOutputMatchesSelectedVMType(t *testing.T) {
 		{vz, "qemu", "9p", "QEMU"},
 		{qemu, "vz", "virtiofs", "Virtualization.Framework"},
 		{strings.Replace(qemu, "9p", "reverse-sshfs", 1), "qemu", "9p", "9p"},
+		{strings.Replace(qemu, "9p", "9p-bogus", 1), "qemu", "9p", "9p"},
 		{qemu, "krunkit", "9p", "unsupported vm type"},
 	} {
 		err := ValidateColimaStatusOutput(tc.status, "wcl", tc.vmType, tc.mountType)
