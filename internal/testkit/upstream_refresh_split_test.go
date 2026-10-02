@@ -249,6 +249,14 @@ func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 					t.Fatalf("gh calls = %q, want %q", gh, want)
 				}
 			}
+			// The guard and the verify scripts cover the provider candidate only.
+			bodies, _ := os.ReadFile(ghLog + ".bodies")
+			if strings.Count(string(bodies), "scope guard: passed") != 1 || strings.Count(string(bodies), "scope guard: not-run") != 1 {
+				t.Fatalf("PR bodies = %q, want scope guard passed for provider and not-run for toolchain", bodies)
+			}
+			if strings.Count(auditText, "verify-upstream-*-release.sh") != 1 {
+				t.Fatalf("audit = %q, want the release verify claim for the provider candidate only", auditText)
+			}
 		})
 	}
 }

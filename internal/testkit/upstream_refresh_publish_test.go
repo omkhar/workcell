@@ -125,7 +125,7 @@ func writePublishFakeGH(t *testing.T, root string) string {
 		"  *git/refs\\ *) ;;\n" +
 		"  \"api graphql\"*) git write-tree >\"${FAKE_GH_LOG}.tree\"; echo \"${FAKE_COMMIT}\" ;;\n" +
 		"  *git/commits/*) printf '{\"tree\":{\"sha\":\"%s\"},\"parents\":[{\"sha\":\"%s\"}],\"verification\":{\"verified\":true}}\\n' \"${FAKE_TREE:-$(cat \"${FAKE_GH_LOG}.tree\")}\" \"${FAKE_PARENT}\" ;;\n" +
-		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; echo https://example.invalid/pr/1 ;;\n" +
+		"  \"pr create\"*) [ -z \"${FAKE_PR_CREATE_FAIL}\" ] || exit 1; for a; do [ \"${p}\" = --body-file ] && cat \"${a}\" >>\"${FAKE_GH_LOG}.bodies\"; p=\"${a}\"; done; echo https://example.invalid/pr/1 ;;\n" +
 		"  \"api -X DELETE\"*) ;;\n" +
 		"  *git/ref/heads/codex*) [ -n \"${FAKE_ORPHAN}\" ] || { echo \"${FAKE_REF_ERROR:-gh: Not Found (HTTP 404)}\" >&2; exit 1; } ;;\n" +
 		"  \"pr merge\"* | \"pr edit\"*) ;;\n" +

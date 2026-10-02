@@ -39,6 +39,8 @@ candidate_dir="$1"
 scope_result="$2"
 audit_file="$3"
 kind="$4"
+# The scope guard checks only the provider candidate.
+[[ "${kind}" == provider ]] || scope_result="not-run"
 metadata="${candidate_dir}/metadata.json"
 patch="${candidate_dir}/patch"
 : "${GH_TOKEN:?GH_TOKEN must hold the upstream-refresh App token}"
@@ -236,7 +238,11 @@ cooloff_hours="$(awk -F= '/^cooloff_hours[[:space:]]*=/ {gsub(/[[:space:]]/, "",
   echo "- commit: \`${commit_oid}\` (GitHub-verified, tree matches candidate)"
   echo "- merge: ${merge_line}"
   echo "- cool-off: ${cooloff_hours}h policy; the candidate selects only releases older than the cutoff"
-  echo "- provenance: the ${kind} updater --apply and --check passed in the refresh job, including the verify-upstream-*-release.sh checks"
+  if [[ "${kind}" == provider ]]; then
+    echo "- provenance: the provider updater --apply and --check passed in the refresh job, including the verify-upstream-*-release.sh checks"
+  else
+    echo "- provenance: the toolchain updater --apply and --check passed in the refresh job with --toolchain-only"
+  fi
   echo "- versions:"
   grep -E '^\+ARG (CLAUDE|CODEX|COPILOT|GEMINI)_[A-Z0-9_]*VERSION=' "${patch}" | sed -e 's/^+ARG /  - /' || true
   if [[ "${kind}" == provider && -s "${candidate_dir}/../provider-summary" ]]; then
