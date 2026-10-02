@@ -25,6 +25,28 @@ func scopeGuardCodexFixturePatch(oldVersion, newVersion string) string {
 		"+# codex-version: " + newVersion + "\n+# (openai/codex tag rust-v" + newVersion + ", x)\n"
 }
 
+// scopeGuardGeminiLockPatch is a real Gemini CLI bump diff of the lockfile
+// (git diff of a 0.62.0 to 0.63.0 edit). mutate may change it before use.
+func scopeGuardGeminiLockPatch(mutate func(string) string) string {
+	const sha = "sha512-A1rw0Tf2sHLpGncfYdaq5WaJIufKAP8il4BmHD5Yw4ewmB/Wo0vRQb2bEvx7OqyaPFPZCh0hVhcMKsICZyIBww=="
+	const lock = "runtime/container/providers/package-lock.json"
+	p := "diff --git a/" + lock + " b/" + lock + "\n" + scopeGuardIndex + "--- a/" + lock + "\n+++ b/" + lock + "\n" +
+		"@@ -9,7 +9,7 @@\n       \"version\": \"1.0.0\",\n       \"license\": \"Apache-2.0\",\n       \"dependencies\": {\n" +
+		"-        \"@google/gemini-cli\": \"0.62.0\"\n+        \"@google/gemini-cli\": \"0.63.0\"\n       }\n     },\n     \"node_modules/@github/keytar\": {\n" +
+		"@@ -24,9 +24,9 @@\n       }\n     },\n     \"node_modules/@google/gemini-cli\": {\n" +
+		"-      \"version\": \"0.62.0\",\n" +
+		"-      \"resolved\": \"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-0.62.0.tgz\",\n" +
+		"-      \"integrity\": \"" + sha + "\",\n" +
+		"+      \"version\": \"0.63.0\",\n" +
+		"+      \"resolved\": \"https://registry.npmjs.org/@google/gemini-cli/-/gemini-cli-0.63.0.tgz\",\n" +
+		"+      \"integrity\": \"" + strings.Replace(sha, "A1rw", "B1rw", 1) + "\",\n" +
+		"       \"license\": \"Apache-2.0\",\n       \"bin\": {\n         \"gemini\": \"bundle/gemini.js\"\n"
+	if mutate != nil {
+		p = mutate(p)
+	}
+	return p
+}
+
 func TestUpstreamRefreshScopeGuard(t *testing.T) {
 	t.Parallel()
 
@@ -285,9 +307,46 @@ func TestUpstreamRefreshScopeGuard(t *testing.T) {
 			wantErr: "both change to the same version",
 		},
 		{
-			name:    "lockfile resolution change",
+			name:    "lockfile resolution change without its owner context",
 			patch:   scopeGuardFilePatch("runtime/container/providers/package-lock.json", `"resolved": "a"`, `"resolved": "b"`),
-			wantErr: "path runtime/container/providers/package-lock.json",
+			wantErr: "only the Gemini CLI version",
+		},
+		{name: "gemini lockfile version bump", patch: scopeGuardGeminiLockPatch(nil)},
+		{
+			name:    "lockfile transitive package added",
+			patch:   scopeGuardGeminiLockPatch(nil) + "@@ -90,1 +91,6 @@\n     },\n+    \"node_modules/evil\": {\n+      \"version\": \"1.0.0\",\n+      \"resolved\": \"https://registry.npmjs.org/evil/-/evil-1.0.0.tgz\",\n+      \"integrity\": \"sha512-AAAA\"\n+    },\n",
+			wantErr: "only the Gemini CLI version",
+		},
+		{
+			name:    "lockfile other package integrity changed",
+			patch:   scopeGuardGeminiLockPatch(nil) + "@@ -40,3 +40,3 @@\n     \"node_modules/@lydell/node-pty\": {\n       \"version\": \"1.1.0\",\n-      \"integrity\": \"sha512-AAAA\",\n+      \"integrity\": \"sha512-BBBB\",\n",
+			wantErr: "only the Gemini CLI version",
+		},
+		{
+			name: "lockfile resolved outside the npm registry",
+			patch: scopeGuardGeminiLockPatch(func(p string) string {
+				return strings.Replace(p, "+      \"resolved\": \"https://registry.npmjs.org/", "+      \"resolved\": \"https://evil.example/", 1)
+			}),
+			wantErr: "only the Gemini CLI version",
+		},
+		{
+			name: "lockfile resolved version disagrees with the entry version",
+			patch: scopeGuardGeminiLockPatch(func(p string) string {
+				return strings.Replace(p, "gemini-cli-0.63.0.tgz", "gemini-cli-0.64.0.tgz", 1)
+			}),
+			wantErr: "only the Gemini CLI version",
+		},
+		{
+			name: "lockfile root pin disagrees with the entry version",
+			patch: scopeGuardGeminiLockPatch(func(p string) string {
+				return strings.Replace(p, `+        "@google/gemini-cli": "0.63.0"`, `+        "@google/gemini-cli": "0.64.0"`, 1)
+			}),
+			wantErr: "only the Gemini CLI version",
+		},
+		{
+			name:    "lockfile gemini optional dependency changed",
+			patch:   scopeGuardGeminiLockPatch(nil) + "@@ -36,2 +36,2 @@\n       \"optionalDependencies\": {\n-        \"@github/keytar\": \"7.10.6\",\n+        \"@github/keytar\": \"7.10.7\",\n",
+			wantErr: "only the Gemini CLI version",
 		},
 		{
 			name: "duplicate provider assignment added",

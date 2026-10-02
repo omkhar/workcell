@@ -214,6 +214,7 @@ The scope guard allows only these changes:
 
 - Provider version `ARG` lines and SHA-256 assignments in `runtime/container/Dockerfile`
 - The pinned Gemini CLI version line in `runtime/container/providers/package.json`
+- The Gemini CLI entry in `runtime/container/providers/package-lock.json`
 - The version stamp and source tag in the header of `tests/fixtures/codex-subcommands.txt`
 - `runtime/container/control-plane-manifest.json`
 
@@ -246,6 +247,12 @@ An operator can still use `./scripts/publish-upstream-refresh-pr.sh` for host pu
 The candidate artifact and issue are operator signals.
 They are not integrity evidence.
 The `publish` job proves candidate identity again before it writes.
+
+The scope guard accepts a lockfile change only when it edits two places.
+The first place is the `version`, `resolved`, and `integrity` lines of the `node_modules/@google/gemini-cli` entry.
+The second place is the root `@google/gemini-cli` pin.
+The `resolved` URL must be on `registry.npmjs.org` and must name the same version.
+Any other lockfile change is out of scope, including an added or removed package.
 
 ## Action and tool pins
 

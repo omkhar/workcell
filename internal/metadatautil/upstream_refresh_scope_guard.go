@@ -26,7 +26,10 @@ const (
 	scopeGuardDockerfilePath  = "runtime/container/Dockerfile"
 	scopeGuardPackageJSONPath = "runtime/container/providers/package.json"
 	scopeGuardCodexFixture    = "tests/fixtures/codex-subcommands.txt"
+	scopeGuardLockfilePath    = "runtime/container/providers/package-lock.json"
 )
+
+const scopeGuardLockSemver = `[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?`
 
 var (
 	// Dockerfile lines may change only when they are provider version ARG
@@ -42,10 +45,21 @@ var (
 	scopeGuardCodexStampLineRE = regexp.MustCompile(`^[-+](# codex-version: |#.*openai/codex tag rust-v)[0-9]+\.[0-9]+\.[0-9]+(\D|$)`)
 	scopeGuardSemverRE         = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+`)
 	scopeGuardPathRE           = regexp.MustCompile(
-		`^(runtime/container/providers/package\.json|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
+		`^(runtime/container/providers/package(-lock)?\.json|tests/fixtures/codex-subcommands\.txt|runtime/container/control-plane-manifest\.json)$`)
 	scopeGuardHeaderOnlyRE = regexp.MustCompile(
 		`^(old mode|new mode|deleted file mode|rename |copy |similarity |dissimilarity )`)
-	scopeGuardHunkRE = regexp.MustCompile(`^@@ -\d+(?:,(\d{1,6}))? \+\d+(?:,(\d{1,6}))? @@`)
+	// The lockfile may change only the Gemini CLI entry (version, resolved,
+	// integrity) and the root pin for it. Each changed block must follow the
+	// exact context line that names its owner. Any other changed line,
+	// including an added or removed package, breaks the block shape.
+	scopeGuardLockEntryContext = " " + `    "node_modules/@google/gemini-cli": {`
+	scopeGuardLockRootContext  = " " + `      "dependencies": {`
+	scopeGuardLockVersionRE    = regexp.MustCompile(`^([-+])      "version": "(` + scopeGuardLockSemver + `)",$`)
+	scopeGuardLockResolvedRE   = regexp.MustCompile(
+		`^([-+])      "resolved": "https://registry\.npmjs\.org/@google/gemini-cli/-/gemini-cli-(` + scopeGuardLockSemver + `)\.tgz",$`)
+	scopeGuardLockIntegrityRE = regexp.MustCompile(`^([-+])      "integrity": "sha512-[A-Za-z0-9+/]+=*",$`)
+	scopeGuardLockRootDepRE   = regexp.MustCompile(`^([-+])        "@google/gemini-cli": "(` + scopeGuardLockSemver + `)"$`)
+	scopeGuardHunkRE          = regexp.MustCompile(`^@@ -\d+(?:,(\d{1,6}))? \+\d+(?:,(\d{1,6}))? @@`)
 )
 
 // CheckUpstreamRefreshScope reads one git patch without following symlinks
@@ -66,6 +80,9 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 	var seen, newFile, afterChange, hunkChanged bool
 	var oldHeaders, newHeaders, hunks, remOld, remNew int
 	var removedKeys, addedKeys, addedVersions []string
+	var lockBlocks []scopeGuardLockBlock
+	var changedBefore bool
+	var prevLine string
 	closeSection := func() {
 		switch {
 		case file == "":
@@ -75,6 +92,8 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			fail("%s: incomplete patch section (no hunk)", file)
 		case !hunkChanged:
 			fail("%s: hunk without an added or removed line", file)
+		case file == scopeGuardLockfilePath && scopeGuardLockProblem(lockBlocks) != "":
+			fail("%s: %s", file, scopeGuardLockProblem(lockBlocks))
 		case file == scopeGuardCodexFixture && (len(addedVersions) != 2 || addedVersions[0] != addedVersions[1]):
 			fail("%s: the version stamp and source tag must both change to the same version", file)
 		case (file == scopeGuardDockerfilePath || file == scopeGuardCodexFixture || file == scopeGuardPackageJSONPath) && !slices.Equal(removedKeys, addedKeys):
@@ -99,13 +118,14 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 					fail("%s: misplaced no-newline marker", file)
 				}
 				afterChange = false
+				prevLine = line
 				continue
 			case strings.HasPrefix(line, "-"):
 				remOld--
-				afterChange, hunkChanged = true, true
+				changedBefore, afterChange, hunkChanged = afterChange, true, true
 			case strings.HasPrefix(line, "+"):
 				remNew--
-				afterChange, hunkChanged = true, true
+				changedBefore, afterChange, hunkChanged = afterChange, true, true
 			case strings.HasPrefix(line, " "):
 				remOld--
 				remNew--
@@ -119,6 +139,13 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 				fail("%s: hunk longer than its header", file)
 				remOld, remNew = 0, 0
 			}
+			if file == scopeGuardLockfilePath && (line[0] == '-' || line[0] == '+') {
+				if !changedBefore {
+					lockBlocks = append(lockBlocks, scopeGuardLockBlock{context: prevLine})
+				}
+				lockBlocks[len(lockBlocks)-1].lines = append(lockBlocks[len(lockBlocks)-1].lines, line)
+			}
+			prevLine = line
 			if (strings.HasPrefix(line, "-") || strings.HasPrefix(line, "+")) &&
 				(file == scopeGuardDockerfilePath && !scopeGuardDockerfileLineRE.MatchString(line) ||
 					file == scopeGuardPackageJSONPath && !scopeGuardPackageJSONLineRE.MatchString(line) ||
@@ -148,7 +175,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		case strings.HasPrefix(line, "diff --git "):
 			closeSection()
 			file, newFile, hunkChanged, oldHeaders, newHeaders, hunks = "", false, false, 0, 0, 0
-			removedKeys, addedKeys, addedVersions = nil, nil, nil
+			removedKeys, addedKeys, addedVersions, lockBlocks, prevLine = nil, nil, nil, nil, ""
 			if len(fields) != 4 || !strings.HasPrefix(fields[2], "a/") || !strings.HasPrefix(fields[3], "b/") || fields[2][2:] != fields[3][2:] {
 				fail("unsupported diff header (rename, copy, or unusual path): %s", line)
 				continue
@@ -201,7 +228,7 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 			if hunks > 0 && !hunkChanged {
 				fail("%s: hunk without an added or removed line", file)
 			}
-			afterChange, hunkChanged = false, false
+			afterChange, hunkChanged, prevLine = false, false, ""
 			remOld, remNew = scopeGuardHunkCount(m[1]), scopeGuardHunkCount(m[2])
 			if newFile && remOld != 0 {
 				fail("%s: new file hunk must have no old lines: %s", file, line)
@@ -235,6 +262,59 @@ func CheckUpstreamRefreshScope(patchPath string) error {
 		return errors.New(strings.Join(problems, "\n"))
 	}
 	return nil
+}
+
+// scopeGuardLockBlock is one run of changed lines and the line before it.
+type scopeGuardLockBlock struct {
+	context string
+	lines   []string
+}
+
+// scopeGuardLockProblem returns "" when the changed blocks are exactly the
+// Gemini CLI root pin and the Gemini CLI lockfile entry for one version bump.
+func scopeGuardLockProblem(blocks []scopeGuardLockBlock) string {
+	const shape = "only the Gemini CLI version, resolved, and integrity lines and the root pin may change"
+	if len(blocks) != 2 || blocks[0].context != scopeGuardLockRootContext || blocks[1].context != scopeGuardLockEntryContext ||
+		len(blocks[0].lines) != 2 || len(blocks[1].lines) != 6 {
+		return shape
+	}
+	root, entry := blocks[0].lines, blocks[1].lines
+	// git prints the removed lines first, then the added lines.
+	var oldVer, newVer string
+	for i, re := range []*regexp.Regexp{scopeGuardLockRootDepRE, scopeGuardLockRootDepRE} {
+		m := re.FindStringSubmatch(root[i])
+		if m == nil || m[1] != string("-+"[i]) {
+			return shape
+		}
+		if i == 0 {
+			oldVer = m[2]
+		} else {
+			newVer = m[2]
+		}
+	}
+	for i, line := range entry {
+		sign := string("-+"[i/3])
+		ver := oldVer
+		if i >= 3 {
+			ver = newVer
+		}
+		var m []string
+		switch i % 3 {
+		case 0:
+			m = scopeGuardLockVersionRE.FindStringSubmatch(line)
+		case 1:
+			m = scopeGuardLockResolvedRE.FindStringSubmatch(line)
+		default:
+			m = scopeGuardLockIntegrityRE.FindStringSubmatch(line)
+			if m != nil {
+				m = append(m, ver)
+			}
+		}
+		if m == nil || m[1] != sign || m[2] != ver {
+			return shape
+		}
+	}
+	return ""
 }
 
 func scopeGuardHunkCount(text string) int {
