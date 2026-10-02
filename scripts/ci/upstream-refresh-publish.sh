@@ -77,8 +77,8 @@ else
 fi
 branch="codex/upstream-refresh-${kind}-${GITHUB_RUN_ID}"
 # A legacy mixed refresh PR blocks both kinds.
-existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --limit 1000 --json title,url,headRefName,headRefOid,isCrossRepository \
-  --jq 'map(select(.isCrossRepository | not) | select(.title == "Refresh pinned upstreams" or (.headRefName | test("^codex/upstream-refresh-([0-9]+$|'"${kind}"'-)")))) | .[0] // empty')"
+existing_pr="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --base main --limit 1000 --json title,url,headRefName,headRefOid,isCrossRepository |
+  jq -L "$(dirname "${BASH_SOURCE[0]}")" -c --arg kind "${kind}" 'include "upstream-refresh-overlap"; overlap($kind) // empty')"
 # A PR from this run means an earlier attempt stopped after it opened the PR.
 # Resume its disposition. The commit checks below still run against its head.
 resume=0
