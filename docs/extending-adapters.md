@@ -20,8 +20,9 @@ In `adapters/<provider>/adapter.toml`:
 1. Add a `[credentials.<key>]` table.
 2. Set its `container_path` under `/opt/workcell/host-inputs/credentials/`.
 3. Add its provider-home destination to `[home] reserved_targets`.
-4. Run `scripts/generate-adapters-data.sh` and commit `data_gen.go`. The
-   generated-artifact check fails when the committed file is stale.
+4. Run `scripts/generate-adapters-data.sh` and
+   `scripts/generate-adapters-providerid.sh`, and commit both generated files.
+   The generated-artifact check fails when a committed file is stale.
 
 The reserved target stops a general copy rule that tries to replace a Workcell
 control file. See [Injection Policy explicit limits](injection-policy.md#explicit-limits).
@@ -99,10 +100,12 @@ For a new provider:
 
 1. Define the identifier in `internal/providerid`. A planned identifier can stay
    outside `AllProviders` and fail closed during implementation.
-2. Add `adapters/<provider>/adapter.toml` with credential keys, paths, and
-   reserved targets. Set `tier = "planned"` to keep the provider outside
-   `AllProviders` during this step.
-3. Run `scripts/generate-adapters-data.sh` and
+2. Add `adapters/<provider>/adapter.toml` with only the schema, `id`, and
+   `tier = "planned"`. A planned manifest cannot declare more, and it stays
+   outside `AllProviders`.
+3. When the adapter is ready, change the tier. Add the binary, install method,
+   credential keys, paths, and reserved targets to the manifest. Then run
+   `scripts/generate-adapters-data.sh` and
    `scripts/generate-adapters-providerid.sh`. Do not edit
    `CredentialMetadataProviders`, `AllProviders`, or the registry rows by hand.
 4. Add launcher validation and help output.
@@ -112,8 +115,8 @@ For a new provider:
 7. Add the provider binary and wrapper links to the runtime image.
 8. Add the provider allowlist, credential setup, and probe cases to
    `scripts/provider-e2e.sh`.
-9. Change the manifest tier from `planned` and run both generators again so
-   that `AllProviders` includes the identifier and validation can select it.
+9. Confirm that the generated `AllProviders` includes the identifier, so that
+   validation can select it.
 10. Run the deterministic tests for the final supported-provider set.
 11. Complete live provider certification before you sign the support-claim
    commit.
