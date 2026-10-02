@@ -4941,6 +4941,22 @@ if kill -0 "${PREMERGE_LIVE_PID}" 2>/dev/null; then
 fi
 test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
+# A closed stdout does not skip the live-lane cleanup. SIGPIPE is ignored, so
+# a write to the closed pipe fails with EPIPE under set -e.
+: >"${PREMERGE_LOG}"
+(
+  trap '' PIPE
+  PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+    PREMERGE_LOG="${PREMERGE_LOG}" \
+    WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+    WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
+    WORKCELL_PREMERGE_TEST_FAIL_LANE=job-docs.sh \
+    WORKCELL_PREMERGE_TEST_FAIL_LANE_DELAY=1 \
+    "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" 2>/dev/null | sed -n '/lane=job-pr-shape/q'
+) || true
+PREMERGE_LIVE_PID="$(sed -n 's/^live-lane-running pid=//p' "${PREMERGE_LOG}")"
+grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
+
 # A stop signal to pre-merge also stops the live lane and waits for its cleanup.
 : >"${PREMERGE_LOG}"
 # pre-merge runs in its own process group, as under a terminal, and the signal

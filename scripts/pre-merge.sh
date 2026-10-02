@@ -254,7 +254,8 @@ lane_begin() {
 }
 
 lane_record() {
-  echo "[pre-merge] lane=$1 seconds=$2 rc=$3"
+  # A closed stdout must not skip the live-lane cleanup that follows.
+  echo "[pre-merge] lane=$1 seconds=$2 rc=$3" || true
   LANE_TIMINGS[${#LANE_TIMINGS[@]}]="$1"$'\t'"$2"$'\t'"$3"
 }
 
@@ -271,7 +272,7 @@ report_timing_on_exit() {
   trap - EXIT
   lane_end "${rc}"
   stop_live_invariants_lane
-  echo "[pre-merge] total seconds=$((SECONDS - START_SECONDS)) rc=${rc}"
+  echo "[pre-merge] total seconds=$((SECONDS - START_SECONDS)) rc=${rc}" || true
   exit "${rc}"
 }
 
