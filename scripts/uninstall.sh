@@ -426,7 +426,7 @@ cleanup_temp_root() {
   for pattern in "${patterns[@]}"; do
     for candidate in "${temp_root}"/${pattern}; do
       [[ -O "${candidate}" ]] || continue
-      if temp_entry_owner_is_alive "${candidate}"; then
+      if [[ "${pattern}" == "workcell-docker.*" ]] && temp_entry_owner_is_alive "${candidate}"; then
         log_action "Kept in-use" "${candidate}"
         continue
       fi

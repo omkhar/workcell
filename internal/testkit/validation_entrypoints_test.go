@@ -1276,9 +1276,10 @@ func TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes(t *tes
 		t.Fatal(err)
 	}
 	stale := filepath.Join(tempRoot, "workcell-docker.stale")
+	nonDocker := filepath.Join(tempRoot, "workcell-provider-e2e.live-marker")
 	live := filepath.Join(tempRoot, "workcell-docker.live")
 	deadOwner := filepath.Join(tempRoot, "workcell-docker.dead-owner")
-	for dir, pid := range map[string]int{stale: 0, live: os.Getpid(), deadOwner: dead.Process.Pid} {
+	for dir, pid := range map[string]int{stale: 0, live: os.Getpid(), deadOwner: dead.Process.Pid, nonDocker: os.Getpid()} {
 		if err := os.MkdirAll(filepath.Join(dir, "home"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -1317,7 +1318,7 @@ func TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes(t *tes
 			t.Fatalf("uninstall removed %s: %v\n%s", kept, err, out)
 		}
 	}
-	for _, removed := range []string{stale, deadOwner} {
+	for _, removed := range []string{stale, deadOwner, nonDocker} {
 		if _, err := os.Stat(removed); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("uninstall kept %s (err=%v)\n%s", removed, err, out)
 		}
