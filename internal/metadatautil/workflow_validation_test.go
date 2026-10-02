@@ -1289,7 +1289,8 @@ jobs:
         with:
           cosign-release: ${{ env.WORKCELL_COSIGN_VERSION }}
       - run: sudo install -m 0755 "$(command -v cosign)" /usr/local/bin/cosign
-      - env:
+      - if: steps.existing_pr.outputs.provider == ''
+        env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
@@ -1300,7 +1301,8 @@ jobs:
           WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh --check
           ./scripts/check-pinned-inputs.sh
           ./scripts/ci/upstream-refresh-candidate.sh provider "${RUNNER_TEMP}/upstream-refresh-candidate"
-      - env:
+      - if: steps.existing_pr.outputs.toolchain == ''
+        env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
@@ -1425,6 +1427,9 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"toolchain refresh drops --toolchain-only", "./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log", "./scripts/update-upstream-pins.sh --apply | tee apply.log", "only with --toolchain-only"},
 		{"second full refresh in the provider step", "          ./scripts/ci/upstream-refresh-candidate.sh provider", "          ./scripts/update-upstream-pins.sh --apply\n          ./scripts/ci/upstream-refresh-candidate.sh provider", "only with --toolchain-only"},
 		{"toolchain refresh runs twice", "          ./scripts/ci/upstream-refresh-candidate.sh toolchain", "          ./scripts/update-upstream-pins.sh --apply --toolchain-only\n          ./scripts/ci/upstream-refresh-candidate.sh toolchain", "--apply --toolchain-only once"},
+		{"provider updater runs apply and check in one call", "update-provider-pins.sh --apply | tee provider.log\n          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" ./scripts/update-provider-pins.sh --check\n", "update-provider-pins.sh --apply --check | tee provider.log\n", "each updater --apply and --check once"},
+		{"provider step is skipped", "if: steps.existing_pr.outputs.provider == ''", "if: false", "must run only when"},
+		{"toolchain step gains a false condition", "if: steps.existing_pr.outputs.toolchain == ''", "if: steps.existing_pr.outputs.toolchain == '' && false", "must run only when"},
 		{"hosted signing input", "      - env:\n          GH_TOKEN: ${{ github.token }}\n        run: |\n          gh issue create", "      - env:\n          WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY }}\n        run: |\n          gh issue create", "WORKCELL_UPSTREAM_REFRESH_GPG_PRIVATE_KEY"},
 	}
 	for _, mutation := range mutations {

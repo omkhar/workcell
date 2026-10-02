@@ -916,43 +916,55 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	// would no longer apply to main alone.
 	// ShellInvocations reads no assignment prefix, so match the token-file
 	// form the workflow uses as well as the bare command.
-	toolchainApplies, providerApplies, providerChecks, toolchainChecks := 0, 0, 0, 0
-	builds := map[string]int{}
+	// Each counted invocation is one exact argument vector, so one call cannot
+	// stand for two modes. Its step runs only when no PR of that kind is open.
+	skipUnlessNoPR := func(kind string) string { return "steps.existing_pr.outputs." + kind + " == ''" }
+	const candidateDir = "${RUNNER_TEMP}/upstream-refresh-candidate"
+	count := map[string]int{}
 	for _, step := range refresh.Steps {
-		// The same parser anchors the provider updater and each candidate builder,
+		// The same parser anchors the updaters and each candidate builder,
 		// so a comment or an unrun branch cannot stand in for the invocation.
-		for _, run := range ShellInvocations(step.Run, "WORKCELL_GITHUB_API_TOKEN_FILE=${token_file} ./scripts/update-provider-pins.sh") {
-			if slices.Contains(run.Args, "--apply") {
-				providerApplies++
+		counted := func(kind string, runs []Invocation, vectors ...[]string) error {
+			for _, run := range runs {
+				for _, vector := range vectors {
+					if !slices.Equal(run.Args, vector) {
+						continue
+					}
+					if step.If.Kind != yaml.ScalarNode || strings.TrimSpace(step.If.Value) != skipUnlessNoPR(kind) {
+						return fmt.Errorf("%s refresh job step for the %s candidate must run only when %s", path, kind, skipUnlessNoPR(kind))
+					}
+					count[kind+" "+strings.Join(vector, " ")]++
+				}
 			}
-			if slices.Contains(run.Args, "--check") {
-				providerChecks++
-			}
+			return nil
 		}
-		for _, run := range ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-candidate.sh") {
-			if len(run.Args) == 2 && run.Args[1] == "${RUNNER_TEMP}/upstream-refresh-candidate" {
-				builds[run.Args[0]]++
-			}
+		builders := ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-candidate.sh")
+		if err := errors.Join(
+			counted("provider", ShellInvocations(step.Run, "WORKCELL_GITHUB_API_TOKEN_FILE=${token_file} ./scripts/update-provider-pins.sh"), []string{"--apply"}, []string{"--check"}),
+			counted("provider", builders, []string{"provider", candidateDir}),
+			counted("toolchain", builders, []string{"toolchain", candidateDir}),
+		); err != nil {
+			return err
 		}
 		for _, command := range []string{"./scripts/update-upstream-pins.sh", "WORKCELL_GITHUB_API_TOKEN_FILE=${token_file} ./scripts/update-upstream-pins.sh"} {
-			for _, run := range ShellInvocations(step.Run, command) {
+			runs := ShellInvocations(step.Run, command)
+			for _, run := range runs {
 				if !slices.Contains(run.Args, "--toolchain-only") {
 					return fmt.Errorf("%s refresh job must run ./scripts/update-upstream-pins.sh only with --toolchain-only", path)
 				}
-				if slices.Contains(run.Args, "--apply") {
-					toolchainApplies++
-				}
-				if slices.Contains(run.Args, "--check") {
-					toolchainChecks++
-				}
+			}
+			if err := counted("toolchain", runs, []string{"--apply", "--toolchain-only"}, []string{"--check", "--toolchain-only"}); err != nil {
+				return err
 			}
 		}
 	}
-	if toolchainApplies != 1 {
+	if count["toolchain --apply --toolchain-only"] != 1 {
 		return fmt.Errorf("%s refresh job must run ./scripts/update-upstream-pins.sh --apply --toolchain-only once", path)
 	}
-	if providerApplies != 1 || providerChecks != 1 || toolchainChecks != 1 || builds["provider"] != 1 || builds["toolchain"] != 1 {
-		return fmt.Errorf("%s refresh job must run each updater --apply and --check once and build the provider and toolchain candidates once each", path)
+	for _, key := range []string{"provider --apply", "provider --check", "toolchain --check --toolchain-only", "provider provider " + candidateDir, "toolchain toolchain " + candidateDir} {
+		if count[key] != 1 {
+			return fmt.Errorf("%s refresh job must run each updater --apply and --check once and build the provider and toolchain candidates once each", path)
+		}
 	}
 	guard := document.Jobs["scope-guard"]
 	if !maps.Equal(guard.Permissions, map[string]string{"contents": "read"}) {
