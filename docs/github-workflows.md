@@ -214,6 +214,7 @@ The scope guard allows only these changes:
 
 - Provider version `ARG` lines and SHA-256 assignments in `runtime/container/Dockerfile`
 - The pinned Gemini CLI version line in `runtime/container/providers/package.json`
+- The Gemini CLI entry in `runtime/container/providers/package-lock.json`
 - The version stamp and source tag in the header of `tests/fixtures/codex-subcommands.txt`
 - `runtime/container/control-plane-manifest.json`
 
@@ -247,17 +248,7 @@ The candidate artifact and issue are operator signals.
 They are not integrity evidence.
 The `publish` job proves candidate identity again before it writes.
 
-The auto-merge scope guard (`scripts/ci/upstream-refresh-scope-guard.sh`) limits an automatic merge to the agent-bump surface.
-A human must review an out-of-scope bump.
-The surface has these parts:
-
-- the Claude, Codex, and Copilot version and checksum lines in the Dockerfile
-- the Codex command-inventory stamp
-- the Gemini CLI pin in `runtime/container/providers/package.json`
-- the control-plane manifest
-- the Gemini CLI entry in `runtime/container/providers/package-lock.json`
-
-The lockfile change is in scope only when it edits two places.
+The scope guard accepts a lockfile change only when it edits two places.
 The first place is the `version`, `resolved`, and `integrity` lines of the `node_modules/@google/gemini-cli` entry.
 The second place is the root `@google/gemini-cli` pin.
 The `resolved` URL must be on `registry.npmjs.org` and must name the same version.
