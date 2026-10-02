@@ -33,6 +33,10 @@ The validate lane then runs `verify-invariants.sh --skip-live-lane`.
 On a failure or a stop signal, it stops the live lane and waits for its cleanup.
 That cleanup deletes the Colima profiles of the lane.
 
+It prints one line for each lane: `[pre-merge] lane=<name> seconds=<n> rc=<rc>`.
+It prints `[pre-merge] total seconds=<n> rc=<rc>` when it exits.
+The PR-parity evidence file records the same data in `timings`.
+
 For an approved large adapter PR, use both required options:
 
 ```bash

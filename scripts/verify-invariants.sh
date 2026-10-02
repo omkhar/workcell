@@ -4871,6 +4871,10 @@ done
 test "$(grep -c '^verify-invariants.sh ' "${PREMERGE_LOG}")" = 2
 grep -q '^live-lane-output$' /tmp/workcell-premerge-local-snapshot.out
 grep -q '^\[pre-merge\] live invariants lane passed$' /tmp/workcell-premerge-local-snapshot.out
+for lane in check-workflows job-pr-shape job-validate job-docs container-smoke verify-reproducible-build live-invariants; do
+  grep -Eq "^\[pre-merge\] lane=${lane} seconds=[0-9]+ rc=0$" /tmp/workcell-premerge-local-snapshot.out
+done
+grep -Eq '^\[pre-merge\] total seconds=[0-9]+ rc=0$' /tmp/workcell-premerge-local-snapshot.out
 PREMERGE_EXPECTED_DISPATCH=$'scripts/check-workflows.sh\nscripts/ci/job-pr-shape.sh\nscripts/ci/job-validate.sh\nscripts/ci/job-docs.sh\nscripts/container-smoke.sh\nscripts/verify-reproducible-build.sh'
 if [[ "$(cat "${PREMERGE_DISPATCH_LOG}")" != "${PREMERGE_EXPECTED_DISPATCH}" ]]; then
   echo "Expected pre-merge to execute each selected local script once in local_order without sharing dispatcher stdin" >&2
@@ -4888,6 +4892,13 @@ for expected in \
   '"status_sha256":'; do
   grep -q "${expected}" "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 done
+jq -e '
+  (.timings.total_seconds | type == "number") and
+  (.timings.lanes | map(.lane) == ["check-workflows", "job-pr-shape", "job-validate", "job-docs", "container-smoke", "verify-reproducible-build", "live-invariants"]) and
+  (.timings.lanes | all(.rc == 0 and (.seconds | type == "number")))
+' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" >/dev/null
+test "$(jq -r '.timings.total_seconds' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json")" = \
+  "$(sed -n 's/^\[pre-merge\] total seconds=\([0-9]*\) rc=0$/\1/p' /tmp/workcell-premerge-local-snapshot.out)"
 
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
@@ -4903,6 +4914,7 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'live invariants lane failed with status 7' /tmp/workcell-premerge-live-fail.out
+grep -Eq '^\[pre-merge\] lane=live-invariants seconds=[0-9]+ rc=7$' /tmp/workcell-premerge-live-fail.out
 grep -q 'verify-reproducible-build.sh env' "${PREMERGE_LOG}"
 test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
@@ -4919,6 +4931,10 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'stopping the live invariants lane' /tmp/workcell-premerge-live-stop.out
+# The failed lane reports its time before the live-lane cleanup starts.
+test "$(grep -nE '^\[pre-merge\] lane=job-docs seconds=[0-9]+ rc=[1-9]' /tmp/workcell-premerge-live-stop.out | cut -d: -f1)" -lt \
+  "$(grep -n 'stopping the live invariants lane' /tmp/workcell-premerge-live-stop.out | cut -d: -f1)"
+grep -Eq '^\[pre-merge\] lane=live-invariants seconds=[0-9]+ rc=' /tmp/workcell-premerge-live-stop.out
 PREMERGE_LIVE_PID="$(sed -n 's/^live-lane-running pid=//p' "${PREMERGE_LOG}")"
 grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
 if kill -0 "${PREMERGE_LIVE_PID}" 2>/dev/null; then
@@ -4926,6 +4942,22 @@ if kill -0 "${PREMERGE_LIVE_PID}" 2>/dev/null; then
   exit 1
 fi
 test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
+
+# A closed stdout does not skip the live-lane cleanup. SIGPIPE is ignored, so
+# a write to the closed pipe fails with EPIPE under set -e.
+: >"${PREMERGE_LOG}"
+(
+  trap '' PIPE
+  PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+    PREMERGE_LOG="${PREMERGE_LOG}" \
+    WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+    WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
+    WORKCELL_PREMERGE_TEST_FAIL_LANE=job-docs.sh \
+    WORKCELL_PREMERGE_TEST_FAIL_LANE_DELAY=1 \
+    "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" 2>/dev/null | sed -n '/lane=job-pr-shape/q'
+) || true
+PREMERGE_LIVE_PID="$(sed -n 's/^live-lane-running pid=//p' "${PREMERGE_LOG}")"
+grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
 
 # A stop signal to pre-merge also stops the live lane and waits for its cleanup.
 : >"${PREMERGE_LOG}"
@@ -4983,6 +5015,7 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'validation changed the publishable tree' /tmp/workcell-premerge-mutated-tree.out
+grep -Eq '^\[pre-merge\] total seconds=[0-9]+ rc=2$' /tmp/workcell-premerge-mutated-tree.out
 test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
 : >"${PREMERGE_LOG}"
