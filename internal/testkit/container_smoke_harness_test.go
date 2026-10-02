@@ -177,6 +177,12 @@ func validateContainerSmokeHarness(source string) error {
 		}
 	}
 
+	// A per-commit epoch invalidates every cached runtime-image RUN layer.
+	require("smoke build epoch", source, `SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"`+"\n")
+	if strings.Contains(source, "log -1 --pretty=%ct") {
+		problems = append(problems, "smoke build epoch still follows the HEAD commit time")
+	}
+
 	if len(problems) != 0 {
 		return fmt.Errorf("container smoke harness validation failed:\n- %s", strings.Join(problems, "\n- "))
 	}
@@ -365,6 +371,11 @@ func TestContainerSmokeHarnessRejectsMutations(t *testing.T) {
 			name:        "exact-success-marker-removed",
 			anchor:      `printf 'raw-execveat-fd-script-allowed\n'`,
 			replacement: `printf 'raw-execveat-fd-script-ran\n'`,
+		},
+		{
+			name:        "smoke-build-epoch-follows-head-commit",
+			anchor:      `SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"`,
+			replacement: `SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"`,
 		},
 		{
 			name:        "generic-einval-accepted",

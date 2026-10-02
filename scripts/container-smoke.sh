@@ -28,7 +28,10 @@ GO_BIN="${WORKCELL_GO_BIN:-}"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
 IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
 DOCKER_CONTEXT_NAME="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT:-}"
-SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
+# Smoke tests image behavior, not release bytes. A per-commit epoch reaches
+# every runtime-image RUN layer and defeats the BuildKit cache, so default to
+# a fixed epoch. verify-reproducible-build.sh keeps the commit epoch.
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
 HOST_UID="${WORKCELL_TEST_HOST_UID:-$(id -u)}"
 HOST_GID="${WORKCELL_TEST_HOST_GID:-$(id -g)}"
 HOST_USER="${WORKCELL_TEST_HOST_USER:-$(id -un)}"
