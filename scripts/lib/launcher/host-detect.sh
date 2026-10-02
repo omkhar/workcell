@@ -8,7 +8,7 @@
 # decomposition (roadmap item D4).  These helpers normalise the host OS,
 # architecture, and (on Linux) distribution/version into the lowercased
 # values the launcher's support-matrix logic consumes.  They depend only
-# on uname/ps/PPID/env vars and each other — no other launcher function —
+# on uname/ps/PPID/env vars, /dev/kvm, and each other — no other launcher function —
 # so they are a self-contained, behaviour-preserving unit.  See
 # docs/launcher-contract.md for the module contract.
 
@@ -26,7 +26,8 @@ support_matrix_host_override_allowed() {
       *"tests/scenarios/shared/test-copilot-session-dry-run.sh"* | \
       *"tests/scenarios/shared/test-compat-target-dry-run.sh"* | \
       *"tests/scenarios/shared/test-gcp-remote-vm-dry-run.sh"* | \
-      *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"*)
+      *"tests/scenarios/shared/test-aws-remote-vm-dry-run.sh"* | \
+      *"tests/scenarios/shared/test-linux-colima-qemu-dry-run.sh"*)
       return 0
       ;;
   esac
@@ -45,6 +46,50 @@ workcell_host_cache_root() {
       printf '%s\n' "${XDG_CACHE_HOME:-${REAL_HOME}/.cache}"
       ;;
   esac
+}
+
+# Per-host managed Colima VM type: vz on macOS, qemu on Linux.  Linux has no
+# vz, and Lima's QEMU driver is the reviewed Linux path.
+colima_vm_type() {
+  case "$(detected_host_os)" in
+    linux)
+      printf 'qemu\n'
+      ;;
+    *)
+      printf 'vz\n'
+      ;;
+  esac
+}
+
+# Mount type for the selected VM type: virtiofs for vz, 9p for qemu (Lima's
+# QEMU default since v1.0; virtiofs on QEMU is experimental in Lima, and
+# reverse-sshfs needs an SFTP server on the host).
+colima_mount_type() {
+  case "$(colima_vm_type)" in
+    qemu)
+      printf '9p\n'
+      ;;
+    *)
+      printf 'virtiofs\n'
+      ;;
+  esac
+}
+
+# KVM state for the qemu VM type: ready, missing, or denied (exists but this
+# user cannot open it read-write).  Workcell never falls back to QEMU TCG.
+host_kvm_status() {
+  local device="/dev/kvm"
+
+  if support_matrix_host_override_allowed && [[ -n "${WORKCELL_TEST_KVM_DEVICE:-}" ]]; then
+    device="${WORKCELL_TEST_KVM_DEVICE}"
+  fi
+  if [[ ! -e "${device}" ]]; then
+    printf 'missing\n'
+  elif { : <>"${device}"; } 2>/dev/null; then
+    printf 'ready\n'
+  else
+    printf 'denied\n'
+  fi
 }
 
 detected_host_os() {

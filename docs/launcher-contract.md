@@ -119,8 +119,8 @@ refresh.
 
 [`host-detect.sh`](../scripts/lib/launcher/host-detect.sh) returns normalized,
 lowercase host fields during detection without a test override. The module uses
-`uname`, `ps`, `tr`, `PPID`, environment values, `/etc/os-release`, and its own
-functions.
+`uname`, `ps`, `tr`, `PPID`, environment values, `/etc/os-release`,
+`/dev/kvm`, and its own functions.
 
 ### `support_matrix_host_override_allowed()`
 
@@ -150,9 +150,31 @@ Darwin, it returns `${REAL_HOME}/Library/Caches`. On any other host, it returns
 `XDG_CACHE_HOME`, or `${REAL_HOME}/.cache` when `XDG_CACHE_HOME` is unset or
 empty. The caller adds the `workcell` path parts.
 
+### `colima_vm_type()`
+
+This function returns the managed Colima VM type. On Linux, it returns `qemu`.
+On any other host, it returns `vz`.
+
+### `colima_mount_type()`
+
+This function returns the mount type for the selected VM type. For `qemu`, it
+returns `9p`. For `vz`, it returns `virtiofs`. The launcher starts the profile
+with this mount type. The Lima config, the Colima config, and the Colima status
+must show this mount type and no other.
+
+### `host_kvm_status()`
+
+This function returns `ready` when the user can open `/dev/kvm` for read and
+write. It returns `missing` when the device does not exist, and `denied` when
+the device exists but the open fails. When the VM type is `qemu` and the state
+is not `ready`, the launch stops with status `2`. Workcell does not use QEMU
+TCG emulation. `--doctor` shows the state in `doctor_kvm`.
+
 ### Harness-only overrides
 
 An allowed test override passes through without a case change.
+`WORKCELL_TEST_KVM_DEVICE` replaces the `/dev/kvm` path for an allowed harness.
+The launcher removes this value when the sanitized-entrypoint marker is absent.
 
 ## Trusted host-command execution (`host-exec.sh`)
 

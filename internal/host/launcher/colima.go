@@ -92,19 +92,25 @@ func runHostColimaWithContext(ctx context.Context, inv HostColimaInvocation) (in
 
 // ValidateColimaStatusOutput checks that the textual output of
 // `colima status --profile <profile>` advertises the configuration
-// invariants workcell expects (virtualization framework, virtiofs
-// mount, docker runtime).  It returns nil when the status text meets
-// every requirement, or an error describing the first missing marker.
-func ValidateColimaStatusOutput(status, profile string) error {
+// invariants workcell expects for the selected host VM type (vz on macOS,
+// qemu on Linux): the matching driver, the selected mount type, and the
+// docker runtime.  It returns nil when the status text meets every
+// requirement, or an error describing the first missing marker.
+func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error {
 	if profile == "" {
 		return errors.New("ValidateColimaStatusOutput: profile name is required")
+	}
+	drivers := map[string]string{"vz": "Virtualization.Framework", "qemu": "QEMU"}
+	driver, ok := drivers[vmType]
+	if !ok || mountType == "" {
+		return fmt.Errorf("ValidateColimaStatusOutput: unsupported vm type %q or mount type %q", vmType, mountType)
 	}
 	checks := []struct {
 		needle  string
 		message string
 	}{
-		{"Virtualization.Framework", "Colima profile " + profile + " is not using Virtualization.Framework."},
-		{"mountType: virtiofs", "Colima profile " + profile + " is not using virtiofs."},
+		{driver, "Colima profile " + profile + " is not using " + driver + "."},
+		{"mountType: " + mountType, "Colima profile " + profile + " is not using " + mountType + "."},
 		{"runtime: docker", "Colima profile " + profile + " is not using Docker runtime."},
 	}
 	for _, check := range checks {

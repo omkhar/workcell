@@ -295,7 +295,7 @@ func helperSubcommands() []helperSubcommand {
 		{"colima-status", 1, 1, cmdHelperColimaStatus},
 		{"colima-profile-process-pids", 1, 1, cmdHelperColimaProfileProcessPIDs},
 		{"reap-colima-profile-processes", 1, 1, cmdHelperReapColimaProfileProcesses},
-		{"validate-colima-status", 1, 1, cmdHelperValidateColimaStatus},
+		{"validate-colima-status", 3, 3, cmdHelperValidateColimaStatus},
 		{"run-host-colima-with-timeout", 1, -1, cmdHelperRunHostColimaWithTimeout},
 		{"docker-desktop-context-name", 0, 0, cmdHelperDockerDesktopContextName},
 		{"route-profile-docker-command", 1, -1, cmdHelperRouteProfileDockerCommand},
@@ -499,7 +499,7 @@ func cmdHelperValidateColimaStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	return launcher.ValidateColimaStatusOutput(string(statusBytes), args[0])
+	return launcher.ValidateColimaStatusOutput(string(statusBytes), args[0], args[1], args[2])
 }
 
 func readHelperInput(subject string, inputReader io.Reader) ([]byte, error) {

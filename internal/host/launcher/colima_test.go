@@ -23,7 +23,7 @@ func TestValidateColimaStatusOutputAcceptsExpectedStatus(t *testing.T) {
 		"arch: aarch64",
 		"Using Virtualization.Framework",
 	}, "\n")
-	if err := ValidateColimaStatusOutput(status, "workcell-test"); err != nil {
+	if err := ValidateColimaStatusOutput(status, "workcell-test", "vz", "virtiofs"); err != nil {
 		t.Fatalf("ValidateColimaStatusOutput() err = %v, want nil", err)
 	}
 }
@@ -31,7 +31,7 @@ func TestValidateColimaStatusOutputAcceptsExpectedStatus(t *testing.T) {
 func TestValidateColimaStatusOutputDetectsMissingVZ(t *testing.T) {
 	t.Parallel()
 	status := "runtime: docker\nmountType: virtiofs\n"
-	err := ValidateColimaStatusOutput(status, "workcell-test")
+	err := ValidateColimaStatusOutput(status, "workcell-test", "vz", "virtiofs")
 	if err == nil {
 		t.Fatal("ValidateColimaStatusOutput() err = nil, want missing Virtualization.Framework error")
 	}
@@ -46,7 +46,7 @@ func TestValidateColimaStatusOutputDetectsMissingVZ(t *testing.T) {
 func TestValidateColimaStatusOutputDetectsMissingVirtiofs(t *testing.T) {
 	t.Parallel()
 	status := "Virtualization.Framework\nruntime: docker\n"
-	err := ValidateColimaStatusOutput(status, "workcell-test")
+	err := ValidateColimaStatusOutput(status, "workcell-test", "vz", "virtiofs")
 	if err == nil {
 		t.Fatal("ValidateColimaStatusOutput() err = nil, want missing virtiofs error")
 	}
@@ -58,7 +58,7 @@ func TestValidateColimaStatusOutputDetectsMissingVirtiofs(t *testing.T) {
 func TestValidateColimaStatusOutputDetectsMissingDockerRuntime(t *testing.T) {
 	t.Parallel()
 	status := "Virtualization.Framework\nmountType: virtiofs\nruntime: containerd\n"
-	err := ValidateColimaStatusOutput(status, "workcell-test")
+	err := ValidateColimaStatusOutput(status, "workcell-test", "vz", "virtiofs")
 	if err == nil {
 		t.Fatal("ValidateColimaStatusOutput() err = nil, want missing docker runtime error")
 	}
@@ -69,8 +69,28 @@ func TestValidateColimaStatusOutputDetectsMissingDockerRuntime(t *testing.T) {
 
 func TestValidateColimaStatusOutputRequiresProfileName(t *testing.T) {
 	t.Parallel()
-	if err := ValidateColimaStatusOutput("anything", ""); err == nil {
+	if err := ValidateColimaStatusOutput("anything", "", "vz", "virtiofs"); err == nil {
 		t.Fatal("ValidateColimaStatusOutput() err = nil, want profile-required error")
+	}
+}
+
+func TestValidateColimaStatusOutputMatchesSelectedVMType(t *testing.T) {
+	t.Parallel()
+	qemu := "INFO[0000] colima [profile=wcl] is running using QEMU\nruntime: docker\nmountType: 9p\n"
+	vz := "INFO[0000] colima [profile=wcl] is running using macOS Virtualization.Framework\nruntime: docker\nmountType: virtiofs\n"
+	if err := ValidateColimaStatusOutput(qemu, "wcl", "qemu", "9p"); err != nil {
+		t.Fatalf("qemu status: err = %v, want nil", err)
+	}
+	for _, tc := range []struct{ status, vmType, mountType, want string }{
+		{vz, "qemu", "9p", "QEMU"},
+		{qemu, "vz", "virtiofs", "Virtualization.Framework"},
+		{strings.Replace(qemu, "9p", "reverse-sshfs", 1), "qemu", "9p", "9p"},
+		{qemu, "krunkit", "9p", "unsupported vm type"},
+	} {
+		err := ValidateColimaStatusOutput(tc.status, "wcl", tc.vmType, tc.mountType)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("vm %s mount %s: err = %v, want %q", tc.vmType, tc.mountType, err, tc.want)
+		}
 	}
 }
 

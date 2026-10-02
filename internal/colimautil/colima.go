@@ -13,12 +13,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func ValidateRuntimeMounts(configPath, workspace, profile string) error {
+// ValidateRuntimeMounts checks the managed Lima config: only the Workcell
+// mounts, through only the mount type the launcher selected for this host.
+func ValidateRuntimeMounts(configPath, workspace, profile, mountType string) error {
 	config, err := loadYAMLMap(configPath)
 	if err != nil {
 		return err
 	}
 
+	if got := yamlFirstString(config, "mountType", "mount_type"); got != mountType {
+		return fmt.Errorf("colima profile %s has unexpected Lima mountType %q, want %q", profile, got, mountType)
+	}
 	return validateManagedMounts(config["mounts"], workspace, profile)
 }
 
@@ -118,7 +123,7 @@ func validateManagedMounts(mountsRaw any, workspace, profile string) error {
 	return nil
 }
 
-func ValidateProfileConfig(configPath, workspace, expectedCPU, expectedMemory, expectedDisk string) error {
+func ValidateProfileConfig(configPath, workspace, expectedCPU, expectedMemory, expectedDisk, expectedVMType, expectedMountType string) error {
 	config, err := loadYAMLMap(configPath)
 	if err != nil {
 		return err
@@ -146,11 +151,11 @@ func ValidateProfileConfig(configPath, workspace, expectedCPU, expectedMemory, e
 	}
 
 	vmType := yamlFirstString(config, "vmType", "vm_type")
-	if vmType != "vz" {
+	if vmType != expectedVMType {
 		return fmt.Errorf("unexpected Colima vmType for managed profile: %v", yamlFirst(config, "vmType", "vm_type"))
 	}
 	mountType := yamlFirstString(config, "mountType", "mount_type")
-	if mountType != "virtiofs" {
+	if mountType != expectedMountType {
 		return fmt.Errorf("unexpected Colima mountType for managed profile: %v", yamlFirst(config, "mountType", "mount_type"))
 	}
 	runtimeName := yamlRuntimeName(config["runtime"])

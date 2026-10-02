@@ -671,7 +671,7 @@ func validateHostInputSource(workcell, invariants, hostutil, colima string) erro
 		"run_host_colima list --json 2>/dev/null |\n      run_go_hostutil_preserve_exit helper colima-status \"${profile}\" >\"${status_output}\" 2>\"${status_error}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
 		"printf -v cleanup_command 'rm -rf -- %q' \"${status_dir}\"\n    # Expand the escaped path before Bash unwinds this local scope.\n    # shellcheck disable=SC2064\n    trap \"${cleanup_command}\" EXIT",
 		"if ((pipe_status[0] != 0)); then\n      exit 1\n    fi\n    if ((pipe_status[1] == 3)); then\n      exit 3\n    fi\n    if ((pipe_status[1] != 0)); then\n      cat -- \"${status_error}\" >&2\n      exit \"${pipe_status[1]}\"\n    fi\n    cat -- \"${status_error}\" >&2\n    cat -- \"${status_output}\"",
-		"run_host_colima status --profile \"${profile}\" 2>&1 |\n      run_go_hostutil_preserve_exit helper validate-colima-status \"${profile}\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
+		"run_host_colima status --profile \"${profile}\" 2>&1 |\n      run_go_hostutil_preserve_exit helper validate-colima-status \"${profile}\" \"$(colima_vm_type)\" \"$(colima_mount_type)\"\n    pipe_status=(\"${PIPESTATUS[@]}\")",
 	}
 	for _, required := range requiredWorkcell {
 		if !strings.Contains(workcell, required) {

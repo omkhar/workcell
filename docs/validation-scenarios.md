@@ -71,6 +71,7 @@ Use these scenario identifiers for release claims:
 - `shared/policy-commands` tests policy commands.
 - `shared/assurance-dry-run` tests assurance labels.
 - `shared/compat-target-dry-run` tests Docker Desktop selection.
+- `shared/linux-colima-qemu-dry-run` tests the Linux QEMU and KVM gate.
 - `shared/aws-remote-vm-dry-run` tests AWS preview plans.
 - `shared/gcp-remote-vm-dry-run` tests GCP preview plans.
 - `shared/agent-launch-smoke` tests the local runtime launch.

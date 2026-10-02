@@ -36,15 +36,15 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "validate-runtime-mounts":
-		if len(args) != 4 {
+		if len(args) != 5 {
 			return usage()
 		}
-		return colimautil.ValidateRuntimeMounts(args[1], args[2], args[3])
+		return colimautil.ValidateRuntimeMounts(args[1], args[2], args[3], args[4])
 	case "validate-profile-config":
-		if len(args) != 6 {
+		if len(args) != 8 {
 			return usage()
 		}
-		return colimautil.ValidateProfileConfig(args[1], args[2], args[3], args[4], args[5])
+		return colimautil.ValidateProfileConfig(args[1], args[2], args[3], args[4], args[5], args[6], args[7])
 	default:
 		return usage()
 	}
