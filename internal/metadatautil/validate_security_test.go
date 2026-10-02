@@ -1006,6 +1006,31 @@ func TestCheckPinnedInputsRejectsMarkdownlintPinDrift(t *testing.T) {
 	}
 }
 
+func TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorRegression(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, old, new string }{
+		{"brace-expansion", `"version": "5.0.12"`, `"version": "5.0.9"`},
+		{"markdown-it", `"version": "14.3.2"`, `"version": "14.3.0"`},
+		{"smol-toml", `"version": "1.7.2"`, `"version": "1.7.0"`},
+		{"js-yaml", `"version": "5.4.1"`, `"version": "5.2.2"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := rewritePinnedInputsFixtureFile(t, "tools/markdownlint/package-lock.json", func(content string) string {
+				marker := `"node_modules/` + tc.name + `": {`
+				idx := strings.Index(content, marker)
+				if idx < 0 {
+					t.Fatalf("lockfile has no %s entry", tc.name)
+				}
+				return content[:idx] + strings.Replace(content[idx:], tc.old, tc.new, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "must lock "+tc.name)
+		})
+	}
+}
+
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeMinimumDrift(t *testing.T) {
 	t.Parallel()
 

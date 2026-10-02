@@ -7,10 +7,40 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/tomlsubset"
 )
+
+// markdownlintAdvisoryFloors lists the lowest locked versions that fix open
+// Dependabot advisories in the markdownlint dependency tree. Raise a floor
+// when a new advisory lands; the lockfile must not fall below it.
+var markdownlintAdvisoryFloors = []struct{ name, minimum string }{
+	{"brace-expansion", "5.0.12"},
+	{"markdown-it", "14.3.2"},
+	{"smol-toml", "1.7.2"},
+	{"js-yaml", "5.4.1"},
+}
+
+var versionTriplePattern = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)$`)
+
+// versionTripleAtLeast reports whether version and minimum are both
+// MAJOR.MINOR.PATCH and version >= minimum.
+func versionTripleAtLeast(version, minimum string) bool {
+	have, want := versionTriplePattern.FindStringSubmatch(version), versionTriplePattern.FindStringSubmatch(minimum)
+	if have == nil || want == nil {
+		return false
+	}
+	for i := 1; i <= 3; i++ {
+		h, _ := strconv.Atoi(have[i])
+		w, _ := strconv.Atoi(want[i])
+		if h != w {
+			return h > w
+		}
+	}
+	return true
+}
 
 func validateNodeMarkdownlintPinnedInputs(
 	cfg PinnedInputsConfig,
@@ -44,6 +74,12 @@ func validateNodeMarkdownlintPinnedInputs(
 	}
 	if markdownlintLockRoot.Dependencies["markdownlint-cli"] != validatorMarkdownlintVersion {
 		return fmt.Errorf("markdownlint-cli version must match between %s and %s; found %q and %q", markdownlintPackageLockPath, cfg.ValidatorDockerfilePath, markdownlintLockRoot.Dependencies["markdownlint-cli"], validatorMarkdownlintVersion)
+	}
+	for _, floor := range markdownlintAdvisoryFloors {
+		lockedVersion := markdownlintPackageLock.Packages["node_modules/"+floor.name].Version
+		if !versionTripleAtLeast(lockedVersion, floor.minimum) {
+			return fmt.Errorf("%s must lock %s at %s or newer (Dependabot advisory fix); found %q", markdownlintPackageLockPath, floor.name, floor.minimum, lockedVersion)
+		}
 	}
 	markdownlintLockPackage, ok := markdownlintPackageLock.Packages["node_modules/markdownlint-cli"]
 	if !ok {
