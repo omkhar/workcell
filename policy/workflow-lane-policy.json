@@ -294,6 +294,12 @@
       "local_script": "scripts/check-workflows.sh",
       "local_order": 10
     },
+    "upstream-refresh-scope.yml/merge-time-scope": {
+      "profiles": ["pr-parity"],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the merge-time scope check reads the PR author and head that GitHub reports for the bump PR"
+    },
     "upstream-refresh.yml/refresh": {
       "authority": "github-only",
       "local_mode": "none",

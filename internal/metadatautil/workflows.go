@@ -1096,3 +1096,49 @@ func requireWorkflowMapping(parent *yaml.Node, key, message string) (*yaml.Node,
 
 // readText lives in core.go.
 // requireStringSliceTable lives in hostedcontrols.go.
+
+// ValidateUpstreamRefreshScopeWorkflow pins the merge-time scope check. The
+// guard code must come from the PR base, and the PR head must be only data.
+// The job must run on pull_request, never pull_request_target, with a read-only token.
+func ValidateUpstreamRefreshScopeWorkflow(workflowText string) error {
+	const path = ".github/workflows/upstream-refresh-scope.yml"
+	var document struct {
+		On   map[string]any         `yaml:"on"`
+		Jobs map[string]workflowJob `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+		return fmt.Errorf("%s: parse workflow YAML: %w", path, err)
+	}
+	if _, ok := document.On["pull_request"]; !ok || len(document.On) != 1 {
+		return fmt.Errorf("%s must run only on pull_request", path)
+	}
+	job, ok := document.Jobs["merge-time-scope"]
+	if !ok || len(document.Jobs) != 1 || job.Name != "Upstream refresh merge-time scope" {
+		return fmt.Errorf("%s must define only the merge-time-scope job named %q", path, "Upstream refresh merge-time scope")
+	}
+	if !maps.Equal(job.Permissions, map[string]string{"contents": "read"}) {
+		return fmt.Errorf("%s merge-time-scope job must use only contents: read", path)
+	}
+	if len(job.Steps) != 3 {
+		return fmt.Errorf("%s merge-time-scope job must be the base checkout, head checkout, and check steps", path)
+	}
+	baseWith := map[string]string{"ref": "${{ github.event.pull_request.base.sha }}", "persist-credentials": "false"}
+	headWith := map[string]string{"ref": "${{ github.event.pull_request.head.sha }}", "path": "pr-head", "fetch-depth": "0", "persist-credentials": "false"}
+	for i, with := range []map[string]string{baseWith, headWith} {
+		if step := job.Steps[i]; !strings.HasPrefix(step.Uses, "actions/checkout@") || !maps.Equal(step.With, with) {
+			return fmt.Errorf("%s merge-time-scope job must check out the PR base first and the PR head second, without credentials", path)
+		}
+	}
+	wantEnv := map[string]string{
+		"PR_AUTHOR_TYPE": "${{ github.event.pull_request.user.type }}",
+		"PR_BASE_SHA":    "${{ github.event.pull_request.base.sha }}",
+		"PR_HEAD_REF":    "${{ github.event.pull_request.head.ref }}",
+		"PR_HEAD_REPO":   "${{ github.event.pull_request.head.repo.full_name }}",
+		"PR_HEAD_SHA":    "${{ github.event.pull_request.head.sha }}",
+	}
+	if step := job.Steps[2]; step.Uses != "" || !step.If.IsZero() || step.WorkDir != "" || !maps.Equal(step.Env, wantEnv) ||
+		strings.TrimSpace(step.Run) != "./scripts/ci/upstream-refresh-merge-time-scope.sh pr-head" {
+		return fmt.Errorf("%s merge-time-scope job must run only ./scripts/ci/upstream-refresh-merge-time-scope.sh pr-head with the reviewed PR environment", path)
+	}
+	return nil
+}

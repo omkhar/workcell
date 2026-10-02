@@ -68,6 +68,7 @@ func writePinnedInputsFixture(tb testing.TB) metadatautil.PinnedInputsConfig {
 		".github/workflows/security.yml",
 		".github/workflows/pin-hygiene.yml",
 		".github/workflows/upstream-refresh.yml",
+		".github/workflows/upstream-refresh-scope.yml",
 		"adapters/codex/requirements.toml",
 		"adapters/codex/mcp/config.toml",
 		"policy/github-hosted-controls.toml",

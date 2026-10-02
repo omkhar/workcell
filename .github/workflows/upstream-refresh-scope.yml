@@ -1,0 +1,52 @@
+name: Upstream refresh scope
+
+# Auto-merge is armed on the bump PR before a writer can push to its branch.
+# This workflow checks the scope again on the head that merges. Add the job
+# name "Upstream refresh merge-time scope" to the main-status-checks ruleset.
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  merge-time-scope:
+    name: Upstream refresh merge-time scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # Read the PR base and head.
+    steps:
+      # The base checkout holds the guard code. A PR cannot change it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check merge-time scope
+        env:
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/ci/upstream-refresh-merge-time-scope.sh pr-head

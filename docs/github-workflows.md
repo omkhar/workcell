@@ -62,6 +62,7 @@ For an approved large adapter PR, use both required options:
 | `release.yml` | Builds, verifies, signs, and publishes a release. |
 | `scorecard.yml` | Runs OpenSSF Scorecard analysis. |
 | `security.yml` | Checks workflow policy, dependencies, and GitHub Actions security. |
+| `upstream-refresh-scope.yml` | Checks the scope of an upstream-refresh provider PR again on the head that merges. |
 | `upstream-refresh.yml` | Creates an upstream-pin candidate, updates the tracking issue, and opens the bump PR. |
 
 ## CI routing
@@ -260,6 +261,19 @@ A lockfile change to any other package, for example a new transitive dependency,
 
 If the guard passes, `publish` runs `gh pr merge --auto --merge --match-head-commit` on the signed `provider` commit.
 Every provider waits for `cooloff_hours = 48` in [`policy/provider-bumps.toml`](../policy/provider-bumps.toml) before a bump is eligible. The required checks still gate the merge.
+
+The scope guard in `upstream-refresh.yml` runs before auto-merge is armed.
+After that, a repository writer can push to the bump branch.
+`upstream-refresh-scope.yml` closes this gap.
+Its job `Upstream refresh merge-time scope` runs on `pull_request`, and it runs the same guard on the PR head that merges.
+It takes the guard code from the PR base, so a PR cannot change the guard.
+
+The job applies only to a PR with a `Bot` author, a branch in this repository, and a branch name that starts with `codex/upstream-refresh-provider-`.
+On any other PR, the job passes as not applicable.
+A provider PR that fails the check needs a human review and an administrator merge.
+
+The owner must add `Upstream refresh merge-time scope` to the `main-status-checks` ruleset.
+`policy/github-hosted-controls.toml` does not list it yet, because the hosted-controls audit fails until the ruleset has it.
 
 The `refresh` job creates the `needs-human-review` label, because the App token cannot create labels.
 If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.

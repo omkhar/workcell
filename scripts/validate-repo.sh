@@ -244,6 +244,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/publish-provider-bump-pr.sh"
   "${ROOT_DIR}/scripts/publish-upstream-refresh-pr.sh"
   "${ROOT_DIR}/scripts/ci/upstream-refresh-candidate.sh"
+  "${ROOT_DIR}/scripts/ci/upstream-refresh-merge-time-scope.sh"
   "${ROOT_DIR}/scripts/ci/upstream-refresh-publish.sh"
   "${ROOT_DIR}/scripts/ci/upstream-refresh-scope-guard.sh"
   "${ROOT_DIR}/scripts/run-hosted-controls-audit.sh"

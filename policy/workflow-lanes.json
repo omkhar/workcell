@@ -983,6 +983,22 @@
       "local_order": 10
     },
     {
+      "id": "upstream-refresh-scope.yml/merge-time-scope",
+      "workflow_path": ".github/workflows/upstream-refresh-scope.yml",
+      "workflow_name": "Upstream refresh scope",
+      "job_id": "merge-time-scope",
+      "job_name": "Upstream refresh merge-time scope",
+      "workflow_events": [
+        "pull_request"
+      ],
+      "profiles": [
+        "pr-parity"
+      ],
+      "authority": "github-only",
+      "local_mode": "none",
+      "github_only_reason": "the merge-time scope check reads the PR author and head that GitHub reports for the bump PR"
+    },
+    {
       "id": "upstream-refresh.yml/publish",
       "workflow_path": ".github/workflows/upstream-refresh.yml",
       "workflow_name": "Upstream refresh",

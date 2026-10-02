@@ -21,29 +21,30 @@ type pinnedInputsCheck struct {
 	allowedActions map[string]bool
 	pins           toolPins
 
-	runtimeDockerfile           string
-	validatorDockerfile         string
-	providersPackageJSONText    string
-	providersPackageLockText    string
-	markdownlintPackageJSONText string
-	markdownlintPackageLockText string
-	installDevToolsScript       string
-	validateRepoScript          string
-	ciWorkflow                  string
-	releaseWorkflow             string
-	pinHygieneWorkflow          string
-	upstreamRefreshWorkflow     string
-	validatorImageScript        string
-	localDockerParityScript     string
-	codeowners                  string
-	hostedControlsPolicyText    string
-	hostedControlsScript        string
-	codexRequirementsText       string
-	codexMCPConfigText          string
-	goModText                   string
-	cargoManifestText           string
-	rustToolchainText           string
-	securityWorkflow            string
+	runtimeDockerfile            string
+	validatorDockerfile          string
+	providersPackageJSONText     string
+	providersPackageLockText     string
+	markdownlintPackageJSONText  string
+	markdownlintPackageLockText  string
+	installDevToolsScript        string
+	validateRepoScript           string
+	ciWorkflow                   string
+	releaseWorkflow              string
+	pinHygieneWorkflow           string
+	upstreamRefreshWorkflow      string
+	upstreamRefreshScopeWorkflow string
+	validatorImageScript         string
+	localDockerParityScript      string
+	codeowners                   string
+	hostedControlsPolicyText     string
+	hostedControlsScript         string
+	codexRequirementsText        string
+	codexMCPConfigText           string
+	goModText                    string
+	cargoManifestText            string
+	rustToolchainText            string
+	securityWorkflow             string
 
 	debianBootstrapManifest DebianBootstrapManifest
 	providersPackageJSON    map[string]any
@@ -67,6 +68,7 @@ type pinnedInputPaths struct {
 	rustToolchain        string
 	debianBootstrap      string
 	upstreamRefresh      string
+	upstreamRefreshScope string
 	validatorImageScript string
 	localDockerParity    string
 }
@@ -123,6 +125,7 @@ func newPinnedInputsCheck(cfg PinnedInputsConfig) *pinnedInputsCheck {
 			rustToolchain:        filepath.Join(repoRoot, "runtime", "container", "rust", "rust-toolchain.toml"),
 			debianBootstrap:      filepath.Join(repoRoot, filepath.FromSlash(DebianBootstrapManifestRelPath)),
 			upstreamRefresh:      filepath.Join(cfg.WorkflowsDir, "upstream-refresh.yml"),
+			upstreamRefreshScope: filepath.Join(cfg.WorkflowsDir, "upstream-refresh-scope.yml"),
 			validatorImageScript: filepath.Join(repoRoot, "scripts", "ci", "build-validator-image.sh"),
 			localDockerParity:    filepath.Join(repoRoot, "scripts", "ci", "lib", "local-docker-parity.sh"),
 		},
@@ -166,6 +169,7 @@ func (check *pinnedInputsCheck) load() error {
 				{check.cfg.ReleaseWorkflowPath, &check.releaseWorkflow},
 				{check.cfg.PinHygieneWorkflowPath, &check.pinHygieneWorkflow},
 				{check.paths.upstreamRefresh, &check.upstreamRefreshWorkflow},
+				{check.paths.upstreamRefreshScope, &check.upstreamRefreshScopeWorkflow},
 				{check.paths.validatorImageScript, &check.validatorImageScript},
 				{check.paths.localDockerParity, &check.localDockerParityScript},
 				{check.cfg.CodeownersPath, &check.codeowners},

@@ -524,7 +524,10 @@ func (check *pinnedInputsCheck) validateReleaseHostedControls() error {
 	); err != nil {
 		return err
 	}
-	return ValidateUpstreamRefreshWorkflow(check.upstreamRefreshWorkflow)
+	if err := ValidateUpstreamRefreshWorkflow(check.upstreamRefreshWorkflow); err != nil {
+		return err
+	}
+	return ValidateUpstreamRefreshScopeWorkflow(check.upstreamRefreshScopeWorkflow)
 }
 
 func (check *pinnedInputsCheck) validateHostedControlsWorkflow() error {
