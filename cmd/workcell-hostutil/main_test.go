@@ -752,7 +752,7 @@ func TestAdaptersGenReplacesSymlinkWithoutFollowing(t *testing.T) {
 	if got, _ := os.ReadFile(victim); string(got) != "keep" {
 		t.Fatalf("symlink target was written through: %q", got)
 	}
-	if fi, err := os.Lstat(out); err != nil || !fi.Mode().IsRegular() {
-		t.Fatalf("output is not a regular file: %v %v", fi, err)
+	if fi, err := os.Lstat(out); err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("output is not an owner-only regular file: %v %v", fi, err)
 	}
 }

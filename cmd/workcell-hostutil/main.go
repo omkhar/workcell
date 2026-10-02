@@ -139,7 +139,7 @@ func runAdapters(args []string) error {
 		return err
 	}
 	defer parent.Close()
-	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(output), content, 0o644, ".adapters-gen-")
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(output), content, 0o600, ".adapters-gen-")
 }
 
 func cmdHelperSupportBundleCli(args []string) error {

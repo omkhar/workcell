@@ -21,8 +21,8 @@ func TestProviderRegistryMatchesProviderIDOrder(t *testing.T) {
 	for _, provider := range providers {
 		got = append(got, provider.id)
 	}
-	if !slices.Equal(got, providerid.CredentialMetadataProviders) {
-		t.Fatalf("provider registry order = %v, want %v", got, providerid.CredentialMetadataProviders)
+	if !slices.Equal(got, providerid.AllProviders) {
+		t.Fatalf("provider registry order = %v, want %v", got, providerid.AllProviders)
 	}
 }
 
