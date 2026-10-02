@@ -143,6 +143,13 @@ This function returns the Linux `ID`, `unknown`, or `none` on a non-Linux host.
 This function returns Linux `VERSION_ID`, then `VERSION_CODENAME`, `unknown`, or
 `none`.
 
+### `workcell_host_cache_root()`
+
+This function returns the per-host cache directory. It needs `REAL_HOME`. On
+Darwin, it returns `${REAL_HOME}/Library/Caches`. On any other host, it returns
+`XDG_CACHE_HOME`, or `${REAL_HOME}/.cache` when `XDG_CACHE_HOME` is unset or
+empty. The caller adds the `workcell` path parts.
+
 ### Harness-only overrides
 
 An allowed test override passes through without a case change.
