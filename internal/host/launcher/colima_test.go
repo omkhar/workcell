@@ -95,6 +95,7 @@ func TestValidateColimaStatusOutputMatchesSelectedVMType(t *testing.T) {
 		"warning level":               strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "level=warning msg=\"runtime: docker\"", 1),
 		"unknown level":               strings.Replace(logfmt, "level=info msg=\"mountType: virtiofs\"", "level=bogus msg=\"mountType: virtiofs\"", 1),
 		"escaped quote":               logfmt + "time=\"x\" level=info msg=\"unterminated\\\"\nruntime: docker\n",
+		"balanced raw quotes":         logfmt + "level=info bogus=x\" msg=\"\nruntime: docker\n",
 		"no time key":                 logfmt + "level=info msg=\"\nruntime: docker\n\"\n",
 		"bare marker in continuation": logfmt + "time=\"x\" level=info msg=\"\nruntime: docker\n\"\n",
 		"split record":                strings.Replace(logfmt, "level=info msg=\"runtime: docker\"", "\nlevel=info msg=\"runtime: docker\"", 1),
