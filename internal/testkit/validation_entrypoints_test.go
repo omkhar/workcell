@@ -1388,6 +1388,39 @@ test -s "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"`, "_", root)
 	}
 }
 
+// TestTrustedDockerSandboxRejectsPreexistingDestination plants the rename
+// destination just before mv runs, as another local process could.
+func TestTrustedDockerSandboxRejectsPreexistingDestination(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	tempRoot := t.TempDir()
+	shimDir := t.TempDir()
+	realMv, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim := `#!/bin/bash
+mkdir -p "$2/home" "$2/config"
+exec "$REAL_MV" "$@"
+`
+	if err := os.WriteFile(filepath.Join(shimDir, "mv"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", `set -uo pipefail
+source "$1/scripts/lib/trusted-docker-client.sh"
+if setup_workcell_trusted_docker_client; then echo setup-accepted; exit 0; fi
+echo setup-refused`, "_", root)
+	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "REAL_MV=" + realMv, "PATH=" + shimDir + ":" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "setup-refused") {
+		t.Fatalf("setup trusted a pre-existing destination: %v\n%s", err, out)
+	}
+	if entries, _ := filepath.Glob(filepath.Join(tempRoot, "workcell-docker-stage.*")); len(entries) != 0 {
+		t.Fatalf("staging directory leaked: %v", entries)
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 

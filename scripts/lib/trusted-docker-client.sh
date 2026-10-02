@@ -182,7 +182,7 @@ select_workcell_trusted_buildx() {
 }
 
 setup_workcell_trusted_docker_client() {
-  local real_home staging
+  local real_home staging nested
 
   # Launch, inspect, and doctor flows can all sanitize the host Docker
   # environment more than once in a single process. Reuse the in-process
@@ -207,6 +207,15 @@ setup_workcell_trusted_docker_client() {
   printf '%s\n' "$$" >"${staging}/owner.pid"
   WORKCELL_DOCKER_SANDBOX_ROOT="${staging%/*}/workcell-docker.${staging##*.}"
   mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"
+  # mv nests the staged directory when the destination already exists. Fail
+  # closed instead of trusting a destination another process created.
+  nested="${WORKCELL_DOCKER_SANDBOX_ROOT}/${staging##*/}"
+  if [[ -e "${nested}" ]]; then
+    rm -rf "${nested:?}"
+    unset WORKCELL_DOCKER_SANDBOX_ROOT
+    echo "Docker sandbox destination already existed; refusing to use it." >&2
+    return 1
+  fi
   WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"
   WORKCELL_DOCKER_CONFIG="${WORKCELL_DOCKER_SANDBOX_ROOT}/config"
   mkdir -p "${WORKCELL_DOCKER_HOME}" "${WORKCELL_DOCKER_CONFIG}"
