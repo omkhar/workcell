@@ -254,6 +254,9 @@ func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 			if strings.Count(string(bodies), "scope guard: passed") != 1 || strings.Count(string(bodies), "scope guard: not-run") != 1 {
 				t.Fatalf("PR bodies = %q, want scope guard passed for provider and not-run for toolchain", bodies)
 			}
+			if strings.Count(auditText, "cool-off:") != 1 {
+				t.Fatalf("audit = %q, want the cool-off claim for the provider candidate only", auditText)
+			}
 			if strings.Count(auditText, "verify-upstream-*-release.sh") != 1 {
 				t.Fatalf("audit = %q, want the release verify claim for the provider candidate only", auditText)
 			}

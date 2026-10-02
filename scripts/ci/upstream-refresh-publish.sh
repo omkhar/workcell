@@ -237,7 +237,9 @@ cooloff_hours="$(awk -F= '/^cooloff_hours[[:space:]]*=/ {gsub(/[[:space:]]/, "",
   echo "- ${kind} PR: ${pr_url}"
   echo "- commit: \`${commit_oid}\` (GitHub-verified, tree matches candidate)"
   echo "- merge: ${merge_line}"
-  echo "- cool-off: ${cooloff_hours}h policy; the candidate selects only releases older than the cutoff"
+  if [[ "${kind}" == provider ]]; then
+    echo "- cool-off: ${cooloff_hours}h policy; the candidate selects only releases older than the cutoff"
+  fi
   if [[ "${kind}" == provider ]]; then
     echo "- provenance: the provider updater --apply and --check passed in the refresh job, including the verify-upstream-*-release.sh checks"
   else

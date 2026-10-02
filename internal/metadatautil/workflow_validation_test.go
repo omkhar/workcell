@@ -1451,18 +1451,23 @@ func TestValidateUpstreamRefreshWorkflowRejectsEvasions(t *testing.T) {
 	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
 		"          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md",
 		"run the publish script once", metadatautil.ValidateUpstreamRefreshWorkflow)
+	const tokenFile = "          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" "
 	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
-		"          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" ./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log",
+		tokenFile+"./scripts/update-upstream-pins.sh --apply --toolchain-only | tee apply.log",
 		"--apply --toolchain-only once", metadatautil.ValidateUpstreamRefreshWorkflow)
-	RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
-		"          WORKCELL_GITHUB_API_TOKEN_FILE=\"${token_file}\" ./scripts/update-provider-pins.sh --apply | tee provider.log",
-		"build the provider and toolchain candidates once each", metadatautil.ValidateUpstreamRefreshWorkflow)
+	for _, anchor := range []string{
+		"./scripts/update-upstream-pins.sh --check --toolchain-only",
+		"./scripts/update-provider-pins.sh --apply | tee provider.log",
+		"./scripts/update-provider-pins.sh --check",
+	} {
+		RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture, tokenFile+anchor,
+			"build the provider and toolchain candidates once each", metadatautil.ValidateUpstreamRefreshWorkflow)
+	}
 	for _, kind := range []string{"provider", "toolchain"} {
 		RequireRejectsAllEvasions(t, upstreamRefreshWorkflowFixture,
 			"          ./scripts/ci/upstream-refresh-candidate.sh "+kind+" \"${RUNNER_TEMP}/upstream-refresh-candidate\"",
 			"build the provider and toolchain candidates once each", metadatautil.ValidateUpstreamRefreshWorkflow)
 	}
-
 }
 
 func TestValidateHostedControlsWorkflowRequiresMainRef(t *testing.T) {

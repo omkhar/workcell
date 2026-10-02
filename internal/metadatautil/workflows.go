@@ -801,7 +801,6 @@ func ValidateUpstreamRefreshWorkflow(workflowText string) error {
 		`(umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")`,
 		"unset GITHUB_TOKEN GH_TOKEN",
 		`trap 'rm -f "${token_file}"' EXIT`,
-		`WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check`,
 		"actions/upload-artifact@",
 		"name: upstream-refresh-candidate",
 		"metadata.json",
@@ -917,7 +916,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	// would no longer apply to main alone.
 	// ShellInvocations reads no assignment prefix, so match the token-file
 	// form the workflow uses as well as the bare command.
-	toolchainApplies, providerApplies := 0, 0
+	toolchainApplies, providerApplies, providerChecks, toolchainChecks := 0, 0, 0, 0
 	builds := map[string]int{}
 	for _, step := range refresh.Steps {
 		// The same parser anchors the provider updater and each candidate builder,
@@ -925,6 +924,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		for _, run := range ShellInvocations(step.Run, "WORKCELL_GITHUB_API_TOKEN_FILE=${token_file} ./scripts/update-provider-pins.sh") {
 			if slices.Contains(run.Args, "--apply") {
 				providerApplies++
+			}
+			if slices.Contains(run.Args, "--check") {
+				providerChecks++
 			}
 		}
 		for _, run := range ShellInvocations(step.Run, "./scripts/ci/upstream-refresh-candidate.sh") {
@@ -940,14 +942,17 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				if slices.Contains(run.Args, "--apply") {
 					toolchainApplies++
 				}
+				if slices.Contains(run.Args, "--check") {
+					toolchainChecks++
+				}
 			}
 		}
 	}
 	if toolchainApplies != 1 {
 		return fmt.Errorf("%s refresh job must run ./scripts/update-upstream-pins.sh --apply --toolchain-only once", path)
 	}
-	if providerApplies != 1 || builds["provider"] != 1 || builds["toolchain"] != 1 {
-		return fmt.Errorf("%s refresh job must run update-provider-pins.sh --apply once and build the provider and toolchain candidates once each", path)
+	if providerApplies != 1 || providerChecks != 1 || toolchainChecks != 1 || builds["provider"] != 1 || builds["toolchain"] != 1 {
+		return fmt.Errorf("%s refresh job must run each updater --apply and --check once and build the provider and toolchain candidates once each", path)
 	}
 	guard := document.Jobs["scope-guard"]
 	if !maps.Equal(guard.Permissions, map[string]string{"contents": "read"}) {
