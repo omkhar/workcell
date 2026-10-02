@@ -4871,7 +4871,7 @@ done
 test "$(grep -c '^verify-invariants.sh ' "${PREMERGE_LOG}")" = 2
 grep -q '^live-lane-output$' /tmp/workcell-premerge-local-snapshot.out
 grep -q '^\[pre-merge\] live invariants lane passed$' /tmp/workcell-premerge-local-snapshot.out
-for lane in check-workflows job-pr-shape job-validate job-docs container-smoke verify-reproducible-build; do
+for lane in check-workflows job-pr-shape job-validate job-docs container-smoke verify-reproducible-build live-invariants; do
   grep -Eq "^\[pre-merge\] lane=${lane} seconds=[0-9]+ rc=0$" /tmp/workcell-premerge-local-snapshot.out
 done
 grep -Eq '^\[pre-merge\] total seconds=[0-9]+ rc=0$' /tmp/workcell-premerge-local-snapshot.out
@@ -4894,7 +4894,7 @@ for expected in \
 done
 jq -e '
   (.timings.total_seconds | type == "number") and
-  (.timings.lanes | map(.lane) == ["check-workflows", "job-pr-shape", "job-validate", "job-docs", "container-smoke", "verify-reproducible-build"]) and
+  (.timings.lanes | map(.lane) == ["check-workflows", "job-pr-shape", "job-validate", "job-docs", "container-smoke", "verify-reproducible-build", "live-invariants"]) and
   (.timings.lanes | all(.rc == 0 and (.seconds | type == "number")))
 ' "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" >/dev/null
 
@@ -4912,6 +4912,7 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'live invariants lane failed with status 7' /tmp/workcell-premerge-live-fail.out
+grep -Eq '^\[pre-merge\] lane=live-invariants seconds=[0-9]+ rc=7$' /tmp/workcell-premerge-live-fail.out
 grep -q 'verify-reproducible-build.sh env' "${PREMERGE_LOG}"
 test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
@@ -4928,6 +4929,10 @@ if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   exit 1
 fi
 grep -q 'stopping the live invariants lane' /tmp/workcell-premerge-live-stop.out
+# The failed lane reports its time before the live-lane cleanup starts.
+test "$(grep -nE '^\[pre-merge\] lane=job-docs seconds=[0-9]+ rc=[1-9]' /tmp/workcell-premerge-live-stop.out | cut -d: -f1)" -lt \
+  "$(grep -n 'stopping the live invariants lane' /tmp/workcell-premerge-live-stop.out | cut -d: -f1)"
+grep -Eq '^\[pre-merge\] lane=live-invariants seconds=[0-9]+ rc=' /tmp/workcell-premerge-live-stop.out
 PREMERGE_LIVE_PID="$(sed -n 's/^live-lane-running pid=//p' "${PREMERGE_LOG}")"
 grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
 if kill -0 "${PREMERGE_LIVE_PID}" 2>/dev/null; then

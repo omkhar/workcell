@@ -24,6 +24,7 @@ PARITY_BASE_REF=""
 PARITY_BASE_OID=""
 LIVE_LANE_PID=""
 LIVE_LANE_LOG=""
+LIVE_LANE_START=0
 START_SECONDS="${SECONDS}"
 LANE_NAME=""
 LANE_START=0
@@ -252,14 +253,14 @@ lane_begin() {
   LANE_START="${SECONDS}"
 }
 
-lane_end() {
-  local rc="$1"
-  local elapsed=0
+lane_record() {
+  echo "[pre-merge] lane=$1 seconds=$2 rc=$3"
+  LANE_TIMINGS[${#LANE_TIMINGS[@]}]="$1"$'\t'"$2"$'\t'"$3"
+}
 
+lane_end() {
   [[ -n "${LANE_NAME}" ]] || return 0
-  elapsed=$((SECONDS - LANE_START))
-  echo "[pre-merge] lane=${LANE_NAME} seconds=${elapsed} rc=${rc}"
-  LANE_TIMINGS[${#LANE_TIMINGS[@]}]="${LANE_NAME}"$'\t'"${elapsed}"$'\t'"${rc}"
+  lane_record "${LANE_NAME}" "$((SECONDS - LANE_START))" "$1"
   LANE_NAME=""
 }
 
@@ -268,8 +269,8 @@ report_timing_on_exit() {
   local rc=$?
 
   trap - EXIT
-  stop_live_invariants_lane
   lane_end "${rc}"
+  stop_live_invariants_lane
   echo "[pre-merge] total seconds=$((SECONDS - START_SECONDS)) rc=${rc}"
   exit "${rc}"
 }
@@ -354,6 +355,7 @@ start_live_invariants_lane() {
   WORKCELL_COLIMA_START_TIMEOUT_SECONDS="${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-360}" \
     "${ROOT_DIR}/scripts/verify-invariants.sh" --live-lane-only </dev/null >"${LIVE_LANE_LOG}" 2>&1 &
   LIVE_LANE_PID=$!
+  LIVE_LANE_START="${SECONDS}"
   set +m
 }
 
@@ -364,6 +366,7 @@ finish_live_invariants_lane() {
   echo "[pre-merge] waiting for the live invariants lane"
   wait "${LIVE_LANE_PID}" || status=$?
   LIVE_LANE_PID=""
+  lane_record live-invariants "$((SECONDS - LIVE_LANE_START))" "${status}"
   cat "${LIVE_LANE_LOG}"
   rm -f "${LIVE_LANE_LOG}"
   if [[ "${status}" -ne 0 ]]; then
@@ -376,10 +379,13 @@ finish_live_invariants_lane() {
 # EXIT trap: a failed lane or a signal stops the live lane and waits for its
 # cleanup, so no managed Colima VM outlives the run.
 stop_live_invariants_lane() {
+  local status=0
+
   [[ -n "${LIVE_LANE_PID}" ]] || return 0
   echo "[pre-merge] stopping the live invariants lane and waiting for its cleanup" >&2
   kill -TERM -- "-${LIVE_LANE_PID}" 2>/dev/null || kill -TERM "${LIVE_LANE_PID}" 2>/dev/null || true
-  wait "${LIVE_LANE_PID}" 2>/dev/null || true
+  wait "${LIVE_LANE_PID}" 2>/dev/null || status=$?
+  lane_record live-invariants "$((SECONDS - LIVE_LANE_START))" "${status}"
   LIVE_LANE_PID=""
   cat "${LIVE_LANE_LOG}" >&2 || true
   rm -f "${LIVE_LANE_LOG}"
