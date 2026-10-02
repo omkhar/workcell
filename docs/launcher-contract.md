@@ -320,10 +320,15 @@ gets `--network wc-<session> --dns 127.0.0.1`, and each host maps to the token
 
 `start_egress_proxy` creates the internal network `wc-<session>`. It runs the
 sidecar `wc-egress-<session>` from the verified image ID, and connects the
-sidecar to the bridge network. Then it replaces the `egress-proxy-ip` token in
-the agent command with the sidecar address. A failure stops the launch.
-`stop_egress_proxy` removes the sidecar and the network. The launcher cleanup
-calls it, and the detached session monitor calls it after the agent exits.
+sidecar to the bridge network. The sidecar listens only on its address in the
+subnet of `wc-<session>`, so other containers on the bridge cannot use the
+session allowlist. Then it replaces the `egress-proxy-ip` token in the agent
+command with the sidecar address. A failure stops the launch.
+
+`stop_egress_proxy` saves the proxy deny lines to
+`<sessions-dir>/<session>/egress-deny.jsonl`. Then it removes the sidecar and
+the network. The launcher cleanup calls it, and the detached session monitor
+calls it after the agent exits.
 
 ## Change Rule
 

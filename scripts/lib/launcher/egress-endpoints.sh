@@ -22,7 +22,8 @@
 # they are a self-contained, behaviour-preserving unit.  The --egress-proxy
 # helpers also read `EGRESS_PROXY`, `SESSION_ID`, `ALLOW_ENDPOINTS`,
 # `HOST_DOCKER_BIN` and `DOCKER_RUN`, and call the launcher's
-# `run_workcell_docker_client_command` and `run_profile_docker_command`.  See
+# `run_workcell_docker_client_command`, `run_profile_docker_command` and
+# `profile_sessions_dir_path`.  See
 # docs/launcher-contract.md for the module contract.
 
 target_broker_endpoints() {
@@ -156,15 +157,26 @@ egress_proxy_agent_network_args() {
 }
 
 # start_egress_proxy creates the internal network and runs the sidecar from the
-# verified image with the agent's conformance flags. Then it puts the sidecar's
-# internal IP into the agent's --add-host values. Any failure stops the launch;
-# cleanup and the detached monitor remove what was created.
+# verified image with the agent's conformance flags. The sidecar also joins the
+# bridge for its upstream route, so it listens only on its address in the
+# internal subnet: other containers on the bridge cannot use this session's
+# allowlist. Then it puts the sidecar's internal IP into the agent's --add-host
+# values. Any failure stops the launch; cleanup and the detached monitor remove
+# what was created.
 start_egress_proxy() {
   local image_id="$1"
+  local subnet=""
   local ip=""
   local i=""
 
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1
+  subnet="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network inspect \
+    -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "${EGRESS_PROXY_NETWORK}")" || return 1
+  subnet="${subnet% }"
+  if [[ ! "${subnet}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+    echo "workcell: ${EGRESS_PROXY_NETWORK} has no single IPv4 subnet: ${subnet}" >&2
+    return 1
+  fi
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" create \
     --name "${EGRESS_PROXY_CONTAINER}" \
     --network "${EGRESS_PROXY_NETWORK}" \
@@ -176,7 +188,7 @@ start_egress_proxy() {
     --memory 256m \
     --sysctl net.ipv4.ip_unprivileged_port_start=0 \
     --entrypoint /usr/local/libexec/workcell/workcell-egress-proxy \
-    "${image_id}" -allow "${ALLOW_ENDPOINTS}" >/dev/null || return 1
+    "${image_id}" -allow "${ALLOW_ENDPOINTS}" -listen "${subnet}" >/dev/null || return 1
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network connect bridge "${EGRESS_PROXY_CONTAINER}" || return 1
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" start "${EGRESS_PROXY_CONTAINER}" >/dev/null || return 1
   ip="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" inspect \
@@ -193,12 +205,20 @@ start_egress_proxy() {
   done
 }
 
-# stop_egress_proxy removes the sidecar, then the network. It is best effort:
-# it runs on every exit path, including after a failed start.
+# stop_egress_proxy saves the proxy's deny lines (its stdout, one JSON object
+# per line) to <sessions-dir>/<session>/egress-deny.jsonl, then removes the
+# sidecar and the network. It is best effort: it runs on every exit path,
+# including after a failed start.
 stop_egress_proxy() {
   local profile="$1"
+  local deny_dir=""
 
   [[ -n "${EGRESS_PROXY_CONTAINER:-}" ]] || return 0
+  deny_dir="$(profile_sessions_dir_path "${profile}")/${SESSION_ID}"
+  if mkdir -p "${deny_dir}" 2>/dev/null && chmod 0700 "${deny_dir}" 2>/dev/null; then
+    run_profile_docker_command "${profile}" logs "${EGRESS_PROXY_CONTAINER}" \
+      >"${deny_dir}/egress-deny.jsonl" 2>/dev/null || true
+  fi
   run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 || true
   run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || true
 }

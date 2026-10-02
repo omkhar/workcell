@@ -87,18 +87,41 @@ grep -q '^ip_literal=blocked$' "${TMP_DIR}/probe.stdout"
 grep -q '^dns=blocked$' "${TMP_DIR}/probe.stdout"
 assert_no_proxy_residue "an attached run"
 
+# The detached session makes one denied request, so its deny log is not empty.
 "${ROOT_DIR}/scripts/workcell" session start --session-workspace direct --agent codex --workspace "${WORKSPACE}" \
   --colima-profile "${PROFILE}" --no-default-injection-policy --egress-proxy \
   --allow-arbitrary-command "--ack-arbitrary-command=${ACK_TODAY_UTC}" \
-  -- sleep 600 >"${TMP_DIR}/detached.stdout" 2>"${TMP_DIR}/detached.stderr"
+  -- bash -c 'curl -sS -o /dev/null --max-time 15 --connect-to example.com:443:api.openai.com:443 https://example.com/; exec sleep 600' \
+  >"${TMP_DIR}/detached.stdout" 2>"${TMP_DIR}/detached.stderr"
 session_id="$(sed -n 's/^session_id=//p' "${TMP_DIR}/detached.stdout")"
 [[ -n "${session_id}" ]]
-profile_docker ps --format '{{.Names}}' | grep -qx "wc-egress-${session_id}"
+sidecar="wc-egress-${session_id}"
+profile_docker ps --format '{{.Names}}' | grep -qx "${sidecar}"
+
+# The sidecar is also on the bridge for its upstream route. It listens only on
+# its internal-network address, so another container on the bridge cannot use
+# this session's allowlist.
+bridge_ip="$(profile_docker inspect -f '{{.NetworkSettings.Networks.bridge.IPAddress}}' "${sidecar}")"
+sidecar_image="$(profile_docker inspect -f '{{.Image}}' "${sidecar}")"
+[[ -n "${bridge_ip}" ]]
+if profile_docker run --rm --network bridge --entrypoint curl "${sidecar_image}" \
+  -sS -o /dev/null --max-time 15 --connect-to "api.openai.com:443:${bridge_ip}:443" https://api.openai.com/v1/models; then
+  echo "the egress proxy accepted a connection on its bridge address" >&2
+  exit 1
+fi
+
+for _ in $(seq 1 30); do
+  profile_docker logs "${sidecar}" 2>/dev/null | grep -q '"host":"example.com"' && break
+  sleep 1
+done
 "${ROOT_DIR}/scripts/workcell" session stop --id "${session_id}" >/dev/null
 for _ in $(seq 1 60); do
   profile_docker ps -a --format '{{.Names}}' | grep -q '^wc-egress-' || break
   sleep 1
 done
 assert_no_proxy_residue "a detached session stop"
+deny_log="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
+  -path "*/${PROFILE}/sessions/${session_id}/egress-deny.jsonl" -type f | head -n 1)"
+grep -q '"host":"example.com"' "${deny_log}"
 
 echo "Egress proxy smoke scenario passed"

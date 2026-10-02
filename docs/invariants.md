@@ -154,7 +154,8 @@ sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
   host maps to the proxy address, never to a resolved upstream address.
 - `egress-proxy-hardening` (`[egress_proxy]`): the sidecar uses the agent
   conformance flags. It drops all capabilities, uses `no-new-privileges` and a
-  read-only root, runs as a non-root user, and has PID and memory limits.
+  read-only root, runs as a non-root user, and has PID and memory limits. It
+  listens only on its internal-network address, never on `0.0.0.0`.
 
 The injection policy can add or deny endpoints through `[network]`. It cannot
 disable the default policy or change `NETWORK_POLICY`. See

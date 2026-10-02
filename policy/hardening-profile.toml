@@ -170,6 +170,8 @@ forbidden = []
 # egress-proxy-hardening: the sidecar runs from the verified image with the
 # agent container's conformance flags (no capabilities, no-new-privileges,
 # read-only root, non-root user, PID and memory limits) on an internal network.
+# It listens only on its internal-subnet address, never on 0.0.0.0, so other
+# containers on the bridge cannot use this session's allowlist.
 [egress_proxy]
 target = "scripts/lib/launcher/egress-endpoints.sh"
 block = "start_egress_proxy"
@@ -182,8 +184,9 @@ required = [
   "--pids-limit 256",
   "--memory 256m",
   "--entrypoint /usr/local/libexec/workcell/workcell-egress-proxy",
+  "-listen \"${subnet}\"",
 ]
-forbidden = ["--privileged", "--cap-add ALL", "--cap-add NET_ADMIN", "--cap-add NET_RAW", "--security-opt seccomp=unconfined", "--network host", "--network=host", "--user 0"]
+forbidden = ["0.0.0.0", "--privileged", "--cap-add ALL", "--cap-add NET_ADMIN", "--cap-add NET_RAW", "--security-opt seccomp=unconfined", "--network host", "--network=host", "--user 0"]
 
 # egress-proxy-sole-route: the agent joins only the per-session internal network
 # with no resolver, and every allowlisted host maps to the proxy address. It
