@@ -182,7 +182,7 @@ select_workcell_trusted_buildx() {
 }
 
 setup_workcell_trusted_docker_client() {
-  local real_home
+  local real_home staging
 
   # Launch, inspect, and doctor flows can all sanitize the host Docker
   # environment more than once in a single process. Reuse the in-process
@@ -200,12 +200,16 @@ setup_workcell_trusted_docker_client() {
   fi
 
   real_home="$(resolve_workcell_real_home)"
-  WORKCELL_DOCKER_SANDBOX_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker.XXXXXX")"
+  # Stage under a name that scripts/uninstall.sh does not match. Write the owner
+  # marker, then rename into the cleanup namespace, so uninstall never sees a
+  # sandbox without its marker.
+  staging="$(mktemp -d "${TMPDIR:-/tmp}/workcell-docker-stage.XXXXXX")"
+  printf '%s\n' "$$" >"${staging}/owner.pid"
+  WORKCELL_DOCKER_SANDBOX_ROOT="${staging%/*}/workcell-docker.${staging##*.}"
+  mv "${staging}" "${WORKCELL_DOCKER_SANDBOX_ROOT}"
   WORKCELL_DOCKER_HOME="${WORKCELL_DOCKER_SANDBOX_ROOT}/home"
   WORKCELL_DOCKER_CONFIG="${WORKCELL_DOCKER_SANDBOX_ROOT}/config"
   mkdir -p "${WORKCELL_DOCKER_HOME}" "${WORKCELL_DOCKER_CONFIG}"
-  # scripts/uninstall.sh keeps a sandbox while this owner process is alive.
-  printf '%s\n' "$$" >"${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"
 
   copy_workcell_docker_state_tree "${real_home}/.docker/contexts" "${WORKCELL_DOCKER_CONFIG}/contexts"
   copy_workcell_docker_state_tree "${real_home}/.docker/buildx" "${WORKCELL_DOCKER_CONFIG}/buildx"

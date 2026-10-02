@@ -1345,6 +1345,49 @@ echo sandbox-survived`, "_", root, home, tempRoot)
 	}
 }
 
+// TestTrustedDockerSandboxIsStagedBeforeItEntersTheCleanupNamespace shims mv to
+// check the state at the instant the sandbox is renamed into the namespace
+// that scripts/uninstall.sh matches: nothing matches yet, and the staged
+// directory already holds its owner marker.
+func TestTrustedDockerSandboxIsStagedBeforeItEntersTheCleanupNamespace(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	tempRoot := t.TempDir()
+	shimDir := t.TempDir()
+	record := filepath.Join(t.TempDir(), "record")
+	realMv, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim := `#!/bin/bash
+set -euo pipefail
+for entry in "$TEMP_ROOT"/workcell-docker.*; do
+  [[ -e "${entry}" ]] && { echo "exposed:${entry}" >>"$RECORD"; exit 1; }
+done
+[[ -s "$1/owner.pid" ]] || { echo "no-marker:$1" >>"$RECORD"; exit 1; }
+echo staged-ok >>"$RECORD"
+exec "$REAL_MV" "$@"
+`
+	if err := os.WriteFile(filepath.Join(shimDir, "mv"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", `set -euo pipefail
+source "$1/scripts/lib/trusted-docker-client.sh"
+setup_workcell_trusted_docker_client
+test -s "${WORKCELL_DOCKER_SANDBOX_ROOT}/owner.pid"`, "_", root)
+	cmd.Env = []string{"HOME=" + t.TempDir(), "TMPDIR=" + tempRoot, "TEMP_ROOT=" + tempRoot, "RECORD=" + record,
+		"REAL_MV=" + realMv, "PATH=" + shimDir + ":" + os.Getenv("PATH")}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sandbox setup failed: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(record)
+	if err != nil || strings.TrimSpace(string(got)) != "staged-ok" {
+		t.Fatalf("sandbox was not staged before rename: record=%q err=%v", got, err)
+	}
+}
+
 func TestAppleSiliconOnlyHostGuardsArePinned(t *testing.T) {
 	t.Parallel()
 
