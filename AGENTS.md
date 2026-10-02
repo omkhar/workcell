@@ -249,8 +249,9 @@ argument again. Do not start another review round to settle them.
 - Exception: upstream-refresh bump PRs. The upstream-refresh workflow may
   publish these PRs from CI through the upstream-refresh GitHub App, with
   commits signed by GitHub (web-flow) instead of the maintainer key. Codex
-  review is advisory for these PRs. They auto-merge after the 48 h cool-off
-  when scope-guard and all required checks pass. All other PRs keep the
+  review is advisory for these PRs. A provider PR auto-merges after the 48 h
+  cool-off when scope-guard and all required checks pass. A toolchain PR needs
+  human review. All other PRs keep the
   host-side publication, maintainer signing, and Codex loop rules.
 - Actionable comments must be addressed or explicitly dispositioned before
   merge.

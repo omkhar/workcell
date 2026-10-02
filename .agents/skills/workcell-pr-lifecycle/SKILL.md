@@ -57,10 +57,12 @@ For a public workflow or contract change, also use
 The no-force-push rule is an operator procedure. It does not configure or
 enforce GitHub branch protection.
 
-The upstream-refresh workflow publishes each candidate as a PR with a GitHub
-App token. See `docs/github-workflows.md`. An operator can still publish on the
-host with `./scripts/publish-upstream-refresh-pr.sh`. That helper recreates the
-change locally and calls `./scripts/repo-publish-pr.sh`.
+The upstream-refresh workflow makes a provider candidate and a toolchain
+candidate. It publishes each one as a PR with a GitHub App token, except a
+candidate that changes `.github/workflows/`. See `docs/github-workflows.md`. An
+operator publishes such a candidate on the host with
+`./scripts/publish-upstream-refresh-pr.sh --candidate <kind>`. That helper
+recreates the change locally and calls `./scripts/repo-publish-pr.sh`.
 
 ## Hosted Mutation Order
 

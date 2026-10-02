@@ -66,6 +66,7 @@ UPSTREAM_REFRESH_WORKFLOW_PATH="${ROOT_DIR}/.github/workflows/upstream-refresh.y
 TOOL_PINS_POLICY_PATH="${ROOT_DIR}/policy/tool-pins.toml"
 
 mode="summary"
+toolchain_only=0
 
 cleanup() {
   [[ -z "${workcell_upstream_pins_token_file_created}" || "${workcell_upstream_pins_token_file_created}" != "${TMPDIR:-/tmp}"/workcell-github-token.* ]] || rm -f "${workcell_upstream_pins_token_file_created}"
@@ -74,12 +75,16 @@ trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
-Usage: scripts/update-upstream-pins.sh [--apply | --check]
+Usage: scripts/update-upstream-pins.sh [--apply | --check] [--toolchain-only]
 
 Modes:
   --apply   Refresh pinned provider versions, Linux base images, toolchains, and
             release-build inputs to the newest reviewed upstream versions.
   --check   Exit non-zero when any eligible pinned upstream refresh is pending.
+
+Options:
+  --toolchain-only  Leave provider pins to scripts/update-provider-pins.sh.
+                    Pending provider bumps do not count as changes.
 
 Without a mode flag, the script prints a human-readable summary.
 EOF
@@ -93,6 +98,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       mode="check"
+      shift
+      ;;
+    --toolchain-only)
+      toolchain_only=1
       shift
       ;;
     -h | --help)
@@ -673,7 +682,7 @@ for current_target_pair in \
     break
   fi
 done
-if [[ "${provider_has_changes}" -eq 1 ]]; then
+if [[ "${provider_has_changes}" -eq 1 && "${toolchain_only}" -eq 0 ]]; then
   has_changes=1
 fi
 
@@ -827,7 +836,9 @@ replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'actionlint_sha256 = ' "acti
 replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'zizmor_version = ' "zizmor_version = \"${target_zizmor_version}\""
 replace_line_with_prefix "${TOOL_PINS_POLICY_PATH}" 'zizmor_sha256 = ' "zizmor_sha256 = \"${target_zizmor_sha}\""
 
-"${ROOT_DIR}/scripts/update-provider-pins.sh" --apply
+if [[ "${toolchain_only}" -eq 0 ]]; then
+  "${ROOT_DIR}/scripts/update-provider-pins.sh" --apply
+fi
 "${ROOT_DIR}/scripts/check-pinned-inputs.sh"
 
 print_summary

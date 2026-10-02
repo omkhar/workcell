@@ -56,103 +56,56 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/upstream-refresh-candidate"
           WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh >"${RUNNER_TEMP}/upstream-refresh-candidate/provider-summary"
 
-      - name: Refresh pinned upstreams
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply | tee "${RUNNER_TEMP}/upstream-refresh-apply.log"
-
-      - id: changes
-        name: Detect refreshed content
-        run: |
-          if git diff --quiet --exit-code; then
-            echo "changed=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          echo "changed=true" >> "${GITHUB_OUTPUT}"
-
-      - name: Re-check refreshed pin state
-        if: steps.changes.outputs.changed == 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
-          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
-          unset GITHUB_TOKEN GH_TOKEN
-          trap 'rm -f "${token_file}"' EXIT
-          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check
-          ./scripts/check-pinned-inputs.sh
-
+      # One open refresh PR of a kind blocks only a new candidate of that kind.
       - id: existing_pr
         name: Detect overlapping upstream refresh PRs
-        if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          existing_pr_url="$(
-            gh pr list \
-              --state open \
-              --json title,url,headRefName \
-              --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | startswith("codex/upstream-refresh-")))) | .[0].url // ""'
-          )"
-          if [[ -n "${existing_pr_url}" ]]; then
-            echo "skip=true" >> "${GITHUB_OUTPUT}"
-            echo "url=${existing_pr_url}" >> "${GITHUB_OUTPUT}"
-            echo "Upstream refresh PR already open: ${existing_pr_url}"
-            exit 0
-          fi
-          echo "skip=false" >> "${GITHUB_OUTPUT}"
+          prs="$(gh pr list --state open --json title,url,headRefName)"
+          for kind in provider toolchain; do
+            url="$(jq -r --arg kind "${kind}" 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | test("^codex/upstream-refresh-([0-9]+$|" + $kind + "-"))))) | .[0].url // ""' <<<"${prs}")"
+            echo "${kind}=${url}" >> "${GITHUB_OUTPUT}"
+            [[ -z "${url}" ]] || echo "Upstream ${kind} refresh PR already open: ${url}"
+          done
+
+      # The provider candidate holds only provider pins, so the scope guard can
+      # pass it. The toolchain candidate holds every other pin.
+      - name: Refresh provider pins
+        if: steps.existing_pr.outputs.provider == ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh --apply | tee "${RUNNER_TEMP}/upstream-refresh-provider-apply.log"
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-provider-pins.sh --check
+          ./scripts/check-pinned-inputs.sh
+          ./scripts/ci/upstream-refresh-candidate.sh provider "${RUNNER_TEMP}/upstream-refresh-candidate"
+
+      - name: Refresh toolchain pins
+        if: steps.existing_pr.outputs.toolchain == ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          token_file="$(mktemp "${RUNNER_TEMP}/workcell-github-api-token.XXXXXX")"
+          (umask 077 && printf '%s' "${GITHUB_TOKEN}" >"${token_file}")
+          unset GITHUB_TOKEN GH_TOKEN
+          trap 'rm -f "${token_file}"' EXIT
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --apply --toolchain-only | tee "${RUNNER_TEMP}/upstream-refresh-apply.log"
+          WORKCELL_GITHUB_API_TOKEN_FILE="${token_file}" ./scripts/update-upstream-pins.sh --check --toolchain-only
+          ./scripts/check-pinned-inputs.sh
+          ./scripts/ci/upstream-refresh-candidate.sh toolchain "${RUNNER_TEMP}/upstream-refresh-candidate"
 
       - id: candidate
-        name: Build candidate bundle
-        if: steps.changes.outputs.changed == 'true' && steps.existing_pr.outputs.skip != 'true'
+        name: Collect candidates
         run: |
           candidate_dir="${RUNNER_TEMP}/upstream-refresh-candidate"
-          mkdir -p "${candidate_dir}"
-
-          git diff --binary --full-index --patch --no-ext-diff --no-color > "${candidate_dir}/patch"
-          git diff --stat --no-color > "${candidate_dir}/diffstat"
-
-          tmp_index="$(mktemp "${RUNNER_TEMP}/upstream-refresh-index.XXXXXX")"
-          rm -f "${tmp_index}"
-          trap 'rm -f "${tmp_index}"' EXIT
-          GIT_INDEX_FILE="${tmp_index}" git read-tree HEAD
-          GIT_INDEX_FILE="${tmp_index}" git add -A
-          tree_oid="$(GIT_INDEX_FILE="${tmp_index}" git write-tree)"
-          rm -f "${tmp_index}"
-          trap - EXIT
-
-          patch_sha256="$(shasum -a 256 "${candidate_dir}/patch" | awk '{print $1}')"
-          changed_files_json="$(git diff --name-only | jq -R . | jq -s .)"
-          jq -n \
-            --arg repository "${GITHUB_REPOSITORY}" \
-            --arg workflow "upstream-refresh" \
-            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg artifact_name "upstream-refresh-candidate" \
-            --arg base_ref "${GITHUB_REF}" \
-            --arg base_sha "$(git rev-parse HEAD)" \
-            --arg patch_sha256 "${patch_sha256}" \
-            --arg tree_oid "${tree_oid}" \
-            --argjson changed_files "${changed_files_json}" \
-            '{
-              version: 1,
-              repository: $repository,
-              workflow: $workflow,
-              run_id: (env.GITHUB_RUN_ID | tonumber),
-              run_url: $run_url,
-              artifact_name: $artifact_name,
-              base_ref: $base_ref,
-              base_sha: $base_sha,
-              patch_sha256: $patch_sha256,
-              tree_oid: $tree_oid,
-              changed_files: $changed_files
-            }' > "${candidate_dir}/metadata.json"
-
-          echo "dir=${candidate_dir}" >> "${GITHUB_OUTPUT}"
+          if compgen -G "${candidate_dir}/*/metadata.json" >/dev/null; then
+            echo "dir=${candidate_dir}" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Upload candidate artifact
         if: steps.candidate.outputs.dir != ''
@@ -161,19 +114,18 @@ jobs:
           name: upstream-refresh-candidate
           if-no-files-found: error
           path: |
-            ${{ steps.candidate.outputs.dir }}/patch
-            ${{ steps.candidate.outputs.dir }}/diffstat
-            ${{ steps.candidate.outputs.dir }}/metadata.json
+            ${{ steps.candidate.outputs.dir }}/*/patch
+            ${{ steps.candidate.outputs.dir }}/*/diffstat
+            ${{ steps.candidate.outputs.dir }}/*/metadata.json
             ${{ steps.candidate.outputs.dir }}/provider-summary
           retention-days: 7
 
       - name: Update tracking issue
         env:
           GH_TOKEN: ${{ github.token }}
-          REFRESH_CHANGED: ${{ steps.changes.outputs.changed }}
-          REFRESH_SKIP: ${{ steps.existing_pr.outputs.skip }}
-          REFRESH_EXISTING_PR_URL: ${{ steps.existing_pr.outputs.url }}
-          CANDIDATE_DIR: ${{ steps.candidate.outputs.dir }}
+          REFRESH_PROVIDER_PR: ${{ steps.existing_pr.outputs.provider }}
+          REFRESH_TOOLCHAIN_PR: ${{ steps.existing_pr.outputs.toolchain }}
+          CANDIDATE_DIR: ${{ runner.temp }}/upstream-refresh-candidate
         run: |
           tracking_label="upstream-refresh-candidate"
           tracking_title="Upstream refresh candidate"
@@ -187,64 +139,57 @@ jobs:
             gh label create needs-human-review --color "D93F0B" --description "Human review required before merge"
           fi
 
-          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-          if [[ "${REFRESH_CHANGED}" != 'true' ]]; then
-            {
-              echo "## Latest result"
+          {
+            echo "## Latest result"
+            echo
+            echo "- generated: \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`"
+            echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- base ref: \`${GITHUB_REF}\`"
+            echo "- base sha: \`$(git rev-parse HEAD)\`"
+            for kind in provider toolchain; do
+              existing_pr_var="REFRESH_${kind^^}_PR"
+              metadata_path="${CANDIDATE_DIR}/${kind}/metadata.json"
               echo
-              echo "No upstream refresh changes were detected."
+              echo "## ${kind^} candidate"
               echo
-              echo "- generated: \`${generated_at}\`"
-              echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-              echo "- base ref: ${GITHUB_REF}"
-              echo "- base sha: $(git rev-parse HEAD)"
-            } > "${issue_body}"
-          elif [[ "${REFRESH_SKIP}" == 'true' ]]; then
-            {
-              echo "## Latest result"
-              echo
-              echo "Skipped candidate publication because a refresh PR is already open:"
-              echo "${REFRESH_EXISTING_PR_URL}"
-              echo
-              echo "- generated: \`${generated_at}\`"
-              echo "- run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-              echo "- base ref: ${GITHUB_REF}"
-              echo "- base sha: $(git rev-parse HEAD)"
-            } > "${issue_body}"
-          else
-            metadata_path="${CANDIDATE_DIR}/metadata.json"
-            diffstat_path="${CANDIDATE_DIR}/diffstat"
-            {
-              echo "## Latest candidate"
-              echo
-              echo "- generated: \`${generated_at}\`"
-              echo "- run: $(jq -r '.run_url' "${metadata_path}")"
-              echo "- artifact: \`$(jq -r '.artifact_name' "${metadata_path}")\`"
-              echo "- base ref: \`$(jq -r '.base_ref' "${metadata_path}")\`"
-              echo "- base sha: \`$(jq -r '.base_sha' "${metadata_path}")\`"
+              if [[ -n "${!existing_pr_var}" ]]; then
+                echo "Skipped, because a ${kind} refresh PR is already open: ${!existing_pr_var}"
+                continue
+              fi
+              if [[ ! -f "${metadata_path}" ]]; then
+                echo "No ${kind} refresh changes were detected."
+                continue
+              fi
               echo "- patch sha256: \`$(jq -r '.patch_sha256' "${metadata_path}")\`"
               echo "- tree oid: \`$(jq -r '.tree_oid' "${metadata_path}")\`"
               echo
-              echo "## Changed files"
+              echo "Changed files:"
               echo
               jq -r '.changed_files[] | "- `" + . + "`"' "${metadata_path}"
               echo
-              echo "## Diffstat"
-              echo
               echo '```'
-              cat "${diffstat_path}"
+              cat "${CANDIDATE_DIR}/${kind}/diffstat"
               echo '```'
-            } > "${issue_body}"
-          fi
+              # The App has no Workflows permission, so a person publishes this candidate.
+              if jq -e 'any(.changed_files[]; startswith(".github/workflows/"))' "${metadata_path}" >/dev/null; then
+                echo
+                echo "This candidate changes \`.github/workflows/\`. The App does not publish it. Publish it from a host:"
+                echo
+                echo '```'
+                echo "./scripts/publish-upstream-refresh-pr.sh --run-id ${GITHUB_RUN_ID} --candidate ${kind}"
+                echo '```'
+              fi
+            done
+          } > "${issue_body}"
 
-          # Held releases show in every result branch, not only the no-change one.
-          if grep -q 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log"; then
+          # Held releases show in every result, not only the no-change one.
+          held_lines="$(cat "${RUNNER_TEMP}"/upstream-refresh-*apply.log 2>/dev/null | grep 'unclassified-cli-surface' | sed 's/^ */- /' | sort -u || true)"
+          if [[ -n "${held_lines}" ]]; then
             {
               echo
               echo "## Held for manual classification"
               echo
-              grep 'unclassified-cli-surface' "${RUNNER_TEMP}/upstream-refresh-apply.log" | sed 's/^ */- /' | sort -u
+              echo "${held_lines}"
             } >>"${issue_body}"
           fi
 
@@ -293,11 +238,12 @@ jobs:
           path: ${{ runner.temp }}/candidate
 
       # A failed guard is a result: publish then opens a PR for human review.
+      # Only the provider candidate can pass. A missing one fails the guard.
       - id: guard
         name: Run scope guard
         shell: bash --noprofile --norc -euo pipefail {0}
         continue-on-error: true
-        run: ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/patch"
+        run: ./scripts/ci/upstream-refresh-scope-guard.sh "${RUNNER_TEMP}/candidate/provider/patch"
 
   publish:
     name: Publish upstream refresh PR
