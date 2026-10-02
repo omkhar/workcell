@@ -36,15 +36,15 @@ func TestParseAllowlist(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseAllowlist(tc.text, "allowlist")
+			got, err := ParseAllowlist(tc.text, "allowlist")
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("parseAllowlist(%q) error = %v, want %q", tc.text, err, tc.wantErr)
+					t.Fatalf("ParseAllowlist(%q) error = %v, want %q", tc.text, err, tc.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseAllowlist(%q) unexpected error: %v", tc.text, err)
+				t.Fatalf("ParseAllowlist(%q) unexpected error: %v", tc.text, err)
 			}
 			for _, host := range tc.sni {
 				if !got.sni[host] {

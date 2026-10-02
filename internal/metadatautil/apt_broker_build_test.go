@@ -242,8 +242,14 @@ func TestCheckPinnedInputsRejectsAptBrokerBuildContractDrift(t *testing.T) {
 		},
 		{
 			name: "runtime-install-override",
-			old:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /usr/local/libexec/workcell/",
-			new:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /usr/local/libexec/workcell/\nRUN chmod 0777 /usr/local/libexec/workcell/workcell-apt-broker-client",
+			old:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/",
+			new:  "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/\nRUN chmod 0777 /usr/local/libexec/workcell/workcell-apt-broker-client",
+			want: "apt broker runtime install boundary",
+		},
+		{
+			name: "runtime-install-drops-egress-proxy",
+			old:  " /out/workcell-egress-proxy /usr/local/libexec/workcell/",
+			new:  " /usr/local/libexec/workcell/",
 			want: "apt broker runtime install boundary",
 		},
 		{

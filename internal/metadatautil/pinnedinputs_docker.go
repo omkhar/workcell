@@ -399,6 +399,18 @@ func (validator *dockerPinnedInputValidator) validateAptBrokerContext() error {
 !cmd/workcell-apt-broker-client/**
 !cmd/workcell-apt-broker-server/
 !cmd/workcell-apt-broker-server/**
+!internal/cliexit/
+!internal/cliexit/**
+!internal/egressproxy/
+!internal/egressproxy/**
+!internal/injectionpolicy/
+!internal/injectionpolicy/**
+!internal/rootio/
+!internal/rootio/**
+!internal/tomlsubset/
+!internal/tomlsubset/**
+!cmd/workcell-egress-proxy/
+!cmd/workcell-egress-proxy/**
 !adapters/
 !adapters/**
 !runtime/
@@ -521,9 +533,15 @@ COPY --chmod=0444 go.mod go.sum ./
 COPY --chmod=0555 internal/aptbroker ./internal/aptbroker
 COPY --chmod=0555 cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-client
 COPY --chmod=0555 cmd/workcell-apt-broker-server ./cmd/workcell-apt-broker-server
+COPY --chmod=0555 internal/cliexit ./internal/cliexit
+COPY --chmod=0555 internal/egressproxy ./internal/egressproxy
+COPY --chmod=0555 internal/injectionpolicy ./internal/injectionpolicy
+COPY --chmod=0555 internal/rootio ./internal/rootio
+COPY --chmod=0555 internal/tomlsubset ./internal/tomlsubset
+COPY --chmod=0555 cmd/workcell-egress-proxy ./cmd/workcell-egress-proxy
 
-RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server \
-  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server
+RUN GOOS=linux GOARCH="${TARGETARCH}" /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -ldflags='-buildid=' -o /out/ ./cmd/workcell-apt-broker-client ./cmd/workcell-apt-broker-server ./cmd/workcell-egress-proxy \
+  && touch -d "@${SOURCE_DATE_EPOCH}" /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy
 
 `
 
@@ -532,7 +550,7 @@ func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeInstall() e
 	if err != nil {
 		return err
 	}
-	const install = "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /usr/local/libexec/workcell/"
+	const install = "COPY --from=apt-broker-builder --chown=0:0 --chmod=0555 /out/workcell-apt-broker-client /out/workcell-apt-broker-server /out/workcell-egress-proxy /usr/local/libexec/workcell/"
 	const installBoundary = install + "\n\nWORKDIR /workspace\n"
 	if err := requireTextCount(runtimeStage, installBoundary, 1, "apt broker runtime install boundary", validator.cfg.RuntimeDockerfilePath); err != nil {
 		return err
@@ -559,7 +577,7 @@ func (validator *dockerPinnedInputValidator) aptBrokerRuntimeStage() (string, er
 func (validator *dockerPinnedInputValidator) validateAptBrokerRuntimeBinaries(runtimeStage string) error {
 	// Count instructions, not text: a comment naming a binary changes nothing.
 	instructions := dockerfileInstructions(runtimeStage)
-	for _, binary := range []string{"workcell-apt-broker-client", "workcell-apt-broker-server"} {
+	for _, binary := range []string{"workcell-apt-broker-client", "workcell-apt-broker-server", "workcell-egress-proxy"} {
 		if err := requireTextCount(instructions, binary, 1, "apt broker runtime binary", validator.cfg.RuntimeDockerfilePath); err != nil {
 			return err
 		}

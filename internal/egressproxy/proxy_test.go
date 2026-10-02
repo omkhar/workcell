@@ -167,7 +167,7 @@ func FuzzPeekSNI(f *testing.F) {
 // dialer sends every dial to target, recording the address it was asked for.
 func testProxy(t *testing.T, allow string, addrs []netip.Addr, target string) (*Proxy, *bytes.Buffer, *[]netip.AddrPort) {
 	t.Helper()
-	a, err := parseAllowlist(allow, "allowlist")
+	a, err := ParseAllowlist(allow, "allowlist")
 	if err != nil {
 		t.Fatal(err)
 	}

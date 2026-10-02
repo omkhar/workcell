@@ -26,7 +26,9 @@ func TestRunFailsClosedOnBadConfig(t *testing.T) {
 		args []string
 		want string
 	}{
-		"no allowlist":      {nil, "-allowlist is required"},
+		"no allowlist":      {nil, "exactly one of -allowlist or -allow"},
+		"both allowlists":   {[]string{"-allowlist", shared, "-allow", "a.example:443"}, "exactly one of -allowlist or -allow"},
+		"inline IP literal": {[]string{"-allow", "a.example:443 192.0.2.1:443"}, "IP literal"},
 		"missing file":      {[]string{"-allowlist", filepath.Join(dir, "missing")}, "no such file"},
 		"shared plain port": {[]string{"-allowlist", shared}, "more than one host"},
 		"extra argument":    {[]string{"-allowlist", shared, "typo"}, "unexpected argument"},
