@@ -107,17 +107,18 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 		return fmt.Errorf("ValidateColimaStatusOutput: unsupported vm type %q or mount type %q", vmType, mountType)
 	}
 	// Every marker must be a complete status line, optionally behind the
-	// logrus "INFO[0000] " prefix, so "9p-bogus", "QEMU-bogus", and
-	// "warning: mountType: 9p" never satisfy a check.
-	const linePrefix = `(?m)^(?:[A-Za-z]+\[\d+\]\s+)?`
+	// logrus "INFO[0000] " prefix or the logfmt `time="..." level=info msg="`
+	// prefix that Colima 0.10 prints (with a closing quote), so "9p-bogus",
+	// "QEMU-bogus", and "warning: mountType: 9p" never satisfy a check.
+	const linePrefix = `(?m)^(?:[A-Za-z]+\[\d+\]\s+|time="[^"]*"\s+level=\w+\s+msg=")?`
 	field := func(text string) *regexp.Regexp {
-		return regexp.MustCompile(linePrefix + regexp.QuoteMeta(text) + `\s*$`)
+		return regexp.MustCompile(linePrefix + regexp.QuoteMeta(text) + `"?\s*$`)
 	}
 	checks := []struct {
 		pattern *regexp.Regexp
 		message string
 	}{
-		{regexp.MustCompile(`(?i)` + linePrefix + `(?:colima \[profile=\S+\] is running )?using (?:macOS )?` + regexp.QuoteMeta(driver) + `\s*$`), "Colima profile " + profile + " is not using " + driver + "."},
+		{regexp.MustCompile(`(?i)` + linePrefix + `(?:colima (?:\[profile=\S+\] )?is running )?using (?:macOS )?` + regexp.QuoteMeta(driver) + `"?\s*$`), "Colima profile " + profile + " is not using " + driver + "."},
 		{field("mountType: " + mountType), "Colima profile " + profile + " is not using " + mountType + "."},
 		{field("runtime: docker"), "Colima profile " + profile + " is not using Docker runtime."},
 	}
