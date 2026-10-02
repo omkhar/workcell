@@ -8,7 +8,7 @@ additional protection.
 ## Auth methods
 
 - `codex_auth` stages `auth.json` at `~/.codex/auth.json`. See
-  `internal/adapters/data.go`.
+  `adapters/codex/adapter.toml`.
 - `codex-home-auth-file` reads the reviewed host Codex auth file. It does not
   pass a keychain to the runtime.
 - Codex accepts the shared `github_hosts`, `github_config`, and SSH inputs.
@@ -44,7 +44,7 @@ Repo baselines under `adapters/codex/` (paths relative to this directory):
 
 In-container reserved session targets: `~/.codex/{config.toml,auth.json,`
 `AGENTS.md,managed_config.toml,requirements.toml,agents,rules,mcp}`
-(`ReservedTargets` in `internal/adapters/data.go`).
+(`reserved_targets` in `adapters/codex/adapter.toml`).
 
 ## Adapter behavior
 

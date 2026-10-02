@@ -13,7 +13,7 @@ additional protection.
 - `claude-macos-keychain` is a fail-closed scaffold. Workcell stops until a
   supported export path exists.
 - Shared GitHub CLI (`github_hosts`, `github_config`) and SSH inputs apply
-  (`sharedCredentialsEnabled: true` in `internal/adapters/data.go`).
+  (`shared_credentials = true` in `adapters/claude/adapter.toml`).
 
 See [../../docs/injection-policy.md](../../docs/injection-policy.md).
 
@@ -36,7 +36,7 @@ In-container reserved session targets include `~/.claude`,
 `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, the auth mirrors
 (`~/.claude/.credentials.json`, `~/.claude.json`,
 `~/.config/claude-code/auth.json`), the API key helper dir `~/.claude/workcell`,
-and `~/.mcp.json` (`ReservedTargets` in `internal/adapters/data.go`).
+and `~/.mcp.json` (`reserved_targets` in `adapters/claude/adapter.toml`).
 
 ## Adapter behavior
 

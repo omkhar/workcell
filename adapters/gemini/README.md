@@ -7,7 +7,7 @@ is the primary control. The Gemini sandbox is not the Tier 1 boundary.
 ## Auth methods
 
 - `gemini_env` credential key — API key, Gemini Code Assist (GCA), or Vertex
-  configuration seeded to `~/.gemini/.env` (`internal/adapters/data.go`).
+  configuration seeded to `~/.gemini/.env` (`adapters/gemini/adapter.toml`).
 - `gemini_oauth` credential key — cached Gemini OAuth state seeded to
   `~/.gemini/oauth_creds.json`.
 - `gemini_projects` credential key — persisted project registry seeded to
@@ -16,7 +16,7 @@ is the primary control. The Gemini sandbox is not the Tier 1 boundary.
   `~/.config/gcloud/application_default_credentials.json`; supplemental to
   `gemini_env` Vertex config, not a standalone auth mode.
 - Shared GitHub CLI (`github_hosts`, `github_config`) and SSH inputs apply
-  (`sharedCredentialsEnabled: true` in `internal/adapters/data.go`).
+  (`shared_credentials = true` in `adapters/gemini/adapter.toml`).
 - Google OAuth/ADC needs extra egress: `accounts.google.com:443`,
   `oauth2.googleapis.com:443`, `sts.googleapis.com:443`
   (`GeminiGoogleAuthEndpoints` in `internal/adapters/data.go`).
@@ -40,7 +40,7 @@ Repo baselines under `adapters/gemini/`:
 Additional in-container session targets: `~/.gemini/.env`,
 `~/.gemini/oauth_creds.json`, `~/.gemini/projects.json`,
 `~/.gemini/trustedFolders.json`, and the gcloud ADC path
-(`ReservedTargets` in `internal/adapters/data.go`).
+(`reserved_targets` in `adapters/gemini/adapter.toml`).
 
 ## Adapter behavior
 

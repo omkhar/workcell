@@ -41,20 +41,22 @@ Adapter rules:
 
 ## Adding a new provider
 
-Per-provider Go tables contain credential keys, container paths, and reserved
-targets. These tables are in `internal/adapters/data.go`. Add a row when you
-implement an adapter. The row must match `providerid.CredentialMetadataProviders`
-order. Also add the provider configuration tree under `adapters/<name>/`.
+Each adapter directory has an `adapter.toml` manifest (strict schema and
+loader: `internal/adapters/manifest.go`). The manifest is the source of the
+per-provider credential keys, container paths, and reserved targets. Run
+`scripts/generate-adapters-data.sh` and `scripts/generate-adapters-providerid.sh`
+to generate `internal/adapters/data_gen.go` and
+`internal/providerid/providerid_gen.go` from the manifests. Do not edit the
+generated files by hand. Also add the provider configuration tree under
+`adapters/<name>/`.
 
 These registry changes do not make a provider supported. Support also requires
 launcher, auth, policy, tests, documents, and live certification. A provider
-directory without a registry row is a fail-closed scaffold.
+directory with a planned manifest is a fail-closed scaffold.
 
-Each adapter directory also has an `adapter.toml` manifest (strict schema and
-loader: `internal/adapters/manifest.go`; no runtime code reads it yet). The
-parity test in `internal/adapters/manifest_test.go` compares each manifest with
-the tables above, the launcher shell tables, and the Rust launcher table. When
-you change one of these tables, change the manifest in the same review unit.
+The parity test in `internal/adapters/manifest_test.go` compares each manifest
+with the generated tables, the launcher shell tables, and the Rust launcher
+table.
 
 The file `internal/adapters/adapters.go` contains the public API. Injection,
 policy, and runtime code use this API.
