@@ -24,6 +24,15 @@ It ignores `.git/info/exclude` and disables Git conversion filters.
 It reads the complete plan before it starts a lane.
 Thus, a lane cannot consume a later plan record from standard input.
 
+When the plan selects the validate lane, `pre-merge.sh` starts the live-Colima invariant lane first.
+That lane runs `verify-invariants.sh --live-lane-only` in parallel with the other lanes.
+It uses its own Colima VMs, so it does not share image tags with the other lanes.
+The validate lane then runs `verify-invariants.sh --skip-live-lane`.
+
+`pre-merge.sh` waits for the live lane at the end and fails if that lane fails.
+On a failure or a stop signal, it stops the live lane and waits for its cleanup.
+That cleanup deletes the Colima profiles of the lane.
+
 For an approved large adapter PR, use both required options:
 
 ```bash
