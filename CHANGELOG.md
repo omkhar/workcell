@@ -11,9 +11,10 @@ The GitHub Releases page contains old details that are not in this file.
 
 The X1 baseline audit produced 10 items.
 The fixes are below.
-`docs/security/audit-2026-10.md` lists scope, severity, and the open finding.
+`docs/security/audit-2026-10.md` lists scope, severity, and the status of each item.
 
 - Session capture no longer follows container symbolic links on the host (#750).
+- The launcher now refuses a safe-path workspace with a Git `commondir` redirect (#744).
 - The SSH config check parses `Keyword=value` syntax and rejects SSH sources in the workspace (#743).
 - The Colima egress allowlist now replaces its chains atomically (#746).
 - The Codex override guard now covers the `projects` table (#742).
