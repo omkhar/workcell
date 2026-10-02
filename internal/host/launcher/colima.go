@@ -112,7 +112,7 @@ func ValidateColimaStatusOutput(status, profile, vmType, mountType string) error
 	// one line), so "9p-bogus", "QEMU-bogus", and "warning: mountType: 9p"
 	// never satisfy a check.
 	statusLine := func(body string) string {
-		return `(?m)^(?:(?:[A-Za-z]+\[\d+\]\s+)?` + body + `\s*|time="[^"\n]*"[ \t]+level=\w+[ \t]+msg="` + body + `"[ \t]*)$`
+		return `(?m)^(?:(?:[A-Za-z]+\[\d+\]\s+)?` + body + `\s*|time="[^"\n]*"[ \t]+level=info[ \t]+msg="` + body + `"[ \t]*)$`
 	}
 	field := func(text string) *regexp.Regexp {
 		return regexp.MustCompile(statusLine(regexp.QuoteMeta(text)))
