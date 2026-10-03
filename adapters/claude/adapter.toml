@@ -71,6 +71,7 @@ deny = [
   "--allowed-tools", "--allowedTools", "--append-subagent-system-prompt",
   "--append-subagent-system-prompt-file", "--append-system-prompt",
   "--append-system-prompt-file", "--dangerously-skip-permissions",
-  "--mcp-config", "--permission-mode", "--plugin-dir", "--plugin-url",
+  "--mcp-config", "--permission-mode", "--permission-prompt-tool",
+  "--plugin-dir", "--plugin-url",
   "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
 ]

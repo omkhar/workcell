@@ -115,6 +115,10 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 				probe{[]string{"--", "-yellow"}, "0"}, probe{[]string{"--", "-safe"}, "0"}, probe{[]string{"-d", "--", "-yellow"}, "0"},
 				probe{[]string{"-y", "--", "text"}, "2"})
 		}
+		if m.ID == "claude" {
+			// A hidden option still takes the attached form.
+			probes = append(probes, probe{[]string{"--permission-prompt-tool=" + flagInventoryProbeValue}, "2"})
+		}
 		for _, sub := range m.Flags.Subcommands {
 			probes = append(probes, probe{[]string{sub}, "0"})
 		}
