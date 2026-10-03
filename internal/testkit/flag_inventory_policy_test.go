@@ -96,8 +96,11 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 					// yargs reads -d<letter> as -d plus the short option.
 					forms = append(forms, []string{"-d" + flag[1:]})
 				}
-			} else if yargsProviders[m.ID] {
+			} else {
+				// Every parser takes the attached value form of a long option.
 				forms = append(forms, []string{flag + "=" + flagInventoryProbeValue})
+			}
+			if len(flag) > 2 && yargsProviders[m.ID] {
 				// yargs also accepts the camel-case spelling of a dashed option.
 				camel := camelCaseFlag(flag)
 				forms = append(forms, []string{camel, flagInventoryProbeValue}, []string{camel + "=" + flagInventoryProbeValue})
@@ -115,9 +118,10 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 				probe{[]string{"--", "-yellow"}, "0"}, probe{[]string{"--", "-safe"}, "0"}, probe{[]string{"-d", "--", "-yellow"}, "0"},
 				probe{[]string{"-y", "--", "text"}, "2"})
 		}
-		if m.ID == "claude" {
-			// A hidden option still takes the attached form.
-			probes = append(probes, probe{[]string{"--permission-prompt-tool=" + flagInventoryProbeValue}, "2"})
+		if m.ID == "codex" {
+			// A config override reaches the same setting as --approve-for-me.
+			probes = append(probes, probe{[]string{"-c", "approvals_reviewer=auto_review"}, "2"},
+				probe{[]string{"--config=profiles.x.approvals_reviewer=auto_review"}, "2"})
 		}
 		for _, sub := range m.Flags.Subcommands {
 			probes = append(probes, probe{[]string{sub}, "0"})

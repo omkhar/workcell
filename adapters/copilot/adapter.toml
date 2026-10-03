@@ -43,7 +43,7 @@ subcommands = [
   "completion",
 ]
 allow = [
-  "--assisted-approval", "--auto-tier", "--banner", "--context",
+  "--auto-tier", "--banner", "--context",
   "--enable-mcp-server", "--fleet", "-h", "--help", "--log-level",
   "--max-ai-credits", "--model", "--mouse", "--no-color",
   "--no-eager-powershell-resolution", "--no-experimental", "--no-mouse", "-p",
@@ -55,7 +55,8 @@ deny = [
   "--add-github-mcp-toolset", "--additional-mcp-config", "--agent",
   "--allow-all", "--allow-all-mcp-server-instructions", "--allow-all-paths",
   "--allow-all-tools", "--allow-all-urls", "--allow-tool", "--allow-url",
-  "--attachment", "--autopilot", "--available-tools", "--bash-env", "-C", "-c",
+  "--assisted-approval", "--attachment", "--autopilot", "--available-tools",
+  "--bash-env", "-C", "-c",
   "--config-dir", "--connect", "--continue", "--deny-tool", "--deny-url",
   "--disable-builtin-mcps", "--disable-mcp-server", "--disallow-temp-dir",
   "--dynamic-retrieval", "--enable-all-github-mcp-tools", "--enable-memory",

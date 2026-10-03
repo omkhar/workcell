@@ -40,9 +40,9 @@ subcommands = [
   "resume", "fork", "archive", "unarchive", "delete", "features", "execpolicy",
 ]
 allow = [
-  "--all", "--approve-for-me", "--ascii", "--base", "-c", "--color", "--commit",
+  "--all", "--ascii", "--base", "-c", "--color", "--commit",
   "--config", "--device-auth", "--ephemeral", "--force", "-h", "--help", "-i",
-  "--ignore-rules", "--ignore-user-config", "--image",
+  "--ignore-user-config", "--image",
   "--include-non-interactive", "--json", "--last", "--local-provider", "-m",
   "--model", "--no-alt-screen", "--no-color", "--no-daemon", "-o", "--oss",
   "--output-last-message", "--output-schema", "--skip-git-repo-check",
@@ -50,9 +50,10 @@ allow = [
   "-V", "--version", "--with-access-token", "--with-api-key", "--worktree",
 ]
 deny = [
-  "-a", "--add-dir", "--ask-for-approval", "-C", "--cd",
+  "-a", "--add-dir", "--approve-for-me", "--ask-for-approval", "-C", "--cd",
   "--dangerously-bypass-approvals-and-sandbox",
   "--dangerously-bypass-hook-trust", "--disable", "--enable", "--full-auto",
-  "-p", "--profile", "--remote", "--remote-auth-token-env", "-s", "--sandbox",
-  "--search", "--yolo",
+  "--ignore-rules",
+  "--not-so-yolo", "-p", "--profile", "--remote", "--remote-auth-token-env",
+  "-s", "--sandbox", "--search", "--yolo",
 ]
