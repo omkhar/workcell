@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -35,6 +36,8 @@ var discardLog = log.New(io.Discard, "", 0)
 var (
 	headerNamePattern  = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 	placeholderPattern = regexp.MustCompile(`^wcph-[0-9a-f]{32}$`)
+	// placeholderAnywhere matches any placeholder in case-folded text.
+	placeholderAnywhere = regexp.MustCompile(`wcph-[0-9a-f]{32}`)
 )
 
 // Broker returns the real value of a brokered header. The credential broker
@@ -168,17 +171,21 @@ func (ca *SessionCA) issue(host string, key *ecdsa.PrivateKey) (*x509.Certificat
 }
 
 // Terminate makes p terminate TLS for each rule host, which must be on the
-// SNI allowlist, and swap the rule's placeholder header via broker.
+// SNI allowlist, and swap each rule's placeholder header via broker. A host
+// can have one rule per header.
 func (p *Proxy) Terminate(ca *SessionCA, broker Broker, rules []TerminateRule) error {
-	terminate := map[string]TerminateRule{}
+	terminate := map[string][]TerminateRule{}
+	seen := map[string]bool{}
 	for _, r := range rules {
 		if !p.allow.sni[r.Host] {
 			return fmt.Errorf("terminate host %s is not on the port 443 allowlist", r.Host)
 		}
-		if _, dup := terminate[r.Host]; dup {
-			return fmt.Errorf("terminate host %s has more than one rule", r.Host)
+		key := r.Host + " " + strings.ToLower(r.Header)
+		if seen[key] {
+			return fmt.Errorf("terminate host %s has more than one rule for header %s", r.Host, r.Header)
 		}
-		terminate[r.Host] = r
+		seen[key] = true
+		terminate[r.Host] = append(terminate[r.Host], r)
 	}
 	p.ca, p.broker, p.terminate = ca, broker, terminate
 	p.transport = &http.Transport{
@@ -246,9 +253,10 @@ func (c *closeNotifyConn) Close() error {
 }
 
 // serveTerminated terminates TLS for host with a session leaf and proxies
-// HTTP/1.1 requests to the real host, swapping the placeholder header.
+// HTTP/1.1 requests to the real host, swapping the placeholder headers. It
+// refuses a request that still carries a placeholder after the swap.
 func (p *Proxy) serveTerminated(client net.Conn, host string, replay []byte) {
-	rule := p.terminate[host]
+	rules := p.terminate[host]
 	tlsConn := tls.Server(&replayConn{Conn: client, r: io.MultiReader(bytes.NewReader(replay), client)}, &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		NextProtos: []string{"http/1.1"},
@@ -273,7 +281,11 @@ func (p *Proxy) serveTerminated(client net.Conn, host string, replay []byte) {
 		ReadHeaderTimeout: peekTimeout,
 		ErrorLog:          discardLog,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if prefix, ok := placeholderPrefix(r.Header.Values(rule.Header), rule.Placeholder); ok {
+			for _, rule := range rules {
+				prefix, ok := placeholderPrefix(r.Header.Values(rule.Header), rule.Placeholder)
+				if !ok {
+					continue
+				}
 				value, err := p.broker.Lookup(r.Context(), host, rule.Header)
 				if err != nil {
 					p.deny(host, tlsPort, "broker_denied")
@@ -281,6 +293,11 @@ func (p *Proxy) serveTerminated(client net.Conn, host string, replay []byte) {
 					return
 				}
 				r.Header.Set(rule.Header, prefix+value)
+			}
+			if carriesPlaceholder(r) {
+				p.deny(host, tlsPort, "placeholder_unswapped")
+				http.Error(w, "request carries an unswapped credential placeholder", http.StatusBadGateway)
+				return
 			}
 			proxy.ServeHTTP(w, r)
 		}),
@@ -301,4 +318,26 @@ func placeholderPrefix(values []string, placeholder string) (string, bool) {
 		return "Bearer ", true
 	}
 	return "", false
+}
+
+// carriesPlaceholder reports whether any header name or value, or the request
+// target raw or percent-decoded, holds a placeholder in any letter case. A
+// target that does not decode counts as a hit, so an escape cannot hide one.
+func carriesPlaceholder(r *http.Request) bool {
+	has := func(text string) bool { return placeholderAnywhere.MatchString(strings.ToLower(text)) }
+	decoded, err := url.PathUnescape(r.RequestURI)
+	if err != nil || has(r.RequestURI) || has(decoded) {
+		return true
+	}
+	for name, values := range r.Header {
+		if has(name) {
+			return true
+		}
+		for _, v := range values {
+			if has(v) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -83,7 +83,7 @@ type Proxy struct {
 	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
 
 	// TLS termination; set by Terminate. upstreamRoots nil means system roots.
-	terminate     map[string]TerminateRule
+	terminate     map[string][]TerminateRule
 	ca            *SessionCA
 	broker        Broker
 	transport     *http.Transport

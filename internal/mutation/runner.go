@@ -336,7 +336,7 @@ var goHelperMutations = []mutationCase{
 		original:     `if len(values) != 1 {`,
 		replacement:  `if len(values) == 0 {`,
 		label:        "egress proxy swaps only a single exact placeholder",
-		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateSwapsOnlyExactPlaceholder", "-count=1"),
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateRefusesUnswappedPlaceholder", "-count=1"),
 	},
 	{
 		relativePath: "internal/egressproxy/terminate.go",
@@ -358,6 +358,13 @@ var goHelperMutations = []mutationCase{
 		replacement:  `_ = host`,
 		label:        "egress proxy logs broker denials",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateBrokerErrorIs502", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/terminate.go",
+		original:     `if carriesPlaceholder(r) {`,
+		replacement:  `if false {`,
+		label:        "egress proxy refuses an unswapped placeholder",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateRefusesUnswappedPlaceholder", "-count=1"),
 	},
 }
 
