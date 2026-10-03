@@ -161,6 +161,7 @@ var knownAuditFields = map[string]struct{}{
 	"runtime_api":                        {},
 	"session_assurance_final":            {},
 	"parent":                             {},
+	"provider_arg_count":                 {},
 	"session_assurance_initial":          {},
 	"session_id":                         {},
 	"shared_auth_modes":                  {},

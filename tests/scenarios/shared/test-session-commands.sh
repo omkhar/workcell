@@ -4419,7 +4419,7 @@ fork_append_record() {
   bash -c 'source "$1"; trap - EXIT; shift; append_audit_record_to_path "$@"' _ "${WORKCELL_FUNCTIONS_COPY}" "${FORK_AUDIT_LOG}" "$@"
 }
 fork_append_record event=launch "session_id=${FORK_PARENT}" agent=codex mode=strict agent_autonomy=yolo \
-  profile="${FORK_PROFILE}" injection_policy_sha256= container_assurance=managed-mutable vm_cpu=6 vm_memory_gib=12 vm_disk_gib=90 container_cpu=2 container_memory=4g execution_path=managed-tier1
+  profile="${FORK_PROFILE}" injection_policy_sha256= container_assurance=managed-mutable vm_cpu=6 vm_memory_gib=12 vm_disk_gib=90 container_cpu=2 container_memory=4g workspace_origin="${FORK_ORIGIN}" provider_arg_count=0 execution_path=managed-tier1
 fork_snapshot_id="$("${ROOT_DIR}/scripts/workcell" session snapshot --id "${FORK_PARENT}" | sed -n 's/^snapshot_id=//p')"
 fork_commit="$(git --git-dir="${FORK_STORE}" rev-parse "refs/workcell/snapshots/${FORK_PARENT}/${fork_snapshot_id}")"
 fork_tree="$(git --git-dir="${FORK_STORE}" rev-parse "${fork_commit}^{tree}")"

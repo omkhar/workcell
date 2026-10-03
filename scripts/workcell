@@ -3128,6 +3128,8 @@ append_launch_audit_record() {
     "vm_disk_gib=${COLIMA_DISK}" \
     "container_cpu=${CONTAINER_CPU_OVERRIDE:-unmanaged}" \
     "container_memory=${CONTAINER_MEMORY}" \
+    "workspace_origin=${SESSION_SOURCE_WORKSPACE}" \
+    "provider_arg_count=${#PROVIDER_ARGS[@]}" \
     "session_assurance_initial=$(session_assurance_initial)"
 }
 

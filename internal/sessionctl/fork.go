@@ -112,6 +112,15 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
 		return err
 	}
+	// The unsigned record picks the clone source, so the signed launch record
+	// must name the same origin. A child does not replay provider arguments, so
+	// a parent that ran with any is refused instead of forked with the default.
+	if launch["workspace_origin"] != origin {
+		return fmt.Errorf("session fork: the session record workspace origin does not match the signed launch record: %s", opts.sessionID)
+	}
+	if launch["provider_arg_count"] != "0" {
+		return fmt.Errorf("session fork does not support a parent that ran with provider arguments: %s", opts.sessionID)
+	}
 	// The child reuses this profile, so it comes from the signed record. A
 	// durable session record that names another profile is refused.
 	if launch["profile"] != record.Profile {

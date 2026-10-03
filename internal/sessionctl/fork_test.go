@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,6 +43,9 @@ func newForkFixtureWithAssurance(t *testing.T, executionPath, assurance string) 
 
 func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...string) *forkFixture {
 	t.Helper()
+	if !slices.ContainsFunc(vm, func(field string) bool { return strings.HasPrefix(field, "provider_arg_count=") }) {
+		vm = append(slices.Clone(vm), "provider_arg_count=0")
+	}
 	f := &forkFixture{root: t.TempDir(), signingDir: filepath.Join(t.TempDir(), "signing")}
 	profileDir := filepath.Join(f.root, "wcl-fixture")
 	if err := os.MkdirAll(filepath.Join(profileDir, "sessions"), 0o700); err != nil {
@@ -49,7 +53,7 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	}
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
-	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "agent=codex", "mode=strict", "agent_autonomy=yolo",
+	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "agent=codex", "mode=strict", "agent_autonomy=yolo",
 		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
@@ -138,6 +142,32 @@ func TestForkMainRequiresParentVMResources(t *testing.T) {
 			!strings.Contains(err.Error(), "parent VM resources") {
 			t.Fatalf("vm %v error = %v", vm, err)
 		}
+	}
+}
+
+func TestForkMainBindsOriginAndRefusesProviderArguments(t *testing.T) {
+	writeRecord := func(f *forkFixture, origin string) {
+		t.Helper()
+		if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
+			"session_id": "parent-1", "profile": "wcl-fixture", "target_provider": "colima", "execution_path": "managed-tier1",
+			"agent": "codex", "mode": "strict", "status": "running", "live_status": "running",
+			"monitor_pid": "4242", "session_audit_dir": "/tmp/audit-fixture", "workspace": "/tmp/clone", "workspace_origin": origin,
+			"started_at": "2026-07-08T00:00:00Z", "audit_log_path": f.logPath,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := newForkFixture(t, "managed-tier1")
+	writeRecord(f, "/tmp/other-repo")
+	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "workspace origin does not match") {
+		t.Fatalf("changed origin error = %v", err)
+	}
+	g := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80",
+		"container_cpu=unmanaged", "container_memory=8g", "provider_arg_count=2")
+	if _, err := g.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "provider arguments") {
+		t.Fatalf("provider argument error = %v", err)
 	}
 }
 
