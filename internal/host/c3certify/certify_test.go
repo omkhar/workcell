@@ -96,6 +96,24 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 		return &evidence{record: record}
 	}
 	children := []*evidence{newChild("child-1"), newChild("child-2")}
+	c.docker = "/fake/docker"
+	containerSeesMarker, containerSeesSibling := true, false
+	c.deps.command = func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+		switch {
+		case name != c.docker:
+			return runCommand(ctx, env, name, args...)
+		case args[0] != "exec":
+			return nil, nil
+		case strings.Contains(args[4], "cat"):
+			if containerSeesMarker {
+				return []byte("session-a-only\n"), nil
+			}
+			return nil, nil
+		case containerSeesSibling:
+			return nil, errors.New("sibling marker present")
+		}
+		return nil, nil
+	}
 	if err := c.validateFork(context.Background(), a, b, children, commit); err != nil {
 		t.Fatalf("validateFork error = %v", err)
 	}
@@ -111,8 +129,11 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 		}, "status"},
 		{"shared container", func(e *evidence) { e.record.ContainerName = a.ContainerName }, "containers"},
 		{"execution path", func(e *evidence) { e.record.ExecutionPath = "" }, "execution_path"},
+		{"container misses parent marker", func(*evidence) { containerSeesMarker = false }, "does not see marker"},
+		{"container sees sibling marker", func(*evidence) { containerSeesSibling = true }, "container of fork child"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			containerSeesMarker, containerSeesSibling = true, false
 			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))
 			tc.mutate(bad)
 			err := c.validateFork(context.Background(), a, b, []*evidence{children[0], bad}, commit)
