@@ -311,7 +311,7 @@ func TestResolveSourceFailsClosed(t *testing.T) {
 	}
 	for _, source := range []string{"file:/x", "keychain:", "keychain:/acct", "keychain:svc/", "svc"} {
 		if _, err := resolveSource(context.Background(), source); err == nil {
-			t.Fatalf("source %q accepted", source)
+			t.Fatalf("resolveSource accepted %q", source)
 		}
 	}
 }

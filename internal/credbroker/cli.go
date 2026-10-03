@@ -133,7 +133,7 @@ func resolveSource(ctx context.Context, source string) (string, error) {
 	item, ok := strings.CutPrefix(source, "keychain:")
 	service, account, hasAccount := strings.Cut(item, "/")
 	if !ok || service == "" || (hasAccount && account == "") {
-		return "", fmt.Errorf("source must be keychain:SERVICE[/ACCOUNT], got %q", source)
+		return "", fmt.Errorf("credential source must be keychain:SERVICE[/ACCOUNT], got %q", source)
 	}
 	args := []string{"find-generic-password", "-s", service}
 	if hasAccount {
