@@ -41,10 +41,12 @@ const (
 
 type grant struct{ host, header string }
 
-// grants is the fixed table of where each credential key may be sent.
-var grants = map[string]grant{
-	"claude_api_key": {host: "api.anthropic.com", header: "x-api-key"},
-	"gemini_env":     {host: "generativelanguage.googleapis.com", header: "x-goog-api-key"},
+// grants is the fixed table of where each credential key may be sent. The
+// broker always returns the bare value; for authorization the proxy adds the
+// "Bearer " prefix where the placeholder header carried it.
+var grants = map[string][]grant{
+	"claude_api_key": {{host: "api.anthropic.com", header: "x-api-key"}, {host: "api.anthropic.com", header: "authorization"}},
+	"gemini_env":     {{host: "generativelanguage.googleapis.com", header: "x-goog-api-key"}},
 }
 
 // Request is the one JSON line a client sends on a connection.
@@ -92,11 +94,13 @@ func newServer(config Config) (*server, error) {
 	}
 	creds := make(map[grant]credential, len(config.Credentials))
 	for key, value := range config.Credentials {
-		g, ok := grants[key]
+		keyGrants, ok := grants[key]
 		if !ok {
 			return nil, fmt.Errorf("credential %s has no broker grant", key)
 		}
-		creds[g] = credential{key: key, value: value}
+		for _, g := range keyGrants {
+			creds[g] = credential{key: key, value: value}
+		}
 	}
 	return &server{token: config.Token, creds: creds, uid: uint32(os.Getuid()), now: time.Now, log: config.Log}, nil
 }

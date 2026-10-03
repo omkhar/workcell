@@ -103,12 +103,17 @@ func TestLookupReleasesOnlyGrantedPairs(t *testing.T) {
 	if v, err := Lookup(ctx, path, testToken, "api.anthropic.com", "x-api-key"); err != nil || v != "sk-claude" {
 		t.Fatalf("claude lookup = %q, %v", v, err)
 	}
+	if v, err := Lookup(ctx, path, testToken, "api.anthropic.com", "authorization"); err != nil || v != "sk-claude" {
+		t.Fatalf("claude authorization lookup = %q, %v, want bare value", v, err)
+	}
 	if v, err := Lookup(ctx, path, testToken, "generativelanguage.googleapis.com", "x-goog-api-key"); err != nil || v != "g-key" {
 		t.Fatalf("gemini lookup = %q, %v", v, err)
 	}
 	for _, pair := range [][2]string{
 		{"api.anthropic.com", "x-goog-api-key"},
 		{"generativelanguage.googleapis.com", "x-api-key"},
+		{"generativelanguage.googleapis.com", "authorization"},
+		{"api.anthropic.com", "Authorization"},
 		{"evil.example", "x-api-key"},
 		{"API.anthropic.com", "x-api-key"},
 	} {
@@ -127,7 +132,7 @@ func TestLookupReleasesOnlyGrantedPairs(t *testing.T) {
 	for _, record := range records {
 		results = append(results, record.Result)
 	}
-	want := "granted granted not_granted not_granted not_granted not_granted bad_token bad_token"
+	want := "granted granted granted not_granted not_granted not_granted not_granted not_granted not_granted bad_token bad_token"
 	if got := strings.Join(results, " "); got != want {
 		t.Fatalf("log results = %q, want %q", got, want)
 	}
