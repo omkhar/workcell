@@ -65,4 +65,13 @@ if workcell_owned_root_remove "${TMP_DIR}/foreign" 2>/dev/null; then
 fi
 [[ -d "${TMP_DIR}/foreign" ]]
 
+# A base with a trailing slash (macOS TMPDIR) must not yield a double slash,
+# because launcher output echoes paths verbatim and verify-invariants greps them.
+slash_root="$(workcell_owned_root_create "${TMP_DIR}/" slash)"
+[[ "${slash_root}" == "${TMP_DIR}"/slash.* ]] || {
+  echo "owned root kept a double slash: ${slash_root}" >&2
+  exit 1
+}
+workcell_owned_root_remove "${slash_root}"
+
 echo "lane-owned-roots-ok"

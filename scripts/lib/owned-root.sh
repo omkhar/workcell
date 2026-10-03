@@ -6,7 +6,7 @@
 
 workcell_owned_root_create() {
   local base="$1" prefix="$2" root=""
-  root="$(mktemp -d "${base}/${prefix}.XXXXXX")" || return
+  root="$(mktemp -d "${base%/}/${prefix}.XXXXXX")" || return
   printf '%s\n' "$$" >"${root}/owner.pid" || return
   printf '%s\n' "${root}"
 }
