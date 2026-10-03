@@ -57,7 +57,7 @@ Use the diagnostic and command context to identify the source.
 
 The Go command tools use exit code `2` for usage and precondition errors.
 They use exit code `1` for runtime errors.
-`internal/cliexit.ExitCodeError` carries the code through the error chain.
+`ExitCodeError` in `internal/cliexit` carries the code through the error chain.
 
 The `scripts/workcell` command uses exit code `2` for most precondition errors.
 It runs with `set -euo pipefail`.

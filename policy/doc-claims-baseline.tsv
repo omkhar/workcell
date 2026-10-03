@@ -1,0 +1,136 @@
+# Doc claim ratchet baseline (scripts/check-doc-links.sh).
+#
+# One row per hit: PATH<TAB>RULE<TAB>SUBJECT<TAB>REASON. A hit that is not
+# listed fails the check. A row with no hit fails too, so this file only
+# shrinks. Delete a row when you add the path span or remove the claim.
+# Rules: missing-path (named path does not exist), unwired-script (no lane
+# runs it), unanchored-claim ("enforced by", "rejects", "refuses" with no
+# scripts/, internal/ or .github/workflows/ span within 2 lines).
+adapters/codex/.codex/agents/openai_codex_platform.md	unanchored-claim	- What must be enforced by the outer container or VM.	claim predates the rule; cite the enforcing path or drop the claim
+adapters/README.md	unanchored-claim	- The wrapper rejects provider unsafe flags in every mode.	claim predates the rule; cite the enforcing path or drop the claim
+AGENTS.md	unanchored-claim	Then resolve the thread. The merge gate refuses an unresolved thread, so	claim predates the rule; cite the enforcing path or drop the claim
+CHANGELOG.md	unanchored-claim	- `session logs` now refuses a symbolic link when it opens the log file (#740).	claim predates the rule; cite the enforcing path or drop the claim
+CHANGELOG.md	unanchored-claim	- The decoder for audit records now rejects NUL bytes (#739).	claim predates the rule; cite the enforcing path or drop the claim
+CHANGELOG.md	unanchored-claim	- The launcher now refuses a safe-path workspace with a Git `commondir` redirect (#744).	claim predates the rule; cite the enforcing path or drop the claim
+CHANGELOG.md	unanchored-claim	- The SSH config check parses `Keyword=value` syntax and rejects SSH sources in the workspace	claim predates the rule; cite the enforcing path or drop the claim
+CHANGELOG.md	unanchored-claim	`--load` docker exporter rejects on the buildx `v0.35.0` pin, and release	claim predates the rule; cite the enforcing path or drop the claim
+CHANGELOG.md	unanchored-claim	hash-chain from a per-host signing key, rejects duplicate-key and reordered	claim predates the rule; cite the enforcing path or drop the claim
+CONTRIBUTING.md	unanchored-claim	`pr-parity` evidence emitted by `./scripts/pre-merge.sh` and refuses to publish	claim predates the rule; cite the enforcing path or drop the claim
+CONTRIBUTING.md	unanchored-claim	`pre-push` hook rejects every push:	claim predates the rule; cite the enforcing path or drop the claim
+CONTRIBUTING.md	unanchored-claim	publication-grade `pr-parity` rejects it so emitted evidence cannot certify a	claim predates the rule; cite the enforcing path or drop the claim
+docs/adapter-control-planes.md	unanchored-claim	ambient GitHub CLI auth. It also rejects custom instructions and unreviewed	claim predates the rule; cite the enforcing path or drop the claim
+docs/adapter-control-planes.md	unanchored-claim	blocks shell access by omission from `--available-tools`, and rejects unsafe	claim predates the rule; cite the enforcing path or drop the claim
+docs/adapter-control-planes.md	unanchored-claim	cache/config directories. It rejects host Copilot state, keychain access, and	claim predates the rule; cite the enforcing path or drop the claim
+docs/apple-container-evaluation.md	unanchored-claim	It rejects a source workspace that overlaps `StateRoot`.	claim predates the rule; cite the enforcing path or drop the claim
+docs/apple-container-evaluation.md	unanchored-claim	The manifest reader rejects noncanonical JSON and trailing data.	claim predates the rule; cite the enforcing path or drop the claim
+docs/ci-threat-model.md	unanchored-claim	| 2 | A poisoned build dependency enters an image. | Workcell pins snapshots, provider digests,	claim predates the rule; cite the enforcing path or drop the claim
+docs/ci-threat-model.md	unanchored-claim	5. **No global rule rejects self-hosted runners.**	claim predates the rule; cite the enforcing path or drop the claim
+docs/ci-threat-model.md	unanchored-claim	The release publisher rejects extended ACLs on source and staging file handles.	claim predates the rule; cite the enforcing path or drop the claim
+docs/enterprise-rollout.md	unanchored-claim	Strict Copilot mode rejects provider telemetry and content-capture environment variables.	claim predates the rule; cite the enforcing path or drop the claim
+docs/github-workflows.md	unanchored-claim	`./scripts/verify-workflow-lanes.sh` rejects manifest drift.	claim predates the rule; cite the enforcing path or drop the claim
+docs/github-workflows.md	unanchored-claim	It rejects split indexes, shallow graphs, unsafe ancestry, mutable ignore files, and present	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	An include path is relative to the file that contains it. Workcell rejects cycles,	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	It rejects byte-count and modification changes.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	It rejects group or other write permission below that anchor.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	It rejects identity, owner, group, mode, link-count, and size changes.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Keep each source outside the workspace. Workcell rejects operator-controlled	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	On Linux, it rejects unproved ACL types and NFS, CIFS, and SMB descriptor filesystems.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Store each credential source outside the mounted workspace. Workcell rejects a	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	The descriptor walk rejects symbolic links that reach the reader.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	The reader rejects other foreign-owned ancestors and non-sticky writable ancestors.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	The reader rejects POSIX ACLs on policy files, current-user directories, and sticky transit	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Workcell rejects destination names that collide after NFC normalization and Unicode case folding.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Workcell rejects group-writable or world-writable `known_hosts` files. It	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Workcell rejects the render when a selected input passes an allowance.	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Workcell rejects writes to reserved control-plane targets. It checks secret	claim predates the rule; cite the enforcing path or drop the claim
+docs/injection-policy.md	unanchored-claim	Workcell writes no content at a destination path it rejects for invalid UTF-8 data.	claim predates the rule; cite the enforcing path or drop the claim
+docs/install-lifecycle.md	unanchored-claim	The current binary reads version 1 and rejects an unknown version.	claim predates the rule; cite the enforcing path or drop the claim
+docs/install.md	unanchored-claim	checked bundle). Without the acknowledgement flag, `--skip-verify` refuses to	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	`hardening-profile-conformance` invariant checks the launcher. It also rejects	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	and refuses every other command.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	server rejects any other name and any unlisted value, and builds the helper	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	Workcell also refuses the workspace when it cannot list the workspace, a Git	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	Workcell refuses a safe-path workspace in these cases. Each case can make Git	claim predates the rule; cite the enforcing path or drop the claim
+docs/launcher-contract.md	unanchored-claim	On macOS it also refuses a root, a directory, or a binary of the cache with an	claim predates the rule; cite the enforcing path or drop the claim
+docs/launcher-contract.md	unanchored-claim	The function refuses a cache directory that is a symlink or that the current	claim predates the rule; cite the enforcing path or drop the claim
+docs/launcher-contract.md	unanchored-claim	The launcher rejects inherited `WORKCELL_TEST_CODEX_AUTH_FILE` and	claim predates the rule; cite the enforcing path or drop the claim
+docs/launcher-contract.md	unanchored-claim	user does not own. It also refuses a cache root that group or other can write.	claim predates the rule; cite the enforcing path or drop the claim
+docs/owasp-agentic-mapping.md	unanchored-claim	It also refuses parent directories that are symlinks.	claim predates the rule; cite the enforcing path or drop the claim
+docs/owasp-agentic-mapping.md	unanchored-claim	It refuses a linked worktree or an unavailable base commit.	claim predates the rule; cite the enforcing path or drop the claim
+docs/owasp-agentic-mapping.md	unanchored-claim	It refuses a workspace whose `.git` directory has a `commondir` redirect or a symlink that can	claim predates the rule; cite the enforcing path or drop the claim
+docs/owasp-agentic-mapping.md	unanchored-claim	It refuses a workspace whose `.git` directory has a `commondir` redirect or a symlink that can	claim predates the rule; cite the enforcing path or drop the claim
+docs/owasp-agentic-mapping.md	unanchored-claim	The acknowledged path refuses symlinked MCP files.	claim predates the rule; cite the enforcing path or drop the claim
+docs/owasp-agentic-mapping.md	unanchored-claim	Workcell rejects credential sources that are inside the workspace.	claim predates the rule; cite the enforcing path or drop the claim
+docs/provider-matrix.md	unanchored-claim	Google, not Workcell, refuses the retired account types.	claim predates the rule; cite the enforcing path or drop the claim
+docs/releasing.md	unanchored-claim	changes after staging cannot change the uploaded bytes. The entrypoint rejects	claim predates the rule; cite the enforcing path or drop the claim
+docs/releasing.md	unanchored-claim	The dispatch run loads the current `main`. The run rejects a tag whose target	claim predates the rule; cite the enforcing path or drop the claim
+docs/remote-vm-contract.md	unanchored-claim	It writes no content at a destination path it rejects for invalid UTF-8 data.	claim predates the rule; cite the enforcing path or drop the claim
+docs/remote-vm-contract.md	unanchored-claim	The fake target rejects destination names that collide after NFC normalization and Unicode case	claim predates the rule; cite the enforcing path or drop the claim
+docs/safe-path-expectations.md	unanchored-claim	`workcell session delete` requires a session with terminal status. It refuses a	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/audit-2026-10.md	unanchored-claim	It also refuses some symbolic links under `.git` and `.git/modules`.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/audit-2026-10.md	unanchored-claim	It also rejects a destination that is a directory or a link to one.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/audit-2026-10.md	unanchored-claim	It also rejects SSH sources that are inside the workspace.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/audit-2026-10.md	unanchored-claim	The fix rejects a NUL byte in the shared strict decoder.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-mutation-results.md	unanchored-claim	| Disable the path-separator check in `statePathSegment` | F4 | `go test ./internal/remotevm -run	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-mutation-results.md	unanchored-claim	| Disable the YAML AST check for job permissions | F2 | `go test ./internal/metadatautil -run	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestFakeTargetRejectsPathTraversalIdentifiers` | Unit | F4 | Target and materialization	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestFakeTargetRejectsPathTraversalProvider` | Unit | F4 | The provider contains `../`. | Valid	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestFakeTargetRejectsPathTraversalSessionID` | Unit | F4 | The session identifier contains	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestSafePullRequestTargetWorkflowRejectsInlineCheckout` | Unit | F2 | A step has inline	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestSafePullRequestTargetWorkflowRejectsInlineJobLevelPermissions` | Unit | F2 | A job has	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestSafePullRequestTargetWorkflowRejectsInlineReusableWorkflowCalls` | Unit | F2 | A job has	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestSafePullRequestTargetWorkflowRejectsInlineStepUses` | Unit | F2 | A step has inline	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-poc-matrix.md	unanchored-claim	| `TestWorkcellRejectsHarnessOnlyCredentialResolverEnvBeforeBundlePreparation` | Static | F3 | A	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-validation.md	missing-path	internal/metadatautil/validate.go	historical finding names a file since renamed
+docs/security/security-findings-2026-04-24-validation.md	unanchored-claim	rejects it, and neither component forwards it.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-validation.md	unanchored-claim	The fix parses the YAML AST. It rejects non-empty top-level permissions,	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-findings-2026-04-24-validation.md	unanchored-claim	The fix removed the resolver support for that variable. The launcher rejects	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-012 | Replace a workspace entry or add a special file | Stable regular workspace tree | Copy	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-021 | Add an administrator bypass to tag updates or deletion | Creation and immutability	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-022 | Use `#!/usr/bin/env -S` to unset `LD_PRELOAD` | The guard rejects split-string and unset	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-026 | Add newline, U+001F, U+2028, or invalid UTF-8 to a manifest field | The renderer rejects	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-030 | Add a bypass actor to required status checks | The validator requires an empty	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-031 | Add two review bypass actors or use another role | The validator permits zero actors or	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-033 | Pass a revision-qualified tag or rely on ambient repository state | The script accepts	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-038 | Set an ambient hosted-controls policy path | The script uses the versioned policy path |	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-042 | Report a required context from another GitHub app | Every context requires integration ID	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-045 | Change the local tag ref during verification or use a mismatched tag object name | One	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-047 | Remove a broker input from `.dockerignore` | Exact context inclusions and broker `COPY`	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-048 | Move `ENV LD_PRELOAD` after the broker build steps | The exact preload environment	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-054 | Run a provider or development wrapper after its sanitizer reassigns `PATH` | The exact	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	| F-055 | Extract Codex with archive ownership and move it into the runtime | `install -o 0 -g 0 -m	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects invalid requests and isolates each request failure.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects non-empty destinations before materialization.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects special files and escaping symbolic links.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects symbolic links, hard links, and non-regular files.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects untrusted ELF files through every intercepted execution family.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The copy rejects symbolic links, named pipes, sockets, and other special files.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The fix parses direct and `env` shebang forms. It rejects `env -S`, split-string,	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The focused structural test rejects later reassignment.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The guard now rejects `-S`, `--split-string`, `--unset=`, and attached `-u` options.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The pinned-input mutation test rejects a late declaration.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The renderer now rejects invalid UTF-8, control characters, and Unicode line and paragraph	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The validator rejects a combined ruleset or an immutability bypass.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The verifier rejects ambient Go paths and selects one exact toolchain path.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The verifier rejects attestations from self-hosted runners.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	The workflow validator rejects other visibility sources and mutable conditions.	claim predates the rule; cite the enforcing path or drop the claim
+docs/security/security-review-2026-08-12.md	unanchored-claim	uses the selected path for execution. It rejects mutable loader options, unsafe	claim predates the rule; cite the enforcing path or drop the claim
+docs/signed-session-audit-records.md	unanchored-claim	`workcell session export --format ocsf` does not include the seal. It rejects	claim predates the rule; cite the enforcing path or drop the claim
+docs/signed-session-audit-records.md	unanchored-claim	4. It rejects each strictly checked record that contains a duplicate key.	claim predates the rule; cite the enforcing path or drop the claim
+docs/stability-contract.md	unanchored-claim	Workcell rejects each option without its acknowledgement.	claim predates the rule; cite the enforcing path or drop the claim
+docs/unsafe-code-audit-checklist.md	unanchored-claim	`undocumented_unsafe_blocks = "deny"`. Thus, Clippy rejects an `unsafe {}` block	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	It also rejects hidden flags, conversion filters, present gitlinks, and unsafe ancestry.	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	It rejects a near-match.	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	It rejects common-directory redirection and shallow graphs.	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	It rejects other path bytes.	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	It rejects worktree, index, and untracked case variants of that file.	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	The helper also rejects these ambient inputs:	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	The helper rejects nonempty shell-visible ambient `GO*` and `CGO*` variables.	claim predates the rule; cite the enforcing path or drop the claim
+docs/validation-scenarios.md	unanchored-claim	The planner rejects nonregular or split-index state.	claim predates the rule; cite the enforcing path or drop the claim
+docs/workcell-system-design.md	unanchored-claim	5. [`provider-policy.sh`](../runtime/container/provider-policy.sh) rejects	claim predates the rule; cite the enforcing path or drop the claim
+docs/workcell-system-design.md	unanchored-claim	the guard refuses a child environment that does not have this exact value.	claim predates the rule; cite the enforcing path or drop the claim
+docs/workcell-system-design.md	unanchored-claim	The launcher mounts the selected workspace at `/workspace`. It rejects broad	claim predates the rule; cite the enforcing path or drop the claim
+docs/workcell-system-design.md	unanchored-claim	The profile mounts `/tmp` `noexec`. The guard refuses a script run directly	claim predates the rule; cite the enforcing path or drop the claim
+verify/invariants/expected-controls.md	unanchored-claim	- Workcell rejects `/` and the operator home as default workspaces.	claim predates the rule; cite the enforcing path or drop the claim
+verify/invariants/README.md	unanchored-claim	3. The safe path rejects direct mounts of host authentication roots and all	claim predates the rule; cite the enforcing path or drop the claim
+verify/invariants/README.md	unanchored-claim	8. Workcell rejects unsafe broad workspaces.	claim predates the rule; cite the enforcing path or drop the claim

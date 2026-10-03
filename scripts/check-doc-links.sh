@@ -121,8 +121,68 @@ while IFS= read -r doc; do
   fi
 done <<<"${docs_listing}"
 
+# --- Doc claim enforcement check ----------------------------------------------
+# A code span naming scripts/..., internal/... or .github/workflows/... must
+# exist. A scripts/*.sh path must appear in validate-repo.sh, a scripts/ci/job-*.sh,
+# or a workflow, so a doc cannot cite a gate that nothing runs. A line that says
+# "enforced by", "rejects" or "refuses" needs such a span within 2 lines.
+# Hits that exist today sit in policy/doc-claims-baseline.tsv
+# (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
+# fails too, so the baseline only shrinks. Override the baseline path with
+# DOC_CLAIMS_BASELINE (tests only).
+claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
+claim_hits="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+claim_base="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+claim_wired="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_wired}"' EXIT
+
+# Every script a lane runs: validate-repo.sh, the CI job scripts, the workflows.
+cat "${ROOT_DIR}/scripts/validate-repo.sh" "${ROOT_DIR}"/scripts/ci/job-*.sh \
+  "${ROOT_DIR}"/.github/workflows/*.yml >"${claim_wired}"
+
+
+for f in "${md_files[@]}"; do
+  awk -f "${ROOT_DIR}/scripts/lib/doc-claims.awk" "${f}" |
+    while IFS=$'\t' read -r kind doc subject; do
+      if [[ "${kind}" == CLAIM ]]; then
+        printf '%s\tunanchored-claim\t%s\n' "${doc}" "${subject}"
+        continue
+      fi
+      if [[ ! -e "${subject}" ]]; then
+        printf '%s\tmissing-path\t%s\n' "${doc}" "${subject}"
+        continue
+      fi
+      case "${subject}" in
+        scripts/*.sh)
+          wired=0
+          grep -qF "${subject}" "${claim_wired}" || wired=$?
+          if [[ "${wired}" -gt 1 ]]; then
+            echo "check-doc-links: grep failed on ${subject}" >&2
+            exit 2
+          fi
+          [[ "${wired}" -eq 0 ]] || printf '%s\tunwired-script\t%s\n' "${doc}" "${subject}"
+          ;;
+        *) : ;;
+      esac
+    done >>"${claim_hits}"
+done
+
+grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
+sort -o "${claim_hits}" "${claim_hits}"
+sort -o "${claim_base}" "${claim_base}"
+claim_new="$(comm -23 "${claim_hits}" "${claim_base}")"
+claim_stale="$(comm -13 "${claim_hits}" "${claim_base}")"
+while IFS= read -r row; do
+  [[ -n "${row}" ]] || continue
+  note "unbaselined doc claim hit: ${row//$'\t'/ | }"
+done <<<"${claim_new}"
+while IFS= read -r row; do
+  [[ -n "${row}" ]] || continue
+  note "stale doc-claims baseline row (fixed; delete it): ${row//$'\t'/ | }"
+done <<<"${claim_stale}"
+
 if [[ "${failures}" -gt 0 ]]; then
   echo "check-doc-links: FAILED with ${failures} issue(s)" >&2
   exit 1
 fi
-echo "check-doc-links: OK (${#md_files[@]} markdown files; relative links and docs/ orphans clean)"
+echo "check-doc-links: OK (${#md_files[@]} markdown files; relative links, docs/ orphans, and doc claims clean)"
