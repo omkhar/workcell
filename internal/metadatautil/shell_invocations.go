@@ -481,6 +481,13 @@ func ShellInvocations(script, commandName string) []Invocation {
 				// The step ends here; nothing written after it runs.
 				return invocations
 			}
+			if names[0] == "eval" {
+				// eval runs text this reader never sees as code, and that text
+				// can define a function or an alias with the command's name,
+				// as eval 'or''as() { :; }' does. No later call is proved to
+				// run the program; the calls before it already ran.
+				return invocations
+			}
 			if names[0] == "alias" && shadowsByAlias(names, prefix[0]) {
 				return nil // Every later use expands to the alias.
 			}

@@ -1326,6 +1326,7 @@ jobs:
   scope-guard:
     runs-on: ubuntu-latest
     needs: refresh
+    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
     outputs:
       result: ${{ steps.guard.outcome == 'success' && 'passed' || 'failed' }}
     permissions:
@@ -1346,6 +1347,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: [refresh, scope-guard]
+    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'
     environment:
       name: upstream-refresh
     permissions:
@@ -2052,5 +2054,40 @@ func TestValidateCanonicalWorkflowEnvironmentsRejectsAuditOptionalSecrets(t *tes
 	err := metadatautil.ValidateCanonicalWorkflowEnvironments(policy, "policy/github-hosted-controls.toml")
 	if err == nil || !strings.Contains(err.Error(), "must not declare optional secrets for workflow_environment.hosted-controls-audit") {
 		t.Fatalf("error = %v, want optional-secret rejection", err)
+	}
+}
+
+// TestWorkflowValidatorsRejectUnmodelledKeysAndJobConditions is the negative
+// control for the closed workflow decoder: an unmodelled key fails, and a job
+// condition that could skip a checked job fails, in every validator that reads
+// the job.
+func TestWorkflowValidatorsRejectUnmodelledKeysAndJobConditions(t *testing.T) {
+	release := string(readReleaseWorkflow(t))
+	const onCandidate = "    if: github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'\n"
+	cases := []struct {
+		name, workflow, old, replacement, want string
+		validate                               func(string) error
+	}{
+		{"unmodelled job key", release, "  publish-github-release:\n", "  publish-github-release:\n    snapshot: decoy\n", "field snapshot not found", metadatautil.ValidateReleaseWorkflowPublicationGate},
+		{"unmodelled step key", release, "      - name: Recheck hosted controls and publish GitHub release assets\n", "      - name: Recheck hosted controls and publish GitHub release assets\n        decoy: true\n", "field decoy not found", metadatautil.ValidateReleaseWorkflowPublicationGate},
+		{"publish job skipped", release, "  publish-github-release:\n", "  publish-github-release:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowPublicationGate},
+		{"verify job skipped", release, "  verify-release-outputs:\n", "  verify-release-outputs:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowPublicationGate},
+		{"release job skipped", release, "  release:\n", "  release:\n    if: false\n", "must run unconditionally", metadatautil.ValidateReleaseWorkflowAuthoritySplit},
+		{"upstream publish job skipped", upstreamRefreshWorkflowFixture, "needs: [refresh, scope-guard]\n" + onCandidate, "needs: [refresh, scope-guard]\n    if: false\n", "publish job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
+		{"upstream scope-guard condition widened", upstreamRefreshWorkflowFixture, "needs: refresh\n" + onCandidate, "needs: refresh\n    if: always()\n", "scope-guard job must run only when", metadatautil.ValidateUpstreamRefreshWorkflow},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if err := testCase.validate(testCase.workflow); err != nil {
+				t.Fatalf("unmutated workflow rejected: %v", err)
+			}
+			mutated := strings.Replace(testCase.workflow, testCase.old, testCase.replacement, 1)
+			if mutated == testCase.workflow {
+				t.Fatal("mutation left the workflow unchanged")
+			}
+			if err := testCase.validate(mutated); err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("validate() error = %v, want %q", err, testCase.want)
+			}
+		})
 	}
 }

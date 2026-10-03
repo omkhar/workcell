@@ -10,8 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type workflowText struct{ text, path string }
@@ -461,8 +459,8 @@ const releaseTagRecheckCommand = `./scripts/check-release-tag-signature.sh ` +
 // validateReleaseTagRechecks requires each mutation phase to run its own fully
 // bound tag recheck, and no other job to run one.
 func validateReleaseTagRechecks(workflowText string) error {
-	var document workflowDocument
-	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+	document, err := decodeWorkflow([]byte(workflowText))
+	if err != nil {
 		return fmt.Errorf("parse release tag rechecks: %w", err)
 	}
 	const requirement = ".github/workflows/release.yml must verify release tag signatures before every release mutation phase"
@@ -470,7 +468,7 @@ func validateReleaseTagRechecks(workflowText string) error {
 		phase := releaseTagRecheckPhases[name]
 		found, lastAt := 0, -1
 		for at, step := range job.Steps {
-			if strings.TrimSpace(step.Run) == releaseTagRecheckCommand {
+			if strings.TrimSpace(stepRuns(step)) == releaseTagRecheckCommand && job.If.Kind == 0 {
 				found++
 				lastAt = at
 			}

@@ -102,7 +102,8 @@ type workflowLaneRawJob struct {
 }
 
 type workflowLaneRawJobStrategy struct {
-	Matrix workflowLaneRawMatrix `yaml:"matrix"`
+	Matrix   workflowLaneRawMatrix `yaml:"matrix"`
+	FailFast yaml.Node             `yaml:"fail-fast"`
 }
 
 type workflowLaneRawMatrix struct {
