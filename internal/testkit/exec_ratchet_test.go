@@ -15,16 +15,31 @@ import (
 	"testing"
 )
 
+// etxtbsyRetryHelpers are the only helpers whose func-literal argument is
+// exempt from the ratchet: each one guarantees an ETXTBSY retry. A near-match
+// such as execRetryOn with an arbitrary predicate is counted like a raw call.
+var etxtbsyRetryHelpers = map[string]bool{
+	"execRetryETXTBSY":             true,
+	"execRetryETXTBSYOrNestedBusy": true,
+}
+
 // rawExecSites counts exec.Command/CommandContext calls in src whose program
 // is a path-valued expression (not a string literal such as "git" or
-// "/bin/bash") and that sit outside a func literal handed to an execRetry*
-// helper. Such a call execs a possibly freshly written fixture directly and
-// can fail with ETXTBSY (golang/go#22315).
+// "/bin/bash") and that sit outside a func literal handed to one of
+// etxtbsyRetryHelpers. Such a call execs a possibly freshly written fixture
+// directly and can fail with ETXTBSY (golang/go#22315). The os/exec package
+// is matched by its import path, so an import alias is still counted.
 func rawExecSites(t *testing.T, name, src string) int {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
+	}
+	execPkg := "exec"
+	for _, imp := range file.Imports {
+		if imp.Path.Value == `"os/exec"` && imp.Name != nil {
+			execPkg = imp.Name.Name
+		}
 	}
 	count := 0
 	var walk func(n ast.Node, wrapped bool)
@@ -36,7 +51,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 			}
 			switch fn := call.Fun.(type) {
 			case *ast.Ident:
-				if strings.HasPrefix(fn.Name, "execRetry") {
+				if etxtbsyRetryHelpers[fn.Name] {
 					for _, arg := range call.Args {
 						walk(arg, true)
 					}
@@ -44,7 +59,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 				}
 			case *ast.SelectorExpr:
 				pkg, _ := fn.X.(*ast.Ident)
-				if pkg != nil && pkg.Name == "exec" && (fn.Sel.Name == "Command" || fn.Sel.Name == "CommandContext") && !wrapped {
+				if pkg != nil && pkg.Name == execPkg && (fn.Sel.Name == "Command" || fn.Sel.Name == "CommandContext") && !wrapped {
 					prog := 0
 					if fn.Sel.Name == "CommandContext" {
 						prog = 1
@@ -111,9 +126,22 @@ func a(p string) { exec.Command(p, "--x") }
 func b(p string) { execRetryETXTBSY(func() *exec.Cmd { return exec.Command(p) }) }
 func c()         { exec.Command("git", "init") }
 func d(p string) { exec.CommandContext(nil, p) }
+func e(p string) { execRetryOn(func() *exec.Cmd { return exec.Command(p) }, nil) }
+func f(p string) { execRetryETXTBSYLater(func() *exec.Cmd { return exec.Command(p) }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 2 {
-		t.Fatalf("rawExecSites = %d, want 2 (a and d)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 4 {
+		t.Fatalf("rawExecSites = %d, want 4 (a, d, e, f)", got)
+	}
+}
+
+func TestRawExecSitesResolvesOsExecImportAlias(t *testing.T) {
+	const aliased = `package x
+import osexec "os/exec"
+func a(p string) { osexec.Command(p) }
+func b(p string) { exec.Command(p) }
+`
+	if got := rawExecSites(t, "aliased.go", aliased); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (aliased os/exec only)", got)
 	}
 }
 
