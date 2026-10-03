@@ -62,11 +62,11 @@ func testBinaryCLIContract(t *testing.T, binName, binPath string) {
 	// For these, we skip the "stray positional" test because they may
 	// interpret the positional as a subcommand or argument.
 	acceptsPositionals := map[string]bool{
-		"workcell-apt-broker-client":  true, // passes command args
-		"workcell-apt-broker-server":  true, // server startup args
-		"workcell-citools":            true, // subcommand-based
-		"workcell-hostutil":           true, // subcommand-based
-		"workcell-runtimeutil":        true, // subcommand-based
+		"workcell-apt-broker-client": true, // passes command args
+		"workcell-apt-broker-server": true, // server startup args
+		"workcell-citools":           true, // subcommand-based
+		"workcell-hostutil":          true, // subcommand-based
+		"workcell-runtimeutil":       true, // subcommand-based
 	}
 
 	tests := []struct {
