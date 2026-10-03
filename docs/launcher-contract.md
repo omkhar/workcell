@@ -333,10 +333,17 @@ connections cannot fill the VM disk. The oldest lines rotate out.
 `session delete` removes the file with the record and keeps it under
 `--record-only`. The save stages the lines in a private directory and publishes
 them with the staged, fsynced, owner-only rename of
-`publish-session-capture-file`. A failed save prints a warning and leaves the
-earlier file unchanged. Then it removes the sidecar and the network, also after
-a failed save. The launcher cleanup calls it, and the detached session monitor
-calls it after the agent exits.
+`publish-session-capture-file`.
+
+A failed save prints a warning and leaves the earlier file unchanged. Then
+`stop_egress_proxy` removes the sidecar and the network, also after a failed
+save. The launcher cleanup calls it, and the detached session monitor calls it
+after the agent exits.
+
+`stop_orphaned_egress_proxy` removes the sidecar and the network of a session
+whose launcher and monitor are gone. It derives both names from the session ID.
+`session stop` calls it when the monitor is dead, and `session delete` calls it
+before it plans the artifacts. It does nothing for a session without a sidecar.
 
 ## Change Rule
 

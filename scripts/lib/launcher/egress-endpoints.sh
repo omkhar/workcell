@@ -213,7 +213,7 @@ start_egress_proxy() {
     listening="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" exec "${EGRESS_PROXY_CONTAINER}" cat /proc/net/tcp 2>/dev/null)" || listening=""
     ready=1
     for endpoint in ${ALLOW_ENDPOINTS}; do
-      printf -v port ':%04X [0-9A-F]{8}:[0-9A-F]{4} 0A ' "${endpoint##*:}"
+      printf -v port ':%04X [0-9A-F]{8}:[0-9A-F]{4} 0A ' "$((10#${endpoint##*:}))"
       grep -Eqi -- "${port}" <<<"${listening}" || {
         ready=0
         break
@@ -262,4 +262,23 @@ stop_egress_proxy() {
   [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
   run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 || true
   run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || true
+}
+
+# stop_orphaned_egress_proxy removes the sidecar and the network of a session
+# whose launcher or monitor is gone. The names derive from the session id, so
+# session stop and session delete need no record field. It does nothing when the
+# session has no sidecar.
+stop_orphaned_egress_proxy() {
+  local profile="$1"
+  local session_id="$2"
+  local names=""
+
+  names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 0
+  grep -qx "wc-egress-${session_id}" <<<"${names}" || return 0
+  (
+    SESSION_ID="${session_id}"
+    EGRESS_PROXY_CONTAINER="wc-egress-${session_id}"
+    EGRESS_PROXY_NETWORK="wc-${session_id}"
+    stop_egress_proxy "${profile}"
+  )
 }

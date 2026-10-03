@@ -125,16 +125,21 @@ func TestStartEgressProxyWaitsForListeners(t *testing.T) {
 		wantFail      bool
 	}{
 		{"listening", "  0: 0200090A:01BB 00000000:0000 0A 0", false},
+		{"leading-zero port", "  0: 0200090A:01BB 00000000:0000 0A 0", false},
 		{"other port", "  0: 0200090A:0050 00000000:0000 0A 0", true},
 		{"not listening", "  0: 0200090A:01BB 0300090A:9C40 01 0", true},
 		{"no sockets", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			endpoint := "a.example:443"
+			if tc.name == "leading-zero port" {
+				endpoint = "a.example:0443"
+			}
 			script := `
 set -euo pipefail
 source "$LIB"
 sleep() { :; }
-EGRESS_PROXY_NETWORK=net EGRESS_PROXY_CONTAINER=side ALLOW_ENDPOINTS="a.example:443" HOST_DOCKER_BIN=docker IMAGE_TAG=img
+EGRESS_PROXY_NETWORK=net EGRESS_PROXY_CONTAINER=side ALLOW_ENDPOINTS="$ENDPOINT" HOST_DOCKER_BIN=docker IMAGE_TAG=img
 DOCKER_RUN=(docker run img)
 run_workcell_docker_client_command() {
   shift
@@ -147,10 +152,55 @@ run_workcell_docker_client_command() {
 start_egress_proxy sha256:abc
 `
 			cmd := exec.Command("bash", "-c", script)
-			cmd.Env = append(os.Environ(), "LIB="+lib, "SOCKETS="+tc.sockets)
+			cmd.Env = append(os.Environ(), "LIB="+lib, "SOCKETS="+tc.sockets, "ENDPOINT="+endpoint)
 			out, err := cmd.CombinedOutput()
 			if failed := err != nil; failed != tc.wantFail {
 				t.Fatalf("failed = %v, want %v\n%s", failed, tc.wantFail, out)
+			}
+		})
+	}
+}
+
+// TestStopOrphanedEgressProxy proves that a session with a sidecar gets the
+// sidecar and network removed from the session id alone, and a session with
+// none gets no docker call beyond the lookup.
+func TestStopOrphanedEgressProxy(t *testing.T) {
+	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, listed, want string }{
+		{"sidecar present", "wc-egress-S1", "ps\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\n"},
+		{"other sidecar only", "wc-egress-S10", "ps\n"},
+		{"none", "", "ps\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			script := `
+set -euo pipefail
+source "$LIB"
+profile_sessions_dir_path() { printf '%s\n' "$DIR"; }
+go_hostutil() { :; }
+run_profile_docker_command() {
+  shift
+  case "$1" in
+    ps) printf 'ps\n' >>"$CALLS"; printf '%s\n' "$LISTED" ;;
+    logs) printf 'logs %s\n' "$2" >>"$CALLS" ;;
+    rm) printf 'rm\n' >>"$CALLS" ;;
+    network) printf 'network rm %s\n' "$3" >>"$CALLS" ;;
+  esac
+}
+stop_orphaned_egress_proxy prof S1
+`
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(), "LIB="+lib, "DIR="+dir, "CALLS="+calls, "LISTED="+tc.listed, "TMPDIR="+dir)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("stop_orphaned_egress_proxy failed: %v\n%s", err, out)
+			}
+			got, _ := os.ReadFile(calls)
+			if string(got) != tc.want {
+				t.Fatalf("docker calls = %q, want %q", got, tc.want)
 			}
 		})
 	}
