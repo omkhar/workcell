@@ -273,43 +273,53 @@ stop_egress_proxy() {
     echo "workcell: warning: could not remove the egress proxy network ${EGRESS_PROXY_NETWORK}; session delete removes it." >&2
 }
 
+# egress_proxy_residue prints "sidecar" and "network" for each proxy resource a
+# session still has, named from the session id alone. It prints nothing when
+# the session has none, and it fails when a lookup fails: a failed lookup is
+# not an empty one. It changes nothing, so a delete preview can use it.
+egress_proxy_residue() {
+  local profile="$1"
+  local session_id="$2"
+  local names=""
+  local networks=""
+
+  names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
+  networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^wc-${session_id}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
+  ! grep -qx "wc-egress-${session_id}" <<<"${names}" || echo sidecar
+  ! grep -qx "wc-${session_id}" <<<"${networks}" || echo network
+}
+
 # stop_orphaned_egress_proxy removes the sidecar and the network of a session
 # whose launcher or monitor is gone. The names derive from the session id, so
 # session stop and session delete need no record field. It disconnects the
 # stopped agent container first, because Docker refuses to remove a network
 # that still holds an endpoint. It removes a network that outlived its sidecar
-# too, and it fails when a lookup fails, the sidecar is still there after its
-# removal, or the network removal fails: a failed lookup is not an empty one. It does nothing when the session has neither.
+# too. It fails when a lookup fails, when the sidecar is still there after its
+# removal, or when the network removal fails. It does nothing when the session
+# has neither resource.
 stop_orphaned_egress_proxy() {
   local profile="$1"
   local session_id="$2"
   local agent_container="${3:-}"
   local network="wc-${session_id}"
-  local names=""
-  local networks=""
-  local has_sidecar=0
-  local has_network=0
+  local residue=""
 
-  names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
-  networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^${network}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
-  ! grep -qx "wc-egress-${session_id}" <<<"${names}" || has_sidecar=1
-  ! grep -qx "${network}" <<<"${networks}" || has_network=1
-  [[ "${has_sidecar}" -eq 1 || "${has_network}" -eq 1 ]] || return 0
-  if [[ "${has_network}" -eq 1 && -n "${agent_container}" ]]; then
+  residue="$(egress_proxy_residue "${profile}" "${session_id}")" || return 1
+  [[ -n "${residue}" ]] || return 0
+  if grep -qx network <<<"${residue}" && [[ -n "${agent_container}" ]]; then
     run_profile_docker_command "${profile}" network disconnect -f "${network}" "${agent_container}" >/dev/null 2>&1 || true
   fi
-  if [[ "${has_sidecar}" -eq 1 ]]; then
+  if grep -qx sidecar <<<"${residue}"; then
     (
       SESSION_ID="${session_id}"
       EGRESS_PROXY_CONTAINER="wc-egress-${session_id}"
       EGRESS_PROXY_NETWORK="${network}"
       stop_egress_proxy "${profile}"
     )
-    names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
-    ! grep -qx "wc-egress-${session_id}" <<<"${names}" || return 1
   fi
-  networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^${network}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
-  if grep -qx "${network}" <<<"${networks}"; then
+  residue="$(egress_proxy_residue "${profile}" "${session_id}")" || return 1
+  ! grep -qx sidecar <<<"${residue}" || return 1
+  if grep -qx network <<<"${residue}"; then
     run_profile_docker_command "${profile}" network rm "${network}" >/dev/null 2>&1 || return 1
   fi
 }

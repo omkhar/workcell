@@ -1425,6 +1425,9 @@ monitor_env_output="$(
     SESSION_META_TARGET_PROVIDER="docker-desktop"
     SESSION_META_TARGET_ID="desktop-linux"
     SESSION_META_TARGET_ASSURANCE_CLASS="compat"
+    EGRESS_PROXY_STARTED=1
+    EGRESS_PROXY_CONTAINER="wc-egress-fixture"
+    EGRESS_PROXY_NETWORK="wc-fixture"
     write_session_monitor_env_file "$4"
     cat "$4"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env" "${TMP_DIR}/monitor-xdg-state"
@@ -1438,6 +1441,8 @@ grep -q '^SESSION_META_TARGET_PROVIDER=docker-desktop$' <<<"${monitor_env_output
 grep -q '^SESSION_META_TARGET_ID=desktop-linux$' <<<"${monitor_env_output}"
 grep -q '^SESSION_META_TARGET_ASSURANCE_CLASS=compat$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
+grep -q '^EGRESS_PROXY_STARTED=1$' <<<"${monitor_env_output}"
+grep -q '^EGRESS_PROXY_CONTAINER=wc-egress-fixture$' <<<"${monitor_env_output}"
 grep -qxF "XDG_STATE_HOME=$(printf '%q' "${TMP_DIR}/monitor-xdg-state")" <<<"${monitor_env_output}"
 grep -qxF "WORKCELL_STATE_ROOT=$(printf '%q' "${TMP_DIR}/monitor-xdg-state/workcell")" <<<"${monitor_env_output}"
 grep -qxF "WORKCELL_TARGET_STATE_ROOT=$(printf '%q' "${TMP_DIR}/monitor-xdg-state/workcell/targets")" <<<"${monitor_env_output}"
@@ -3139,6 +3144,9 @@ EOF_JSON
         inspect)
           printf "stopped\n"
           ;;
+        ps)
+          printf "wc-egress-detached-fixture\n"
+          ;;
         network)
           return 0
           ;;
@@ -3158,7 +3166,11 @@ EOF_JSON
 )"
 grep -q '^deleted=0$' <<<"${session_delete_dry_run_output}"
 grep -q '^dry_run=1$' <<<"${session_delete_dry_run_output}"
-grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
+grep -q '^would_remove=record,container,egress_proxy,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
+if grep -Eq '^transport\|wcl-detached-fixture\|(network (rm|disconnect)|logs) ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
+  echo "session delete --dry-run changed the egress proxy resources" >&2
+  exit 1
+fi
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
   echo "session delete --dry-run unexpectedly removed a container" >&2
   exit 1

@@ -2492,6 +2492,7 @@ write_session_monitor_env_file() {
     DEBUG_LOG_PATH
     EGRESS_PROXY_CONTAINER
     EGRESS_PROXY_NETWORK
+    EGRESS_PROXY_STARTED
     EXECUTION_PATH
     FILE_TRACE_LOG_PATH
     INJECTION_CREDENTIAL_KEYS
@@ -4165,6 +4166,12 @@ session_stop_main() {
   sanitize_host_docker_env
   current_live_status="${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}"
   if ! container_state="$(session_container_live_state "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null)"; then
+    # A monitor that died after it removed the agent leaves the proxy behind.
+    # Only a proven missing agent with a dead monitor allows the cleanup.
+    if ! session_monitor_pid_is_live && [[ "$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null || true)" == "missing" ]]; then
+      stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "" ||
+        echo "session stop could not confirm the egress proxy cleanup: ${session_id}" >&2
+    fi
     echo "session stop could not confirm a live detached session: ${session_id}" >&2
     exit 1
   fi
@@ -4402,6 +4409,7 @@ session_delete_main() {
   local audit_seal_path=""
   local remove_egress_deny_log=0
   local egress_deny_log_path=""
+  local proxy_residue=""
   local session_audit_dir=""
   local -a removed=()
   local -a kept=()
@@ -4488,13 +4496,23 @@ session_delete_main() {
         ;;
     esac
   fi
-  # A lost launcher or monitor can leave the egress proxy sidecar behind. Remove
-  # it before the artifact plan, so the deny log it saves joins the plan.
-  if [[ "${record_only}" -eq 0 ]] && [[ "${dry_run}" -eq 0 ]] && [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
-    stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
-      echo "session delete could not confirm the egress proxy cleanup: ${session_id}" >&2
+  # A lost launcher or monitor can leave the egress proxy sidecar behind. Plan
+  # its removal like any artifact, and remove it before the artifact plan is
+  # read, so the deny log it saves joins the plan. A dry run only looks.
+  if [[ "${record_only}" -eq 0 ]] && [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
+    proxy_residue="$(egress_proxy_residue "${SESSION_META_PROFILE}" "${session_id}")" || {
+      echo "session delete could not inspect the egress proxy resources: ${session_id}" >&2
       exit 1
     }
+    if [[ -n "${proxy_residue}" ]]; then
+      planned_remove+=("egress_proxy")
+      if [[ "${dry_run}" -eq 0 ]]; then
+        stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+          echo "session delete could not confirm the egress proxy cleanup: ${session_id}" >&2
+          exit 1
+        }
+      fi
+    fi
   fi
   if session_audit_dir="$(session_delete_resolve_dir_artifact "session_audit_dir" "${SESSION_META_SESSION_AUDIT_DIR}")"; then
     if [[ -e "${session_audit_dir}" ]]; then
@@ -4859,6 +4877,9 @@ session_monitor_main() {
   finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
   run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   stop_egress_proxy "${COLIMA_PROFILE}"
+  # The monitor's EXIT cleanup also stops the proxy while this flag is set, so a
+  # failed finalize cannot leave the sidecar. The stop above already ran.
+  EGRESS_PROXY_STARTED=0
   if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -d "${SESSION_AUDIT_DIR}" ]]; then
     chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
     rm -rf "${SESSION_AUDIT_DIR}"
