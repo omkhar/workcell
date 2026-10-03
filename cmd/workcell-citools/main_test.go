@@ -178,7 +178,8 @@ func TestCitoolsHelperProcess(t *testing.T) {
 
 // TestHardeningProfileConformanceParsesSidecarCommand proves the production
 // gate runs the parsed sidecar check: a flag the profile scan still finds as
-// text, because a longer flag contains it, must fail the gate.
+// text, because a longer flag contains it, must fail the gate. The same holds for the
+// sole-route function.
 func TestHardeningProfileConformanceParsesSidecarCommand(t *testing.T) {
 	root := t.TempDir()
 	for _, rel := range []string{
@@ -206,14 +207,22 @@ func TestHardeningProfileConformanceParsesSidecarCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mutated := strings.Replace(string(data), "    --read-only \\\n", "    --read-only-x \\\n", 1)
-	if mutated == string(data) {
-		t.Fatal("mutation changed nothing")
-	}
-	if err := os.WriteFile(script, []byte(mutated), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmdHardeningProfileConformance([]string{root}); err == nil || !strings.Contains(err.Error(), "egress proxy sidecar") {
-		t.Fatalf("mutated tree error = %v, want the sidecar check to fail", err)
+	for name, mutate := range map[string]func(string) string{
+		"sidecar flag": func(s string) string { return strings.Replace(s, "    --read-only \\\n", "    --read-only-x \\\n", 1) },
+		"sole route decoy": func(s string) string {
+			route := `RUNTIME_NETWORK_ARGS=(--network "${EGRESS_PROXY_NETWORK}" --dns 127.0.0.1)`
+			return strings.Replace(s, route, "echo '"+route+"'\n  RUNTIME_NETWORK_ARGS=(--network bridge)", 1)
+		},
+	} {
+		mutated := mutate(string(data))
+		if mutated == string(data) {
+			t.Fatalf("%s: mutation changed nothing", name)
+		}
+		if err := os.WriteFile(script, []byte(mutated), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmdHardeningProfileConformance([]string{root}); err == nil || !strings.Contains(err.Error(), "egress proxy") {
+			t.Fatalf("%s: error = %v, want the parsed egress proxy check to fail", name, err)
+		}
 	}
 }

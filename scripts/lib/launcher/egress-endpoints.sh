@@ -142,7 +142,8 @@ build_runtime_host_aliases() {
 # resolver. Each allowlisted host maps to the sidecar proxy, which peeks at the
 # SNI and is the only route out. The proxy IP is known only after the sidecar
 # starts, so the --add-host values carry EGRESS_PROXY_IP_TOKEN until
-# start_egress_proxy replaces it in DOCKER_RUN.
+# start_egress_proxy replaces it in DOCKER_RUN, in the --add-host values before
+# the image only.
 EGRESS_PROXY_IP_TOKEN="egress-proxy-ip"
 
 egress_proxy_agent_network_args() {
@@ -202,7 +203,10 @@ start_egress_proxy() {
     return 1
   fi
   for i in "${!DOCKER_RUN[@]}"; do
-    [[ "${DOCKER_RUN[i]}" == *":${EGRESS_PROXY_IP_TOKEN}" ]] || continue
+    # Only the generated --add-host values before the image carry the token. A
+    # provider or prompt argument after the image is user input and stays as is.
+    [[ "${DOCKER_RUN[i]}" != "${IMAGE_TAG}" ]] || break
+    [[ "${DOCKER_RUN[i]}" == *":${EGRESS_PROXY_IP_TOKEN}" && "${DOCKER_RUN[i - 1]}" == "--add-host" ]] || continue
     DOCKER_RUN[i]="${DOCKER_RUN[i]%:"${EGRESS_PROXY_IP_TOKEN}"}:${ip}"
   done
 }

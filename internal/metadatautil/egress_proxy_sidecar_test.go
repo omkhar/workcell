@@ -45,7 +45,20 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 		"bind mount": func(a string) string {
 			return strings.Replace(a, "    --read-only \\\n", "    --read-only \\\n    -v /:/host \\\n", 1)
 		},
-		"echoed flag decoy":   func(a string) string { return strings.Replace(a, "    --read-only \\\n", "    --read-only-x \\\n", 1) },
+		"echoed flag decoy": func(a string) string { return strings.Replace(a, "    --read-only \\\n", "    --read-only-x \\\n", 1) },
+		"pids unlimited": func(a string) string {
+			return strings.Replace(a, "    --read-only \\\n", "    --read-only \\\n    --pids-limit=-1 \\\n", 1)
+		},
+		"read-only false": func(a string) string {
+			return strings.Replace(a, "    --read-only \\\n", "    --read-only=false \\\n", 1)
+		},
+		"entrypoint override": func(a string) string {
+			return strings.Replace(a, "    --read-only \\\n", "    --read-only \\\n    --entrypoint=/bin/sh \\\n", 1)
+		},
+		"memory alias": func(a string) string {
+			return strings.Replace(a, "    --read-only \\\n", "    --read-only \\\n    -m 4g \\\n", 1)
+		},
+		"unbounded log":       func(a string) string { return strings.Replace(a, "    --log-opt max-size=10m \\\n", "", 1) },
 		"weaker security opt": func(a string) string { return strings.Replace(a, "no-new-privileges:true", "seccomp=unconfined", 1) },
 	} {
 		t.Run(name, func(t *testing.T) {

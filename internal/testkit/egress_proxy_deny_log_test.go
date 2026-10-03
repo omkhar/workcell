@@ -76,3 +76,37 @@ stop_egress_proxy prof
 		})
 	}
 }
+
+// TestStartEgressProxyReplacesOnlyGeneratedAliases proves that the token swap
+// touches the --add-host values before the image and no user argument after it.
+func TestStartEgressProxyReplacesOnlyGeneratedAliases(t *testing.T) {
+	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `
+set -euo pipefail
+source "$LIB"
+EGRESS_PROXY_NETWORK=net EGRESS_PROXY_CONTAINER=side ALLOW_ENDPOINTS=a.example:443 HOST_DOCKER_BIN=docker IMAGE_TAG=img
+DOCKER_RUN=(docker run --add-host a.example:egress-proxy-ip -e X=y:egress-proxy-ip img prompt:egress-proxy-ip --add-host b.example:egress-proxy-ip)
+run_workcell_docker_client_command() {
+  shift
+  case "$1 $2" in
+    "network inspect") printf '10.9.0.0/24 \n' ;;
+    "inspect -f") printf '10.9.0.2\n' ;;
+  esac
+}
+start_egress_proxy sha256:abc
+printf '%s\n' "${DOCKER_RUN[@]}"
+`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(), "LIB="+lib)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("start_egress_proxy failed: %v\n%s", err, out)
+	}
+	want := "docker\nrun\n--add-host\na.example:10.9.0.2\n-e\nX=y:egress-proxy-ip\nimg\nprompt:egress-proxy-ip\n--add-host\nb.example:egress-proxy-ip\n"
+	if string(out) != want {
+		t.Fatalf("DOCKER_RUN = %q, want %q", out, want)
+	}
+}
