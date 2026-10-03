@@ -281,7 +281,8 @@ The base-trusted fix is `pull_request_target`.
 That fix would widen a repository security contract.
 
 The repository has one writer, so the owner accepted this risk.
-Auto-merge stays bound to the guarded commit with `--match-head-commit`.
+The `--match-head-commit` flag checks the head only when `publish` arms auto-merge.
+The flag does not pin the head after that point.
 Revisit this risk when a second maintainer gets write access.
 
 ### Upstream refresh administrator steps
