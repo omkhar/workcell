@@ -59,7 +59,7 @@ The export has these properties:
 
 - It writes one summary event and one event for each audit record that matches
   the session.
-- It records OCSF schema version `1.3.0` and Workcell mapping version `2`.
+- It records OCSF schema version `1.3.0` and Workcell mapping version `3`.
 - It applies the shared support-bundle redactor to each dynamic session or
   audit string value.
 - It replaces free-form session messages and unexpected audit fields with a

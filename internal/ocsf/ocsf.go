@@ -46,7 +46,9 @@ const OCSFSchemaVersion = "1.3.0"
 // "2": the export became a MULTI-EVENT stream — the session-summary event plus
 // one Application Lifecycle event per audit lifecycle record — where "1" emitted
 // only the single session-summary event. Consumers gate their parsers on this.
-const MappingVersion = "2"
+//
+// "3": the session-summary event gained the session.parent_session_id attribute.
+const MappingVersion = "3"
 
 // OCSF Application Lifecycle classification constants.
 const (
