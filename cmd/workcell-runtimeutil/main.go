@@ -35,6 +35,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// Support -h and --help flags at the top level (exit 0)
+	if args[0] == "-h" || args[0] == "--help" {
+		fmt.Fprintln(stdout, "usage: workcell-runtimeutil <command> [args...]")
+		return 0
+	}
+
 	var err error
 	switch args[0] {
 	case "canonicalize-path":

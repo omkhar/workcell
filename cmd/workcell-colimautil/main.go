@@ -35,6 +35,9 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "-h", "--help":
+		fmt.Println("usage: workcell-colimautil <validate-runtime-mounts|validate-profile-config> [args...]")
+		return nil
 	case "validate-runtime-mounts":
 		if len(args) != 5 {
 			return usage()

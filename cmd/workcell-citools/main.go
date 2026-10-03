@@ -201,6 +201,11 @@ func main() {
 		// the wrong-arity path below and the other workcell Go CLIs (D8).
 		dieUsage(rootUsageError(""))
 	}
+	// Support -h and --help flags at the top level (exit 0)
+	if os.Args[1] == "-h" || os.Args[1] == "--help" {
+		fmt.Println(rootUsageErrorMessage())
+		return
+	}
 	if os.Args[1] == "startup-bench" {
 		os.Exit(startupbench.Run(os.Args[2:], os.Stdout, os.Stderr))
 	}
@@ -234,6 +239,25 @@ func main() {
 	}
 	// An unknown top-level command is a usage error (exit 2).
 	dieUsage(rootUsageError(os.Args[1]))
+}
+
+func rootUsageErrorMessage() string {
+	names := make([]string, 0, len(subcommands())+2)
+	for _, sub := range subcommands() {
+		names = append(names, sub.name)
+	}
+	// scenario-manifest is dispatched directly in main() and so is not
+	// part of the subcommands() table, but it is still a known command
+	// for help/error output purposes.
+	names = append(names, "scenario-manifest", "startup-bench")
+	sort.Strings(names)
+	var lines strings.Builder
+	for _, name := range names {
+		lines.WriteString("  ")
+		lines.WriteString(name)
+		lines.WriteString("\n")
+	}
+	return fmt.Sprintf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], lines.String())
 }
 
 func rootUsageError(badCommand string) error {

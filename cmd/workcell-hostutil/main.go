@@ -60,6 +60,9 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "-h", "--help":
+		fmt.Println(usageMessage())
+		return nil
 	case "adapters":
 		return runAdapters(args[1:])
 	case "path":
@@ -1095,8 +1098,12 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // (workcell-citools, -runtimeutil, and the delegated -hostutil subcommands
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
+func usageMessage() string {
+	return "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli> [args...]"
+}
+
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: usageMessage()}
 }
 
 func pathUsage() error {
