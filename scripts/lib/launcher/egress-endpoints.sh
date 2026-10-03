@@ -207,18 +207,29 @@ start_egress_proxy() {
 
 # stop_egress_proxy saves the proxy's deny lines (its stdout, one JSON object
 # per line) to <sessions-dir>/<session>/egress-deny.jsonl, then removes the
-# sidecar and the network. It is best effort: it runs on every exit path,
-# including after a failed start.
+# sidecar and the network. The save stages the logs in a private directory and
+# publishes them through the same staged, fsynced, owner-only rename as the
+# other session captures, so a failed or partial collection never replaces the
+# final file. A failed save warns and the cleanup still runs: a live sidecar
+# that holds the allowlist is worse than a missing log. It runs on every exit
+# path, including after a failed start.
 stop_egress_proxy() {
   local profile="$1"
   local deny_dir=""
+  local staged_dir=""
 
   [[ -n "${EGRESS_PROXY_CONTAINER:-}" ]] || return 0
   deny_dir="$(profile_sessions_dir_path "${profile}")/${SESSION_ID}"
-  if mkdir -p "${deny_dir}" 2>/dev/null && chmod 0700 "${deny_dir}" 2>/dev/null; then
-    run_profile_docker_command "${profile}" logs "${EGRESS_PROXY_CONTAINER}" \
-      >"${deny_dir}/egress-deny.jsonl" 2>/dev/null || true
+  staged_dir="$(mktemp -d "${TMPDIR:-/tmp}/workcell-egress-deny.XXXXXX")" || staged_dir=""
+  if [[ -z "${staged_dir}" ]] ||
+    ! mkdir -p "${deny_dir}" 2>/dev/null ||
+    ! chmod 0700 "${deny_dir}" 2>/dev/null ||
+    ! run_profile_docker_command "${profile}" logs "${EGRESS_PROXY_CONTAINER}" \
+      >"${staged_dir}/file" 2>/dev/null ||
+    ! go_hostutil helper publish-session-capture-file "${staged_dir}/file" "${deny_dir}/egress-deny.jsonl" >/dev/null 2>&1; then
+    echo "workcell: warning: could not save the egress proxy deny log for ${SESSION_ID}." >&2
   fi
+  [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
   run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 || true
   run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || true
 }

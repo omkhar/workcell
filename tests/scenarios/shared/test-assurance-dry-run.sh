@@ -381,7 +381,26 @@ grep -q 'unsupported keys' "${TMP_DIR}/network-weaken.stderr"
 # upstream address. Other modes and targets fail closed.
 run_dry_run "egress-proxy-codex" --agent codex --egress-proxy
 grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/egress-proxy-codex.stderr"
-grep -Eq -- '--network wc-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+ --dns 127\.0\.0\.1 ' "${TMP_DIR}/egress-proxy-codex.stdout"
+# Compare argument tokens: exactly one --network (the per-session network) and one
+# --dns (127.0.0.1), in no other spelling.
+egress_proxy_route_tokens_ok() {
+  tr ' ' '\n' <"$1" | awk '
+    /^--(net|network|dns|dns-search|dns-option)=/ || $0 == "--net" || $0 == "--dns-search" || $0 == "--dns-option" { bad = 1 }
+    $0 == "--network" { networks++ }
+    $0 == "--dns" { resolvers++ }
+    prev == "--network" { network = $0 }
+    prev == "--dns" { resolver = $0 }
+    { prev = $0 }
+    END { exit !(!bad && networks == 1 && network ~ /^wc-[0-9]+T[0-9]+Z-[0-9a-f]+$/ && resolvers == 1 && resolver == "127.0.0.1") }'
+}
+egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-codex.stdout"
+for decoy in '--network=bridge' '--net host' '--dns=8.8.8.8' '--dns 8.8.8.8' '--network bridge'; do
+  printf '%s %s\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" "${decoy}" >"${TMP_DIR}/egress-proxy-decoy.stdout"
+  if egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-decoy.stdout"; then
+    echo "--egress-proxy route check accepted a second route flag: ${decoy}" >&2
+    exit 1
+  fi
+done
 grep -q -- '--add-host api.openai.com:egress-proxy-ip ' "${TMP_DIR}/egress-proxy-codex.stdout"
 if tr ' ' '\n' <"${TMP_DIR}/egress-proxy-codex.stdout" | grep -A1 -x -- '--add-host' | grep -v -x -e '--add-host' -e '--' | grep -v ':egress-proxy-ip$'; then
   echo "--egress-proxy mapped a host to an address other than the proxy" >&2

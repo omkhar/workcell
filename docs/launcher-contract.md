@@ -326,8 +326,11 @@ session allowlist. Then it replaces the `egress-proxy-ip` token in the agent
 command with the sidecar address. A failure stops the launch.
 
 `stop_egress_proxy` saves the proxy deny lines to
-`<sessions-dir>/<session>/egress-deny.jsonl`. Then it removes the sidecar and
-the network. The launcher cleanup calls it, and the detached session monitor
+`<sessions-dir>/<session>/egress-deny.jsonl`. It stages the lines in a private
+directory and publishes them with the staged, fsynced, owner-only rename of
+`publish-session-capture-file`. A failed save prints a warning and leaves the
+earlier file unchanged. Then it removes the sidecar and the network, also after
+a failed save. The launcher cleanup calls it, and the detached session monitor
 calls it after the agent exits.
 
 ## Change Rule
