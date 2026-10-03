@@ -225,6 +225,7 @@ fi
 # The scope guard checks only the provider candidate.
 if [[ "${kind}" == provider && "${scope_result}" == passed ]]; then
   # Enable auto-merge only for the commit that passed the scope guard and tree check.
+  # The head match applies at arming time only; a later writer push is an accepted risk.
   gh pr merge --repo "${GITHUB_REPOSITORY}" --auto --merge --match-head-commit "${commit_oid}" "${pr_url}"
   merge_line="auto-merge enabled (scope guard passed)"
 else
