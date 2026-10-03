@@ -183,3 +183,18 @@ func TestRemoveAllAtNoFollowStaysInsideTheTree(t *testing.T) {
 		t.Fatal("OpenParentDirectoryNoFollow followed a symlinked ancestor")
 	}
 }
+
+func TestRemoveAllAtTreatsAnObservedVanishedEntryAsFailure(t *testing.T) {
+	parent, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	fd := int(parent.Fd())
+	if err := removeAllAt(fd, "absent", false); err != nil {
+		t.Fatalf("a named absent entry error = %v", err)
+	}
+	if err := removeAllAt(fd, "absent", true); err == nil {
+		t.Fatal("an entry seen in a directory read vanished without an error")
+	}
+}

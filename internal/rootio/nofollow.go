@@ -175,18 +175,29 @@ func RemoveAllAtNoFollow(parent *os.File, name string) error {
 	if err := validateLeafName(name); err != nil {
 		return err
 	}
-	return removeAllAt(int(parent.Fd()), name)
+	return removeAllAt(int(parent.Fd()), name, false)
 }
 
-func removeAllAt(dirFD int, name string) error {
+// removeAllAt removes one name. An observed name came from a directory read, so
+// its disappearance means a rename outside the tree and fails the removal.
+func removeAllAt(dirFD int, name string, observed bool) error {
 	unlinkErr := unix.Unlinkat(dirFD, name, 0)
-	if unlinkErr == nil || errors.Is(unlinkErr, unix.ENOENT) {
+	if unlinkErr == nil {
+		return nil
+	}
+	if errors.Is(unlinkErr, unix.ENOENT) {
+		if observed {
+			return fmt.Errorf("entry vanished during removal: %s", name)
+		}
 		return nil
 	}
 	// A directory refuses a plain unlink (EISDIR or EPERM, by platform), so
 	// open it without following a link and empty it first.
 	fd, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ENOENT) {
+		if observed {
+			return fmt.Errorf("entry vanished during removal: %s", name)
+		}
 		return nil
 	}
 	if err != nil {
@@ -199,7 +210,7 @@ func removeAllAt(dirFD int, name string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if err := removeAllAt(fd, entry); err != nil {
+		if err := removeAllAt(fd, entry, true); err != nil {
 			return err
 		}
 	}
