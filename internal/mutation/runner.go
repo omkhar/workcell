@@ -324,6 +324,41 @@ var goHelperMutations = []mutationCase{
 		label:        "egress proxy plain port maps to one host",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestParseAllowlist", "-count=1"),
 	},
+	{
+		relativePath: "internal/egressproxy/proxy.go",
+		original:     `if _, ok := p.terminate[host]; ok && port == tlsPort {`,
+		replacement:  `if false {`,
+		label:        "egress proxy terminates brokered hosts",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateSwapsOnlyExactPlaceholder", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/terminate.go",
+		original:     `if len(values) != 1 {`,
+		replacement:  `if len(values) == 0 {`,
+		label:        "egress proxy swaps only a single exact placeholder",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateSwapsOnlyExactPlaceholder", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/terminate.go",
+		original:     `PermittedDNSDomains:         hosts,`,
+		replacement:  `PermittedDNSDomains:         nil,`,
+		label:        "egress session CA name constraints",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestSessionCANameConstraints", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/terminate.go",
+		original:     `NextProtos: []string{"http/1.1"},`,
+		replacement:  `NextProtos: nil,`,
+		label:        "egress proxy terminated ALPN is http/1.1 only",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateOffersHTTP11Only", "-count=1"),
+	},
+	{
+		relativePath: "internal/egressproxy/terminate.go",
+		original:     `p.deny(host, tlsPort, "broker_denied")`,
+		replacement:  `_ = host`,
+		label:        "egress proxy logs broker denials",
+		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateBrokerErrorIs502", "-count=1"),
+	},
 }
 
 var rustMutations = []mutationCase{
