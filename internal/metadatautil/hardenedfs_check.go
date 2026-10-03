@@ -44,57 +44,7 @@ func CheckHardenedFS(rootDir string) error {
 	counts := map[hardenedFSKey]int{}
 	details := map[hardenedFSKey][]string{}
 	for _, pkg := range hardenedFSPackages {
-		// A symlinked package root is not walked: filepath.WalkDir reports the
-		// link entry and returns success, so every source below it would
-		// escape the scan while the check still reported a clean result.
-		info, statErr := os.Lstat(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this proves the package root is a real directory before the walk opens it
-		if statErr != nil || !info.IsDir() {
-			return fmt.Errorf("trust-boundary package %s is not a directory; the hardened filesystem rule cannot read it", pkg)
-		}
-		// Walk and read through one directory handle. A pathname walk resolves
-		// the package name again for every entry, so a rename between the
-		// check and the read hands the scan a different tree than the one it
-		// verified. os.Root binds every open to this handle and refuses a
-		// symlink inside it.
-		root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this opens the handle that every later read is relative to
-		if err != nil {
-			return fmt.Errorf("open the trust-boundary package %s: %w", pkg, err)
-		}
-		// os.OpenRoot resolves its own argument, so the handle can name a
-		// directory other than the one Lstat proved. Compare the two before
-		// anything is read through it.
-		opened, err := root.Stat(".")
-		if err != nil || !os.SameFile(info, opened) {
-			_ = root.Close()
-			return fmt.Errorf("the trust-boundary package %s changed between the check and the open", pkg)
-		}
-		scanned := 0
-		err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			base := entry.Name()
-			if entry.IsDir() {
-				if base == "testdata" {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
-				return nil
-			}
-			// The walk reports a symlink as a symlink, and os.Root follows one
-			// whose target stays inside the root. Only a regular file is a
-			// source this check can bind to the entry it inspected.
-			if !entry.Type().IsRegular() {
-				return fmt.Errorf("%s/%s is not a regular file; the hardened filesystem rule reads only regular sources", pkg, name)
-			}
-			rel := pkg + "/" + name
-			content, readErr := hardenedFSReadSource(root, name, rel)
-			if readErr != nil {
-				return readErr
-			}
-			scanned++
+		err := scanHardenedGoSources(rootDir, pkg, func(rel string, content []byte) error {
 			fileFindings, scanErr := HardenedFSFindings(string(content))
 			if scanErr != nil {
 				return fmt.Errorf("%s: %w", rel, scanErr)
@@ -106,21 +56,94 @@ func CheckHardenedFS(rootDir string) error {
 			}
 			return nil
 		})
-		closeErr := root.Close()
 		if err != nil {
-			return fmt.Errorf("scan %s for raw os pathname references: %w", pkg, err)
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if scanned == 0 {
-			return fmt.Errorf("no Go source under the trust-boundary package %s; refusing a vacuous pass", pkg)
+			return err
 		}
 	}
-	baseline, err := loadHardenedFSBaseline(filepath.Join(rootDir, hardenedFSBaselinePath))
+	baseline, err := loadHardenedBaseline(rootDir, hardenedFSBaselinePath, false)
 	if err != nil {
 		return err
 	}
+	failures := compareHardenedBaseline(counts, details, baseline, func(string) string {
+		return "use internal/rootio, or state the reason with // " + hardenedFSExemptTag + " <reason>"
+	})
+	if len(failures) == 0 {
+		return nil
+	}
+	return fmt.Errorf("hardened filesystem check failed:\n  %s", strings.Join(failures, "\n  "))
+}
+
+// scanHardenedGoSources hands visit each non-test Go source under pkg, named
+// relative to the repository. A testdata directory is skipped.
+func scanHardenedGoSources(rootDir, pkg string, visit func(rel string, content []byte) error) error {
+	// A symlinked package root is not walked: filepath.WalkDir reports the
+	// link entry and returns success, so every source below it would escape
+	// the scan while the check still reported a clean result.
+	info, statErr := os.Lstat(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this proves the package root is a real directory before the walk opens it
+	if statErr != nil || !info.IsDir() {
+		return fmt.Errorf("scan root %s is not a directory; the hardened filesystem rule cannot read it", pkg)
+	}
+	// Walk and read through one directory handle. A pathname walk resolves
+	// the package name again for every entry, so a rename between the check
+	// and the read hands the scan a different tree than the one it verified.
+	// os.Root binds every open to this handle and refuses a symlink inside it.
+	root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this opens the handle that every later read is relative to
+	if err != nil {
+		return fmt.Errorf("open the scan root %s: %w", pkg, err)
+	}
+	// os.OpenRoot resolves its own argument, so the handle can name a
+	// directory other than the one Lstat proved. Compare the two before
+	// anything is read through it.
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		_ = root.Close()
+		return fmt.Errorf("the scan root %s changed between the check and the open", pkg)
+	}
+	scanned := 0
+	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		base := entry.Name()
+		if entry.IsDir() {
+			if base == "testdata" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
+			return nil
+		}
+		// The walk reports a symlink as a symlink, and os.Root follows one
+		// whose target stays inside the root. Only a regular file is a source
+		// this check can bind to the entry it inspected.
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("%s/%s is not a regular file; the hardened filesystem rule reads only regular sources", pkg, name)
+		}
+		rel := pkg + "/" + name
+		content, readErr := hardenedFSReadSource(root, name, rel)
+		if readErr != nil {
+			return readErr
+		}
+		scanned++
+		return visit(rel, content)
+	})
+	closeErr := root.Close()
+	if err != nil {
+		return fmt.Errorf("scan %s for raw pathname references: %w", pkg, err)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if scanned == 0 {
+		return fmt.Errorf("no Go source under the scan root %s; refusing a vacuous pass", pkg)
+	}
+	return nil
+}
+
+// compareHardenedBaseline returns one sorted failure per count that differs
+// from its baseline row and per stale row. advice names the fix for a symbol.
+func compareHardenedBaseline(counts map[hardenedFSKey]int, details map[hardenedFSKey][]string, baseline map[hardenedFSKey]int, advice func(symbol string) string) []string {
 	var failures []string
 	for key, count := range counts {
 		allowed := baseline[key]
@@ -140,8 +163,8 @@ func CheckHardenedFS(rootDir string) error {
 				reported = reported[:hardenedFSMaxReported]
 			}
 			failures = append(failures, fmt.Sprintf(
-				"%s: %d reference(s) to %s, baseline allows %d; use internal/rootio, or state the reason with // %s <reason>\n    %s",
-				key.path, count, key.symbol, allowed, hardenedFSExemptTag, strings.Join(reported, "\n    ")))
+				"%s: %d reference(s) to %s, baseline allows %d; %s\n    %s",
+				key.path, count, key.symbol, allowed, advice(key.symbol), strings.Join(reported, "\n    ")))
 		}
 	}
 	for key := range baseline {
@@ -151,11 +174,8 @@ func CheckHardenedFS(rootDir string) error {
 		failures = append(failures, fmt.Sprintf(
 			"%s: stale baseline row for %s; the file no longer makes that call, so remove the row", key.path, key.symbol))
 	}
-	if len(failures) == 0 {
-		return nil
-	}
 	sort.Strings(failures)
-	return fmt.Errorf("hardened filesystem check failed:\n  %s", strings.Join(failures, "\n  "))
+	return failures
 }
 
 const (
@@ -250,7 +270,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse the Go source: %w", err)
 	}
-	name, err := hardenedFSOSImportName(file)
+	name, err := hardenedFSImportName(file, "os")
 	if err != nil {
 		return nil, err
 	}
@@ -320,11 +340,12 @@ func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int][]in
 	return kept
 }
 
-// hardenedFSOSImportName returns the name that qualifies a call of the os
-// package in this file, or the empty string when the file does not import it.
+// hardenedFSImportName returns the name that qualifies a call of the package
+// at importPath in this file, or the empty string when the file does not
+// import it.
 // A dot import is refused: it removes the qualifier that the scan reads, so
 // the rule would silently stop applying to the file.
-func hardenedFSOSImportName(file *ast.File) (string, error) {
+func hardenedFSImportName(file *ast.File, importPath string) (string, error) {
 	for _, spec := range file.Imports {
 		if spec.Path == nil {
 			continue
@@ -332,14 +353,14 @@ func hardenedFSOSImportName(file *ast.File) (string, error) {
 		// Go accepts a raw string and an escaped string for an import path, so
 		// the literal spelling is not the path. Unquote it before comparing.
 		path, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || path != "os" {
+		if err != nil || path != importPath {
 			continue
 		}
 		if spec.Name == nil {
-			return "os", nil
+			return importPath[strings.LastIndex(importPath, "/")+1:], nil
 		}
 		if spec.Name.Name == "." || spec.Name.Name == "_" {
-			return "", fmt.Errorf("the os import uses the %q form; write it as a plain import or an alias so the hardened filesystem rule can read its calls", spec.Name.Name)
+			return "", fmt.Errorf("the %s import uses the %q form; write it as a plain import or an alias so the hardened filesystem rule can read its calls", importPath, spec.Name.Name)
 		}
 		return spec.Name.Name, nil
 	}
@@ -400,10 +421,17 @@ func HardenedFSPackages() []string {
 	return append([]string(nil), hardenedFSPackages...)
 }
 
-func loadHardenedFSBaseline(path string) (map[hardenedFSKey]int, error) {
-	content, err := rootio.ReadFileNoFollow(path, hardenedFSBaselinePath, hardenedFSMaxSourceBytes)
+// loadHardenedBaseline reads a PATH<TAB>SYMBOL<TAB>COUNT ratchet file. When
+// withReason is set, each row carries a fourth REASON field. The line is
+// trimmed first, so an empty trailing reason leaves too few fields.
+func loadHardenedBaseline(rootDir, rel string, withReason bool) (map[hardenedFSKey]int, error) {
+	content, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, rel), rel, hardenedFSMaxSourceBytes)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", hardenedFSBaselinePath, err)
+		return nil, fmt.Errorf("read %s: %w", rel, err)
+	}
+	want := 3
+	if withReason {
+		want = 4
 	}
 	baseline := map[hardenedFSKey]int{}
 	for number, line := range strings.Split(string(content), "\n") {
@@ -412,14 +440,18 @@ func loadHardenedFSBaseline(path string) (map[hardenedFSKey]int, error) {
 			continue
 		}
 		fields := strings.Split(line, "\t")
-		if len(fields) != 3 {
-			return nil, fmt.Errorf("%s:%d: expected three tab-separated fields, found %d", hardenedFSBaselinePath, number+1, len(fields))
+		if len(fields) != want {
+			return nil, fmt.Errorf("%s:%d: expected %d tab-separated fields, found %d", rel, number+1, want, len(fields))
 		}
 		count, convErr := strconv.Atoi(fields[2])
 		if convErr != nil || count <= 0 {
-			return nil, fmt.Errorf("%s:%d: count must be a positive integer, found %q", hardenedFSBaselinePath, number+1, fields[2])
+			return nil, fmt.Errorf("%s:%d: count must be a positive integer, found %q", rel, number+1, fields[2])
 		}
-		baseline[hardenedFSKey{path: fields[0], symbol: fields[1]}] = count
+		key := hardenedFSKey{path: fields[0], symbol: fields[1]}
+		if _, dup := baseline[key]; dup {
+			return nil, fmt.Errorf("%s:%d: duplicate row for %s %s", rel, number+1, fields[0], fields[1])
+		}
+		baseline[key] = count
 	}
 	return baseline, nil
 }
