@@ -148,11 +148,17 @@ build_runtime_host_aliases() {
 # the image only.
 EGRESS_PROXY_IP_TOKEN="egress-proxy-ip"
 
+# egress_proxy_names derives the per-session network and sidecar names from
+# the session id alone, so a host command can find them without monitor state.
+egress_proxy_names() {
+  EGRESS_PROXY_NETWORK="wc-${SESSION_ID}"
+  EGRESS_PROXY_CONTAINER="wc-egress-${SESSION_ID}"
+}
+
 egress_proxy_agent_network_args() {
   local endpoint=""
 
-  EGRESS_PROXY_NETWORK="wc-${SESSION_ID}"
-  EGRESS_PROXY_CONTAINER="wc-egress-${SESSION_ID}"
+  egress_proxy_names
   RUNTIME_NETWORK_ARGS=(--network "${EGRESS_PROXY_NETWORK}" --dns 127.0.0.1)
   for endpoint in ${1}; do
     RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")
@@ -271,4 +277,18 @@ stop_egress_proxy() {
     echo "workcell: warning: could not remove the egress proxy sidecar ${EGRESS_PROXY_CONTAINER}." >&2
   run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 ||
     echo "workcell: warning: could not remove the egress proxy network ${EGRESS_PROXY_NETWORK}." >&2
+}
+
+# stop_egress_proxy_for_session runs the same save and cleanup for a session
+# whose monitor died before its own cleanup ran. The names derive from the
+# session id, so the stop command needs no monitor state. A session that never
+# started a proxy has no such network and is left alone.
+stop_egress_proxy_for_session() {
+  local profile="$1"
+  local SESSION_ID="$2"
+  local EGRESS_PROXY_NETWORK="" EGRESS_PROXY_CONTAINER=""
+
+  egress_proxy_names
+  run_profile_docker_command "${profile}" network inspect "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || return 0
+  stop_egress_proxy "${profile}"
 }

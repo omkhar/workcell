@@ -381,10 +381,17 @@ grep -q 'unsupported keys' "${TMP_DIR}/network-weaken.stderr"
 # upstream address. Other modes and targets fail closed.
 run_dry_run "egress-proxy-codex" --agent codex --egress-proxy
 grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/egress-proxy-codex.stderr"
+# The dry run renders the Docker argument vector with printf %q, so eval is its
+# exact inverse: one line per argument, quoting and escapes honored.
+dry_run_argv_lines() {
+  local -a argv=()
+  eval "argv=($(cat "$1"))"
+  printf '%s\n' "${argv[@]}"
+}
 # Compare argument tokens: exactly one --network (the per-session network) and one
 # --dns (127.0.0.1), in no other spelling.
 egress_proxy_route_tokens_ok() {
-  tr ' ' '\n' <"$1" | awk '
+  dry_run_argv_lines "$1" | awk '
     /^--(net|network|dns|dns-search|dns-option)=/ || $0 == "--net" || $0 == "--dns-search" || $0 == "--dns-option" { bad = 1 }
     $0 == "--network" { networks++ }
     $0 == "--dns" { resolvers++ }
@@ -401,11 +408,31 @@ for decoy in '--network=bridge' '--net host' '--dns=8.8.8.8' '--dns 8.8.8.8' '--
     exit 1
   fi
 done
+# A quoted argument value that merely contains route-flag text is one token,
+# not a second route: the check must read the argument vector, not the text.
+printf '%s --label %q\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" 'note --dns 8.8.8.8 --network bridge' >"${TMP_DIR}/egress-proxy-quoted.stdout"
+egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-quoted.stdout" || {
+  echo "--egress-proxy route check split a quoted argument value into flags" >&2
+  exit 1
+}
 grep -q -- '--add-host api.openai.com:egress-proxy-ip ' "${TMP_DIR}/egress-proxy-codex.stdout"
-if tr ' ' '\n' <"${TMP_DIR}/egress-proxy-codex.stdout" | grep -A1 -x -- '--add-host' | grep -v -x -e '--add-host' -e '--' | grep -v ':egress-proxy-ip$'; then
+egress_proxy_add_hosts_ok() {
+  ! dry_run_argv_lines "$1" | grep -A1 -x -- '--add-host' | grep -v -x -e '--add-host' -e '--' | grep -q -v ':egress-proxy-ip$'
+}
+egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-codex.stdout" || {
   echo "--egress-proxy mapped a host to an address other than the proxy" >&2
   exit 1
+}
+printf '%s --add-host %q\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" 'evil.example:10.0.0.1' >"${TMP_DIR}/egress-proxy-add-host-decoy.stdout"
+if egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-add-host-decoy.stdout"; then
+  echo "--egress-proxy add-host check accepted a host mapped away from the proxy" >&2
+  exit 1
 fi
+printf '%s --label %q\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" 'note --add-host evil.example:10.0.0.1' >"${TMP_DIR}/egress-proxy-add-host-quoted.stdout"
+egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-add-host-quoted.stdout" || {
+  echo "--egress-proxy add-host check split a quoted argument value into flags" >&2
+  exit 1
+}
 # The proxy forwards one host per non-443 port. A policy that shares such a port
 # fails before launch; one host on the port passes.
 PROXY_SHARED_PORT_FILE="${TMP_DIR}/proxy-shared-port.toml"

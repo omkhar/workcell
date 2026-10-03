@@ -2406,6 +2406,70 @@ grep -q '^marker=cleared$' <<<"${stop_dead_monitor_output}"
 grep -q '^audit|wcl-detached-fixture|detached-fixture|stop-request|' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 grep -q '^audit|wcl-detached-fixture|detached-fixture|exit|source=host-stop-fallback' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|observed_at=' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
+# A session without a proxy network gets no proxy cleanup.
+if grep -q '|rm -f wc-egress-\||network rm wc-' "${SESSION_STOP_DEAD_MONITOR_RECORD}"; then
+  echo "Detached session stop removed egress proxy resources for a session that had none" >&2
+  exit 1
+fi
+
+# With the monitor dead, the stop command saves the deny log and removes the
+# proxy sidecar and network, whether the container is still running (fallback
+# finalize) or already stopped (stopped-container finalize).
+for stop_proxy_state in running stopped; do
+  SESSION_STOP_DEAD_PROXY_RECORD="${DETACHED_STATE_DIR}/session-stop.dead-proxy-${stop_proxy_state}.record"
+  SESSION_STOP_DEAD_PROXY_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.dead-proxy-${stop_proxy_state}.audit"
+  SESSION_STOP_DEAD_PROXY_STATE_ROOT="${DETACHED_STATE_DIR}/session-stop.dead-proxy-${stop_proxy_state}.state-root"
+  mkdir -p "${SESSION_STOP_DEAD_PROXY_AUDIT_DIR}" "${SESSION_STOP_DEAD_PROXY_STATE_ROOT}/wcl-detached-fixture/sessions"
+  sed "s|${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}|${SESSION_STOP_DEAD_PROXY_AUDIT_DIR}|" \
+    "${SESSION_STOP_DEAD_MONITOR_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" \
+    >"${SESSION_STOP_DEAD_PROXY_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json"
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    AUDIT_DIR="$3"
+    WORKCELL_STATE_ROOT="$4"
+    COLIMA_STATE_ROOT="$4"
+    CONTAINER_STATE="$5"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    resolve_host_output_candidate() { printf "%s\n" "$1"; }
+    exit() { return "${1:-0}"; }
+    session_monitor_pid_is_live() { return 1; }
+    session_container_exit_code() { printf "1\n"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_MONITOR_PID="4242"
+      SESSION_META_STATUS="running"
+      SESSION_META_LIVE_STATUS="running"
+      SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+      SESSION_META_SESSION_AUDIT_DIR="${AUDIT_DIR}"
+    }
+    append_session_control_audit_record() { :; }
+    write_session_record() { :; }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1 $2" in
+        "inspect "*) printf "%s\n" "${CONTAINER_STATE}" ;;
+        "stop "* | "logs "* | "rm "* | "network inspect" | "network rm") return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    session_stop_main --id detached-fixture >/dev/null
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_DEAD_PROXY_RECORD}" "${SESSION_STOP_DEAD_PROXY_AUDIT_DIR}" \
+    "${SESSION_STOP_DEAD_PROXY_STATE_ROOT}" "${stop_proxy_state}" 2>/dev/null
+  for expected in 'logs wc-egress-detached-fixture' 'rm -f wc-egress-detached-fixture' 'network rm wc-detached-fixture'; do
+    grep -q "^transport|wcl-detached-fixture|${expected}\$" "${SESSION_STOP_DEAD_PROXY_RECORD}" || {
+      echo "Detached session stop with a dead monitor (container ${stop_proxy_state}) skipped: ${expected}" >&2
+      exit 1
+    }
+  done
+done
 
 SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped.record"
 SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
