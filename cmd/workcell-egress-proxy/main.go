@@ -2,7 +2,7 @@
 // Copyright 2026 Omkhar Arasaratnam
 
 // Command workcell-egress-proxy runs the per-session egress proxy. It listens
-// on each allowlisted port and writes one JSONL line per denied connection to
+// on each allowlisted port of one address and writes one JSONL line per denied connection to
 // stdout. Overload refusals are best-effort: they are dropped if stdout stalls.
 package main
 
@@ -42,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	flags.SetOutput(stderr)
 	allowPath := flags.String("allowlist", "", "file with one host:port entry per line")
 	allowText := flags.String("allow", "", "space-separated host:port entries, in place of -allowlist")
-	listenHost := flags.String("listen", "0.0.0.0", "address to listen on")
+	listen := flags.String("listen", "0.0.0.0", "IP address to listen on, or a CIDR subnet that holds exactly one local interface address")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return err
@@ -55,11 +55,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if (*allowPath == "") == (*allowText == "") {
 		return usageError(errors.New("exactly one of -allowlist or -allow is required"))
 	}
-	if _, err := netip.ParseAddr(*listenHost); err != nil {
-		return usageError(fmt.Errorf("-listen must be an IP address: %q", *listenHost))
+	ifaceAddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return err
+	}
+	listenHost, err := listenAddr(*listen, ifaceAddrs)
+	if err != nil {
+		return usageError(err)
 	}
 	var allow *egressproxy.Allowlist
-	var err error
 	if *allowText != "" {
 		allow, err = egressproxy.ParseAllowlist(*allowText, "-allow")
 	} else {
@@ -71,11 +75,38 @@ func run(args []string, stdout, stderr io.Writer) error {
 	proxy := egressproxy.New(allow, stdout)
 	errs := make(chan error)
 	for _, port := range allow.Ports() {
-		ln, err := net.Listen("tcp", net.JoinHostPort(*listenHost, strconv.Itoa(int(port))))
+		ln, err := net.Listen("tcp", net.JoinHostPort(listenHost.String(), strconv.Itoa(int(port))))
 		if err != nil {
 			return err
 		}
 		go func() { errs <- proxy.Serve(ln, port) }()
 	}
 	return <-errs
+}
+
+// listenAddr returns the -listen address. A CIDR subnet selects the one local
+// interface address inside it, so a sidecar on two networks listens only on the
+// network that the subnet names.
+func listenAddr(value string, ifaceAddrs []net.Addr) (netip.Addr, error) {
+	if addr, err := netip.ParseAddr(value); err == nil {
+		return addr, nil
+	}
+	subnet, err := netip.ParsePrefix(value)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("-listen must be an IP address or a CIDR subnet: %q", value)
+	}
+	var found []netip.Addr
+	for _, a := range ifaceAddrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if addr, ok := netip.AddrFromSlice(ipnet.IP); ok && subnet.Contains(addr.Unmap()) {
+			found = append(found, addr.Unmap())
+		}
+	}
+	if len(found) != 1 {
+		return netip.Addr{}, fmt.Errorf("-listen subnet %s holds %d local interface addresses, want 1", subnet, len(found))
+	}
+	return found[0], nil
 }

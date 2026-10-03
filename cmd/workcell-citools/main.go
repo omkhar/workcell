@@ -809,7 +809,19 @@ func cmdGitConfigBlocklistParity(args []string) error {
 // in the reviewed policy/hardening-profile.toml artifact, failing (exit 1 via
 // die()) with a message identifying the first drifted section/literal.
 func cmdHardeningProfileConformance(args []string) error {
-	return hardeningprofile.Check(args[0])
+	if err := hardeningprofile.Check(args[0]); err != nil {
+		return err
+	}
+	// The profile scan matches text. The parsed checks prove that the sidecar
+	// command and the agent route really run, so a quoted decoy cannot pass.
+	script, err := os.ReadFile(filepath.Join(args[0], "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	if err != nil {
+		return err
+	}
+	if err := metadatautil.ValidateEgressProxySidecar(string(script)); err != nil {
+		return err
+	}
+	return metadatautil.ValidateEgressProxySoleRoute(string(script))
 }
 
 // cmdWorkcellCheckBatch runs several migrated static checks in one

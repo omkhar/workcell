@@ -7,6 +7,14 @@ The GitHub Releases page contains old details that are not in this file.
 
 ## Unreleased
 
+### Added
+
+- `--egress-proxy` routes strict Colima egress only through a per-session SNI
+  proxy sidecar on an internal network. The sidecar listens only on its
+  internal-network address. Denied connections go to `<session>.egress-deny.jsonl`
+  beside the session record. `session delete` removes it with the record. The launch summary reports
+  `egress_enforcement=proxy`.
+
 ### Security hardening
 
 The X1 baseline audit produced 10 items.

@@ -164,3 +164,39 @@ required = [
   "snapshot.debian.org:443",
 ]
 forbidden = []
+
+# --- Egress proxy (--egress-proxy, strict Colima) ---
+
+# egress-proxy-hardening: the sidecar runs from the verified image with the
+# agent container's conformance flags (no capabilities, no-new-privileges,
+# read-only root, non-root user, PID and memory limits) on an internal network.
+# It listens only on its internal-subnet address, never on 0.0.0.0, so other
+# containers on the bridge cannot use this session's allowlist.
+[egress_proxy]
+target = "scripts/lib/launcher/egress-endpoints.sh"
+block = "start_egress_proxy"
+required = [
+  "network create --internal",
+  "--user 65532:65532",
+  "--cap-drop ALL",
+  "--security-opt no-new-privileges:true",
+  "--read-only",
+  "--pids-limit 256",
+  "--memory 256m",
+  "--entrypoint /usr/local/libexec/workcell/workcell-egress-proxy",
+  "-listen \"${subnet}\"",
+]
+forbidden = ["0.0.0.0", "--privileged", "--cap-add ALL", "--cap-add NET_ADMIN", "--cap-add NET_RAW", "--security-opt seccomp=unconfined", "--network host", "--network=host", "--user 0"]
+
+# egress-proxy-sole-route: the agent joins only the per-session internal network
+# with no resolver, and every allowlisted host maps to the proxy address. It
+# never gets a resolved upstream address or a host-network route.
+[egress_proxy_sole_route]
+target = "scripts/lib/launcher/egress-endpoints.sh"
+block = "egress_proxy_agent_network_args"
+required = [
+  "EGRESS_PROXY_NETWORK=\"wc-${SESSION_ID}\"",
+  "RUNTIME_NETWORK_ARGS=(--network \"${EGRESS_PROXY_NETWORK}\" --dns 127.0.0.1)",
+  ":${EGRESS_PROXY_IP_TOKEN}\")",
+]
+forbidden = ["resolve-endpoints", "--network host", "--network=host", "host-gateway"]

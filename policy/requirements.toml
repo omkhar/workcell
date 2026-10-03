@@ -307,14 +307,19 @@ docs = [
 [nonfunctional.NFR-001]
 title = "Bounded VM-plus-container execution"
 summary = "The safe path preserves a dedicated Colima VM plus a hardened container rather than depending on provider config as the security boundary."
+workflows = ["launch_egress_proxy"]
 evidence = [
   "scripts/container-smoke.sh",
   "scripts/verify-invariants.sh",
+  "tests/scenarios/shared/test-assurance-dry-run.sh",
+  "tests/scenarios/shared/test-egress-proxy-smoke.sh",
 ]
 docs = [
   "README.md",
+  "docs/injection-policy.md",
   "docs/invariants.md",
   "docs/threat-model.md",
+  "man/workcell.1",
 ]
 
 [nonfunctional.NFR-002]

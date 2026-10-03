@@ -145,6 +145,18 @@ atomic for each address family. The old default-deny chain stays in force until
 the complete new chain replaces it. Other targets use their own network
 controls. The launch summary states the result in `egress_enforcement=`.
 
+`--egress-proxy` routes a strict Colima session through a per-session proxy
+sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
+`hardening-profile-conformance` check enforces them:
+
+- `egress-proxy-sole-route` (`[egress_proxy_sole_route]`): the agent joins only
+  the internal network `wc-<session>` with `--dns 127.0.0.1`. Each allowlisted
+  host maps to the proxy address, never to a resolved upstream address.
+- `egress-proxy-hardening` (`[egress_proxy]`): the sidecar uses the agent
+  conformance flags. It drops all capabilities, uses `no-new-privileges` and a
+  read-only root, runs as a non-root user, and has PID and memory limits. It
+  listens only on its internal-network address, never on `0.0.0.0`.
+
 The injection policy can add or deny endpoints through `[network]`. It cannot
 disable the default policy or change `NETWORK_POLICY`. See
 [Network egress](injection-policy.md#network-rules).

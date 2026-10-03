@@ -19,7 +19,11 @@
 # `INJECTION_CREDENTIAL_KEYS`, `NETWORK_POLICY`, and `TARGET_BACKEND`, and the
 # `RUNTIME_NETWORK_ARGS` array `build_runtime_host_aliases` populates — every
 # dependency is defined before the first call site in the main launch path — so
-# they are a self-contained, behaviour-preserving unit.  See
+# they are a self-contained, behaviour-preserving unit.  The --egress-proxy
+# helpers also read `EGRESS_PROXY`, `SESSION_ID`, `ALLOW_ENDPOINTS`,
+# `HOST_DOCKER_BIN` and `DOCKER_RUN`, and call the launcher's
+# `run_workcell_docker_client_command`, `run_profile_docker_command` and
+# `profile_sessions_dir_path`.  See
 # docs/launcher-contract.md for the module contract.
 
 target_broker_endpoints() {
@@ -100,7 +104,9 @@ fail_empty_egress_after_deny() {
 # aws-ec2-ssm, gcp-vm) relies on its own network controls, so this prints
 # 'none' to make the parity gap explicit on the launch summary.
 egress_enforcement_label() {
-  if [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
+  if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+    printf 'proxy\n'
+  elif [[ "${TARGET_BACKEND}" == "colima" ]] && [[ "${NETWORK_POLICY}" == "allowlist" ]]; then
     printf 'allowlist\n'
   else
     printf 'none\n'
@@ -114,6 +120,12 @@ build_runtime_host_aliases() {
 
   RUNTIME_NETWORK_ARGS=()
   [[ "${NETWORK_POLICY}" == "allowlist" ]] || return 0
+  if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+    # The proxy refuses an endpoint set it cannot route. Say so before launch.
+    go_hostutil helper validate-egress-proxy-allowlist "${endpoint_list}" || return 1
+    egress_proxy_agent_network_args "${endpoint_list}"
+    return 0
+  fi
 
   while IFS=$'\t' read -r host ip; do
     [[ -n "${host}" ]] || continue
@@ -124,4 +136,190 @@ build_runtime_host_aliases() {
     fi
   done < <(go_hostutil helper resolve-endpoints "${endpoint_list}")
 
+}
+
+# --- Egress proxy (--egress-proxy, strict Colima only) ---
+#
+# The agent joins only the per-session internal network wc-<session>, with no
+# resolver. Each allowlisted host maps to the sidecar proxy, which peeks at the
+# SNI and is the only route out. The proxy IP is known only after the sidecar
+# starts, so the --add-host values carry EGRESS_PROXY_IP_TOKEN until
+# start_egress_proxy replaces it in DOCKER_RUN, in the --add-host values before
+# the image only.
+EGRESS_PROXY_IP_TOKEN="egress-proxy-ip"
+
+egress_proxy_agent_network_args() {
+  local endpoint=""
+
+  EGRESS_PROXY_NETWORK="wc-${SESSION_ID}"
+  EGRESS_PROXY_CONTAINER="wc-egress-${SESSION_ID}"
+  RUNTIME_NETWORK_ARGS=(--network "${EGRESS_PROXY_NETWORK}" --dns 127.0.0.1)
+  for endpoint in ${1}; do
+    RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")
+  done
+}
+
+# start_egress_proxy creates the internal network and runs the sidecar from the
+# verified image with the agent's conformance flags. The network is internal
+# and isolated: Docker gives an internal network no outside route, but its
+# bridge still carries the VM's gateway address, where any VM service that
+# listens on all addresses would answer the agent. The isolated gateway mode
+# gives the bridge no gateway address. The sidecar also joins the
+# bridge for its upstream route, so it listens only on its address in the
+# internal subnet: other containers on the bridge cannot use this session's
+# allowlist. Then it puts the sidecar's internal IP into the agent's --add-host
+# values. Any failure stops the launch; cleanup and the detached monitor remove
+# what was created.
+start_egress_proxy() {
+  local image_id="$1"
+  local subnet=""
+  local ip=""
+  local i=""
+  local endpoint=""
+  local listening=""
+  local ready=0
+  local port=""
+
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal \
+    --opt com.docker.network.bridge.gateway_mode_ipv4=isolated "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1
+  subnet="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network inspect \
+    -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "${EGRESS_PROXY_NETWORK}")" || return 1
+  subnet="${subnet% }"
+  if [[ ! "${subnet}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+    echo "workcell: ${EGRESS_PROXY_NETWORK} has no single IPv4 subnet: ${subnet}" >&2
+    return 1
+  fi
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" create \
+    --name "${EGRESS_PROXY_CONTAINER}" \
+    --network "${EGRESS_PROXY_NETWORK}" \
+    --user 65532:65532 \
+    --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --read-only \
+    --pids-limit 256 \
+    --memory 256m \
+    --log-driver json-file \
+    --log-opt max-size=10m \
+    --sysctl net.ipv4.ip_unprivileged_port_start=0 \
+    --entrypoint /usr/local/libexec/workcell/workcell-egress-proxy \
+    "${image_id}" -allow "${ALLOW_ENDPOINTS}" -listen "${subnet}" >/dev/null || return 1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network connect bridge "${EGRESS_PROXY_CONTAINER}" || return 1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" start "${EGRESS_PROXY_CONTAINER}" >/dev/null || return 1
+  ip="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" inspect \
+    -f "{{if .State.Running}}{{(index .NetworkSettings.Networks \"${EGRESS_PROXY_NETWORK}\").IPAddress}}{{end}}" \
+    "${EGRESS_PROXY_CONTAINER}")" || return 1
+  if [[ ! "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "workcell: the egress proxy sidecar did not start on ${EGRESS_PROXY_NETWORK}." >&2
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" logs "${EGRESS_PROXY_CONTAINER}" >&2 || true
+    return 1
+  fi
+  # A running container is not a listening proxy. Read its listening sockets
+  # until every allowlisted port is bound, so the agent never meets a refusal.
+  # The read opens no connection, so it adds no line to the deny log.
+  for _ in {1..40}; do
+    listening="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" exec "${EGRESS_PROXY_CONTAINER}" cat /proc/net/tcp 2>/dev/null)" || listening=""
+    ready=1
+    for endpoint in ${ALLOW_ENDPOINTS}; do
+      printf -v port ':%04X [0-9A-F]{8}:[0-9A-F]{4} 0A ' "$((10#${endpoint##*:}))"
+      grep -Eqi -- "${port}" <<<"${listening}" || {
+        ready=0
+        break
+      }
+    done
+    [[ "${ready}" -eq 1 ]] && break
+    sleep 0.25
+  done
+  if [[ "${ready}" -ne 1 ]]; then
+    echo "workcell: the egress proxy sidecar is not listening on every allowlisted port." >&2
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" logs "${EGRESS_PROXY_CONTAINER}" >&2 || true
+    return 1
+  fi
+  for i in "${!DOCKER_RUN[@]}"; do
+    # Only the generated --add-host values before the image carry the token. A
+    # provider or prompt argument after the image is user input and stays as is.
+    [[ "${DOCKER_RUN[i]}" != "${IMAGE_TAG}" ]] || break
+    [[ "${DOCKER_RUN[i]}" == *":${EGRESS_PROXY_IP_TOKEN}" && "${DOCKER_RUN[i - 1]}" == "--add-host" ]] || continue
+    DOCKER_RUN[i]="${DOCKER_RUN[i]%:"${EGRESS_PROXY_IP_TOKEN}"}:${ip}"
+  done
+}
+
+# stop_egress_proxy saves the proxy's deny lines (its stdout, one JSON object
+# per line) beside the session record, as <sessions-dir>/<session>.egress-deny.jsonl.
+# The sessions directory already holds the record, so the save creates no
+# directory, and session delete removes the file with the record. The save
+# stages the logs in a private directory and publishes them through the same
+# staged, fsynced, owner-only rename as the other session captures, so a failed
+# or partial collection never replaces the final file. A failed save warns and
+# the cleanup still runs: a live sidecar that holds the allowlist is worse than
+# a missing log. It runs on every exit path, including after a failed start.
+stop_egress_proxy() {
+  local profile="$1"
+  local deny_file=""
+  local staged_dir=""
+
+  [[ -n "${EGRESS_PROXY_CONTAINER:-}" ]] || return 0
+  deny_file="$(profile_sessions_dir_path "${profile}")/${SESSION_ID}.egress-deny.jsonl"
+  staged_dir="$(mktemp -d "${TMPDIR:-/tmp}/workcell-egress-deny.XXXXXX")" || staged_dir=""
+  if [[ -z "${staged_dir}" ]] ||
+    ! run_profile_docker_command "${profile}" logs "${EGRESS_PROXY_CONTAINER}" \
+      >"${staged_dir}/file" 2>/dev/null ||
+    ! go_hostutil helper publish-session-capture-file "${staged_dir}/file" "${deny_file}" >/dev/null 2>&1; then
+    echo "workcell: warning: could not save the egress proxy deny log for ${SESSION_ID}." >&2
+  fi
+  [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
+  run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 ||
+    echo "workcell: warning: could not remove the egress proxy sidecar ${EGRESS_PROXY_CONTAINER}; session delete removes it." >&2
+  run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 ||
+    echo "workcell: warning: could not remove the egress proxy network ${EGRESS_PROXY_NETWORK}; session delete removes it." >&2
+}
+
+# egress_proxy_residue prints "sidecar" and "network" for each proxy resource a
+# session still has, named from the session id alone. It prints nothing when
+# the session has none, and it fails when a lookup fails: a failed lookup is
+# not an empty one. It changes nothing, so a delete preview can use it.
+egress_proxy_residue() {
+  local profile="$1"
+  local session_id="$2"
+  local names=""
+  local networks=""
+
+  names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
+  networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^wc-${session_id}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
+  ! grep -qx "wc-egress-${session_id}" <<<"${names}" || echo sidecar
+  ! grep -qx "wc-${session_id}" <<<"${networks}" || echo network
+}
+
+# stop_orphaned_egress_proxy removes the sidecar and the network of a session
+# whose launcher or monitor is gone. The names derive from the session id, so
+# session stop and session delete need no record field. It disconnects the
+# stopped agent container first, because Docker refuses to remove a network
+# that still holds an endpoint. It removes a network that outlived its sidecar
+# too. It fails when a lookup fails, when the sidecar is still there after its
+# removal, or when the network removal fails. It does nothing when the session
+# has neither resource.
+stop_orphaned_egress_proxy() {
+  local profile="$1"
+  local session_id="$2"
+  local agent_container="${3:-}"
+  local network="wc-${session_id}"
+  local residue=""
+
+  residue="$(egress_proxy_residue "${profile}" "${session_id}")" || return 1
+  [[ -n "${residue}" ]] || return 0
+  if grep -qx network <<<"${residue}" && [[ -n "${agent_container}" ]]; then
+    run_profile_docker_command "${profile}" network disconnect -f "${network}" "${agent_container}" >/dev/null 2>&1 || true
+  fi
+  if grep -qx sidecar <<<"${residue}"; then
+    (
+      SESSION_ID="${session_id}"
+      EGRESS_PROXY_CONTAINER="wc-egress-${session_id}"
+      EGRESS_PROXY_NETWORK="${network}"
+      stop_egress_proxy "${profile}"
+    )
+  fi
+  residue="$(egress_proxy_residue "${profile}" "${session_id}")" || return 1
+  ! grep -qx sidecar <<<"${residue}" || return 1
+  if grep -qx network <<<"${residue}"; then
+    run_profile_docker_command "${profile}" network rm "${network}" >/dev/null 2>&1 || return 1
+  fi
 }

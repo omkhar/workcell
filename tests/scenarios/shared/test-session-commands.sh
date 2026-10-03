@@ -1425,6 +1425,9 @@ monitor_env_output="$(
     SESSION_META_TARGET_PROVIDER="docker-desktop"
     SESSION_META_TARGET_ID="desktop-linux"
     SESSION_META_TARGET_ASSURANCE_CLASS="compat"
+    EGRESS_PROXY_STARTED=1
+    EGRESS_PROXY_CONTAINER="wc-egress-fixture"
+    EGRESS_PROXY_NETWORK="wc-fixture"
     write_session_monitor_env_file "$4"
     cat "$4"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${DETACHED_STATE_DIR}" "${SESSIONS_DIR}/${DETACHED_SESSION}.json" "${DETACHED_STATE_DIR}/session-monitor.env" "${TMP_DIR}/monitor-xdg-state"
@@ -1438,6 +1441,8 @@ grep -q '^SESSION_META_TARGET_PROVIDER=docker-desktop$' <<<"${monitor_env_output
 grep -q '^SESSION_META_TARGET_ID=desktop-linux$' <<<"${monitor_env_output}"
 grep -q '^SESSION_META_TARGET_ASSURANCE_CLASS=compat$' <<<"${monitor_env_output}"
 grep -q '^SESSION_MONITOR_READY_PATH=' <<<"${monitor_env_output}"
+grep -q '^EGRESS_PROXY_STARTED=1$' <<<"${monitor_env_output}"
+grep -q '^EGRESS_PROXY_CONTAINER=wc-egress-fixture$' <<<"${monitor_env_output}"
 grep -qxF "XDG_STATE_HOME=$(printf '%q' "${TMP_DIR}/monitor-xdg-state")" <<<"${monitor_env_output}"
 grep -qxF "WORKCELL_STATE_ROOT=$(printf '%q' "${TMP_DIR}/monitor-xdg-state/workcell")" <<<"${monitor_env_output}"
 grep -qxF "WORKCELL_TARGET_STATE_ROOT=$(printf '%q' "${TMP_DIR}/monitor-xdg-state/workcell/targets")" <<<"${monitor_env_output}"
@@ -2299,6 +2304,12 @@ bash -lc '
       inspect)
         printf "stopped\n"
         ;;
+      ps)
+        return 0
+        ;;
+      network)
+        return 0
+        ;;
       *)
         return 1
         ;;
@@ -2382,6 +2393,12 @@ stop_dead_monitor_output="$(
         stop)
           return 0
           ;;
+        ps)
+          return 0
+          ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2401,6 +2418,7 @@ grep -q '^marker=cleared$' <<<"${stop_dead_monitor_output}"
 grep -q '^audit|wcl-detached-fixture|detached-fixture|stop-request|' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 grep -q '^audit|wcl-detached-fixture|detached-fixture|exit|source=host-stop-fallback' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|observed_at=' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
+grep -q '^transport|wcl-detached-fixture|ps -a --filter name=^wc-egress-detached-fixture\$ --format {{.Names}}$' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 
 SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped.record"
 SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
@@ -2461,6 +2479,12 @@ stop_already_stopped_output="$(
       case "$1" in
         inspect)
           printf "stopped\n"
+          ;;
+        ps)
+          return 0
+          ;;
+        network)
+          return 0
           ;;
         *)
           return 1
@@ -2546,6 +2570,12 @@ stop_already_stopped_running_output="$(
         inspect)
           printf "stopped\n"
           ;;
+        ps)
+          return 0
+          ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2592,6 +2622,8 @@ session_delete_cleanup_output="$(
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
     printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
+    EGRESS_DENY_LOG="${RECORD_PATH%.json}.egress-deny.jsonl"
+    printf "{\"host\":\"example.com\"}\n" >"${EGRESS_DENY_LOG}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
   "version": 1,
@@ -2639,6 +2671,9 @@ EOF_JSON
         ps)
           return 0
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2651,11 +2686,12 @@ EOF_JSON
     test ! -e "${SESSION_AUDIT_DIR}"
     test ! -e "${TRANSCRIPT_LOG}"
     test ! -e "${AUDIT_SEAL_PATH}"
+    test ! -e "${EGRESS_DENY_LOG}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_CLEANUP_ROOT}" "${SESSION_DELETE_CLEANUP_RECORD}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${session_delete_cleanup_output}"
 grep -q '^deleted=1$' <<<"${session_delete_cleanup_output}"
-grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_cleanup_output}"
+grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal,egress_deny_log$' <<<"${session_delete_cleanup_output}"
 grep -q '^kept=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^missing=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
@@ -2833,6 +2869,9 @@ EOF_JSON
         ps)
           return 0
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2902,6 +2941,9 @@ EOF_JSON
           fi
           return 1
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2950,7 +2992,7 @@ EOF_JSON
     run_profile_docker_command() {
       local profile="$1"; shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; *) return 1 ;; esac
+      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; ps) return 0 ;; network) return 0 ;; *) return 1 ;; esac
     }
     session_delete_main --id detached-fixture
     test ! -e "${RECORD_PATH}"
@@ -3102,6 +3144,12 @@ EOF_JSON
         inspect)
           printf "stopped\n"
           ;;
+        ps)
+          printf "wc-egress-detached-fixture\n"
+          ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -3118,7 +3166,11 @@ EOF_JSON
 )"
 grep -q '^deleted=0$' <<<"${session_delete_dry_run_output}"
 grep -q '^dry_run=1$' <<<"${session_delete_dry_run_output}"
-grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
+grep -q '^would_remove=record,container,egress_proxy,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
+if grep -Eq '^transport\|wcl-detached-fixture\|(network (rm|disconnect)|logs) ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
+  echo "session delete --dry-run changed the egress proxy resources" >&2
+  exit 1
+fi
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
   echo "session delete --dry-run unexpectedly removed a container" >&2
   exit 1
@@ -3171,6 +3223,9 @@ EOF_JSON
     case "$1" in
       inspect)
         printf "running\n"
+        ;;
+      network)
+        return 0
         ;;
       *)
         return 1
@@ -3271,6 +3326,12 @@ EOF_JSON
           ;;
         rm)
           printf "removed\n" >"${CONTAINER_STATE_FILE}"
+          ;;
+        ps)
+          return 0
+          ;;
+        network)
+          return 0
           ;;
         *)
           return 1

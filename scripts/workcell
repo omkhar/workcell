@@ -158,6 +158,8 @@ SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
 FINAL_SESSION_ASSURANCE=""
 SESSION_ID=""
 SESSION_RECORD_PATH=""
+EGRESS_PROXY=0
+EGRESS_PROXY_STARTED=0
 SUPPORT_MATRIX_HOST_OS=""
 SUPPORT_MATRIX_HOST_ARCH=""
 SUPPORT_MATRIX_HOST_DISTRO=""
@@ -270,6 +272,7 @@ Options:
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
+  --egress-proxy                Route strict Colima egress only through a per-session SNI proxy sidecar
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
   --vm-memory GIB               Colima VM memory in GiB (default: profile value)
@@ -1135,6 +1138,9 @@ cleanup() {
 
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
+    stop_egress_proxy "${COLIMA_PROFILE}"
   fi
 
   cleanup_runtime_builder || true
@@ -2484,6 +2490,9 @@ write_session_monitor_env_file() {
     CONTAINER_MUTABILITY
     CONTAINER_NAME
     DEBUG_LOG_PATH
+    EGRESS_PROXY_CONTAINER
+    EGRESS_PROXY_NETWORK
+    EGRESS_PROXY_STARTED
     EXECUTION_PATH
     FILE_TRACE_LOG_PATH
     INJECTION_CREDENTIAL_KEYS
@@ -4157,6 +4166,12 @@ session_stop_main() {
   sanitize_host_docker_env
   current_live_status="${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}"
   if ! container_state="$(session_container_live_state "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null)"; then
+    # A monitor that died after it removed the agent leaves the proxy behind.
+    # Only a proven missing agent with a dead monitor allows the cleanup.
+    if ! session_monitor_pid_is_live && [[ "$(session_container_state_for_delete "${SESSION_META_PROFILE}" "${SESSION_META_CONTAINER_NAME}" 2>/dev/null || true)" == "missing" ]]; then
+      stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "" ||
+        echo "session stop could not confirm the egress proxy cleanup: ${session_id}" >&2
+    fi
     echo "session stop could not confirm a live detached session: ${session_id}" >&2
     exit 1
   fi
@@ -4167,6 +4182,10 @@ session_stop_main() {
   fi
   if [[ "${container_state}" != "running" ]]; then
     if [[ "${container_state}" == "stopped" ]] && ! session_monitor_pid_is_live; then
+      stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+        echo "session stop could not confirm the egress proxy cleanup: ${session_id}" >&2
+        exit 1
+      }
       session_record_stop_request_marker || exit 1
       append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "stop-request" \
         "source=host-cli" \
@@ -4262,6 +4281,10 @@ session_stop_main() {
       ;;
   esac
   if ! session_monitor_pid_is_live; then
+    stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+      echo "session stop could not confirm the egress proxy cleanup: ${session_id}" >&2
+      exit 1
+    }
     case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
       stopped | exited | failed | aborted) ;;
       *)
@@ -4384,6 +4407,9 @@ session_delete_main() {
   local remove_transcript_log=0
   local remove_audit_seal=0
   local audit_seal_path=""
+  local remove_egress_deny_log=0
+  local egress_deny_log_path=""
+  local proxy_residue=""
   local session_audit_dir=""
   local -a removed=()
   local -a kept=()
@@ -4470,6 +4496,24 @@ session_delete_main() {
         ;;
     esac
   fi
+  # A lost launcher or monitor can leave the egress proxy sidecar behind. Plan
+  # its removal like any artifact, and remove it before the artifact plan is
+  # read, so the deny log it saves joins the plan. A dry run only looks.
+  if [[ "${record_only}" -eq 0 ]] && [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
+    proxy_residue="$(egress_proxy_residue "${SESSION_META_PROFILE}" "${session_id}")" || {
+      echo "session delete could not inspect the egress proxy resources: ${session_id}" >&2
+      exit 1
+    }
+    if [[ -n "${proxy_residue}" ]]; then
+      planned_remove+=("egress_proxy")
+      if [[ "${dry_run}" -eq 0 ]]; then
+        stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+          echo "session delete could not confirm the egress proxy cleanup: ${session_id}" >&2
+          exit 1
+        }
+      fi
+    fi
+  fi
   if session_audit_dir="$(session_delete_resolve_dir_artifact "session_audit_dir" "${SESSION_META_SESSION_AUDIT_DIR}")"; then
     if [[ -e "${session_audit_dir}" ]]; then
       if [[ "${record_only}" -eq 1 ]]; then
@@ -4531,6 +4575,17 @@ session_delete_main() {
       planned_remove+=("audit_seal")
     fi
   fi
+  # The egress proxy deny log sits beside the record the same way, so it follows
+  # the same rule: removed with the full delete, kept under --record-only.
+  egress_deny_log_path="${record_path%.json}.egress-deny.jsonl"
+  if [[ -e "${egress_deny_log_path}" ]]; then
+    if [[ "${record_only}" -eq 1 ]]; then
+      kept+=("egress_deny_log")
+    else
+      remove_egress_deny_log=1
+      planned_remove+=("egress_deny_log")
+    fi
+  fi
 
   if [[ "${#planned_remove[@]}" -eq 0 ]]; then
     planned_remove=("record")
@@ -4589,6 +4644,12 @@ session_delete_main() {
   if [[ "${remove_audit_seal}" -eq 1 ]]; then
     rm -f -- "${audit_seal_path}" || {
       echo "session delete failed to remove the recorded audit_seal artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_egress_deny_log}" -eq 1 ]]; then
+    rm -f -- "${egress_deny_log_path}" || {
+      echo "session delete failed to remove the recorded egress_deny_log artifact: ${session_id}" >&2
       exit 1
     }
   fi
@@ -4815,6 +4876,10 @@ session_monitor_main() {
   capture_session_file_trace "${CONTAINER_NAME}"
   finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
   run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  stop_egress_proxy "${COLIMA_PROFILE}"
+  # The monitor's EXIT cleanup also stops the proxy while this flag is set, so a
+  # failed finalize cannot leave the sidecar. The stop above already ran.
+  EGRESS_PROXY_STARTED=0
   if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -d "${SESSION_AUDIT_DIR}" ]]; then
     chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
     rm -rf "${SESSION_AUDIT_DIR}"
@@ -8741,6 +8806,10 @@ while [[ $# -gt 0 ]]; do
       ALLOW_ARBITRARY_COMMAND=1
       shift
       ;;
+    --egress-proxy)
+      EGRESS_PROXY=1
+      shift
+      ;;
     --ack-breakglass)
       ACK_BREAKGLASS=1
       shift
@@ -8807,6 +8876,10 @@ validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
+if [[ "${EGRESS_PROXY}" -eq 1 ]] && { [[ "${TARGET_BACKEND}" != "colima" ]] || [[ "${MODE}" != "strict" ]]; }; then
+  echo "--egress-proxy supports only --target colima with --mode strict." >&2
+  exit 2
+fi
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
   echo "--target-id only supports --target aws-ec2-ssm or --target gcp-vm." >&2
   exit 2
@@ -9238,6 +9311,7 @@ fi
 prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}" "${WORKSPACE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
 prepare_copilot_token_handoff_mount "$@"
+[[ "${EGRESS_PROXY}" -eq 0 ]] || [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
 build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   prepare_session_audit_state "${COLIMA_PROFILE}"
@@ -9625,6 +9699,10 @@ fi
 
 DOCKER_STATUS=0
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+  EGRESS_PROXY_STARTED=1
+  start_egress_proxy "${CURRENT_IMAGE_ID}" || exit 1
+fi
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   detached_status="running"
   detached_live_status="running"
