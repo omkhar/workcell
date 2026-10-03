@@ -678,7 +678,15 @@ container_path = "/opt/demo.json"
 `
 	cases := map[string]string{
 		"unknown key":             strings.Replace(valid, `binary = "demo"`, "binary = \"demo\"\nextra = true", 1),
-		"unknown table":           valid + "\n[flags]\nmode = \"allowlist\"\n",
+		"unknown table":           valid + "\n[managed_config]\nfiles = []\n",
+		"unknown flags key":       valid + "\n[flags]\nmode = \"allowlist\"\n",
+		"flag without dash":       valid + "\n[flags]\nallow = [\"help\"]\n",
+		"flag with value":         valid + "\n[flags]\ndeny = [\"--sandbox=x\"]\n",
+		"flag allowed and denied": valid + "\n[flags]\nallow = [\"--yolo\"]\ndeny = [\"--yolo\"]\n",
+		"flag denied twice":       valid + "\n[flags]\ndeny = [\"-y\", \"-y\"]\n",
+		"duplicate subcommand":    valid + "\n[flags]\nsubcommands = [\"exec\", \"exec\"]\n",
+		"subcommand with space":   valid + "\n[flags]\nsubcommands = [\"exec now\"]\n",
+		"planned with flags":      "schema = 1\nid = \"demo\"\ntier = \"planned\"\n\n[flags]\ndeny = [\"-y\"]\n",
 		"unknown install key":     strings.Replace(valid, `method = "binary"`, "method = \"binary\"\nsha = \"x\"", 1),
 		"bare credentials table":  valid + "\n[credentials]\ncontainer_path = \"/x\"\n",
 		"nested credentials key":  valid + "\n[credentials.a.b]\ncontainer_path = \"/x\"\n",
@@ -706,8 +714,12 @@ container_path = "/opt/demo.json"
 		"endpoint port zero":      valid + "\n[egress]\nendpoints = [\"api.example:0\"]\n",
 		"endpoint empty label":    valid + "\n[egress]\nendpoints = [\"api..example:443\"]\n",
 	}
-	if _, err := parseManifest("valid.toml", []byte(valid+"\n[egress]\nendpoints = [\"api.demo-1.example:443\"]\n")); err != nil {
+	m, err := parseManifest("valid.toml", []byte(valid+"\n[egress]\nendpoints = [\"api.demo-1.example:443\"]\n\n[flags]\nsubcommands = [\"exec\"]\nallow = [\"-m\", \"--model\"]\ndeny = [\"--yolo\"]\n"))
+	if err != nil {
 		t.Fatalf("valid fixture rejected: %v", err)
+	}
+	if want := (Flags{Subcommands: []string{"exec"}, Allow: []string{"-m", "--model"}, Deny: []string{"--yolo"}}); !reflect.DeepEqual(m.Flags, want) {
+		t.Fatalf("flags = %+v, want %+v", m.Flags, want)
 	}
 	for name, content := range cases {
 		if _, err := parseManifest("case.toml", []byte(content)); err == nil {

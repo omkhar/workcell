@@ -61,6 +61,17 @@ files with the generator output. The parity test in
 `internal/adapters/manifest_test.go` compares each manifest with the generated
 tables, the launcher `--agent` dispatch, and the Rust launcher table.
 
+The `[flags]` table puts each option of the pinned CLI in `allow` or `deny`. The
+values must agree with `reject_unsafe_<id>_args` in
+`runtime/container/provider-policy.sh`. `subcommands` names the allowed
+subcommands whose help the inventory also reads. Container smoke runs
+`scripts/check-flag-inventory.sh`. This script reads the CLI help in the runtime
+image with `--network none` and compares the result with
+`tests/fixtures/flags/<id>.txt`. The check fails when a fixture flag is not in
+`allow` or `deny`. After a provider bump, run the script with `--write` and
+classify each new flag. `TestFlagInventoryEntriesMatchProviderPolicy` sends each
+entry through the policy function.
+
 The file `internal/adapters/adapters.go` contains the public API. Injection,
 policy, and runtime code use this API.
 

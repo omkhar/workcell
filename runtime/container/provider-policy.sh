@@ -416,6 +416,9 @@ reject_unsafe_gemini_args() {
   local expect_value=""
   local arg
   local arg_lower=""
+  local short_group=""
+  local short_char=""
+  local arg_key=""
 
   provider_policy_allows_breakglass && return 0
 
@@ -431,14 +434,44 @@ reject_unsafe_gemini_args() {
     fi
 
     arg_lower="${arg,,}"
-    case "${arg_lower}" in
-      --*dangerously* | --*bypass*permission* | --sandbox | --sandbox=* | --add-dir | --add-dir=* | -y | --yolo)
+    # yargs also accepts the camel-case spelling of a dashed option
+    # (--allowedTools for --allowed-tools). Drop the dashes after the leading
+    # -- so each spelling reaches the same pattern.
+    if [[ "${arg_lower}" == --* ]]; then
+      arg_key="${arg_lower:2}"
+      arg_key="--${arg_key//-/}"
+    else
+      arg_key="${arg_lower}"
+    fi
+    case "${arg_key}" in
+      --)
+        # yargs reads every argument after -- as prompt text, not as an option.
+        break
+        ;;
+      --*dangerously* | --*bypass*permission* | --sandbox | --sandbox=* | --adddir | --adddir=* | --includedirectories | --includedirectories=* | --allowedtools | --allowedtools=* | --policy | --policy=* | --adminpolicy | --adminpolicy=* | --yolo | --yolo=*)
         workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
         ;;
-      --approval-mode)
+      -[!-]*)
+        # yargs reads -dy as -d and -y. Scan the short group up to the first
+        # option that takes a value; the rest of the group is that value.
+        short_group="${arg_lower#-}"
+        while [[ -n "${short_group}" ]]; do
+          short_char="${short_group:0:1}"
+          short_group="${short_group:1}"
+          case "${short_char}" in
+            y | s)
+              workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
+              ;;
+            m | p | i | w | e | r | o)
+              break
+              ;;
+          esac
+        done
+        ;;
+      --approvalmode)
         expect_value="approval-mode"
         ;;
-      --approval-mode=*)
+      --approvalmode=*)
         workcell_die "Workcell blocked Gemini autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
     esac

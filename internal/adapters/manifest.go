@@ -38,6 +38,16 @@ type Manifest struct {
 	ReservedTargets   []string
 	Credentials       []Credential // declaration order
 	EgressEndpoints   []string
+	Flags             Flags
+}
+
+// Flags classifies every option the pinned CLI prints in its help. The flag
+// inventory (scripts/check-flag-inventory.sh) fails on a fixture flag in neither
+// Allow nor Deny; a Go test runs each entry through reject_unsafe_<id>_args.
+type Flags struct {
+	Subcommands []string // allowed subcommands whose --help the inventory also reads
+	Allow       []string
+	Deny        []string
 }
 
 // Install names where the provider pin lives. The pins themselves stay in
@@ -62,6 +72,9 @@ var (
 	// so each must be a plain token.
 	credentialKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	endpointPattern      = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?:[0-9]{1,5}$`)
+	// FlagPattern is one option token as CLI help prints it: -x or --long-name.
+	FlagPattern       = regexp.MustCompile(`^(-[A-Za-z0-9]|--[A-Za-z0-9][A-Za-z0-9-]*)$`)
+	subcommandPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
 // LoadManifests loads every <root>/<id>/adapter.toml in name order; each id must
@@ -172,6 +185,12 @@ func parseManifest(path string, content []byte) (Manifest, error) {
 			fields = map[string]any{"reserved_targets": &m.ReservedTargets}
 		case "egress":
 			fields = map[string]any{"endpoints": &m.EgressEndpoints}
+		case "flags":
+			fields = map[string]any{
+				"subcommands": &m.Flags.Subcommands,
+				"allow":       &m.Flags.Allow,
+				"deny":        &m.Flags.Deny,
+			}
 		default:
 			key, ok := strings.CutPrefix(table.Name, "credentials.")
 			if !ok || strings.Contains(key, ".") {
@@ -268,6 +287,9 @@ func validateManifest(m Manifest, schema int) error {
 	if m.Binary == "" {
 		return fmt.Errorf("binary is required for tier %q", m.Tier)
 	}
+	if err := validateFlags(m.Flags); err != nil {
+		return err
+	}
 	switch m.Install.Method {
 	case "binary":
 		if m.Install.VersionArg == "" || m.Install.Package != "" {
@@ -282,6 +304,30 @@ func validateManifest(m Manifest, schema int) error {
 	}
 	if m.Install.Provenance == "" {
 		return fmt.Errorf("install provenance is required")
+	}
+	return nil
+}
+
+func validateFlags(f Flags) error {
+	seen := map[string]string{}
+	for _, list := range []struct {
+		name  string
+		items []string
+	}{{"allow", f.Allow}, {"deny", f.Deny}} {
+		for _, flag := range list.items {
+			if !FlagPattern.MatchString(flag) {
+				return fmt.Errorf("invalid flags %s entry %q", list.name, flag)
+			}
+			if prev, ok := seen[flag]; ok {
+				return fmt.Errorf("flag %q is listed in %s and %s", flag, prev, list.name)
+			}
+			seen[flag] = list.name
+		}
+	}
+	for i, sub := range f.Subcommands {
+		if !subcommandPattern.MatchString(sub) || slices.Contains(f.Subcommands[:i], sub) {
+			return fmt.Errorf("invalid or duplicate flags subcommand %q", sub)
+		}
 	}
 	return nil
 }
