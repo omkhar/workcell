@@ -74,6 +74,21 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
+## 2b. Shell scripts must not hide a failed tool
+
+These idioms can turn a failure into an empty answer. A gate then passes on
+nothing. The idioms are a `< <(` process substitution and a `$(...)` around
+`find`, `git`, `gh`, `docker` or `getent`. They also include `|| true` and
+`2>/dev/null` on those tools.
+
+`scripts/check-shell-portability.sh` rejects each of them in `scripts/` and
+`runtime/container/`. The block must capture the status or record completion.
+A line can instead state its reason with a `# fail-closed: <reason>` comment.
+
+`policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
+today. A count that does not match its baseline fails the check. Repair a hit,
+then lower the count in the same change.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only

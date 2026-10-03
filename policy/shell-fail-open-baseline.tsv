@@ -1,0 +1,69 @@
+# Shell fail-open ratchet baseline (scripts/check-shell-portability.sh).
+#
+# One row per script and rule: PATH<TAB>RULE<TAB>COUNT<TAB>REASON. COUNT is the
+# number of hits the script carries today. The check fails when a script goes
+# above its count, and when it goes below, so the row drops with the repair.
+# Repair a hit by capturing the status in the same block, or state the case
+# with "# fail-closed: <reason>" on the line. Do not add a row for new code.
+runtime/container/detached-stdin-wrapper.sh	process-substitution	2	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+runtime/container/home-control-plane.sh	process-substitution	6	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+runtime/container/runtime-user.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+runtime/container/runtime-user.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/build-and-test.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/check-doc-links.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/check-doc-links.sh	process-substitution	2	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/check-pr-shape.sh	process-substitution	2	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/check-release-tag-signature.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/check-repo-readiness.sh	command-substitution	12	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/check-rust-vendor.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/cost-report.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/flaky-report.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/job-pr-shape.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/ci/job-validate.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/lib/local-docker-parity.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/ci/run-docs-in-validator.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/ci/run-validate-in-validator.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/upstream-refresh-candidate.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/upstream-refresh-publish.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/upstream-refresh-publish.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/colima-egress-allowlist.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/container-smoke.sh	process-substitution	6	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/dev-quick-check.sh	process-substitution	2	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/generate-build-input-manifest.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/generate-builder-environment-manifest.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/generate-builder-environment-manifest.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call without a status test; predates the rule
+scripts/generate-builder-environment-manifest.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/go-port-validate.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/install-release.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/lib/launcher/egress-endpoints.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/lib/trusted-docker-client.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/lib/trusted-docker-client.sh	process-substitution	4	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/lib/trusted-entrypoint.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/lint-dockerfiles.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/pre-merge.sh	command-substitution	6	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/publish-github-release.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/publish-provider-bump-pr.sh	or-true	2	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/publish-upstream-refresh-pr.sh	command-substitution	6	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/uninstall.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/uninstall.sh	dev-null	5	2>/dev/null on a find/git/gh/docker/getent call without a status test; predates the rule
+scripts/uninstall.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/uninstall.sh	process-substitution	5	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/update-provider-pins.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/update-upstream-pins.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/validate-repo.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/validate-repo.sh	process-substitution	8	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-build-input-manifest.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-control-plane-manifest.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-control-plane-parity.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-github-hosted-controls.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-github-macos-release-test-runners.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-invariants-live.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/verify-invariants.sh	command-substitution	4	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/verify-invariants.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent call without a status test; predates the rule
+scripts/verify-invariants.sh	or-true	2	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/verify-invariants.sh	process-substitution	7	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/verify-reproducible-build.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/with-validation-snapshot.sh	process-substitution	9	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/workcell	dev-null	5	2>/dev/null on a find/git/gh/docker/getent call without a status test; predates the rule
+scripts/workcell	or-true	2	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
+scripts/workcell	process-substitution	18	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
