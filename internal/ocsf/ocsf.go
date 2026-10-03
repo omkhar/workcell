@@ -48,7 +48,14 @@ const OCSFSchemaVersion = "1.3.0"
 // only the single session-summary event. Consumers gate their parsers on this.
 //
 // "3": the session-summary event gained the session.parent_session_id attribute.
-const MappingVersion = "3"
+//
+// "4": the launch event gained the audit.vm_cpu, audit.vm_memory_gib,
+// audit.vm_disk_gib, audit.container_cpu, and audit.container_memory
+// attributes, and the session_fork event became a recognized lifecycle event
+// with audit.snapshot_id, audit.parent, and audit.children. The
+// session_snapshot record gained audit.snapshot_workspace and
+// audit.snapshot_head.
+const MappingVersion = "4"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -527,6 +534,7 @@ var knownAuditEvents = map[string]struct{}{
 	"session_finished":       {},
 	"bootstrap_ready":        {},
 	"workspace_materialized": {},
+	"session_fork":           {},
 }
 
 // activityForEvent maps a Workcell audit event name to an OCSF activity_id.

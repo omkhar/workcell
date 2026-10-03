@@ -98,11 +98,32 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 	children := []*evidence{newChild("child-1"), newChild("child-2")}
 	c.docker = "/fake/docker"
 	containerSeesMarker, containerSeesSibling := true, false
+	// mounts maps a container to the host worktree it exposes. A container
+	// that is not listed exposes its own recorded worktree.
+	mounts := map[string]string{}
+	worktrees := map[string]string{a.ContainerName: a.WorktreePath, b.ContainerName: b.WorktreePath}
+	for _, child := range children {
+		worktrees[child.record.ContainerName] = child.record.WorktreePath
+	}
+	exposed := func(container string) string {
+		if dir, ok := mounts[container]; ok {
+			return dir
+		}
+		return worktrees[container]
+	}
 	c.deps.command = func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 		switch {
 		case name != c.docker:
 			return runCommand(ctx, env, name, args...)
 		case args[0] != "exec":
+			return nil, nil
+		case strings.Contains(args[4], "printf"):
+			// A child writes its own marker through the container mount.
+			return nil, os.WriteFile(filepath.Join(exposed(args[1]), args[7]), []byte(args[6]+"\n"), 0o600)
+		case strings.HasPrefix(args[6], ".workcell-c3-fork-"):
+			if _, err := os.Lstat(filepath.Join(exposed(args[1]), args[6])); err == nil {
+				return nil, errors.New("child marker present")
+			}
 			return nil, nil
 		case strings.Contains(args[4], "cat"):
 			if containerSeesMarker {
@@ -131,10 +152,17 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 		{"execution path", func(e *evidence) { e.record.ExecutionPath = "" }, "execution_path"},
 		{"container misses parent marker", func(*evidence) { containerSeesMarker = false }, "does not see marker"},
 		{"container sees sibling marker", func(*evidence) { containerSeesSibling = true }, "container of fork child"},
+		{"child container mounts a peer worktree", func(e *evidence) { mounts[e.record.ContainerName] = children[0].record.WorktreePath }, "marker crossed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containerSeesMarker, containerSeesSibling = true, false
+			// An earlier run left its child markers in the shared worktree.
+			leftovers, _ := filepath.Glob(filepath.Join(children[0].record.WorktreePath, ".workcell-c3-fork-*"))
+			for _, leftover := range leftovers {
+				mustNoError(t, os.Remove(leftover))
+			}
 			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))
+			worktrees[bad.record.ContainerName] = bad.record.WorktreePath
 			tc.mutate(bad)
 			err := c.validateFork(context.Background(), a, b, []*evidence{children[0], bad}, commit)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -793,4 +821,36 @@ func runGit(t *testing.T, dir string, args ...string) []byte {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return output
+}
+
+func TestRemoveOwnedPathStaysInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustNoError(t, os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o600))
+	owned := filepath.Join(root, "store", "hash.git")
+	mustNoError(t, os.MkdirAll(owned, 0o700))
+	mustNoError(t, os.WriteFile(filepath.Join(owned, "obj"), []byte("x"), 0o600))
+	mustNoError(t, os.Symlink(outside, filepath.Join(owned, "link")))
+	mustNoError(t, removeOwnedPath(root, owned))
+	if _, err := os.Lstat(owned); !os.IsNotExist(err) {
+		t.Fatalf("owned path remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("removeOwnedPath followed a link out of the root: %v", err)
+	}
+	// A symlinked ancestor under the root is refused and nothing is deleted.
+	link := filepath.Join(root, "linked")
+	mustNoError(t, os.Symlink(outside, link))
+	if err := removeOwnedPath(root, filepath.Join(link, "keep")); err == nil {
+		t.Fatal("removeOwnedPath accepted a symlinked ancestor")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("a symlinked ancestor was followed: %v", err)
+	}
+	// A path that does not exist is not an error.
+	mustNoError(t, removeOwnedPath(root, filepath.Join(root, "never", "created")))
+	// A path outside the trusted root is refused.
+	if err := removeOwnedPath(root, filepath.Join(outside, "keep")); err == nil {
+		t.Fatal("removeOwnedPath accepted a path outside the root")
+	}
 }
