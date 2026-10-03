@@ -74,6 +74,20 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
+## 2b. Workflow bodies reference real scripts and bounded lists
+
+`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
+`run:` body calls a `./scripts` path that does not exist. It fails when a
+`gh api` call has no `--paginate` or `--limit`. It fails when a `gh list` call
+has no `--limit`. It fails when a `with:` key is not an input of the action.
+
+`policy/workflow-refs-baseline.tsv` records the hits that the tree carries
+today. A new hit fails. A row with no hit also fails. Remove a row when you fix
+its hit.
+
+A testkit case runs each inline jq program against an empty array. A compile
+error fails the test.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only
