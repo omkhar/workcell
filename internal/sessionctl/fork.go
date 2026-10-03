@@ -22,6 +22,10 @@ import (
 
 // forkCountPattern accepts 1 to 8, the most children one `session fork` starts.
 var forkCountPattern = regexp.MustCompile(`^[1-8]$`)
+var (
+	forkContainerCPUPattern    = regexp.MustCompile(`^(unmanaged|[0-9]+([.][0-9]+)?)$`)
+	forkContainerMemoryPattern = regexp.MustCompile(`^[0-9]+([kKmMgGtTpP][iI]?[bB]?)?$`)
+)
 var forkVMResourcePattern = regexp.MustCompile(`^[1-9][0-9]{0,5}$`)
 
 // forkExecutionPaths are the parent execution paths a child can reproduce
@@ -127,6 +131,10 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("session fork needs the parent VM resources in the signed launch record (%s): %s", key, opts.sessionID)
 		}
 	}
+	// Container limits matter the same way: up to eight children share the VM.
+	if !forkContainerCPUPattern.MatchString(launch["container_cpu"]) || !forkContainerMemoryPattern.MatchString(launch["container_memory"]) {
+		return fmt.Errorf("session fork needs the parent container limits in the signed launch record: %s", opts.sessionID)
+	}
 	originHash := sha256.Sum256([]byte(origin))
 	return shellproto.WriteFields(stdout, []shellproto.Field{
 		{Key: "session_id", Value: record.SessionID},
@@ -140,6 +148,8 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		{Key: "vm_cpu", Value: launch["vm_cpu"]},
 		{Key: "vm_memory_gib", Value: launch["vm_memory_gib"]},
 		{Key: "vm_disk_gib", Value: launch["vm_disk_gib"]},
+		{Key: "container_cpu", Value: launch["container_cpu"]},
+		{Key: "container_memory", Value: launch["container_memory"]},
 		{Key: "injection_policy_sha256", Value: launch["injection_policy_sha256"]},
 		{Key: "snapshot_id", Value: opts.snapshotID},
 		{Key: "commit", Value: snapshot["commit"]},

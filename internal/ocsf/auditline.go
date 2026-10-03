@@ -126,6 +126,8 @@ var knownAuditFields = map[string]struct{}{
 	"codex_rules_mutability_effective_initial": {},
 	"command":                            {},
 	"container_assurance":                {},
+	"container_cpu":                      {},
+	"container_memory":                   {},
 	"container_name":                     {},
 	"debug_log_enabled":                  {},
 	"endpoints":                          {},

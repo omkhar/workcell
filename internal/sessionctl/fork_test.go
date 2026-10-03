@@ -37,7 +37,7 @@ func newForkFixture(t *testing.T, executionPath string) *forkFixture {
 
 func newForkFixtureWithAssurance(t *testing.T, executionPath, assurance string) *forkFixture {
 	t.Helper()
-	return newForkFixtureWithVM(t, executionPath, assurance, "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80")
+	return newForkFixtureWithVM(t, executionPath, assurance, "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g")
 }
 
 func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...string) *forkFixture {
@@ -108,7 +108,7 @@ func TestForkMainEmitsPlanFromSignedRecords(t *testing.T) {
 	want := strings.Join([]string{
 		"session_id=parent-1", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo",
 		"origin_hash=" + hex.EncodeToString(origin[:]), "agent=codex", "mode=strict",
-		"agent_autonomy=yolo", "container_mutability=ephemeral", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "injection_policy_sha256=", "snapshot_id=snap-1",
+		"agent_autonomy=yolo", "container_mutability=ephemeral", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g", "injection_policy_sha256=", "snapshot_id=snap-1",
 		"commit=" + forkFixtureCommit, "tree=" + forkFixtureTree, "count=2", "ack_arbitrary_command=",
 	}, "\n") + "\n"
 	if out != want {
@@ -125,9 +125,9 @@ func TestForkMainAsksForSnapshotWithoutSnapshotID(t *testing.T) {
 }
 
 func TestForkMainRequiresParentVMResources(t *testing.T) {
-	f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=6", "vm_memory_gib=12", "vm_disk_gib=90")
+	f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=6", "vm_memory_gib=12", "vm_disk_gib=90", "container_cpu=2", "container_memory=4g")
 	out, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1")
-	if err != nil || !strings.Contains(out, "vm_cpu=6\nvm_memory_gib=12\nvm_disk_gib=90\n") {
+	if err != nil || !strings.Contains(out, "vm_cpu=6\nvm_memory_gib=12\nvm_disk_gib=90\ncontainer_cpu=2\ncontainer_memory=4g\n") {
 		t.Fatalf("plan = %q, %v", out, err)
 	}
 	// A parent without the resources, or with a malformed one, is refused so a
@@ -137,6 +137,17 @@ func TestForkMainRequiresParentVMResources(t *testing.T) {
 		if _, err := g.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
 			!strings.Contains(err.Error(), "parent VM resources") {
 			t.Fatalf("vm %v error = %v", vm, err)
+		}
+	}
+}
+
+func TestForkMainRequiresParentContainerLimits(t *testing.T) {
+	vm := []string{"vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80"}
+	for _, limits := range [][]string{{}, {"container_cpu=unmanaged"}, {"container_cpu=lots", "container_memory=8g"}, {"container_cpu=2", "container_memory=big"}} {
+		g := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", append(append([]string{}, vm...), limits...)...)
+		if _, err := g.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+			!strings.Contains(err.Error(), "parent container limits") {
+			t.Fatalf("limits %v error = %v", limits, err)
 		}
 	}
 }

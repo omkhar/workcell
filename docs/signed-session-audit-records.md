@@ -139,8 +139,8 @@ terminal session without a seal does not meet this requirement.
 
 `workcell session snapshot` signs the session head after it appends the
 `session_snapshot` record. It signs a running session too. A later record of a
-running session moves the head, so `session verify` fails until the session
-ends and Workcell signs the final head.
+running session moves the head, so `session verify` fails until the next
+snapshot, the next fork, or the end of the session signs the new head.
 
 `workcell session fork` uses only the signed prefix of the parent chain. It
 verifies the seal over the head that the seal names. Then it reads the

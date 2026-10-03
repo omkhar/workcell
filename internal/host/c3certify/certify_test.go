@@ -110,11 +110,32 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 	children := []*evidence{newChild("child-1"), newChild("child-2")}
 	c.docker = "/fake/docker"
 	containerSeesMarker, containerSeesSibling := true, false
+	// mounts maps a container to the host worktree it exposes. A container
+	// that is not listed exposes its own recorded worktree.
+	mounts := map[string]string{}
+	worktrees := map[string]string{a.ContainerName: a.WorktreePath, b.ContainerName: b.WorktreePath}
+	for _, child := range children {
+		worktrees[child.record.ContainerName] = child.record.WorktreePath
+	}
+	exposed := func(container string) string {
+		if dir, ok := mounts[container]; ok {
+			return dir
+		}
+		return worktrees[container]
+	}
 	c.deps.command = func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 		switch {
 		case name != c.docker:
 			return runCommand(ctx, env, name, args...)
 		case args[0] != "exec":
+			return nil, nil
+		case strings.Contains(args[4], "printf"):
+			// A child writes its own marker through the container mount.
+			return nil, os.WriteFile(filepath.Join(exposed(args[1]), args[7]), []byte(args[6]+"\n"), 0o600)
+		case strings.HasPrefix(args[6], ".workcell-c3-fork-"):
+			if _, err := os.Lstat(filepath.Join(exposed(args[1]), args[6])); err == nil {
+				return nil, errors.New("child marker present")
+			}
 			return nil, nil
 		case strings.Contains(args[4], "cat"):
 			if containerSeesMarker {
@@ -143,10 +164,17 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 		{"execution path", func(e *evidence) { e.record.ExecutionPath = "" }, "execution_path"},
 		{"container misses parent marker", func(*evidence) { containerSeesMarker = false }, "does not see marker"},
 		{"container sees sibling marker", func(*evidence) { containerSeesSibling = true }, "container of fork child"},
+		{"child container mounts a peer worktree", func(e *evidence) { mounts[e.record.ContainerName] = children[0].record.WorktreePath }, "marker crossed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containerSeesMarker, containerSeesSibling = true, false
+			// An earlier run left its child markers in the shared worktree.
+			leftovers, _ := filepath.Glob(filepath.Join(children[0].record.WorktreePath, ".workcell-c3-fork-*"))
+			for _, leftover := range leftovers {
+				mustNoError(t, os.Remove(leftover))
+			}
 			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))
+			worktrees[bad.record.ContainerName] = bad.record.WorktreePath
 			tc.mutate(bad)
 			err := c.validateFork(context.Background(), a, b, []*evidence{children[0], bad}, commit)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -369,6 +397,19 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 		wantMarkerCommands = append(wantMarkerCommands,
 			strings.Join([]string{"exec", child, "/bin/sh", "-lc", `cat "/workspace/$1"`, "sh", ".workcell-c3-session-1"}, "\x00"),
 			strings.Join([]string{"exec", child, "/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", ".workcell-c3-session-2"}, "\x00"))
+	}
+	// Each child then proves a marker of its own against every other session.
+	childContainers := []string{"workcell-session-3", "workcell-session-4"}
+	for _, child := range childContainers {
+		marker := ".workcell-c3-fork-session-" + child[len("workcell-session-"):]
+		for _, peer := range []string{"workcell-session-1", "workcell-session-2", "workcell-session-3", "workcell-session-4"} {
+			if peer == child {
+				continue
+			}
+			wantMarkerCommands = append(wantMarkerCommands,
+				strings.Join([]string{"exec", child, "/bin/sh", "-lc", `printf "%s\n" "$1" >"/workspace/$2"`, "sh", "fork-child-only", marker}, "\x00"),
+				strings.Join([]string{"exec", peer, "/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", marker}, "\x00"))
+		}
 	}
 	if !slices.Equal(markerCommands, wantMarkerCommands) {
 		t.Fatalf("marker commands = %q, want symmetric A/B proof %q", markerCommands, wantMarkerCommands)

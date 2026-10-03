@@ -3126,6 +3126,8 @@ append_launch_audit_record() {
     "vm_cpu=${COLIMA_CPU}" \
     "vm_memory_gib=${COLIMA_MEMORY}" \
     "vm_disk_gib=${COLIMA_DISK}" \
+    "container_cpu=${CONTAINER_CPU_OVERRIDE:-unmanaged}" \
+    "container_memory=${CONTAINER_MEMORY}" \
     "session_assurance_initial=$(session_assurance_initial)"
 }
 
@@ -4910,7 +4912,11 @@ session_fork_main() {
     --vm-cpu "$(shellproto_field "${plan}" vm_cpu)"
     --vm-memory "$(shellproto_field "${plan}" vm_memory_gib)"
     --vm-disk "$(shellproto_field "${plan}" vm_disk_gib)"
+    --container-memory "$(shellproto_field "${plan}" container_memory)"
   )
+  if [[ "$(shellproto_field "${plan}" container_cpu)" != "unmanaged" ]]; then
+    child_args+=(--container-cpu "$(shellproto_field "${plan}" container_cpu)")
+  fi
   if [[ -n "${ack}" ]]; then
     child_args+=(--allow-arbitrary-command "--ack-arbitrary-command=${ack}" "${command[@]}")
   fi
