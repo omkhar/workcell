@@ -4392,6 +4392,8 @@ session_delete_main() {
   local remove_transcript_log=0
   local remove_audit_seal=0
   local audit_seal_path=""
+  local remove_egress_deny_log=0
+  local egress_deny_log_path=""
   local session_audit_dir=""
   local -a removed=()
   local -a kept=()
@@ -4539,6 +4541,17 @@ session_delete_main() {
       planned_remove+=("audit_seal")
     fi
   fi
+  # The egress proxy deny log sits beside the record the same way, so it follows
+  # the same rule: removed with the full delete, kept under --record-only.
+  egress_deny_log_path="${record_path%.json}.egress-deny.jsonl"
+  if [[ -e "${egress_deny_log_path}" ]]; then
+    if [[ "${record_only}" -eq 1 ]]; then
+      kept+=("egress_deny_log")
+    else
+      remove_egress_deny_log=1
+      planned_remove+=("egress_deny_log")
+    fi
+  fi
 
   if [[ "${#planned_remove[@]}" -eq 0 ]]; then
     planned_remove=("record")
@@ -4597,6 +4610,12 @@ session_delete_main() {
   if [[ "${remove_audit_seal}" -eq 1 ]]; then
     rm -f -- "${audit_seal_path}" || {
       echo "session delete failed to remove the recorded audit_seal artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_egress_deny_log}" -eq 1 ]]; then
+    rm -f -- "${egress_deny_log_path}" || {
+      echo "session delete failed to remove the recorded egress_deny_log artifact: ${session_id}" >&2
       exit 1
     }
   fi

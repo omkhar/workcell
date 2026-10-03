@@ -30,8 +30,8 @@ func TestStopEgressProxyDenyLogPublish(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			sessions := filepath.Join(dir, "sessions")
-			final := filepath.Join(sessions, "S1", "egress-deny.jsonl")
-			if err := os.MkdirAll(filepath.Dir(final), 0o700); err != nil {
+			final := filepath.Join(sessions, "S1.egress-deny.jsonl")
+			if err := os.MkdirAll(sessions, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(final, []byte("old\n"), 0o600); err != nil {

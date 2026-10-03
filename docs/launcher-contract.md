@@ -325,9 +325,14 @@ subnet of `wc-<session>`, so other containers on the bridge cannot use the
 session allowlist. Then it replaces the `egress-proxy-ip` token in the agent
 command with the sidecar address. A failure stops the launch.
 
+The sidecar log is bounded: `json-file` with `max-size=10m`, so a flood of denied
+connections cannot fill the VM disk. The oldest lines rotate out.
+
 `stop_egress_proxy` saves the proxy deny lines to
-`<sessions-dir>/<session>/egress-deny.jsonl`. It stages the lines in a private
-directory and publishes them with the staged, fsynced, owner-only rename of
+`<sessions-dir>/<session>.egress-deny.jsonl`, beside the session record.
+`session delete` removes the file with the record and keeps it under
+`--record-only`. The save stages the lines in a private directory and publishes
+them with the staged, fsynced, owner-only rename of
 `publish-session-capture-file`. A failed save prints a warning and leaves the
 earlier file unchanged. Then it removes the sidecar and the network, also after
 a failed save. The launcher cleanup calls it, and the detached session monitor

@@ -121,7 +121,7 @@ for _ in $(seq 1 60); do
 done
 assert_no_proxy_residue "a detached session stop"
 deny_log="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
-  -path "*/${PROFILE}/sessions/${session_id}/egress-deny.jsonl" -type f | head -n 1)"
+  -path "*/${PROFILE}/sessions/${session_id}.egress-deny.jsonl" -type f | head -n 1)"
 grep -q '"host":"example.com"' "${deny_log}"
 
 echo "Egress proxy smoke scenario passed"

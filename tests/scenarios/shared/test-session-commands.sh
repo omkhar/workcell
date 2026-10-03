@@ -2592,6 +2592,8 @@ session_delete_cleanup_output="$(
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
     printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
+    EGRESS_DENY_LOG="${RECORD_PATH%.json}.egress-deny.jsonl"
+    printf "{\"host\":\"example.com\"}\n" >"${EGRESS_DENY_LOG}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
   "version": 1,
@@ -2651,11 +2653,12 @@ EOF_JSON
     test ! -e "${SESSION_AUDIT_DIR}"
     test ! -e "${TRANSCRIPT_LOG}"
     test ! -e "${AUDIT_SEAL_PATH}"
+    test ! -e "${EGRESS_DENY_LOG}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_CLEANUP_ROOT}" "${SESSION_DELETE_CLEANUP_RECORD}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${session_delete_cleanup_output}"
 grep -q '^deleted=1$' <<<"${session_delete_cleanup_output}"
-grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_cleanup_output}"
+grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal,egress_deny_log$' <<<"${session_delete_cleanup_output}"
 grep -q '^kept=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^missing=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"

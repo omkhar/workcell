@@ -226,7 +226,7 @@ connection only when its SNI is on the session allowlist. The sidecar uses the
 verified runtime image and listens only on its internal-network address.
 When the session stops, Workcell saves the denied connections to
 .I egress-deny.jsonl
-in the session state directory, then removes the network and the sidecar.
+beside the session record, then removes the network and the sidecar.
 The launch summary reports
 .BR egress_enforcement=proxy .
 Other modes and targets stop with status 2.

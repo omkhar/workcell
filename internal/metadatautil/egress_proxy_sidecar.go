@@ -20,6 +20,8 @@ var egressProxySidecarFlags = [][]string{
 	{"--read-only"},
 	{"--pids-limit", "256"},
 	{"--memory", "256m"},
+	{"--log-driver", "json-file"},
+	{"--log-opt", "max-size=10m"},
 	{"--entrypoint", "/usr/local/libexec/workcell/workcell-egress-proxy"},
 	{"-listen", "${subnet}"},
 }

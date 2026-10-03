@@ -175,3 +175,45 @@ func TestCitoolsHelperProcess(t *testing.T) {
 	}
 	os.Exit(2)
 }
+
+// TestHardeningProfileConformanceParsesSidecarCommand proves the production
+// gate runs the parsed sidecar check: a flag the profile scan still finds as
+// text, because a longer flag contains it, must fail the gate.
+func TestHardeningProfileConformanceParsesSidecarCommand(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{
+		"policy/hardening-profile.toml",
+		"scripts/workcell",
+		"scripts/lib/launcher/egress-endpoints.sh",
+		"scripts/lib/launcher/generated-adapters.sh",
+	} {
+		data, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cmdHardeningProfileConformance([]string{root}); err != nil {
+		t.Fatalf("real tree rejected: %v", err)
+	}
+	script := filepath.Join(root, "scripts", "lib", "launcher", "egress-endpoints.sh")
+	data, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := strings.Replace(string(data), "    --read-only \\\n", "    --read-only-x \\\n", 1)
+	if mutated == string(data) {
+		t.Fatal("mutation changed nothing")
+	}
+	if err := os.WriteFile(script, []byte(mutated), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdHardeningProfileConformance([]string{root}); err == nil || !strings.Contains(err.Error(), "egress proxy sidecar") {
+		t.Fatalf("mutated tree error = %v, want the sidecar check to fail", err)
+	}
+}
