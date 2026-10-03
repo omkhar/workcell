@@ -1686,19 +1686,32 @@ create_isolated_session_workspace() {
   if [[ -n "${SESSION_FORK_COMMIT}" ]]; then
     # A fork child fetches the signed snapshot commit by object id, never by a
     # store ref, and starts on its parent: the launch commit of the fork parent.
-    run_workspace_safe_git_command_in_dir "${target}" fetch --quiet --no-tags --no-write-fetch-head "${SESSION_FORK_STORE}" "${SESSION_FORK_COMMIT}"
-    [[ "$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^{tree}")" == "${SESSION_FORK_TREE}" ]] || {
-      echo "session fork snapshot tree does not match the signed record: ${SESSION_FORK_COMMIT}" >&2
+    # A failed step removes the session directory, so no orphan clone stays.
+    local session_dir=""
+    session_dir="$(dirname "${target}")"
+    run_workspace_safe_git_command_in_dir "${target}" fetch --quiet --no-tags --no-write-fetch-head "${SESSION_FORK_STORE}" "${SESSION_FORK_COMMIT}" || {
+      rm -rf "${session_dir}"
       exit 2
     }
-    base_ref="$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^1")"
+    [[ "$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^{tree}")" == "${SESSION_FORK_TREE}" ]] || {
+      echo "session fork snapshot tree does not match the signed record: ${SESSION_FORK_COMMIT}" >&2
+      rm -rf "${session_dir}"
+      exit 2
+    }
+    base_ref="$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^1")" || {
+      rm -rf "${session_dir}"
+      exit 2
+    }
   fi
   run_workspace_safe_git_command_in_dir "${target}" checkout --quiet -B "${branch_name}" "${base_ref}"
   if [[ -n "${SESSION_FORK_COMMIT}" ]]; then
     # Apply the snapshot tree to the worktree through a scratch index, so the
     # real index stays on the launch commit and the parent changes stay
     # uncommitted in the child.
-    run_workspace_safe_git_command_in_dir "${target}" read-tree -u --reset "--index-output=${target}/.git/workcell-fork-index" "${SESSION_FORK_TREE}"
+    run_workspace_safe_git_command_in_dir "${target}" read-tree -u --reset "--index-output=${target}/.git/workcell-fork-index" "${SESSION_FORK_TREE}" || {
+      rm -rf "${session_dir}"
+      exit 2
+    }
     rm -f "${target}/.git/workcell-fork-index"
   fi
   printf '%s\n' "${target}"
@@ -1720,7 +1733,9 @@ validate_isolated_session_workspace_source() {
     echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree." >&2
     exit 2
   fi
-  if workspace_git_has_worktree_changes "${source_workspace}"; then
+  # A fork child takes its content from the signed snapshot, not from the
+  # source worktree, so uncommitted origin changes do not matter to it.
+  if [[ -z "${SESSION_FORK_COMMIT}" ]] && workspace_git_has_worktree_changes "${source_workspace}"; then
     echo "session start requires a clean source workspace for isolated session cloning: ${source_workspace}" >&2
     echo "Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place." >&2
     exit 2

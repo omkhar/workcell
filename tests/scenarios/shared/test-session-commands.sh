@@ -4492,11 +4492,23 @@ if run_fork_workspace "${fork_commit}" "${FORK_BASE}" "fork-bad-tree-$$" >/dev/n
   exit 1
 fi
 grep -q 'session fork snapshot tree does not match the signed record' "${TMP_DIR}/fork-bad-tree.err"
+test ! -e "${FORK_ORIGIN}/.git/workcell-sessions/fork-bad-tree-$$"
 if run_fork_workspace "$(printf '0%.0s' {1..40})" "${fork_tree}" "fork-missing-$$" >/dev/null 2>&1; then
   echo "session fork used a commit that the store does not hold" >&2
   exit 1
 fi
+test ! -e "${FORK_ORIGIN}/.git/workcell-sessions/fork-missing-$$"
 run_fork_workspace "${fork_commit}" "${fork_tree}" "fork-direct-$$" >/dev/null
+# A dirty origin does not block a fork child, because the snapshot supplies the
+# content. The same origin still blocks a plain isolated session.
+printf 'dirty\n' >"${FORK_ORIGIN}/tracked.txt"
+run_fork_workspace "${fork_commit}" "${fork_tree}" "fork-dirty-origin-$$" >/dev/null
+[[ "$(cat "${FORK_ORIGIN}/.git/workcell-sessions/fork-dirty-origin-$$/repo/tracked.txt")" == "changed" ]]
+if bash -c 'set -euo pipefail; source "$1"; trap - EXIT; HOST_GIT_BIN="$(command -v git)"; create_isolated_session_workspace "${FORK_ORIGIN}" "$2"' _ "${WORKCELL_FUNCTIONS_COPY}" "plain-dirty-origin-$$" >/dev/null 2>&1; then
+  echo "plain isolated session accepted a dirty origin" >&2
+  exit 1
+fi
+git -C "${FORK_ORIGIN}" checkout -q -- tracked.txt
 
 # A fork child refuses a non-detached launch and an injection policy that
 # differs from the parent launch record. The shebang clears the environment,
