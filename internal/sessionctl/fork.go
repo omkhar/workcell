@@ -282,6 +282,11 @@ func validateForkLaunch(opts forkArgs, record sessions.SessionRecord, origin str
 	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
 		return "", err
 	}
+	// A breakglass child needs its own dated acknowledgement, which fork does
+	// not replay, and an arbitrary command hides that mode in the execution path.
+	if launch["mode"] == "breakglass" {
+		return "", fmt.Errorf("session fork does not support a breakglass parent: %s", opts.sessionID)
+	}
 	// The child launches with --target colima, so the signed launch must name
 	// colima and agree with the durable record.
 	if launch["target_provider"] != "colima" || record.TargetProvider != "colima" {

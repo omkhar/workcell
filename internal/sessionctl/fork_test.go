@@ -47,6 +47,9 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	if !slices.ContainsFunc(vm, func(field string) bool { return strings.HasPrefix(field, "provider_arg_count=") }) {
 		vm = append(slices.Clone(vm), "provider_arg_count=0")
 	}
+	if !slices.ContainsFunc(vm, func(field string) bool { return strings.HasPrefix(field, "mode=") }) {
+		vm = append(slices.Clone(vm), "mode=strict")
+	}
 	if !slices.ContainsFunc(vm, func(field string) bool { return strings.HasPrefix(field, "target_provider=") }) {
 		vm = append(slices.Clone(vm), "target_provider=colima")
 	}
@@ -57,7 +60,7 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	}
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
-	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "workspace=/tmp/clone", "workspace_head=" + forkFixtureHead, "agent=codex", "mode=strict", "agent_autonomy=yolo",
+	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "workspace=/tmp/clone", "workspace_head=" + forkFixtureHead, "agent=codex", "agent_autonomy=yolo",
 		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
@@ -261,6 +264,15 @@ func TestForkMainRefusesBeforeAskingForSnapshot(t *testing.T) {
 	g := newForkFixture(t, "unsupported-path")
 	if out, err := g.run("--id", "parent-1", "--count", "1"); err == nil || out != "" {
 		t.Fatalf("forkMain with an unsupported path = %q, %v", out, err)
+	}
+}
+
+func TestForkMainRefusesBreakglassArbitraryCommandParent(t *testing.T) {
+	f := newForkFixtureWithVM(t, "lower-assurance-debug-command", "managed-mutable", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80",
+		"container_cpu=unmanaged", "container_memory=8g", "mode=breakglass")
+	out, err := f.run("--id", "parent-1", "--count", "1", "--allow-arbitrary-command", "--ack-arbitrary-command=2026-07-08", "--", "true")
+	if err == nil || out != "" || !strings.Contains(err.Error(), "breakglass parent") {
+		t.Fatalf("breakglass parent = %q, %v", out, err)
 	}
 }
 

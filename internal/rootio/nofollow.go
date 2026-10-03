@@ -219,10 +219,9 @@ func removeAllAt(dirFD int, name string) error {
 	if opened.Dev != named.Dev || opened.Ino != named.Ino {
 		return fmt.Errorf("directory replaced during removal: %s", name)
 	}
-	if err := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {
-		return err
-	}
-	return nil
+	// The directory was opened, so a missing name now means it was renamed.
+	// Fail instead of reporting that the tree is gone.
+	return unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR)
 }
 
 func validateLeafName(name string) error {
