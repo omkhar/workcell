@@ -3,6 +3,15 @@
 # workcell_owned_root_create and removes it with workcell_owned_root_remove.
 # Removal refuses any root whose owner.pid does not name the calling script, so
 # a lane never deletes a root that another concurrent lane created.
+#
+# Residual risk, accepted: the owner check and the chmod/rm that follow it
+# address the root by pathname, so a same-UID process that swaps the pathname
+# between the check and the rm can steer the rm at an unchecked tree. The
+# guard exists to stop the repo's own concurrent lanes from deleting each
+# other's roots by accident, not to defend against a hostile same-UID process,
+# which already owns every file these scripts can touch. Bash has no
+# fd-relative, no-follow tree removal; move removal to a Go helper built on
+# internal/rootio if a hostile same-UID process ever enters the threat model.
 
 workcell_owned_root_create() {
   local base="$1" prefix="$2" root=""

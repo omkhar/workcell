@@ -3,6 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
+# wait_for_file polls for PATH for at most 10 s so a peer that fails before it
+# publishes a marker fails this lane instead of hanging the scenario.
+wait_for_file() {
+  local path="$1" i=0
+  until [[ -e "${path}" ]]; do
+    ((++i < 200)) || {
+      echo "timed out waiting for ${path}" >&2
+      return 1
+    }
+    sleep 0.05
+  done
+}
+
 # Ownership is the pid of the lane script, so each lane is its own process.
 # Two lanes run at once. Each creates its owned root, waits for the other to
 # create one, tries to remove the other's root, then removes its own.
@@ -12,7 +25,7 @@ lane() {
   source "${ROOT_DIR}/scripts/lib/owned-root.sh"
   root="$(workcell_owned_root_create "${TMP_DIR}" "lane-${name}")"
   printf '%s\n' "${root}" >"${TMP_DIR}/${name}.root"
-  until [[ -s "${TMP_DIR}/${peer}.root" ]]; do sleep 0.05; done
+  wait_for_file "${TMP_DIR}/${peer}.root"
   other="$(cat "${TMP_DIR}/${peer}.root")"
   if workcell_owned_root_remove "${other}" 2>"${TMP_DIR}/${name}.refusal"; then
     echo "lane ${name} removed a root it does not own" >&2
@@ -24,7 +37,7 @@ lane() {
     return 1
   }
   : >"${TMP_DIR}/${name}.refused"
-  until [[ -e "${TMP_DIR}/${peer}.refused" ]]; do sleep 0.05; done
+  wait_for_file "${TMP_DIR}/${peer}.refused"
   workcell_owned_root_remove "${root}"
 }
 
@@ -35,7 +48,8 @@ if [[ "${1:-}" == "--lane" ]]; then
 fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-lane-owned-roots.XXXXXX")"
-trap 'chmod -R u+w "${TMP_DIR}"; rm -rf "${TMP_DIR}"' EXIT
+pid_a="" pid_b=""
+trap 'kill "${pid_a}" "${pid_b}" 2>/dev/null || true; chmod -R u+w "${TMP_DIR}"; rm -rf "${TMP_DIR}"' EXIT
 "${BASH_SOURCE[0]}" --lane a b "${TMP_DIR}" &
 pid_a=$!
 "${BASH_SOURCE[0]}" --lane b a "${TMP_DIR}" &
