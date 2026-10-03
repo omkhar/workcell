@@ -888,6 +888,17 @@ func TestRemoveOwnedPathStaysInsideRoot(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
 		t.Fatalf("removeOwnedPath followed a link out of the root: %v", err)
 	}
+	// A symlinked ancestor under the root is refused and nothing is deleted.
+	link := filepath.Join(root, "linked")
+	mustNoError(t, os.Symlink(outside, link))
+	if err := removeOwnedPath(root, filepath.Join(link, "keep")); err == nil {
+		t.Fatal("removeOwnedPath accepted a symlinked ancestor")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("a symlinked ancestor was followed: %v", err)
+	}
+	// A path that does not exist is not an error.
+	mustNoError(t, removeOwnedPath(root, filepath.Join(root, "never", "created")))
 	// A path outside the trusted root is refused.
 	if err := removeOwnedPath(root, filepath.Join(outside, "keep")); err == nil {
 		t.Fatal("removeOwnedPath accepted a path outside the root")

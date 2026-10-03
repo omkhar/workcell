@@ -860,35 +860,17 @@ func removeOwnedPath(root, path string) error {
 	if err := requirePlainDirectoryChain(root, filepath.Dir(path)); err != nil {
 		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
 	}
-	relative, err := filepath.Rel(root, path)
+	// Open every ancestor from / without following a link, then remove relative
+	// to that descriptor. A swap after the chain check cannot move the delete.
+	parent, leaf, err := rootio.OpenParentDirectoryNoFollow(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
 	}
-	// Remove through one handle on the trusted root. The chain check above
-	// names each parent again, so a swap to a symlink after it must not move
-	// the delete: os.Root refuses a link that leaves the root.
-	handle, err := os.OpenRoot(root) // hardened-fs-exempt: this opens the handle that the delete and the residue check are relative to
-	if err != nil {
-		return err
-	}
-	defer func() { _ = handle.Close() }()
-	// OpenRoot follows a link at the root name, so prove that the handle is the
-	// plain directory that the chain check saw.
-	named, err := os.Lstat(root)
-	if err != nil {
-		return err
-	}
-	opened, err := handle.Stat(".")
-	if err != nil || !named.IsDir() || !os.SameFile(named, opened) {
-		return fmt.Errorf("certify-c3: owned profile root changed between the check and the open: %s", root)
-	}
-	if err := handle.RemoveAll(relative); err != nil {
-		return err
-	}
-	if _, err := handle.Lstat(relative); !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("certify-c3: owned profile residue remains: %s", path)
-	}
-	return nil
+	defer func() { _ = parent.Close() }()
+	return rootio.RemoveAllAtNoFollow(parent, filepath.Base(leaf))
 }
 func colimaProfilePaths(root, profile string) []string {
 	return []string{

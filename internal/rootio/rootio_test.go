@@ -136,3 +136,50 @@ func TestRelativePathWithinRejectsOutsideRoot(t *testing.T) {
 		t.Fatal("RelativePathWithin unexpectedly accepted a path outside the root")
 	}
 }
+
+func TestRemoveAllAtNoFollowStaysInsideTheTree(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(base, "tree")
+	if err := os.MkdirAll(filepath.Join(tree, "a", "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tree, "a", "b", "file"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(tree, "a", "link")); err != nil {
+		t.Fatal(err)
+	}
+	parent, leaf, err := OpenParentDirectoryNoFollow(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	if err := RemoveAllAtNoFollow(parent, filepath.Base(leaf)); err != nil {
+		t.Fatalf("RemoveAllAtNoFollow error = %v", err)
+	}
+	if _, err := os.Lstat(tree); !os.IsNotExist(err) {
+		t.Fatalf("tree remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("a link inside the tree was followed: %v", err)
+	}
+	// A missing name is not an error, and a name with a separator is refused.
+	if err := RemoveAllAtNoFollow(parent, "absent"); err != nil {
+		t.Fatalf("missing name error = %v", err)
+	}
+	if err := RemoveAllAtNoFollow(parent, "a/b"); err == nil {
+		t.Fatal("RemoveAllAtNoFollow accepted a path with a separator")
+	}
+	// A symlinked ancestor is refused before anything is removed.
+	link := filepath.Join(base, "ancestor-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := OpenParentDirectoryNoFollow(filepath.Join(link, "keep")); err == nil {
+		t.Fatal("OpenParentDirectoryNoFollow followed a symlinked ancestor")
+	}
+}

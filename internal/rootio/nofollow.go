@@ -168,6 +168,47 @@ func WriteFileAtomicAtNoFollow(parent *os.File, name string, data []byte, mode o
 	return StageAndPublishAt(parent, name, data, mode, tempPrefix)
 }
 
+// RemoveAllAtNoFollow removes name and everything below it through descriptors
+// relative to parent, never following a symlink. A missing name is not an
+// error. A link inside the tree is removed as a link, not followed.
+func RemoveAllAtNoFollow(parent *os.File, name string) error {
+	if err := validateLeafName(name); err != nil {
+		return err
+	}
+	return removeAllAt(int(parent.Fd()), name)
+}
+
+func removeAllAt(dirFD int, name string) error {
+	unlinkErr := unix.Unlinkat(dirFD, name, 0)
+	if unlinkErr == nil || errors.Is(unlinkErr, unix.ENOENT) {
+		return nil
+	}
+	// A directory refuses a plain unlink (EISDIR or EPERM, by platform), so
+	// open it without following a link and empty it first.
+	fd, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return unlinkErr
+	}
+	dir := os.NewFile(uintptr(fd), name)
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := removeAllAt(fd, entry); err != nil {
+			return err
+		}
+	}
+	if err := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {
+		return err
+	}
+	return nil
+}
+
 func validateLeafName(name string) error {
 	if name == "" || name == "." || name == ".." || name == string(filepath.Separator) || name != filepath.Base(name) {
 		return fmt.Errorf("path must name one file within the opened parent: %s", name)
