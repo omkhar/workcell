@@ -23,9 +23,14 @@ var etxtbsyRetryHelpers = map[string]bool{
 	"execRetryETXTBSYOrNestedBusy": true,
 }
 
+// systemBinaryDirs are the directories no test writes to, so a literal under
+// one of them names an installed binary, never a freshly written fixture.
+var systemBinaryDirs = []string{"/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/"}
+
 // stableProgramLiteral reports whether a string literal names a tool resolved
-// on PATH ("git") or an absolute system binary ("/bin/bash"). A relative path
-// literal such as "./fixture" can still name a freshly written script.
+// on PATH ("git") or a binary under systemBinaryDirs ("/bin/bash"). Any other
+// path literal, relative ("./fixture") or absolute ("/tmp/fixture.sh"), can
+// still name a freshly written script.
 func stableProgramLiteral(lit *ast.BasicLit) bool {
 	if lit.Kind != token.STRING {
 		return false
@@ -34,7 +39,15 @@ func stableProgramLiteral(lit *ast.BasicLit) bool {
 	if err != nil {
 		return false
 	}
-	return !strings.Contains(prog, "/") || strings.HasPrefix(prog, "/")
+	if !strings.Contains(prog, "/") {
+		return true
+	}
+	for _, dir := range systemBinaryDirs {
+		if strings.HasPrefix(prog, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // rawExecSites counts exec.Command/CommandContext calls in src whose program
@@ -144,9 +157,10 @@ func e(p string) { execRetryOn(func() *exec.Cmd { return exec.Command(p) }, nil)
 func f(p string) { execRetryETXTBSYLater(func() *exec.Cmd { return exec.Command(p) }) }
 func g()         { exec.Command("./fixture.sh") }
 func h()         { exec.Command("/bin/bash", "-c", "true") }
+func i()         { exec.Command("/tmp/workcell-fixture.sh") }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 5 {
-		t.Fatalf("rawExecSites = %d, want 5 (a, d, e, f, g)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 6 {
+		t.Fatalf("rawExecSites = %d, want 6 (a, d, e, f, g, i)", got)
 	}
 }
 
@@ -178,9 +192,11 @@ func TestExecRatchetFailsOnPlantedViolation(t *testing.T) {
 
 func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	root := repoRoot(t)
-	files, err := filepath.Glob(filepath.Join(root, "internal", "testkit", "*_test.go"))
+	// Every Go file in the package, not only tests: a shared helper that execs
+	// a fixture by path is a raw site too.
+	files, err := filepath.Glob(filepath.Join(root, "internal", "testkit", "*.go"))
 	if err != nil || len(files) == 0 {
-		t.Fatalf("glob testkit tests: %v (%d files)", err, len(files))
+		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
 	counts := map[string]int{}
 	for _, f := range files {
