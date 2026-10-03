@@ -110,6 +110,7 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 			mustNoError(t, os.WriteFile(filepath.Join(e.record.WorktreePath, ".workcell-c3-session-b"), nil, 0o600))
 		}, "status"},
 		{"shared container", func(e *evidence) { e.record.ContainerName = a.ContainerName }, "containers"},
+		{"execution path", func(e *evidence) { e.record.ExecutionPath = "" }, "execution_path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))

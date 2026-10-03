@@ -768,3 +768,23 @@ func TestSealedSessionRecordsFailsOnForgedHead(t *testing.T) {
 		t.Fatal("a seal whose signature does not cover its head must fail")
 	}
 }
+
+// A session record that sits before the chain root carries no digest. It must
+// not come back as part of the signed prefix (control: the plain head check
+// still verifies the same log).
+func TestSealedSessionRecordsRejectsUnsignedLegacyRecord(t *testing.T) {
+	tmp := t.TempDir()
+	signingDir := filepath.Join(tmp, "signing")
+	lines := append([]string{legacyLine("2026-07-07T00:00:00Z", "sess-A", "launch")}, buildLog(t, genuineLog(t))...)
+	logPath := writeLog(t, tmp, lines)
+	seal, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t")
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err != nil {
+		t.Fatalf("control: head check must verify, got %v", err)
+	}
+	if _, err := SealedSessionRecords(signingDir, logPath, "colima", "sess-A", seal); err == nil {
+		t.Fatal("an unsigned legacy session record must not be returned as sealed")
+	}
+}

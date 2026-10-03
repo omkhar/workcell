@@ -167,8 +167,8 @@ func recomputeSessionHead(auditLogPath, targetProvider, sessionID string) (strin
 // session's records up to and including that head, in log order. Records that
 // the session appended after the seal are not returned, so a running session
 // whose chain grew after the last seal still yields its signed prefix.
-// Fail-closed on a bad signature, an unknown key, a broken chain before the
-// sealed head, or a sealed head that no session record carries.
+// Fail-closed on a bad signature, an unknown key, a broken chain or an unsigned
+// legacy record before the sealed head, or a sealed head that no session record carries.
 func SealedSessionRecords(signingDir, auditLogPath, targetProvider, sessionID string, seal Seal) ([][]ocsf.AuditField, error) {
 	if err := verifySealSignature(signingDir, sessionID, seal.HeadDigest, seal); err != nil {
 		return nil, err
@@ -183,6 +183,10 @@ func SealedSessionRecords(signingDir, auditLogPath, targetProvider, sessionID st
 		}
 		records := make([][]ocsf.AuditField, 0, i+1)
 		for _, match := range matches[:i+1] {
+			if match.err != nil {
+				// A leading pre-digest record is not covered by the signed chain.
+				return nil, fmt.Errorf("auditseal: session %s has a record outside the signed chain: %w", sessionID, match.err)
+			}
 			records = append(records, match.fields)
 		}
 		return records, nil

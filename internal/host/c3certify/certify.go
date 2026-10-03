@@ -432,7 +432,7 @@ func (c *certifier) validateFork(ctx context.Context, parent, sibling sessions.S
 	all := []sessions.SessionRecord{parent, sibling}
 	for _, child := range children {
 		record := child.record
-		if err := c.validateIdentity(record, record.ExecutionPath, parent.SessionID); err != nil {
+		if err := c.validateIdentity(record, parent.ExecutionPath, parent.SessionID); err != nil {
 			return err
 		}
 		if err := c.validateGitIdentity(ctx, record, commit, "?? "+parentMarker); err != nil {
