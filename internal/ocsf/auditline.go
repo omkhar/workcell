@@ -187,6 +187,7 @@ var knownAuditFields = map[string]struct{}{
 	"vm_memory_gib":           {},
 	"workspace":               {},
 	"workspace_control_plane": {},
+	"workspace_head":          {},
 	"workspace_origin":        {},
 	"workspace_repo_mcp":      {},
 	"workspace_transport":     {},

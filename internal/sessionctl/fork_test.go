@@ -22,6 +22,7 @@ import (
 const (
 	forkFixtureCommit = "1111111111111111111111111111111111111111"
 	forkFixtureTree   = "2222222222222222222222222222222222222222"
+	forkFixtureHead   = "4444444444444444444444444444444444444444"
 )
 
 type forkFixture struct {
@@ -53,7 +54,7 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	}
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
-	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "agent=codex", "mode=strict", "agent_autonomy=yolo",
+	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "workspace=/tmp/clone", "workspace_head=" + forkFixtureHead, "agent=codex", "mode=strict", "agent_autonomy=yolo",
 		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
@@ -61,7 +62,7 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 		"session_id": "parent-1", "profile": "wcl-fixture", "target_provider": "colima", "execution_path": executionPath,
 		"agent": "codex", "mode": "strict", "status": "running", "live_status": "running",
 		"monitor_pid": "4242", "session_audit_dir": "/tmp/audit-fixture", "workspace": "/tmp/clone", "workspace_origin": "/tmp/origin-repo",
-		"started_at": "2026-07-08T00:00:00Z", "audit_log_path": f.logPath,
+		"git_head": forkFixtureHead, "started_at": "2026-07-08T00:00:00Z", "audit_log_path": f.logPath,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +169,26 @@ func TestForkMainBindsOriginAndRefusesProviderArguments(t *testing.T) {
 	if _, err := g.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
 		!strings.Contains(err.Error(), "provider arguments") {
 		t.Fatalf("provider argument error = %v", err)
+	}
+}
+
+func TestForkMainBindsWorkspaceAndGitHeadToSignedLaunch(t *testing.T) {
+	for field, value := range map[string]string{"workspace": "/tmp/other-clone", "git_head": strings.Repeat("5", 40)} {
+		f := newForkFixture(t, "managed-tier1")
+		record := map[string]string{
+			"session_id": "parent-1", "profile": "wcl-fixture", "target_provider": "colima", "execution_path": "managed-tier1",
+			"agent": "codex", "mode": "strict", "status": "running", "live_status": "running",
+			"monitor_pid": "4242", "session_audit_dir": "/tmp/audit-fixture", "workspace": "/tmp/clone", "workspace_origin": "/tmp/origin-repo",
+			"git_head": forkFixtureHead, "started_at": "2026-07-08T00:00:00Z", "audit_log_path": f.logPath,
+		}
+		record[field] = value
+		if err := sessions.WriteSessionRecord(f.recordPath, record); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+			!strings.Contains(err.Error(), "workspace or git head does not match") {
+			t.Fatalf("changed %s error = %v", field, err)
+		}
 	}
 }
 

@@ -126,6 +126,11 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if launch["profile"] != record.Profile {
 		return fmt.Errorf("session fork: the session record profile does not match the signed launch record: %s", opts.sessionID)
 	}
+	// The snapshot step already captured the unsigned workspace and git head,
+	// so they must match the signed launch before any child starts.
+	if launch["workspace"] != record.Workspace || launch["workspace_head"] != record.GitHead {
+		return fmt.Errorf("session fork: the session record workspace or git head does not match the signed launch record: %s", opts.sessionID)
+	}
 	// A child replays the parent rootfs posture. Without it a readonly parent
 	// forks into the ephemeral default, a wider posture.
 	var containerMutability string
