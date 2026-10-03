@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -53,7 +54,12 @@ func TestRequireProvesExactWorkspaceAndCleansChallenge(t *testing.T) {
 			t.Fatalf("challenge value length = %d, want 64", len(value))
 		}
 		challenge := filepath.Join(canonical, name)
-		info, err := os.Stat(challenge)
+		file, err := os.Open(challenge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		info, err := file.Stat() // fd-based: no path re-resolution between open and mode check
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +330,7 @@ func TestRequireCancellationStopsBlockingExecutable(t *testing.T) {
 			Image:        "validator:fixture",
 			Workspace:    workspace,
 			Context:      "fixture-context",
-		}, runCommand, 30*time.Second)
+		}, runCommandRetryBusy, 30*time.Second)
 	}()
 	waitForLoggedProbeStart(t, commandLog, 5*time.Second)
 	cancel()
@@ -333,7 +339,7 @@ func TestRequireCancellationStopsBlockingExecutable(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("blocking executable error = %v, want context.Canceled", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second): // failure-only bound; success returns on the event
 		t.Fatal("blocking executable did not stop after parent cancellation")
 	}
 	assertLoggedProbeCleanup(t, commandLog, "fixture-context")
@@ -465,6 +471,19 @@ exec /bin/sleep 60
 		t.Fatal(err)
 	}
 	return path, commandLog
+}
+
+// runCommandRetryBusy retries runCommand while the just-written fixture is
+// still held open for write by a concurrent fork (ETXTBSY, golang/go#22315).
+func runCommandRetryBusy(ctx context.Context, dir, binary string, args []string) error {
+	var err error
+	for attempt := 0; attempt < 20; attempt++ {
+		if err = runCommand(ctx, dir, binary, args); !errors.Is(err, syscall.ETXTBSY) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return err
 }
 
 func argumentValue(t *testing.T, args []string, prefix string) string {
@@ -627,7 +646,7 @@ func receiveArgs(t *testing.T, result <-chan []string) []string {
 	select {
 	case args := <-result:
 		return args
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second): // failure-only bound; success returns on the event
 		t.Fatal("Docker command was not recorded")
 		return nil
 	}

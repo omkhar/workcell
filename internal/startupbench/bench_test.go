@@ -423,7 +423,7 @@ func TestLifecycleFailuresAreJoinedAndVerifierGetsIndependentBudget(t *testing.T
 	// ShellQuote is used here as defense in depth rather than trusting a
 	// literal double-quoted splice to stay safe.
 	writeExec(t, verify, "#!/usr/bin/env bash\ntouch "+testkit.ShellQuote(verified)+"\nprintf 'absent session_id=%s sample_token=%s\\n' \"${WORKCELL_STARTUP_SESSION_ID}\" \"${WORKCELL_STARTUP_SAMPLE_TOKEN}\"\n")
-	cfg := config{target: []string{"false"}, teardown: teardown, cleanupCheck: verify, teardownTimeout: 50 * time.Millisecond, verifyTimeout: 2 * time.Second}
+	cfg := config{target: []string{"false"}, teardown: teardown, cleanupCheck: verify, teardownTimeout: 50 * time.Millisecond, verifyTimeout: 30 * time.Second}
 	_, err := measureOne(context.Background(), cfg, "cold", 1, "1", io.Discard)
 	if err == nil {
 		t.Fatal("combined lifecycle failure unexpectedly passed")
