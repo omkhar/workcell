@@ -178,16 +178,16 @@ jobs:
           persist-credentials: false
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
-        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
       - if: ${{ (!github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true') && matrix.build-mode == 'autobuild' }}
-        uses: github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
 
       - if: ${{ !github.event.repository.private || vars.WORKCELL_ENABLE_PRIVATE_CODE_SCANNING == 'true' }}
-        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
 
   preflight-arm64-repro:
     name: Release reproducible image (arm64)
@@ -218,7 +218,7 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
@@ -279,7 +279,7 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
@@ -318,7 +318,7 @@ jobs:
           ref: ${{ needs.tag-policy.outputs.release_commit }}
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
@@ -357,7 +357,7 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
@@ -527,7 +527,7 @@ jobs:
             -t "workcell-validator:${RELEASE_COMMIT}" \
             .
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
@@ -842,14 +842,14 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
       - id: build_amd64
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
         with:
@@ -919,14 +919,14 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
           version: ${{ env.WORKCELL_BUILDX_VERSION }}
 
       - id: build_arm64
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           SOURCE_DATE_EPOCH: ${{ steps.source_date.outputs.epoch }}
         with:
@@ -1018,7 +1018,7 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
@@ -1167,7 +1167,7 @@ jobs:
         name: Compute source date epoch
         run: echo "epoch=$(git log -1 --pretty=%ct "${RELEASE_COMMIT}")" >> "${GITHUB_OUTPUT}"
 
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
           driver-opts: image=${{ env.WORKCELL_BUILDKIT_IMAGE }}
