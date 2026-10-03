@@ -100,7 +100,8 @@ The refresh job has no content-write or release-publication scope.
 
 The upstream-refresh publish job uses the `upstream-refresh` environment.
 It mints a GitHub App token with `contents: write` and `pull-requests: write`.
-It uses that token to create a signed branch commit and a bump PR for each candidate. If the scope guard passes on the provider candidate, it enables auto-merge for that commit only.
+It uses that token to create a signed branch commit and a bump PR for each candidate. If the scope guard passes on the provider candidate, it enables auto-merge and checks that commit at arming time.
+A later writer push is an accepted risk (see `docs/github-workflows.md`).
 The App has no Workflows permission, so the job does not publish a candidate that changes `.github/workflows/`.
 
 The release environment protects registry publication, signing, and attestation.
