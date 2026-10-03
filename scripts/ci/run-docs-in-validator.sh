@@ -65,17 +65,6 @@ workcell_ci_docker run --rm \
   -lc '
     set -euo pipefail
     mkdir -p "${HOME}" "${XDG_CACHE_HOME}" "${GOCACHE}" "${GOMODCACHE}" "${CARGO_TARGET_DIR}" "${TMPDIR}"
-    mapfile -d "" doc_files < <( # portability-exempt: the validator image runs this command string
-      find /workspace \
-        -path /workspace/.git -prune -o \
-        -path /workspace/dist -prune -o \
-        -path /workspace/tmp -prune -o \
-        -path /workspace/runtime/container/providers/node_modules -prune -o \
-        -path /workspace/tools/markdownlint/node_modules -prune -o \
-        -path /workspace/runtime/container/rust/vendor -prune -o \
-        -path /workspace/runtime/container/rust/target -prune -o \
-        -type f \( -name "*.md" -o -name "*.txt" -o -name "*.1" \) -print0 | sort -z
-    )
-    codespell --config /workspace/.codespellrc "${doc_files[@]}"
+    /workspace/scripts/ci/run-codespell.sh /workspace
     mandoc -Tlint /workspace/man/workcell.1 >/dev/null
   '

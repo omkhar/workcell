@@ -5,6 +5,7 @@ if [[ "${WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT:-0}" != "1" ]]; then
     PATH="${TRUSTED_HOST_PATH}"
     TMPDIR="${TMPDIR:-/tmp}"
     WORKCELL_SKIP_PUSH_SIGNATURES="${WORKCELL_SKIP_PUSH_SIGNATURES:-}"
+    WORKCELL_SKIP_PREPUSH_CHECKS="${WORKCELL_SKIP_PREPUSH_CHECKS:-}"
     WORKCELL_PREPUSH_SANITIZED_ENTRYPOINT=1
   )
   # HOME is forwarded only when the caller has one. Replacing an absent HOME
@@ -40,12 +41,13 @@ fi
 set -euo pipefail
 export PATH="${TRUSTED_HOST_PATH}"
 
-if [[ "${WORKCELL_SKIP_PUSH_SIGNATURES:-0}" == "1" ]]; then
-  exit 0
-fi
-
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${HOOK_DIR}/.." && pwd)"
+
+# The signature bypass does not skip the fast checks; each has its own bypass.
+if [[ "${WORKCELL_SKIP_PUSH_SIGNATURES:-0}" == "1" ]]; then
+  exec "${ROOT_DIR}/scripts/githooks/pre-push"
+fi
 readonly ZERO_OID_PATTERN='^0+$'
 REMOTE_URL="${2:-}"
 
@@ -99,4 +101,4 @@ while read -r _ local_sha _ remote_sha; do
   done <<<"${outgoing}"
 done
 
-exit 0
+exec "${ROOT_DIR}/scripts/githooks/pre-push"

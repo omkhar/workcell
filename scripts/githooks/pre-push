@@ -1,0 +1,63 @@
+#!/bin/bash -p
+# Fast pre-push gates on the files this branch changes. .githooks/pre-push
+# hands off to this script after its signature walk. It runs the local halves
+# of the CI checks that failed most often after a push: generated artifacts,
+# doc links, doc language, codespell, and PR shape. Set
+# WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
+set -euo pipefail
+
+if [[ "${WORKCELL_SKIP_PREPUSH_CHECKS:-0}" == "1" ]]; then
+  exit 0
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+BASE_REF="${WORKCELL_PREPUSH_BASE_REF:-origin/main}"
+cd "${ROOT_DIR}"
+
+if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null; then
+  echo "pre-push: base ref ${BASE_REF} is missing; run git fetch origin main." >&2
+  exit 1
+fi
+merge_base="$(git merge-base "${BASE_REF}" HEAD)"
+
+changed_list="$(mktemp "${TMPDIR:-/tmp}/workcell-prepush.XXXXXX")"
+trap 'rm -f "${changed_list}"' EXIT
+git diff -z --name-only --diff-filter=d "${merge_base}" HEAD >"${changed_list}"
+
+changed_files=()
+markdown_changed=0
+while IFS= read -r -d '' file; do
+  changed_files+=("${file}")
+  [[ "${file}" != *.md ]] || markdown_changed=1
+done <"${changed_list}"
+
+failures=0
+run_gate() {
+  local name="$1"
+  shift
+  echo "[pre-push] ${name}"
+  if ! "$@"; then
+    echo "pre-push: ${name} failed" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+run_gate "generated artifacts" ./scripts/check-generated-artifacts.sh
+if [[ "${markdown_changed}" -eq 1 ]]; then
+  run_gate "doc links" ./scripts/check-doc-links.sh
+  run_gate "doc language" ./scripts/check-doc-language.sh
+fi
+if [[ "${#changed_files[@]}" -gt 0 ]]; then
+  if command -v codespell >/dev/null; then
+    run_gate "codespell" codespell --config .codespellrc "${changed_files[@]}"
+  else
+    echo "pre-push: codespell is missing; run ./scripts/install-dev-tools.sh." >&2
+    failures=$((failures + 1))
+  fi
+fi
+run_gate "PR shape" ./scripts/check-pr-shape.sh --base-ref "${BASE_REF}"
+
+if [[ "${failures}" -ne 0 ]]; then
+  echo "pre-push: ${failures} gate(s) failed; fix them or set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
+  exit 1
+fi

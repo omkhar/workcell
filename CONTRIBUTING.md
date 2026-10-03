@@ -32,6 +32,11 @@ pending pinned upstream updates. The `commit-msg` hook checks the Risk-Aware
 Commit Notation subject format. The `pre-push` hook verifies the signature of
 each outgoing commit.
 
+After that walk, `pre-push` runs `scripts/githooks/pre-push`.
+That script checks generated artifacts, doc links, doc language, codespell, and
+PR shape on the files the branch changes. Set `WORKCELL_SKIP_PREPUSH_CHECKS=1`
+only for an intentional bypass.
+
 These three hooks are shell, not Go. This is the documented exception to the
 Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before
 any build. The `pre-push` hook must also work when the Go toolchain and the
