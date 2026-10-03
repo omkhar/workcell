@@ -4900,6 +4900,9 @@ session_fork_main() {
     child_args+=(--agent-autonomy "$(shellproto_field "${plan}" agent_autonomy)")
   fi
   [[ -n "${SESSION_FORK_POLICY_SHA256}" ]] || child_args+=(--no-default-injection-policy)
+  if [[ "$(shellproto_field "${plan}" container_mutability)" == "readonly" ]]; then
+    child_args+=(--container-mutability readonly)
+  fi
   if [[ -n "${ack}" ]]; then
     child_args+=(--allow-arbitrary-command "--ack-arbitrary-command=${ack}" "${command[@]}")
   fi

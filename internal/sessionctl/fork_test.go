@@ -32,6 +32,11 @@ type forkFixture struct {
 // and a signed session_snapshot record (snapshot id "snap-1").
 func newForkFixture(t *testing.T, executionPath string) *forkFixture {
 	t.Helper()
+	return newForkFixtureWithAssurance(t, executionPath, "managed-mutable")
+}
+
+func newForkFixtureWithAssurance(t *testing.T, executionPath, assurance string) *forkFixture {
+	t.Helper()
 	f := &forkFixture{root: t.TempDir(), signingDir: filepath.Join(t.TempDir(), "signing")}
 	profileDir := filepath.Join(f.root, "wcl-fixture")
 	if err := os.MkdirAll(filepath.Join(profileDir, "sessions"), 0o700); err != nil {
@@ -40,7 +45,7 @@ func newForkFixture(t *testing.T, executionPath string) *forkFixture {
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
 	f.appendRecord(t, "event=launch", "agent=codex", "mode=strict", "agent_autonomy=yolo",
-		"injection_policy_sha256=", "execution_path="+executionPath)
+		"injection_policy_sha256=", "container_assurance="+assurance, "execution_path="+executionPath)
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
 	if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
@@ -98,7 +103,7 @@ func TestForkMainEmitsPlanFromSignedRecords(t *testing.T) {
 	want := strings.Join([]string{
 		"session_id=parent-1", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo",
 		"origin_hash=" + hex.EncodeToString(origin[:]), "agent=codex", "mode=strict",
-		"agent_autonomy=yolo", "injection_policy_sha256=", "snapshot_id=snap-1",
+		"agent_autonomy=yolo", "container_mutability=ephemeral", "injection_policy_sha256=", "snapshot_id=snap-1",
 		"commit=" + forkFixtureCommit, "tree=" + forkFixtureTree, "count=2", "ack_arbitrary_command=",
 	}, "\n") + "\n"
 	if out != want {
@@ -111,6 +116,22 @@ func TestForkMainAsksForSnapshotWithoutSnapshotID(t *testing.T) {
 	out, err := f.run("--id", "parent-1", "--count", "1")
 	if err != nil || out != "session_id=parent-1\nneeds_snapshot=1\nack_arbitrary_command=\n" {
 		t.Fatalf("forkMain = %q, %v", out, err)
+	}
+}
+
+func TestForkMainReplaysContainerPosture(t *testing.T) {
+	for assurance, want := range map[string]string{"managed-readonly": "container_mutability=readonly\n", "managed-mutable": "container_mutability=ephemeral\n"} {
+		f := newForkFixtureWithAssurance(t, "managed-tier1", assurance)
+		out, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1")
+		if err != nil || !strings.Contains(out, want) {
+			t.Fatalf("%s: plan = %q, %v; want %q", assurance, out, err, want)
+		}
+	}
+	// A posture that fork cannot name is refused, not defaulted.
+	f := newForkFixtureWithAssurance(t, "managed-tier1", "unknown")
+	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "container assurance") {
+		t.Fatalf("unknown assurance error = %v", err)
 	}
 }
 

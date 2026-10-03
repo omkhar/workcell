@@ -4419,7 +4419,7 @@ fork_append_record() {
   bash -c 'source "$1"; trap - EXIT; shift; append_audit_record_to_path "$@"' _ "${WORKCELL_FUNCTIONS_COPY}" "${FORK_AUDIT_LOG}" "$@"
 }
 fork_append_record event=launch "session_id=${FORK_PARENT}" agent=codex mode=strict agent_autonomy=yolo \
-  injection_policy_sha256= execution_path=managed-tier1
+  injection_policy_sha256= container_assurance=managed-mutable execution_path=managed-tier1
 fork_snapshot_id="$("${ROOT_DIR}/scripts/workcell" session snapshot --id "${FORK_PARENT}" | sed -n 's/^snapshot_id=//p')"
 fork_commit="$(git --git-dir="${FORK_STORE}" rev-parse "refs/workcell/snapshots/${FORK_PARENT}/${fork_snapshot_id}")"
 fork_tree="$(git --git-dir="${FORK_STORE}" rev-parse "${fork_commit}^{tree}")"
@@ -4535,6 +4535,32 @@ grep -q called "${fork_stale_snapshots}" || {
   cat "${TMP_DIR}/fork-fresh-ack.err" >&2
   exit 1
 }
+
+# A readonly parent forks into readonly children. The plan is a stub, so the
+# check covers only the child argument list.
+fork_child_args_file="${TMP_DIR}/fork-child-args.log"
+fork_args_run() {
+  FORK_STUB_MUTABILITY="$1" FORK_STUB_LOG="${fork_child_args_file}" bash -c '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    session_run_cli_with_roots() { printf "session_id=p\nsnapshot_id=s\ncount=1\ncommit=c\ntree=t\nagent=codex\nmode=strict\nprofile=x\nworkspace_origin=/o\norigin_hash=h\ncontainer_mutability=%s\n" "${FORK_STUB_MUTABILITY}"; }
+    session_snapshot_store_root() { echo /nonexistent; }
+    session_fork_start_child() { echo "$*" >"${FORK_STUB_LOG}"; printf "session_id=child-1\n"; }
+    load_session_runtime_metadata() { SESSION_META_PROFILE=x SESSION_META_RECORD_PATH=/r; }
+    append_session_control_audit_record() { return 0; }
+    sign_session_audit_head_explicit() { return 0; }
+    session_fork_main --id p --snapshot s --count 1
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" >/dev/null 2>&1
+}
+fork_args_run readonly
+grep -q -- '--container-mutability readonly' "${fork_child_args_file}"
+# Negative control: an ephemeral parent adds no mutability flag.
+fork_args_run ephemeral
+if grep -q -- '--container-mutability' "${fork_child_args_file}"; then
+  echo "session fork added a mutability flag for an ephemeral parent" >&2
+  exit 1
+fi
 
 # A failed fork audit append still names the running children.
 fork_append_out="$(

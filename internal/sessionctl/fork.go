@@ -107,6 +107,17 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
 		return err
 	}
+	// A child replays the parent rootfs posture. Without it a readonly parent
+	// forks into the ephemeral default, a wider posture.
+	var containerMutability string
+	switch launch["container_assurance"] {
+	case "managed-readonly":
+		containerMutability = "readonly"
+	case "managed-mutable":
+		containerMutability = "ephemeral"
+	default:
+		return fmt.Errorf("session fork does not support the parent container assurance %q: %s", launch["container_assurance"], opts.sessionID)
+	}
 	originHash := sha256.Sum256([]byte(origin))
 	return shellproto.WriteFields(stdout, []shellproto.Field{
 		{Key: "session_id", Value: record.SessionID},
@@ -116,6 +127,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		{Key: "agent", Value: launch["agent"]},
 		{Key: "mode", Value: launch["mode"]},
 		{Key: "agent_autonomy", Value: launch["agent_autonomy"]},
+		{Key: "container_mutability", Value: containerMutability},
 		{Key: "injection_policy_sha256", Value: launch["injection_policy_sha256"]},
 		{Key: "snapshot_id", Value: opts.snapshotID},
 		{Key: "commit", Value: snapshot["commit"]},
