@@ -29,7 +29,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write fa
 
 func TestWriteReportReturnsWriterError(t *testing.T) {
 	item := &evidence{}
-	if err := writeReport(failingWriter{}, snapshot{}, item, item, time.Time{}); err == nil {
+	if err := writeReport(failingWriter{}, snapshot{}, item, item, nil, time.Time{}); err == nil {
 		t.Fatal("writeReport hid writer failure")
 	}
 }
@@ -44,6 +44,18 @@ func TestParseStartSessionID(t *testing.T) {
 	} {
 		if _, err := parseStartSessionID([]byte(output)); err == nil {
 			t.Fatalf("parseStartSessionID accepted %q", output)
+		}
+	}
+}
+
+func TestParseForkChildren(t *testing.T) {
+	got, err := parseForkChildren([]byte("session_id=a\nchildren=c-1,c-2\n"), 2)
+	if err != nil || !slices.Equal(got, []string{"c-1", "c-2"}) {
+		t.Fatalf("parseForkChildren = %q, %v", got, err)
+	}
+	for _, output := range []string{"session_id=a\n", "children=c-1\n", "children=c-1,--all\n", "children=none\nchildren=c-1,c-2\n"} {
+		if _, err := parseForkChildren([]byte(output), 2); err == nil {
+			t.Fatalf("parseForkChildren accepted %q", output)
 		}
 	}
 }
@@ -98,11 +110,32 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 	children := []*evidence{newChild("child-1"), newChild("child-2")}
 	c.docker = "/fake/docker"
 	containerSeesMarker, containerSeesSibling := true, false
+	// mounts maps a container to the host worktree it exposes. A container
+	// that is not listed exposes its own recorded worktree.
+	mounts := map[string]string{}
+	worktrees := map[string]string{a.ContainerName: a.WorktreePath, b.ContainerName: b.WorktreePath}
+	for _, child := range children {
+		worktrees[child.record.ContainerName] = child.record.WorktreePath
+	}
+	exposed := func(container string) string {
+		if dir, ok := mounts[container]; ok {
+			return dir
+		}
+		return worktrees[container]
+	}
 	c.deps.command = func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 		switch {
 		case name != c.docker:
 			return runCommand(ctx, env, name, args...)
 		case args[0] != "exec":
+			return nil, nil
+		case strings.Contains(args[4], "printf"):
+			// A child writes its own marker through the container mount.
+			return nil, os.WriteFile(filepath.Join(exposed(args[1]), args[7]), []byte(args[6]+"\n"), 0o600)
+		case strings.HasPrefix(args[6], ".workcell-c3-fork-"):
+			if _, err := os.Lstat(filepath.Join(exposed(args[1]), args[6])); err == nil {
+				return nil, errors.New("child marker present")
+			}
 			return nil, nil
 		case strings.Contains(args[4], "cat"):
 			if containerSeesMarker {
@@ -131,10 +164,17 @@ func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
 		{"execution path", func(e *evidence) { e.record.ExecutionPath = "" }, "execution_path"},
 		{"container misses parent marker", func(*evidence) { containerSeesMarker = false }, "does not see marker"},
 		{"container sees sibling marker", func(*evidence) { containerSeesSibling = true }, "container of fork child"},
+		{"child container mounts a peer worktree", func(e *evidence) { mounts[e.record.ContainerName] = children[0].record.WorktreePath }, "marker crossed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			containerSeesMarker, containerSeesSibling = true, false
+			// An earlier run left its child markers in the shared worktree.
+			leftovers, _ := filepath.Glob(filepath.Join(children[0].record.WorktreePath, ".workcell-c3-fork-*"))
+			for _, leftover := range leftovers {
+				mustNoError(t, os.Remove(leftover))
+			}
 			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))
+			worktrees[bad.record.ContainerName] = bad.record.WorktreePath
 			tc.mutate(bad)
 			err := c.validateFork(context.Background(), a, b, []*evidence{children[0], bad}, commit)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -232,7 +272,8 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	c.baseEnv = append(c.baseEnv, "WORKCELL_STATE_ROOT="+c.stateRoot)
 	c.scratchRoot, _ = newGitRepo(t)
 	c.launchRoot, c.dockerConfig = filepath.Join(c.scratchRoot, "repo"), t.TempDir()
-	ownedPaths := append(colimaProfilePaths(c.colimaRoot, c.profile), filepath.Join(c.stateRoot, "targets", "local_vm", "colima", c.profile))
+	c.snapshotStore = filepath.Join(t.TempDir(), "workcell-snapshots", "origin.git")
+	ownedPaths := append(colimaProfilePaths(c.colimaRoot, c.profile), filepath.Join(c.stateRoot, "targets", "local_vm", "colima", c.profile), c.snapshotStore)
 	for _, path := range ownedPaths {
 		mustNoError(t, os.MkdirAll(path, 0o700))
 	}
@@ -264,6 +305,22 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 				records[id] = record
 				paths[id] = writeTestRecord(t, c, record)
 				return []byte("session_id=" + id + "\n"), nil
+			case "fork":
+				if want := []string{"session", "fork", "--id", "session-1", "--count", "2", "--allow-arbitrary-command",
+					"--ack-arbitrary-command=1970-01-01", "--", "/bin/sh", "-lc", keepalive}; !slices.Equal(args, want) {
+					return nil, fmt.Errorf("fork args = %q", args)
+				}
+				var ids []string
+				for range 2 {
+					id := fmt.Sprintf("session-%d", len(records)+1)
+					record := newIsolatedRecord(t, c.launchRoot, commit, id, "workcell-"+id)
+					record.ParentSessionID = "session-1"
+					mustNoError(t, os.WriteFile(filepath.Join(record.WorktreePath, ".workcell-c3-session-1"), []byte("session-a-only\n"), 0o600))
+					records[id] = record
+					paths[id] = writeTestRecord(t, c, record)
+					ids = append(ids, id)
+				}
+				return []byte("session_id=session-1\nchildren=" + strings.Join(ids, ",") + "\n"), nil
 			case "stop":
 				id := args[3]
 				record := records[id]
@@ -281,6 +338,9 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 		if name == c.docker {
 			if args[0] == "exec" {
 				markerCommands = append(markerCommands, strings.Join(args, "\x00"))
+				if strings.Contains(args[4], "cat") {
+					return []byte("session-a-only\n"), nil
+				}
 				if strings.Contains(args[4], "printf") {
 					for _, record := range records {
 						if record.ContainerName == args[1] {
@@ -320,7 +380,7 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	if err := c.execute(context.Background(), new(strings.Builder)); err != nil {
 		t.Fatalf("execute error = %v", err)
 	}
-	if len(records) != 2 || !deleted["session-1"] || !deleted["session-2"] || reapedProfile != c.profile {
+	if len(records) != 4 || !deleted["session-1"] || !deleted["session-2"] || !deleted["session-3"] || !deleted["session-4"] || reapedProfile != c.profile {
 		t.Fatalf("incomplete certification: deleted=%v reaped=%s", deleted, reapedProfile)
 	}
 	wantMarkerCommands := []string{
@@ -332,6 +392,24 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 			`printf "%s\n" "$1" >"/workspace/$2"`, "sh", "session-b-only", ".workcell-c3-session-2"}, "\x00"),
 		strings.Join([]string{"exec", "workcell-session-1", "/bin/sh", "-lc",
 			`test ! -e "/workspace/$1"`, "sh", ".workcell-c3-session-2"}, "\x00"),
+	}
+	for _, child := range []string{"workcell-session-3", "workcell-session-4"} {
+		wantMarkerCommands = append(wantMarkerCommands,
+			strings.Join([]string{"exec", child, "/bin/sh", "-lc", `cat "/workspace/$1"`, "sh", ".workcell-c3-session-1"}, "\x00"),
+			strings.Join([]string{"exec", child, "/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", ".workcell-c3-session-2"}, "\x00"))
+	}
+	// Each child then proves a marker of its own against every other session.
+	childContainers := []string{"workcell-session-3", "workcell-session-4"}
+	for _, child := range childContainers {
+		marker := ".workcell-c3-fork-session-" + child[len("workcell-session-"):]
+		for _, peer := range []string{"workcell-session-1", "workcell-session-2", "workcell-session-3", "workcell-session-4"} {
+			if peer == child {
+				continue
+			}
+			wantMarkerCommands = append(wantMarkerCommands,
+				strings.Join([]string{"exec", child, "/bin/sh", "-lc", `printf "%s\n" "$1" >"/workspace/$2"`, "sh", "fork-child-only", marker}, "\x00"),
+				strings.Join([]string{"exec", peer, "/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", marker}, "\x00"))
+		}
 	}
 	if !slices.Equal(markerCommands, wantMarkerCommands) {
 		t.Fatalf("marker commands = %q, want symmetric A/B proof %q", markerCommands, wantMarkerCommands)
@@ -793,4 +871,36 @@ func runGit(t *testing.T, dir string, args ...string) []byte {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
 	}
 	return output
+}
+
+func TestRemoveOwnedPathStaysInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustNoError(t, os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o600))
+	owned := filepath.Join(root, "store", "hash.git")
+	mustNoError(t, os.MkdirAll(owned, 0o700))
+	mustNoError(t, os.WriteFile(filepath.Join(owned, "obj"), []byte("x"), 0o600))
+	mustNoError(t, os.Symlink(outside, filepath.Join(owned, "link")))
+	mustNoError(t, removeOwnedPath(root, owned))
+	if _, err := os.Lstat(owned); !os.IsNotExist(err) {
+		t.Fatalf("owned path remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("removeOwnedPath followed a link out of the root: %v", err)
+	}
+	// A symlinked ancestor under the root is refused and nothing is deleted.
+	link := filepath.Join(root, "linked")
+	mustNoError(t, os.Symlink(outside, link))
+	if err := removeOwnedPath(root, filepath.Join(link, "keep")); err == nil {
+		t.Fatal("removeOwnedPath accepted a symlinked ancestor")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("a symlinked ancestor was followed: %v", err)
+	}
+	// A path that does not exist is not an error.
+	mustNoError(t, removeOwnedPath(root, filepath.Join(root, "never", "created")))
+	// A path outside the trusted root is refused.
+	if err := removeOwnedPath(root, filepath.Join(outside, "keep")); err == nil {
+		t.Fatal("removeOwnedPath accepted a path outside the root")
+	}
 }

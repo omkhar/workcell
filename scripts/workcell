@@ -177,6 +177,13 @@ SESSION_MONITOR_READY_PATH=""
 SESSION_MONITOR_PID=""
 SESSION_SOURCE_WORKSPACE=""
 SESSION_DETACHED="${WORKCELL_SESSION_DETACHED:-0}"
+# session_fork_main sets these for each child launch. See session_fork_main.
+SESSION_FORK_PARENT="${WORKCELL_SESSION_FORK_PARENT:-}"
+SESSION_FORK_COMMIT="${WORKCELL_SESSION_FORK_COMMIT:-}"
+SESSION_FORK_TREE="${WORKCELL_SESSION_FORK_TREE:-}"
+SESSION_FORK_STORE="${WORKCELL_SESSION_FORK_STORE:-}"
+SESSION_FORK_POLICY_SHA256="${WORKCELL_SESSION_FORK_POLICY_SHA256:-}"
+SESSION_FORK_HEAD="${WORKCELL_SESSION_FORK_HEAD:-}"
 DETACHED_SESSION_ACTIVE=0
 DETACHED_SESSION_STDIN_PATH="/state/tmp/workcell/session-stdin"
 SESSION_WORKSPACE_MODE=""
@@ -216,7 +223,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify> [options]
+       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]
@@ -1677,7 +1684,44 @@ create_isolated_session_workspace() {
 
   mkdir -p "$(dirname "${target}")"
   run_clean_host_command_in_dir "${ROOT_DIR}" "${HOST_GIT_BIN}" clone --quiet --no-hardlinks "${source_workspace}" "${target}"
+  if [[ -n "${SESSION_FORK_COMMIT}" ]]; then
+    # A fork child fetches the signed snapshot commit by object id, never by a
+    # store ref, and starts on its parent: the launch commit of the fork parent.
+    # A failed step removes the session directory, so no orphan clone stays.
+    local session_dir=""
+    session_dir="$(dirname "${target}")"
+    run_workspace_safe_git_command_in_dir "${target}" fetch --quiet --no-tags --no-write-fetch-head "${SESSION_FORK_STORE}" "${SESSION_FORK_COMMIT}" || {
+      rm -rf "${session_dir}"
+      exit 2
+    }
+    [[ "$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^{tree}")" == "${SESSION_FORK_TREE}" ]] || {
+      echo "session fork snapshot tree does not match the signed record: ${SESSION_FORK_COMMIT}" >&2
+      rm -rf "${session_dir}"
+      exit 2
+    }
+    base_ref="$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^1")" || {
+      rm -rf "${session_dir}"
+      exit 2
+    }
+    # The snapshot parent must be the signed launch head, not a commit that the
+    # unsigned session record named when the snapshot ran.
+    [[ -n "${SESSION_FORK_HEAD}" && "${base_ref}" == "${SESSION_FORK_HEAD}" ]] || {
+      echo "session fork snapshot parent does not match the signed launch head: ${SESSION_FORK_COMMIT}" >&2
+      rm -rf "${session_dir}"
+      exit 2
+    }
+  fi
   run_workspace_safe_git_command_in_dir "${target}" checkout --quiet -B "${branch_name}" "${base_ref}"
+  if [[ -n "${SESSION_FORK_COMMIT}" ]]; then
+    # Apply the snapshot tree to the worktree through a scratch index, so the
+    # real index stays on the launch commit and the parent changes stay
+    # uncommitted in the child.
+    run_workspace_safe_git_command_in_dir "${target}" read-tree -u --reset "--index-output=${target}/.git/workcell-fork-index" "${SESSION_FORK_TREE}" || {
+      rm -rf "${session_dir}"
+      exit 2
+    }
+    rm -f "${target}/.git/workcell-fork-index"
+  fi
   printf '%s\n' "${target}"
 }
 
@@ -1697,7 +1741,9 @@ validate_isolated_session_workspace_source() {
     echo "Alternatively, pass --mode breakglass --ack-breakglass=YYYY-MM-DD to proceed with a linked worktree." >&2
     exit 2
   fi
-  if workspace_git_has_worktree_changes "${source_workspace}"; then
+  # A fork child takes its content from the signed snapshot, not from the
+  # source worktree, so uncommitted origin changes do not matter to it.
+  if [[ -z "${SESSION_FORK_COMMIT}" ]] && workspace_git_has_worktree_changes "${source_workspace}"; then
     echo "session start requires a clean source workspace for isolated session cloning: ${source_workspace}" >&2
     echo "Next step: commit or stash the workspace changes, or rerun with --session-workspace direct to use the current workspace in place." >&2
     exit 2
@@ -3085,6 +3131,15 @@ append_launch_audit_record() {
     "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
     "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" \
     "container_assurance=$(container_assurance)" \
+    "vm_cpu=${COLIMA_CPU}" \
+    "vm_memory_gib=${COLIMA_MEMORY}" \
+    "vm_disk_gib=${COLIMA_DISK}" \
+    "container_cpu=${CONTAINER_CPU_OVERRIDE:-unmanaged}" \
+    "container_memory=${CONTAINER_MEMORY}" \
+    "workspace_origin=${SESSION_SOURCE_WORKSPACE}" \
+    "provider_arg_count=$([[ "${ALLOW_ARBITRARY_COMMAND}" -eq 1 ]] && printf '0' || printf '%s' "${#PROVIDER_ARGS[@]}")" \
+    "target_provider=$(current_target_provider)" \
+    "workspace_head=$(shellproto_field "$(session_git_metadata_lines "${WORKSPACE}")" git_head)" \
     "session_assurance_initial=$(session_assurance_initial)"
 }
 
@@ -3208,7 +3263,8 @@ write_session_record_initial() {
     "current_assurance=$(session_assurance_initial)" \
     "live_status=$([[ "${SESSION_DETACHED}" -eq 1 ]] && printf 'starting' || printf 'running')" \
     "workspace_control_plane=$(workspace_control_plane_state)" \
-    "workspace_repo_mcp=$(workspace_repo_mcp_state)"
+    "workspace_repo_mcp=$(workspace_repo_mcp_state)" \
+    "parent_session_id=${SESSION_FORK_PARENT}"
   SESSION_RECORD_WRITTEN=1
 }
 
@@ -4763,18 +4819,159 @@ session_snapshot_main() {
     "snapshot_id=${snapshot_id}" \
     "tree=${tree}" \
     "commit=${commit}"
-  if [[ "${pause}" == "0" ]] && ! session_monitor_pid_is_live; then
-    record_path="${SESSION_META_RECORD_PATH:-$(session_record_path_for "${profile}" "${session_id}")}"
-    sign_session_audit_head_explicit "${profile}" "${session_id}" "${record_path}" strict || {
-      echo "session snapshot recorded the snapshot but could not re-sign the audit chain: ${session_id}" >&2
-      exit 1
-    }
-  fi
+  # Seal a running session too: session fork reads the snapshot only from the
+  # signed prefix of the chain.
+  record_path="${SESSION_META_RECORD_PATH:-$(session_record_path_for "${profile}" "${session_id}")}"
+  sign_session_audit_head_explicit "${profile}" "${session_id}" "${record_path}" strict || {
+    echo "session snapshot recorded the snapshot but could not re-sign the audit chain: ${session_id}" >&2
+    exit 1
+  }
   printf 'session_id=%s\n' "${session_id}"
   printf 'snapshot_id=%s\n' "${snapshot_id}"
   printf 'tree=%s\n' "${tree}"
   printf 'commit=%s\n' "${commit}"
   exit 0
+}
+
+# session_fork_start_child CHILD_ARGS... runs one detached child launch with
+# the fork settings of the current session_fork_main call.
+session_fork_start_child() {
+  build_session_start_env
+  env -i \
+    "${SESSION_START_ENV[@]}" \
+    "WORKCELL_SESSION_FORK_PARENT=${SESSION_FORK_PARENT}" \
+    "WORKCELL_SESSION_FORK_COMMIT=${SESSION_FORK_COMMIT}" \
+    "WORKCELL_SESSION_FORK_TREE=${SESSION_FORK_TREE}" \
+    "WORKCELL_SESSION_FORK_STORE=${SESSION_FORK_STORE}" \
+    "WORKCELL_SESSION_FORK_POLICY_SHA256=${SESSION_FORK_POLICY_SHA256}" \
+    "WORKCELL_SESSION_FORK_HEAD=${SESSION_FORK_HEAD}" \
+    /bin/bash "${BASH_SOURCE[0]}" "$@"
+}
+
+# session_fork_main is dispatch glue. The Go owner (ForkMain) reads the plan
+# from the signed audit chain. This shell takes the snapshot when --snapshot is
+# absent, starts each child, and appends the session_fork audit record.
+session_fork_main() {
+  local plan=""
+  local cli_status=0
+  local session_id=""
+  local snapshot_id=""
+  local count=""
+  local ack=""
+  local child_output=""
+  local child_id=""
+  local record_path=""
+  local status=0
+  local index=0
+  local -a options=()
+  local -a command=()
+  local -a child_args=()
+  local -a children=()
+
+  while [[ $# -gt 0 ]] && [[ "$1" != "--" ]]; do
+    options+=("$1")
+    shift
+  done
+  if [[ $# -gt 0 ]]; then
+    shift
+    command=(-- "$@")
+  fi
+  reject_session_trusted_flags fork "${options[@]+"${options[@]}"}"
+  set +e
+  plan="$(session_run_cli_with_roots session-fork-cli "${options[@]+"${options[@]}"}" \
+    "--signing-dir=${WORKCELL_STATE_ROOT}/signing" "${command[@]+"${command[@]}"}")"
+  cli_status="$?"
+  set -e
+  [[ "${cli_status}" -eq 0 ]] || exit "${cli_status}"
+  session_id="$(shellproto_field "${plan}" session_id)"
+  [[ -n "${session_id}" ]] || exit 0
+  if [[ "$(shellproto_field "${plan}" needs_snapshot)" == "1" ]]; then
+    # Refuse a stale acknowledgement before the snapshot, which persists.
+    ack="$(shellproto_field "${plan}" ack_arbitrary_command)"
+    [[ -z "${ack}" ]] || validate_ack_token "--ack-arbitrary-command" "${ack}"
+    snapshot_id="$(shellproto_field "$(session_snapshot_main --id "${session_id}")" snapshot_id)"
+    [[ -n "${snapshot_id}" ]] || exit 1
+    set +e
+    plan="$(session_run_cli_with_roots session-fork-cli "${options[@]}" --snapshot "${snapshot_id}" \
+      "--signing-dir=${WORKCELL_STATE_ROOT}/signing" "${command[@]+"${command[@]}"}")"
+    cli_status="$?"
+    set -e
+    [[ "${cli_status}" -eq 0 ]] || exit "${cli_status}"
+  fi
+  snapshot_id="$(shellproto_field "${plan}" snapshot_id)"
+  count="$(shellproto_field "${plan}" count)"
+  ack="$(shellproto_field "${plan}" ack_arbitrary_command)"
+  # An explicit --snapshot skips the check before the snapshot, so check here,
+  # before any child starts or any audit record changes.
+  [[ -z "${ack}" ]] || validate_ack_token "--ack-arbitrary-command" "${ack}"
+  SESSION_FORK_PARENT="${session_id}"
+  SESSION_FORK_COMMIT="$(shellproto_field "${plan}" commit)"
+  SESSION_FORK_TREE="$(shellproto_field "${plan}" tree)"
+  SESSION_FORK_STORE="$(session_snapshot_store_root)/$(shellproto_field "${plan}" origin_hash).git"
+  SESSION_FORK_POLICY_SHA256="$(shellproto_field "${plan}" injection_policy_sha256)"
+  SESSION_FORK_HEAD="$(shellproto_field "${plan}" launch_head)"
+  child_args=(
+    --agent "$(shellproto_field "${plan}" agent)"
+    --mode "$(shellproto_field "${plan}" mode)"
+    --target colima
+    --colima-profile "$(shellproto_field "${plan}" profile)"
+    --workspace "$(shellproto_field "${plan}" workspace_origin)"
+    --session-workspace isolated
+  )
+  if [[ -n "$(shellproto_field "${plan}" agent_autonomy)" ]]; then
+    child_args+=(--agent-autonomy "$(shellproto_field "${plan}" agent_autonomy)")
+  fi
+  [[ -n "${SESSION_FORK_POLICY_SHA256}" ]] || child_args+=(--no-default-injection-policy)
+  if [[ "$(shellproto_field "${plan}" container_mutability)" == "readonly" ]]; then
+    child_args+=(--container-mutability readonly)
+  fi
+  child_args+=(
+    --vm-cpu "$(shellproto_field "${plan}" vm_cpu)"
+    --vm-memory "$(shellproto_field "${plan}" vm_memory_gib)"
+    --vm-disk "$(shellproto_field "${plan}" vm_disk_gib)"
+    --container-memory "$(shellproto_field "${plan}" container_memory)"
+  )
+  if [[ "$(shellproto_field "${plan}" container_cpu)" != "unmanaged" ]]; then
+    child_args+=(--container-cpu "$(shellproto_field "${plan}" container_cpu)")
+  fi
+  if [[ -n "${ack}" ]]; then
+    child_args+=(--allow-arbitrary-command "--ack-arbitrary-command=${ack}" "${command[@]}")
+  fi
+
+  for ((index = 0; index < count; index++)); do
+    if ! child_output="$(session_fork_start_child "${child_args[@]}")"; then
+      status=1
+      break
+    fi
+    child_id="$(shellproto_field "${child_output}" session_id)"
+    [[ -n "${child_id}" ]] || {
+      status=1
+      break
+    }
+    children+=("${child_id}")
+  done
+
+  # Name the children first. The bookkeeping below can exit under set -e, and
+  # the operator needs the ids to stop children that already run.
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'snapshot_id=%s\n' "${snapshot_id}"
+  printf 'children=%s\n' "$(csv_join_or_none "${children[@]-}")"
+  load_session_runtime_metadata "${session_id}"
+  append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "session_fork" \
+    "source=host-cli" \
+    "snapshot_id=${snapshot_id}" \
+    "parent=${session_id}" \
+    "children=$(csv_join_or_none "${children[@]-}")" || {
+    echo "session fork started children but could not record the fork: ${session_id}" >&2
+    status=1
+  }
+  record_path="${SESSION_META_RECORD_PATH:-$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")}"
+  sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" strict || {
+    echo "session fork recorded the fork but could not re-sign the audit chain: ${session_id}" >&2
+    status=1
+  }
+  [[ "${status}" -eq 0 ]] || echo "session fork started ${#children[@]} of ${count} children: ${session_id}" >&2
+  exit "${status}"
 }
 
 session_monitor_main() {
@@ -5022,6 +5219,9 @@ session_main() {
       ;;
     snapshot)
       session_snapshot_main "$@"
+      ;;
+    fork)
+      session_fork_main "$@"
       ;;
     diff)
       while [[ $# -gt 0 ]]; do
@@ -9018,6 +9218,16 @@ fi
 cleanup_default_injection_bundles
 resolve_launch_workspace
 prepare_injection_bundle "${AGENT}" "${MODE}"
+if [[ -n "${SESSION_FORK_PARENT}" ]]; then
+  if [[ "${SESSION_DETACHED}" -ne 1 ]] || [[ "$(effective_session_workspace_mode)" != "isolated" ]]; then
+    echo "A session fork child must be a detached isolated session: ${SESSION_FORK_PARENT}" >&2
+    exit 2
+  fi
+  if [[ "${INJECTION_POLICY_SHA256}" != "${SESSION_FORK_POLICY_SHA256}" ]]; then
+    echo "session fork child injection policy does not match the parent launch policy: ${SESSION_FORK_PARENT}" >&2
+    exit 2
+  fi
+fi
 
 IMAGE_TAG="workcell:local"
 PROFILE_MARKER="$(profile_marker_path "${COLIMA_PROFILE}")"

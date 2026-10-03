@@ -386,6 +386,16 @@ evidence = ["tests/scenarios/shared/test-session-commands.sh", "internal/session
 requirements = ["functional.FR-007"]
 target_state = "retain"
 
+[workflows.session_fork]
+title = "Fork a detached session from a signed snapshot"
+support = "supported"
+canonical = "workcell session fork --id SESSION_ID [--snapshot SNAPSHOT_ID] --count N"
+discoverability = ["subcommand-help:session", "manpage"]
+docs = ["man/workcell.1"]
+evidence = ["tests/scenarios/shared/test-session-commands.sh", "internal/sessionctl/fork_test.go"]
+requirements = ["functional.FR-007"]
+target_state = "retain"
+
 [workflows.session_delete]
 title = "Delete durable detached session"
 support = "supported"

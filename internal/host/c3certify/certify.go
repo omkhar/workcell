@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ type certifier struct {
 	options                                        Options
 	deps                                           dependencies
 	workcell, docker, colima, git                  string
-	stateRoot, colimaRoot                          string
+	stateRoot, colimaRoot, snapshotStore           string
 	scratchRoot, launchRoot, dockerConfig, profile string
 	baseEnv                                        []string
 	sessions                                       []*evidence
@@ -128,6 +129,13 @@ func (c *certifier) execute(ctx context.Context, stdout io.Writer) (runErr error
 		".workcell-c3-"+second.record.SessionID, "session-b-only"); err != nil {
 		return err
 	}
+	children, err := c.fork(ctx, first.record)
+	if err != nil {
+		return err
+	}
+	if err := c.validateFork(ctx, first.record, second.record, children, before.workloadCommit); err != nil {
+		return err
+	}
 	if _, err := c.workcellCommand(ctx, "session", "stop", "--id", first.record.SessionID); err != nil {
 		return fmt.Errorf("certify-c3: stop session A: %w", err)
 	}
@@ -147,15 +155,23 @@ func (c *certifier) execute(ctx context.Context, stdout io.Writer) (runErr error
 	if before != after {
 		return errors.New("certify-c3: recorded control-plane or workload identity changed during certification")
 	}
-	return writeReport(stdout, before, first, second, c.deps.now())
+	return writeReport(stdout, before, first, second, children, c.deps.now())
 }
-func writeReport(stdout io.Writer, before snapshot, first, second *evidence, now time.Time) error {
-	const format = "# C3 strict-target isolation certification\n\n- date (UTC): %s\n- Workcell control-plane commit: %s\n- Workcell control-plane tree: %s\n- Workcell launcher SHA-256: %s\n- Docker client SHA-256: %s\n- workload commit: %s\n- target: local_vm/colima/strict\n- profile: %s\n- session A: %s (%s, %s, %s)\n- session B: %s (%s, %s, %s)\n- sessions overlapped: true\n- containers distinct: true\n- worktrees distinct: true\n- branches distinct: true\n- marker visible in session A: true\n- marker absent from session B: true\n- marker visible in session B: true\n- marker absent from session A: true\n- container workspaces matched recorded host worktrees: true\n- session A stopped independently: true\n- session B remained running after A stopped: true\n- session records, containers, and isolated worktrees removed: true\n- certifier-owned Colima profile, target state, and runtime image cache removed: true\n- keepalive scope: acknowledged arbitrary command; provider interaction is not certified\n"
+func writeReport(stdout io.Writer, before snapshot, first, second *evidence, children []*evidence, now time.Time) error {
+	const format = "# C3 strict-target isolation certification\n\n- date (UTC): %s\n- Workcell control-plane commit: %s\n- Workcell control-plane tree: %s\n- Workcell launcher SHA-256: %s\n- Docker client SHA-256: %s\n- workload commit: %s\n- target: local_vm/colima/strict\n- profile: %s\n- session A: %s (%s, %s, %s)\n- session B: %s (%s, %s, %s)\n- sessions overlapped: true\n- containers distinct: true\n- worktrees distinct: true\n- branches distinct: true\n- marker visible in session A: true\n- marker absent from session B: true\n- marker visible in session B: true\n- marker absent from session A: true\n- fork children of session A: %s (signed snapshot of A; A's marker uncommitted in each child and its container; B's marker absent; distinct containers, worktrees, and branches; one parallel group)\n- container workspaces matched recorded host worktrees: true\n- session A stopped independently: true\n- session B remained running after A stopped: true\n- session records, containers, and isolated worktrees removed: true\n- certifier-owned Colima profile, target state, and runtime image cache removed: true\n- keepalive scope: acknowledged arbitrary command; provider interaction is not certified\n"
 	_, err := fmt.Fprintf(stdout, format, now.UTC().Format(time.RFC3339), before.controlCommit, before.controlTree,
 		before.launcherHash, before.dockerHash, before.workloadCommit, first.record.Profile,
 		first.record.SessionID, first.record.ContainerName, first.record.WorktreePath, first.record.GitBranch,
-		second.record.SessionID, second.record.ContainerName, second.record.WorktreePath, second.record.GitBranch)
+		second.record.SessionID, second.record.ContainerName, second.record.WorktreePath, second.record.GitBranch,
+		forkChildIDs(children))
 	return err
+}
+func forkChildIDs(children []*evidence) string {
+	ids := make([]string, 0, len(children))
+	for _, child := range children {
+		ids = append(ids, child.record.SessionID)
+	}
+	return strings.Join(ids, ", ")
 }
 func newCertifier(options Options, deps dependencies) (_ *certifier, resultErr error) {
 	root, rootErr := canonicalDirectory(options.Root, false)
@@ -222,6 +238,14 @@ func newCertifier(options Options, deps dependencies) (_ *certifier, resultErr e
 	if err := requireOwnedPathsAbsent(stateRoot, append(cachePaths, filepath.Join(stateRoot, "targets", "local_vm", "colima", profile))...); err != nil {
 		return nil, err
 	}
+	// session fork stores the snapshot of session A in the store for the owned
+	// workload origin; cleanup removes it.
+	launchRoot := filepath.Join(scratchRoot, "repo")
+	originHash := sha256.Sum256([]byte(launchRoot))
+	snapshotStore := filepath.Join(home, "Library", "Caches", "colima", "workcell-snapshots", hex.EncodeToString(originHash[:])+".git")
+	if err := requireOwnedPathsAbsent(home, snapshotStore); err != nil {
+		return nil, err
+	}
 	env := []string{
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin", "HOME=" + home,
 		"TMPDIR=" + os.TempDir(), "LC_ALL=C", "LANG=C", "GIT_CONFIG_GLOBAL=/dev/null",
@@ -229,8 +253,8 @@ func newCertifier(options Options, deps dependencies) (_ *certifier, resultErr e
 	}
 	return &certifier{
 		options: options, deps: deps, workcell: workcell, docker: docker, colima: colima, git: git,
-		stateRoot: stateRoot, colimaRoot: colimaRoot, scratchRoot: scratchRoot,
-		launchRoot: filepath.Join(scratchRoot, "repo"), dockerConfig: dockerConfig, profile: profile, baseEnv: env,
+		stateRoot: stateRoot, colimaRoot: colimaRoot, snapshotStore: snapshotStore, scratchRoot: scratchRoot,
+		launchRoot: launchRoot, dockerConfig: dockerConfig, profile: profile, baseEnv: env,
 	}, nil
 }
 func canonicalDirectory(path string, create bool) (string, error) {
@@ -327,6 +351,56 @@ func (c *certifier) start(ctx context.Context) (*evidence, error) {
 		return nil, err
 	}
 	return item, nil
+}
+
+// fork forks session A into two children that run the keepalive command.
+func (c *certifier) fork(ctx context.Context, parent sessions.SessionRecord) ([]*evidence, error) {
+	ack := c.deps.now().UTC().Format("2006-01-02")
+	output, err := c.workcellCommand(ctx, "session", "fork", "--id", parent.SessionID, "--count", "2",
+		"--allow-arbitrary-command", "--ack-arbitrary-command="+ack, "--", "/bin/sh", "-lc", keepalive)
+	settleCtx, cancel := context.WithTimeout(context.Background(), c.options.CommandTimeout)
+	defer cancel()
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("certify-c3: fork session A: %w", err), c.adoptOwnedRecords(settleCtx))
+	}
+	ids, err := parseForkChildren(output, 2)
+	if err != nil {
+		return nil, errors.Join(err, c.adoptOwnedRecords(settleCtx))
+	}
+	children := make([]*evidence, 0, len(ids))
+	for _, id := range ids {
+		item := &evidence{record: sessions.SessionRecord{SessionID: id}}
+		c.sessions = append(c.sessions, item)
+		record, recordPath, err := c.waitRunning(settleCtx, id)
+		if err != nil {
+			return nil, err
+		}
+		item.record, item.recordPath = record, recordPath
+		if err := c.requireRunning(ctx, record); err != nil {
+			return nil, err
+		}
+		children = append(children, item)
+	}
+	return children, nil
+}
+func parseForkChildren(output []byte, want int) ([]string, error) {
+	for _, line := range strings.Split(string(output), "\n") {
+		value, ok := strings.CutPrefix(line, "children=")
+		if !ok {
+			continue
+		}
+		ids := strings.Split(value, ",")
+		if len(ids) != want {
+			break
+		}
+		for _, id := range ids {
+			if !safeID.MatchString(id) {
+				return nil, errors.New("certify-c3: session fork returned an invalid child session id")
+			}
+		}
+		return ids, nil
+	}
+	return nil, fmt.Errorf("certify-c3: session fork did not report %d children", want)
 }
 func (c *certifier) waitRunning(ctx context.Context, id string) (sessions.SessionRecord, string, error) {
 	for attempt := 0; attempt < c.options.PollAttempts; attempt++ {
@@ -455,6 +529,20 @@ func (c *certifier) validateFork(ctx context.Context, parent, sibling sessions.S
 	}
 	if err := requireDistinct(all...); err != nil {
 		return err
+	}
+	// Every child holds the same parent marker, so that marker cannot tell a
+	// child container from a peer. Each child writes a marker of its own and
+	// proves it in its recorded worktree and absent from every peer.
+	for _, child := range children {
+		marker := ".workcell-c3-fork-" + child.record.SessionID
+		for _, peer := range all {
+			if peer.SessionID == child.record.SessionID {
+				continue
+			}
+			if err := c.proveMarker(ctx, child.record, peer, marker, "fork-child-only"); err != nil {
+				return err
+			}
+		}
 	}
 	groups := sessions.GroupParallelSessions(all)
 	if len(groups) != 1 || groups[0].OriginKey != c.launchRoot || len(groups[0].Members) != len(all) {
@@ -646,6 +734,9 @@ func (c *certifier) cleanup(ctx context.Context) error {
 				}
 			}
 		}
+		if err := removeOwnedPath(filepath.Dir(filepath.Dir(c.snapshotStore)), c.snapshotStore); err != nil {
+			problems = append(problems, err)
+		}
 	}
 	if len(problems) == 0 {
 		if err := requirePlainDirectoryChain(c.scratchRoot, c.scratchRoot); err != nil {
@@ -769,13 +860,17 @@ func removeOwnedPath(root, path string) error {
 	if err := requirePlainDirectoryChain(root, filepath.Dir(path)); err != nil {
 		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
 	}
-	if err := os.RemoveAll(path); err != nil {
-		return err
+	// Open every ancestor from / without following a link, then remove relative
+	// to that descriptor. A swap after the chain check cannot move the delete.
+	parent, leaf, err := rootio.OpenParentDirectoryNoFollow(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("certify-c3: owned profile residue remains: %s", path)
+	if err != nil {
+		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
 	}
-	return nil
+	defer func() { _ = parent.Close() }()
+	return rootio.RemoveAllAtNoFollow(parent, filepath.Base(leaf))
 }
 func colimaProfilePaths(root, profile string) []string {
 	return []string{
