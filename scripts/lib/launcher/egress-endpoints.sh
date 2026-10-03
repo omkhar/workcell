@@ -266,15 +266,22 @@ stop_egress_proxy() {
 
 # stop_orphaned_egress_proxy removes the sidecar and the network of a session
 # whose launcher or monitor is gone. The names derive from the session id, so
-# session stop and session delete need no record field. It does nothing when the
-# session has no sidecar.
+# session stop and session delete need no record field. It disconnects the
+# stopped agent container first, because Docker refuses to remove a network
+# that still holds an endpoint. It does nothing when the session has no
+# sidecar, and it fails when the sidecar lookup fails: a failed lookup is not
+# an empty one.
 stop_orphaned_egress_proxy() {
   local profile="$1"
   local session_id="$2"
+  local agent_container="${3:-}"
   local names=""
 
-  names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 0
+  names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
   grep -qx "wc-egress-${session_id}" <<<"${names}" || return 0
+  if [[ -n "${agent_container}" ]]; then
+    run_profile_docker_command "${profile}" network disconnect -f "wc-${session_id}" "${agent_container}" >/dev/null 2>&1 || true
+  fi
   (
     SESSION_ID="${session_id}"
     EGRESS_PROXY_CONTAINER="wc-egress-${session_id}"

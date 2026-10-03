@@ -162,17 +162,22 @@ start_egress_proxy sha256:abc
 }
 
 // TestStopOrphanedEgressProxy proves that a session with a sidecar gets the
-// sidecar and network removed from the session id alone, and a session with
-// none gets no docker call beyond the lookup.
+// agent disconnected and the sidecar and network removed from the session id
+// alone, a session with none gets no docker call beyond the lookup, and a
+// failed lookup fails instead of passing as empty.
 func TestStopOrphanedEgressProxy(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ name, listed, want string }{
-		{"sidecar present", "wc-egress-S1", "ps\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\n"},
-		{"other sidecar only", "wc-egress-S10", "ps\n"},
-		{"none", "", "ps\n"},
+	for _, tc := range []struct {
+		name, listed, psFails, want string
+		wantFail                    bool
+	}{
+		{"sidecar present", "wc-egress-S1", "", "ps\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\n", false},
+		{"other sidecar only", "wc-egress-S10", "", "ps\n", false},
+		{"none", "", "", "ps\n", false},
+		{"lookup fails", "wc-egress-S1", "1", "ps\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -185,18 +190,24 @@ go_hostutil() { :; }
 run_profile_docker_command() {
   shift
   case "$1" in
-    ps) printf 'ps\n' >>"$CALLS"; printf '%s\n' "$LISTED" ;;
+    ps) printf 'ps\n' >>"$CALLS"; [[ -z "$PS_FAILS" ]] || return 1; printf '%s\n' "$LISTED" ;;
     logs) printf 'logs %s\n' "$2" >>"$CALLS" ;;
     rm) printf 'rm\n' >>"$CALLS" ;;
-    network) printf 'network rm %s\n' "$3" >>"$CALLS" ;;
+    network)
+      case "$2" in
+        disconnect) printf 'disconnect %s %s\n' "$4" "$5" >>"$CALLS" ;;
+        rm) printf 'network rm %s\n' "$3" >>"$CALLS" ;;
+      esac
+      ;;
   esac
 }
-stop_orphaned_egress_proxy prof S1
+stop_orphaned_egress_proxy prof S1 agent1
 `
 			cmd := exec.Command("bash", "-c", script)
-			cmd.Env = append(os.Environ(), "LIB="+lib, "DIR="+dir, "CALLS="+calls, "LISTED="+tc.listed, "TMPDIR="+dir)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("stop_orphaned_egress_proxy failed: %v\n%s", err, out)
+			cmd.Env = append(os.Environ(), "LIB="+lib, "DIR="+dir, "CALLS="+calls, "LISTED="+tc.listed, "PS_FAILS="+tc.psFails, "TMPDIR="+dir)
+			out, err := cmd.CombinedOutput()
+			if failed := err != nil; failed != tc.wantFail {
+				t.Fatalf("failed = %v, want %v\n%s", failed, tc.wantFail, out)
 			}
 			got, _ := os.ReadFile(calls)
 			if string(got) != tc.want {

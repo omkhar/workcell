@@ -2299,6 +2299,9 @@ bash -lc '
       inspect)
         printf "stopped\n"
         ;;
+      ps)
+        return 0
+        ;;
       *)
         return 1
         ;;
@@ -2382,6 +2385,9 @@ stop_dead_monitor_output="$(
         stop)
           return 0
           ;;
+        ps)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2401,6 +2407,7 @@ grep -q '^marker=cleared$' <<<"${stop_dead_monitor_output}"
 grep -q '^audit|wcl-detached-fixture|detached-fixture|stop-request|' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 grep -q '^audit|wcl-detached-fixture|detached-fixture|exit|source=host-stop-fallback' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 grep -q '^record|.*/detached-fixture\.json|status=exited|live_status=stopped|observed_at=' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
+grep -q '^transport|wcl-detached-fixture|ps -a --filter name=^wc-egress-detached-fixture\$ --format {{.Names}}$' "${SESSION_STOP_DEAD_MONITOR_RECORD}"
 
 SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped.record"
 SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
@@ -2461,6 +2468,9 @@ stop_already_stopped_output="$(
       case "$1" in
         inspect)
           printf "stopped\n"
+          ;;
+        ps)
+          return 0
           ;;
         *)
           return 1
@@ -2545,6 +2555,9 @@ stop_already_stopped_running_output="$(
       case "$1" in
         inspect)
           printf "stopped\n"
+          ;;
+        ps)
+          return 0
           ;;
         *)
           return 1
@@ -2953,7 +2966,7 @@ EOF_JSON
     run_profile_docker_command() {
       local profile="$1"; shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; *) return 1 ;; esac
+      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; ps) return 0 ;; *) return 1 ;; esac
     }
     session_delete_main --id detached-fixture
     test ! -e "${RECORD_PATH}"
@@ -3274,6 +3287,9 @@ EOF_JSON
           ;;
         rm)
           printf "removed\n" >"${CONTAINER_STATE_FILE}"
+          ;;
+        ps)
+          return 0
           ;;
         *)
           return 1

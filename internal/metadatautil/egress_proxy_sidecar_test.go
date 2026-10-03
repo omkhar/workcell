@@ -26,6 +26,21 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 	end := strings.Index(string(script)[start:], ">/dev/null || return 1\n")
 	anchor := string(script)[start : start+end+len(">/dev/null || return 1")]
 	RequireRejectsAllEvasions(t, string(script), anchor, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
+	network := `  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1`
+	RequireRejectsAllEvasions(t, string(script), network, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
+	for name, replacement := range map[string]string{
+		"non-internal network": strings.Replace(network, " --internal", "", 1),
+		"echoed internal":      `  echo "network create --internal"` + "\n" + strings.Replace(network, " --internal", "", 1),
+		"second network":       network + "\n" + strings.Replace(network, " --internal", "", 1),
+		"other network":        strings.Replace(network, "${EGRESS_PROXY_NETWORK}", "bridge", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(string(script), network, replacement, 1)
+			if err := metadatautil.ValidateEgressProxySidecar(mutated); err == nil {
+				t.Fatalf("validator accepted %s", name)
+			}
+		})
+	}
 
 	for name, mutate := range map[string]func(string) string{
 		"dropped read-only": func(a string) string { return strings.Replace(a, "    --read-only \\\n", "", 1) },

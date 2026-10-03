@@ -4175,7 +4175,10 @@ session_stop_main() {
   fi
   if [[ "${container_state}" != "running" ]]; then
     if [[ "${container_state}" == "stopped" ]] && ! session_monitor_pid_is_live; then
-      stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}"
+      stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+        echo "session stop could not confirm the egress proxy cleanup: ${session_id}" >&2
+        exit 1
+      }
       session_record_stop_request_marker || exit 1
       append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "stop-request" \
         "source=host-cli" \
@@ -4271,7 +4274,10 @@ session_stop_main() {
       ;;
   esac
   if ! session_monitor_pid_is_live; then
-    stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}"
+    stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+      echo "session stop could not confirm the egress proxy cleanup: ${session_id}" >&2
+      exit 1
+    }
     case "${SESSION_META_LIVE_STATUS:-${SESSION_META_STATUS}}" in
       stopped | exited | failed | aborted) ;;
       *)
@@ -4485,7 +4491,10 @@ session_delete_main() {
   # A lost launcher or monitor can leave the egress proxy sidecar behind. Remove
   # it before the artifact plan, so the deny log it saves joins the plan.
   if [[ "${record_only}" -eq 0 ]] && [[ "${dry_run}" -eq 0 ]] && [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
-    stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}"
+    stop_orphaned_egress_proxy "${SESSION_META_PROFILE}" "${session_id}" "${SESSION_META_CONTAINER_NAME}" || {
+      echo "session delete could not confirm the egress proxy cleanup: ${session_id}" >&2
+      exit 1
+    }
   fi
   if session_audit_dir="$(session_delete_resolve_dir_artifact "session_audit_dir" "${SESSION_META_SESSION_AUDIT_DIR}")"; then
     if [[ -e "${session_audit_dir}" ]]; then

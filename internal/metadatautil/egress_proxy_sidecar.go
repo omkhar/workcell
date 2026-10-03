@@ -32,12 +32,17 @@ var egressProxySidecarCreate = []string{
 }
 
 // ValidateEgressProxySidecar requires start_egress_proxy in the launcher to
-// run one `docker create` whose argument vector equals the reviewed vector. The
+// create the internal network once and run one `docker create` whose argument
+// vector equals the reviewed vector. The
 // shared shell-invocation parser reads the function body, so a comment, a
 // heredoc body, a quoted decoy or an unreached branch does not count as the
 // command. The body is cut out first because the parser skips function bodies.
 func ValidateEgressProxySidecar(script string) error {
 	body := functionBody(script, "start_egress_proxy")
+	networks := ShellInvocations(body, `run_workcell_docker_client_command ${HOST_DOCKER_BIN} network create`)
+	if len(networks) != 1 || !slices.Equal(networks[0].Args, []string{"--internal", "${EGRESS_PROXY_NETWORK}", ">/dev/null"}) {
+		return errors.New("Expected the egress proxy sidecar network create command to equal the reviewed internal network command")
+	}
 	creates := ShellInvocations(body, `run_workcell_docker_client_command ${HOST_DOCKER_BIN} create`)
 	if len(creates) != 1 || !slices.Equal(creates[0].Args, egressProxySidecarCreate) {
 		return errors.New("Expected the egress proxy sidecar create command to equal the reviewed hardened command")

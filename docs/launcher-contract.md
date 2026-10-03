@@ -342,8 +342,10 @@ after the agent exits.
 
 `stop_orphaned_egress_proxy` removes the sidecar and the network of a session
 whose launcher and monitor are gone. It derives both names from the session ID.
+It first disconnects the stopped agent container, so the network can go.
 `session stop` calls it when the monitor is dead, and `session delete` calls it
 before it plans the artifacts. It does nothing for a session without a sidecar.
+A failed sidecar lookup fails the command.
 
 ## Change Rule
 
