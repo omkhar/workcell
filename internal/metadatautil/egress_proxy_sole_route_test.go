@@ -24,6 +24,7 @@ func TestValidateEgressProxySoleRouteRejectsEvasions(t *testing.T) {
 	}
 	network := `  EGRESS_PROXY_NETWORK="wc-${SESSION_ID}"`
 	route := `  RUNTIME_NETWORK_ARGS=(--network "${EGRESS_PROXY_NETWORK}" --dns 127.0.0.1)`
+	alias := `    RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")`
 	RequireRejectsAllEvasions(t, string(script), network, "egress proxy sole route", metadatautil.ValidateEgressProxySoleRoute)
 	RequireRejectsAllEvasions(t, string(script), route, "egress proxy sole route", metadatautil.ValidateEgressProxySoleRoute)
 
@@ -35,6 +36,12 @@ func TestValidateEgressProxySoleRouteRejectsEvasions(t *testing.T) {
 		"resolver":     func(s string) string { return strings.Replace(s, "--dns 127.0.0.1", "--dns 8.8.8.8", 1) },
 		"extra route": func(s string) string {
 			return strings.Replace(s, route, route+"\n  RUNTIME_NETWORK_ARGS=(--network bridge)", 1)
+		},
+		"appended network": func(s string) string {
+			return strings.Replace(s, route, route+"\n  RUNTIME_NETWORK_ARGS+=(--network bridge)", 1)
+		},
+		"appended in loop": func(s string) string {
+			return strings.Replace(s, alias, "    RUNTIME_NETWORK_ARGS+=(--network bridge)\n"+alias, 1)
 		},
 		"shared network": func(s string) string { return strings.Replace(s, network, `  EGRESS_PROXY_NETWORK="bridge"`, 1) },
 		"echoed decoy": func(s string) string {

@@ -94,6 +94,7 @@ run_workcell_docker_client_command() {
   case "$1 $2" in
     "network inspect") printf '10.9.0.0/24 \n' ;;
     "inspect -f") printf '10.9.0.2\n' ;;
+    "exec side") printf '  0: 0200090A:01BB 00000000:0000 0A 00000000:00000000\n' ;;
   esac
 }
 start_egress_proxy sha256:abc
@@ -108,5 +109,49 @@ printf '%s\n' "${DOCKER_RUN[@]}"
 	want := "docker\nrun\n--add-host\na.example:10.9.0.2\n-e\nX=y:egress-proxy-ip\nimg\nprompt:egress-proxy-ip\n--add-host\nb.example:egress-proxy-ip\n"
 	if string(out) != want {
 		t.Fatalf("DOCKER_RUN = %q, want %q", out, want)
+	}
+}
+
+// TestStartEgressProxyWaitsForListeners proves that start_egress_proxy fails
+// the launch when the sidecar runs but does not listen on an allowlisted port,
+// and passes when every port listens.
+func TestStartEgressProxyWaitsForListeners(t *testing.T) {
+	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, sockets string
+		wantFail      bool
+	}{
+		{"listening", "  0: 0200090A:01BB 00000000:0000 0A 0", false},
+		{"other port", "  0: 0200090A:0050 00000000:0000 0A 0", true},
+		{"not listening", "  0: 0200090A:01BB 0300090A:9C40 01 0", true},
+		{"no sockets", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			script := `
+set -euo pipefail
+source "$LIB"
+sleep() { :; }
+EGRESS_PROXY_NETWORK=net EGRESS_PROXY_CONTAINER=side ALLOW_ENDPOINTS="a.example:443" HOST_DOCKER_BIN=docker IMAGE_TAG=img
+DOCKER_RUN=(docker run img)
+run_workcell_docker_client_command() {
+  shift
+  case "$1 $2" in
+    "network inspect") printf '10.9.0.0/24 \n' ;;
+    "inspect -f") printf '10.9.0.2\n' ;;
+    "exec side") printf '%s\n' "$SOCKETS" ;;
+  esac
+}
+start_egress_proxy sha256:abc
+`
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Env = append(os.Environ(), "LIB="+lib, "SOCKETS="+tc.sockets)
+			out, err := cmd.CombinedOutput()
+			if failed := err != nil; failed != tc.wantFail {
+				t.Fatalf("failed = %v, want %v\n%s", failed, tc.wantFail, out)
+			}
+		})
 	}
 }

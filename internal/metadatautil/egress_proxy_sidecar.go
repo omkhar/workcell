@@ -47,7 +47,10 @@ func ValidateEgressProxySidecar(script string) error {
 
 // ValidateEgressProxySoleRoute requires egress_proxy_agent_network_args to
 // select the per-session network with no resolver, once. The parser skips the
-// loop body that adds the host aliases, which the dry-run scenario proves.
+// loop body that adds the host aliases, so the array name may appear only in the
+// assignment and in the one alias line: an appended `+=(--network ...)`, a
+// second assignment or a decoy mention fails closed. The dry-run scenario proves
+// the aliases at run time.
 func ValidateEgressProxySoleRoute(script string) error {
 	const fail = "Expected the egress proxy sole route to put the agent on the per-session network with no resolver"
 	body := functionBody(script, "egress_proxy_agent_network_args")
@@ -55,7 +58,8 @@ func ValidateEgressProxySoleRoute(script string) error {
 	routes := ShellInvocations(body, `RUNTIME_NETWORK_ARGS=(--network`)
 	if len(networks) != 1 || len(networks[0].Args) != 0 ||
 		len(routes) != 1 || !slices.Equal(routes[0].Args, []string{"${EGRESS_PROXY_NETWORK}", "--dns", "127.0.0.1)"}) ||
-		strings.Count(body, "RUNTIME_NETWORK_ARGS=(") != 1 {
+		strings.Count(body, "RUNTIME_NETWORK_ARGS") != 2 ||
+		strings.Count(body, `RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")`) != 1 {
 		return errors.New(fail)
 	}
 	return nil

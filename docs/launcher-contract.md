@@ -322,7 +322,7 @@ gets `--network wc-<session> --dns 127.0.0.1`, and each host maps to the token
 sidecar `wc-egress-<session>` from the verified image ID, and connects the
 sidecar to the bridge network. The sidecar listens only on its address in the
 subnet of `wc-<session>`, so other containers on the bridge cannot use the
-session allowlist. Then it replaces the `egress-proxy-ip` token in the agent
+session allowlist. Then it waits until the sidecar listens on every allowlisted port. Then it replaces the `egress-proxy-ip` token in the agent
 command with the sidecar address. A failure stops the launch.
 
 The sidecar log is bounded: `json-file` with `max-size=10m`, so a flood of denied

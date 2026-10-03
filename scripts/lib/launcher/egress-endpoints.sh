@@ -169,6 +169,10 @@ start_egress_proxy() {
   local subnet=""
   local ip=""
   local i=""
+  local endpoint=""
+  local listening=""
+  local ready=0
+  local port=""
 
   run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1
   subnet="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network inspect \
@@ -199,6 +203,27 @@ start_egress_proxy() {
     "${EGRESS_PROXY_CONTAINER}")" || return 1
   if [[ ! "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     echo "workcell: the egress proxy sidecar did not start on ${EGRESS_PROXY_NETWORK}." >&2
+    run_workcell_docker_client_command "${HOST_DOCKER_BIN}" logs "${EGRESS_PROXY_CONTAINER}" >&2 || true
+    return 1
+  fi
+  # A running container is not a listening proxy. Read its listening sockets
+  # until every allowlisted port is bound, so the agent never meets a refusal.
+  # The read opens no connection, so it adds no line to the deny log.
+  for _ in {1..40}; do
+    listening="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" exec "${EGRESS_PROXY_CONTAINER}" cat /proc/net/tcp 2>/dev/null)" || listening=""
+    ready=1
+    for endpoint in ${ALLOW_ENDPOINTS}; do
+      printf -v port ':%04X [0-9A-F]{8}:[0-9A-F]{4} 0A ' "${endpoint##*:}"
+      grep -Eqi -- "${port}" <<<"${listening}" || {
+        ready=0
+        break
+      }
+    done
+    [[ "${ready}" -eq 1 ]] && break
+    sleep 0.25
+  done
+  if [[ "${ready}" -ne 1 ]]; then
+    echo "workcell: the egress proxy sidecar is not listening on every allowlisted port." >&2
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" logs "${EGRESS_PROXY_CONTAINER}" >&2 || true
     return 1
   fi
