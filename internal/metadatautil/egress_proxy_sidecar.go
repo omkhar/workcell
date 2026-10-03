@@ -13,16 +13,16 @@ import (
 	"strings"
 )
 
-// egressProxyGuardedDigest is the SHA-256 of the reviewed bodies of
-// start_egress_proxy and egress_proxy_agent_network_args, joined by the
-// separator that guardedFunctionsDigest uses. The parser rules below name the
+// egressProxyGuardedDigest is the SHA-256 of the reviewed definitions of
+// start_egress_proxy and egress_proxy_agent_network_args, header line and
+// closing brace included, joined by the separator that guardedFunctionsDigest uses. The parser rules below name the
 // rule that failed, but a static check cannot prove that nothing else runs:
 // bash assembles commands across quotes, loops and later definitions, and every
 // spelling needs its own rule. The digest closes the class, as it does for the
 // Colima egress script. Any edit of either body, in any spelling, fails until a
 // reviewer regenerates it. The dry-run and Colima smoke scenarios then check
 // the behavior of the reviewed functions.
-const egressProxyGuardedDigest = "80c3a124b1cac909f0dccd6f92a849ed2d5a8a02b8a5cd558473dae14045a0d4"
+const egressProxyGuardedDigest = "e17b4a4ca3eb718af1640b1dd339deeb810b5096b48d0535fefe523ffdfc0956"
 
 var egressProxyGuardedFunctions = []string{"start_egress_proxy", "egress_proxy_agent_network_args"}
 
@@ -30,7 +30,7 @@ var egressProxyGuardedFunctions = []string{"start_egress_proxy", "egress_proxy_a
 func guardedFunctionsDigest(script string) string {
 	var bodies []string
 	for _, name := range egressProxyGuardedFunctions {
-		bodies = append(bodies, functionBody(script, name))
+		bodies = append(bodies, strings.Join(functionDefinition(script, name), "\n"))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(bodies, "\n--\n")))
 	return hex.EncodeToString(sum[:])
@@ -113,21 +113,35 @@ func ValidateEgressProxySoleRoute(script string) error {
 	return checkGuardedFunctions(script, "egress proxy sole route")
 }
 
-// functionBody returns the lines between the `name()` header and the closing
-// brace at the start of a line, or "" when the function is absent.
-func functionBody(script, name string) string {
-	var body []string
+// functionDefinition returns the lines of the function from the `name()` header
+// through the closing brace at the start of a line, both included, or "" when
+// the function is absent. The header line is part of the definition: a command
+// after the opening brace runs with the function.
+func functionDefinition(script, name string) []string {
+	var lines []string
 	inBlock := false
 	for line := range strings.Lines(script) {
 		line = strings.TrimSuffix(line, "\n")
-		switch {
-		case !inBlock:
-			inBlock = strings.HasPrefix(line, name+"()")
-		case strings.HasPrefix(line, "}"):
-			return strings.Join(body, "\n")
-		default:
-			body = append(body, line)
+		if !inBlock {
+			if !strings.HasPrefix(line, name+"()") {
+				continue
+			}
+			inBlock = true
+		}
+		lines = append(lines, line)
+		if len(lines) > 1 && strings.HasPrefix(line, "}") {
+			break
 		}
 	}
-	return strings.Join(body, "\n")
+	return lines
+}
+
+// functionBody returns the lines between the header and the closing brace, for
+// the parser, which skips a function body it meets as a definition.
+func functionBody(script, name string) string {
+	lines := functionDefinition(script, name)
+	if len(lines) < 2 {
+		return ""
+	}
+	return strings.Join(lines[1:len(lines)-1], "\n")
 }

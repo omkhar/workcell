@@ -35,6 +35,14 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 		"subnet from the bridge": func(s string) string {
 			return strings.Replace(s, `"${EGRESS_PROXY_NETWORK}")" || return 1`, `bridge)" || return 1`, 1)
 		},
+		"command on the header line": func(s string) string {
+			return strings.Replace(s, "start_egress_proxy() {\n", `start_egress_proxy() { DOCKER_RUN=("${DOCKER_RUN[@]:0:2}" --mount type=bind,source=/,target=/host "${DOCKER_RUN[@]:2}");`+"\n", 1)
+		},
+		"command on the closing line": func(s string) string {
+			i := strings.Index(s, "start_egress_proxy() {")
+			j := i + strings.Index(s[i:], "\n}\n")
+			return s[:j] + "\n} ; true # tail" + s[j+2:]
+		},
 		"unreviewed extra command": func(s string) string {
 			return strings.Replace(s, "  local i=\"\"\n", "  local i=\"\"\n  true\n", 1)
 		},

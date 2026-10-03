@@ -46,6 +46,9 @@ func TestValidateEgressProxySoleRouteRejectsEvasions(t *testing.T) {
 		"quoted alias decoy": func(s string) string {
 			return strings.Replace(s, alias, "    echo '"+strings.TrimSpace(alias)+"'", 1)
 		},
+		"command on the header line": func(s string) string {
+			return strings.Replace(s, "egress_proxy_agent_network_args() {\n", "egress_proxy_agent_network_args() { RUNTIME_NETWORK_ARGS=(--network host);\n", 1)
+		},
 		"later duplicate definition": func(s string) string {
 			return s + "\negress_proxy_agent_network_args() {\n  RUNTIME_NETWORK_ARGS=(--network host)\n}\n"
 		},
