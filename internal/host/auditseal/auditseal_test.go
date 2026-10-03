@@ -723,3 +723,68 @@ func TestVerifySessionSealRejectsAppendedNULFoldedRecord(t *testing.T) {
 		})
 	}
 }
+
+// A running session can append records after its last seal. The sealed prefix
+// still verifies and the later record is not returned; the full-head check
+// fails on the same log (control).
+func TestSealedSessionRecordsReturnsSignedPrefixOnly(t *testing.T) {
+	tmp, signingDir, logPath, _, seal := signedGenuine(t)
+	grown := append(genuineLog(t), record{session: "sess-A", args: []string{"event=session_send"}})
+	writeLog(t, tmp, buildLog(t, grown))
+	if verifyA(signingDir, logPath, seal) == nil {
+		t.Fatal("control: the full-head check must fail after an unsigned append")
+	}
+	records, err := SealedSessionRecords(signingDir, logPath, "colima", "sess-A", seal)
+	if err != nil {
+		t.Fatalf("SealedSessionRecords: %v", err)
+	}
+	var events []string
+	for _, fields := range records {
+		for _, f := range fields {
+			if f.Key == "event" {
+				events = append(events, f.Value)
+			}
+		}
+	}
+	if got := strings.Join(events, ","); got != "launch,assurance_change,exit" {
+		t.Fatalf("sealed events = %q", got)
+	}
+}
+
+func TestSealedSessionRecordsFailsOnTamperBeforeHead(t *testing.T) {
+	tmp, signingDir, logPath, lines, seal := signedGenuine(t)
+	tampered := append([]string{}, lines...)
+	tampered[2] = strings.Replace(tampered[2], "final=lower", "final=xower", 1)
+	writeLog(t, tmp, tampered)
+	if _, err := SealedSessionRecords(signingDir, logPath, "colima", "sess-A", seal); err == nil {
+		t.Fatal("a tampered record before the sealed head must fail")
+	}
+}
+
+func TestSealedSessionRecordsFailsOnForgedHead(t *testing.T) {
+	_, signingDir, logPath, _, seal := signedGenuine(t)
+	seal.HeadDigest = strings.Repeat("0", len(seal.HeadDigest))
+	if _, err := SealedSessionRecords(signingDir, logPath, "colima", "sess-A", seal); err == nil {
+		t.Fatal("a seal whose signature does not cover its head must fail")
+	}
+}
+
+// A session record that sits before the chain root carries no digest. It must
+// not come back as part of the signed prefix (control: the plain head check
+// still verifies the same log).
+func TestSealedSessionRecordsRejectsUnsignedLegacyRecord(t *testing.T) {
+	tmp := t.TempDir()
+	signingDir := filepath.Join(tmp, "signing")
+	lines := append([]string{legacyLine("2026-07-07T00:00:00Z", "sess-A", "launch")}, buildLog(t, genuineLog(t))...)
+	logPath := writeLog(t, tmp, lines)
+	seal, err := SignSessionHead(signingDir, logPath, "colima", "sess-A", "t")
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := VerifySessionSeal(signingDir, logPath, "colima", "sess-A", seal); err != nil {
+		t.Fatalf("control: head check must verify, got %v", err)
+	}
+	if _, err := SealedSessionRecords(signingDir, logPath, "colima", "sess-A", seal); err == nil {
+		t.Fatal("an unsigned legacy session record must not be returned as sealed")
+	}
+}

@@ -314,6 +314,7 @@ var newlineBaseUpdates = map[string]string{
 	"workspace_repo_mcp":      "denied",
 	"bootstrap_id":            "boot-1",
 	"image_ref":               "img@sha256:aaa",
+	"parent_session_id":       "parent-1",
 }
 
 // sessionRecordStringFieldTags returns the JSON name of every string field on

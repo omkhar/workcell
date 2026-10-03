@@ -70,21 +70,8 @@ func verifyMain(args []string, stdout io.Writer) error {
 		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Session %s has no recorded audit log to verify.", redactor.String(sessionID))}
 	}
 
-	// Derive the audit log path CANONICALLY from the trusted on-disk record
-	// location, never from the free-form record.AuditLogPath field. recordPath is
-	// where the profile-scoped lookup actually found the record —
-	// <root>/targets/<kind>/<provider>/<profile>/sessions/<id>.json (or the legacy
-	// <root>/<profile>/sessions/<id>.json) — so its grandparent is the profile
-	// state dir, exactly where profile_audit_log_path/the signer place
-	// workcell.audit.log. Recomputing the signed head over this canonical log
-	// (not an attacker-supplied path) closes the offline tamper hole where a
-	// rewritten AuditLogPath points verification at a pristine copy while the real
-	// log is modified. This derivation is layout-agnostic (modern and legacy).
-	canonicalAuditLog := filepath.Join(filepath.Dir(filepath.Dir(recordPath)), "workcell.audit.log")
-	// Defense in depth: a record whose recorded path disagrees with its own
-	// profile location is itself tampered — reject it fail-closed rather than
-	// silently verifying against the canonical log.
-	if filepath.Clean(record.AuditLogPath) != canonicalAuditLog {
+	canonicalAuditLog, ok := canonicalSessionAuditLog(record, recordPath)
+	if !ok {
 		return &cliexit.ExitCodeError{Code: 1, Message: fmt.Sprintf("Session %s FAILED audit verification: recorded audit log path does not match the profile's canonical location.", redactor.String(sessionID))}
 	}
 
@@ -134,4 +121,21 @@ func parseVerifyArgs(args []string) (sessionID, signingDir, realHome string, sho
 		}
 	}
 	return sessionID, signingDir, realHome, showHelp, nil
+}
+
+// canonicalSessionAuditLog derives the audit log path CANONICALLY from the
+// trusted on-disk record location, never from the free-form
+// record.AuditLogPath field. recordPath is where the profile-scoped lookup
+// actually found the record — <root>/targets/<kind>/<provider>/<profile>/
+// sessions/<id>.json (or the legacy <root>/<profile>/sessions/<id>.json) — so
+// its grandparent is the profile state dir, exactly where
+// profile_audit_log_path/the signer place workcell.audit.log. Reading the chain
+// from this canonical log (not an attacker-supplied path) closes the offline
+// tamper hole where a rewritten AuditLogPath points at a pristine copy while
+// the real log is modified. This derivation is layout-agnostic (modern and
+// legacy). ok is false when the recorded path disagrees with the record's own
+// profile location: that record is itself tampered, so callers fail closed.
+func canonicalSessionAuditLog(record sessions.SessionRecord, recordPath string) (string, bool) {
+	canonical := filepath.Join(filepath.Dir(filepath.Dir(recordPath)), "workcell.audit.log")
+	return canonical, filepath.Clean(record.AuditLogPath) == canonical
 }

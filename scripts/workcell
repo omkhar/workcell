@@ -4621,8 +4621,24 @@ session_timeline_main() {
   exit $?
 }
 
+# reject_session_trusted_flags SUBCOMMAND ARGS... exits 2 when the user passes
+# one of the trusted-context flags that the session wrapper supplies itself.
+reject_session_trusted_flags() {
+  local subcommand="$1"
+  local arg=""
+
+  shift
+  for arg in "$@"; do
+    case "${arg}" in
+      --root | --root=* | --signing-dir | --signing-dir=* | --real-home | --real-home=*)
+        echo "workcell: ${arg%%=*} is not a user-configurable option for session ${subcommand}." >&2
+        exit 2
+        ;;
+    esac
+  done
+}
+
 session_verify_main() {
-  local -a args=()
   # --root, --signing-dir, and --real-home are trusted-context flags this wrapper
   # supplies from host-derived values (the session lookup roots prepended below,
   # the host-owned signing key dir, and the OCSF redaction root). A user-supplied
@@ -4639,21 +4655,10 @@ session_verify_main() {
   # swallow an appended trusted flag as its value. Legitimate HOST config (the
   # WORKCELL_STATE_ROOT/COLIMA_STATE_ROOT env that DERIVES the trusted roots)
   # stays honored — only a per-invocation CLI override is refused.
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --root | --root=* | --signing-dir | --signing-dir=* | --real-home | --real-home=*)
-        echo "workcell: ${1%%=*} is not a user-configurable option for session verify." >&2
-        exit 2
-        ;;
-      *)
-        args+=("$1")
-        shift
-        ;;
-    esac
-  done
+  reject_session_trusted_flags verify "$@"
   collect_session_lookup_roots || exit 1
   run_go_hostutil_preserve_exit session-verify-cli "${SESSION_LOOKUP_ROOTS[@]}" \
-    "${args[@]}" \
+    "$@" \
     "--signing-dir=${WORKCELL_STATE_ROOT}/signing" \
     "--real-home=${REAL_HOME}"
   exit $?
@@ -4817,6 +4822,31 @@ session_monitor_main() {
   exit 0
 }
 
+# build_session_start_env sets SESSION_START_ENV to the scrubbed environment
+# that a detached session launch runs under (`session start` and each
+# `session fork` child).
+build_session_start_env() {
+  SESSION_START_ENV=(
+    PATH="${TRUSTED_HOST_PATH}"
+    HOME="${REAL_HOME}"
+    TMPDIR="${TMPDIR:-/tmp}"
+    LC_ALL=C
+    LANG=C
+    WORKCELL_SESSION_DETACHED=1
+  )
+  [[ -n "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-}" ]] && SESSION_START_ENV+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")
+  [[ -n "${XDG_STATE_HOME:-}" ]] && SESSION_START_ENV+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
+  [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && SESSION_START_ENV+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
+  if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]]; then
+    SESSION_START_ENV+=("WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1")
+    [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]] && SESSION_START_ENV+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}")
+    [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && SESSION_START_ENV+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
+    [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]] && SESSION_START_ENV+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}")
+    [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]] && SESSION_START_ENV+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}")
+  fi
+  return 0
+}
+
 session_main() {
   local subcommand="${1:-}"
   local plan=""
@@ -4838,7 +4868,6 @@ session_main() {
   local git_base=""
   local rendered=""
   local -a args=()
-  local -a session_start_env=()
 
   shift || true
   set +e
@@ -4852,31 +4881,14 @@ session_main() {
   route="$(shellproto_field "${plan}" subcommand)"
   case "${route}" in
     start)
-      session_start_env=(
-        PATH="${TRUSTED_HOST_PATH}"
-        HOME="${REAL_HOME}"
-        TMPDIR="${TMPDIR:-/tmp}"
-        LC_ALL=C
-        LANG=C
-        WORKCELL_SESSION_DETACHED=1
-      )
-      [[ -n "${WORKCELL_COLIMA_START_TIMEOUT_SECONDS:-}" ]] && session_start_env+=("WORKCELL_COLIMA_START_TIMEOUT_SECONDS=${WORKCELL_COLIMA_START_TIMEOUT_SECONDS}")
-      [[ -n "${XDG_STATE_HOME:-}" ]] && session_start_env+=("XDG_STATE_HOME=${XDG_STATE_HOME}")
-      [[ -n "${WORKCELL_STATE_ROOT:-}" ]] && session_start_env+=("WORKCELL_STATE_ROOT=${WORKCELL_STATE_ROOT}")
-      if [[ "${WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT:-0}" == "1" ]]; then
-        session_start_env+=("WORKCELL_VERIFY_INVARIANTS_SANITIZED_ENTRYPOINT=1")
-        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_OS}")
-        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_ARCH}")
-        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO}")
-        [[ -n "${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION:-}" ]] && session_start_env+=("WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION=${WORKCELL_TEST_SUPPORT_MATRIX_HOST_DISTRO_VERSION}")
-      fi
+      build_session_start_env
       if [[ "${#}" -eq 0 ]]; then
         exec env -i \
-          "${session_start_env[@]}" \
+          "${SESSION_START_ENV[@]}" \
           /bin/bash "${BASH_SOURCE[0]}"
       fi
       exec env -i \
-        "${session_start_env[@]}" \
+        "${SESSION_START_ENV[@]}" \
         /bin/bash "${BASH_SOURCE[0]}" "$@"
       ;;
     attach)

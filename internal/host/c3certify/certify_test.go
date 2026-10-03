@@ -83,6 +83,67 @@ func TestValidatePairPinsStrictIsolationIdentity(t *testing.T) {
 	}
 }
 
+func TestValidateForkRequiresParentMarkerAndSharedOrigin(t *testing.T) {
+	workspace, commit := newGitRepo(t)
+	c := testCertifier(t, workspace)
+	a := newIsolatedRecord(t, workspace, commit, "session-a", "workcell-a")
+	b := newIsolatedRecord(t, workspace, commit, "session-b", "workcell-b")
+	marker := ".workcell-c3-session-a"
+	newChild := func(id string) *evidence {
+		record := newIsolatedRecord(t, workspace, commit, id, "workcell-"+id)
+		record.ParentSessionID = "session-a"
+		mustNoError(t, os.WriteFile(filepath.Join(record.WorktreePath, marker), []byte("session-a-only\n"), 0o600))
+		return &evidence{record: record}
+	}
+	children := []*evidence{newChild("child-1"), newChild("child-2")}
+	c.docker = "/fake/docker"
+	containerSeesMarker, containerSeesSibling := true, false
+	c.deps.command = func(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+		switch {
+		case name != c.docker:
+			return runCommand(ctx, env, name, args...)
+		case args[0] != "exec":
+			return nil, nil
+		case strings.Contains(args[4], "cat"):
+			if containerSeesMarker {
+				return []byte("session-a-only\n"), nil
+			}
+			return nil, nil
+		case containerSeesSibling:
+			return nil, errors.New("sibling marker present")
+		}
+		return nil, nil
+	}
+	if err := c.validateFork(context.Background(), a, b, children, commit); err != nil {
+		t.Fatalf("validateFork error = %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*evidence)
+		want   string
+	}{
+		{"parent", func(e *evidence) { e.record.ParentSessionID = "session-b" }, "parent_session_id"},
+		{"marker missing", func(e *evidence) { mustNoError(t, os.Remove(filepath.Join(e.record.WorktreePath, marker))) }, "status"},
+		{"sibling marker", func(e *evidence) {
+			mustNoError(t, os.WriteFile(filepath.Join(e.record.WorktreePath, ".workcell-c3-session-b"), nil, 0o600))
+		}, "status"},
+		{"shared container", func(e *evidence) { e.record.ContainerName = a.ContainerName }, "containers"},
+		{"execution path", func(e *evidence) { e.record.ExecutionPath = "" }, "execution_path"},
+		{"container misses parent marker", func(*evidence) { containerSeesMarker = false }, "does not see marker"},
+		{"container sees sibling marker", func(*evidence) { containerSeesSibling = true }, "container of fork child"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			containerSeesMarker, containerSeesSibling = true, false
+			bad := newChild("child-" + strings.ReplaceAll(tc.name, " ", "-"))
+			tc.mutate(bad)
+			err := c.validateFork(context.Background(), a, b, []*evidence{children[0], bad}, commit)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateFork error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestStartTimeoutAdoptsOwnedRecord(t *testing.T) {
 	workspace, commit := newGitRepo(t)
 	c := testCertifier(t, workspace)

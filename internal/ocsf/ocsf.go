@@ -46,7 +46,9 @@ const OCSFSchemaVersion = "1.3.0"
 // "2": the export became a MULTI-EVENT stream — the session-summary event plus
 // one Application Lifecycle event per audit lifecycle record — where "1" emitted
 // only the single session-summary event. Consumers gate their parsers on this.
-const MappingVersion = "2"
+//
+// "3": the session-summary event gained the session.parent_session_id attribute.
+const MappingVersion = "3"
 
 // OCSF Application Lifecycle classification constants.
 const (
@@ -316,6 +318,7 @@ func sessionEvent(rec sessions.SessionRecord, redact func(string) string, logged
 	unmapped.putStr("session.final_assurance", rec.FinalAssurance, redact)
 	unmapped.putStr("session.bootstrap_id", rec.BootstrapID, redact)
 	unmapped.putStr("session.image_ref", rec.ImageRef, redact)
+	unmapped.putStr("session.parent_session_id", rec.ParentSessionID, redact)
 	unmapped.putStr("session.container_name", rec.ContainerName, redact)
 	unmapped.putStr("session.monitor_pid", rec.MonitorPID, redact)
 	unmapped.putStr("session.session_audit_dir", rec.SessionAuditDir, redact)

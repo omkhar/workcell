@@ -21,6 +21,7 @@ import (
 
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/sessions"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 var keepalive, safeID, gitFilterSetting, gitHiddenIndexState = `trap 'exit 0' TERM INT; while :; do sleep 1; done`, regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`), regexp.MustCompile(`^filter\..+\.(clean|smudge|process|required)$`), regexp.MustCompile(`(^|\x00)(S|[a-z]) `)
@@ -341,42 +342,59 @@ func (c *certifier) waitRunning(ctx context.Context, id string) (sessions.Sessio
 }
 func (c *certifier) validatePair(ctx context.Context, a, b sessions.SessionRecord, workloadCommit string) error {
 	for _, record := range []sessions.SessionRecord{a, b} {
-		if !safeID.MatchString(record.SessionID) {
-			return fmt.Errorf("certify-c3: invalid session id: %q", record.SessionID)
+		if err := c.validateIdentity(record, "lower-assurance-debug-command", ""); err != nil {
+			return err
 		}
-		for _, check := range []struct{ name, got, want string }{
-			{"target_kind", record.TargetKind, "local_vm"},
-			{"target_provider", record.TargetProvider, "colima"},
-			{"target_assurance_class", record.TargetAssuranceClass, "strict"},
-			{"profile", record.Profile, c.profile},
-			{"mode", record.Mode, "strict"},
-			{"workspace_transport", record.WorkspaceTransport, "isolated-worktree-mount"},
-			{"assurance", sessions.SessionAssuranceSummary(record), "managed-mutable"},
-			{"execution_path", record.ExecutionPath, "lower-assurance-debug-command"},
-			{"workspace_origin", record.WorkspaceOrigin, c.launchRoot},
-		} {
-			if check.got != check.want {
-				return fmt.Errorf("certify-c3: session %s %s = %q, want %q",
-					record.SessionID, check.name, check.got, check.want)
-			}
-		}
-		if err := c.validateGitIdentity(ctx, record, workloadCommit); err != nil {
+		if err := c.validateGitIdentity(ctx, record, workloadCommit, ""); err != nil {
 			return err
 		}
 	}
-	for _, check := range []struct{ name, a, b string }{
-		{"session ids", a.SessionID, b.SessionID},
-		{"containers", a.ContainerName, b.ContainerName},
-		{"worktrees", a.WorktreePath, b.WorktreePath},
-		{"branches", a.GitBranch, b.GitBranch},
+	return requireDistinct(a, b)
+}
+func (c *certifier) validateIdentity(record sessions.SessionRecord, executionPath, parent string) error {
+	if !safeID.MatchString(record.SessionID) {
+		return fmt.Errorf("certify-c3: invalid session id: %q", record.SessionID)
+	}
+	for _, check := range []struct{ name, got, want string }{
+		{"target_kind", record.TargetKind, "local_vm"},
+		{"target_provider", record.TargetProvider, "colima"},
+		{"target_assurance_class", record.TargetAssuranceClass, "strict"},
+		{"profile", record.Profile, c.profile},
+		{"mode", record.Mode, "strict"},
+		{"workspace_transport", record.WorkspaceTransport, "isolated-worktree-mount"},
+		{"assurance", sessions.SessionAssuranceSummary(record), "managed-mutable"},
+		{"execution_path", record.ExecutionPath, executionPath},
+		{"workspace_origin", record.WorkspaceOrigin, c.launchRoot},
+		{"parent_session_id", record.ParentSessionID, parent},
 	} {
-		if check.a == "" || check.b == "" || check.a == check.b {
-			return fmt.Errorf("certify-c3: %s are missing or not distinct", check.name)
+		if check.got != check.want {
+			return fmt.Errorf("certify-c3: session %s %s = %q, want %q",
+				record.SessionID, check.name, check.got, check.want)
 		}
 	}
 	return nil
 }
-func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.SessionRecord, commit string) error {
+func requireDistinct(records ...sessions.SessionRecord) error {
+	for i, a := range records {
+		for _, b := range records[i+1:] {
+			for _, check := range []struct{ name, a, b string }{
+				{"session ids", a.SessionID, b.SessionID},
+				{"containers", a.ContainerName, b.ContainerName},
+				{"worktrees", a.WorktreePath, b.WorktreePath},
+				{"branches", a.GitBranch, b.GitBranch},
+			} {
+				if check.a == "" || check.b == "" || check.a == check.b {
+					return fmt.Errorf("certify-c3: %s are missing or not distinct", check.name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateGitIdentity proves the session-owned clone, branch, and commit. Its
+// porcelain status must equal wantStatus ("" for a clean worktree).
+func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.SessionRecord, commit, wantStatus string) error {
 	expected, err := c.expectedWorktree(ctx, record.SessionID)
 	if err != nil {
 		return err
@@ -401,8 +419,46 @@ func (c *certifier) validateGitIdentity(ctx context.Context, record sessions.Ses
 		return fmt.Errorf("certify-c3: isolated worktree does not match workload commit: %s", record.SessionID)
 	}
 	status, err := c.gitCommand(ctx, expected, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-	if err != nil || len(bytes.TrimSpace(status)) != 0 {
-		return fmt.Errorf("certify-c3: isolated worktree is not clean: %s", record.SessionID)
+	if err != nil || string(bytes.TrimSpace(status)) != wantStatus {
+		return fmt.Errorf("certify-c3: isolated worktree status does not match %q: %s", wantStatus, record.SessionID)
+	}
+	return nil
+}
+
+// validateFork proves each child records the parent, starts on the workload
+// commit with the parent's marker as its only uncommitted change, stays
+// distinct from every other session, and groups under the shared origin.
+func (c *certifier) validateFork(ctx context.Context, parent, sibling sessions.SessionRecord, children []*evidence, commit string) error {
+	parentMarker, siblingMarker := ".workcell-c3-"+parent.SessionID, ".workcell-c3-"+sibling.SessionID
+	all := []sessions.SessionRecord{parent, sibling}
+	for _, child := range children {
+		record := child.record
+		if err := c.validateIdentity(record, parent.ExecutionPath, parent.SessionID); err != nil {
+			return err
+		}
+		if err := c.validateGitIdentity(ctx, record, commit, "?? "+parentMarker); err != nil {
+			return err
+		}
+		if err := proveHostMarkerPair(record.WorktreePath, sibling.WorktreePath, parentMarker, "session-a-only\n"); err != nil {
+			return err
+		}
+		if err := requireHostMarkerAbsent(record.WorktreePath, siblingMarker); err != nil {
+			return errors.New("certify-c3: session B marker appeared in a fork child")
+		}
+		if err := c.requireContainerMarker(ctx, record, parentMarker, "session-a-only\n"); err != nil {
+			return err
+		}
+		if err := c.requireContainerMarkerAbsent(ctx, record, siblingMarker); err != nil {
+			return fmt.Errorf("certify-c3: session B marker appeared in the container of fork child %s: %w", record.SessionID, err)
+		}
+		all = append(all, record)
+	}
+	if err := requireDistinct(all...); err != nil {
+		return err
+	}
+	groups := sessions.GroupParallelSessions(all)
+	if len(groups) != 1 || groups[0].OriginKey != c.launchRoot || len(groups[0].Members) != len(all) {
+		return errors.New("certify-c3: fork children did not group with sessions A and B under one origin")
 	}
 	return nil
 }
@@ -418,27 +474,75 @@ func (c *certifier) proveMarker(
 	if err := proveHostMarkerPair(present.WorktreePath, absent.WorktreePath, marker, content+"\n"); err != nil {
 		return err
 	}
-	if _, err := c.dockerCommand(ctx, absent.Profile, "exec", absent.ContainerName,
-		"/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", marker); err != nil {
+	if err := c.requireContainerMarkerAbsent(ctx, absent, marker); err != nil {
 		return fmt.Errorf("certify-c3: marker crossed from session %s to %s: %w",
 			present.SessionID, absent.SessionID, err)
 	}
 	return nil
 }
+
+// proveHostMarkerPair reads the marker through a no-follow parent descriptor, so
+// a path swap after the open cannot redirect the proof.
 func proveHostMarkerPair(presentWorktree, absentWorktree, marker, content string) error {
-	presentMarker := filepath.Join(presentWorktree, marker)
-	info, err := os.Lstat(presentMarker)
-	if err != nil || !info.Mode().IsRegular() {
+	parent, name, err := openMarkerParent(presentWorktree, marker)
+	if err != nil {
 		return errors.New("certify-c3: marker was not a regular file in its recorded host worktree")
 	}
-	data, err := os.ReadFile(presentMarker)
-	if err != nil || string(data) != content {
+	defer parent.Close()
+	data, err := rootio.ReadFileAtNoFollow(parent, name, "certify-c3 marker", int64(len(content))+1)
+	if err != nil {
+		return errors.New("certify-c3: marker was not a regular file in its recorded host worktree")
+	}
+	if string(data) != content {
 		return errors.New("certify-c3: marker content did not match its recorded host worktree")
 	}
-	if _, err := os.Lstat(filepath.Join(absentWorktree, marker)); !errors.Is(err, os.ErrNotExist) {
+	if err := requireHostMarkerAbsent(absentWorktree, marker); err != nil {
 		return errors.New("certify-c3: marker appeared in the other recorded host worktree")
 	}
 	return nil
+}
+
+func openMarkerParent(worktree, marker string) (*os.File, string, error) {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(worktree, marker))
+	if err != nil {
+		return nil, "", err
+	}
+	return parent, filepath.Base(cleaned), nil
+}
+
+// requireHostMarkerAbsent proves marker does not exist in worktree, through a
+// no-follow parent descriptor. A symlink at the marker counts as present.
+func requireHostMarkerAbsent(worktree, marker string) error {
+	parent, name, err := openMarkerParent(worktree, marker)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	file, err := rootio.OpenRegularFileAtNoFollow(parent, name, "certify-c3 marker")
+	if file != nil {
+		_ = file.Close()
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("marker %s is not absent: %v", marker, err)
+	}
+	return nil
+}
+
+// requireContainerMarker proves the container sees marker with content at
+// /workspace, so a wrong container-to-worktree binding fails the proof.
+func (c *certifier) requireContainerMarker(ctx context.Context, record sessions.SessionRecord, marker, content string) error {
+	out, err := c.dockerCommand(ctx, record.Profile, "exec", record.ContainerName,
+		"/bin/sh", "-lc", `cat "/workspace/$1"`, "sh", marker)
+	if err != nil || string(out) != content {
+		return fmt.Errorf("certify-c3: session %s does not see marker %s in its container", record.SessionID, marker)
+	}
+	return nil
+}
+
+func (c *certifier) requireContainerMarkerAbsent(ctx context.Context, record sessions.SessionRecord, marker string) error {
+	_, err := c.dockerCommand(ctx, record.Profile, "exec", record.ContainerName,
+		"/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", marker)
+	return err
 }
 func (c *certifier) requireRunning(ctx context.Context, record sessions.SessionRecord) error {
 	out, err := c.dockerCommand(ctx, record.Profile, "inspect", "-f", "{{.State.Running}}", record.ContainerName)

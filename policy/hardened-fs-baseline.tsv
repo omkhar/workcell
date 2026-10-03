@@ -42,7 +42,7 @@ internal/host/auditseal/sealio.go	os.Rename	1
 internal/host/c3certify/certify.go	os.MkdirAll	1
 internal/host/c3certify/certify.go	os.MkdirTemp	3
 internal/host/c3certify/certify.go	os.ReadDir	1
-internal/host/c3certify/certify.go	os.ReadFile	2
+internal/host/c3certify/certify.go	os.ReadFile	1
 internal/host/c3certify/certify.go	os.RemoveAll	8
 internal/host/c3certify/certify.go	os.Stat	3
 internal/host/hoststate/hoststate.go	os.ReadDir	5

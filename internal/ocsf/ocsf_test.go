@@ -830,17 +830,18 @@ func TestTornStopRecordNotSuccess(t *testing.T) {
 
 // TestMappingVersionBumpedForMultiEvent is the FIX-4 proof: the multi-event
 // export carries mapping_version "2" (was "1" for the single session event).
+// Version "3" added session.parent_session_id and keeps the multi-event stream.
 func TestMappingVersionBumpedForMultiEvent(t *testing.T) {
-	if MappingVersion != "2" {
-		t.Fatalf("multi-event mapping must be version 2, got %q", MappingVersion)
+	if MappingVersion != "3" {
+		t.Fatalf("mapping must be version 3 after session.parent_session_id, got %q", MappingVersion)
 	}
 	events := mustExport(t, sampleExport(), Options{Now: fixedNow})
 	if len(events) < 2 {
 		t.Fatalf("fixture must produce a multi-event stream, got %d", len(events))
 	}
 	for i, ev := range events {
-		if ev.Metadata.MappingVersion != "2" {
-			t.Errorf("event %d: mapping_version=%q want 2", i, ev.Metadata.MappingVersion)
+		if ev.Metadata.MappingVersion != "3" {
+			t.Errorf("event %d: mapping_version=%q want 3", i, ev.Metadata.MappingVersion)
 		}
 	}
 }

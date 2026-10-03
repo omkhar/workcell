@@ -60,6 +60,7 @@ type SessionRecord struct {
 	WorkspaceRepoMcp      string `json:"workspace_repo_mcp,omitempty"`
 	BootstrapID           string `json:"bootstrap_id,omitempty"`
 	ImageRef              string `json:"image_ref,omitempty"`
+	ParentSessionID       string `json:"parent_session_id,omitempty"`
 }
 
 type SessionListOptions struct {
@@ -514,6 +515,8 @@ func encodeSessionRecordFrom(existing []byte, updates map[string]string, source 
 			record.BootstrapID = value
 		case "image_ref":
 			record.ImageRef = value
+		case "parent_session_id":
+			record.ParentSessionID = value
 		default:
 			return nil, fmt.Errorf("unsupported session record field %q", key)
 		}
@@ -1023,6 +1026,7 @@ func validateSessionRecord(record SessionRecord, source string) error {
 		{name: "workspace_repo_mcp", value: record.WorkspaceRepoMcp},
 		{name: "bootstrap_id", value: record.BootstrapID},
 		{name: "image_ref", value: record.ImageRef},
+		{name: "parent_session_id", value: record.ParentSessionID},
 	} {
 		if strings.ContainsAny(field.value, "\r\n") {
 			return fmt.Errorf("%s: session record field %s may not contain newlines", source, field.name)
