@@ -46,8 +46,9 @@ type forkArgs struct {
 // reads the snapshot commit and the parent launch settings only from audit
 // records that the host seal covers, never from a ref in the snapshot store.
 //
-// Without --snapshot it emits session_id= and needs_snapshot=1, and the shim
-// takes a snapshot first and calls ForkMain again with --snapshot.
+// Without --snapshot it checks the signed launch record and the execution
+// path, then emits session_id= and needs_snapshot=1. The shim takes a snapshot
+// and calls ForkMain again with --snapshot.
 func ForkMain(args []string) error {
 	return forkMain(args, os.Stdout, os.Stderr)
 }
@@ -83,13 +84,6 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if origin == "" {
 		return fmt.Errorf("session fork record is missing a workspace origin: %s", opts.sessionID)
 	}
-	if opts.snapshotID == "" {
-		return shellproto.WriteFields(stdout, []shellproto.Field{
-			{Key: "session_id", Value: record.SessionID},
-			{Key: "needs_snapshot", Value: "1"},
-		})
-	}
-
 	launch, snapshot, err := sealedForkRecords(opts, record, recordPath)
 	if err != nil {
 		return err
@@ -97,6 +91,15 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
 		return err
 	}
+	// The shim snapshots the parent only after the signed launch and the
+	// execution path pass, so a refused fork leaves no snapshot behind.
+	if opts.snapshotID == "" {
+		return shellproto.WriteFields(stdout, []shellproto.Field{
+			{Key: "session_id", Value: record.SessionID},
+			{Key: "needs_snapshot", Value: "1"},
+		})
+	}
+
 	originHash := sha256.Sum256([]byte(origin))
 	return shellproto.WriteFields(stdout, []shellproto.Field{
 		{Key: "session_id", Value: record.SessionID},
@@ -203,7 +206,7 @@ func sealedForkRecords(opts forkArgs, record sessions.SessionRecord, recordPath 
 	if launch == nil || launch["agent"] == "" || launch["mode"] == "" {
 		return nil, nil, fmt.Errorf("session fork: no signed launch record for %s", opts.sessionID)
 	}
-	if snapshot == nil || !gitObjectIDPattern.MatchString(snapshot["commit"]) || !gitObjectIDPattern.MatchString(snapshot["tree"]) {
+	if opts.snapshotID != "" && (snapshot == nil || !gitObjectIDPattern.MatchString(snapshot["commit"]) || !gitObjectIDPattern.MatchString(snapshot["tree"])) {
 		return nil, nil, fmt.Errorf("session fork: no signed session_snapshot record %s for %s", opts.snapshotID, opts.sessionID)
 	}
 	return launch, snapshot, nil

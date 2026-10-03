@@ -831,3 +831,24 @@ func runGit(t *testing.T, dir string, args ...string) []byte {
 	}
 	return output
 }
+
+func TestRemoveOwnedPathStaysInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustNoError(t, os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o600))
+	owned := filepath.Join(root, "store", "hash.git")
+	mustNoError(t, os.MkdirAll(owned, 0o700))
+	mustNoError(t, os.WriteFile(filepath.Join(owned, "obj"), []byte("x"), 0o600))
+	mustNoError(t, os.Symlink(outside, filepath.Join(owned, "link")))
+	mustNoError(t, removeOwnedPath(root, owned))
+	if _, err := os.Lstat(owned); !os.IsNotExist(err) {
+		t.Fatalf("owned path remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("removeOwnedPath followed a link out of the root: %v", err)
+	}
+	// A path outside the trusted root is refused.
+	if err := removeOwnedPath(root, filepath.Join(outside, "keep")); err == nil {
+		t.Fatal("removeOwnedPath accepted a path outside the root")
+	}
+}

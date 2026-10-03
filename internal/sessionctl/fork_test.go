@@ -114,6 +114,25 @@ func TestForkMainAsksForSnapshotWithoutSnapshotID(t *testing.T) {
 	}
 }
 
+func TestForkMainRefusesBeforeAskingForSnapshot(t *testing.T) {
+	f := newForkFixture(t, "managed-tier1")
+	// A parent that the plan refuses must not reach the snapshot step.
+	if out, err := f.run("--id", "parent-1", "--count", "1", "--allow-arbitrary-command"); err == nil || out != "" {
+		t.Fatalf("forkMain with a refused flag = %q, %v", out, err)
+	}
+	g := newForkFixture(t, "unsupported-path")
+	if out, err := g.run("--id", "parent-1", "--count", "1"); err == nil || out != "" {
+		t.Fatalf("forkMain with an unsupported path = %q, %v", out, err)
+	}
+	tampered := strings.Replace(f.lines[0], "mode=strict", "mode=breakglass", 1)
+	if err := os.WriteFile(f.logPath, []byte(tampered+"\n"+f.lines[1]+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := f.run("--id", "parent-1", "--count", "1"); err == nil || out != "" {
+		t.Fatalf("forkMain with a tampered chain = %q, %v", out, err)
+	}
+}
+
 func TestForkMainRejectsSnapshotOutsideSignedPrefix(t *testing.T) {
 	f := newForkFixture(t, "managed-tier1")
 	// A record appended after the seal is not covered by it.
