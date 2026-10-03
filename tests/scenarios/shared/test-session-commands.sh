@@ -4537,6 +4537,30 @@ if fork_stale_run 2001-01-01 >/dev/null 2>"${TMP_DIR}/fork-stale-ack.err"; then
 fi
 grep -q "does not match today's UTC date" "${TMP_DIR}/fork-stale-ack.err"
 test ! -e "${fork_stale_snapshots}"
+# An explicit --snapshot with a stale acknowledgement stops before any child
+# starts and before any audit record changes.
+fork_explicit_log="${TMP_DIR}/fork-explicit-ack.log"
+fork_explicit_run() {
+  FORK_STUB_ACK="$1" FORK_STUB_LOG="${fork_explicit_log}" bash -c '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    session_run_cli_with_roots() { printf "session_id=p\nsnapshot_id=s\ncount=1\ncommit=c\ntree=t\nagent=codex\nmode=strict\nprofile=x\nworkspace_origin=/o\norigin_hash=h\nack_arbitrary_command=%s\n" "${FORK_STUB_ACK}"; }
+    session_snapshot_store_root() { echo /nonexistent; }
+    session_fork_start_child() { echo child >>"${FORK_STUB_LOG}"; printf "session_id=child-1\n"; }
+    load_session_runtime_metadata() { SESSION_META_PROFILE=x SESSION_META_RECORD_PATH=/r; }
+    append_session_control_audit_record() { echo append >>"${FORK_STUB_LOG}"; }
+    sign_session_audit_head_explicit() { return 0; }
+    session_fork_main --id p --snapshot s --count 1 --allow-arbitrary-command --ack-arbitrary-command="${FORK_STUB_ACK}" -- true
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+}
+if fork_explicit_run 2001-01-01 >/dev/null 2>&1; then
+  echo "session fork accepted a stale acknowledgement with an explicit snapshot" >&2
+  exit 1
+fi
+test ! -e "${fork_explicit_log}"
+fork_explicit_run "${ACK_TODAY_UTC}" >/dev/null 2>&1 || true
+grep -q child "${fork_explicit_log}"
 # Negative control: today's date reaches the snapshot step.
 fork_stale_run "${ACK_TODAY_UTC}" >/dev/null 2>"${TMP_DIR}/fork-fresh-ack.err" || true
 grep -q called "${fork_stale_snapshots}" || {

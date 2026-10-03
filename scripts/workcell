@@ -4901,6 +4901,9 @@ session_fork_main() {
   snapshot_id="$(shellproto_field "${plan}" snapshot_id)"
   count="$(shellproto_field "${plan}" count)"
   ack="$(shellproto_field "${plan}" ack_arbitrary_command)"
+  # An explicit --snapshot skips the check before the snapshot, so check here,
+  # before any child starts or any audit record changes.
+  [[ -z "${ack}" ]] || validate_ack_token "--ack-arbitrary-command" "${ack}"
   SESSION_FORK_PARENT="${session_id}"
   SESSION_FORK_COMMIT="$(shellproto_field "${plan}" commit)"
   SESSION_FORK_TREE="$(shellproto_field "${plan}" tree)"

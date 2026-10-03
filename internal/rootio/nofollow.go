@@ -203,6 +203,22 @@ func removeAllAt(dirFD int, name string) error {
 			return err
 		}
 	}
+	// Unlink takes a name, so prove that the name still means the directory
+	// that was emptied. POSIX has no unlink by descriptor, so a swap after this
+	// check is the one window that stays.
+	var opened, named unix.Stat_t
+	if err := unix.Fstat(fd, &opened); err != nil {
+		return err
+	}
+	if err := unix.Fstatat(dirFD, name, &named, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("directory moved during removal: %s", name)
+		}
+		return err
+	}
+	if opened.Dev != named.Dev || opened.Ino != named.Ino {
+		return fmt.Errorf("directory replaced during removal: %s", name)
+	}
 	if err := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {
 		return err
 	}
