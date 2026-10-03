@@ -133,7 +133,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	}
 	// The snapshot step already captured the unsigned workspace and git head,
 	// so they must match the signed launch before any child starts.
-	if launch["workspace"] != record.Workspace || launch["workspace_head"] != record.GitHead {
+	if launch["workspace"] != record.Workspace || launch["workspace_head"] != record.GitHead || !gitObjectIDPattern.MatchString(launch["workspace_head"]) {
 		return fmt.Errorf("session fork: the session record workspace or git head does not match the signed launch record: %s", opts.sessionID)
 	}
 	// A child replays the parent rootfs posture. Without it a readonly parent
@@ -169,6 +169,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		{Key: "mode", Value: launch["mode"]},
 		{Key: "agent_autonomy", Value: launch["agent_autonomy"]},
 		{Key: "container_mutability", Value: containerMutability},
+		{Key: "launch_head", Value: launch["workspace_head"]},
 		{Key: "vm_cpu", Value: launch["vm_cpu"]},
 		{Key: "vm_memory_gib", Value: launch["vm_memory_gib"]},
 		{Key: "vm_disk_gib", Value: launch["vm_disk_gib"]},

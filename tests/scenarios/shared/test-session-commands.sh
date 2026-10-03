@@ -4444,7 +4444,7 @@ run_fork_fixture() {
     session_fork_main "$@"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${log}" "$@"
 }
-export FORK_ORIGIN
+export FORK_ORIGIN FORK_BASE
 
 # Negative control: a session_snapshot record that no seal covers is refused,
 # even when its commit is genuine.
@@ -4483,7 +4483,7 @@ run_fork_workspace() {
     source "$1"
     trap - EXIT
     HOST_GIT_BIN="$(command -v git)"
-    SESSION_FORK_STORE="$2" SESSION_FORK_COMMIT="$3" SESSION_FORK_TREE="$4"
+    SESSION_FORK_STORE="$2" SESSION_FORK_COMMIT="$3" SESSION_FORK_TREE="$4" SESSION_FORK_HEAD="${FORK_STUB_HEAD:-${FORK_BASE}}"
     create_isolated_session_workspace "${FORK_ORIGIN}" "$5"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${FORK_STORE}" "$@"
 }
@@ -4498,6 +4498,14 @@ if run_fork_workspace "$(printf '0%.0s' {1..40})" "${fork_tree}" "fork-missing-$
   exit 1
 fi
 test ! -e "${FORK_ORIGIN}/.git/workcell-sessions/fork-missing-$$"
+# A snapshot whose parent is not the signed launch head is refused and leaves
+# no directory behind.
+if FORK_STUB_HEAD="$(printf '1%.0s' {1..40})" run_fork_workspace "${fork_commit}" "${fork_tree}" "fork-bad-head-$$" >/dev/null 2>"${TMP_DIR}/fork-bad-head.err"; then
+  echo "session fork accepted a snapshot parent that is not the signed launch head" >&2
+  exit 1
+fi
+grep -q 'snapshot parent does not match the signed launch head' "${TMP_DIR}/fork-bad-head.err"
+test ! -e "${FORK_ORIGIN}/.git/workcell-sessions/fork-bad-head-$$"
 run_fork_workspace "${fork_commit}" "${fork_tree}" "fork-direct-$$" >/dev/null
 # A dirty origin does not block a fork child, because the snapshot supplies the
 # content. The same origin still blocks a plain isolated session.
@@ -4605,6 +4613,14 @@ fork_child_policy="$(
     /bin/bash "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${FORK_ORIGIN}" --no-default-injection-policy --dry-run 2>&1 || true
 )"
 grep -q "session fork child injection policy does not match the parent launch policy: ${FORK_PARENT}" <<<"${fork_child_policy}"
+# The same mismatch on a real launch stops before the child workspace exists.
+fork_sessions_before="$(find "${FORK_ORIGIN}/.git/workcell-sessions" -mindepth 1 -maxdepth 1 2>/dev/null | sort | tr '\n' ' ')"
+fork_child_policy_live="$(
+  WORKCELL_SESSION_DETACHED=1 WORKCELL_SESSION_FORK_PARENT="${FORK_PARENT}" WORKCELL_SESSION_FORK_POLICY_SHA256=deadbeef \
+    /bin/bash "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${FORK_ORIGIN}" --no-default-injection-policy 2>&1 || true
+)"
+grep -q "session fork child injection policy does not match the parent launch policy: ${FORK_PARENT}" <<<"${fork_child_policy_live}"
+[[ "$(find "${FORK_ORIGIN}/.git/workcell-sessions" -mindepth 1 -maxdepth 1 2>/dev/null | sort | tr '\n' ' ')" == "${fork_sessions_before}" ]]
 
 # The primary help synopsis and the manual list fork.
 "${ROOT_DIR}/scripts/workcell" --help 2>&1 | grep -Fq 'export|verify|fork> [options]'

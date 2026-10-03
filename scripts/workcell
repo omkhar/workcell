@@ -183,6 +183,7 @@ SESSION_FORK_COMMIT="${WORKCELL_SESSION_FORK_COMMIT:-}"
 SESSION_FORK_TREE="${WORKCELL_SESSION_FORK_TREE:-}"
 SESSION_FORK_STORE="${WORKCELL_SESSION_FORK_STORE:-}"
 SESSION_FORK_POLICY_SHA256="${WORKCELL_SESSION_FORK_POLICY_SHA256:-}"
+SESSION_FORK_HEAD="${WORKCELL_SESSION_FORK_HEAD:-}"
 DETACHED_SESSION_ACTIVE=0
 DETACHED_SESSION_STDIN_PATH="/state/tmp/workcell/session-stdin"
 SESSION_WORKSPACE_MODE=""
@@ -1699,6 +1700,13 @@ create_isolated_session_workspace() {
       exit 2
     }
     base_ref="$(run_workspace_safe_git_command_in_dir "${target}" rev-parse --verify "${SESSION_FORK_COMMIT}^1")" || {
+      rm -rf "${session_dir}"
+      exit 2
+    }
+    # The snapshot parent must be the signed launch head, not a commit that the
+    # unsigned session record named when the snapshot ran.
+    [[ -n "${SESSION_FORK_HEAD}" && "${base_ref}" == "${SESSION_FORK_HEAD}" ]] || {
+      echo "session fork snapshot parent does not match the signed launch head: ${SESSION_FORK_COMMIT}" >&2
       rm -rf "${session_dir}"
       exit 2
     }
@@ -4836,6 +4844,7 @@ session_fork_start_child() {
     "WORKCELL_SESSION_FORK_TREE=${SESSION_FORK_TREE}" \
     "WORKCELL_SESSION_FORK_STORE=${SESSION_FORK_STORE}" \
     "WORKCELL_SESSION_FORK_POLICY_SHA256=${SESSION_FORK_POLICY_SHA256}" \
+    "WORKCELL_SESSION_FORK_HEAD=${SESSION_FORK_HEAD}" \
     /bin/bash "${BASH_SOURCE[0]}" "$@"
 }
 
@@ -4897,6 +4906,7 @@ session_fork_main() {
   SESSION_FORK_TREE="$(shellproto_field "${plan}" tree)"
   SESSION_FORK_STORE="$(session_snapshot_store_root)/$(shellproto_field "${plan}" origin_hash).git"
   SESSION_FORK_POLICY_SHA256="$(shellproto_field "${plan}" injection_policy_sha256)"
+  SESSION_FORK_HEAD="$(shellproto_field "${plan}" launch_head)"
   child_args=(
     --agent "$(shellproto_field "${plan}" agent)"
     --mode "$(shellproto_field "${plan}" mode)"

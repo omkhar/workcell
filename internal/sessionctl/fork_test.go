@@ -116,7 +116,7 @@ func TestForkMainEmitsPlanFromSignedRecords(t *testing.T) {
 	want := strings.Join([]string{
 		"session_id=parent-1", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo",
 		"origin_hash=" + hex.EncodeToString(origin[:]), "agent=codex", "mode=strict",
-		"agent_autonomy=yolo", "container_mutability=ephemeral", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g", "injection_policy_sha256=", "snapshot_id=snap-1",
+		"agent_autonomy=yolo", "container_mutability=ephemeral", "launch_head=" + forkFixtureHead, "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "container_cpu=unmanaged", "container_memory=8g", "injection_policy_sha256=", "snapshot_id=snap-1",
 		"commit=" + forkFixtureCommit, "tree=" + forkFixtureTree, "count=2", "ack_arbitrary_command=",
 	}, "\n") + "\n"
 	if out != want {
