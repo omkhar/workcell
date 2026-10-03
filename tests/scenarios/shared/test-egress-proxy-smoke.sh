@@ -98,6 +98,15 @@ session_id="$(sed -n 's/^session_id=//p' "${TMP_DIR}/detached.stdout")"
 sidecar="wc-egress-${session_id}"
 profile_docker ps --format '{{.Names}}' | grep -qx "${sidecar}"
 
+# The session network is isolated: it has no gateway address, so a VM service
+# that listens on all addresses cannot answer the agent at the gateway.
+session_gateway="$(profile_docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "wc-${session_id}")"
+if [[ "${session_gateway}" =~ ^[0-9.]+$ ]]; then
+  echo "the session network has a gateway address: ${session_gateway}" >&2
+  exit 1
+fi
+[[ "$(profile_docker network inspect -f '{{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}' "wc-${session_id}")" == "isolated" ]]
+
 # The sidecar is also on the bridge for its upstream route. It listens only on
 # its internal-network address, so another container on the bridge cannot use
 # this session's allowlist.

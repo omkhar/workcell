@@ -26,7 +26,7 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 	end := strings.Index(string(script)[start:], ">/dev/null || return 1\n")
 	anchor := string(script)[start : start+end+len(">/dev/null || return 1")]
 	RequireRejectsAllEvasions(t, string(script), anchor, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
-	network := `  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1`
+	network := "  run_workcell_docker_client_command \"${HOST_DOCKER_BIN}\" network create --internal \\\n    --opt com.docker.network.bridge.gateway_mode_ipv4=isolated \"${EGRESS_PROXY_NETWORK}\" >/dev/null || return 1"
 	RequireRejectsAllEvasions(t, string(script), network, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
 	for name, mutate := range map[string]func(string) string{
 		"later duplicate definition": func(s string) string {
@@ -59,6 +59,8 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 	}
 	for name, replacement := range map[string]string{
 		"non-internal network": strings.Replace(network, " --internal", "", 1),
+		"routable gateway":     strings.Replace(network, "gateway_mode_ipv4=isolated", "gateway_mode_ipv4=nat", 1),
+		"no gateway option":    strings.Replace(network, "    --opt com.docker.network.bridge.gateway_mode_ipv4=isolated ", "    ", 1),
 		"echoed internal":      `  echo "network create --internal"` + "\n" + strings.Replace(network, " --internal", "", 1),
 		"second network":       network + "\n" + strings.Replace(network, " --internal", "", 1),
 		"other network":        strings.Replace(network, "${EGRESS_PROXY_NETWORK}", "bridge", 1),

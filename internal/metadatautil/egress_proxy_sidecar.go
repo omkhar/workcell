@@ -22,7 +22,7 @@ import (
 // Colima egress script. Any edit of either body, in any spelling, fails until a
 // reviewer regenerates it. The dry-run and Colima smoke scenarios then check
 // the behavior of the reviewed functions.
-const egressProxyGuardedDigest = "e17b4a4ca3eb718af1640b1dd339deeb810b5096b48d0535fefe523ffdfc0956"
+const egressProxyGuardedDigest = "65278bca7124eafea12cfcbf91f71349cb2376000794e9ef02a8154e730b2e96"
 
 var egressProxyGuardedFunctions = []string{"start_egress_proxy", "egress_proxy_agent_network_args"}
 
@@ -83,7 +83,7 @@ var egressProxySidecarCreate = []string{
 func ValidateEgressProxySidecar(script string) error {
 	body := functionBody(script, "start_egress_proxy")
 	networks := ShellInvocations(body, `run_workcell_docker_client_command ${HOST_DOCKER_BIN} network create`)
-	if len(networks) != 1 || !slices.Equal(networks[0].Args, []string{"--internal", "${EGRESS_PROXY_NETWORK}", ">/dev/null"}) {
+	if len(networks) != 1 || !slices.Equal(networks[0].Args, []string{"--internal", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated", "${EGRESS_PROXY_NETWORK}", ">/dev/null"}) {
 		return errors.New("Expected the egress proxy sidecar network create command to equal the reviewed internal network command")
 	}
 	creates := ShellInvocations(body, `run_workcell_docker_client_command ${HOST_DOCKER_BIN} create`)

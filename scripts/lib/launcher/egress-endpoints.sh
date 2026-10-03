@@ -121,6 +121,8 @@ build_runtime_host_aliases() {
   RUNTIME_NETWORK_ARGS=()
   [[ "${NETWORK_POLICY}" == "allowlist" ]] || return 0
   if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+    # The proxy refuses an endpoint set it cannot route. Say so before launch.
+    go_hostutil helper validate-egress-proxy-allowlist "${endpoint_list}" || return 1
     egress_proxy_agent_network_args "${endpoint_list}"
     return 0
   fi
@@ -158,7 +160,11 @@ egress_proxy_agent_network_args() {
 }
 
 # start_egress_proxy creates the internal network and runs the sidecar from the
-# verified image with the agent's conformance flags. The sidecar also joins the
+# verified image with the agent's conformance flags. The network is internal
+# and isolated: Docker gives an internal network no outside route, but its
+# bridge still carries the VM's gateway address, where any VM service that
+# listens on all addresses would answer the agent. The isolated gateway mode
+# gives the bridge no gateway address. The sidecar also joins the
 # bridge for its upstream route, so it listens only on its address in the
 # internal subnet: other containers on the bridge cannot use this session's
 # allowlist. Then it puts the sidecar's internal IP into the agent's --add-host
@@ -174,7 +180,8 @@ start_egress_proxy() {
   local ready=0
   local port=""
 
-  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1
+  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal \
+    --opt com.docker.network.bridge.gateway_mode_ipv4=isolated "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1
   subnet="$(run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network inspect \
     -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "${EGRESS_PROXY_NETWORK}")" || return 1
   subnet="${subnet% }"
@@ -260,8 +267,10 @@ stop_egress_proxy() {
     echo "workcell: warning: could not save the egress proxy deny log for ${SESSION_ID}." >&2
   fi
   [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
-  run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 || true
-  run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || true
+  run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 ||
+    echo "workcell: warning: could not remove the egress proxy sidecar ${EGRESS_PROXY_CONTAINER}; session delete removes it." >&2
+  run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 ||
+    echo "workcell: warning: could not remove the egress proxy network ${EGRESS_PROXY_NETWORK}; session delete removes it." >&2
 }
 
 # stop_orphaned_egress_proxy removes the sidecar and the network of a session

@@ -406,6 +406,36 @@ if tr ' ' '\n' <"${TMP_DIR}/egress-proxy-codex.stdout" | grep -A1 -x -- '--add-h
   echo "--egress-proxy mapped a host to an address other than the proxy" >&2
   exit 1
 fi
+# The proxy forwards one host per non-443 port. A policy that shares such a port
+# fails before launch; one host on the port passes.
+PROXY_SHARED_PORT_FILE="${TMP_DIR}/proxy-shared-port.toml"
+cat >"${PROXY_SHARED_PORT_FILE}" <<'EOF_POLICY'
+version = 1
+[network]
+allow_endpoints = ["db1.internal.example:5432", "db2.internal.example:5432"]
+EOF_POLICY
+set +e
+HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+  "${ROOT_DIR}/scripts/workcell" --agent codex --egress-proxy \
+  --injection-policy "${PROXY_SHARED_PORT_FILE}" --workspace "${WORKSPACE}" --dry-run \
+  >"${TMP_DIR}/proxy-shared-port.stdout" 2>"${TMP_DIR}/proxy-shared-port.stderr"
+shared_port_rc=$?
+set -e
+if [[ "${shared_port_rc}" -eq 0 ]]; then
+  echo "--egress-proxy accepted two hosts on one non-443 port" >&2
+  exit 1
+fi
+grep -q 'maps port 5432 to more than one host' "${TMP_DIR}/proxy-shared-port.stderr"
+cat >"${PROXY_SHARED_PORT_FILE}" <<'EOF_POLICY'
+version = 1
+[network]
+allow_endpoints = ["db1.internal.example:5432"]
+EOF_POLICY
+HOME="${HOME_DIR}" XDG_CONFIG_HOME="${HOME_DIR}/.config" \
+  "${ROOT_DIR}/scripts/workcell" --agent codex --egress-proxy \
+  --injection-policy "${PROXY_SHARED_PORT_FILE}" --workspace "${WORKSPACE}" --dry-run \
+  >"${TMP_DIR}/proxy-one-port.stdout" 2>"${TMP_DIR}/proxy-one-port.stderr"
+grep -q -- '--add-host db1.internal.example:egress-proxy-ip ' "${TMP_DIR}/proxy-one-port.stdout"
 run_dry_run_expect_failure 2 "egress-proxy-development" --agent codex --egress-proxy --mode development
 grep -q '^--egress-proxy supports only --target colima with --mode strict\.$' "${TMP_DIR}/egress-proxy-development.stderr"
 run_dry_run_expect_failure 2 "egress-proxy-docker-desktop" --agent codex --egress-proxy --target docker-desktop
