@@ -4928,13 +4928,17 @@ session_fork_main() {
     children+=("${child_id}")
   done
 
+  # Name the children first. The bookkeeping below can exit under set -e, and
+  # the operator needs the ids to stop children that already run.
+  printf 'session_id=%s\n' "${session_id}"
+  printf 'snapshot_id=%s\n' "${snapshot_id}"
+  printf 'children=%s\n' "$(csv_join_or_none "${children[@]-}")"
   load_session_runtime_metadata "${session_id}"
   append_session_control_audit_record "${SESSION_META_PROFILE}" "${session_id}" "session_fork" \
     "source=host-cli" \
     "snapshot_id=${snapshot_id}" \
     "parent=${session_id}" \
     "children=$(csv_join_or_none "${children[@]-}")" || {
-    # The children run, so name them: the operator needs the ids to stop them.
     echo "session fork started children but could not record the fork: ${session_id}" >&2
     status=1
   }
@@ -4943,9 +4947,6 @@ session_fork_main() {
     echo "session fork recorded the fork but could not re-sign the audit chain: ${session_id}" >&2
     status=1
   }
-  printf 'session_id=%s\n' "${session_id}"
-  printf 'snapshot_id=%s\n' "${snapshot_id}"
-  printf 'children=%s\n' "$(csv_join_or_none "${children[@]-}")"
   [[ "${status}" -eq 0 ]] || echo "session fork started ${#children[@]} of ${count} children: ${session_id}" >&2
   exit "${status}"
 }
