@@ -111,7 +111,9 @@ agent, mode, agent autonomy, container mutability, VM resources, container limit
 that the host seal covers, never from a store ref. Each child clones the
 workspace origin, checks out the parent launch commit, and applies the snapshot
 tree to the worktree, so the parent changes stay uncommitted. A child stops when
-its injection policy hash differs from the parent. Each child records
+its injection policy hash differs from the parent. A running parent has no
+seal before its first snapshot. When the signed launch record then refuses the
+fork, the snapshot stays in the store until you remove it. Each child records
 .BR parent_session_id ,
 and the parent gets one
 .B session_fork
