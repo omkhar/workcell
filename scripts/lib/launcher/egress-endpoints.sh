@@ -269,8 +269,8 @@ stop_egress_proxy() {
 # session stop and session delete need no record field. It disconnects the
 # stopped agent container first, because Docker refuses to remove a network
 # that still holds an endpoint. It removes a network that outlived its sidecar
-# too, and it fails when a lookup or the network removal fails: a failed lookup
-# is not an empty one. It does nothing when the session has neither.
+# too, and it fails when a lookup fails, the sidecar is still there after its
+# removal, or the network removal fails: a failed lookup is not an empty one. It does nothing when the session has neither.
 stop_orphaned_egress_proxy() {
   local profile="$1"
   local session_id="$2"
@@ -296,6 +296,8 @@ stop_orphaned_egress_proxy() {
       EGRESS_PROXY_NETWORK="${network}"
       stop_egress_proxy "${profile}"
     )
+    names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
+    ! grep -qx "wc-egress-${session_id}" <<<"${names}" || return 1
   fi
   networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^${network}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
   if grep -qx "${network}" <<<"${networks}"; then

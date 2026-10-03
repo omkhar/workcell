@@ -176,13 +176,17 @@ func TestStopOrphanedEgressProxy(t *testing.T) {
 		wantFail bool
 	}{
 		{"sidecar and network", []string{"SIDECAR=wc-egress-S1", "NET=wc-S1"},
-			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nls\n", false},
+			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nps\nls\n", false},
 		{"network outlived the sidecar", []string{"NET=wc-S1"},
 			"ps\nls\ndisconnect wc-S1 agent1\nls\nnetwork rm wc-S1\n", false},
 		{"other session only", []string{"SIDECAR=wc-egress-S10", "NET=wc-S10"}, "ps\nls\n", false},
 		{"neither", nil, "ps\nls\n", false},
 		{"network removal fails", []string{"SIDECAR=wc-egress-S1", "NET=wc-S1", "NET_RM_FAILS=1"},
-			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nls\nnetwork rm wc-S1\n", true},
+			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nps\nls\nnetwork rm wc-S1\n", true},
+		{"sidecar removal fails", []string{"SIDECAR=wc-egress-S1", "NET=wc-S1", "RM_FAILS=1"},
+			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nps\n", true},
+		{"sidecar recheck lookup fails", []string{"SIDECAR=wc-egress-S1", "NET=wc-S1", "PS_FAILS_AFTER=1"},
+			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nps\n", true},
 		{"sidecar lookup fails", []string{"SIDECAR=wc-egress-S1", "PS_FAILS=1"}, "ps\n", true},
 		{"network lookup fails", []string{"SIDECAR=wc-egress-S1", "LS_FAILS=1"}, "ps\nls\n", true},
 	} {
@@ -197,12 +201,18 @@ go_hostutil() { :; }
 run_profile_docker_command() {
   shift
   case "$1" in
-    ps) printf 'ps\n' >>"$CALLS"; [[ -z "${PS_FAILS:-}" ]] || return 1; printf '%s\n' "${SIDECAR:-}" ;;
+    ps)
+      [[ "$3 $4" == '--filter name=^wc-egress-S1$' ]] || { echo "bad ps filter: $*" >&2; exit 99; }
+      printf 'ps\n' >>"$CALLS"; [[ -z "${PS_FAILS:-}" ]] || return 1
+      if [[ -e "$DIR/removed" && -n "${PS_FAILS_AFTER:-}" ]]; then return 1; fi
+      if [[ -e "$DIR/removed" && -z "${RM_FAILS:-}" ]]; then return 0; fi
+      printf '%s\n' "${SIDECAR:-}" ;;
     logs) printf 'logs %s\n' "$2" >>"$CALLS" ;;
-    rm) printf 'rm\n' >>"$CALLS" ;;
+    rm) printf 'rm\n' >>"$CALLS"; : >"$DIR/removed"; [[ -z "${RM_FAILS:-}" ]] || return 1 ;;
     network)
       case "$2" in
         ls)
+          [[ "$3 $4" == '--filter name=^wc-S1$' ]] || { echo "bad ls filter: $*" >&2; exit 99; }
           printf 'ls\n' >>"$CALLS"; [[ -z "${LS_FAILS:-}" ]] || return 1
           [[ -e "$DIR/gone" ]] || printf '%s\n' "${NET:-}" ;;
         disconnect) printf 'disconnect %s %s\n' "$4" "$5" >>"$CALLS" ;;
