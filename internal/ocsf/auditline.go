@@ -176,6 +176,9 @@ var knownAuditFields = map[string]struct{}{
 	// in internal/applecontainer/session_helpers.go), appended to EVERY rendered
 	// apple-container audit line — a legitimate field, not a tampered key.
 	"v":                       {},
+	"vm_cpu":                  {},
+	"vm_disk_gib":             {},
+	"vm_memory_gib":           {},
 	"workspace":               {},
 	"workspace_control_plane": {},
 	"workspace_origin":        {},

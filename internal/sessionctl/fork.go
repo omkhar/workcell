@@ -22,6 +22,7 @@ import (
 
 // forkCountPattern accepts 1 to 8, the most children one `session fork` starts.
 var forkCountPattern = regexp.MustCompile(`^[1-8]$`)
+var forkVMResourcePattern = regexp.MustCompile(`^[1-9][0-9]{0,5}$`)
 
 // forkExecutionPaths are the parent execution paths a child can reproduce
 // from the signed launch record. The other lower-assurance paths need a dated
@@ -118,6 +119,14 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("session fork does not support the parent container assurance %q: %s", launch["container_assurance"], opts.sessionID)
 	}
+	// A child reuses the parent profile. Resource flags that differ from the
+	// profile make a launch delete the shared VM, so a child replays the parent
+	// values, and a parent without them is refused.
+	for _, key := range []string{"vm_cpu", "vm_memory_gib", "vm_disk_gib"} {
+		if !forkVMResourcePattern.MatchString(launch[key]) {
+			return fmt.Errorf("session fork needs the parent VM resources in the signed launch record (%s): %s", key, opts.sessionID)
+		}
+	}
 	originHash := sha256.Sum256([]byte(origin))
 	return shellproto.WriteFields(stdout, []shellproto.Field{
 		{Key: "session_id", Value: record.SessionID},
@@ -128,6 +137,9 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		{Key: "mode", Value: launch["mode"]},
 		{Key: "agent_autonomy", Value: launch["agent_autonomy"]},
 		{Key: "container_mutability", Value: containerMutability},
+		{Key: "vm_cpu", Value: launch["vm_cpu"]},
+		{Key: "vm_memory_gib", Value: launch["vm_memory_gib"]},
+		{Key: "vm_disk_gib", Value: launch["vm_disk_gib"]},
 		{Key: "injection_policy_sha256", Value: launch["injection_policy_sha256"]},
 		{Key: "snapshot_id", Value: opts.snapshotID},
 		{Key: "commit", Value: snapshot["commit"]},

@@ -4419,7 +4419,7 @@ fork_append_record() {
   bash -c 'source "$1"; trap - EXIT; shift; append_audit_record_to_path "$@"' _ "${WORKCELL_FUNCTIONS_COPY}" "${FORK_AUDIT_LOG}" "$@"
 }
 fork_append_record event=launch "session_id=${FORK_PARENT}" agent=codex mode=strict agent_autonomy=yolo \
-  injection_policy_sha256= container_assurance=managed-mutable execution_path=managed-tier1
+  injection_policy_sha256= container_assurance=managed-mutable vm_cpu=6 vm_memory_gib=12 vm_disk_gib=90 execution_path=managed-tier1
 fork_snapshot_id="$("${ROOT_DIR}/scripts/workcell" session snapshot --id "${FORK_PARENT}" | sed -n 's/^snapshot_id=//p')"
 fork_commit="$(git --git-dir="${FORK_STORE}" rev-parse "refs/workcell/snapshots/${FORK_PARENT}/${fork_snapshot_id}")"
 fork_tree="$(git --git-dir="${FORK_STORE}" rev-parse "${fork_commit}^{tree}")"
@@ -4463,7 +4463,7 @@ git --git-dir="${FORK_STORE}" update-ref "refs/workcell/snapshots/${FORK_PARENT}
 fork_output="$(run_fork_fixture "${TMP_DIR}/fork.log" --id "${FORK_PARENT}" --snapshot "${fork_snapshot_id}" --count 2)"
 fork_children="$(sed -n 's/^children=//p' <<<"${fork_output}")"
 [[ "$(grep -c '^child|' "${TMP_DIR}/fork.log")" == "2" ]]
-grep -Fxq "child|--agent codex --mode strict --target colima --colima-profile ${FORK_PROFILE} --workspace ${FORK_ORIGIN} --session-workspace isolated --agent-autonomy yolo --no-default-injection-policy" "${TMP_DIR}/fork.log"
+grep -Fxq "child|--agent codex --mode strict --target colima --colima-profile ${FORK_PROFILE} --workspace ${FORK_ORIGIN} --session-workspace isolated --agent-autonomy yolo --no-default-injection-policy --vm-cpu 6 --vm-memory 12 --vm-disk 90" "${TMP_DIR}/fork.log"
 for fork_child in ${fork_children//,/ }; do
   fork_child_ws="${FORK_ORIGIN}/.git/workcell-sessions/${fork_child}/repo"
   [[ "$(git -C "${fork_child_ws}" rev-parse HEAD)" == "${FORK_BASE}" ]]
@@ -4544,7 +4544,7 @@ fork_args_run() {
     set -euo pipefail
     source "$1"
     trap - EXIT
-    session_run_cli_with_roots() { printf "session_id=p\nsnapshot_id=s\ncount=1\ncommit=c\ntree=t\nagent=codex\nmode=strict\nprofile=x\nworkspace_origin=/o\norigin_hash=h\ncontainer_mutability=%s\n" "${FORK_STUB_MUTABILITY}"; }
+    session_run_cli_with_roots() { printf "session_id=p\nsnapshot_id=s\ncount=1\ncommit=c\ntree=t\nagent=codex\nmode=strict\nprofile=x\nworkspace_origin=/o\norigin_hash=h\ncontainer_mutability=%s\nvm_cpu=4\nvm_memory_gib=10\nvm_disk_gib=80\n" "${FORK_STUB_MUTABILITY}"; }
     session_snapshot_store_root() { echo /nonexistent; }
     session_fork_start_child() { echo "$*" >"${FORK_STUB_LOG}"; printf "session_id=child-1\n"; }
     load_session_runtime_metadata() { SESSION_META_PROFILE=x SESSION_META_RECORD_PATH=/r; }
@@ -4555,6 +4555,7 @@ fork_args_run() {
 }
 fork_args_run readonly
 grep -q -- '--container-mutability readonly' "${fork_child_args_file}"
+grep -q -- '--vm-cpu 4 --vm-memory 10 --vm-disk 80' "${fork_child_args_file}"
 # Negative control: an ephemeral parent adds no mutability flag.
 fork_args_run ephemeral
 if grep -q -- '--container-mutability' "${fork_child_args_file}"; then

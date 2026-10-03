@@ -37,6 +37,11 @@ func newForkFixture(t *testing.T, executionPath string) *forkFixture {
 
 func newForkFixtureWithAssurance(t *testing.T, executionPath, assurance string) *forkFixture {
 	t.Helper()
+	return newForkFixtureWithVM(t, executionPath, assurance, "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80")
+}
+
+func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...string) *forkFixture {
+	t.Helper()
 	f := &forkFixture{root: t.TempDir(), signingDir: filepath.Join(t.TempDir(), "signing")}
 	profileDir := filepath.Join(f.root, "wcl-fixture")
 	if err := os.MkdirAll(filepath.Join(profileDir, "sessions"), 0o700); err != nil {
@@ -44,8 +49,8 @@ func newForkFixtureWithAssurance(t *testing.T, executionPath, assurance string) 
 	}
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
-	f.appendRecord(t, "event=launch", "agent=codex", "mode=strict", "agent_autonomy=yolo",
-		"injection_policy_sha256=", "container_assurance="+assurance, "execution_path="+executionPath)
+	f.appendRecord(t, append([]string{"event=launch", "agent=codex", "mode=strict", "agent_autonomy=yolo",
+		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
 	if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
@@ -103,7 +108,7 @@ func TestForkMainEmitsPlanFromSignedRecords(t *testing.T) {
 	want := strings.Join([]string{
 		"session_id=parent-1", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo",
 		"origin_hash=" + hex.EncodeToString(origin[:]), "agent=codex", "mode=strict",
-		"agent_autonomy=yolo", "container_mutability=ephemeral", "injection_policy_sha256=", "snapshot_id=snap-1",
+		"agent_autonomy=yolo", "container_mutability=ephemeral", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80", "injection_policy_sha256=", "snapshot_id=snap-1",
 		"commit=" + forkFixtureCommit, "tree=" + forkFixtureTree, "count=2", "ack_arbitrary_command=",
 	}, "\n") + "\n"
 	if out != want {
@@ -116,6 +121,23 @@ func TestForkMainAsksForSnapshotWithoutSnapshotID(t *testing.T) {
 	out, err := f.run("--id", "parent-1", "--count", "1")
 	if err != nil || out != "session_id=parent-1\nneeds_snapshot=1\nack_arbitrary_command=\n" {
 		t.Fatalf("forkMain = %q, %v", out, err)
+	}
+}
+
+func TestForkMainRequiresParentVMResources(t *testing.T) {
+	f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=6", "vm_memory_gib=12", "vm_disk_gib=90")
+	out, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1")
+	if err != nil || !strings.Contains(out, "vm_cpu=6\nvm_memory_gib=12\nvm_disk_gib=90\n") {
+		t.Fatalf("plan = %q, %v", out, err)
+	}
+	// A parent without the resources, or with a malformed one, is refused so a
+	// child never forces a profile refresh.
+	for _, vm := range [][]string{{}, {"vm_cpu=4", "vm_memory_gib=10"}, {"vm_cpu=0", "vm_memory_gib=10", "vm_disk_gib=80"}} {
+		g := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", vm...)
+		if _, err := g.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+			!strings.Contains(err.Error(), "parent VM resources") {
+			t.Fatalf("vm %v error = %v", vm, err)
+		}
 	}
 }
 

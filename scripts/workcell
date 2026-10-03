@@ -3123,6 +3123,9 @@ append_launch_audit_record() {
     "bootstrap_applied=${BOOTSTRAP_APPLIED}" \
     "bootstrap_endpoints=$([[ "${BOOTSTRAP_APPLIED}" -eq 1 ]] && printf '%s' "${BOOTSTRAP_ENDPOINTS}" || printf '')" \
     "container_assurance=$(container_assurance)" \
+    "vm_cpu=${COLIMA_CPU}" \
+    "vm_memory_gib=${COLIMA_MEMORY}" \
+    "vm_disk_gib=${COLIMA_DISK}" \
     "session_assurance_initial=$(session_assurance_initial)"
 }
 
@@ -4903,6 +4906,11 @@ session_fork_main() {
   if [[ "$(shellproto_field "${plan}" container_mutability)" == "readonly" ]]; then
     child_args+=(--container-mutability readonly)
   fi
+  child_args+=(
+    --vm-cpu "$(shellproto_field "${plan}" vm_cpu)"
+    --vm-memory "$(shellproto_field "${plan}" vm_memory_gib)"
+    --vm-disk "$(shellproto_field "${plan}" vm_disk_gib)"
+  )
   if [[ -n "${ack}" ]]; then
     child_args+=(--allow-arbitrary-command "--ack-arbitrary-command=${ack}" "${command[@]}")
   fi
