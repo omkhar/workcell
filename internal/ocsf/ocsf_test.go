@@ -955,3 +955,19 @@ func TestExportSessionForkKeepsLinkage(t *testing.T) {
 		t.Errorf("fork fields fell into the unexpected bucket: %v", got.Unmapped)
 	}
 }
+
+// TestExportSessionSnapshotKeepsCapture proves that a snapshot record keeps the
+// captured workspace and head as named audit attributes.
+func TestExportSessionSnapshotKeepsCapture(t *testing.T) {
+	line := "timestamp=2026-07-05T11:00:00Z session_id=s1 event=session_snapshot source=host-cli snapshot_id=snap-1 snapshot_workspace=/tmp/clone snapshot_head=4444444444444444444444444444444444444444"
+	exp := sessions.SessionExport{
+		Session:      sessions.SessionRecord{SessionID: "s1", Agent: "claude", Mode: "yolo", Status: "running", StartedAt: "2026-07-05T11:00:00Z"},
+		AuditRecords: []string{line},
+	}
+	got := mustExport(t, exp, Options{Now: fixedNow})[1]
+	for key, want := range map[string]string{"audit.snapshot_workspace": "/tmp/clone", "audit.snapshot_head": strings.Repeat("4", 40)} {
+		if got.Unmapped[key] != want {
+			t.Errorf("%s = %q, want %q", key, got.Unmapped[key], want)
+		}
+	}
+}

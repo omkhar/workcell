@@ -485,7 +485,7 @@ test ! -e "${FILTER_MARKER}"
 [[ "$(git --git-dir="${SNAPSHOT_STORE_A}" show "${snapshot_tree}:new.txt")" == "new file" ]]
 git --git-dir="${SNAPSHOT_STORE_A}" fsck --strict --no-dangling >/dev/null
 [[ "$("${ROOT_DIR}/scripts/workcell" session verify --id "${SESSION_SNAPSHOT}" | sed -n 's/^session_verify=//p')" == "verified" ]]
-grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT} source=host-cli snapshot_id=${snapshot_id} tree=${snapshot_tree} commit=${snapshot_commit}" "${SNAPSHOT_AUDIT_LOG}"
+grep -q "event=session_snapshot session_id=${SESSION_SNAPSHOT} source=host-cli snapshot_id=${snapshot_id} tree=${snapshot_tree} commit=${snapshot_commit} snapshot_workspace=${WORKSPACE_A} snapshot_head=${GIT_BASE}" "${SNAPSHOT_AUDIT_LOG}"
 
 # Negative control: a forged workspace object fails the store fetch, so no
 # snapshot ref and no audit record land.

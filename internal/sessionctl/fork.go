@@ -128,6 +128,12 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// The signed snapshot record names the workspace and head that capture
+	// really used. They must be the signed launch values, because the unsigned
+	// session record can change between the check and the capture.
+	if snapshot["snapshot_workspace"] != launch["workspace"] || snapshot["snapshot_head"] != launch["workspace_head"] {
+		return fmt.Errorf("session fork: the snapshot did not capture the signed launch workspace and head: %s", opts.sessionID)
+	}
 	originHash := sha256.Sum256([]byte(origin))
 	return shellproto.WriteFields(stdout, []shellproto.Field{
 		{Key: "session_id", Value: record.SessionID},

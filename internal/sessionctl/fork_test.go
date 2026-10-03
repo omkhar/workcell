@@ -25,6 +25,10 @@ const (
 	forkFixtureHead   = "4444444444444444444444444444444444444444"
 )
 
+// forkSnapshotCapture is the workspace and head that the fixture snapshot
+// record names. A test replaces it to model a capture of another clone.
+var forkSnapshotCapture = []string{"snapshot_workspace=/tmp/clone", "snapshot_head=" + forkFixtureHead}
+
 type forkFixture struct {
 	root, signingDir, logPath, recordPath, prev string
 	lines                                       []string
@@ -62,8 +66,8 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
 	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "workspace_origin=/tmp/origin-repo", "workspace=/tmp/clone", "workspace_head=" + forkFixtureHead, "agent=codex", "agent_autonomy=yolo",
 		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
-	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
-		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
+	f.appendRecord(t, append([]string{"event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
+		"tree=" + forkFixtureTree, "commit=" + forkFixtureCommit}, forkSnapshotCapture...)...)
 	if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
 		"session_id": "parent-1", "profile": "wcl-fixture", "target_provider": "colima", "execution_path": executionPath,
 		"agent": "codex", "mode": "strict", "status": "running", "live_status": "running",
@@ -204,6 +208,23 @@ func TestForkMainBindsTargetToSignedLaunch(t *testing.T) {
 	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
 		!strings.Contains(err.Error(), "colima target") {
 		t.Fatalf("docker-desktop launch error = %v", err)
+	}
+}
+
+func TestForkMainBindsTheCapturedWorkspaceToTheLaunch(t *testing.T) {
+	old := forkSnapshotCapture
+	t.Cleanup(func() { forkSnapshotCapture = old })
+	for _, capture := range [][]string{
+		{"snapshot_workspace=/tmp/other-clone", "snapshot_head=" + forkFixtureHead},
+		{"snapshot_workspace=/tmp/clone", "snapshot_head=" + strings.Repeat("5", 40)},
+		{},
+	} {
+		forkSnapshotCapture = capture
+		f := newForkFixture(t, "managed-tier1")
+		if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+			!strings.Contains(err.Error(), "did not capture the signed launch workspace") {
+			t.Fatalf("capture %v error = %v", capture, err)
+		}
 	}
 }
 

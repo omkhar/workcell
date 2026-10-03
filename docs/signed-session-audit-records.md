@@ -150,6 +150,9 @@ head. A snapshot record after the signed head is refused. Fork never reads the
 snapshot commit from a store ref. After it starts the children, fork appends
 one `session_fork` record and signs the parent head again.
 
+The snapshot record names the workspace and git head that the capture used.
+Fork refuses a snapshot when they differ from the signed launch record.
+
 ## Limits and provider coverage
 
 Verification detects these conditions:

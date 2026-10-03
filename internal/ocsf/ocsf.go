@@ -52,7 +52,9 @@ const OCSFSchemaVersion = "1.3.0"
 // "4": the launch event gained the audit.vm_cpu, audit.vm_memory_gib,
 // audit.vm_disk_gib, audit.container_cpu, and audit.container_memory
 // attributes, and the session_fork event became a recognized lifecycle event
-// with audit.snapshot_id, audit.parent, and audit.children.
+// with audit.snapshot_id, audit.parent, and audit.children. The
+// session_snapshot record gained audit.snapshot_workspace and
+// audit.snapshot_head.
 const MappingVersion = "4"
 
 // OCSF Application Lifecycle classification constants.
