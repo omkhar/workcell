@@ -43,6 +43,12 @@ func TestValidateEgressProxySoleRouteRejectsEvasions(t *testing.T) {
 		"appended in loop": func(s string) string {
 			return strings.Replace(s, alias, "    RUNTIME_NETWORK_ARGS+=(--network bridge)\n"+alias, 1)
 		},
+		"quoted alias decoy": func(s string) string {
+			return strings.Replace(s, alias, "    echo '"+strings.TrimSpace(alias)+"'", 1)
+		},
+		"later duplicate definition": func(s string) string {
+			return s + "\negress_proxy_agent_network_args() {\n  RUNTIME_NETWORK_ARGS=(--network host)\n}\n"
+		},
 		"shared network": func(s string) string { return strings.Replace(s, network, `  EGRESS_PROXY_NETWORK="bridge"`, 1) },
 		"echoed decoy": func(s string) string {
 			return strings.Replace(s, route, "  echo '"+strings.TrimSpace(route)+"'\n  RUNTIME_NETWORK_ARGS=(--network bridge)", 1)

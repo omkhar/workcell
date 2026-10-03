@@ -4,10 +4,53 @@
 package metadatautil
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
+
+// egressProxyGuardedDigest is the SHA-256 of the reviewed bodies of
+// start_egress_proxy and egress_proxy_agent_network_args, joined by the
+// separator that guardedFunctionsDigest uses. The parser rules below name the
+// rule that failed, but a static check cannot prove that nothing else runs:
+// bash assembles commands across quotes, loops and later definitions, and every
+// spelling needs its own rule. The digest closes the class, as it does for the
+// Colima egress script. Any edit of either body, in any spelling, fails until a
+// reviewer regenerates it. The dry-run and Colima smoke scenarios then check
+// the behavior of the reviewed functions.
+const egressProxyGuardedDigest = "80c3a124b1cac909f0dccd6f92a849ed2d5a8a02b8a5cd558473dae14045a0d4"
+
+var egressProxyGuardedFunctions = []string{"start_egress_proxy", "egress_proxy_agent_network_args"}
+
+// guardedFunctionsDigest returns the digest of the guarded function bodies.
+func guardedFunctionsDigest(script string) string {
+	var bodies []string
+	for _, name := range egressProxyGuardedFunctions {
+		bodies = append(bodies, functionBody(script, name))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(bodies, "\n--\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// checkGuardedFunctions requires one definition of each guarded function, so
+// that a later definition cannot replace the reviewed one, and the reviewed
+// bodies. label names the validator in the error.
+func checkGuardedFunctions(script, label string) error {
+	for _, name := range egressProxyGuardedFunctions {
+		definition := regexp.MustCompile(`(?m)^[ \t]*(?:function[ \t]+` + name + `\b|` + name + `[ \t]*\([ \t]*\))`)
+		if count := len(definition.FindAllString(script, -1)); count != 1 {
+			return fmt.Errorf("Expected exactly one definition of %s for the %s, found %d", name, label, count)
+		}
+	}
+	if got := guardedFunctionsDigest(script); got != egressProxyGuardedDigest {
+		return fmt.Errorf("Expected the %s functions to equal the reviewed functions (digest %s)", label, got)
+	}
+	return nil
+}
 
 // egressProxySidecarCreate is the exact argument vector of the sidecar `docker
 // create`, after the command words. Equality closes the class that a deny list
@@ -47,7 +90,7 @@ func ValidateEgressProxySidecar(script string) error {
 	if len(creates) != 1 || !slices.Equal(creates[0].Args, egressProxySidecarCreate) {
 		return errors.New("Expected the egress proxy sidecar create command to equal the reviewed hardened command")
 	}
-	return nil
+	return checkGuardedFunctions(script, "egress proxy sidecar")
 }
 
 // ValidateEgressProxySoleRoute requires egress_proxy_agent_network_args to
@@ -67,7 +110,7 @@ func ValidateEgressProxySoleRoute(script string) error {
 		strings.Count(body, `RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")`) != 1 {
 		return errors.New(fail)
 	}
-	return nil
+	return checkGuardedFunctions(script, "egress proxy sole route")
 }
 
 // functionBody returns the lines between the `name()` header and the closing

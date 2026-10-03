@@ -161,23 +161,30 @@ start_egress_proxy sha256:abc
 	}
 }
 
-// TestStopOrphanedEgressProxy proves that a session with a sidecar gets the
-// agent disconnected and the sidecar and network removed from the session id
-// alone, a session with none gets no docker call beyond the lookup, and a
-// failed lookup fails instead of passing as empty.
+// TestStopOrphanedEgressProxy runs stop_orphaned_egress_proxy against stubbed
+// docker. It proves the cleanup order, the cleanup of a network that outlived
+// its sidecar, and that a failed lookup or network removal fails the call.
 func TestStopOrphanedEgressProxy(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join("..", "..", "scripts", "lib", "launcher", "egress-endpoints.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		name, listed, psFails, want string
-		wantFail                    bool
+		name     string
+		env      []string
+		want     string
+		wantFail bool
 	}{
-		{"sidecar present", "wc-egress-S1", "", "ps\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\n", false},
-		{"other sidecar only", "wc-egress-S10", "", "ps\n", false},
-		{"none", "", "", "ps\n", false},
-		{"lookup fails", "wc-egress-S1", "1", "ps\n", true},
+		{"sidecar and network", []string{"SIDECAR=wc-egress-S1", "NET=wc-S1"},
+			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nls\n", false},
+		{"network outlived the sidecar", []string{"NET=wc-S1"},
+			"ps\nls\ndisconnect wc-S1 agent1\nls\nnetwork rm wc-S1\n", false},
+		{"other session only", []string{"SIDECAR=wc-egress-S10", "NET=wc-S10"}, "ps\nls\n", false},
+		{"neither", nil, "ps\nls\n", false},
+		{"network removal fails", []string{"SIDECAR=wc-egress-S1", "NET=wc-S1", "NET_RM_FAILS=1"},
+			"ps\nls\ndisconnect wc-S1 agent1\nlogs wc-egress-S1\nrm\nnetwork rm wc-S1\nls\nnetwork rm wc-S1\n", true},
+		{"sidecar lookup fails", []string{"SIDECAR=wc-egress-S1", "PS_FAILS=1"}, "ps\n", true},
+		{"network lookup fails", []string{"SIDECAR=wc-egress-S1", "LS_FAILS=1"}, "ps\nls\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -190,13 +197,19 @@ go_hostutil() { :; }
 run_profile_docker_command() {
   shift
   case "$1" in
-    ps) printf 'ps\n' >>"$CALLS"; [[ -z "$PS_FAILS" ]] || return 1; printf '%s\n' "$LISTED" ;;
+    ps) printf 'ps\n' >>"$CALLS"; [[ -z "${PS_FAILS:-}" ]] || return 1; printf '%s\n' "${SIDECAR:-}" ;;
     logs) printf 'logs %s\n' "$2" >>"$CALLS" ;;
     rm) printf 'rm\n' >>"$CALLS" ;;
     network)
       case "$2" in
+        ls)
+          printf 'ls\n' >>"$CALLS"; [[ -z "${LS_FAILS:-}" ]] || return 1
+          [[ -e "$DIR/gone" ]] || printf '%s\n' "${NET:-}" ;;
         disconnect) printf 'disconnect %s %s\n' "$4" "$5" >>"$CALLS" ;;
-        rm) printf 'network rm %s\n' "$3" >>"$CALLS" ;;
+        rm)
+          printf 'network rm %s\n' "$3" >>"$CALLS"
+          [[ -z "${NET_RM_FAILS:-}" ]] || return 1
+          : >"$DIR/gone" ;;
       esac
       ;;
   esac
@@ -204,7 +217,7 @@ run_profile_docker_command() {
 stop_orphaned_egress_proxy prof S1 agent1
 `
 			cmd := exec.Command("bash", "-c", script)
-			cmd.Env = append(os.Environ(), "LIB="+lib, "DIR="+dir, "CALLS="+calls, "LISTED="+tc.listed, "PS_FAILS="+tc.psFails, "TMPDIR="+dir)
+			cmd.Env = append(append(os.Environ(), "LIB="+lib, "DIR="+dir, "CALLS="+calls, "TMPDIR="+dir), tc.env...)
 			out, err := cmd.CombinedOutput()
 			if failed := err != nil; failed != tc.wantFail {
 				t.Fatalf("failed = %v, want %v\n%s", failed, tc.wantFail, out)

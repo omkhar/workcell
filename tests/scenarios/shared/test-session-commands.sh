@@ -2302,6 +2302,9 @@ bash -lc '
       ps)
         return 0
         ;;
+      network)
+        return 0
+        ;;
       *)
         return 1
         ;;
@@ -2388,6 +2391,9 @@ stop_dead_monitor_output="$(
         ps)
           return 0
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2470,6 +2476,9 @@ stop_already_stopped_output="$(
           printf "stopped\n"
           ;;
         ps)
+          return 0
+          ;;
+        network)
           return 0
           ;;
         *)
@@ -2557,6 +2566,9 @@ stop_already_stopped_running_output="$(
           printf "stopped\n"
           ;;
         ps)
+          return 0
+          ;;
+        network)
           return 0
           ;;
         *)
@@ -2652,6 +2664,9 @@ EOF_JSON
           return 1
           ;;
         ps)
+          return 0
+          ;;
+        network)
           return 0
           ;;
         *)
@@ -2849,6 +2864,9 @@ EOF_JSON
         ps)
           return 0
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2918,6 +2936,9 @@ EOF_JSON
           fi
           return 1
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -2966,7 +2987,7 @@ EOF_JSON
     run_profile_docker_command() {
       local profile="$1"; shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; ps) return 0 ;; *) return 1 ;; esac
+      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; ps) return 0 ;; network) return 0 ;; *) return 1 ;; esac
     }
     session_delete_main --id detached-fixture
     test ! -e "${RECORD_PATH}"
@@ -3118,6 +3139,9 @@ EOF_JSON
         inspect)
           printf "stopped\n"
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -3187,6 +3211,9 @@ EOF_JSON
     case "$1" in
       inspect)
         printf "running\n"
+        ;;
+      network)
+        return 0
         ;;
       *)
         return 1
@@ -3289,6 +3316,9 @@ EOF_JSON
           printf "removed\n" >"${CONTAINER_STATE_FILE}"
           ;;
         ps)
+          return 0
+          ;;
+        network)
           return 0
           ;;
         *)

@@ -28,6 +28,27 @@ func TestValidateEgressProxySidecarRejectsEvasions(t *testing.T) {
 	RequireRejectsAllEvasions(t, string(script), anchor, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
 	network := `  run_workcell_docker_client_command "${HOST_DOCKER_BIN}" network create --internal "${EGRESS_PROXY_NETWORK}" >/dev/null || return 1`
 	RequireRejectsAllEvasions(t, string(script), network, "egress proxy sidecar", metadatautil.ValidateEgressProxySidecar)
+	for name, mutate := range map[string]func(string) string{
+		"later duplicate definition": func(s string) string {
+			return s + "\nstart_egress_proxy() {\n  :\n}\n"
+		},
+		"subnet from the bridge": func(s string) string {
+			return strings.Replace(s, `"${EGRESS_PROXY_NETWORK}")" || return 1`, `bridge)" || return 1`, 1)
+		},
+		"unreviewed extra command": func(s string) string {
+			return strings.Replace(s, "  local i=\"\"\n", "  local i=\"\"\n  true\n", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := mutate(string(script))
+			if mutated == string(script) {
+				t.Fatal("mutation changed nothing")
+			}
+			if err := metadatautil.ValidateEgressProxySidecar(mutated); err == nil {
+				t.Fatalf("validator accepted %s", name)
+			}
+		})
+	}
 	for name, replacement := range map[string]string{
 		"non-internal network": strings.Replace(network, " --internal", "", 1),
 		"echoed internal":      `  echo "network create --internal"` + "\n" + strings.Replace(network, " --internal", "", 1),

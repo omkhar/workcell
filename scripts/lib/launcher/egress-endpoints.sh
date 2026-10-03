@@ -268,24 +268,37 @@ stop_egress_proxy() {
 # whose launcher or monitor is gone. The names derive from the session id, so
 # session stop and session delete need no record field. It disconnects the
 # stopped agent container first, because Docker refuses to remove a network
-# that still holds an endpoint. It does nothing when the session has no
-# sidecar, and it fails when the sidecar lookup fails: a failed lookup is not
-# an empty one.
+# that still holds an endpoint. It removes a network that outlived its sidecar
+# too, and it fails when a lookup or the network removal fails: a failed lookup
+# is not an empty one. It does nothing when the session has neither.
 stop_orphaned_egress_proxy() {
   local profile="$1"
   local session_id="$2"
   local agent_container="${3:-}"
+  local network="wc-${session_id}"
   local names=""
+  local networks=""
+  local has_sidecar=0
+  local has_network=0
 
   names="$(run_profile_docker_command "${profile}" ps -a --filter "name=^wc-egress-${session_id}\$" --format '{{.Names}}' 2>/dev/null)" || return 1
-  grep -qx "wc-egress-${session_id}" <<<"${names}" || return 0
-  if [[ -n "${agent_container}" ]]; then
-    run_profile_docker_command "${profile}" network disconnect -f "wc-${session_id}" "${agent_container}" >/dev/null 2>&1 || true
+  networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^${network}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
+  ! grep -qx "wc-egress-${session_id}" <<<"${names}" || has_sidecar=1
+  ! grep -qx "${network}" <<<"${networks}" || has_network=1
+  [[ "${has_sidecar}" -eq 1 || "${has_network}" -eq 1 ]] || return 0
+  if [[ "${has_network}" -eq 1 && -n "${agent_container}" ]]; then
+    run_profile_docker_command "${profile}" network disconnect -f "${network}" "${agent_container}" >/dev/null 2>&1 || true
   fi
-  (
-    SESSION_ID="${session_id}"
-    EGRESS_PROXY_CONTAINER="wc-egress-${session_id}"
-    EGRESS_PROXY_NETWORK="wc-${session_id}"
-    stop_egress_proxy "${profile}"
-  )
+  if [[ "${has_sidecar}" -eq 1 ]]; then
+    (
+      SESSION_ID="${session_id}"
+      EGRESS_PROXY_CONTAINER="wc-egress-${session_id}"
+      EGRESS_PROXY_NETWORK="${network}"
+      stop_egress_proxy "${profile}"
+    )
+  fi
+  networks="$(run_profile_docker_command "${profile}" network ls --filter "name=^${network}\$" --format '{{.Name}}' 2>/dev/null)" || return 1
+  if grep -qx "${network}" <<<"${networks}"; then
+    run_profile_docker_command "${profile}" network rm "${network}" >/dev/null 2>&1 || return 1
+  fi
 }
