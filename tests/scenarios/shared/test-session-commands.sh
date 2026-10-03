@@ -4600,6 +4600,24 @@ grep -q 'could not record the fork' "${TMP_DIR}/fork-append.err"
 fork_append_out="$(fork_bookkeeping_run fail)"
 grep -Fxq 'children=child-1' <<<"${fork_append_out}"
 
+# The launch record counts provider arguments, but not the command of an
+# arbitrary-command parent, which fork asks for again.
+fork_launch_fields() {
+  FORK_STUB_ALLOW="$1" bash -c '
+    source "$1"
+    trap - EXIT
+    set +eu
+    append_audit_record() { printf "%s\n" "$@"; }
+    session_git_metadata_lines() { printf "git_head=abc\n"; }
+    ALLOW_ARBITRARY_COMMAND="${FORK_STUB_ALLOW}"
+    PROVIDER_ARGS=(a b)
+    append_launch_audit_record p managed-tier1 2>/dev/null
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+}
+fork_launch_fields 1 | grep -Fxq 'provider_arg_count=0'
+fork_launch_fields 0 | grep -Fxq 'provider_arg_count=2'
+fork_launch_fields 0 | grep -Fxq 'workspace_head=abc'
+
 # A fork child refuses a non-detached launch and an injection policy that
 # differs from the parent launch record. The shebang clears the environment,
 # so these runs start bash directly, as session_fork_start_child does.
