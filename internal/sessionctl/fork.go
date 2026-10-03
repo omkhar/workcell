@@ -47,8 +47,9 @@ type forkArgs struct {
 // records that the host seal covers, never from a ref in the snapshot store.
 //
 // Without --snapshot it checks the signed launch record and the execution
-// path, then emits session_id= and needs_snapshot=1. The shim takes a snapshot
-// and calls ForkMain again with --snapshot.
+// path, then emits session_id=, needs_snapshot=1, and the acknowledgement. The
+// shim checks the acknowledgement date, takes a snapshot, and calls ForkMain
+// again with --snapshot.
 func ForkMain(args []string) error {
 	return forkMain(args, os.Stdout, os.Stderr)
 }
@@ -97,6 +98,7 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		return shellproto.WriteFields(stdout, []shellproto.Field{
 			{Key: "session_id", Value: record.SessionID},
 			{Key: "needs_snapshot", Value: "1"},
+			{Key: "ack_arbitrary_command", Value: opts.ackArbitrary},
 		})
 	}
 

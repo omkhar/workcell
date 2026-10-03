@@ -109,7 +109,7 @@ func TestForkMainEmitsPlanFromSignedRecords(t *testing.T) {
 func TestForkMainAsksForSnapshotWithoutSnapshotID(t *testing.T) {
 	f := newForkFixture(t, "managed-tier1")
 	out, err := f.run("--id", "parent-1", "--count", "1")
-	if err != nil || out != "session_id=parent-1\nneeds_snapshot=1\n" {
+	if err != nil || out != "session_id=parent-1\nneeds_snapshot=1\nack_arbitrary_command=\n" {
 		t.Fatalf("forkMain = %q, %v", out, err)
 	}
 }

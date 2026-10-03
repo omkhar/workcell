@@ -4510,6 +4510,32 @@ if bash -c 'set -euo pipefail; source "$1"; trap - EXIT; HOST_GIT_BIN="$(command
 fi
 git -C "${FORK_ORIGIN}" checkout -q -- tracked.txt
 
+# A stale acknowledgement stops the fork before the snapshot, which persists.
+# The plan and the snapshot step are stubs, so the run changes no state.
+fork_stale_snapshots="${TMP_DIR}/fork-stale-ack.log"
+fork_stale_run() {
+  FORK_STUB_ACK="$1" FORK_STUB_LOG="${fork_stale_snapshots}" bash -c '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    session_run_cli_with_roots() { printf "session_id=p\nneeds_snapshot=1\nack_arbitrary_command=%s\n" "${FORK_STUB_ACK}"; }
+    session_snapshot_main() { echo called >>"${FORK_STUB_LOG}"; exit 0; }
+    session_fork_main --id p --count 1 --allow-arbitrary-command --ack-arbitrary-command="${FORK_STUB_ACK}" -- true
+  ' _ "${WORKCELL_FUNCTIONS_COPY}"
+}
+if fork_stale_run 2001-01-01 >/dev/null 2>"${TMP_DIR}/fork-stale-ack.err"; then
+  echo "session fork accepted a stale acknowledgement" >&2
+  exit 1
+fi
+grep -q "does not match today's UTC date" "${TMP_DIR}/fork-stale-ack.err"
+test ! -e "${fork_stale_snapshots}"
+# Negative control: today's date reaches the snapshot step.
+fork_stale_run "${ACK_TODAY_UTC}" >/dev/null 2>"${TMP_DIR}/fork-fresh-ack.err" || true
+grep -q called "${fork_stale_snapshots}" || {
+  cat "${TMP_DIR}/fork-fresh-ack.err" >&2
+  exit 1
+}
+
 # A fork child refuses a non-detached launch and an injection policy that
 # differs from the parent launch record. The shebang clears the environment,
 # so these runs start bash directly, as session_fork_start_child does.

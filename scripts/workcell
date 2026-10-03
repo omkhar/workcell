@@ -4868,6 +4868,9 @@ session_fork_main() {
   session_id="$(shellproto_field "${plan}" session_id)"
   [[ -n "${session_id}" ]] || exit 0
   if [[ "$(shellproto_field "${plan}" needs_snapshot)" == "1" ]]; then
+    # Refuse a stale acknowledgement before the snapshot, which persists.
+    ack="$(shellproto_field "${plan}" ack_arbitrary_command)"
+    [[ -z "${ack}" ]] || validate_ack_token "--ack-arbitrary-command" "${ack}"
     snapshot_id="$(shellproto_field "$(session_snapshot_main --id "${session_id}")" snapshot_id)"
     [[ -n "${snapshot_id}" ]] || exit 1
     set +e
