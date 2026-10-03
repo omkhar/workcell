@@ -264,6 +264,17 @@ func TestForkMainRefusesBeforeAskingForSnapshot(t *testing.T) {
 	}
 }
 
+func TestForkMainRefusesSealedParentBeforeSnapshot(t *testing.T) {
+	// A sealed parent has signed launch settings, so an unsupported one is
+	// refused before the snapshot instead of after it.
+	f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80",
+		"container_cpu=unmanaged", "container_memory=8g", "provider_arg_count=2")
+	if out, err := f.run("--id", "parent-1", "--count", "1"); err == nil || out != "" ||
+		!strings.Contains(err.Error(), "provider arguments") {
+		t.Fatalf("forkMain on a sealed unsupported parent = %q, %v", out, err)
+	}
+}
+
 func TestForkMainAsksForSnapshotBeforeAnySeal(t *testing.T) {
 	f := newForkFixture(t, "managed-tier1")
 	// A running parent has no seal until its first snapshot.

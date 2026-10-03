@@ -6,6 +6,7 @@ package sessionctl
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,8 +52,9 @@ type forkArgs struct {
 // reads the snapshot commit and the parent launch settings only from audit
 // records that the host seal covers, never from a ref in the snapshot store.
 //
-// Without --snapshot it checks the recorded execution path, then emits
-// session_id=, needs_snapshot=1, and the acknowledgement. The shim checks the
+// Without --snapshot it checks the signed launch record of a sealed parent, or
+// the recorded execution path of an unsealed one, then emits session_id=,
+// needs_snapshot=1, and the acknowledgement. The shim checks the
 // acknowledgement date, takes a snapshot, and calls ForkMain again with
 // --snapshot.
 func ForkMain(args []string) error {
@@ -91,9 +93,22 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("session fork record is missing a workspace origin: %s", opts.sessionID)
 	}
 	if opts.snapshotID == "" {
-		// A running parent has no seal yet, so only the unsigned session record
-		// can refuse early. The signed launch record decides after the snapshot.
-		if record.ExecutionPath != "" {
+		// A sealed parent, such as a stopped one, has signed launch settings
+		// that can refuse before a snapshot. A running parent has no seal yet,
+		// so only the unsigned session record can refuse early there.
+		_, sealErr := auditseal.ReadSeal(auditseal.SealPathForRecord(recordPath))
+		switch {
+		case sealErr == nil:
+			launch, _, err := sealedForkRecords(opts, record, recordPath)
+			if err != nil {
+				return err
+			}
+			if _, err := validateForkLaunch(opts, record, origin, launch); err != nil {
+				return err
+			}
+		case !errors.Is(sealErr, os.ErrNotExist):
+			return fmt.Errorf("session fork requires a signed audit chain for %s: %w", opts.sessionID, sealErr)
+		case record.ExecutionPath != "":
 			if err := checkForkExecutionPath(opts, record.ExecutionPath); err != nil {
 				return err
 			}
@@ -109,55 +124,9 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
+	containerMutability, err := validateForkLaunch(opts, record, origin, launch)
+	if err != nil {
 		return err
-	}
-	// The child launches with --target colima, so the signed launch must name
-	// colima and agree with the durable record.
-	if launch["target_provider"] != "colima" || record.TargetProvider != "colima" {
-		return fmt.Errorf("session fork supports only a parent that the signed launch record shows on the colima target: %s", opts.sessionID)
-	}
-	// The unsigned record picks the clone source, so the signed launch record
-	// must name the same origin. A child does not replay provider arguments, so
-	// a parent that ran with any is refused instead of forked with the default.
-	if launch["workspace_origin"] != origin {
-		return fmt.Errorf("session fork: the session record workspace origin does not match the signed launch record: %s", opts.sessionID)
-	}
-	if launch["provider_arg_count"] != "0" {
-		return fmt.Errorf("session fork does not support a parent that ran with provider arguments: %s", opts.sessionID)
-	}
-	// The child reuses this profile, so it comes from the signed record. A
-	// durable session record that names another profile is refused.
-	if launch["profile"] != record.Profile {
-		return fmt.Errorf("session fork: the session record profile does not match the signed launch record: %s", opts.sessionID)
-	}
-	// The snapshot step already captured the unsigned workspace and git head,
-	// so they must match the signed launch before any child starts.
-	if launch["workspace"] != record.Workspace || launch["workspace_head"] != record.GitHead || !gitObjectIDPattern.MatchString(launch["workspace_head"]) {
-		return fmt.Errorf("session fork: the session record workspace or git head does not match the signed launch record: %s", opts.sessionID)
-	}
-	// A child replays the parent rootfs posture. Without it a readonly parent
-	// forks into the ephemeral default, a wider posture.
-	var containerMutability string
-	switch launch["container_assurance"] {
-	case "managed-readonly":
-		containerMutability = "readonly"
-	case "managed-mutable":
-		containerMutability = "ephemeral"
-	default:
-		return fmt.Errorf("session fork does not support the parent container assurance %q: %s", launch["container_assurance"], opts.sessionID)
-	}
-	// A child reuses the parent profile. Resource flags that differ from the
-	// profile make a launch delete the shared VM, so a child replays the parent
-	// values, and a parent without them is refused.
-	for _, key := range []string{"vm_cpu", "vm_memory_gib", "vm_disk_gib"} {
-		if !forkVMResourcePattern.MatchString(launch[key]) {
-			return fmt.Errorf("session fork needs the parent VM resources in the signed launch record (%s): %s", key, opts.sessionID)
-		}
-	}
-	// Container limits matter the same way: up to eight children share the VM.
-	if !forkContainerCPUPattern.MatchString(launch["container_cpu"]) || !forkContainerMemoryPattern.MatchString(launch["container_memory"]) {
-		return fmt.Errorf("session fork needs the parent container limits in the signed launch record: %s", opts.sessionID)
 	}
 	originHash := sha256.Sum256([]byte(origin))
 	return shellproto.WriteFields(stdout, []shellproto.Field{
@@ -272,7 +241,7 @@ func sealedForkRecords(opts forkArgs, record sessions.SessionRecord, recordPath 
 	if launch == nil || launch["agent"] == "" || launch["mode"] == "" {
 		return nil, nil, fmt.Errorf("session fork: no signed launch record for %s", opts.sessionID)
 	}
-	if snapshot == nil || !gitObjectIDPattern.MatchString(snapshot["commit"]) || !gitObjectIDPattern.MatchString(snapshot["tree"]) {
+	if opts.snapshotID != "" && (snapshot == nil || !gitObjectIDPattern.MatchString(snapshot["commit"]) || !gitObjectIDPattern.MatchString(snapshot["tree"])) {
 		return nil, nil, fmt.Errorf("session fork: no signed session_snapshot record %s for %s", opts.snapshotID, opts.sessionID)
 	}
 	return launch, snapshot, nil
@@ -304,4 +273,61 @@ func checkForkExecutionPath(opts forkArgs, executionPath string) error {
 		return &cliexit.ExitCodeError{Code: 2, Message: "workcell session fork of an arbitrary-command parent requires --allow-arbitrary-command, --ack-arbitrary-command=YYYY-MM-DD, and a command after --."}
 	}
 	return nil
+}
+
+// validateForkLaunch checks the signed launch record against the durable
+// session record and the fork request. It returns the container mutability a
+// child replays.
+func validateForkLaunch(opts forkArgs, record sessions.SessionRecord, origin string, launch map[string]string) (string, error) {
+	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
+		return "", err
+	}
+	// The child launches with --target colima, so the signed launch must name
+	// colima and agree with the durable record.
+	if launch["target_provider"] != "colima" || record.TargetProvider != "colima" {
+		return "", fmt.Errorf("session fork supports only a parent that the signed launch record shows on the colima target: %s", opts.sessionID)
+	}
+	// The unsigned record picks the clone source, so the signed launch record
+	// must name the same origin. A child does not replay provider arguments, so
+	// a parent that ran with any is refused instead of forked with the default.
+	if launch["workspace_origin"] != origin {
+		return "", fmt.Errorf("session fork: the session record workspace origin does not match the signed launch record: %s", opts.sessionID)
+	}
+	if launch["provider_arg_count"] != "0" {
+		return "", fmt.Errorf("session fork does not support a parent that ran with provider arguments: %s", opts.sessionID)
+	}
+	// The child reuses this profile, so it comes from the signed record. A
+	// durable session record that names another profile is refused.
+	if launch["profile"] != record.Profile {
+		return "", fmt.Errorf("session fork: the session record profile does not match the signed launch record: %s", opts.sessionID)
+	}
+	// The snapshot step already captured the unsigned workspace and git head,
+	// so they must match the signed launch before any child starts.
+	if launch["workspace"] != record.Workspace || launch["workspace_head"] != record.GitHead || !gitObjectIDPattern.MatchString(launch["workspace_head"]) {
+		return "", fmt.Errorf("session fork: the session record workspace or git head does not match the signed launch record: %s", opts.sessionID)
+	}
+	// A child replays the parent rootfs posture. Without it a readonly parent
+	// forks into the ephemeral default, a wider posture.
+	var containerMutability string
+	switch launch["container_assurance"] {
+	case "managed-readonly":
+		containerMutability = "readonly"
+	case "managed-mutable":
+		containerMutability = "ephemeral"
+	default:
+		return "", fmt.Errorf("session fork does not support the parent container assurance %q: %s", launch["container_assurance"], opts.sessionID)
+	}
+	// A child reuses the parent profile. Resource flags that differ from the
+	// profile make a launch delete the shared VM, so a child replays the parent
+	// values, and a parent without them is refused.
+	for _, key := range []string{"vm_cpu", "vm_memory_gib", "vm_disk_gib"} {
+		if !forkVMResourcePattern.MatchString(launch[key]) {
+			return "", fmt.Errorf("session fork needs the parent VM resources in the signed launch record (%s): %s", key, opts.sessionID)
+		}
+	}
+	// Container limits matter the same way: up to eight children share the VM.
+	if !forkContainerCPUPattern.MatchString(launch["container_cpu"]) || !forkContainerMemoryPattern.MatchString(launch["container_memory"]) {
+		return "", fmt.Errorf("session fork needs the parent container limits in the signed launch record: %s", opts.sessionID)
+	}
+	return containerMutability, nil
 }
