@@ -29,7 +29,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write fa
 
 func TestWriteReportReturnsWriterError(t *testing.T) {
 	item := &evidence{}
-	if err := writeReport(failingWriter{}, snapshot{}, item, item, time.Time{}); err == nil {
+	if err := writeReport(failingWriter{}, snapshot{}, item, item, nil, time.Time{}); err == nil {
 		t.Fatal("writeReport hid writer failure")
 	}
 }
@@ -44,6 +44,18 @@ func TestParseStartSessionID(t *testing.T) {
 	} {
 		if _, err := parseStartSessionID([]byte(output)); err == nil {
 			t.Fatalf("parseStartSessionID accepted %q", output)
+		}
+	}
+}
+
+func TestParseForkChildren(t *testing.T) {
+	got, err := parseForkChildren([]byte("session_id=a\nchildren=c-1,c-2\n"), 2)
+	if err != nil || !slices.Equal(got, []string{"c-1", "c-2"}) {
+		t.Fatalf("parseForkChildren = %q, %v", got, err)
+	}
+	for _, output := range []string{"session_id=a\n", "children=c-1\n", "children=c-1,--all\n", "children=none\nchildren=c-1,c-2\n"} {
+		if _, err := parseForkChildren([]byte(output), 2); err == nil {
+			t.Fatalf("parseForkChildren accepted %q", output)
 		}
 	}
 }
@@ -232,7 +244,8 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	c.baseEnv = append(c.baseEnv, "WORKCELL_STATE_ROOT="+c.stateRoot)
 	c.scratchRoot, _ = newGitRepo(t)
 	c.launchRoot, c.dockerConfig = filepath.Join(c.scratchRoot, "repo"), t.TempDir()
-	ownedPaths := append(colimaProfilePaths(c.colimaRoot, c.profile), filepath.Join(c.stateRoot, "targets", "local_vm", "colima", c.profile))
+	c.snapshotStore = filepath.Join(t.TempDir(), "workcell-snapshots", "origin.git")
+	ownedPaths := append(colimaProfilePaths(c.colimaRoot, c.profile), filepath.Join(c.stateRoot, "targets", "local_vm", "colima", c.profile), c.snapshotStore)
 	for _, path := range ownedPaths {
 		mustNoError(t, os.MkdirAll(path, 0o700))
 	}
@@ -264,6 +277,22 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 				records[id] = record
 				paths[id] = writeTestRecord(t, c, record)
 				return []byte("session_id=" + id + "\n"), nil
+			case "fork":
+				if want := []string{"session", "fork", "--id", "session-1", "--count", "2", "--allow-arbitrary-command",
+					"--ack-arbitrary-command=1970-01-01", "--", "/bin/sh", "-lc", keepalive}; !slices.Equal(args, want) {
+					return nil, fmt.Errorf("fork args = %q", args)
+				}
+				var ids []string
+				for range 2 {
+					id := fmt.Sprintf("session-%d", len(records)+1)
+					record := newIsolatedRecord(t, c.launchRoot, commit, id, "workcell-"+id)
+					record.ParentSessionID = "session-1"
+					mustNoError(t, os.WriteFile(filepath.Join(record.WorktreePath, ".workcell-c3-session-1"), []byte("session-a-only\n"), 0o600))
+					records[id] = record
+					paths[id] = writeTestRecord(t, c, record)
+					ids = append(ids, id)
+				}
+				return []byte("session_id=session-1\nchildren=" + strings.Join(ids, ",") + "\n"), nil
 			case "stop":
 				id := args[3]
 				record := records[id]
@@ -281,6 +310,9 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 		if name == c.docker {
 			if args[0] == "exec" {
 				markerCommands = append(markerCommands, strings.Join(args, "\x00"))
+				if strings.Contains(args[4], "cat") {
+					return []byte("session-a-only\n"), nil
+				}
 				if strings.Contains(args[4], "printf") {
 					for _, record := range records {
 						if record.ContainerName == args[1] {
@@ -320,7 +352,7 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 	if err := c.execute(context.Background(), new(strings.Builder)); err != nil {
 		t.Fatalf("execute error = %v", err)
 	}
-	if len(records) != 2 || !deleted["session-1"] || !deleted["session-2"] || reapedProfile != c.profile {
+	if len(records) != 4 || !deleted["session-1"] || !deleted["session-2"] || !deleted["session-3"] || !deleted["session-4"] || reapedProfile != c.profile {
 		t.Fatalf("incomplete certification: deleted=%v reaped=%s", deleted, reapedProfile)
 	}
 	wantMarkerCommands := []string{
@@ -332,6 +364,11 @@ func TestExecuteProvesAndCleansTwoSessions(t *testing.T) {
 			`printf "%s\n" "$1" >"/workspace/$2"`, "sh", "session-b-only", ".workcell-c3-session-2"}, "\x00"),
 		strings.Join([]string{"exec", "workcell-session-1", "/bin/sh", "-lc",
 			`test ! -e "/workspace/$1"`, "sh", ".workcell-c3-session-2"}, "\x00"),
+	}
+	for _, child := range []string{"workcell-session-3", "workcell-session-4"} {
+		wantMarkerCommands = append(wantMarkerCommands,
+			strings.Join([]string{"exec", child, "/bin/sh", "-lc", `cat "/workspace/$1"`, "sh", ".workcell-c3-session-1"}, "\x00"),
+			strings.Join([]string{"exec", child, "/bin/sh", "-lc", `test ! -e "/workspace/$1"`, "sh", ".workcell-c3-session-2"}, "\x00"))
 	}
 	if !slices.Equal(markerCommands, wantMarkerCommands) {
 		t.Fatalf("marker commands = %q, want symmetric A/B proof %q", markerCommands, wantMarkerCommands)

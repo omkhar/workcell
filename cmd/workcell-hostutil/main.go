@@ -108,6 +108,8 @@ func run(args []string) error {
 		return sessionctl.SnapshotMain(args[1:])
 	case "session-snapshot-capture-cli":
 		return sessionctl.SnapshotCaptureMain(args[1:])
+	case "session-fork-cli":
+		return sessionctl.ForkMain(args[1:])
 	case "session-sign-head":
 		return cmdHelperSessionSignHead(args[1:])
 	case "runtime-builder-cli":
@@ -1096,7 +1098,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-fork-cli|session-sign-head|support-bundle-cli> [args...]"}
 }
 
 func pathUsage() error {

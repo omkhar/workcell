@@ -53,6 +53,7 @@ cleanup() {
   cleanup_workcell_trusted_docker_client
   rm -f "${WORKCELL_FUNCTIONS_COPY}"
   rm -rf "${SNAPSHOT_STORE_A:-}" "${SNAPSHOT_STORE_POISON:-}" "${SNAPSHOT_TARGET_STATE_DIR:-}"
+  rm -rf "${FORK_STORE:-}" "${FORK_TARGET_STATE_DIR:-}"
   rm -rf "${REAL_HOME}/.colima/${PROFILE}"
   rm -rf "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets/local_vm/colima/${PROFILE}"
   rm -rf "${TMP_DIR}"
@@ -4370,6 +4371,146 @@ if SNAPSHOT_FIXTURE_PAUSE_FAILS=1 run_paused_snapshot_fixture "${GIT_BASE}" "${P
   exit 1
 fi
 [[ "$(cat "${PAUSED_SNAPSHOT_AMBIGUOUS_LOG}")" == "$(printf 'docker|pause|workcell-snapshot-fixture\ndocker|unpause|workcell-snapshot-fixture')" ]]
+
+# session fork: the plan comes from the signed audit chain of the parent, and
+# each child applies the snapshot tree on the parent launch commit. The child
+# launch is replaced by the workspace step, because the scenario has no docker.
+FORK_PROFILE="wcl-fork-scenario-$$"
+FORK_PARENT="20260408T160000Z-77777777-$$"
+FORK_TARGET_STATE_DIR="${WORKCELL_STATE_ROOT}/targets/local_vm/colima/${FORK_PROFILE}"
+FORK_AUDIT_LOG="${FORK_TARGET_STATE_DIR}/workcell.audit.log"
+FORK_ORIGIN="${TMP_DIR}/fork-origin"
+FORK_CLONE="${TMP_DIR}/fork-clone"
+mkdir -p "${FORK_TARGET_STATE_DIR}/sessions"
+git init -q "${FORK_ORIGIN}"
+printf 'base\n' >"${FORK_ORIGIN}/tracked.txt"
+git -C "${FORK_ORIGIN}" add tracked.txt
+git -C "${FORK_ORIGIN}" -c user.name='Workcell Test' -c user.email='workcell@example.com' commit -qm base
+FORK_BASE="$(git -C "${FORK_ORIGIN}" rev-parse HEAD)"
+git clone -q "${FORK_ORIGIN}" "${FORK_CLONE}"
+printf 'changed\n' >"${FORK_CLONE}/tracked.txt"
+printf 'parent-only\n' >"${FORK_CLONE}/.fork-marker"
+FORK_STORE="$(snapshot_store_for "${FORK_ORIGIN}")"
+cat >"${FORK_TARGET_STATE_DIR}/sessions/${FORK_PARENT}.json" <<EOF_JSON
+{
+  "version": 1,
+  "session_id": "${FORK_PARENT}",
+  "profile": "${FORK_PROFILE}",
+  "target_provider": "colima",
+  "agent": "codex",
+  "mode": "strict",
+  "status": "exited",
+  "live_status": "stopped",
+  "workspace": "${FORK_CLONE}",
+  "workspace_origin": "${FORK_ORIGIN}",
+  "container_name": "workcell-${FORK_PARENT}",
+  "monitor_pid": "999999",
+  "session_audit_dir": "${TMP_DIR}/${FORK_PARENT}.audit",
+  "git_head": "${FORK_BASE}",
+  "audit_log_path": "${FORK_AUDIT_LOG}",
+  "started_at": "2026-04-08T16:00:00Z",
+  "finished_at": "2026-04-08T16:05:00Z",
+  "exit_status": "0",
+  "initial_assurance": "managed-mutable",
+  "final_assurance": "managed-mutable"
+}
+EOF_JSON
+fork_append_record() {
+  bash -c 'source "$1"; trap - EXIT; shift; append_audit_record_to_path "$@"' _ "${WORKCELL_FUNCTIONS_COPY}" "${FORK_AUDIT_LOG}" "$@"
+}
+fork_append_record event=launch "session_id=${FORK_PARENT}" agent=codex mode=strict agent_autonomy=yolo \
+  injection_policy_sha256= execution_path=managed-tier1
+fork_snapshot_id="$("${ROOT_DIR}/scripts/workcell" session snapshot --id "${FORK_PARENT}" | sed -n 's/^snapshot_id=//p')"
+fork_commit="$(git --git-dir="${FORK_STORE}" rev-parse "refs/workcell/snapshots/${FORK_PARENT}/${fork_snapshot_id}")"
+fork_tree="$(git --git-dir="${FORK_STORE}" rev-parse "${fork_commit}^{tree}")"
+
+run_fork_fixture() {
+  local log="$1"
+  shift
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    LOG="$2"
+    shift 2
+    HOST_GIT_BIN="$(command -v git)"
+    session_fork_start_child() {
+      local id=""
+      printf "child|%s\n" "$*" >>"${LOG}"
+      id="fork-child-$(grep -c "^child|" "${LOG}")-$$"
+      create_isolated_session_workspace "${FORK_ORIGIN}" "${id}" >/dev/null
+      printf "session_id=%s\n" "${id}"
+    }
+    session_fork_main "$@"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${log}" "$@"
+}
+export FORK_ORIGIN
+
+# Negative control: a session_snapshot record that no seal covers is refused,
+# even when its commit is genuine.
+fork_append_record event=session_snapshot "session_id=${FORK_PARENT}" source=host-cli snapshot_id=forged \
+  "tree=${fork_tree}" "commit=${fork_commit}"
+if run_fork_fixture "${TMP_DIR}/fork-forged.log" --id "${FORK_PARENT}" --snapshot forged --count 1 >/dev/null 2>"${TMP_DIR}/fork-forged.err"; then
+  echo "session fork accepted an unsigned snapshot record" >&2
+  exit 1
+fi
+grep -q 'no signed session_snapshot record forged' "${TMP_DIR}/fork-forged.err"
+test ! -e "${TMP_DIR}/fork-forged.log"
+
+# A moved store ref does not change what a child gets: fork reads the commit
+# from the signed record only.
+git --git-dir="${FORK_STORE}" update-ref "refs/workcell/snapshots/${FORK_PARENT}/${fork_snapshot_id}" "${FORK_BASE}"
+fork_output="$(run_fork_fixture "${TMP_DIR}/fork.log" --id "${FORK_PARENT}" --snapshot "${fork_snapshot_id}" --count 2)"
+fork_children="$(sed -n 's/^children=//p' <<<"${fork_output}")"
+[[ "$(grep -c '^child|' "${TMP_DIR}/fork.log")" == "2" ]]
+grep -Fxq "child|--agent codex --mode strict --target colima --colima-profile ${FORK_PROFILE} --workspace ${FORK_ORIGIN} --session-workspace isolated --agent-autonomy yolo --no-default-injection-policy" "${TMP_DIR}/fork.log"
+for fork_child in ${fork_children//,/ }; do
+  fork_child_ws="${FORK_ORIGIN}/.git/workcell-sessions/${fork_child}/repo"
+  [[ "$(git -C "${fork_child_ws}" rev-parse HEAD)" == "${FORK_BASE}" ]]
+  [[ "$(git -C "${fork_child_ws}" status --porcelain=v1 --untracked-files=all)" == "$(printf ' M tracked.txt\n?? .fork-marker')" ]]
+  [[ "$(cat "${fork_child_ws}/.fork-marker")" == "parent-only" ]]
+  test ! -e "${fork_child_ws}/.git/workcell-fork-index"
+done
+# printf %q escapes the comma in the audit record.
+grep -Fq "event=session_fork session_id=${FORK_PARENT} source=host-cli snapshot_id=${fork_snapshot_id} parent=${FORK_PARENT} children=${fork_children//,/\\,}" "${FORK_AUDIT_LOG}"
+[[ "$("${ROOT_DIR}/scripts/workcell" session verify --id "${FORK_PARENT}" | sed -n 's/^session_verify=//p')" == "verified" ]]
+
+# Negative controls for the child workspace step: a tree that does not match
+# the signed record and a commit that the store does not hold both stop it.
+run_fork_workspace() {
+  bash -c '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    HOST_GIT_BIN="$(command -v git)"
+    SESSION_FORK_STORE="$2" SESSION_FORK_COMMIT="$3" SESSION_FORK_TREE="$4"
+    create_isolated_session_workspace "${FORK_ORIGIN}" "$5"
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${FORK_STORE}" "$@"
+}
+if run_fork_workspace "${fork_commit}" "${FORK_BASE}" "fork-bad-tree-$$" >/dev/null 2>"${TMP_DIR}/fork-bad-tree.err"; then
+  echo "session fork applied a tree that does not match the signed record" >&2
+  exit 1
+fi
+grep -q 'session fork snapshot tree does not match the signed record' "${TMP_DIR}/fork-bad-tree.err"
+if run_fork_workspace "$(printf '0%.0s' {1..40})" "${fork_tree}" "fork-missing-$$" >/dev/null 2>&1; then
+  echo "session fork used a commit that the store does not hold" >&2
+  exit 1
+fi
+run_fork_workspace "${fork_commit}" "${fork_tree}" "fork-direct-$$" >/dev/null
+
+# A fork child refuses a non-detached launch and an injection policy that
+# differs from the parent launch record. The shebang clears the environment,
+# so these runs start bash directly, as session_fork_start_child does.
+fork_child_attached="$(
+  WORKCELL_SESSION_FORK_PARENT="${FORK_PARENT}" /bin/bash "${ROOT_DIR}/scripts/workcell" --agent codex \
+    --workspace "${FORK_ORIGIN}" --no-default-injection-policy --dry-run 2>&1 || true
+)"
+grep -q "A session fork child must be a detached isolated session: ${FORK_PARENT}" <<<"${fork_child_attached}"
+fork_child_policy="$(
+  WORKCELL_SESSION_DETACHED=1 WORKCELL_SESSION_FORK_PARENT="${FORK_PARENT}" WORKCELL_SESSION_FORK_POLICY_SHA256=deadbeef \
+    /bin/bash "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${FORK_ORIGIN}" --no-default-injection-policy --dry-run 2>&1 || true
+)"
+grep -q "session fork child injection policy does not match the parent launch policy: ${FORK_PARENT}" <<<"${fork_child_policy}"
 
 missing_output="$(
   "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true
