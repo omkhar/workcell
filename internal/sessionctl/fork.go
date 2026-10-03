@@ -112,6 +112,11 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
 		return err
 	}
+	// The child reuses this profile, so it comes from the signed record. A
+	// durable session record that names another profile is refused.
+	if launch["profile"] != record.Profile {
+		return fmt.Errorf("session fork: the session record profile does not match the signed launch record: %s", opts.sessionID)
+	}
 	// A child replays the parent rootfs posture. Without it a readonly parent
 	// forks into the ephemeral default, a wider posture.
 	var containerMutability string

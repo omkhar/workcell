@@ -49,7 +49,7 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	}
 	f.logPath = filepath.Join(profileDir, "workcell.audit.log")
 	f.recordPath = filepath.Join(profileDir, "sessions", "parent-1.json")
-	f.appendRecord(t, append([]string{"event=launch", "agent=codex", "mode=strict", "agent_autonomy=yolo",
+	f.appendRecord(t, append([]string{"event=launch", "profile=wcl-fixture", "agent=codex", "mode=strict", "agent_autonomy=yolo",
 		"injection_policy_sha256=", "container_assurance=" + assurance, "execution_path=" + executionPath}, vm...)...)
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
@@ -138,6 +138,27 @@ func TestForkMainRequiresParentVMResources(t *testing.T) {
 			!strings.Contains(err.Error(), "parent VM resources") {
 			t.Fatalf("vm %v error = %v", vm, err)
 		}
+	}
+}
+
+func TestForkMainBindsProfileToSignedLaunch(t *testing.T) {
+	f := newForkFixture(t, "managed-tier1")
+	record, err := sessions.ReadSessionRecord(f.recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The durable record is unsigned, so a changed profile must not pass.
+	if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
+		"session_id": "parent-1", "profile": "other-profile", "target_provider": "colima", "execution_path": "managed-tier1",
+		"agent": "codex", "mode": "strict", "status": "running", "live_status": "running",
+		"monitor_pid": "4242", "session_audit_dir": "/tmp/audit-fixture", "workspace": "/tmp/clone", "workspace_origin": "/tmp/origin-repo",
+		"started_at": record.StartedAt, "audit_log_path": f.logPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "profile does not match") {
+		t.Fatalf("changed profile error = %v", err)
 	}
 }
 
