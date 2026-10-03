@@ -19,7 +19,10 @@ lane() {
     return 1
   fi
   grep -q "does not own" "${TMP_DIR}/${name}.refusal"
-  [[ -d "${other}" ]] || { echo "lane ${name} lost the peer root" >&2; return 1; }
+  [[ -d "${other}" ]] || {
+    echo "lane ${name} lost the peer root" >&2
+    return 1
+  }
   : >"${TMP_DIR}/${name}.refused"
   until [[ -e "${TMP_DIR}/${peer}.refused" ]]; do sleep 0.05; done
   workcell_owned_root_remove "${root}"
@@ -40,7 +43,10 @@ pid_b=$!
 wait "${pid_a}"
 wait "${pid_b}"
 for name in a b; do
-  [[ ! -e "$(cat "${TMP_DIR}/${name}.root")" ]] || { echo "lane ${name} did not remove its own root" >&2; exit 1; }
+  [[ ! -e "$(cat "${TMP_DIR}/${name}.root")" ]] || {
+    echo "lane ${name} did not remove its own root" >&2
+    exit 1
+  }
 done
 
 # Negative control: an unmarked root and a root marked by another pid are refused.
