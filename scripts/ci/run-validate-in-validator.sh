@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+source "${ROOT_DIR}/scripts/lib/owned-root.sh"
 source "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
 source "${ROOT_DIR}/scripts/ci/lib/validator-passwd.sh"
 VALIDATOR_IMAGE="${WORKCELL_VALIDATOR_IMAGE:-}"
@@ -19,7 +20,7 @@ validator_passwd=""
 hostile_root=""
 cleanup() {
   [[ -z "${validator_passwd}" ]] || rm -f "${validator_passwd}"
-  [[ -z "${hostile_root}" ]] || rm -rf "${hostile_root}"
+  workcell_owned_root_remove "${hostile_root}"
   cleanup_workcell_ci_docker
 }
 trap cleanup EXIT
@@ -47,7 +48,7 @@ if [[ "${HOSTILE_ENV}" == "workspace" ]]; then
   # is the one that matters most: the --mount record is CSV, so a source that
   # carries one has to survive the encoder rather than split the record.  The
   # copy is required because the checkout itself lives at a plain path.
-  hostile_root="$(mktemp -d "${TMPDIR:-/tmp}/workcell-hostile.XXXXXX")"
+  hostile_root="$(workcell_owned_root_create "${TMPDIR:-/tmp}" workcell-hostile)"
   hostile_workspace="${hostile_root}/hostile ws,dir --workspace"
   mkdir -p "${hostile_workspace}"
   cp -a "${WORKSPACE}/." "${hostile_workspace}/"
