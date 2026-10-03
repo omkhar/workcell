@@ -47,6 +47,9 @@ func newForkFixtureWithVM(t *testing.T, executionPath, assurance string, vm ...s
 	if !slices.ContainsFunc(vm, func(field string) bool { return strings.HasPrefix(field, "provider_arg_count=") }) {
 		vm = append(slices.Clone(vm), "provider_arg_count=0")
 	}
+	if !slices.ContainsFunc(vm, func(field string) bool { return strings.HasPrefix(field, "target_provider=") }) {
+		vm = append(slices.Clone(vm), "target_provider=colima")
+	}
 	f := &forkFixture{root: t.TempDir(), signingDir: filepath.Join(t.TempDir(), "signing")}
 	profileDir := filepath.Join(f.root, "wcl-fixture")
 	if err := os.MkdirAll(filepath.Join(profileDir, "sessions"), 0o700); err != nil {
@@ -189,6 +192,15 @@ func TestForkMainBindsWorkspaceAndGitHeadToSignedLaunch(t *testing.T) {
 			!strings.Contains(err.Error(), "workspace or git head does not match") {
 			t.Fatalf("changed %s error = %v", field, err)
 		}
+	}
+}
+
+func TestForkMainBindsTargetToSignedLaunch(t *testing.T) {
+	f := newForkFixtureWithVM(t, "managed-tier1", "managed-mutable", "vm_cpu=4", "vm_memory_gib=10", "vm_disk_gib=80",
+		"container_cpu=unmanaged", "container_memory=8g", "target_provider=docker-desktop")
+	if _, err := f.run("--id", "parent-1", "--snapshot", "snap-1", "--count", "1"); err == nil ||
+		!strings.Contains(err.Error(), "colima target") {
+		t.Fatalf("docker-desktop launch error = %v", err)
 	}
 }
 

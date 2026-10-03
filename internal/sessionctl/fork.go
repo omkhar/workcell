@@ -112,6 +112,11 @@ func forkMain(args []string, stdout, stderr io.Writer) error {
 	if err := checkForkExecutionPath(opts, launch["execution_path"]); err != nil {
 		return err
 	}
+	// The child launches with --target colima, so the signed launch must name
+	// colima and agree with the durable record.
+	if launch["target_provider"] != "colima" || record.TargetProvider != "colima" {
+		return fmt.Errorf("session fork supports only a parent that the signed launch record shows on the colima target: %s", opts.sessionID)
+	}
 	// The unsigned record picks the clone source, so the signed launch record
 	// must name the same origin. A child does not replay provider arguments, so
 	// a parent that ran with any is refused instead of forked with the default.

@@ -3130,6 +3130,7 @@ append_launch_audit_record() {
     "container_memory=${CONTAINER_MEMORY}" \
     "workspace_origin=${SESSION_SOURCE_WORKSPACE}" \
     "provider_arg_count=${#PROVIDER_ARGS[@]}" \
+    "target_provider=$(current_target_provider)" \
     "workspace_head=$(shellproto_field "$(session_git_metadata_lines "${WORKSPACE}")" git_head)" \
     "session_assurance_initial=$(session_assurance_initial)"
 }
