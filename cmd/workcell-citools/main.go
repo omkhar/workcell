@@ -101,6 +101,7 @@ func subcommands() []subcommand {
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE [NOW_RFC3339]", 4, 5, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
+		{"flag-inventory", "plan|check ROOT | render ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -526,6 +527,27 @@ func cmdApplyProviderBumpPlan(args []string) error {
 
 func cmdPrepareCodexSubcommandFixture(args []string) error {
 	return metadatautil.PrepareCodexSubcommandFixture(args[0], args[1], args[2])
+}
+
+func cmdFlagInventory(args []string) error {
+	action, root := args[0], args[1]
+	switch {
+	case action == "plan" && len(args) == 2:
+		plan, err := metadatautil.FlagInventoryPlan(root)
+		if err == nil {
+			_, err = os.Stdout.WriteString(plan)
+		}
+		return err
+	case action == "check" && len(args) == 2:
+		return metadatautil.CheckFlagInventory(root)
+	case action == "render" && len(args) >= 4:
+		fixture, err := metadatautil.RenderFlagFixtureFromHelp(root, args[2], args[3:])
+		if err == nil {
+			_, err = os.Stdout.Write(fixture)
+		}
+		return err
+	}
+	return fmt.Errorf("usage: workcell-citools flag-inventory plan|check ROOT | render ROOT ID HELP_FILE...")
 }
 
 func cmdGenerateBuildInputManifest(args []string) error {

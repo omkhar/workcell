@@ -145,6 +145,10 @@ Wire a new provider into both argument validation and the provider wrapper. The
 wrapper checks the arguments again. Current provider wrappers do not accept an
 unsafe-argument exception in a `breakglass` session.
 
+Put each option of the CLI help in the manifest `[flags]` `allow` or `deny`
+list (see `adapters/README.md`). Run `scripts/check-flag-inventory.sh --write`
+to create `tests/fixtures/flags/<provider>.txt`.
+
 ### 4. Build the managed control plane
 
 In non-breakglass modes, build the provider home from these sources:

@@ -39,3 +39,23 @@ container_path = "/opt/workcell/host-inputs/credentials/gcloud-adc.json"
 
 [egress]
 endpoints = ["generativelanguage.googleapis.com:443", "ai.google.dev:443"]
+
+# Each option of the pinned CLI help (tests/fixtures/flags/gemini.txt) is in allow
+# or deny, as reject_unsafe_gemini_args decides; a Go test proves each entry.
+# subcommands names the allowed subcommands whose --help the inventory reads.
+[flags]
+subcommands = [
+  "mcp", "extensions", "skills", "hooks", "gemma",
+]
+allow = [
+  "--accept-raw-output-risk", "--acp", "--allowed-mcp-server-names", "-d",
+  "--debug", "--delete-session", "-e", "--experimental-acp", "--extensions",
+  "-h", "--help", "-i", "-l", "--list-extensions", "--list-sessions", "-m",
+  "--model", "-o", "--output-format", "-p", "--prompt", "--prompt-interactive",
+  "-r", "--raw-output", "--resume", "--screen-reader", "--session-file",
+  "--session-id", "--skip-trust", "-v", "--version", "-w", "--worktree",
+]
+deny = [
+  "--add-dir", "--admin-policy", "--allowed-tools", "--include-directories",
+  "--policy", "-s", "--sandbox", "-y", "--yolo",
+]
