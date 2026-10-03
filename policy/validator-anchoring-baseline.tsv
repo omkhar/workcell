@@ -1,0 +1,33 @@
+# Text-matching validator ratchet (scripts/check-validator-anchoring.sh).
+#
+# One row per function: PACKAGE<TAB>FUNCTION<TAB>REASON. The check lists every
+# function in internal/adapters, internal/metadatautil, internal/testkit and
+# internal/workcellhardening that reads content and then calls strings or bytes
+# Contains, HasPrefix or Index, or regexp. A function with no row fails, and a
+# row whose function no longer does this fails, so the list only gets shorter.
+# Port a "debt" row to ShellInvocations or a closed decoder, then delete it.
+#
+# Seeded from origin/main 14040a17.
+internal/adapters	LoadManifests	the pattern checks a directory entry name, not file content
+internal/metadatautil	ApplyProviderBumpPlan	the pattern checks a version field of the decoded JSON plan
+internal/metadatautil	CheckRetentionPolicy	the prefix checks a decoded workflow step uses: value
+internal/metadatautil	CheckUpstreamRefreshScope	the prefix reads the unified-diff line marker of a patch
+internal/metadatautil	ControlPlaneParityRows	the prefix checks a decoded manifest path
+internal/metadatautil	ExtractClaudeSHA	debt: regexp over Dockerfile text; read the parsed RUN case arm
+internal/metadatautil	ExtractCopilotSHA	debt: regexp over Dockerfile text; read the parsed RUN case arm
+internal/metadatautil	ExtractDockerfileArg	debt: regexp over Dockerfile text; read the parsed ARG instruction
+internal/metadatautil	ScanCredentialPatterns	credential scan: a pattern match over content is the goal
+internal/metadatautil	ValidateCodexAdapterLockstep	debt: substring over the wrapper shell; use ShellInvocations
+internal/metadatautil	ValidateOperatorContract	debt: substring over scripts/workcell and docs; use ShellInvocations
+internal/metadatautil	ValidateRequirements	the prefix checks a requirement ID field
+internal/metadatautil	extractCodexChecksum	debt: regexp over Dockerfile text; read the parsed RUN case arm
+internal/metadatautil	generatedArtifactDeclaration	the prefix reads the generated-artifact header tag line
+internal/metadatautil	githubAPIToken	the search rejects a line break in a token file
+internal/metadatautil	githubReleaseAssetAPIURL	the patterns check API JSON field values, not repo content
+internal/metadatautil	loadDocLanguageBaseline	the prefix skips a TSV comment line
+internal/metadatautil	loadHardenedFSBaseline	the prefix skips a TSV comment line
+internal/metadatautil	loadTextMatchBaseline	the prefix skips a TSV comment line
+internal/metadatautil	ociConfigDigest	the prefix checks a decoded digest field
+internal/metadatautil	providerBumpGitHubAPIToken	the search rejects a line break in a token file
+internal/metadatautil	renderDiscoverabilitySurface	the prefix checks a surface name from the decoded contract
+internal/metadatautil	renderManpageText	the prefix checks that the man page source starts with a macro

@@ -6,12 +6,19 @@ package metadatautil
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // CheckValidatorAnchoring requires each validator that anchors on the shared
@@ -38,7 +45,215 @@ func CheckValidatorAnchoring(rootDir string) error {
 	if anchors != corpus {
 		return fmt.Errorf("validator anchoring parity: %d call(s) of ShellInvocations but %d run(s) of the shared evasion corpus; every anchored validator needs one RequireRejectsAllEvasions run", anchors, corpus)
 	}
-	return nil
+	return checkTextMatchBaseline(rootDir)
+}
+
+const (
+	textMatchBaselinePath = "policy/validator-anchoring-baseline.tsv"
+	textMatchMaxReported  = 20
+)
+
+// textMatchPackages hold the validators. A function there that reads repo
+// content and then matches text in it is the class a comment, a heredoc or a
+// longer option bypasses.
+var textMatchPackages = []string{"internal/adapters", "internal/metadatautil", "internal/testkit", "internal/workcellhardening"}
+
+// checkTextMatchBaseline is a ratchet. Every function in textMatchPackages that
+// reads repo content and then matches text must have a row in the baseline
+// with a reason. A new function fails, and a row whose function no longer
+// matches text fails too, so the count only goes down.
+func checkTextMatchBaseline(rootDir string) error {
+	found := map[string]bool{}
+	for _, pkg := range textMatchPackages {
+		root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: every read below is relative to this handle
+		if err != nil {
+			return fmt.Errorf("open validator package %s: %w", pkg, err)
+		}
+		scanned := 0
+		err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if entry.Name() == "testdata" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				return nil
+			}
+			if !entry.Type().IsRegular() {
+				return fmt.Errorf("%s/%s is not a regular file", pkg, name)
+			}
+			content, err := hardenedFSReadSource(root, name, pkg+"/"+name)
+			if err != nil {
+				return err
+			}
+			scanned++
+			functions, err := TextMatchingReaders(string(content))
+			if err != nil {
+				return fmt.Errorf("%s/%s: %w", pkg, name, err)
+			}
+			for _, function := range functions {
+				found[path.Join(pkg, path.Dir(name))+"\t"+function] = true
+			}
+			return nil
+		})
+		closeErr := root.Close()
+		if err != nil {
+			return fmt.Errorf("scan %s for text-matching validators: %w", pkg, err)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if scanned == 0 {
+			return fmt.Errorf("no Go source under the validator package %s; refusing a vacuous pass", pkg)
+		}
+	}
+	baseline, err := loadTextMatchBaseline(filepath.Join(rootDir, textMatchBaselinePath))
+	if err != nil {
+		return err
+	}
+	var failures []string
+	for key := range found {
+		if !baseline[key] {
+			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" reads repo content and matches text in it; parse it (ShellInvocations, a closed decoder) or add a baseline row with a reason")
+		}
+	}
+	for key := range baseline {
+		if !found[key] {
+			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" no longer matches text in repo content; remove its stale baseline row")
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	slices.Sort(failures)
+	if extra := len(failures) - textMatchMaxReported; extra > 0 {
+		failures = append(failures[:textMatchMaxReported], fmt.Sprintf("and %d more", extra))
+	}
+	return fmt.Errorf("%s ratchet failed:\n  %s", textMatchBaselinePath, strings.Join(failures, "\n  "))
+}
+
+// loadTextMatchBaseline reads PACKAGE<TAB>FUNCTION<TAB>REASON rows. A row with
+// no reason, or a repeated row, is an error.
+func loadTextMatchBaseline(baselinePath string) (map[string]bool, error) {
+	content, err := rootio.ReadFileNoFollow(baselinePath, textMatchBaselinePath, hardenedFSMaxSourceBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", textMatchBaselinePath, err)
+	}
+	baseline := map[string]bool{}
+	for number, line := range strings.Split(string(content), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 3 || strings.TrimSpace(fields[2]) == "" {
+			return nil, fmt.Errorf("%s:%d: expected PACKAGE<TAB>FUNCTION<TAB>REASON", textMatchBaselinePath, number+1)
+		}
+		key := fields[0] + "\t" + fields[1]
+		if baseline[key] {
+			return nil, fmt.Errorf("%s:%d: repeated row for %s.%s", textMatchBaselinePath, number+1, fields[0], fields[1])
+		}
+		baseline[key] = true
+	}
+	return baseline, nil
+}
+
+// TextMatchingReaders returns each function in source, as Name or Type.Name,
+// that reads content and later matches text with strings or bytes Contains,
+// HasPrefix or Index, or with regexp. A read is any call whose name starts
+// with Read or read, such as os.ReadFile, rootio.ReadFileNoFollow, io.ReadAll
+// or a local readRepoFile, or an exec.Command of a script.
+//
+// ponytail: the scan sees the read and the match only in one function body and
+// only through the stdlib names, so a helper that receives the content, or an
+// import alias, escapes it. Follow the content through callers if one does.
+func TextMatchingReaders(source string) ([]string, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), "", source, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	var functions []string
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Body == nil {
+			continue
+		}
+		read, matched := false, false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || matched {
+				return !matched
+			}
+			pkg, name := calleeName(call)
+			switch {
+			case strings.HasPrefix(name, "Read"), strings.HasPrefix(name, "read"),
+				pkg == "exec" && (name == "Command" || name == "CommandContext"):
+				read = true
+			case read && matchesText(pkg, name):
+				matched = true
+			}
+			return true
+		})
+		if matched {
+			functions = append(functions, receiverPrefix(function)+function.Name.Name)
+		}
+	}
+	return functions, nil
+}
+
+// calleeName returns the package or receiver identifier and the name a call
+// names, such as strings and Contains, or "" and the name of a plain call.
+func calleeName(call *ast.CallExpr) (string, string) {
+	switch callee := call.Fun.(type) {
+	case *ast.Ident:
+		return "", callee.Name
+	case *ast.SelectorExpr:
+		if ident, ok := callee.X.(*ast.Ident); ok {
+			return ident.Name, callee.Sel.Name
+		}
+		return "", callee.Sel.Name
+	}
+	return "", ""
+}
+
+// matchesText reports whether a call matches text: a strings or bytes search,
+// any regexp function, or a method that only a compiled regexp has.
+func matchesText(pkg, name string) bool {
+	switch pkg {
+	case "strings", "bytes":
+		return strings.HasPrefix(name, "Contains") || name == "HasPrefix" ||
+			strings.HasPrefix(name, "Index") || strings.HasPrefix(name, "LastIndex")
+	case "regexp":
+		return true
+	case "filepath", "path", "slices", "maps":
+		return false
+	}
+	return strings.HasPrefix(name, "Match") || strings.HasPrefix(name, "Find") || strings.HasPrefix(name, "ReplaceAllString")
+}
+
+// receiverPrefix returns "Type." for a method and "" for a function.
+func receiverPrefix(function *ast.FuncDecl) string {
+	if function.Recv == nil || len(function.Recv.List) == 0 {
+		return ""
+	}
+	expression := function.Recv.List[0].Type
+	for {
+		switch typed := expression.(type) {
+		case *ast.StarExpr:
+			expression = typed.X
+		case *ast.IndexExpr:
+			expression = typed.X
+		case *ast.IndexListExpr:
+			expression = typed.X
+		case *ast.Ident:
+			return typed.Name + "."
+		default:
+			return ""
+		}
+	}
 }
 
 // countCallSites returns the number of calls of needle under internal/. It
