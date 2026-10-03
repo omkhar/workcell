@@ -21,6 +21,9 @@ import (
 
 const approvedLargeCertifiedAdapterLabel = "approved-large-certified-adapter"
 
+// firstPublicationShapeMargin scales the PR shape limits until a PR exists.
+const firstPublicationShapeMargin = "0.66"
+
 type pullRequestListEntry struct {
 	BaseRefName    string          `json:"baseRefName"`
 	HeadRefName    string          `json:"headRefName"`
@@ -364,6 +367,9 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if opts.ApprovedLargeCertifiedAdapter {
 		shapeCmd = append(shapeCmd, "--allow-certified-adapter-shape")
 	}
+	// First publication keeps a smaller shape budget so review fixes still fit.
+	// Dry run cannot query GitHub and plans for first publication.
+	shapeMarginArgs := []string{"--margin", firstPublicationShapeMargin}
 	pushCmd := clone("push", "--no-verify", "-u", "origin", opts.Branch)
 
 	draft := !preflight.Ready
@@ -416,7 +422,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		}
 		EmitCommand(stdout, fetchBaseCmd)
 		EmitCommand(stdout, signatureCmd)
-		EmitCommand(stdout, shapeCmd)
+		EmitCommand(stdout, slices.Concat(shapeCmd, shapeMarginArgs))
 		EmitCommand(stdout, pushCmd)
 		EmitCommand(stdout, repoViewCmd)
 		EmitCommand(stdout, prListCmd)
@@ -456,7 +462,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 			return err
 		}
 	}
-	for _, step := range [][]string{fetchBaseCmd, signatureCmd, shapeCmd, pushCmd} {
+	for _, step := range [][]string{fetchBaseCmd, signatureCmd} {
 		if err := run(step, nil); err != nil {
 			return err
 		}
@@ -479,6 +485,14 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	prURL, err := lookupExistingPR()
 	if err != nil {
 		return err
+	}
+	if prURL != "" {
+		shapeMarginArgs = nil
+	}
+	for _, step := range [][]string{slices.Concat(shapeCmd, shapeMarginArgs), pushCmd} {
+		if err := run(step, nil); err != nil {
+			return err
+		}
 	}
 	if prURL == "" {
 		var prOut strings.Builder

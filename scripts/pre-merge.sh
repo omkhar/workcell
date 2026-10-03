@@ -22,6 +22,9 @@ PARITY_START_HEAD_OID=""
 PARITY_START_STATUS_SHA256=""
 PARITY_BASE_REF=""
 PARITY_BASE_OID=""
+SHAPE_MARGIN="auto"
+SHAPE_MARGIN_FIRST_PUBLICATION="0.66"
+PARITY_SHAPE_BUDGET=""
 LIVE_LANE_PID=""
 LIVE_LANE_LOG=""
 LIVE_LANE_START=0
@@ -43,6 +46,8 @@ Options:
   --event EVENT             Planner event for pr-parity (default: pull_request)
   --base BRANCH             Base branch for PR-parity planning (default: main)
   --label LABEL             Repeatable PR label input for planner selection
+  --shape-margin auto|F     PR shape limit scale (default: auto = 0.66 while no PR is
+                            open for the branch, else 1.0)
   --allow-dirty             Run against the live worktree even when it is dirty
   --local-snapshot <mode>   Run from a disposable snapshot: head, index, worktree
   --local-include-untracked Include untracked files with --local-snapshot worktree
@@ -137,6 +142,31 @@ run_from_local_snapshot() {
 
   "${snapshot_cmd[@]}" || status=$?
   exit "${status}"
+}
+
+# First publication gets a smaller shape budget so review fixes still fit.
+# Any failure to learn that a PR exists keeps the stricter margin.
+resolve_shape_margin() {
+  local branch=""
+  local list_json=""
+  local open_count=""
+
+  if [[ "${SHAPE_MARGIN}" != "auto" ]]; then
+    printf '%s\n' "${SHAPE_MARGIN}"
+    return 0
+  fi
+  if ! branch="$(git -C "${ROOT_DIR}" symbolic-ref --short --quiet HEAD)" || [[ -z "${branch}" ]] ||
+    ! command -v gh >/dev/null 2>&1 ||
+    ! list_json="$(cd "${ROOT_DIR}" && gh pr list --base "${BASE_BRANCH}" --head "${branch}" --state open --json number --limit 100)" ||
+    ! open_count="$(jq 'length' <<<"${list_json}")"; then
+    printf '%s\n' "${SHAPE_MARGIN_FIRST_PUBLICATION}"
+    return 0
+  fi
+  if [[ "${open_count}" =~ ^[0-9]+$ ]] && ((open_count > 0)); then
+    printf '1.0\n'
+  else
+    printf '%s\n' "${SHAPE_MARGIN_FIRST_PUBLICATION}"
+  fi
 }
 
 parity_evidence_dir() {
@@ -325,6 +355,7 @@ write_pr_parity_evidence() {
     --argjson labels "${labels_json}" \
     --argjson plan "${plan_json}" \
     --argjson timings "${timings}" \
+    --arg shape_budget "${PARITY_SHAPE_BUDGET}" \
     '{
       version: 1,
       profile: $profile,
@@ -339,7 +370,12 @@ write_pr_parity_evidence() {
       status_sha256: $status_sha256,
       generated_at: $generated_at,
       plan: $plan,
-      timings: $timings
+      timings: $timings,
+      pr_shape_budget: (
+        if $shape_budget == "" then null
+        else ($shape_budget | split(" ") | map(split("=") | {key: .[0], value: .[1]}) | from_entries
+          | with_entries(if .key == "margin" then . else .value |= tonumber end))
+        end)
     }' >"${tmp_path}"
   mv "${tmp_path}" "${evidence_path}"
   echo "[pre-merge] wrote PR parity evidence to ${evidence_path}"
@@ -425,12 +461,17 @@ execute_plan() {
         ;;
       scripts/ci/job-pr-shape.sh)
         echo "[pre-merge] pull request shape"
-        local -a shape_args=(--base "${BASE_BRANCH}")
+        local shape_margin=""
+        local shape_out=""
+        shape_margin="$(resolve_shape_margin)"
+        local -a shape_args=(--base "${BASE_BRANCH}" --margin "${shape_margin}")
         local shape_label=""
         for shape_label in "${LABELS[@]}"; do
           shape_args+=(--label "${shape_label}")
         done
-        WORKCELL_PR_BASE_REF="${BASE_BRANCH}" "${ROOT_DIR}/${script}" "${shape_args[@]}"
+        shape_out="$(WORKCELL_PR_BASE_REF="${BASE_BRANCH}" "${ROOT_DIR}/${script}" "${shape_args[@]}")"
+        printf '%s\n' "${shape_out}"
+        PARITY_SHAPE_BUDGET="$(sed -n 's/^PR shape budget remaining: //p' <<<"${shape_out}")"
         ;;
       scripts/ci/job-validate.sh)
         echo "[pre-merge] shared validate job (${PROFILE})"
@@ -526,6 +567,15 @@ while [[ $# -gt 0 ]]; do
       LABELS+=("${2:-}")
       [[ -n "${LABELS[-1]}" ]] || {
         echo "--label requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --shape-margin)
+      SHAPE_MARGIN="${2-}"
+      [[ -n "${SHAPE_MARGIN}" ]] || {
+        echo "Option --shape-margin requires a value." >&2
         usage >&2
         exit 2
       }

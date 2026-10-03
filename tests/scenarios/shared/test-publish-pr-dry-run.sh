@@ -810,6 +810,7 @@ grep -q '^publish_branch=feature/publish-live$' <<<"${publish_output}"
 grep -q '^publish_base=main$' <<<"${publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${publish_output}"
 grep -q '^publish_snapshot=worktree$' <<<"${publish_output}"
+grep -q '^PR shape budget remaining: .* margin=0\.66$' <<<"${publish_output}"
 grep -q "^repo view ${ORIGIN} --json nameWithOwner$" "${GH_LOG}"
 grep -q "^pr list -R ${ORIGIN} --base main --head feature/publish-live --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100$" "${GH_LOG}"
 grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-live --title Live scenario title --draft --body-file " "${GH_LOG}"
@@ -856,6 +857,7 @@ existing_publish_output="$(
 )"
 grep -q '^publish_branch=feature/publish-live$' <<<"${existing_publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/existing$' <<<"${existing_publish_output}"
+grep -q '^PR shape budget remaining: .* margin=1\.0$' <<<"${existing_publish_output}"
 grep -q "^pr list -R ${ORIGIN} --base main --head feature/publish-live --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100$" "${GH_LOG}"
 if grep -q '^pr create ' "${GH_LOG}"; then
   echo "publish-pr should reuse the matching open pull request instead of creating another" >&2
@@ -1021,6 +1023,34 @@ certified_binary_shape_rc=$?
 set -e
 test "${certified_binary_shape_rc}" -eq 2
 grep -q 'certified_adapter_binary_files=1 (limit=0)' <<<"${certified_binary_shape_output}"
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+for index in $(seq 1 8); do
+  printf 'margin fixture %02d\n' "${index}" >"${FIXTURE}/margin-${index}.txt"
+done
+git -C "${FIXTURE}" add .
+git -C "${FIXTURE}" commit -q --no-verify -m "margin shape fixture"
+
+# Negative control: 8 files fit a 10-file limit at full margin and overflow it at 0.5.
+margin_full_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --max-files 10 --max-lines 1200 --max-areas 8 --max-binaries 0 --margin 1.0 2>&1)"
+grep -q '^PR shape budget remaining: files=2 lines=1192 areas=7 binary_files=0 margin=1\.0$' <<<"${margin_full_output}"
+set +e
+margin_half_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --max-files 10 --max-lines 1200 --max-areas 8 --max-binaries 0 --margin 0.5 2>&1)"
+margin_half_rc=$?
+margin_bad_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --margin 1.5 2>&1)"
+margin_bad_rc=$?
+set -e
+test "${margin_half_rc}" -eq 2
+grep -q 'changed_files=8 (limit=5)' <<<"${margin_half_output}"
+test "${margin_bad_rc}" -eq 2
+grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
 
 git -C "${FIXTURE}" switch -C main >/dev/null
 git -C "${FIXTURE}" reset -q --hard origin/main

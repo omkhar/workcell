@@ -17,6 +17,7 @@ MAX_FILES="${DEFAULT_MAX_FILES}"
 MAX_LINES="${DEFAULT_MAX_LINES}"
 MAX_AREAS="${DEFAULT_MAX_AREAS}"
 MAX_BINARY_FILES="${DEFAULT_MAX_BINARY_FILES}"
+MARGIN="1.0"
 ALLOW_CERTIFIED_ADAPTER_SHAPE=0
 TRUSTED_HOST_PATH=""
 HOST_GIT_BIN=""
@@ -164,6 +165,9 @@ Options:
   --max-lines N      Maximum added+deleted lines allowed (default: 1200)
   --max-areas N      Maximum top-level areas allowed (default: 8)
   --max-binaries N   Maximum binary files allowed (default: 0)
+  --margin F         Scale the files, lines, and areas limits by F, 0.01 to
+                     1.0 with at most two decimals (default: 1.0). First
+                     publication uses 0.66 to leave room for review fixes.
   --allow-certified-adapter-shape
                      Allow a reviewed certified-adapter PR shape up to
                      125 files, 10000 lines, 12 areas, and 0 binaries
@@ -251,6 +255,10 @@ while [[ $# -gt 0 ]]; do
       MAX_BINARY_FILES="$(option_value_or_die "$1" "${2-}")"
       shift 2
       ;;
+    --margin)
+      MARGIN="$(option_value_or_die "$1" "${2-}")"
+      shift 2
+      ;;
     --allow-certified-adapter-shape)
       ALLOW_CERTIFIED_ADAPTER_SHAPE=1
       shift
@@ -271,6 +279,24 @@ require_integer "--max-files" "${MAX_FILES}"
 require_integer "--max-lines" "${MAX_LINES}"
 require_integer "--max-areas" "${MAX_AREAS}"
 require_integer "--max-binaries" "${MAX_BINARY_FILES}"
+if [[ ! "${MARGIN}" =~ ^(1(\.00?)?|0\.(0[1-9]|[1-9][0-9]?))$ ]]; then
+  echo "--margin must be 0.01 to 1.0 with at most two decimals: ${MARGIN}" >&2
+  exit 2
+fi
+margin_hundredths=100
+if [[ "${MARGIN}" == 0.* ]]; then
+  margin_fraction="${MARGIN#0.}0"
+  margin_hundredths=$((10#${margin_fraction:0:2}))
+fi
+# Floor, but never below 1 so a small margin cannot make a limit unreachable.
+scale_limit() {
+  local scaled=$(($1 * margin_hundredths / 100))
+  ((scaled >= 1)) || scaled=1
+  printf '%d\n' "${scaled}"
+}
+MAX_FILES="$(scale_limit "${MAX_FILES}")"
+MAX_LINES="$(scale_limit "${MAX_LINES}")"
+MAX_AREAS="$(scale_limit "${MAX_AREAS}")"
 TRUSTED_HOST_PATH="$(build_trusted_host_path)"
 HOST_GIT_BIN="$(resolve_fixed_host_tool git /opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git /bin/git)"
 REAL_HOME="${HOME:-/}"
@@ -344,6 +370,16 @@ if ((changed_files <= CERTIFIED_ADAPTER_MAX_FILES)) &&
   certified_adapter_shape_ok=1
 fi
 
+# One machine-readable line; pre-merge.sh records it in the parity evidence.
+print_budget_remaining() {
+  printf 'PR shape budget remaining: files=%d lines=%d areas=%d binary_files=%d margin=%s\n' \
+    "$((MAX_FILES - changed_files))" \
+    "$((MAX_LINES - changed_lines))" \
+    "$((MAX_AREAS - changed_area_count))" \
+    "$((MAX_BINARY_FILES - binary_files))" \
+    "${MARGIN}"
+}
+
 fail_pr_shape() {
   echo "PR shape check failed: the diff is too broad for a single reviewable PR." >&2
   printf '  base_ref=%s\n' "${BASE_REF}" >&2
@@ -374,6 +410,7 @@ fail_pr_shape() {
 
 if ((changed_files == 0)); then
   printf 'PR shape check passed: no committed diff between %s and %s.\n' "${BASE_REF}" "${HEAD_REF}"
+  print_budget_remaining
   exit 0
 fi
 
@@ -402,3 +439,4 @@ printf 'PR shape check passed: files=%d lines=%d areas=%d binary_files=%d\n' \
   "${changed_lines}" \
   "${changed_area_count}" \
   "${binary_files}"
+print_budget_remaining
