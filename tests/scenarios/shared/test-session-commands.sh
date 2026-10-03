@@ -61,7 +61,7 @@ cleanup() {
 trap cleanup EXIT
 
 top_level_help="$("${ROOT_DIR}/scripts/workcell" --help)"
-grep -Fq 'workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify>' <<<"${top_level_help}"
+grep -Fq 'workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork>' <<<"${top_level_help}"
 grep -Fq 'workcell session verify --id SESSION_ID' <<<"${top_level_help}"
 
 COLIMA_ROOT="${REAL_HOME}/.colima"
@@ -4567,6 +4567,10 @@ fork_child_policy="$(
     /bin/bash "${ROOT_DIR}/scripts/workcell" --agent codex --workspace "${FORK_ORIGIN}" --no-default-injection-policy --dry-run 2>&1 || true
 )"
 grep -q "session fork child injection policy does not match the parent launch policy: ${FORK_PARENT}" <<<"${fork_child_policy}"
+
+# The primary help synopsis and the manual list fork.
+"${ROOT_DIR}/scripts/workcell" --help 2>&1 | grep -Fq 'export|verify|fork> [options]'
+grep -Fq 'export|verify|fork\fR' "${ROOT_DIR}/man/workcell.1"
 
 missing_output="$(
   "${ROOT_DIR}/scripts/workcell" session show --id missing-session 2>&1 >/dev/null || true

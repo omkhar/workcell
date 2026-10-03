@@ -222,7 +222,7 @@ usage() {
   cat <<'EOF'
 Usage: workcell [options] [-- provider-args...]
        workcell publish-pr [options]
-       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify> [options]
+       workcell session <start|attach|send|stop|list|show|delete|logs|timeline|diff|export|verify|fork> [options]
        workcell auth <init|set|unset|status> [options]
        workcell policy <show|validate|diff> [options]
        workcell why --credential KEY --agent NAME [options]

@@ -858,6 +858,16 @@ func removeOwnedPath(root, path string) error {
 		return err
 	}
 	defer func() { _ = handle.Close() }()
+	// OpenRoot follows a link at the root name, so prove that the handle is the
+	// plain directory that the chain check saw.
+	named, err := os.Lstat(root)
+	if err != nil {
+		return err
+	}
+	opened, err := handle.Stat(".")
+	if err != nil || !named.IsDir() || !os.SameFile(named, opened) {
+		return fmt.Errorf("certify-c3: owned profile root changed between the check and the open: %s", root)
+	}
 	if err := handle.RemoveAll(relative); err != nil {
 		return err
 	}
