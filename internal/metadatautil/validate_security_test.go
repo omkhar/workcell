@@ -1031,6 +1031,28 @@ func TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorRegression(t *testing.
 	}
 }
 
+func TestCheckPinnedInputsRejectsMarkdownlintAdvisoryFloorEvasion(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ name, entry string }{
+		{"nested-copy", `"node_modules/foo/node_modules/markdown-it": {"version": "14.0.0"},`},
+		{"overflowing-component", `"node_modules/foo/node_modules/markdown-it": {"version": "14.3.99999999999999999999"},`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := rewritePinnedInputsFixtureFile(t, "tools/markdownlint/package-lock.json", func(content string) string {
+				marker := `"packages": {`
+				if !strings.Contains(content, marker) {
+					t.Fatal("lockfile has no packages map")
+				}
+				return strings.Replace(content, marker, marker+"\n"+tc.entry, 1)
+			})
+			requirePinnedInputsErrorContains(t, cfg, "must lock markdown-it")
+		})
+	}
+}
+
 func TestCheckPinnedInputsRejectsMarkdownlintInstallerNodeMinimumDrift(t *testing.T) {
 	t.Parallel()
 

@@ -33,8 +33,11 @@ func versionTripleAtLeast(version, minimum string) bool {
 		return false
 	}
 	for i := 1; i <= 3; i++ {
-		h, _ := strconv.Atoi(have[i])
-		w, _ := strconv.Atoi(want[i])
+		h, hErr := strconv.ParseUint(have[i], 10, 32)
+		w, wErr := strconv.ParseUint(want[i], 10, 32)
+		if hErr != nil || wErr != nil {
+			return false
+		}
 		if h != w {
 			return h > w
 		}
@@ -76,9 +79,16 @@ func validateNodeMarkdownlintPinnedInputs(
 		return fmt.Errorf("markdownlint-cli version must match between %s and %s; found %q and %q", markdownlintPackageLockPath, cfg.ValidatorDockerfilePath, markdownlintLockRoot.Dependencies["markdownlint-cli"], validatorMarkdownlintVersion)
 	}
 	for _, floor := range markdownlintAdvisoryFloors {
-		lockedVersion := markdownlintPackageLock.Packages["node_modules/"+floor.name].Version
-		if !versionTripleAtLeast(lockedVersion, floor.minimum) {
-			return fmt.Errorf("%s must lock %s at %s or newer (Dependabot advisory fix); found %q", markdownlintPackageLockPath, floor.name, floor.minimum, lockedVersion)
+		if _, ok := markdownlintPackageLock.Packages["node_modules/"+floor.name]; !ok {
+			return fmt.Errorf("%s must lock %s at %s or newer (Dependabot advisory fix); found none", markdownlintPackageLockPath, floor.name, floor.minimum)
+		}
+		for path, entry := range markdownlintPackageLock.Packages {
+			if path != "node_modules/"+floor.name && !strings.HasSuffix(path, "/node_modules/"+floor.name) {
+				continue
+			}
+			if !versionTripleAtLeast(entry.Version, floor.minimum) {
+				return fmt.Errorf("%s must lock %s at %s or newer (Dependabot advisory fix); %s has %q", markdownlintPackageLockPath, floor.name, floor.minimum, path, entry.Version)
+			}
 		}
 	}
 	markdownlintLockPackage, ok := markdownlintPackageLock.Packages["node_modules/markdownlint-cli"]
