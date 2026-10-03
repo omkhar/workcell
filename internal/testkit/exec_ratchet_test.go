@@ -23,10 +23,24 @@ var etxtbsyRetryHelpers = map[string]bool{
 	"execRetryETXTBSYOrNestedBusy": true,
 }
 
+// stableProgramLiteral reports whether a string literal names a tool resolved
+// on PATH ("git") or an absolute system binary ("/bin/bash"). A relative path
+// literal such as "./fixture" can still name a freshly written script.
+func stableProgramLiteral(lit *ast.BasicLit) bool {
+	if lit.Kind != token.STRING {
+		return false
+	}
+	prog, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return false
+	}
+	return !strings.Contains(prog, "/") || strings.HasPrefix(prog, "/")
+}
+
 // rawExecSites counts exec.Command/CommandContext calls in src whose program
-// is a path-valued expression (not a string literal such as "git" or
-// "/bin/bash") and that sit outside a func literal handed to one of
-// etxtbsyRetryHelpers. Such a call execs a possibly freshly written fixture
+// is a path-valued expression or a relative path literal (not a stable
+// literal such as "git" or "/bin/bash") and that sit outside a func literal
+// handed to one of etxtbsyRetryHelpers. Such a call execs a possibly freshly written fixture
 // directly and can fail with ETXTBSY (golang/go#22315). The os/exec package
 // is matched by its import path, so an import alias is still counted.
 func rawExecSites(t *testing.T, name, src string) int {
@@ -65,7 +79,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 						prog = 1
 					}
 					if len(call.Args) > prog {
-						if _, literal := call.Args[prog].(*ast.BasicLit); !literal {
+						if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit) {
 							count++
 						}
 					}
@@ -128,9 +142,11 @@ func c()         { exec.Command("git", "init") }
 func d(p string) { exec.CommandContext(nil, p) }
 func e(p string) { execRetryOn(func() *exec.Cmd { return exec.Command(p) }, nil) }
 func f(p string) { execRetryETXTBSYLater(func() *exec.Cmd { return exec.Command(p) }) }
+func g()         { exec.Command("./fixture.sh") }
+func h()         { exec.Command("/bin/bash", "-c", "true") }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 4 {
-		t.Fatalf("rawExecSites = %d, want 4 (a, d, e, f)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 5 {
+		t.Fatalf("rawExecSites = %d, want 5 (a, d, e, f, g)", got)
 	}
 }
 
