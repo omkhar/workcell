@@ -263,3 +263,72 @@ func TestUpstreamRefreshSplitDryRun(t *testing.T) {
 		})
 	}
 }
+
+// TestUpstreamRefreshOverlapStep runs the exact run script of the workflow
+// step "Detect overlapping upstream refresh PRs" against a fake gh.
+func TestUpstreamRefreshOverlapStep(t *testing.T) {
+	root := repoRoot(t)
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "upstream-refresh.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(workflow), "\n")
+	var script []string
+	state := 0
+	for _, line := range lines {
+		switch {
+		case state == 0 && strings.Contains(line, "name: Detect overlapping upstream refresh PRs"):
+			state = 1
+		case state == 1 && strings.TrimSpace(line) == "run: |":
+			state = 2
+		case state == 2 && (line == "" || strings.HasPrefix(line, "          ")):
+			if line == "" {
+				state = 3
+				break
+			}
+			script = append(script, strings.TrimPrefix(line, "          "))
+		case state == 2:
+			state = 3
+		}
+	}
+	if len(script) == 0 {
+		t.Fatal("overlap step run script not found")
+	}
+	const (
+		sameRepo = `{"title":"Refresh pinned upstreams (provider)","url":"https://example.invalid/pr/1","headRefName":"codex/upstream-refresh-provider-5","isCrossRepository":false}`
+		forkLeg  = `{"title":"Refresh pinned upstreams","url":"https://example.invalid/pr/2","headRefName":"x","isCrossRepository":true}`
+		forkProv = `{"title":"other","url":"https://example.invalid/pr/3","headRefName":"codex/upstream-refresh-provider-6","isCrossRepository":true}`
+	)
+	cases := []struct {
+		name, prs, want string
+	}{
+		{"empty list", `[]`, "provider=\ntoolchain=\n"},
+		{"fork PRs never match", `[` + forkLeg + `,` + forkProv + `]`, "provider=\ntoolchain=\n"},
+		{"same-repo provider PR blocks only provider", `[` + forkLeg + `,` + sameRepo + `]`, "provider=https://example.invalid/pr/1\ntoolchain=\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fake := "#!/usr/bin/env bash\n" +
+				"[[ \"$*\" == *'--base main'* && \"$*\" == *'--limit 1000'* && \"$*\" == *isCrossRepository* ]] || { echo \"bad gh args: $*\" >&2; exit 97; }\n" +
+				"printf '%s' \"${FAKE_PRS}\"\n"
+			if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(fake), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(dir, "out")
+			cmd := exec.Command("bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", strings.Join(script, "\n"))
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_PRS="+tc.prs, "GITHUB_OUTPUT="+out)
+			if combined, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("step failed: %v\n%s", err, combined)
+			}
+			got, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("outputs = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

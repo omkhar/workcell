@@ -213,7 +213,7 @@ func TestUpstreamRefreshPublishLocalChecks(t *testing.T) {
 		})
 	}
 
-	const prFmt = `{"title":"Refresh pinned upstreams (provider)","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-provider-%s","headRefOid":"%s"}`
+	const prFmt = `[{"title":"Refresh pinned upstreams (provider)","url":"https://example.invalid/pr/9","headRefName":"codex/upstream-refresh-provider-%s","headRefOid":"%s","isCrossRepository":false}]`
 	commit, resumed := strings.Repeat("c", 40), strings.Repeat("d", 40)
 	disposition := []struct {
 		name    string

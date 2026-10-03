@@ -264,8 +264,9 @@ existing_pr_url="$(
     --repo "${REPO}" \
     --state open \
     --base "${BASE_BRANCH}" \
-    --json title,url,headRefName \
-    --jq 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | test("^codex/upstream-refresh-([0-9]+$|'"${CANDIDATE_KIND}"'-)")))) | .[0].url // ""'
+    --limit 1000 \
+    --json title,url,headRefName,isCrossRepository |
+    jq -L "${ROOT_DIR}/scripts/ci" -r --arg kind "${CANDIDATE_KIND}" 'include "upstream-refresh-overlap"; overlap($kind).url // ""'
 )"
 if [[ -n "${existing_pr_url}" ]]; then
   echo "Refusing to publish while an upstream ${CANDIDATE_KIND} refresh PR is already open: ${existing_pr_url}" >&2

@@ -62,9 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prs="$(gh pr list --state open --json title,url,headRefName)"
+          prs="$(gh pr list --state open --base main --limit 1000 --json title,url,headRefName,isCrossRepository)"
           for kind in provider toolchain; do
-            url="$(jq -r --arg kind "${kind}" 'map(select(.title == "Refresh pinned upstreams" or (.headRefName | test("^codex/upstream-refresh-([0-9]+$|" + $kind + "-"))))) | .[0].url // ""' <<<"${prs}")"
+            url="$(jq -L scripts/ci -r --arg kind "${kind}" 'include "upstream-refresh-overlap"; overlap($kind).url // ""' <<<"${prs}")"
             echo "${kind}=${url}" >> "${GITHUB_OUTPUT}"
             [[ -z "${url}" ]] || echo "Upstream ${kind} refresh PR already open: ${url}"
           done
