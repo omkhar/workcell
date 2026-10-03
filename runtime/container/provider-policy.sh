@@ -313,8 +313,7 @@ reject_unsafe_codex_args() {
       # not swallow Claude's `--dangerously-skip-permissions` passed as data to `codex
       # execpolicy check`. --yolo is Codex's hidden alias for --dangerously-bypass-
       # approvals-and-sandbox (the glob does not reach a hidden alias, so block it and its
-      # =value form explicitly). --approve-for-me and its hidden alias --not-so-yolo set
-      # approvals_reviewer to auto review; --ignore-rules drops the managed .rules files.
+      # =value form explicitly). --approve-for-me/--not-so-yolo pick auto review.
       --dangerously-bypass-* | --yolo | --yolo=* | --approve-for-me | --approve-for-me=* | --not-so-yolo | --not-so-yolo=* | --ignore-rules | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | -s | --sandbox | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;

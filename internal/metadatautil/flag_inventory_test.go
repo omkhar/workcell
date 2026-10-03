@@ -89,15 +89,12 @@ func TestFlagInventoryRenderAndCheck(t *testing.T) {
 	}
 	help := filepath.Join(root, "help.txt")
 	mustWriteText(t, help, "Commands:\n  exec  Run\n  help  Print help\n\nOptions:\n      --yolo\n  -m, --model <M>\n")
-	if _, err := RenderFlagFixtureFromHelp(root, "demo", []string{help}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := RenderFlagFixtureFromHelp(root, "planned", []string{help}); err == nil {
 		t.Fatal("rendered a fixture for a planned adapter")
 	}
-	fixture, _ := RenderFlagFixtureFromHelp(root, "demo", []string{help})
-	if !strings.Contains(string(fixture), "# demo-version: 1.2.3\n") || !strings.HasSuffix(string(fixture), "\n--model\n--yolo\n-m\n") {
-		t.Fatalf("fixture = %q", fixture)
+	fixture, err := RenderFlagFixtureFromHelp(root, "demo", []string{help})
+	if err != nil || !strings.Contains(string(fixture), "# demo-version: 1.2.3\n") || !strings.HasSuffix(string(fixture), "\n--model\n--yolo\n-m\n") {
+		t.Fatalf("fixture = %q, %v", fixture, err)
 	}
 	mustWriteText(t, FlagFixturePath(root, "demo"), string(fixture))
 	// -m is in the help but not in the manifest.

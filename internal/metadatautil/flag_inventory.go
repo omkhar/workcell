@@ -90,10 +90,15 @@ func FlagInventoryPlan(root string) (string, error) {
 // RenderFlagFixtureFromHelp renders the fixture for adapter id from its help
 // output files, stamped with the current pin.
 func RenderFlagFixtureFromHelp(root, id string, helpPaths []string) ([]byte, error) {
-	m, err := certifiedManifest(root, id)
+	manifests, err := certifiedManifests(root)
 	if err != nil {
 		return nil, err
 	}
+	i := slices.IndexFunc(manifests, func(m adapters.Manifest) bool { return m.ID == id })
+	if i < 0 {
+		return nil, fmt.Errorf("no certified adapter %q", id)
+	}
+	m := manifests[i]
 	version, err := adapterPin(root, m)
 	if err != nil {
 		return nil, err
@@ -189,19 +194,6 @@ func certifiedManifests(root string) ([]adapters.Manifest, error) {
 		}
 	}
 	return out, nil
-}
-
-func certifiedManifest(root, id string) (adapters.Manifest, error) {
-	manifests, err := certifiedManifests(root)
-	if err != nil {
-		return adapters.Manifest{}, err
-	}
-	for _, m := range manifests {
-		if m.ID == id {
-			return m, nil
-		}
-	}
-	return adapters.Manifest{}, fmt.Errorf("no certified adapter %q", id)
 }
 
 // adapterPin reads the version the existing pin owners hold for adapter m.

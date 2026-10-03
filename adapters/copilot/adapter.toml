@@ -34,9 +34,7 @@ endpoints = [
   "github.com:443",
 ]
 
-# Each option of the pinned CLI help (tests/fixtures/flags/copilot.txt) is in allow
-# or deny, as reject_unsafe_copilot_args decides; a Go test proves each entry.
-# subcommands names the allowed subcommands whose --help the inventory reads.
+# Classifies tests/fixtures/flags/copilot.txt as reject_unsafe_copilot_args decides.
 [flags]
 subcommands = [
   "app", "version", "workflow", "sessions", "memories", "instruction", "lsp",

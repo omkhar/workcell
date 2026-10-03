@@ -31,9 +31,7 @@ container_path = "/opt/workcell/host-inputs/credentials/codex-auth.json"
 [egress]
 endpoints = ["api.openai.com:443", "auth.openai.com:443", "chatgpt.com:443"]
 
-# Each option of the pinned CLI help (tests/fixtures/flags/codex.txt) is in allow
-# or deny, as reject_unsafe_codex_args decides; a Go test proves each entry.
-# subcommands names the allowed subcommands whose --help the inventory reads.
+# Classifies tests/fixtures/flags/codex.txt as reject_unsafe_codex_args decides.
 [flags]
 subcommands = [
   "exec", "review", "login", "logout", "completion", "doctor", "apply",

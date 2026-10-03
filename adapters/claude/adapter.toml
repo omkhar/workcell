@@ -38,9 +38,7 @@ container_path = "/opt/workcell/host-inputs/credentials/claude-mcp.json"
 [egress]
 endpoints = ["api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443"]
 
-# Each option of the pinned CLI help (tests/fixtures/flags/claude.txt) is in allow
-# or deny, as reject_unsafe_claude_args decides; a Go test proves each entry.
-# subcommands names the allowed subcommands whose --help the inventory reads.
+# Classifies tests/fixtures/flags/claude.txt as reject_unsafe_claude_args decides.
 [flags]
 subcommands = [
   "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import",
