@@ -408,8 +408,17 @@ func TestEntrypointSignalKillsProcessGroupAndStillCleansUp(t *testing.T) {
 	}
 	pidBytes, _ := os.ReadFile(childPID)
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
-	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("TERM-ignoring descendant survived: %v", err)
+	// The killed descendant is reparented to init and stays a zombie, which
+	// kill(pid, 0) still finds, until init reaps it; under load that takes a
+	// moment, so poll for ESRCH instead of checking once.
+	var probe error
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if probe = syscall.Kill(pid, 0); errors.Is(probe, syscall.ESRCH) || time.Now().After(deadline) {
+			break
+		}
+	}
+	if !errors.Is(probe, syscall.ESRCH) {
+		t.Errorf("TERM-ignoring descendant survived: %v", probe)
 	}
 	if _, err := os.Stat(cleaned); err != nil {
 		t.Errorf("cleanup did not run after signal: %v", err)
