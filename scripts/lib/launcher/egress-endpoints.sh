@@ -282,13 +282,21 @@ stop_egress_proxy() {
 # stop_egress_proxy_for_session runs the same save and cleanup for a session
 # whose monitor died before its own cleanup ran. The names derive from the
 # session id, so the stop command needs no monitor state. A session that never
-# started a proxy has no such network and is left alone.
+# started a proxy has no such network and is left alone. A failed lookup is
+# not proof of absence: it fails the stop so the sidecar is never silently
+# left behind.
 stop_egress_proxy_for_session() {
   local profile="$1"
   local SESSION_ID="$2"
   local EGRESS_PROXY_NETWORK="" EGRESS_PROXY_CONTAINER=""
+  local networks=""
 
   egress_proxy_names
-  run_profile_docker_command "${profile}" network inspect "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 || return 0
+  networks="$(run_profile_docker_command "${profile}" network ls \
+    --filter "name=^${EGRESS_PROXY_NETWORK}\$" --format '{{.Name}}')" || {
+    echo "workcell: could not list networks to find the egress proxy of ${SESSION_ID}." >&2
+    return 1
+  }
+  grep -qx -- "${EGRESS_PROXY_NETWORK}" <<<"${networks}" || return 0
   stop_egress_proxy "${profile}"
 }

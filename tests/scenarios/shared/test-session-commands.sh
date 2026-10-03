@@ -2380,11 +2380,11 @@ stop_dead_monitor_output="$(
       local profile="$1"
       shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in
-        inspect)
+      case "$1 $2" in
+        "inspect "*)
           printf "running\n"
           ;;
-        stop)
+        "stop "* | "network ls")
           return 0
           ;;
         *)
@@ -2456,7 +2456,8 @@ for stop_proxy_state in running stopped; do
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
       case "$1 $2" in
         "inspect "*) printf "%s\n" "${CONTAINER_STATE}" ;;
-        "stop "* | "logs "* | "rm "* | "network inspect" | "network rm") return 0 ;;
+        "network ls") printf "wc-detached-fixture\n" ;;
+        "stop "* | "logs "* | "rm "* | "network rm") return 0 ;;
         *) return 1 ;;
       esac
     }
@@ -2470,6 +2471,68 @@ for stop_proxy_state in running stopped; do
     }
   done
 done
+
+# A failed network listing is not proof that no proxy exists: the stop fails
+# and removes nothing rather than leaving a sidecar behind silently.
+SESSION_STOP_DEAD_PROXY_LOOKUP_RECORD="${DETACHED_STATE_DIR}/session-stop.dead-proxy-lookup.record"
+SESSION_STOP_DEAD_PROXY_LOOKUP_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.dead-proxy-lookup.audit"
+SESSION_STOP_DEAD_PROXY_LOOKUP_STATE_ROOT="${DETACHED_STATE_DIR}/session-stop.dead-proxy-lookup.state-root"
+mkdir -p "${SESSION_STOP_DEAD_PROXY_LOOKUP_AUDIT_DIR}" "${SESSION_STOP_DEAD_PROXY_LOOKUP_STATE_ROOT}/wcl-detached-fixture/sessions"
+sed "s|${SESSION_STOP_DEAD_MONITOR_AUDIT_DIR}|${SESSION_STOP_DEAD_PROXY_LOOKUP_AUDIT_DIR}|" \
+  "${SESSION_STOP_DEAD_MONITOR_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json" \
+  >"${SESSION_STOP_DEAD_PROXY_LOOKUP_STATE_ROOT}/wcl-detached-fixture/sessions/detached-fixture.json"
+set +e
+stop_dead_proxy_lookup_stderr="$(
+  bash -lc '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    RECORD_FILE="$2"
+    AUDIT_DIR="$3"
+    WORKCELL_STATE_ROOT="$4"
+    COLIMA_STATE_ROOT="$4"
+    HOST_DOCKER_BIN="/bin/false"
+    resolve_host_tool() { printf "/bin/false\n"; }
+    sanitize_host_docker_env() { :; }
+    resolve_host_output_candidate() { printf "%s\n" "$1"; }
+    session_monitor_pid_is_live() { return 1; }
+    session_container_exit_code() { printf "1\n"; }
+    load_session_runtime_metadata() {
+      SESSION_META_PROFILE="wcl-detached-fixture"
+      SESSION_META_CONTAINER_NAME="workcell-session-fixture"
+      SESSION_META_MONITOR_PID="4242"
+      SESSION_META_STATUS="running"
+      SESSION_META_LIVE_STATUS="running"
+      SESSION_META_CURRENT_ASSURANCE="managed-mutable"
+      SESSION_META_SESSION_AUDIT_DIR="${AUDIT_DIR}"
+    }
+    append_session_control_audit_record() { :; }
+    write_session_record() { :; }
+    run_profile_docker_command() {
+      local profile="$1"
+      shift
+      printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
+      case "$1 $2" in
+        "inspect "*) printf "running\n" ;;
+        "stop "*) return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    session_stop_main --id detached-fixture >/dev/null
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_STOP_DEAD_PROXY_LOOKUP_RECORD}" "${SESSION_STOP_DEAD_PROXY_LOOKUP_AUDIT_DIR}" \
+    "${SESSION_STOP_DEAD_PROXY_LOOKUP_STATE_ROOT}" 2>&1 >/dev/null
+)"
+stop_dead_proxy_lookup_status=$?
+set -e
+if [[ "${stop_dead_proxy_lookup_status}" -eq 0 ]]; then
+  echo "Detached session stop reported success although the proxy network lookup failed" >&2
+  exit 1
+fi
+grep -q 'could not list networks to find the egress proxy of detached-fixture' <<<"${stop_dead_proxy_lookup_stderr}"
+if grep -q '|rm -f wc-egress-\||network rm wc-' "${SESSION_STOP_DEAD_PROXY_LOOKUP_RECORD}"; then
+  echo "Detached session stop removed proxy resources after a failed network lookup" >&2
+  exit 1
+fi
 
 SESSION_STOP_ALREADY_STOPPED_RECORD="${DETACHED_STATE_DIR}/session-stop.already-stopped.record"
 SESSION_STOP_ALREADY_STOPPED_AUDIT_DIR="${DETACHED_STATE_DIR}/session-stop.already-stopped.audit"
@@ -2527,9 +2590,12 @@ stop_already_stopped_output="$(
       local profile="$1"
       shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in
-        inspect)
+      case "$1 $2" in
+        "inspect "*)
           printf "stopped\n"
+          ;;
+        "network ls")
+          return 0
           ;;
         *)
           return 1
@@ -2611,9 +2677,12 @@ stop_already_stopped_running_output="$(
       local profile="$1"
       shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in
-        inspect)
+      case "$1 $2" in
+        "inspect "*)
           printf "stopped\n"
+          ;;
+        "network ls")
+          return 0
           ;;
         *)
           return 1
@@ -3340,6 +3409,10 @@ EOF_JSON
           ;;
         rm)
           printf "removed\n" >"${CONTAINER_STATE_FILE}"
+          ;;
+        network)
+          # No proxy network exists for this session.
+          return 0
           ;;
         *)
           return 1

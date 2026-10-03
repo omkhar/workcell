@@ -2,7 +2,7 @@
   "host_artifacts": [
     {
       "repo_path": "scripts/workcell",
-      "sha256": "20d485347e8ec25c66d93683cd683b99594020a80e0444b687dedffbc5f1ddd9"
+      "sha256": "8f58b1630bb6d9a6c9034232e1685553ff5f5df1b2c6237f4c821943902b2227"
     },
     {
       "repo_path": "scripts/check-publish-commit-signatures.sh",
@@ -26,7 +26,7 @@
     },
     {
       "repo_path": "scripts/lib/launcher/egress-endpoints.sh",
-      "sha256": "63921087bd1b89aaad200ee5b514e735135b9d028cf8afa5fee8ee767b9f6c46"
+      "sha256": "e7a69a4559e8703e0c86adf52d201cd384333691dee1bb78f17644770af655a0"
     },
     {
       "repo_path": "scripts/lib/launcher/generated-adapters.sh",

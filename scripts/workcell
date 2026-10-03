@@ -4188,7 +4188,7 @@ session_stop_main() {
         "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
       session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}" || exit 1
       sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
-      stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}"
+      stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
       load_session_runtime_metadata "${session_id}"
       printf 'session_id=%s\n' "${session_id}"
       printf 'stop_requested=1\n'
@@ -4287,7 +4287,7 @@ session_stop_main() {
     esac
     # The monitor's own cleanup is gone with it: save the deny log and remove
     # the sidecar and network here, or a stopped session would leave them.
-    stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}"
+    stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
   fi
   # Seal-missing recheck (TOCTOU coverage): once the record is terminal, guarantee
   # it is sealed even if the monitor was observed live at the checks above but
