@@ -44,7 +44,7 @@ func newForkFixture(t *testing.T, executionPath string) *forkFixture {
 	f.appendRecord(t, "event=session_snapshot", "source=host-cli", "snapshot_id=snap-1",
 		"tree="+forkFixtureTree, "commit="+forkFixtureCommit)
 	if err := sessions.WriteSessionRecord(f.recordPath, map[string]string{
-		"session_id": "parent-1", "profile": "wcl-fixture", "target_provider": "colima",
+		"session_id": "parent-1", "profile": "wcl-fixture", "target_provider": "colima", "execution_path": executionPath,
 		"agent": "codex", "mode": "strict", "status": "running", "live_status": "running",
 		"monitor_pid": "4242", "session_audit_dir": "/tmp/audit-fixture", "workspace": "/tmp/clone", "workspace_origin": "/tmp/origin-repo",
 		"started_at": "2026-07-08T00:00:00Z", "audit_log_path": f.logPath,
@@ -124,12 +124,17 @@ func TestForkMainRefusesBeforeAskingForSnapshot(t *testing.T) {
 	if out, err := g.run("--id", "parent-1", "--count", "1"); err == nil || out != "" {
 		t.Fatalf("forkMain with an unsupported path = %q, %v", out, err)
 	}
-	tampered := strings.Replace(f.lines[0], "mode=strict", "mode=breakglass", 1)
-	if err := os.WriteFile(f.logPath, []byte(tampered+"\n"+f.lines[1]+"\n"), 0o600); err != nil {
+}
+
+func TestForkMainAsksForSnapshotBeforeAnySeal(t *testing.T) {
+	f := newForkFixture(t, "managed-tier1")
+	// A running parent has no seal until its first snapshot.
+	if err := os.Remove(auditseal.SealPathForRecord(f.recordPath)); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := f.run("--id", "parent-1", "--count", "1"); err == nil || out != "" {
-		t.Fatalf("forkMain with a tampered chain = %q, %v", out, err)
+	out, err := f.run("--id", "parent-1", "--count", "1")
+	if err != nil || !strings.Contains(out, "needs_snapshot=1") {
+		t.Fatalf("forkMain without a seal = %q, %v", out, err)
 	}
 }
 

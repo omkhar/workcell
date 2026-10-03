@@ -4922,7 +4922,11 @@ session_fork_main() {
     "source=host-cli" \
     "snapshot_id=${snapshot_id}" \
     "parent=${session_id}" \
-    "children=$(csv_join_or_none "${children[@]-}")"
+    "children=$(csv_join_or_none "${children[@]-}")" || {
+    # The children run, so name them: the operator needs the ids to stop them.
+    echo "session fork started children but could not record the fork: ${session_id}" >&2
+    status=1
+  }
   record_path="${SESSION_META_RECORD_PATH:-$(session_record_path_for "${SESSION_META_PROFILE}" "${session_id}")}"
   sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}" strict || {
     echo "session fork recorded the fork but could not re-sign the audit chain: ${session_id}" >&2

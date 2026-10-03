@@ -4536,6 +4536,24 @@ grep -q called "${fork_stale_snapshots}" || {
   exit 1
 }
 
+# A failed fork audit append still names the running children.
+fork_append_out="$(
+  bash -c '
+    set -euo pipefail
+    source "$1"
+    trap - EXIT
+    session_run_cli_with_roots() { printf "session_id=p\nsnapshot_id=s\ncount=1\ncommit=c\ntree=t\nagent=codex\nmode=strict\nprofile=x\nworkspace_origin=/o\norigin_hash=h\n"; }
+    session_snapshot_store_root() { echo /nonexistent; }
+    session_fork_start_child() { printf "session_id=child-1\n"; }
+    load_session_runtime_metadata() { SESSION_META_PROFILE=x SESSION_META_RECORD_PATH=/r; }
+    append_session_control_audit_record() { return 1; }
+    sign_session_audit_head_explicit() { return 0; }
+    session_fork_main --id p --snapshot s --count 1
+  ' _ "${WORKCELL_FUNCTIONS_COPY}" 2>"${TMP_DIR}/fork-append.err" || true
+)"
+grep -Fxq 'children=child-1' <<<"${fork_append_out}"
+grep -q 'could not record the fork' "${TMP_DIR}/fork-append.err"
+
 # A fork child refuses a non-detached launch and an injection policy that
 # differs from the parent launch record. The shebang clears the environment,
 # so these runs start bash directly, as session_fork_start_child does.
