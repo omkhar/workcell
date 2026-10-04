@@ -9580,6 +9580,19 @@ else
   fi
 fi
 
+# The egress proxy sidecar runs the proxy binary from the prepared image, so an
+# image built from another checkout may lack the sidecar's current interface.
+# The marker records the build's source epoch; any mismatch refreshes the image.
+if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "${NEEDS_REBUILD}" -eq 0 ]] &&
+  [[ "${RECORDED_SOURCE_DATE_EPOCH}" != "${SOURCE_DATE_EPOCH}" ]]; then
+  NEEDS_REBUILD=1
+  if [[ "${PREPARE}" -eq 0 ]]; then
+    announce_strict_auto_prepare \
+      "--egress-proxy needs a runtime image prepared from this checkout for profile ${COLIMA_PROFILE}." \
+      "The prepared image was built from another checkout, so its egress proxy sidecar may not match."
+  fi
+fi
+
 if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]] && [[ "${PREPARE}" -eq 0 ]]; then
   announce_strict_auto_prepare \
     "Strict mode needs a prepared runtime image for profile ${COLIMA_PROFILE}." \
