@@ -67,12 +67,20 @@ type Response struct {
 	Error string `json:"error,omitempty"`
 }
 
+// RequestLog receives one JSON line per request and makes it durable on
+// Sync; a grant is released only after its record is durable, so a writer
+// that cannot sync is not a request log.
+type RequestLog interface {
+	io.Writer
+	Sync() error
+}
+
 // Config is one broker session.
 type Config struct {
 	SocketPath  string
 	Token       []byte
 	Credentials map[string]string // credential key -> value; keys must be in grants
-	Log         io.Writer         // receives one JSON line per request; never values
+	Log         RequestLog        // never receives values
 	SSHArgs     []string          // argv for the supervised ssh forward; empty runs none
 }
 
@@ -85,7 +93,7 @@ type server struct {
 	now   func() time.Time
 
 	mu          sync.Mutex
-	log         io.Writer
+	log         RequestLog
 	windowStart time.Time
 	count       int
 }
@@ -118,11 +126,12 @@ func Serve(ctx context.Context, config Config) error {
 	if err != nil {
 		return err
 	}
-	listener, err := listen(config.SocketPath)
+	socket, err := listen(config.SocketPath)
 	if err != nil {
 		return err
 	}
-	defer removeSocket(config.SocketPath, listener)
+	defer socket.close()
+	listener := socket.listener
 	ctx, cancel := context.WithCancelCause(ctx)
 	var sshDone chan struct{}
 	defer func() {
@@ -259,10 +268,27 @@ func (s *server) record(request Request, key, result string) error {
 	if err != nil {
 		return err
 	}
-	if syncer, ok := s.log.(interface{ Sync() error }); ok {
-		return syncer.Sync()
+	return s.log.Sync()
+}
+
+// boundSocket is a listening socket with the parent directory descriptor it
+// was created through. The descriptor lives as long as the listener, so the
+// final unlink also goes through it rather than through a pathname.
+type boundSocket struct {
+	listener *net.UnixListener
+	parent   *os.File
+	name     string
+}
+
+// close stops the listener, unlinks the socket through the pinned parent
+// while it is still a socket, and releases the parent.
+func (b *boundSocket) close() {
+	_ = b.listener.Close()
+	var leaf unix.Stat_t
+	if err := unix.Fstatat(int(b.parent.Fd()), b.name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err == nil && leaf.Mode&unix.S_IFMT == unix.S_IFSOCK {
+		_ = unix.Unlinkat(int(b.parent.Fd()), b.name, 0)
 	}
-	return nil
+	_ = b.parent.Close()
 }
 
 // listen binds a 0600 socket owned by the broker uid in a directory that no
@@ -270,22 +296,24 @@ func (s *server) record(request Request, key, result string) error {
 // O_NOFOLLOW and pinned; the bind, the mode change and the checks all go
 // through that descriptor, so a pathname cannot be repointed in between. The
 // peer uid check still guards the moment between bind and chmod.
-func listen(path string) (*net.UnixListener, error) {
+func listen(path string) (*boundSocket, error) {
 	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
 	if err != nil {
 		return nil, err
 	}
-	defer parent.Close()
 	var parentStat unix.Stat_t
 	if err := unix.Fstat(int(parent.Fd()), &parentStat); err != nil {
+		_ = parent.Close()
 		return nil, err
 	}
 	if parentStat.Mode&unix.S_IFMT != unix.S_IFDIR || parentStat.Mode&0o022 != 0 || parentStat.Uid != uint32(os.Getuid()) {
+		_ = parent.Close()
 		return nil, errors.New("credential broker socket directory must be owned by the broker uid and not group or world writable")
 	}
 	name := filepath.Base(cleaned)
 	var leaf unix.Stat_t
 	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(err, unix.ENOENT) {
+		_ = parent.Close()
 		return nil, errors.New("credential broker socket path already exists")
 	}
 	// bind(2) takes a pathname, so the socket is created by name; every check
@@ -294,11 +322,13 @@ func listen(path string) (*net.UnixListener, error) {
 	// parent, fails the check below, and is closed.
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: cleaned, Net: "unix"})
 	if err != nil {
+		_ = parent.Close()
 		return nil, err
 	}
 	listener.SetUnlinkOnClose(false)
-	fail := func(err error) (*net.UnixListener, error) {
-		removeSocketAt(parent, name, listener)
+	bound := &boundSocket{listener: listener, parent: parent, name: name}
+	fail := func(err error) (*boundSocket, error) {
+		bound.close()
 		return nil, err
 	}
 	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Uid != uint32(os.Getuid()) {
@@ -310,24 +340,7 @@ func listen(path string) (*net.UnixListener, error) {
 	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err != nil || leaf.Mode&unix.S_IFMT != unix.S_IFSOCK || leaf.Mode&0o777 != 0o600 {
 		return fail(errors.New("credential broker socket verification failed"))
 	}
-	return listener, nil
-}
-
-// removeSocketAt unlinks name under the pinned parent only while it is still
-// a socket.
-func removeSocketAt(parent *os.File, name string, listener *net.UnixListener) {
-	_ = listener.Close()
-	var leaf unix.Stat_t
-	if err := unix.Fstatat(int(parent.Fd()), name, &leaf, unix.AT_SYMLINK_NOFOLLOW); err == nil && leaf.Mode&unix.S_IFMT == unix.S_IFSOCK {
-		_ = unix.Unlinkat(int(parent.Fd()), name, 0)
-	}
-}
-
-func removeSocket(path string, listener *net.UnixListener) {
-	_ = listener.Close()
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
-		_ = os.Remove(path)
-	}
+	return bound, nil
 }
 
 func fileUID(info os.FileInfo) uint32 {

@@ -34,6 +34,14 @@ func (b *syncBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
+func (b *syncBuffer) Sync() error { return nil }
+
+// discardLog is a request log that keeps nothing, for tests about other paths.
+type discardLog struct{}
+
+func (discardLog) Write(p []byte) (int, error) { return len(p), nil }
+func (discardLog) Sync() error                 { return nil }
+
 func (b *syncBuffer) records(t *testing.T) []logRecord {
 	t.Helper()
 	b.mu.Lock()
@@ -77,14 +85,14 @@ func testServer(t *testing.T, creds map[string]string) (*server, *syncBuffer) {
 func listenServer(t *testing.T, s *server) string {
 	t.Helper()
 	path := filepath.Join(socketDir(t), "b.sock")
-	listener, err := listen(path)
+	socket, err := listen(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { removeSocket(path, listener) })
+	t.Cleanup(socket.close)
 	go func() {
 		for {
-			connection, err := listener.AcceptUnix()
+			connection, err := socket.listener.AcceptUnix()
 			if err != nil {
 				return
 			}
@@ -210,10 +218,10 @@ func TestGrantFiltering(t *testing.T) {
 	if response, _ := s.answer(Request{Token: testToken, Host: "generativelanguage.googleapis.com", Header: "x-goog-api-key"}); response.Error != ErrNotGranted {
 		t.Fatalf("unconfigured gemini = %+v, want not_granted", response)
 	}
-	if _, err := newServer(Config{Token: []byte(testToken), Credentials: map[string]string{"codex_auth": "x"}, Log: io.Discard}); err == nil {
+	if _, err := newServer(Config{Token: []byte(testToken), Credentials: map[string]string{"codex_auth": "x"}, Log: discardLog{}}); err == nil {
 		t.Fatal("newServer accepted a credential with no grant")
 	}
-	if _, err := newServer(Config{Credentials: map[string]string{}, Log: io.Discard}); err == nil {
+	if _, err := newServer(Config{Credentials: map[string]string{}, Log: discardLog{}}); err == nil {
 		t.Fatal("newServer accepted an empty token")
 	}
 }
@@ -237,7 +245,7 @@ func TestListenRefusesSharedDirectoryAndExistingPath(t *testing.T) {
 		t.Fatal("listen replaced an existing path")
 	}
 	path := filepath.Join(dir, "b.sock")
-	listener, err := listen(path)
+	socket, err := listen(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,10 +253,30 @@ func TestListenRefusesSharedDirectoryAndExistingPath(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("socket mode = %v, %v; want 0600", info.Mode(), err)
 	}
-	removeSocket(path, listener)
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("socket left behind: %v", err)
+	// A swap of the directory entry after the bind must not fool the final
+	// cleanup: it unlinks through the pinned parent, so the socket is gone
+	// while a replacement under the old pathname is untouched.
+	moved := dir + "-moved"
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stray, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray.SetUnlinkOnClose(false)
+	defer stray.Close()
+	socket.close()
+	if _, err := os.Lstat(filepath.Join(moved, "b.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("socket left behind under the moved parent: %v", err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("cleanup removed a stray socket under the old pathname: %v", err)
+	}
+	_ = os.RemoveAll(moved)
 }
 
 func writeScript(t *testing.T, dir, name, body string) string {
@@ -271,7 +299,7 @@ func fakeSSH(t *testing.T, body string) string {
 func TestServeExitsWhenSSHForwardDies(t *testing.T) {
 	dir := fakeSSH(t, `printf '%s\n' "$@" > "$(dirname "$0")/args"; exit 3`+"\n")
 	path := filepath.Join(socketDir(t), "b.sock")
-	err := Serve(context.Background(), Config{SocketPath: path, Token: []byte(testToken), Log: io.Discard, SSHArgs: []string{"-N", "colima-x"}})
+	err := Serve(context.Background(), Config{SocketPath: path, Token: []byte(testToken), Log: discardLog{}, SSHArgs: []string{"-N", "colima-x"}})
 	if err == nil || !strings.Contains(err.Error(), "ssh forward exited: exit status 3") {
 		t.Fatalf("Serve = %v, want ssh forward exit", err)
 	}
@@ -289,7 +317,7 @@ func TestServeStopsSSHForwardOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, Config{SocketPath: path, Token: []byte(testToken), Log: io.Discard, SSHArgs: []string{"colima-x"}})
+		done <- Serve(ctx, Config{SocketPath: path, Token: []byte(testToken), Log: discardLog{}, SSHArgs: []string{"colima-x"}})
 	}()
 	pidFile := filepath.Join(dir, "pid")
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
@@ -325,8 +353,8 @@ func TestListenRefusesSymlinkedAncestor(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	if listener, err := listen(filepath.Join(link, "b.sock")); err == nil {
-		removeSocket(filepath.Join(real, "b.sock"), listener)
+	if socket, err := listen(filepath.Join(link, "b.sock")); err == nil {
+		socket.close()
 		t.Fatal("listen followed a symlinked ancestor")
 	}
 	if _, err := os.Lstat(filepath.Join(real, "b.sock")); !errors.Is(err, os.ErrNotExist) {
