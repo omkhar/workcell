@@ -129,43 +129,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 			if !ok {
 				continue
 			}
-			// The returned command is either the call itself or a variable
-			// the closure assigned from such a call.
-			returnedNames := map[string]bool{}
-			ast.Inspect(closure.Body, func(r ast.Node) bool {
-				if ret, ok := r.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
-					switch returned := ret.Results[0].(type) {
-					case *ast.CallExpr:
-						if execCommandName(returned.Fun) != "" {
-							retried[returned] = true
-						}
-					case *ast.Ident:
-						returnedNames[returned.Name] = true
-					}
-				}
-				return true
-			})
-			// Only the last assignment to a returned name reaches the return;
-			// an earlier command assigned to the same name ran before it.
-			lastBuilt := map[string]ast.Expr{}
-			ast.Inspect(closure.Body, func(r ast.Node) bool {
-				assign, ok := r.(*ast.AssignStmt)
-				if !ok {
-					return true
-				}
-				for i, value := range assign.Rhs {
-					if i >= len(assign.Lhs) {
-						break
-					}
-					id, ok := assign.Lhs[i].(*ast.Ident)
-					built, isCall := value.(*ast.CallExpr)
-					if ok && isCall && returnedNames[id.Name] && execCommandName(built.Fun) != "" {
-						lastBuilt[id.Name] = built
-					}
-				}
-				return true
-			})
-			for _, built := range lastBuilt {
+			if built := retriedCommand(closure, execCommandName); built != nil {
 				retried[built] = true
 			}
 		}
@@ -212,36 +176,107 @@ func rawExecSites(t *testing.T, name, src string) int {
 	return count
 }
 
-// declaresRetryHelper reports whether a function body in the file declares a
-// variable or constant named like one of etxtbsyRetryHelpers, which shadows
-// the package helper for the calls that follow. A second top-level
-// declaration of that name cannot compile in this package, so only local
-// declarations can shadow it.
-func declaresRetryHelper(file *ast.File) bool {
-	found := false
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			continue
+// retriedCommand returns the one command expression in closure that runs
+// under the retry helper: the command the closure's final statement returns,
+// either directly or as a variable whose last build is followed only by
+// field assignments on it. Only the closure's own statements are read, so a
+// nested function literal's return is never taken for this one, and a
+// command the closure runs or hands elsewhere before returning is not
+// retried and stays a raw site.
+func retriedCommand(closure *ast.FuncLit, execCommandName func(ast.Expr) string) ast.Expr {
+	statements := closure.Body.List
+	if len(statements) == 0 {
+		return nil
+	}
+	ret, ok := statements[len(statements)-1].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 {
+		return nil
+	}
+	switch returned := ret.Results[0].(type) {
+	case *ast.CallExpr:
+		if execCommandName(returned.Fun) != "" {
+			return returned
 		}
-		ast.Inspect(fn.Body, func(c ast.Node) bool {
-			switch n := c.(type) {
-			case *ast.AssignStmt:
-				for _, lhs := range n.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok && etxtbsyRetryHelpers[id.Name] {
-						found = true
-					}
+	case *ast.Ident:
+		var built ast.Expr
+		for _, statement := range statements[:len(statements)-1] {
+			assign, ok := statement.(*ast.AssignStmt)
+			if !ok {
+				if built != nil {
+					return nil // the command was used before the return
 				}
-			case *ast.ValueSpec:
-				for _, name := range n.Names {
-					if etxtbsyRetryHelpers[name.Name] {
-						found = true
+				continue
+			}
+			if built != nil && !assignsFieldsOnly(assign, returned.Name) {
+				return nil
+			}
+			for i, value := range assign.Rhs {
+				if i >= len(assign.Lhs) {
+					break
+				}
+				if id, ok := assign.Lhs[i].(*ast.Ident); ok && id.Name == returned.Name {
+					if call, isCall := value.(*ast.CallExpr); isCall && execCommandName(call.Fun) != "" {
+						built = call
+					} else {
+						built = nil
 					}
 				}
 			}
-			return !found
-		})
+		}
+		return built
 	}
+	return nil
+}
+
+// assignsFieldsOnly reports whether assign only sets fields of name, such as
+// c.Dir = x, which configures the command without running it.
+func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
+	for _, lhs := range assign.Lhs {
+		sel, ok := lhs.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		if id, ok := sel.X.(*ast.Ident); !ok || id.Name != name {
+			return false
+		}
+	}
+	return true
+}
+
+// declaresRetryHelper reports whether a function in the file declares a
+// parameter, variable or constant named like one of etxtbsyRetryHelpers,
+// which shadows the package helper for the calls that follow. A second
+// top-level declaration of that name cannot compile in this package, so only
+// local declarations can shadow it.
+func declaresRetryHelper(file *ast.File) bool {
+	found := false
+	ast.Inspect(file, func(c ast.Node) bool {
+		switch n := c.(type) {
+		case *ast.FuncType:
+			if n.Params != nil {
+				for _, field := range n.Params.List {
+					for _, name := range field.Names {
+						if etxtbsyRetryHelpers[name.Name] {
+							found = true
+						}
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && etxtbsyRetryHelpers[id.Name] {
+					found = true
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range n.Names {
+				if etxtbsyRetryHelpers[name.Name] {
+					found = true
+				}
+			}
+		}
+		return !found
+	})
 	return found
 }
 
@@ -379,9 +414,11 @@ func m(p string) { execRetryETXTBSY(func() *exec.Cmd { exec.Command(p).Run(); re
 func n(p string) { first := exec.Command; second := first; second(p) }
 func o(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = "/"; return c }) }
 func q(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Run(); c = exec.Command("git"); return c }) }
+func r(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Run(); return c }) }
+func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return exec.Command(p) }().Run(); return exec.Command("git") }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 15 {
-		t.Fatalf("rawExecSites = %d, want 15 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 17 {
+		t.Fatalf("rawExecSites = %d, want 17 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command; o builds and returns its command under the retry)", got)
 	}
 	// A function that declares its own helper of the same name shadows the
 	// package helper, so nothing in that file is exempt.
@@ -394,6 +431,13 @@ func a(p string) {
 `
 	if got := rawExecSites(t, "shadowed_helper.go", shadowedHelper); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (a shadowed helper exempts nothing)", got)
+	}
+	const parameterHelper = `package x
+import "os/exec"
+func a(p string, execRetryETXTBSY func(func() *exec.Cmd) *exec.Cmd) { execRetryETXTBSY(func() *exec.Cmd { return exec.Command(p) }) }
+`
+	if got := rawExecSites(t, "parameter_helper.go", parameterHelper); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (a parameter named like the helper exempts nothing)", got)
 	}
 }
 
