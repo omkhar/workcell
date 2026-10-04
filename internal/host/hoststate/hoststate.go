@@ -34,14 +34,30 @@ func DirectMountCacheKey(hostSource, mountPath string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// FileSHA256 returns the hex SHA-256 of the regular file at path, read
-// without following symlinks, for the launcher's build-input identity.
-func FileSHA256(path string) (string, error) {
+// BuildInputsDigest returns the hex SHA-256 of the runtime section of the
+// build-input manifest at path, read without following symlinks. Only that
+// section describes the runtime image's inputs; the manifest's other sections
+// list every tracked repository file and must not move the image identity.
+// The section is re-encoded with sorted keys, so its spelling cannot move it.
+func BuildInputsDigest(path string) (string, error) {
 	data, err := rootio.ReadFileNoFollow(path, "build input manifest", 16<<20)
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
+	var manifest struct {
+		Runtime any `json:"runtime"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("build input manifest %s: %w", path, err)
+	}
+	if manifest.Runtime == nil {
+		return "", fmt.Errorf("build input manifest %s has no runtime section", path)
+	}
+	canonical, err := json.Marshal(manifest.Runtime)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:]), nil
 }
 

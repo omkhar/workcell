@@ -33,23 +33,37 @@ func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
 	}
 }
 
-func TestFileSHA256HashesRegularFilesAndRefusesSymlinks(t *testing.T) {
+func TestBuildInputsDigestHashesOnlyTheRuntimeSection(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "manifest.json")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	a := write("a.json", `{"build":{"ref":"a"},"runtime":{"b":1,"a":"x"},"verification":{"inputs":{"docs/a.md":"1"}}}`)
+	b := write("b.json", `{"build":{"ref":"b"},"runtime":{"a":"x","b":1},"verification":{"inputs":{"docs/a.md":"2"}}}`)
+	c := write("c.json", `{"build":{"ref":"a"},"runtime":{"a":"y","b":1},"verification":{"inputs":{"docs/a.md":"1"}}}`)
+	da, err := BuildInputsDigest(a)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := sha256.Sum256([]byte("{}\n"))
-	got, err := FileSHA256(path)
-	if err != nil || got != hex.EncodeToString(want[:]) {
-		t.Fatalf("FileSHA256 = (%q, %v), want %q", got, err, hex.EncodeToString(want[:]))
+	if db, err := BuildInputsDigest(b); err != nil || db != da {
+		t.Fatalf("digest differs across non-runtime edits and key order: %q vs %q (%v)", da, db, err)
+	}
+	if dc, err := BuildInputsDigest(c); err != nil || dc == da {
+		t.Fatalf("digest ignored a runtime change: %q (%v)", dc, err)
+	}
+	if _, err := BuildInputsDigest(write("no-runtime.json", `{"build":{}}`)); err == nil {
+		t.Fatal("manifest without a runtime section accepted")
 	}
 	link := filepath.Join(dir, "link.json")
-	if err := os.Symlink(path, link); err != nil {
+	if err := os.Symlink(a, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := FileSHA256(link); err == nil {
-		t.Fatal("FileSHA256 followed a symlink")
+	if _, err := BuildInputsDigest(link); err == nil {
+		t.Fatal("BuildInputsDigest followed a symlink")
 	}
 }
 

@@ -3921,15 +3921,21 @@ runtime_image_cache_output="$(
         printf "%s\n" "${CURRENT_PROFILE_IMAGE_ID}"
       fi
     }
+    MARKER_DIGEST="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    profile_image_marker_value() {
+      [[ "$2" == build_inputs_sha256 ]] && printf "%s\n" "${MARKER_DIGEST}"
+    }
     write_profile_image_marker() {
       MARKER_COUNT=$((MARKER_COUNT + 1))
-      printf "marker=%s\n" "$2" >>"${CACHE_RECORD}"
+      printf "marker=%s digest=%s\n" "$2" "$3" >>"${CACHE_RECORD}"
     }
 
     rm -f \
       "$(profile_runtime_image_cache_path "${COLIMA_PROFILE}")" \
       "$(profile_runtime_image_cache_metadata_path "${COLIMA_PROFILE}")"
     cache_profile_runtime_image "${COLIMA_PROFILE}" "sha256:cached-runtime-image"
+    # The current inputs move on; the restore must keep the digest the cached image was built from.
+    MARKER_DIGEST="fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
     CURRENT_PROFILE_IMAGE_ID=""
     if restore_profile_runtime_image_cache "${COLIMA_PROFILE}" "sha256:cached-runtime-image" "0"; then
       echo "restore with a stale source epoch unexpectedly succeeded" >&2
@@ -3944,6 +3950,7 @@ runtime_image_cache_output="$(
     printf "cache_metadata=%s\n" "$(profile_runtime_image_cache_metadata_path "${COLIMA_PROFILE}")"
     printf "cache_image_id=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" image_id)"
     printf "cache_epoch=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" source_date_epoch)"
+    printf "cache_digest=%s\n" "$(profile_runtime_image_cache_value "${COLIMA_PROFILE}" build_inputs_sha256)"
   ' _ \
     "${WORKCELL_FUNCTIONS_COPY}" \
     "${COLIMA_ROOT}" \
@@ -3957,7 +3964,8 @@ grep -q '^cache_image_id=sha256:cached-runtime-image$' <<<"${runtime_image_cache
 grep -q '^cache_epoch=1234567890$' <<<"${runtime_image_cache_output}"
 grep -q '^wcl-cache-fixture|image save -o ' "${RUNTIME_IMAGE_CACHE_RECORD}"
 grep -q '^wcl-cache-fixture|image load -i ' "${RUNTIME_IMAGE_CACHE_RECORD}"
-grep -q '^marker=sha256:cached-runtime-image$' "${RUNTIME_IMAGE_CACHE_RECORD}"
+grep -q '^cache_digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$' <<<"${runtime_image_cache_output}"
+grep -q '^marker=sha256:cached-runtime-image digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$' "${RUNTIME_IMAGE_CACHE_RECORD}"
 
 runtime_image_cache_prune_output="$(
   bash -lc '
