@@ -188,6 +188,9 @@ func Serve(ctx context.Context, config Config) error {
 			}
 			break
 		}
+		// Track before the handler starts: stopHandlers runs only after this
+		// loop has exited, so every accepted connection is registered by then.
+		s.track(connection)
 		s.handlers.Add(1)
 		go func() {
 			defer s.handlers.Done()
@@ -201,7 +204,6 @@ func Serve(ctx context.Context, config Config) error {
 }
 
 func (s *server) serve(connection *net.UnixConn) {
-	s.track(connection)
 	defer s.untrack(connection)
 	defer connection.Close()
 	if uid, err := peerUID(connection); err != nil || uid != s.uid {
