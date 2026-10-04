@@ -229,7 +229,9 @@ func retriedCommand(closure *ast.FuncLit, execCommandName func(ast.Expr) string)
 }
 
 // assignsFieldsOnly reports whether assign only sets fields of name, such as
-// c.Dir = x, which configures the command without running it.
+// c.Dir = x, which configures the command without running it. A right-hand
+// side that mentions name could run the command, so it is not a field-only
+// assignment.
 func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
 	for _, lhs := range assign.Lhs {
 		sel, ok := lhs.(*ast.SelectorExpr)
@@ -240,7 +242,16 @@ func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
 			return false
 		}
 	}
-	return true
+	mentions := false
+	for _, rhs := range assign.Rhs {
+		ast.Inspect(rhs, func(c ast.Node) bool {
+			if id, ok := c.(*ast.Ident); ok && id.Name == name {
+				mentions = true
+			}
+			return !mentions
+		})
+	}
+	return !mentions
 }
 
 // declaresRetryHelper reports whether a function in the file declares a
@@ -416,9 +427,10 @@ func o(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.D
 func q(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Run(); c = exec.Command("git"); return c }) }
 func r(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Run(); return c }) }
 func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return exec.Command(p) }().Run(); return exec.Command("git") }) }
+func u(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = func() string { c.Run(); return "/" }(); return c }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 17 {
-		t.Fatalf("rawExecSites = %d, want 17 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 18 {
+		t.Fatalf("rawExecSites = %d, want 18 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment; o builds and returns its command under the retry)", got)
 	}
 	// A function that declares its own helper of the same name shadows the
 	// package helper, so nothing in that file is exempt.
