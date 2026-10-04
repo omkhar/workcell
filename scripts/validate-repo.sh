@@ -75,7 +75,9 @@ case "${VALIDATION_PROFILE}" in
 esac
 
 CITOOLS_BIN=""
-BUILD_CACHE_DIR="${ROOT_DIR}/.workcell-build-cache"
+source "${ROOT_DIR}/scripts/lib/owned-root.sh"
+mkdir -p "${ROOT_DIR}/.workcell-build-cache"
+BUILD_CACHE_DIR="$(workcell_owned_root_create "${ROOT_DIR}/.workcell-build-cache" run)"
 SHEBANG_STDOUT=""
 SHEBANG_STDERR=""
 
@@ -89,7 +91,7 @@ cleanup() {
   if [[ -n "${SHEBANG_STDERR}" && -e "${SHEBANG_STDERR}" ]]; then
     rm -f "${SHEBANG_STDERR}"
   fi
-  rm -rf "${BUILD_CACHE_DIR}"
+  workcell_owned_root_remove "${BUILD_CACHE_DIR}"
 }
 
 build_citools() {
@@ -206,6 +208,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/lint-dockerfiles.sh"
   "${ROOT_DIR}/scripts/lib/extract_direct_mounts"
   "${ROOT_DIR}/scripts/lib/canonical-build-env.sh"
+  "${ROOT_DIR}/scripts/lib/owned-root.sh"
   "${ROOT_DIR}/scripts/lib/go-run-env.sh"
   "${ROOT_DIR}/scripts/lib/launcher/host-detect.sh"
   "${ROOT_DIR}/scripts/lib/launcher/host-exec.sh"
@@ -303,6 +306,7 @@ shell_files=(
 non_executable_shell_files=(
   "${ROOT_DIR}/runtime/container/generated-adapters.sh"
   "${ROOT_DIR}/scripts/lib/launcher/generated-adapters.sh"
+  "${ROOT_DIR}/scripts/lib/owned-root.sh"
   "${ROOT_DIR}/runtime/container/bin/sudo-wrapper.sh"
   "${ROOT_DIR}/runtime/container/detached-stdin-wrapper.sh"
   "${ROOT_DIR}/scripts/ci/lib/local-docker-parity.sh"
@@ -732,7 +736,6 @@ if [[ "${VALIDATION_PROFILE}" == "release-preflight" ]]; then
 fi
 
 # Pre-build hostutil so scenario tests skip `go run` overhead on every invocation
-mkdir -p "${BUILD_CACHE_DIR}"
 (cd "${ROOT_DIR}" && go build -buildvcs=false -o "${BUILD_CACHE_DIR}/hostutil" ./cmd/workcell-hostutil)
 
 # Check E: deterministic repo-required scenarios plus control-plane parity

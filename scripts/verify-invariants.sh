@@ -262,11 +262,13 @@ fi
 REAL_HOME="$(
   printf '%s\n' ~
 )"
-CODEX_VERIFY_HOME="$(mktemp -d)"
-BARRIER_VERIFY_ROOT="$(mktemp -d)"
+source "${ROOT_DIR}/scripts/lib/owned-root.sh"
+VERIFY_RUN_ROOT="$(workcell_owned_root_create "${TMPDIR:-/tmp}" workcell-verify)"
+CODEX_VERIFY_HOME="$(mktemp -d "${VERIFY_RUN_ROOT}/codex.XXXXXX")"
+BARRIER_VERIFY_ROOT="$(mktemp -d "${VERIFY_RUN_ROOT}/barrier.XXXXXX")"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
-INSTALL_VERIFY_HOME="$(mktemp -d)"
+INSTALL_VERIFY_HOME="$(mktemp -d "${VERIFY_RUN_ROOT}/install.XXXXXX")"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
@@ -724,6 +726,7 @@ run_safe_remove_self_test() {
 
 if [[ "${1:-}" == "--self-safe-remove-probe" ]]; then
   run_safe_remove_self_test
+  workcell_owned_root_remove "${VERIFY_RUN_ROOT}"
   echo "verify-invariants-safe-remove-ok"
   exit 0
 fi
@@ -747,9 +750,7 @@ cleanup() {
   delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
   delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
   delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
-  remove_tree_safely "${CODEX_VERIFY_HOME}"
-  remove_tree_safely "${BARRIER_VERIFY_ROOT}"
-  remove_tree_safely "${INSTALL_VERIFY_HOME}"
+  workcell_owned_root_remove "${VERIFY_RUN_ROOT}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
