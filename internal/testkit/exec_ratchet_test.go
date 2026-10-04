@@ -85,14 +85,30 @@ func rawExecSites(t *testing.T, name, src string) int {
 			execPkg = imp.Name.Name
 		}
 	}
-	isExecCommand := func(fn *ast.SelectorExpr) bool {
-		pkg, _ := fn.X.(*ast.Ident)
-		return pkg != nil && pkg.Name == execPkg && (fn.Sel.Name == "Command" || fn.Sel.Name == "CommandContext")
+	// execCommandName returns "Command" or "CommandContext" when expr names
+	// that os/exec function: a selector through the package name, or a bare
+	// identifier under a dot import.
+	execCommandName := func(expr ast.Expr) string {
+		name := ""
+		switch fn := expr.(type) {
+		case *ast.SelectorExpr:
+			if pkg, _ := fn.X.(*ast.Ident); pkg != nil && pkg.Name == execPkg {
+				name = fn.Sel.Name
+			}
+		case *ast.Ident:
+			if execPkg == "." {
+				name = fn.Name
+			}
+		}
+		if name == "Command" || name == "CommandContext" {
+			return name
+		}
+		return ""
 	}
 	pathRewritten := rewritesProcessPath(file)
-	aliases := commandAliases(file, isExecCommand)
+	aliases := commandAliases(file, execCommandName)
 	count := 0
-	called := map[*ast.SelectorExpr]bool{}
+	called := map[ast.Expr]bool{}
 	var walk func(n ast.Node, wrapped bool)
 	walk = func(n ast.Node, wrapped bool) {
 		ast.Inspect(n, func(c ast.Node) bool {
@@ -100,9 +116,8 @@ func rawExecSites(t *testing.T, name, src string) int {
 			if !ok {
 				return true
 			}
-			switch fn := call.Fun.(type) {
-			case *ast.Ident:
-				if etxtbsyRetryHelpers[fn.Name] {
+			if id, ok := call.Fun.(*ast.Ident); ok {
+				if etxtbsyRetryHelpers[id.Name] {
 					for _, arg := range call.Args {
 						walk(arg, true)
 					}
@@ -110,23 +125,23 @@ func rawExecSites(t *testing.T, name, src string) int {
 				}
 				// Every call through a saved exec.Command value is a raw site:
 				// its program is never checked here.
-				if aliases[fn.Name] {
+				if aliases[id.Name] {
 					count++
+					return true
 				}
-			case *ast.SelectorExpr:
-				if isExecCommand(fn) {
-					called[fn] = true
-					if wrapped {
-						break
-					}
-					prog := 0
-					if fn.Sel.Name == "CommandContext" {
-						prog = 1
-					}
-					if len(call.Args) > prog {
-						if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit, pathRewritten) {
-							count++
-						}
+			}
+			if name := execCommandName(call.Fun); name != "" {
+				called[call.Fun] = true
+				if wrapped {
+					return true
+				}
+				prog := 0
+				if name == "CommandContext" {
+					prog = 1
+				}
+				if len(call.Args) > prog {
+					if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit, pathRewritten) {
+						count++
 					}
 				}
 			}
@@ -135,8 +150,12 @@ func rawExecSites(t *testing.T, name, src string) int {
 	}
 	walk(file, false)
 	ast.Inspect(file, func(c ast.Node) bool {
-		if sel, ok := c.(*ast.SelectorExpr); ok && isExecCommand(sel) && !called[sel] {
+		if expr, ok := c.(ast.Expr); ok && execCommandName(expr) != "" && !called[expr] {
+			if _, selectorPart := c.(*ast.Ident); selectorPart && execPkg != "." {
+				return true
+			}
 			count++
+			return false
 		}
 		return true
 	})
@@ -145,11 +164,11 @@ func rawExecSites(t *testing.T, name, src string) int {
 
 // commandAliases lists the identifiers assigned from exec.Command or
 // exec.CommandContext anywhere in the file, such as run := exec.Command.
-func commandAliases(file *ast.File, isExecCommand func(*ast.SelectorExpr) bool) map[string]bool {
+func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[string]bool {
 	aliases := map[string]bool{}
 	record := func(names []ast.Expr, values []ast.Expr) {
 		for i, value := range values {
-			if sel, ok := value.(*ast.SelectorExpr); ok && isExecCommand(sel) && i < len(names) {
+			if execCommandName(value) != "" && i < len(names) {
 				if id, ok := names[i].(*ast.Ident); ok {
 					aliases[id.Name] = true
 				}
@@ -304,6 +323,16 @@ func b(p string) { exec.Command(p) }
 	const rawAliased = "package x\nimport osexec `os/exec`\nfunc a(p string) { osexec.Command(p) }\n"
 	if got := rawExecSites(t, "raw_aliased.go", rawAliased); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (raw-string aliased os/exec)", got)
+	}
+	// A dot import drops the package qualifier entirely.
+	const dotImported = `package x
+import . "os/exec"
+func a(p string) { Command(p) }
+func b()         { Command("git") }
+func c(p string) { run := Command; run(p) }
+`
+	if got := rawExecSites(t, "dot.go", dotImported); got != 3 {
+		t.Fatalf("rawExecSites = %d, want 3 (a, and c's saved value plus its call)", got)
 	}
 }
 
