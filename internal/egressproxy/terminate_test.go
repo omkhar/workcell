@@ -338,9 +338,12 @@ func TestNewSessionCARefusesBadInput(t *testing.T) {
 
 func TestParseTerminateRule(t *testing.T) {
 	t.Parallel()
-	got, err := ParseTerminateRule("API.example.com=x-api-key=" + testPlaceholder)
-	if want := (TerminateRule{"api.example.com", "x-api-key", testPlaceholder}); err != nil || got != want {
-		t.Fatalf("ParseTerminateRule = (%+v, %v), want %+v", got, err, want)
+	want := TerminateRule{"api.example.com", "x-api-key", testPlaceholder}
+	for _, host := range []string{"API.example.com", "api.example.com."} {
+		got, err := ParseTerminateRule(host + "=x-api-key=" + testPlaceholder)
+		if err != nil || got != want {
+			t.Fatalf("ParseTerminateRule(%q...) = (%+v, %v), want %+v", host, got, err, want)
+		}
 	}
 	for _, text := range []string{
 		"example.com=x-api-key",

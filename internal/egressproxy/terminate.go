@@ -60,7 +60,7 @@ func ParseTerminateRule(text string) (TerminateRule, error) {
 	if len(parts) != 3 {
 		return TerminateRule{}, fmt.Errorf("terminate rule must be host=header=placeholder: %q", text)
 	}
-	r := TerminateRule{Host: strings.ToLower(parts[0]), Header: parts[1], Placeholder: parts[2]}
+	r := TerminateRule{Host: canonicalHost(parts[0]), Header: parts[1], Placeholder: parts[2]}
 	if _, err := ParseAllowlist(r.Host+":443", "terminate rule"); err != nil {
 		return TerminateRule{}, err
 	}
