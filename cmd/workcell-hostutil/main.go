@@ -18,7 +18,6 @@ import (
 	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
-	"github.com/omkhar/workcell/internal/credbroker"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
@@ -115,8 +114,6 @@ func run(args []string) error {
 		return runtimebuilder.Main(args[1:], os.Stdout)
 	case "support-bundle-cli":
 		return cmdHelperSupportBundleCli(args[1:])
-	case "credential-broker-cli":
-		return credbroker.Main(args[1:])
 	default:
 		return usage()
 	}
@@ -1099,7 +1096,7 @@ func parsePrepareBundleArgs(args []string) (*injection.PrepareBundleOptions, err
 // already do); previously these returned plain errors and collapsed to the
 // exit-1 fallback, an intra-binary inconsistency (D8).
 func usage() error {
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli|credential-broker-cli> [args...]"}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-hostutil <adapters|path|release|helper|policy|resolve-credentials|pty-transcript|auth-cli|policy-cli|publish-pr-cli|runtime-builder-cli|session-usage|session-attach-cli|session-delete-cli|session-dispatch-cli|session-logs-cli|session-monitor-cli|session-send-cli|session-stop-cli|session-timeline-cli|session-verify-cli|session-snapshot-cli|session-snapshot-capture-cli|session-sign-head|support-bundle-cli> [args...]"}
 }
 
 func pathUsage() error {
