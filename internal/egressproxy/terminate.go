@@ -323,10 +323,12 @@ func placeholderPrefix(values []string, placeholder string) (string, bool) {
 // carriesPlaceholder reports whether any header name or value, or the request
 // target raw or percent-decoded, holds a placeholder in any letter case. A
 // target that does not decode counts as a hit, so an escape cannot hide one.
+// A declared request trailer counts as a hit too: its values arrive after the
+// body has already streamed upstream, so they can never be checked here.
 func carriesPlaceholder(r *http.Request) bool {
 	has := func(text string) bool { return placeholderAnywhere.MatchString(strings.ToLower(text)) }
 	decoded, err := url.PathUnescape(r.RequestURI)
-	if err != nil || has(r.RequestURI) || has(decoded) {
+	if err != nil || has(r.RequestURI) || has(decoded) || len(r.Trailer) > 0 {
 		return true
 	}
 	for name, values := range r.Header {

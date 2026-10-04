@@ -212,10 +212,26 @@ func TestTerminateRefusesUnswappedPlaceholder(t *testing.T) {
 			t.Errorf("%s: got (%d, %q), want 502 from the proxy", name, code, body)
 		}
 	}
+	// A trailer is declared before the body and delivered after it, so the
+	// proxy refuses every request trailer, placeholder-named or benign.
+	trailers := []string{"X-" + testPlaceholder, "X-Checksum"}
+	for _, name := range trailers {
+		req, err := http.NewRequest(http.MethodPost, "https://example.com/v1", strings.NewReader("body"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.ContentLength = -1
+		req.Header.Set("X-Api-Key", testPlaceholder)
+		req.Trailer = http.Header{name: {"v"}}
+		if code, body := do(t, c, req); code != http.StatusBadGateway || !strings.Contains(body, "unswapped") {
+			t.Errorf("trailer %s: got (%d, %q), want 502 from the proxy", name, code, body)
+		}
+	}
 	d := denies(t, p, log)
-	want := denyLine{Host: "example.com", Port: 443, Reason: "placeholder_unswapped", Count: uint64(len(cases))}
-	if len(d) != len(cases) || d[len(d)-1] != want {
-		t.Fatalf("deny lines = %+v, want %d ending in %+v", d, len(cases), want)
+	total := len(cases) + len(trailers)
+	want := denyLine{Host: "example.com", Port: 443, Reason: "placeholder_unswapped", Count: uint64(total)}
+	if len(d) != total || d[len(d)-1] != want {
+		t.Fatalf("deny lines = %+v, want %d ending in %+v", d, total, want)
 	}
 }
 
