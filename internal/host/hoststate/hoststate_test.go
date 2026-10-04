@@ -33,6 +33,26 @@ func TestDirectMountCacheKeyMatchesNULTerminatedHash(t *testing.T) {
 	}
 }
 
+func TestFileSHA256HashesRegularFilesAndRefusesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.json")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256([]byte("{}\n"))
+	got, err := FileSHA256(path)
+	if err != nil || got != hex.EncodeToString(want[:]) {
+		t.Fatalf("FileSHA256 = (%q, %v), want %q", got, err, hex.EncodeToString(want[:]))
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FileSHA256(link); err == nil {
+		t.Fatal("FileSHA256 followed a symlink")
+	}
+}
+
 func TestManifestMetadataLinesUsesBoundedNoFollowReads(t *testing.T) {
 	root := t.TempDir()
 	exactPath := filepath.Join(root, "manifest.json")

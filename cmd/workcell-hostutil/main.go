@@ -314,6 +314,7 @@ func helperSubcommands() []helperSubcommand {
 		{"session-container-absent-for-delete", 1, 1, cmdHelperSessionContainerAbsentForDelete},
 		{"session-timeline", 0, -1, runHelperSessionTimeline},
 		{"audit-digest", 2, -1, cmdHelperAuditDigest},
+		{"file-sha256", 1, 1, cmdHelperFileSHA256},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
@@ -724,6 +725,15 @@ func cmdHelperSessionRecordWrite(args []string) error {
 
 func cmdHelperAuditDigest(args []string) error {
 	fmt.Println(hoststate.AuditRecordDigest(args[0], args[1], args[2:]))
+	return nil
+}
+
+func cmdHelperFileSHA256(args []string) error {
+	value, err := hoststate.FileSHA256(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
 	return nil
 }
 

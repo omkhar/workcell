@@ -3443,15 +3443,34 @@ sign_session_audit_head_explicit() {
   return 0
 }
 
+# The identity of the runtime image's build inputs: the build-input manifest
+# with its ref and epoch pinned, so only the inputs themselves move the digest.
+runtime_build_inputs_digest() {
+  local manifest="" digest=""
+  manifest="$(mktemp "${TMPDIR:-/tmp}/workcell-build-inputs.XXXXXX")" || return 1
+  if WORKCELL_BUILD_INPUT_REF=inputs SOURCE_DATE_EPOCH=0 \
+    "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${manifest}" >/dev/null 2>&1; then
+    digest="$(go_hostutil helper file-sha256 "${manifest}")"
+  fi
+  rm -f "${manifest}"
+  [[ -n "${digest}" ]] || return 1
+  printf '%s\n' "${digest}"
+}
+
 write_profile_image_marker() {
   local profile="$1"
   local image_id="$2"
-  local marker_path
+  local marker_path build_inputs_sha256
 
+  build_inputs_sha256="$(runtime_build_inputs_digest)" || {
+    echo "Workcell could not compute the runtime image build-input digest for profile ${profile}." >&2
+    return 1
+  }
   marker_path="$(profile_image_marker_path "${profile}")"
   mkdir -p "$(dirname "${marker_path}")"
   umask 077
-  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\n' "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" >"${marker_path}"
+  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
+    "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${marker_path}"
   chmod 0600 "${marker_path}" 2>/dev/null || true
 }
 
@@ -9581,15 +9600,15 @@ else
 fi
 
 # The egress proxy sidecar runs the proxy binary from the prepared image, so an
-# image built from another checkout may lack the sidecar's current interface.
-# The marker records the build's source epoch; any mismatch refreshes the image.
+# image built from other inputs may lack the sidecar's current interface. The
+# marker records the build-input digest; any mismatch refreshes the image.
 if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "${NEEDS_REBUILD}" -eq 0 ]] &&
-  [[ "${RECORDED_SOURCE_DATE_EPOCH}" != "${SOURCE_DATE_EPOCH}" ]]; then
+  [[ "$(profile_image_marker_value "${COLIMA_PROFILE}" build_inputs_sha256 || true)" != "$(runtime_build_inputs_digest)" ]]; then
   NEEDS_REBUILD=1
   if [[ "${PREPARE}" -eq 0 ]]; then
     announce_strict_auto_prepare \
       "--egress-proxy needs a runtime image prepared from this checkout for profile ${COLIMA_PROFILE}." \
-      "The prepared image was built from another checkout, so its egress proxy sidecar may not match."
+      "The prepared image was built from other inputs, so its egress proxy sidecar may not match."
   fi
 fi
 

@@ -65,15 +65,15 @@ printf 'scenario workspace\n' >"${WORKSPACE}/README.md"
   --colima-profile "${PROFILE}" --no-default-injection-policy \
   >/dev/null 2>"${TMP_DIR}/prepare.stderr"
 
-# A prepared image from another checkout may carry an older proxy binary. Age
-# the marker's source epoch; the --egress-proxy launch below must refresh the
-# image automatically and record the checkout's epoch again.
+# A prepared image built from other inputs may carry an older proxy binary.
+# Replace the marker's build-input digest; the --egress-proxy launch below must
+# refresh the image automatically and record the current digest again.
 image_marker="$(find "${XDG_STATE_HOME:-${REAL_HOME}/.local/state}/workcell/targets" \
   -path "*/${PROFILE}/*" -name workcell.image-ready -type f | head -n 1)"
 [[ -n "${image_marker}" ]]
-checkout_epoch="$(git -C "${ROOT_DIR}" log -1 --pretty=%ct)"
-grep -q "^source_date_epoch=${checkout_epoch}$" "${image_marker}"
-sed -i.bak 's/^source_date_epoch=.*/source_date_epoch=0/' "${image_marker}" && rm -f "${image_marker}.bak"
+prepared_digest="$(sed -n 's/^build_inputs_sha256=//p' "${image_marker}")"
+[[ "${prepared_digest}" =~ ^[0-9a-f]{64}$ ]]
+sed -i.bak 's/^build_inputs_sha256=.*/build_inputs_sha256=stale/' "${image_marker}" && rm -f "${image_marker}.bak"
 
 # The allowed probe accepts any HTTP status: a completed TLS handshake with the
 # real api.openai.com proves the route. The denied SNI rides the same allowlisted
@@ -92,7 +92,7 @@ EOF
   >"${TMP_DIR}/probe.stdout" 2>"${TMP_DIR}/probe.stderr"
 grep -q '^egress_enforcement=proxy$' "${TMP_DIR}/probe.stderr"
 grep -q -- '^--egress-proxy needs a runtime image prepared from this checkout' "${TMP_DIR}/probe.stderr"
-grep -q "^source_date_epoch=${checkout_epoch}$" "${image_marker}"
+grep -q "^build_inputs_sha256=${prepared_digest}$" "${image_marker}"
 grep -Eq '^allowed=[1-5][0-9][0-9]$' "${TMP_DIR}/probe.stdout"
 grep -q '^denied_sni=blocked$' "${TMP_DIR}/probe.stdout"
 grep -q '^ip_literal=blocked$' "${TMP_DIR}/probe.stdout"
