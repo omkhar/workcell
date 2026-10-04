@@ -90,6 +90,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 		return pkg != nil && pkg.Name == execPkg && (fn.Sel.Name == "Command" || fn.Sel.Name == "CommandContext")
 	}
 	pathRewritten := rewritesProcessPath(file)
+	aliases := commandAliases(file, isExecCommand)
 	count := 0
 	called := map[*ast.SelectorExpr]bool{}
 	var walk func(n ast.Node, wrapped bool)
@@ -106,6 +107,11 @@ func rawExecSites(t *testing.T, name, src string) int {
 						walk(arg, true)
 					}
 					return false
+				}
+				// Every call through a saved exec.Command value is a raw site:
+				// its program is never checked here.
+				if aliases[fn.Name] {
+					count++
 				}
 			case *ast.SelectorExpr:
 				if isExecCommand(fn) {
@@ -137,9 +143,39 @@ func rawExecSites(t *testing.T, name, src string) int {
 	return count
 }
 
+// commandAliases lists the identifiers assigned from exec.Command or
+// exec.CommandContext anywhere in the file, such as run := exec.Command.
+func commandAliases(file *ast.File, isExecCommand func(*ast.SelectorExpr) bool) map[string]bool {
+	aliases := map[string]bool{}
+	record := func(names []ast.Expr, values []ast.Expr) {
+		for i, value := range values {
+			if sel, ok := value.(*ast.SelectorExpr); ok && isExecCommand(sel) && i < len(names) {
+				if id, ok := names[i].(*ast.Ident); ok {
+					aliases[id.Name] = true
+				}
+			}
+		}
+	}
+	ast.Inspect(file, func(c ast.Node) bool {
+		switch n := c.(type) {
+		case *ast.AssignStmt:
+			record(n.Lhs, n.Rhs)
+		case *ast.ValueSpec:
+			names := make([]ast.Expr, len(n.Names))
+			for i, name := range n.Names {
+				names[i] = name
+			}
+			record(names, n.Values)
+		}
+		return true
+	})
+	return aliases
+}
+
 // rewritesProcessPath reports whether the file sets the process PATH through
-// t.Setenv("PATH", ...) or os.Setenv("PATH", ...), after which a slashless
-// program name can resolve to a freshly written fixture.
+// t.Setenv or os.Setenv, after which a slashless program name can resolve to
+// a freshly written fixture. A key that is not a string literal, such as a
+// named constant, is treated as PATH, since its value is not resolved here.
 func rewritesProcessPath(file *ast.File) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
@@ -151,10 +187,13 @@ func rewritesProcessPath(file *ast.File) bool {
 		if !ok || fn.Sel.Name != "Setenv" {
 			return true
 		}
-		if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-			if name, err := strconv.Unquote(lit.Value); err == nil && name == "PATH" {
-				found = true
-			}
+		lit, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			found = true
+			return false
+		}
+		if name, err := strconv.Unquote(lit.Value); err == nil && name == "PATH" {
+			found = true
 		}
 		return !found
 	})
@@ -216,10 +255,10 @@ func h()         { exec.Command("/bin/bash", "-c", "true") }
 func i()         { exec.Command("/tmp/workcell-fixture.sh") }
 func j()         { exec.Command("fixture") }
 func k()         { exec.Command("/bin/../../tmp/workcell-fixture.sh") }
-func l(p string) { run := exec.Command; run(p) }
+func l(p string) { run := exec.Command; run(p); run(p) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 9 {
-		t.Fatalf("rawExecSites = %d, want 9 (a, d, e, f, g, i, j, k, l)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 11 {
+		t.Fatalf("rawExecSites = %d, want 11 (a, d, e, f, g, i, j, k, and l's saved value plus its two calls)", got)
 	}
 }
 
@@ -234,6 +273,14 @@ func a(t *testing.T) { t.Setenv("PATH", "/tmp/fixtures"); exec.Command("git", "i
 	const rawShadowed = "package x\nimport (\"os/exec\"; \"testing\")\nfunc a(t *testing.T) { t.Setenv(`PATH`, \"/tmp/fixtures\"); exec.Command(\"git\") }\n"
 	if got := rawExecSites(t, "raw_shadowed.go", rawShadowed); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a raw-string PATH rewrite)", got)
+	}
+	const constShadowed = `package x
+import ("os/exec"; "testing")
+const pathKey = "PATH"
+func a(t *testing.T) { t.Setenv(pathKey, "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "const_shadowed.go", constShadowed); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a constant-keyed PATH rewrite)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
