@@ -405,6 +405,10 @@ reject_unsafe_claude_args() {
       --permission-mode | --permission-mode=*)
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
+      # --cloud and --environment start cloud sessions, moving execution outside the sandbox.
+      --cloud | --cloud=* | --environment | --environment=*)
+        workcell_die "Workcell blocked Claude cloud execution: ${arg%%=*}"
+        ;;
       --dangerously-skip-permissions=* | --allow-dangerously-skip-permissions=* | --add-dir=* | --allowedTools=* | --allowed-tools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --append-subagent-system-prompt-file=* | --agents=* | --permission-prompt-tool=*)
         workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
         ;;

@@ -48,9 +48,9 @@ subcommands = [
 allow = [
   "--agent", "--all", "--autocompact", "--ax-screen-reader", "--background",
   "--bare", "--betas", "--bg", "--brief", "-c", "--chrome", "--client-data-url",
-  "--cloud", "--config", "--continue", "--cwd", "-d", "--debug", "--debug-file",
+  "--config", "--continue", "--cwd", "-d", "--debug", "--debug-file",
   "--desktop", "--disable-slash-commands", "--disallowed-tools",
-  "--disallowedTools", "--dry-run", "--effort", "--environment",
+  "--disallowedTools", "--dry-run", "--effort",
   "--exclude-dynamic-system-prompt-sections", "--fallback-model", "--file",
   "--fork-session", "--forward-subagent-text", "--from-pr", "-h", "--help",
   "--ide", "--include-hook-events", "--include-partial-messages",
@@ -68,8 +68,8 @@ deny = [
   "--add-dir", "--agents", "--allow-dangerously-skip-permissions",
   "--allowed-tools", "--allowedTools", "--append-subagent-system-prompt",
   "--append-subagent-system-prompt-file", "--append-system-prompt",
-  "--append-system-prompt-file", "--dangerously-skip-permissions",
-  "--mcp-config", "--permission-mode", "--permission-prompt-tool",
+  "--append-system-prompt-file", "--cloud", "--dangerously-skip-permissions",
+  "--environment", "--mcp-config", "--permission-mode", "--permission-prompt-tool",
   "--plugin-dir", "--plugin-url",
   "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
 ]
