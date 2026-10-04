@@ -282,6 +282,16 @@ type boundSocket struct {
 
 // close stops the listener, unlinks the socket through the pinned parent
 // while it is still a socket, and releases the parent.
+//
+// Residual risk, accepted: the check and the unlink address the leaf by name
+// under the pinned parent, and POSIX has no unlink by inode, so a process that
+// can write that directory could swap the leaf between the two calls. listen
+// admits only a directory owned by the broker uid that no other uid can
+// write, so that process is the broker uid itself or root, both of which
+// already control the broker; the guard exists to keep the broker from
+// removing another occupant's entry by accident, not to defend against a
+// hostile same-uid process, which is outside the threat model, as it is for
+// scripts/lib/owned-root.sh.
 func (b *boundSocket) close() {
 	_ = b.listener.Close()
 	var leaf unix.Stat_t
