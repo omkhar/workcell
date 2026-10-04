@@ -416,3 +416,72 @@ func TestLookupStopsWhenCancelledAfterConnecting(t *testing.T) {
 		t.Fatalf("cancelled Lookup took %v, want a prompt return", elapsed)
 	}
 }
+
+func TestListenRefusesAnAncestorAnotherUIDCouldReplace(t *testing.T) {
+	dir := socketDir(t)
+	open := filepath.Join(dir, "open")
+	if err := os.Mkdir(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(open, "p")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if socket, err := listen(filepath.Join(parent, "b.sock")); err == nil {
+		socket.close()
+		t.Fatal("listen accepted a world-writable, non-sticky ancestor")
+	}
+	sticky := filepath.Join(dir, "sticky")
+	if err := os.Mkdir(sticky, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sticky, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	parent = filepath.Join(sticky, "p")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socket, err := listen(filepath.Join(parent, "b.sock"))
+	if err != nil {
+		t.Fatalf("listen refused a sticky ancestor: %v", err)
+	}
+	socket.close()
+}
+
+func TestServeClosesAcceptedConnectionsOnCancel(t *testing.T) {
+	path := filepath.Join(socketDir(t), "b.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, Config{SocketPath: path, Token: []byte(testToken), Credentials: map[string]string{"claude_api_key": "sk"}, Log: discardLog{}})
+	}()
+	var connection net.Conn
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		var err error
+		if connection, err = net.Dial("unix", path); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("broker never listened")
+		}
+	}
+	defer connection.Close()
+	// The handler is waiting for this connection's request when ctx ends.
+	time.Sleep(50 * time.Millisecond)
+	start := time.Now()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Serve = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("Serve waited %v for an idle handler, want a prompt close", elapsed)
+	}
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := connection.Read(make([]byte, 1)); err == nil {
+		t.Fatal("accepted connection still open after Serve returned")
+	}
+}

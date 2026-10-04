@@ -96,6 +96,8 @@ type server struct {
 	log         RequestLog
 	windowStart time.Time
 	count       int
+	conns       map[*net.UnixConn]struct{}
+	handlers    sync.WaitGroup
 }
 
 func newServer(config Config) (*server, error) {
@@ -115,7 +117,31 @@ func newServer(config Config) (*server, error) {
 			creds[g] = credential{key: key, value: value}
 		}
 	}
-	return &server{token: config.Token, creds: creds, uid: uint32(os.Getuid()), now: time.Now, log: config.Log}, nil
+	return &server{token: config.Token, creds: creds, uid: uint32(os.Getuid()), now: time.Now, log: config.Log, conns: map[*net.UnixConn]struct{}{}}, nil
+}
+
+// track registers an accepted connection so shutdown can close it.
+func (s *server) track(connection *net.UnixConn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conns[connection] = struct{}{}
+}
+
+func (s *server) untrack(connection *net.UnixConn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.conns, connection)
+}
+
+// stopHandlers closes every accepted connection and waits for its handler,
+// so no credential is released after Serve returns.
+func (s *server) stopHandlers() {
+	s.mu.Lock()
+	for connection := range s.conns {
+		_ = connection.Close()
+	}
+	s.mu.Unlock()
+	s.handlers.Wait()
 }
 
 // Serve listens on config.SocketPath until ctx ends or the ssh forward exits.
@@ -153,6 +179,7 @@ func Serve(ctx context.Context, config Config) error {
 		}()
 	}
 	go func() { <-ctx.Done(); _ = listener.Close() }()
+	defer s.stopHandlers()
 	for {
 		connection, err := listener.AcceptUnix()
 		if err != nil {
@@ -161,7 +188,11 @@ func Serve(ctx context.Context, config Config) error {
 			}
 			break
 		}
-		go s.serve(connection)
+		s.handlers.Add(1)
+		go func() {
+			defer s.handlers.Done()
+			s.serve(connection)
+		}()
 	}
 	if cause := context.Cause(ctx); !errors.Is(cause, context.Canceled) {
 		return cause
@@ -170,6 +201,8 @@ func Serve(ctx context.Context, config Config) error {
 }
 
 func (s *server) serve(connection *net.UnixConn) {
+	s.track(connection)
+	defer s.untrack(connection)
 	defer connection.Close()
 	if uid, err := peerUID(connection); err != nil || uid != s.uid {
 		s.record(Request{}, "", "peer_rejected")
@@ -271,6 +304,40 @@ func (s *server) record(request Request, key, result string) error {
 	return s.log.Sync()
 }
 
+// requireAncestryWritableOnlyBy refuses a socket directory when any ancestor
+// could be renamed or replaced by a uid other than root or uid: every
+// ancestor must be a real directory owned by root or uid and either not
+// group or world writable or sticky, since a sticky directory lets another
+// uid add entries but not rename or remove ours. Without this, the pathname
+// bind(2) could land in a replacement tree between the checked walk and the
+// bind. The apt broker keeps its own root-only rule, which admits no sticky
+// directory, because its socket lives under a root-owned run directory.
+func requireAncestryWritableOnlyBy(dir string, uid uint32) error {
+	current, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	for {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("credential broker socket ancestor %s is not a directory", current)
+		}
+		owner := fileUID(info)
+		mode := info.Mode()
+		if (owner != 0 && owner != uid) || (mode.Perm()&0o022 != 0 && mode&os.ModeSticky == 0) {
+			return fmt.Errorf("credential broker socket ancestor %s is writable by another uid", current)
+		}
+		next := filepath.Dir(current)
+		if next == current {
+			return nil
+		}
+		current = next
+	}
+}
+
 // boundSocket is a listening socket with the parent directory descriptor it
 // was created through. The descriptor lives as long as the listener, so the
 // final unlink also goes through it rather than through a pathname.
@@ -309,6 +376,12 @@ func (b *boundSocket) close() {
 func listen(path string) (*boundSocket, error) {
 	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
 	if err != nil {
+		return nil, err
+	}
+	// cleaned is the canonical path the no-follow walk opened, so its
+	// ancestors are the directories that walk pinned.
+	if err := requireAncestryWritableOnlyBy(filepath.Dir(cleaned), uint32(os.Getuid())); err != nil {
+		_ = parent.Close()
 		return nil, err
 	}
 	var parentStat unix.Stat_t
