@@ -29,17 +29,19 @@ var etxtbsyRetryHelpers = map[string]bool{
 var systemBinaryDirs = []string{"/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/"}
 
 // systemTools are the installed tools testkit resolves on PATH. Any other
-// slashless name ("fixture") can resolve to a freshly written executable in a
-// directory a test prepended to PATH, so it is counted like a path.
+// slashless name ("fixture") can resolve to a freshly written executable, and
+// so can a systemTools name once the file rewrites the process PATH, because
+// exec.Command resolves the program through the test process environment.
 var systemTools = map[string]bool{
 	"bash": true, "chmod": true, "cp": true, "git": true, "go": true, "shasum": true, "true": true,
 }
 
 // stableProgramLiteral reports whether a string literal names a tool in
-// systemTools ("git") or a binary under systemBinaryDirs ("/bin/bash"). Any
-// other literal, slashless ("fixture"), relative ("./fixture") or absolute
-// ("/tmp/fixture.sh"), can still name a freshly written executable.
-func stableProgramLiteral(lit *ast.BasicLit) bool {
+// systemTools ("git") in a file that leaves the process PATH alone, or a
+// binary under systemBinaryDirs ("/bin/bash"). Any other literal, slashless
+// ("fixture"), relative ("./fixture") or absolute ("/tmp/fixture.sh"), can
+// still name a freshly written executable.
+func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 	if lit.Kind != token.STRING {
 		return false
 	}
@@ -48,7 +50,7 @@ func stableProgramLiteral(lit *ast.BasicLit) bool {
 		return false
 	}
 	if systemTools[prog] {
-		return true
+		return !pathRewritten
 	}
 	// A traversal such as "/bin/../../tmp/fixture.sh" resolves outside the
 	// system directory, so only an already-clean literal can be exempt.
@@ -68,7 +70,9 @@ func stableProgramLiteral(lit *ast.BasicLit) bool {
 // systemTools name or a systemBinaryDirs path) and that sit outside a func literal
 // handed to one of etxtbsyRetryHelpers. Such a call execs a possibly freshly written fixture
 // directly and can fail with ETXTBSY (golang/go#22315). The os/exec package
-// is matched by its import path, so an import alias is still counted.
+// is matched by its import path, so an import alias is still counted. A
+// reference to exec.Command that is not a call (a saved function value) is
+// counted too, because whatever it later runs is not checked here.
 func rawExecSites(t *testing.T, name, src string) int {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
@@ -81,7 +85,13 @@ func rawExecSites(t *testing.T, name, src string) int {
 			execPkg = imp.Name.Name
 		}
 	}
+	isExecCommand := func(fn *ast.SelectorExpr) bool {
+		pkg, _ := fn.X.(*ast.Ident)
+		return pkg != nil && pkg.Name == execPkg && (fn.Sel.Name == "Command" || fn.Sel.Name == "CommandContext")
+	}
+	pathRewritten := rewritesProcessPath(file)
 	count := 0
+	called := map[*ast.SelectorExpr]bool{}
 	var walk func(n ast.Node, wrapped bool)
 	walk = func(n ast.Node, wrapped bool) {
 		ast.Inspect(n, func(c ast.Node) bool {
@@ -98,14 +108,17 @@ func rawExecSites(t *testing.T, name, src string) int {
 					return false
 				}
 			case *ast.SelectorExpr:
-				pkg, _ := fn.X.(*ast.Ident)
-				if pkg != nil && pkg.Name == execPkg && (fn.Sel.Name == "Command" || fn.Sel.Name == "CommandContext") && !wrapped {
+				if isExecCommand(fn) {
+					called[fn] = true
+					if wrapped {
+						break
+					}
 					prog := 0
 					if fn.Sel.Name == "CommandContext" {
 						prog = 1
 					}
 					if len(call.Args) > prog {
-						if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit) {
+						if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit, pathRewritten) {
 							count++
 						}
 					}
@@ -115,7 +128,35 @@ func rawExecSites(t *testing.T, name, src string) int {
 		})
 	}
 	walk(file, false)
+	ast.Inspect(file, func(c ast.Node) bool {
+		if sel, ok := c.(*ast.SelectorExpr); ok && isExecCommand(sel) && !called[sel] {
+			count++
+		}
+		return true
+	})
 	return count
+}
+
+// rewritesProcessPath reports whether the file sets the process PATH through
+// t.Setenv("PATH", ...) or os.Setenv("PATH", ...), after which a slashless
+// program name can resolve to a freshly written fixture.
+func rewritesProcessPath(file *ast.File) bool {
+	found := false
+	ast.Inspect(file, func(c ast.Node) bool {
+		call, ok := c.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		fn, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || fn.Sel.Name != "Setenv" {
+			return true
+		}
+		if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING && lit.Value == `"PATH"` {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 func readExecBaseline(t *testing.T, root string) map[string]int {
@@ -173,9 +214,27 @@ func h()         { exec.Command("/bin/bash", "-c", "true") }
 func i()         { exec.Command("/tmp/workcell-fixture.sh") }
 func j()         { exec.Command("fixture") }
 func k()         { exec.Command("/bin/../../tmp/workcell-fixture.sh") }
+func l(p string) { run := exec.Command; run(p) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 8 {
-		t.Fatalf("rawExecSites = %d, want 8 (a, d, e, f, g, i, j, k)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 9 {
+		t.Fatalf("rawExecSites = %d, want 9 (a, d, e, f, g, i, j, k, l)", got)
+	}
+}
+
+func TestRawExecSitesCountsSystemToolsAfterProcessPathRewrite(t *testing.T) {
+	const shadowed = `package x
+import ("os/exec"; "testing")
+func a(t *testing.T) { t.Setenv("PATH", "/tmp/fixtures"); exec.Command("git", "init") }
+`
+	if got := rawExecSites(t, "shadowed.go", shadowed); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite)", got)
+	}
+	const childEnvOnly = `package x
+import ("os"; "os/exec")
+func a() { c := exec.Command("git", "init"); c.Env = []string{"PATH=/tmp/fixtures:" + os.Getenv("PATH")} }
+`
+	if got := rawExecSites(t, "child.go", childEnvOnly); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a child PATH does not change the lookup)", got)
 	}
 }
 
