@@ -81,7 +81,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 	}
 	execPkg := "exec"
 	for _, imp := range file.Imports {
-		if imp.Path.Value == `"os/exec"` && imp.Name != nil {
+		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == "os/exec" && imp.Name != nil {
 			execPkg = imp.Name.Name
 		}
 	}
@@ -151,8 +151,10 @@ func rewritesProcessPath(file *ast.File) bool {
 		if !ok || fn.Sel.Name != "Setenv" {
 			return true
 		}
-		if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING && lit.Value == `"PATH"` {
-			found = true
+		if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			if name, err := strconv.Unquote(lit.Value); err == nil && name == "PATH" {
+				found = true
+			}
 		}
 		return !found
 	})
@@ -229,6 +231,10 @@ func a(t *testing.T) { t.Setenv("PATH", "/tmp/fixtures"); exec.Command("git", "i
 	if got := rawExecSites(t, "shadowed.go", shadowed); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite)", got)
 	}
+	const rawShadowed = "package x\nimport (\"os/exec\"; \"testing\")\nfunc a(t *testing.T) { t.Setenv(`PATH`, \"/tmp/fixtures\"); exec.Command(\"git\") }\n"
+	if got := rawExecSites(t, "raw_shadowed.go", rawShadowed); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a raw-string PATH rewrite)", got)
+	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
 func a() { c := exec.Command("git", "init"); c.Env = []string{"PATH=/tmp/fixtures:" + os.Getenv("PATH")} }
@@ -246,6 +252,11 @@ func b(p string) { exec.Command(p) }
 `
 	if got := rawExecSites(t, "aliased.go", aliased); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (aliased os/exec only)", got)
+	}
+	// A raw-string import path spells the same package.
+	const rawAliased = "package x\nimport osexec `os/exec`\nfunc a(p string) { osexec.Command(p) }\n"
+	if got := rawExecSites(t, "raw_aliased.go", rawAliased); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (raw-string aliased os/exec)", got)
 	}
 }
 
