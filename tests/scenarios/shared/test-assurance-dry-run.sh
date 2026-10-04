@@ -416,18 +416,25 @@ egress_proxy_route_tokens_ok "${TMP_DIR}/egress-proxy-quoted.stdout" || {
   exit 1
 }
 grep -q -- '--add-host api.openai.com:egress-proxy-ip ' "${TMP_DIR}/egress-proxy-codex.stdout"
+# Docker accepts both "--add-host VALUE" and "--add-host=VALUE"; collect every
+# value in either spelling and require each one to point at the proxy.
 egress_proxy_add_hosts_ok() {
-  ! dry_run_argv_lines "$1" | grep -A1 -x -- '--add-host' | grep -v -x -e '--add-host' -e '--' | grep -q -v ':egress-proxy-ip$'
+  ! dry_run_argv_lines "$1" | awk '
+    prev == "--add-host" { print }
+    sub(/^--add-host=/, "") { print }
+    { prev = $0 }' | grep -q -v ':egress-proxy-ip$'
 }
 egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-codex.stdout" || {
   echo "--egress-proxy mapped a host to an address other than the proxy" >&2
   exit 1
 }
-printf '%s --add-host %q\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" 'evil.example:10.0.0.1' >"${TMP_DIR}/egress-proxy-add-host-decoy.stdout"
-if egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-add-host-decoy.stdout"; then
-  echo "--egress-proxy add-host check accepted a host mapped away from the proxy" >&2
-  exit 1
-fi
+for decoy in '--add-host evil.example:10.0.0.1' '--add-host=evil.example:10.0.0.1'; do
+  printf '%s %s\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" "${decoy}" >"${TMP_DIR}/egress-proxy-add-host-decoy.stdout"
+  if egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-add-host-decoy.stdout"; then
+    echo "--egress-proxy add-host check accepted a host mapped away from the proxy: ${decoy}" >&2
+    exit 1
+  fi
+done
 printf '%s --label %q\n' "$(cat "${TMP_DIR}/egress-proxy-codex.stdout")" 'note --add-host evil.example:10.0.0.1' >"${TMP_DIR}/egress-proxy-add-host-quoted.stdout"
 egress_proxy_add_hosts_ok "${TMP_DIR}/egress-proxy-add-host-quoted.stdout" || {
   echo "--egress-proxy add-host check split a quoted argument value into flags" >&2
