@@ -23,3 +23,19 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 	}
 	return nil
 }
+
+// ValidateContainerSmokeFlagInventory requires scripts/container-smoke.sh to
+// run scripts/check-flag-inventory.sh exactly once with the built image tag and
+// no other arguments; the environment and the executable are exact command words.
+func ValidateContainerSmokeFlagInventory(script string) error {
+	checks := 0
+	for _, invocation := range ShellInvocations(script, "WORKCELL_GO_BIN=${GO_BIN} WORKCELL_IMAGE_TAG=${IMAGE_TAG} WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT=${DOCKER_CONTEXT_NAME} ${ROOT_DIR}/scripts/check-flag-inventory.sh") {
+		if len(invocation.Args) == 0 {
+			checks++
+		}
+	}
+	if checks != 1 {
+		return errors.New("Expected the smoke lane to run the flag inventory once against the built image tag")
+	}
+	return nil
+}

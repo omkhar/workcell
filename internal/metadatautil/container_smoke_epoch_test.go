@@ -40,3 +40,15 @@ func TestValidateContainerSmokeBuildEpochRejectsEvasions(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateContainerSmokeFlagInventoryRejectsEvasions runs the corpus against the real check.
+func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "container-smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := metadatautil.ValidateContainerSmokeFlagInventory(string(script)); err != nil {
+		t.Fatalf("real script rejected: %v", err)
+	}
+	RequireRejectsAllEvasions(t, string(script), "WORKCELL_GO_BIN=\"${GO_BIN}\" \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
+}

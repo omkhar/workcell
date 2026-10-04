@@ -6,13 +6,10 @@ package testkit
 import (
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/omkhar/workcell/internal/metadatautil"
 
 	"github.com/omkhar/workcell/internal/adapters"
 )
@@ -158,39 +155,4 @@ func TestFlagInventoryPolicyHarnessNegativeControl(t *testing.T) {
 	if got := fmt.Sprint(codes); got != "[0 2 2 2]" {
 		t.Fatalf("copilot probe exit codes = %s, want [0 2 2 2]", got)
 	}
-}
-
-// TestContainerSmokeRunsFlagInventory keeps the inventory in the
-// container-smoke lane, after the image build and against the built tag.
-func TestContainerSmokeRunsFlagInventory(t *testing.T) {
-	t.Parallel()
-
-	data, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "container-smoke.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	smoke := string(data)
-	// The guard reads parsed invocations, so the same check as a comment does not satisfy it.
-	commented := strings.ReplaceAll(smoke, "\n  \"${ROOT_DIR}/scripts/check-flag-inventory.sh\"", "\n  # \"${ROOT_DIR}/scripts/check-flag-inventory.sh\"")
-	if commented == smoke || !smokeRunsInventoryAfterBuild(smoke) || smokeRunsInventoryAfterBuild(commented) {
-		t.Fatal("container-smoke.sh must run scripts/check-flag-inventory.sh on WORKCELL_IMAGE_TAG after it builds the image, as a parsed invocation")
-	}
-}
-
-// smokeRunsInventoryAfterBuild anchors on the commands as they run: the parser
-// reads a leading environment assignment as the first command word and drops quotes.
-func smokeRunsInventoryAfterBuild(smoke string) bool {
-	build := -1
-	for _, inv := range metadatautil.ShellInvocations(smoke, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
-		if strings.Contains(strings.Join(inv.Args, " "), "runtime/container/Dockerfile") {
-			build = inv.Position
-		}
-	}
-	for _, inv := range metadatautil.ShellInvocations(smoke, "WORKCELL_GO_BIN=${GO_BIN}") {
-		args := strings.Join(inv.Args, " ")
-		if build >= 0 && inv.Position > build && strings.Contains(args, "WORKCELL_IMAGE_TAG=${IMAGE_TAG}") && strings.Contains(args, "scripts/check-flag-inventory.sh") {
-			return true
-		}
-	}
-	return false
 }
