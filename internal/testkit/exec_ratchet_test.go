@@ -109,6 +109,9 @@ func rawExecSites(t *testing.T, name, src string) int {
 	aliases := commandAliases(file, execCommandName)
 	count := 0
 	called := map[ast.Expr]bool{}
+	// A file that declares its own execRetryETXTBSY shadows the package
+	// helper, so its calls by that name are not trusted to retry anything.
+	helpersShadowed := declaresRetryHelper(file)
 	// retried holds the command expressions a retry helper's closure returns:
 	// only those run under the helper's ETXTBSY retry. Any other execution
 	// inside the closure runs while the closure builds its result and is raw.
@@ -118,7 +121,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 		if !ok {
 			return true
 		}
-		if id, ok := call.Fun.(*ast.Ident); !ok || !etxtbsyRetryHelpers[id.Name] {
+		if id, ok := call.Fun.(*ast.Ident); !ok || !etxtbsyRetryHelpers[id.Name] || helpersShadowed {
 			return true
 		}
 		for _, arg := range call.Args {
@@ -142,6 +145,9 @@ func rawExecSites(t *testing.T, name, src string) int {
 				}
 				return true
 			})
+			// Only the last assignment to a returned name reaches the return;
+			// an earlier command assigned to the same name ran before it.
+			lastBuilt := map[string]ast.Expr{}
 			ast.Inspect(closure.Body, func(r ast.Node) bool {
 				assign, ok := r.(*ast.AssignStmt)
 				if !ok {
@@ -154,11 +160,14 @@ func rawExecSites(t *testing.T, name, src string) int {
 					id, ok := assign.Lhs[i].(*ast.Ident)
 					built, isCall := value.(*ast.CallExpr)
 					if ok && isCall && returnedNames[id.Name] && execCommandName(built.Fun) != "" {
-						retried[built] = true
+						lastBuilt[id.Name] = built
 					}
 				}
 				return true
 			})
+			for _, built := range lastBuilt {
+				retried[built] = true
+			}
 		}
 		return true
 	})
@@ -201,6 +210,39 @@ func rawExecSites(t *testing.T, name, src string) int {
 		return true
 	})
 	return count
+}
+
+// declaresRetryHelper reports whether a function body in the file declares a
+// variable or constant named like one of etxtbsyRetryHelpers, which shadows
+// the package helper for the calls that follow. A second top-level
+// declaration of that name cannot compile in this package, so only local
+// declarations can shadow it.
+func declaresRetryHelper(file *ast.File) bool {
+	found := false
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.AssignStmt:
+				for _, lhs := range n.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && etxtbsyRetryHelpers[id.Name] {
+						found = true
+					}
+				}
+			case *ast.ValueSpec:
+				for _, name := range n.Names {
+					if etxtbsyRetryHelpers[name.Name] {
+						found = true
+					}
+				}
+			}
+			return !found
+		})
+	}
+	return found
 }
 
 // commandAliases lists the identifiers assigned from exec.Command or
@@ -336,9 +378,22 @@ func l(p string) { run := exec.Command; run(p); run(p) }
 func m(p string) { execRetryETXTBSY(func() *exec.Cmd { exec.Command(p).Run(); return exec.Command("git") }) }
 func n(p string) { first := exec.Command; second := first; second(p) }
 func o(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = "/"; return c }) }
+func q(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Run(); c = exec.Command("git"); return c }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 14 {
-		t.Fatalf("rawExecSites = %d, want 14 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 15 {
+		t.Fatalf("rawExecSites = %d, want 15 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command; o builds and returns its command under the retry)", got)
+	}
+	// A function that declares its own helper of the same name shadows the
+	// package helper, so nothing in that file is exempt.
+	const shadowedHelper = `package x
+import "os/exec"
+func a(p string) {
+	execRetryETXTBSY := func(build func() *exec.Cmd) *exec.Cmd { return build() }
+	execRetryETXTBSY(func() *exec.Cmd { return exec.Command(p) })
+}
+`
+	if got := rawExecSites(t, "shadowed_helper.go", shadowedHelper); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (a shadowed helper exempts nothing)", got)
 	}
 }
 
