@@ -136,5 +136,7 @@ func terminate(proxy *egressproxy.Proxy, rules []egressproxy.TerminateRule, caOu
 		return err
 	}
 	defer parent.Close()
-	return rootio.StageAndPublishAt(parent, filepath.Base(path), ca.CertPEM(), 0o644, ".egress-ca-")
+	// Owner-only like every state write; the launcher hands the certificate to
+	// the agent container through the injection bundle, never through this file's mode.
+	return rootio.StageAndPublishAt(parent, filepath.Base(path), ca.CertPEM(), 0o600, ".egress-ca-")
 }

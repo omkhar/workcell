@@ -88,6 +88,9 @@ func TestTerminateWritesConstrainedCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if info, err := os.Stat(out); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("-ca-out mode %v err %v, want owner-only 0600", info.Mode().Perm(), err)
+	}
 	block, _ := pem.Decode(data)
 	if block == nil {
 		t.Fatalf("-ca-out is not PEM: %q", data)
