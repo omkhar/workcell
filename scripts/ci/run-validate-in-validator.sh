@@ -19,6 +19,10 @@ HOSTILE_ENV="${WORKCELL_HOSTILE_ENV:-none}"
 validator_passwd=""
 hostile_root=""
 cleanup() {
+  # Every step runs even when an earlier one fails: a refused root removal
+  # must not leave the trusted Docker client sandbox behind, and the script
+  # keeps its original exit status.
+  set +e
   [[ -z "${validator_passwd}" ]] || rm -f "${validator_passwd}"
   workcell_owned_root_remove "${hostile_root}"
   cleanup_workcell_ci_docker
