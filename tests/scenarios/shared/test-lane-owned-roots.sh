@@ -24,7 +24,9 @@ lane() {
   # shellcheck source=scripts/lib/owned-root.sh
   source "${ROOT_DIR}/scripts/lib/owned-root.sh"
   root="$(workcell_owned_root_create "${TMP_DIR}" "lane-${name}")"
-  printf '%s\n' "${root}" >"${TMP_DIR}/${name}.root"
+  # Publish the path with a rename so the peer never reads a partial file.
+  printf '%s\n' "${root}" >"${TMP_DIR}/${name}.root.tmp"
+  mv "${TMP_DIR}/${name}.root.tmp" "${TMP_DIR}/${name}.root"
   wait_for_file "${TMP_DIR}/${peer}.root"
   other="$(cat "${TMP_DIR}/${peer}.root")"
   if workcell_owned_root_remove "${other}" 2>"${TMP_DIR}/${name}.refusal"; then
