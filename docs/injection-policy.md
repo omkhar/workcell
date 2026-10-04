@@ -303,12 +303,18 @@ denied host stays reachable at the IP layer.
 
 Host-side rebuild downloads do not use the Colima firewall.
 
+With `--egress-proxy`, the agent container joins only an internal network with
+no resolver. A sidecar proxy is its only route out, and it admits a TLS
+connection only when the SNI is on the session allowlist. The proxy routes by
+name, so an IP literal endpoint stops the launch.
+
 Other targets do not receive this allowlist. Their launch summary reports
 `egress_enforcement=none`.
 
 | Target state | `egress_enforcement` | Workcell enforcement |
 |---|---|---|
 | Colima with allowlist | `allowlist` | Profile-wide IPv4 and IPv6 rules |
+| Colima strict with `--egress-proxy` | `proxy` | Per-session SNI proxy sidecar, plus the profile-wide rules |
 | Colima with unrestricted network | `none` | None |
 | Docker Desktop | `none` | None |
 | `aws-ec2-ssm` preview | `none` | None |

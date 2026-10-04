@@ -18,6 +18,7 @@ import (
 	"github.com/omkhar/workcell/internal/authpolicy"
 	"github.com/omkhar/workcell/internal/authresolve"
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/egressproxy"
 	"github.com/omkhar/workcell/internal/host/hoststate"
 	"github.com/omkhar/workcell/internal/host/launcher"
 	"github.com/omkhar/workcell/internal/host/release"
@@ -313,6 +314,7 @@ func helperSubcommands() []helperSubcommand {
 		{"session-container-absent-for-delete", 1, 1, cmdHelperSessionContainerAbsentForDelete},
 		{"session-timeline", 0, -1, runHelperSessionTimeline},
 		{"audit-digest", 2, -1, cmdHelperAuditDigest},
+		{"file-sha256", 1, 1, cmdHelperFileSHA256},
 		{"direct-mount-cache-key", 2, 2, cmdHelperDirectMountCacheKey},
 		{"publish-session-capture-file", 2, 2, cmdHelperPublishSessionCaptureFile},
 		{"resolve-host-output-candidate", 1, 1, cmdHelperResolveHostOutputCandidate},
@@ -330,6 +332,7 @@ func helperSubcommands() []helperSubcommand {
 		{"dedupe-endpoints", 1, 1, cmdHelperDedupeEndpoints},
 		{"subtract-endpoints", 2, 2, cmdHelperSubtractEndpoints},
 		{"resolve-endpoints", 1, 1, cmdHelperResolveEndpoints},
+		{"validate-egress-proxy-allowlist", 1, 1, cmdHelperValidateEgressProxyAllowlist},
 		{"support-matrix-eval", 8, 8, cmdHelperSupportMatrixEval},
 		{"profile-path", 1, -1, cmdHelperProfilePath},
 		// PR 23.4 — injection bundle preparation moved into Go.
@@ -725,6 +728,15 @@ func cmdHelperAuditDigest(args []string) error {
 	return nil
 }
 
+func cmdHelperFileSHA256(args []string) error {
+	value, err := hoststate.FileSHA256(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(value)
+	return nil
+}
+
 func cmdHelperDirectMountCacheKey(args []string) error {
 	fmt.Println(hoststate.DirectMountCacheKey(args[0], args[1]))
 	return nil
@@ -834,6 +846,13 @@ func cmdHelperDedupeEndpoints(args []string) error {
 func cmdHelperSubtractEndpoints(args []string) error {
 	fmt.Println(launcher.SubtractEndpointList(args[0], args[1]))
 	return nil
+}
+
+// cmdHelperValidateEgressProxyAllowlist applies the proxy's own allowlist
+// parser, so --egress-proxy fails before launch on a set the proxy rejects.
+func cmdHelperValidateEgressProxyAllowlist(args []string) error {
+	_, err := egressproxy.ParseAllowlist(args[0], "--egress-proxy allowlist")
+	return err
 }
 
 func cmdHelperResolveEndpoints(args []string) error {

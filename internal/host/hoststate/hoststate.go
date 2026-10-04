@@ -34,6 +34,17 @@ func DirectMountCacheKey(hostSource, mountPath string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// FileSHA256 returns the hex SHA-256 of the regular file at path, read
+// without following symlinks, for the launcher's build-input identity.
+func FileSHA256(path string) (string, error) {
+	data, err := rootio.ReadFileNoFollow(path, "build input manifest", 16<<20)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 func WorkspaceCacheKey(workspace string) (string, error) {
 	canonical, err := canonicalizePath(workspace)
 	if err != nil {

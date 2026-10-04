@@ -218,6 +218,19 @@ Set an explicit CPU limit for the inner runtime container.
 Set an explicit memory limit for the inner runtime container, for example
 .BR 4g .
 .TP
+.B --egress-proxy
+Route the egress of a strict Colima session only through a per-session proxy
+sidecar. The agent container joins only an internal Docker network and has no
+DNS resolver. Each allowlisted host maps to the sidecar, which admits a TLS
+connection only when its SNI is on the session allowlist. The sidecar uses the
+verified runtime image and listens only on its internal-network address.
+When the session stops, Workcell saves the denied connections to
+.I egress-deny.jsonl
+beside the session record, then removes the network and the sidecar.
+The launch summary reports
+.BR egress_enforcement=proxy .
+Other modes and targets stop with status 2.
+.TP
 .B --cache-profile off|standard
 Select whether Workcell mounts an opt-in host-persisted non-secret cache plane
 into the runtime. The default is
