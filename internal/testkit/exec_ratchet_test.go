@@ -109,46 +109,87 @@ func rawExecSites(t *testing.T, name, src string) int {
 	aliases := commandAliases(file, execCommandName)
 	count := 0
 	called := map[ast.Expr]bool{}
-	var walk func(n ast.Node, wrapped bool)
-	walk = func(n ast.Node, wrapped bool) {
-		ast.Inspect(n, func(c ast.Node) bool {
-			call, ok := c.(*ast.CallExpr)
+	// retried holds the command expressions a retry helper's closure returns:
+	// only those run under the helper's ETXTBSY retry. Any other execution
+	// inside the closure runs while the closure builds its result and is raw.
+	retried := map[ast.Expr]bool{}
+	ast.Inspect(file, func(c ast.Node) bool {
+		call, ok := c.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); !ok || !etxtbsyRetryHelpers[id.Name] {
+			return true
+		}
+		for _, arg := range call.Args {
+			closure, ok := arg.(*ast.FuncLit)
 			if !ok {
+				continue
+			}
+			// The returned command is either the call itself or a variable
+			// the closure assigned from such a call.
+			returnedNames := map[string]bool{}
+			ast.Inspect(closure.Body, func(r ast.Node) bool {
+				if ret, ok := r.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+					switch returned := ret.Results[0].(type) {
+					case *ast.CallExpr:
+						if execCommandName(returned.Fun) != "" {
+							retried[returned] = true
+						}
+					case *ast.Ident:
+						returnedNames[returned.Name] = true
+					}
+				}
+				return true
+			})
+			ast.Inspect(closure.Body, func(r ast.Node) bool {
+				assign, ok := r.(*ast.AssignStmt)
+				if !ok {
+					return true
+				}
+				for i, value := range assign.Rhs {
+					if i >= len(assign.Lhs) {
+						break
+					}
+					id, ok := assign.Lhs[i].(*ast.Ident)
+					built, isCall := value.(*ast.CallExpr)
+					if ok && isCall && returnedNames[id.Name] && execCommandName(built.Fun) != "" {
+						retried[built] = true
+					}
+				}
+				return true
+			})
+		}
+		return true
+	})
+	ast.Inspect(file, func(c ast.Node) bool {
+		call, ok := c.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		// Every call through a saved exec.Command value is a raw site: its
+		// program is never checked here.
+		if id, ok := call.Fun.(*ast.Ident); ok && aliases[id.Name] {
+			count++
+			return true
+		}
+		if name := execCommandName(call.Fun); name != "" {
+			called[call.Fun] = true
+			if retried[call] {
 				return true
 			}
-			if id, ok := call.Fun.(*ast.Ident); ok {
-				if etxtbsyRetryHelpers[id.Name] {
-					for _, arg := range call.Args {
-						walk(arg, true)
-					}
-					return false
-				}
-				// Every call through a saved exec.Command value is a raw site:
-				// its program is never checked here.
-				if aliases[id.Name] {
+			prog := 0
+			if name == "CommandContext" {
+				prog = 1
+			}
+			if len(call.Args) > prog {
+				if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit, pathRewritten) {
 					count++
-					return true
 				}
 			}
-			if name := execCommandName(call.Fun); name != "" {
-				called[call.Fun] = true
-				if wrapped {
-					return true
-				}
-				prog := 0
-				if name == "CommandContext" {
-					prog = 1
-				}
-				if len(call.Args) > prog {
-					if lit, literal := call.Args[prog].(*ast.BasicLit); !literal || !stableProgramLiteral(lit, pathRewritten) {
-						count++
-					}
-				}
-			}
-			return true
-		})
-	}
-	walk(file, false)
+		}
+		return true
+	})
 	ast.Inspect(file, func(c ast.Node) bool {
 		if expr, ok := c.(ast.Expr); ok && execCommandName(expr) != "" && !called[expr] {
 			if _, selectorPart := c.(*ast.Ident); selectorPart && execPkg != "." {
@@ -163,32 +204,49 @@ func rawExecSites(t *testing.T, name, src string) int {
 }
 
 // commandAliases lists the identifiers assigned from exec.Command or
-// exec.CommandContext anywhere in the file, such as run := exec.Command.
+// exec.CommandContext anywhere in the file, such as run := exec.Command, and
+// every identifier assigned from one of those in turn, until no new name
+// appears.
 func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[string]bool {
 	aliases := map[string]bool{}
-	record := func(names []ast.Expr, values []ast.Expr) {
+	isAlias := func(value ast.Expr) bool {
+		if execCommandName(value) != "" {
+			return true
+		}
+		id, ok := value.(*ast.Ident)
+		return ok && aliases[id.Name]
+	}
+	record := func(names []ast.Expr, values []ast.Expr) bool {
+		added := false
 		for i, value := range values {
-			if execCommandName(value) != "" && i < len(names) {
-				if id, ok := names[i].(*ast.Ident); ok {
+			if isAlias(value) && i < len(names) {
+				if id, ok := names[i].(*ast.Ident); ok && !aliases[id.Name] {
 					aliases[id.Name] = true
+					added = true
 				}
 			}
 		}
+		return added
 	}
-	ast.Inspect(file, func(c ast.Node) bool {
-		switch n := c.(type) {
-		case *ast.AssignStmt:
-			record(n.Lhs, n.Rhs)
-		case *ast.ValueSpec:
-			names := make([]ast.Expr, len(n.Names))
-			for i, name := range n.Names {
-				names[i] = name
+	for {
+		added := false
+		ast.Inspect(file, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.AssignStmt:
+				added = record(n.Lhs, n.Rhs) || added
+			case *ast.ValueSpec:
+				names := make([]ast.Expr, len(n.Names))
+				for i, name := range n.Names {
+					names[i] = name
+				}
+				added = record(names, n.Values) || added
 			}
-			record(names, n.Values)
+			return true
+		})
+		if !added {
+			return aliases
 		}
-		return true
-	})
-	return aliases
+	}
 }
 
 // rewritesProcessPath reports whether the file sets the process PATH through
@@ -275,9 +333,12 @@ func i()         { exec.Command("/tmp/workcell-fixture.sh") }
 func j()         { exec.Command("fixture") }
 func k()         { exec.Command("/bin/../../tmp/workcell-fixture.sh") }
 func l(p string) { run := exec.Command; run(p); run(p) }
+func m(p string) { execRetryETXTBSY(func() *exec.Cmd { exec.Command(p).Run(); return exec.Command("git") }) }
+func n(p string) { first := exec.Command; second := first; second(p) }
+func o(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = "/"; return c }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 11 {
-		t.Fatalf("rawExecSites = %d, want 11 (a, d, e, f, g, i, j, k, and l's saved value plus its two calls)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 14 {
+		t.Fatalf("rawExecSites = %d, want 14 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call; o builds and returns its command under the retry)", got)
 	}
 }
 
