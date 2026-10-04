@@ -26,6 +26,9 @@ func Lookup(ctx context.Context, socketPath, token, host, header string) (string
 		return "", err
 	}
 	defer connection.Close()
+	// A cancellation after the dial closes the connection, so a stalled
+	// listener cannot hold a cancelled lookup until the deadline.
+	defer context.AfterFunc(ctx, func() { _ = connection.Close() })()
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(ioTimeout)

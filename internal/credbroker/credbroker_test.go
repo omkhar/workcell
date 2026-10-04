@@ -499,3 +499,111 @@ func TestReadTokenRequires32HexBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestListenRefusesSymlinkedAncestor(t *testing.T) {
+	dir := socketDir(t)
+	real := filepath.Join(dir, "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if listener, err := listen(filepath.Join(link, "b.sock")); err == nil {
+		removeSocket(filepath.Join(real, "b.sock"), listener)
+		t.Fatal("listen followed a symlinked ancestor")
+	}
+	if _, err := os.Lstat(filepath.Join(real, "b.sock")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("socket created through the symlink: %v", err)
+	}
+}
+
+func TestOpenLogRequiresAnOwnerOnlySingleLinkedRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "shared")
+	if err := os.WriteFile(shared, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(dir, "linked")
+	if err := os.WriteFile(linked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(linked, filepath.Join(dir, "twin")); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{shared, linked, fifo} {
+		if file, err := openLog(path); err == nil {
+			_ = file.Close()
+			t.Fatalf("openLog(%s) accepted a log that is not an owner-only single-linked regular file", path)
+		}
+	}
+	own := filepath.Join(dir, "own")
+	if err := os.WriteFile(own, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := openLog(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+}
+
+// failingLog fails every write or every sync.
+type failingLog struct{ write, sync error }
+
+func (f failingLog) Write(p []byte) (int, error) {
+	if f.write != nil {
+		return 0, f.write
+	}
+	return len(p), nil
+}
+
+func (f failingLog) Sync() error { return f.sync }
+
+func TestGrantIsWithheldWhenTheRecordIsNotDurable(t *testing.T) {
+	creds := map[string]string{"claude_api_key": "sk-claude"}
+	for name, log := range map[string]failingLog{
+		"write fails": {write: errors.New("disk full")},
+		"sync fails":  {sync: errors.New("io error")},
+	} {
+		s, err := newServer(Config{Token: []byte(testToken), Credentials: creds, Log: log})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := listenServer(t, s)
+		if v, err := Lookup(context.Background(), path, testToken, "api.anthropic.com", "x-api-key"); err != DenyError(ErrLogFailed) || v != "" {
+			t.Fatalf("%s: Lookup = (%q, %v), want withheld with %s", name, v, err, ErrLogFailed)
+		}
+	}
+}
+
+func TestLookupStopsWhenCancelledAfterConnecting(t *testing.T) {
+	path := filepath.Join(socketDir(t), "b.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		time.Sleep(10 * time.Second)
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	start := time.Now()
+	if _, err := Lookup(ctx, path, testToken, "api.anthropic.com", "x-api-key"); err == nil {
+		t.Fatal("Lookup succeeded against a silent listener")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("cancelled Lookup took %v, want a prompt return", elapsed)
+	}
+}

@@ -97,11 +97,30 @@ func openLog(path string) (*os.File, error) {
 		return nil, err
 	}
 	defer parent.Close()
-	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(cleaned), unix.O_WRONLY|unix.O_APPEND|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	// O_NONBLOCK keeps a FIFO at the path from blocking the open; a regular
+	// file ignores it.
+	fd, err := unix.Openat(int(parent.Fd()), filepath.Base(cleaned), unix.O_WRONLY|unix.O_APPEND|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open request log: %w", err)
 	}
-	return os.NewFile(uintptr(fd), cleaned), nil
+	file := os.NewFile(uintptr(fd), cleaned)
+	// The mode argument applies only on creation, and O_NOFOLLOW stops only a
+	// symlink, so an existing path is checked through the open descriptor: one
+	// regular file with one link, owned by the broker, readable by nobody else.
+	var info unix.Stat_t
+	if err := unix.Fstat(fd, &info); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("stat request log: %w", err)
+	}
+	if err := rootio.RequireSingleLinkedRegular(&info, "request log", cleaned); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if info.Uid != uint32(os.Getuid()) || info.Mode&0o777 != 0o600 {
+		_ = file.Close()
+		return nil, fmt.Errorf("request log %q must be owned by the broker uid with mode 0600", cleaned)
+	}
+	return file, nil
 }
 
 // readToken reads the 32-byte session token, hex encoded, from fd.
@@ -123,7 +142,9 @@ func readToken(fd int) ([]byte, error) {
 }
 
 // resolveSource reads keychain:SERVICE[/ACCOUNT] from the login Keychain. The
-// value stays in broker memory; it is never written to disk or sent to the VM.
+// value is held in broker memory on the host and released one request at a
+// time to the session's egress sidecar over the forwarded socket; it is never
+// written to disk and never reaches the agent container.
 //
 // The first read of an item makes macOS ask whether /usr/bin/security may use
 // it. Choose "Always Allow" once to add security to the item's access list;
