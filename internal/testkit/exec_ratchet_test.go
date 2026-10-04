@@ -27,10 +27,17 @@ var etxtbsyRetryHelpers = map[string]bool{
 // one of them names an installed binary, never a freshly written fixture.
 var systemBinaryDirs = []string{"/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/"}
 
-// stableProgramLiteral reports whether a string literal names a tool resolved
-// on PATH ("git") or a binary under systemBinaryDirs ("/bin/bash"). Any other
-// path literal, relative ("./fixture") or absolute ("/tmp/fixture.sh"), can
-// still name a freshly written script.
+// systemTools are the installed tools testkit resolves on PATH. Any other
+// slashless name ("fixture") can resolve to a freshly written executable in a
+// directory a test prepended to PATH, so it is counted like a path.
+var systemTools = map[string]bool{
+	"bash": true, "chmod": true, "cp": true, "git": true, "go": true, "shasum": true, "true": true,
+}
+
+// stableProgramLiteral reports whether a string literal names a tool in
+// systemTools ("git") or a binary under systemBinaryDirs ("/bin/bash"). Any
+// other literal, slashless ("fixture"), relative ("./fixture") or absolute
+// ("/tmp/fixture.sh"), can still name a freshly written executable.
 func stableProgramLiteral(lit *ast.BasicLit) bool {
 	if lit.Kind != token.STRING {
 		return false
@@ -39,7 +46,7 @@ func stableProgramLiteral(lit *ast.BasicLit) bool {
 	if err != nil {
 		return false
 	}
-	if !strings.Contains(prog, "/") {
+	if systemTools[prog] {
 		return true
 	}
 	for _, dir := range systemBinaryDirs {
@@ -51,8 +58,8 @@ func stableProgramLiteral(lit *ast.BasicLit) bool {
 }
 
 // rawExecSites counts exec.Command/CommandContext calls in src whose program
-// is a path-valued expression or a relative path literal (not a stable
-// literal such as "git" or "/bin/bash") and that sit outside a func literal
+// is a path-valued expression or a non-stable literal (anything but a
+// systemTools name or a systemBinaryDirs path) and that sit outside a func literal
 // handed to one of etxtbsyRetryHelpers. Such a call execs a possibly freshly written fixture
 // directly and can fail with ETXTBSY (golang/go#22315). The os/exec package
 // is matched by its import path, so an import alias is still counted.
@@ -158,9 +165,10 @@ func f(p string) { execRetryETXTBSYLater(func() *exec.Cmd { return exec.Command(
 func g()         { exec.Command("./fixture.sh") }
 func h()         { exec.Command("/bin/bash", "-c", "true") }
 func i()         { exec.Command("/tmp/workcell-fixture.sh") }
+func j()         { exec.Command("fixture") }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 6 {
-		t.Fatalf("rawExecSites = %d, want 6 (a, d, e, f, g, i)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 7 {
+		t.Fatalf("rawExecSites = %d, want 7 (a, d, e, f, g, i, j)", got)
 	}
 }
 
