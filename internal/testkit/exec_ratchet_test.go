@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -48,6 +49,11 @@ func stableProgramLiteral(lit *ast.BasicLit) bool {
 	}
 	if systemTools[prog] {
 		return true
+	}
+	// A traversal such as "/bin/../../tmp/fixture.sh" resolves outside the
+	// system directory, so only an already-clean literal can be exempt.
+	if path.Clean(prog) != prog {
+		return false
 	}
 	for _, dir := range systemBinaryDirs {
 		if strings.HasPrefix(prog, dir) {
@@ -166,9 +172,10 @@ func g()         { exec.Command("./fixture.sh") }
 func h()         { exec.Command("/bin/bash", "-c", "true") }
 func i()         { exec.Command("/tmp/workcell-fixture.sh") }
 func j()         { exec.Command("fixture") }
+func k()         { exec.Command("/bin/../../tmp/workcell-fixture.sh") }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 7 {
-		t.Fatalf("rawExecSites = %d, want 7 (a, d, e, f, g, i, j)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 8 {
+		t.Fatalf("rawExecSites = %d, want 8 (a, d, e, f, g, i, j, k)", got)
 	}
 }
 
