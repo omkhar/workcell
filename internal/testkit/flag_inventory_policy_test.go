@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/omkhar/workcell/internal/metadatautil"
+
 	"github.com/omkhar/workcell/internal/adapters"
 )
 
@@ -116,7 +118,7 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 			probes = append(probes, probe{[]string{"-pyes"}, "0"}, probe{[]string{"-dl"}, "0"},
 				// Text after -- is prompt text, not options.
 				probe{[]string{"--", "-yellow"}, "0"}, probe{[]string{"--", "-safe"}, "0"}, probe{[]string{"-d", "--", "-yellow"}, "0"},
-				probe{[]string{"-y", "--", "text"}, "2"})
+				probe{[]string{"-y", "--", "text"}, "2"}, probe{[]string{"---", "-y"}, "2"}) // --- is a positional
 		}
 		if m.ID == "codex" {
 			// A config override reaches the same setting as --approve-for-me.
@@ -168,9 +170,27 @@ func TestContainerSmokeRunsFlagInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	smoke := string(data)
-	build := strings.Index(smoke, `-f "${ROOT_DIR}/runtime/container/Dockerfile"`)
-	check := strings.Index(smoke, `"${ROOT_DIR}/scripts/check-flag-inventory.sh"`)
-	if build < 0 || check < build || !strings.Contains(smoke[build:check], `WORKCELL_IMAGE_TAG="${IMAGE_TAG}"`) {
-		t.Fatal("container-smoke.sh must run scripts/check-flag-inventory.sh on WORKCELL_IMAGE_TAG after it builds the image")
+	// The guard reads parsed invocations, so the same check as a comment does not satisfy it.
+	commented := strings.ReplaceAll(smoke, "\n  \"${ROOT_DIR}/scripts/check-flag-inventory.sh\"", "\n  # \"${ROOT_DIR}/scripts/check-flag-inventory.sh\"")
+	if commented == smoke || !smokeRunsInventoryAfterBuild(smoke) || smokeRunsInventoryAfterBuild(commented) {
+		t.Fatal("container-smoke.sh must run scripts/check-flag-inventory.sh on WORKCELL_IMAGE_TAG after it builds the image, as a parsed invocation")
 	}
+}
+
+// smokeRunsInventoryAfterBuild anchors on the commands as they run: the parser
+// reads a leading environment assignment as the first command word and drops quotes.
+func smokeRunsInventoryAfterBuild(smoke string) bool {
+	build := -1
+	for _, inv := range metadatautil.ShellInvocations(smoke, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
+		if strings.Contains(strings.Join(inv.Args, " "), "runtime/container/Dockerfile") {
+			build = inv.Position
+		}
+	}
+	for _, inv := range metadatautil.ShellInvocations(smoke, "WORKCELL_GO_BIN=${GO_BIN}") {
+		args := strings.Join(inv.Args, " ")
+		if build >= 0 && inv.Position > build && strings.Contains(args, "WORKCELL_IMAGE_TAG=${IMAGE_TAG}") && strings.Contains(args, "scripts/check-flag-inventory.sh") {
+			return true
+		}
+	}
+	return false
 }

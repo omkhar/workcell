@@ -405,8 +405,7 @@ reject_unsafe_claude_args() {
       --permission-mode | --permission-mode=*)
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
-      # --cloud and --environment start cloud sessions, moving execution outside the sandbox.
-      --cloud | --cloud=* | --environment | --environment=*)
+      --cloud | --cloud=* | --environment | --environment=*) # cloud sessions leave the sandbox
         workcell_die "Workcell blocked Claude cloud execution: ${arg%%=*}"
         ;;
       --dangerously-skip-permissions=* | --allow-dangerously-skip-permissions=* | --add-dir=* | --allowedTools=* | --allowed-tools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --append-subagent-system-prompt-file=* | --agents=* | --permission-prompt-tool=*)
@@ -437,6 +436,10 @@ reject_unsafe_gemini_args() {
       continue
     fi
 
+    # yargs reads everything after a bare -- as prompt text; --- is a positional and parsing goes on.
+    if [[ "${arg}" == "--" ]]; then
+      break
+    fi
     arg_lower="${arg,,}"
     # yargs also accepts the camel-case spelling of a dashed option
     # (--allowedTools for --allowed-tools). Drop the dashes after the leading
@@ -448,10 +451,6 @@ reject_unsafe_gemini_args() {
       arg_key="${arg_lower}"
     fi
     case "${arg_key}" in
-      --)
-        # yargs reads every argument after -- as prompt text, not as an option.
-        break
-        ;;
       --*dangerously* | --*bypass*permission* | --sandbox | --sandbox=* | --adddir | --adddir=* | --includedirectories | --includedirectories=* | --allowedtools | --allowedtools=* | --policy | --policy=* | --adminpolicy | --adminpolicy=* | --yolo | --yolo=*)
         workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
         ;;
