@@ -67,10 +67,15 @@ trap 'stop_outstanding_lanes; chmod -R u+w "${TMP_DIR}"; rm -rf "${TMP_DIR}"' EX
 pid_a=$!
 "${BASH_SOURCE[0]}" --lane b a "${TMP_DIR}" &
 pid_b=$!
-wait "${pid_a}"
+# Clear each pid before its wait status can end the script, so the EXIT trap
+# never signals a pid that wait already reaped.
+lane_status=0
+wait "${pid_a}" || lane_status=$?
 pid_a=""
-wait "${pid_b}"
+[[ "${lane_status}" -eq 0 ]]
+wait "${pid_b}" || lane_status=$?
 pid_b=""
+[[ "${lane_status}" -eq 0 ]]
 for name in a b; do
   [[ ! -e "$(cat "${TMP_DIR}/${name}.root")" ]] || {
     echo "lane ${name} did not remove its own root" >&2
