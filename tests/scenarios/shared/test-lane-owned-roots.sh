@@ -51,13 +51,26 @@ fi
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/workcell-lane-owned-roots.XXXXXX")"
 pid_a="" pid_b=""
-trap 'kill "${pid_a}" "${pid_b}" 2>/dev/null || true; chmod -R u+w "${TMP_DIR}"; rm -rf "${TMP_DIR}"' EXIT
+# Only an outstanding lane is signaled: a reaped pid is cleared below so a
+# reused pid number is never killed, and the trap waits so no lane outlives it.
+stop_outstanding_lanes() {
+  local pid
+  for pid in "${pid_a}" "${pid_b}"; do
+    [[ -z "${pid}" ]] || {
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+    }
+  done
+}
+trap 'stop_outstanding_lanes; chmod -R u+w "${TMP_DIR}"; rm -rf "${TMP_DIR}"' EXIT
 "${BASH_SOURCE[0]}" --lane a b "${TMP_DIR}" &
 pid_a=$!
 "${BASH_SOURCE[0]}" --lane b a "${TMP_DIR}" &
 pid_b=$!
 wait "${pid_a}"
+pid_a=""
 wait "${pid_b}"
+pid_b=""
 for name in a b; do
   [[ ! -e "$(cat "${TMP_DIR}/${name}.root")" ]] || {
     echo "lane ${name} did not remove its own root" >&2
