@@ -437,9 +437,7 @@ reject_unsafe_gemini_args() {
     fi
 
     # yargs reads everything after a bare -- as prompt text; --- is a positional and parsing goes on.
-    if [[ "${arg}" == "--" ]]; then
-      break
-    fi
+    [[ "${arg}" != "--" ]] || break
     arg_lower="${arg,,}"
     # yargs also accepts the camel-case spelling of a dashed option
     # (--allowedTools for --allowed-tools). Drop the dashes after the leading

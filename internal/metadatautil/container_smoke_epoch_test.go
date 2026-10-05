@@ -51,4 +51,7 @@ func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
 	}
 	RequireRejectsAllEvasions(t, string(script), "WORKCELL_GO_BIN=\"${GO_BIN}\" \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
 	RequireRejectsAllEvasions(t, string(script), "SOURCE_DATE_EPOCH=\"${BUILD_SOURCE_DATE_EPOCH}\" buildx_cmd build \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
+	if err := metadatautil.ValidateContainerSmokeFlagInventory(strings.Replace(string(script), "-t \"${IMAGE_TAG}\"", "-t \"${IMAGE_TAG}-other\"", 1)); err == nil {
+		t.Fatal("a build that tags another image satisfied the validator")
+	}
 }
