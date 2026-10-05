@@ -3,11 +3,18 @@
 
 package release
 
-func isExtendedACLName(name string) bool {
-	switch name {
-	case "system.nfs4_acl", "system.posix_acl_access", "system.posix_acl_default", "system.richacl":
-		return true
-	default:
-		return false
+import (
+	"errors"
+
+	"github.com/omkhar/workcell/internal/rootio"
+)
+
+// rejectExtendedACL classifies an extended ACL on fd as a publisher input
+// error; every other inspection failure passes through unchanged.
+func rejectExtendedACL(fd int) error {
+	err := rootio.RejectExtendedACL(fd)
+	if errors.Is(err, rootio.ErrExtendedACL) {
+		return inputErrorf("%v", rootio.ErrExtendedACL)
 	}
+	return err
 }
