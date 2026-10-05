@@ -68,8 +68,9 @@ deny = [
   "--add-dir", "--agents", "--allow-dangerously-skip-permissions",
   "--allowed-tools", "--allowedTools", "--append-subagent-system-prompt",
   "--append-subagent-system-prompt-file", "--append-system-prompt",
-  "--append-system-prompt-file", "--cloud", "--dangerously-skip-permissions",
-  "--environment", "--mcp-config", "--permission-mode", "--permission-prompt-tool",
-  "--plugin-dir", "--plugin-url", "--remote",
+  "--append-system-prompt-file", "--dangerously-skip-permissions",
+  "--mcp-config", "--permission-mode", "--permission-prompt-tool",
+  "--plugin-dir", "--plugin-url",
   "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
+  "--cloud", "--environment", "--remote",
 ]

@@ -117,6 +117,9 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 				probe{[]string{"--", "-yellow"}, "0"}, probe{[]string{"--", "-safe"}, "0"}, probe{[]string{"-d", "--", "-yellow"}, "0"},
 				probe{[]string{"-y", "--", "text"}, "2"}, probe{[]string{"---", "-y"}, "2"}) // --- is a positional
 		}
+		if m.ID == "claude" { // text after a bare -- is prompt text, not options
+			probes = append(probes, probe{[]string{"--", "--remote", "task"}, "0"}, probe{[]string{"--remote", "--", "task"}, "2"})
+		}
 		if m.ID == "codex" {
 			// A config override reaches the same setting as --approve-for-me.
 			probes = append(probes, probe{[]string{"-c", "approvals_reviewer=auto_review"}, "2"},

@@ -388,6 +388,7 @@ reject_unsafe_claude_args() {
   provider_policy_allows_breakglass && return 0
 
   for arg in "$@"; do
+    [[ "${arg}" != "--" ]] || break # Claude reads everything after a bare -- as prompt text
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
       case "${arg}" in
