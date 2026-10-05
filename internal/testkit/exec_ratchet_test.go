@@ -380,30 +380,49 @@ func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[s
 // a freshly written fixture. A key that is not a string literal, such as a
 // named constant, is treated as PATH, since its value is not resolved here.
 func rewritesProcessPath(file *ast.File) bool {
+	// Saved Setenv values propagate to a fixed point, so an alias assigned
+	// from another alias counts too.
 	savedSetenv := map[string]bool{}
-	record := func(names []ast.Expr, values []ast.Expr) {
+	isSetenv := func(value ast.Expr) bool {
+		switch v := unparen(value).(type) {
+		case *ast.SelectorExpr:
+			return v.Sel.Name == "Setenv"
+		case *ast.Ident:
+			return savedSetenv[v.Name]
+		}
+		return false
+	}
+	record := func(names []ast.Expr, values []ast.Expr) bool {
+		added := false
 		for i, value := range values {
-			sel, ok := unparen(value).(*ast.SelectorExpr)
-			if ok && sel.Sel.Name == "Setenv" && i < len(names) {
-				if id, ok := unparen(names[i]).(*ast.Ident); ok {
+			if isSetenv(value) && i < len(names) {
+				if id, ok := unparen(names[i]).(*ast.Ident); ok && !savedSetenv[id.Name] {
 					savedSetenv[id.Name] = true
+					added = true
 				}
 			}
 		}
+		return added
 	}
-	ast.Inspect(file, func(c ast.Node) bool {
-		switch n := c.(type) {
-		case *ast.AssignStmt:
-			record(n.Lhs, n.Rhs)
-		case *ast.ValueSpec:
-			names := make([]ast.Expr, len(n.Names))
-			for i, name := range n.Names {
-				names[i] = name
+	for {
+		added := false
+		ast.Inspect(file, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.AssignStmt:
+				added = record(n.Lhs, n.Rhs) || added
+			case *ast.ValueSpec:
+				names := make([]ast.Expr, len(n.Names))
+				for i, name := range n.Names {
+					names[i] = name
+				}
+				added = record(names, n.Values) || added
 			}
-			record(names, n.Values)
+			return true
+		})
+		if !added {
+			break
 		}
-		return true
-	})
+	}
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
 		call, ok := c.(*ast.CallExpr)
@@ -577,6 +596,13 @@ func a(t *testing.T) { var setenv = t.Setenv; setenv("PATH", "/tmp/fixtures"); e
 `
 	if got := rawExecSites(t, "var_setenv.go", varSetenv); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a var-declared Setenv value)", got)
+	}
+	const chainedSetenv = `package x
+import ("os/exec"; "testing")
+func a(t *testing.T) { first := t.Setenv; second := first; second("PATH", "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "chained_setenv.go", chainedSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a chained Setenv alias)", got)
 	}
 	// A rewrite in another file of the package reaches this file's lookups.
 	const plain = `package x
