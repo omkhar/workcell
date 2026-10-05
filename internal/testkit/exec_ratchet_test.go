@@ -74,29 +74,50 @@ func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 // reference to exec.Command that is not a call (a saved function value) is
 // counted too, because whatever it later runs is not checked here.
 func rawExecSites(t *testing.T, name, src string) int {
-	return rawExecSitesIn(t, name, src, false)
+	return rawExecSitesIn(t, name, src, false, nil)
 }
 
-// rawExecSitesIn is rawExecSites for a file whose package may rewrite the
-// process PATH elsewhere: a helper in another file can prepend a fixture
-// directory before this file resolves a slashless tool, so that rewrite
-// counts here too.
-func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool) int {
+// packageRawExecSites counts the raw sites of every file in sources together:
+// a PATH rewrite or a saved exec.Command alias declared in one file reaches the
+// others, so each file is counted with the package-wide rewrite flag and alias
+// set. It returns the count per file name.
+func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", name, err)
+	var parsed []*ast.File
+	packageAliases := map[string]bool{}
+	for name, src := range sources {
+		file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		parsed = append(parsed, file)
+		execCommandName, _ := execCommandNameIn(file)
+		for alias := range commandAliases(file, execCommandName) {
+			packageAliases[alias] = true
+		}
 	}
+	rewrites := packageRewritesProcessPath(parsed)
+	counts := map[string]int{}
+	for name, src := range sources {
+		if n := rawExecSitesIn(t, name, src, rewrites, packageAliases); n > 0 {
+			counts[name] = n
+		}
+	}
+	return counts
+}
+
+// execCommandNameIn returns the function that reports "Command" or
+// "CommandContext" when an expression names that os/exec function in file: a
+// selector through the package name as imported there, or a bare identifier
+// under a dot import.
+func execCommandNameIn(file *ast.File) (func(ast.Expr) string, string) {
 	execPkg := "exec"
 	for _, imp := range file.Imports {
 		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == "os/exec" && imp.Name != nil {
 			execPkg = imp.Name.Name
 		}
 	}
-	// execCommandName returns "Command" or "CommandContext" when expr names
-	// that os/exec function: a selector through the package name, or a bare
-	// identifier under a dot import.
-	execCommandName := func(expr ast.Expr) string {
+	return func(expr ast.Expr) string {
 		name := ""
 		switch fn := unparen(expr).(type) {
 		case *ast.SelectorExpr:
@@ -112,9 +133,26 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool) in
 			return name
 		}
 		return ""
+	}, execPkg
+}
+
+// rawExecSitesIn is rawExecSites for a file whose package may rewrite the
+// process PATH or save exec.Command under an alias elsewhere: a helper in
+// another file can prepend a fixture directory before this file resolves a
+// slashless tool, and a call through an alias declared in another file is a
+// raw site here, so both reach this file's count.
+func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, packageAliases map[string]bool) int {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
 	}
+	execCommandName, execPkg := execCommandNameIn(file)
 	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
 	aliases := commandAliases(file, execCommandName)
+	for alias := range packageAliases {
+		aliases[alias] = true
+	}
 	count := 0
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the package
@@ -643,11 +681,20 @@ func a(t *testing.T) { first := t.Setenv; second := first; second("PATH", "/tmp/
 import "os/exec"
 func a() { exec.Command("git", "init") }
 `
-	if got := rawExecSitesIn(t, "plain.go", plain, true); got != 1 {
+	if got := rawExecSitesIn(t, "plain.go", plain, true, nil); got != 1 {
 		t.Fatalf("rawExecSitesIn = %d, want 1 (git after a PATH rewrite elsewhere in the package)", got)
 	}
-	if got := rawExecSitesIn(t, "plain.go", plain, false); got != 0 {
+	if got := rawExecSitesIn(t, "plain.go", plain, false, nil); got != 0 {
 		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
+	}
+	// A saved exec.Command alias declared in one file counts its calls in
+	// another: the declaration counts once and each cross-file call once.
+	counts := packageRawExecSites(t, map[string]string{
+		"decl.go": "package x\nimport \"os/exec\"\nvar run = exec.Command\n",
+		"call.go": "package x\nfunc a(p string) { run(p); run(p) }\n",
+	})
+	if counts["decl.go"] != 1 || counts["call.go"] != 2 {
+		t.Fatalf("package counts = %v, want decl.go:1 call.go:2 (a saved alias declared in another file)", counts)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
@@ -707,28 +754,19 @@ func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
-	// A PATH rewrite in any file of the package reaches every file's lookups,
-	// and a Setenv alias declared in one file may be called from another.
+	// A PATH rewrite, a Setenv alias or a saved exec.Command alias in any
+	// file of the package reaches every other file.
 	sources := map[string]string{}
-	var parsed []*ast.File
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sources[f] = string(src)
-		file, err := parser.ParseFile(token.NewFileSet(), f, src, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", f, err)
-		}
-		parsed = append(parsed, file)
 	}
-	packageRewritesPath := packageRewritesProcessPath(parsed)
 	counts := map[string]int{}
-	for _, f := range files {
-		if n := rawExecSitesIn(t, f, sources[f], packageRewritesPath); n > 0 {
-			counts["internal/testkit/"+filepath.Base(f)] = n
-		}
+	for f, n := range packageRawExecSites(t, sources) {
+		counts["internal/testkit/"+filepath.Base(f)] = n
 	}
 	for _, p := range execRatchetProblems(counts, readExecBaseline(t, root)) {
 		t.Error(p)
