@@ -90,7 +90,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 	// identifier under a dot import.
 	execCommandName := func(expr ast.Expr) string {
 		name := ""
-		switch fn := expr.(type) {
+		switch fn := unparen(expr).(type) {
 		case *ast.SelectorExpr:
 			if pkg, _ := fn.X.(*ast.Ident); pkg != nil && pkg.Name == execPkg {
 				name = fn.Sel.Name
@@ -142,12 +142,13 @@ func rawExecSites(t *testing.T, name, src string) int {
 		}
 		// Every call through a saved exec.Command value is a raw site: its
 		// program is never checked here.
-		if id, ok := call.Fun.(*ast.Ident); ok && aliases[id.Name] {
+		if id, ok := unparen(call.Fun).(*ast.Ident); ok && aliases[id.Name] {
 			count++
 			return true
 		}
 		if name := execCommandName(call.Fun); name != "" {
 			called[call.Fun] = true
+			called[unparen(call.Fun)] = true
 			if retried[call] {
 				return true
 			}
@@ -291,6 +292,18 @@ func declaresRetryHelper(file *ast.File) bool {
 	return found
 }
 
+// unparen strips parentheses, so (exec.Command) and (run) are read as the
+// expressions they wrap.
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
 // commandAliases lists the identifiers assigned from exec.Command or
 // exec.CommandContext anywhere in the file, such as run := exec.Command, and
 // every identifier assigned from one of those in turn, until no new name
@@ -301,7 +314,7 @@ func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[s
 		if execCommandName(value) != "" {
 			return true
 		}
-		id, ok := value.(*ast.Ident)
+		id, ok := unparen(value).(*ast.Ident)
 		return ok && aliases[id.Name]
 	}
 	record := func(names []ast.Expr, values []ast.Expr) bool {
@@ -428,9 +441,10 @@ func q(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.R
 func r(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Run(); return c }) }
 func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return exec.Command(p) }().Run(); return exec.Command("git") }) }
 func u(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = func() string { c.Run(); return "/" }(); return c }) }
+func v(p string) { run := (exec.Command); run(p); (exec.Command)(p) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 18 {
-		t.Fatalf("rawExecSites = %d, want 18 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 21 {
+		t.Fatalf("rawExecSites = %d, want 21 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call; o builds and returns its command under the retry)", got)
 	}
 	// A function that declares its own helper of the same name shadows the
 	// package helper, so nothing in that file is exempt.
