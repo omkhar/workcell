@@ -226,14 +226,21 @@ func Serve(ctx context.Context, config Config) error {
 func (s *server) serve(connection *net.UnixConn) {
 	defer s.untrack(connection)
 	defer connection.Close()
+	// Every rejection, including one before the request parses, spends the
+	// rejection budget before it is recorded, so an unauthenticated caller
+	// cannot fill the ledger through any path.
 	if uid, err := peerUID(connection); err != nil || uid != s.uid {
-		s.record(Request{}, "", "peer_rejected")
+		if s.allowRejected() {
+			_ = s.record(Request{}, "", "peer_rejected")
+		}
 		return
 	}
 	_ = connection.SetDeadline(time.Now().Add(ioTimeout))
 	request, err := readRequest(connection)
 	if err != nil {
-		s.record(Request{}, "", "malformed")
+		if s.allowRejected() {
+			_ = s.record(Request{}, "", "malformed")
+		}
 		return
 	}
 	response, key := s.answer(request)

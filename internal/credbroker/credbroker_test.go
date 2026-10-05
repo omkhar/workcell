@@ -568,3 +568,23 @@ func TestRejectedRequestsHaveTheirOwnBoundAndLeaveTheGrantQuotaAlone(t *testing.
 		t.Fatalf("authenticated lookup after a rejection flood = (%q, %v), want granted", v, err)
 	}
 }
+
+func TestMalformedRequestsSpendTheRejectionBudget(t *testing.T) {
+	s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
+	path := listenServer(t, s)
+	for i := 0; i < rateLimit+5; i++ {
+		connection, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = connection.Write([]byte("\n"))
+		_, _ = connection.Read(make([]byte, 1))
+		_ = connection.Close()
+	}
+	if n := len(log.records(t)); n != rateLimit {
+		t.Fatalf("malformed rejections recorded = %d, want the window bound %d", n, rateLimit)
+	}
+	if v, err := Lookup(context.Background(), path, testToken, "api.anthropic.com", "x-api-key"); err != nil || v != "sk-claude" {
+		t.Fatalf("authenticated lookup after a malformed flood = (%q, %v), want granted", v, err)
+	}
+}
