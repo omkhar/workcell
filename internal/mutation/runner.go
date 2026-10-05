@@ -324,6 +324,41 @@ var goHelperMutations = []mutationCase{
 		label:        "egress proxy plain port maps to one host",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestParseAllowlist", "-count=1"),
 	},
+	{
+		relativePath: "internal/credbroker/server.go",
+		original:     `subtle.ConstantTimeCompare([]byte(request.Token), s.token) != 1`,
+		replacement:  `subtle.ConstantTimeCompare([]byte(request.Token), s.token) == 1`,
+		label:        "credential broker rejects a wrong session token",
+		command:      goCmd("test", "./internal/credbroker", "-run", "TestLookupReleasesOnlyGrantedPairs", "-count=1"),
+	},
+	{
+		relativePath: "internal/credbroker/server.go",
+		original:     `err != nil || uid != s.uid`,
+		replacement:  `err != nil`,
+		label:        "credential broker rejects a peer with another uid",
+		command:      goCmd("test", "./internal/credbroker", "-run", "TestPeerWithAnotherUIDGetsNoAnswer", "-count=1"),
+	},
+	{
+		relativePath: "internal/credbroker/server.go",
+		original:     `if *count >= rateLimit {`,
+		replacement:  `if false {`,
+		label:        "credential broker enforces the per-session rate limit",
+		command:      goCmd("test", "./internal/credbroker", "-run", "TestRateLimitIsAFixedWindowForValidTokens", "-count=1"),
+	},
+	{
+		relativePath: "internal/credbroker/server.go",
+		original:     `s.creds[grant{host: request.Host, header: request.Header}]`,
+		replacement:  `s.creds[grant{host: "api.anthropic.com", header: request.Header}]`,
+		label:        "credential broker matches the grant host",
+		command:      goCmd("test", "./internal/credbroker", "-run", "TestLookupReleasesOnlyGrantedPairs", "-count=1"),
+	},
+	{
+		relativePath: "internal/credbroker/server.go",
+		original:     `!errors.Is(cause, context.Canceled)`,
+		replacement:  `false`,
+		label:        "credential broker fails closed when the ssh forward exits",
+		command:      goCmd("test", "./internal/credbroker", "-run", "TestServeExitsWhenSSHForwardDies", "-count=1"),
+	},
 }
 
 var rustMutations = []mutationCase{
