@@ -1052,6 +1052,23 @@ test "${margin_half_rc}" -eq 2
 grep -q 'changed_files=8 (limit=5)' <<<"${margin_half_output}"
 test "${margin_bad_rc}" -eq 2
 grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
+# pre-merge lifts the margin only for an open PR from this repository: a fork's
+# PR on the same branch name keeps the first-publication margin.
+MARGIN_GH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/publish-pr-margin-gh.XXXXXX")"
+ln -s "${TRUSTED_GH_STUB}" "${MARGIN_GH_DIR}/gh"
+resolve_margin() {
+  printf '%s\n' "$1" >"${GH_PR_LIST_RESPONSE_FILE}"
+  PATH="${MARGIN_GH_DIR}:${PATH}" bash -c '
+    set -euo pipefail
+    ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto; SHAPE_MARGIN_FIRST_PUBLICATION=0.66
+    eval "$(sed -n "/^resolve_shape_margin()/,/^}/p" "$2")"
+    resolve_shape_margin' _ "${FIXTURE}" "${ROOT_DIR}/scripts/pre-merge.sh"
+}
+test "$(resolve_margin '[{"headRepository":{"nameWithOwner":"fork/publish-pr-fixture"}}]')" = "0.66"
+test "$(resolve_margin '[{"headRepository":{"nameWithOwner":"example/publish-pr-fixture"}}]')" = "1.0"
+rm -f "${GH_PR_LIST_RESPONSE_FILE}"
+rm -rf "${MARGIN_GH_DIR}"
+
 # An explicit limit of 0 is not raised to 1 by the margin floor.
 set +e
 margin_zero_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
