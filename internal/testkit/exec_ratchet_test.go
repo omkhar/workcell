@@ -272,6 +272,16 @@ func declaresRetryHelper(file *ast.File) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
 		switch n := c.(type) {
+		case *ast.FuncDecl:
+			if n.Recv != nil {
+				for _, field := range n.Recv.List {
+					for _, name := range field.Names {
+						if etxtbsyRetryHelpers[name.Name] {
+							found = true
+						}
+					}
+				}
+			}
 		case *ast.FuncType:
 			if n.Params != nil {
 				for _, field := range n.Params.List {
@@ -371,18 +381,26 @@ func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[s
 // named constant, is treated as PATH, since its value is not resolved here.
 func rewritesProcessPath(file *ast.File) bool {
 	savedSetenv := map[string]bool{}
-	ast.Inspect(file, func(c ast.Node) bool {
-		assign, ok := c.(*ast.AssignStmt)
-		if !ok {
-			return true
-		}
-		for i, value := range assign.Rhs {
+	record := func(names []ast.Expr, values []ast.Expr) {
+		for i, value := range values {
 			sel, ok := unparen(value).(*ast.SelectorExpr)
-			if ok && sel.Sel.Name == "Setenv" && i < len(assign.Lhs) {
-				if id, ok := unparen(assign.Lhs[i]).(*ast.Ident); ok {
+			if ok && sel.Sel.Name == "Setenv" && i < len(names) {
+				if id, ok := unparen(names[i]).(*ast.Ident); ok {
 					savedSetenv[id.Name] = true
 				}
 			}
+		}
+	}
+	ast.Inspect(file, func(c ast.Node) bool {
+		switch n := c.(type) {
+		case *ast.AssignStmt:
+			record(n.Lhs, n.Rhs)
+		case *ast.ValueSpec:
+			names := make([]ast.Expr, len(n.Names))
+			for i, name := range n.Names {
+				names[i] = name
+			}
+			record(names, n.Values)
 		}
 		return true
 	})
@@ -516,6 +534,14 @@ func a(p string, helpers []func(func() *exec.Cmd) *exec.Cmd) {
 	if got := rawExecSites(t, "range_helper.go", rangeHelper); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (a range variable named like the helper exempts nothing)", got)
 	}
+	const receiverHelper = `package x
+import "os/exec"
+type retry func(func() *exec.Cmd) *exec.Cmd
+func (execRetryETXTBSY retry) run(p string) { execRetryETXTBSY(func() *exec.Cmd { return exec.Command(p) }) }
+`
+	if got := rawExecSites(t, "receiver_helper.go", receiverHelper); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (a receiver named like the helper exempts nothing)", got)
+	}
 }
 
 func TestRawExecSitesCountsSystemToolsAfterProcessPathRewrite(t *testing.T) {
@@ -544,6 +570,13 @@ func a(t *testing.T) { setenv := t.Setenv; setenv("PATH", "/tmp/fixtures"); exec
 `
 	if got := rawExecSites(t, "saved_setenv.go", savedSetenv); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a saved Setenv value)", got)
+	}
+	const varSetenv = `package x
+import ("os/exec"; "testing")
+func a(t *testing.T) { var setenv = t.Setenv; setenv("PATH", "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "var_setenv.go", varSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a var-declared Setenv value)", got)
 	}
 	// A rewrite in another file of the package reaches this file's lookups.
 	const plain = `package x
