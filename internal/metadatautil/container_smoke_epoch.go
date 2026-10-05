@@ -3,7 +3,10 @@
 
 package metadatautil
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // ValidateContainerSmokeBuildEpoch requires scripts/container-smoke.sh to run
 // the fixed default epoch assignment once. A per-commit epoch reaches every
@@ -24,18 +27,23 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 	return nil
 }
 
-// ValidateContainerSmokeFlagInventory requires scripts/container-smoke.sh to
-// run scripts/check-flag-inventory.sh exactly once with the built image tag and
-// no other arguments; the environment and the executable are exact command words.
+// ValidateContainerSmokeFlagInventory requires scripts/container-smoke.sh to run
+// scripts/check-flag-inventory.sh once, after the Dockerfile build, with the built tag and no other arguments.
 func ValidateContainerSmokeFlagInventory(script string) error {
+	build := -1
+	for _, invocation := range ShellInvocations(script, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
+		if strings.Contains(" "+strings.Join(invocation.Args, " ")+" ", " -f ${ROOT_DIR}/runtime/container/Dockerfile ") {
+			build = invocation.Position
+		}
+	}
 	checks := 0
 	for _, invocation := range ShellInvocations(script, "WORKCELL_GO_BIN=${GO_BIN} WORKCELL_IMAGE_TAG=${IMAGE_TAG} WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT=${DOCKER_CONTEXT_NAME} ${ROOT_DIR}/scripts/check-flag-inventory.sh") {
-		if len(invocation.Args) == 0 {
+		if len(invocation.Args) == 0 && build >= 0 && invocation.Position > build {
 			checks++
 		}
 	}
 	if checks != 1 {
-		return errors.New("Expected the smoke lane to run the flag inventory once against the built image tag")
+		return errors.New("Expected the smoke lane to run the flag inventory once against the built image tag after the image build")
 	}
 	return nil
 }
