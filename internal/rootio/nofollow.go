@@ -210,6 +210,14 @@ func removeAllAt(dirFD int, name string, observed bool) error {
 		}
 		return nil
 	}
+	if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+		// An unreadable directory cannot be emptied, but an empty one is still
+		// removable through its parent; a non-empty one fails closed here.
+		if rmErr := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); rmErr == nil {
+			return nil
+		}
+		return err
+	}
 	if err != nil {
 		return unlinkErr
 	}

@@ -198,3 +198,39 @@ func TestRemoveAllAtTreatsAnObservedVanishedEntryAsFailure(t *testing.T) {
 		t.Fatal("an entry seen in a directory read vanished without an error")
 	}
 }
+
+func TestRemoveAllAtNoFollowRemovesAnEmptyUnreadableDirectoryOnly(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	root := t.TempDir()
+	parent, err := os.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	empty := filepath.Join(root, "empty")
+	if err := os.Mkdir(empty, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(empty, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveAllAtNoFollow(parent, "empty"); err != nil {
+		t.Fatalf("empty unreadable directory not removed: %v", err)
+	}
+	full := filepath.Join(root, "full")
+	if err := os.MkdirAll(filepath.Join(full, "child"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(full, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(full, 0o700) })
+	if err := RemoveAllAtNoFollow(parent, "full"); err == nil {
+		t.Fatal("non-empty unreadable directory reported removed")
+	}
+	if _, err := os.Lstat(full); err != nil {
+		t.Fatalf("non-empty unreadable directory vanished: %v", err)
+	}
+}
