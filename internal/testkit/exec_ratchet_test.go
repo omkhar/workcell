@@ -103,33 +103,44 @@ func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int
 }
 
 // execCommandNameIn returns the function that reports "Command" or
-// "CommandContext" when an expression names that os/exec function in file: a
-// selector through the package name as imported there, or a bare identifier
-// under a dot import.
-func execCommandNameIn(file *ast.File) (func(ast.Expr) string, string) {
-	execPkg := "exec"
+// "CommandContext" when an expression names that os/exec function in file,
+// the function that reports whether an expression names the exec.Cmd type,
+// and whether os/exec is dot imported. A file may import os/exec under
+// several names, so every import of it qualifies: a selector through any of
+// those names, or a bare identifier under a dot import.
+func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bool, bool) {
+	execPkgs := map[string]bool{}
 	for _, imp := range file.Imports {
-		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == "os/exec" && imp.Name != nil {
-			execPkg = imp.Name.Name
+		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == "os/exec" {
+			name := "exec"
+			if imp.Name != nil {
+				name = imp.Name.Name
+			}
+			execPkgs[name] = true
 		}
 	}
-	return func(expr ast.Expr) string {
-		name := ""
+	if len(execPkgs) == 0 {
+		execPkgs["exec"] = true
+	}
+	member := func(expr ast.Expr) string {
 		switch fn := unparen(expr).(type) {
 		case *ast.SelectorExpr:
-			if pkg, _ := fn.X.(*ast.Ident); pkg != nil && pkg.Name == execPkg {
-				name = fn.Sel.Name
+			if pkg, _ := fn.X.(*ast.Ident); pkg != nil && execPkgs[pkg.Name] {
+				return fn.Sel.Name
 			}
 		case *ast.Ident:
-			if execPkg == "." {
-				name = fn.Name
+			if execPkgs["."] {
+				return fn.Name
 			}
 		}
-		if name == "Command" || name == "CommandContext" {
+		return ""
+	}
+	return func(expr ast.Expr) string {
+		if name := member(expr); name == "Command" || name == "CommandContext" {
 			return name
 		}
 		return ""
-	}, execPkg
+	}, func(expr ast.Expr) bool { return member(expr) == "Cmd" }, execPkgs["."]
 }
 
 // rawExecSitesIn is rawExecSites for a file whose package may rewrite the
@@ -143,7 +154,7 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, pa
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
-	execCommandName, execPkg := execCommandNameIn(file)
+	execCommandName, isCmdType, dotImported := execCommandNameIn(file)
 	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
 	aliases := commandAliases(file, execCommandName)
 	for alias := range packageAliases {
@@ -178,8 +189,27 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, pa
 		return true
 	})
 	ast.Inspect(file, func(c ast.Node) bool {
-		call, ok := c.(*ast.CallExpr)
-		if !ok {
+		var call *ast.CallExpr
+		switch n := c.(type) {
+		case *ast.AssignStmt:
+			// A command whose Path field is reassigned runs a program that
+			// exec.Command never saw, so each such assignment is a raw site.
+			for _, lhs := range n.Lhs {
+				if sel, ok := unparen(lhs).(*ast.SelectorExpr); ok && sel.Sel.Name == "Path" {
+					count++
+				}
+			}
+			return true
+		case *ast.CompositeLit:
+			// A Cmd built as a literal names its program in Path rather than
+			// through exec.Command, so it is a raw site.
+			if isCmdType(n.Type) {
+				count++
+			}
+			return true
+		case *ast.CallExpr:
+			call = n
+		default:
 			return true
 		}
 		// Every call through a saved exec.Command value is a raw site: its
@@ -208,7 +238,7 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, pa
 	})
 	ast.Inspect(file, func(c ast.Node) bool {
 		if expr, ok := c.(ast.Expr); ok && execCommandName(expr) != "" && !called[expr] {
-			if _, selectorPart := c.(*ast.Ident); selectorPart && execPkg != "." {
+			if _, selectorPart := c.(*ast.Ident); selectorPart && !dotImported {
 				return true
 			}
 			count++
@@ -298,7 +328,7 @@ func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
 }
 
 // declaresRetryHelper reports whether a function in the file declares a
-// parameter, variable or constant named like one of etxtbsyRetryHelpers,
+// parameter, variable, constant or type named like one of etxtbsyRetryHelpers,
 // which shadows the package helper for the calls that follow. A second
 // top-level declaration of that name cannot compile in this package, so only
 // local declarations can shadow it.
@@ -338,6 +368,10 @@ func declaresRetryHelper(file *ast.File) bool {
 					found = true
 				}
 			}
+		case *ast.TypeSpec:
+			if etxtbsyRetryHelpers[n.Name.Name] {
+				found = true
+			}
 		case *ast.RangeStmt:
 			for _, bound := range []ast.Expr{n.Key, n.Value} {
 				if id, ok := bound.(*ast.Ident); ok && etxtbsyRetryHelpers[id.Name] {
@@ -370,7 +404,7 @@ func packageCommandAliases(files []*ast.File) map[string]bool {
 	for {
 		added := false
 		for _, file := range files {
-			execCommandName, _ := execCommandNameIn(file)
+			execCommandName, _, _ := execCommandNameIn(file)
 			added = collectCommandAliases(aliases, file, execCommandName) || added
 		}
 		if !added {
@@ -430,7 +464,9 @@ func collectCommandAliases(aliases map[string]bool, file *ast.File, execCommandN
 }
 
 // envWriters are the functions that set a process environment variable:
-// t.Setenv, os.Setenv and os.Putenv all can rewrite PATH.
+// t.Setenv, os.Setenv and os.Putenv all can rewrite PATH. A bare identifier
+// of these names, as under a dot import of os, is read as the os function; a
+// local function of the same name only makes the count stricter.
 var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 
 // savedSetenvAliases lists the identifiers that hold a Setenv function value
@@ -445,7 +481,7 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 		case *ast.SelectorExpr:
 			return envWriters[v.Sel.Name]
 		case *ast.Ident:
-			return savedSetenv[v.Name]
+			return savedSetenv[v.Name] || envWriters[v.Name]
 		}
 		return false
 	}
@@ -514,7 +550,7 @@ func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
 				return true
 			}
 		case *ast.Ident:
-			if !savedSetenv[fn.Name] {
+			if !savedSetenv[fn.Name] && !envWriters[fn.Name] {
 				return true
 			}
 		default:
@@ -598,9 +634,11 @@ func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return
 func u(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = func() string { c.Run(); return "/" }(); return c }) }
 func v(p string) { run := (exec.Command); run(p); (exec.Command)(p) }
 func w(p string) { var run func(string, ...string) *exec.Cmd; (run) = exec.Command; run(p) }
+func x(p string) { c := exec.Command("/bin/true"); c.Path = p; c.Run() }
+func y(p string) { (&exec.Cmd{Path: p}).Run() }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 23 {
-		t.Fatalf("rawExecSites = %d, want 23 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call, w's parenthesized assignment target plus its call; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 25 {
+		t.Fatalf("rawExecSites = %d, want 25 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call, w's parenthesized assignment target plus its call, x's Path reassignment, y's Cmd literal; o builds and returns its command under the retry)", got)
 	}
 	// A function that declares its own helper of the same name shadows the
 	// package helper, so nothing in that file is exempt.
@@ -639,6 +677,16 @@ func (execRetryETXTBSY retry) run(p string) { execRetryETXTBSY(func() *exec.Cmd 
 `
 	if got := rawExecSites(t, "receiver_helper.go", receiverHelper); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (a receiver named like the helper exempts nothing)", got)
+	}
+	const typeHelper = `package x
+import "os/exec"
+func a(p string) {
+	type execRetryETXTBSY func() *exec.Cmd
+	execRetryETXTBSY(func() *exec.Cmd { return exec.Command(p) })()
+}
+`
+	if got := rawExecSites(t, "type_helper.go", typeHelper); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (a local type named like the helper exempts nothing)", got)
 	}
 }
 
@@ -682,6 +730,13 @@ func a() { os.Putenv("PATH", "/tmp/fixtures"); exec.Command("git") }
 `
 	if got := rawExecSites(t, "putenv.go", putenv); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through os.Putenv)", got)
+	}
+	const dotSetenv = `package x
+import (. "os"; "os/exec")
+func a() { Setenv("PATH", "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "dot_setenv.go", dotSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a dot-imported Setenv)", got)
 	}
 	const chainedSetenv = `package x
 import ("os/exec"; "testing")
@@ -754,6 +809,14 @@ func b(p string) { exec.Command(p) }
 	const rawAliased = "package x\nimport osexec `os/exec`\nfunc a(p string) { osexec.Command(p) }\n"
 	if got := rawExecSites(t, "raw_aliased.go", rawAliased); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (raw-string aliased os/exec)", got)
+	}
+	// Two imports of os/exec under different names both qualify the package.
+	const twiceAliased = `package x
+import (a "os/exec"; b "os/exec")
+func x(p string) { _ = b.Command("/bin/true"); a.Command(p).Run() }
+`
+	if got := rawExecSites(t, "twice_aliased.go", twiceAliased); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (a call through the first of two os/exec aliases)", got)
 	}
 	// A dot import drops the package qualifier entirely.
 	const dotImported = `package x
