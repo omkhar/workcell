@@ -327,7 +327,7 @@ var goHelperMutations = []mutationCase{
 	{
 		relativePath: "internal/credbroker/server.go",
 		original:     `subtle.ConstantTimeCompare([]byte(request.Token), s.token) != 1`,
-		replacement:  `false`,
+		replacement:  `subtle.ConstantTimeCompare([]byte(request.Token), s.token) == 1`,
 		label:        "credential broker rejects a wrong session token",
 		command:      goCmd("test", "./internal/credbroker", "-run", "TestLookupReleasesOnlyGrantedPairs", "-count=1"),
 	},
