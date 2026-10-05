@@ -120,10 +120,10 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 		if m.ID == "claude" { // text after a bare -- is prompt text, not options
 			probes = append(probes, probe{[]string{"--", "--remote", "task"}, "0"}, probe{[]string{"--remote", "--", "task"}, "2"})
 		}
-		if m.ID == "codex" {
-			// A config override reaches the same setting as --approve-for-me.
-			probes = append(probes, probe{[]string{"-c", "approvals_reviewer=auto_review"}, "2"},
-				probe{[]string{"--config=profiles.x.approvals_reviewer=auto_review"}, "2"})
+		if m.ID == "codex" { // every config override spelling reaches approvals_reviewer, first or after another option
+			for _, form := range [][]string{{"-c", "approvals_reviewer=auto_review"}, {"-capprovals_reviewer=auto_review"}, {"--config", "approvals_reviewer=auto_review"}, {"--config=approvals_reviewer=auto_review"}, {"--config=profiles.x.approvals_reviewer=auto_review"}} {
+				probes = append(probes, probe{form, "2"}, probe{append([]string{m.Flags.Allow[0]}, form...), "2"})
+			}
 		}
 		for _, sub := range m.Flags.Subcommands {
 			probes = append(probes, probe{[]string{sub}, "0"})
