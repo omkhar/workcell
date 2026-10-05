@@ -340,7 +340,7 @@ var goHelperMutations = []mutationCase{
 	},
 	{
 		relativePath: "internal/credbroker/server.go",
-		original:     `if s.count >= rateLimit {`,
+		original:     `if *count >= rateLimit {`,
 		replacement:  `if false {`,
 		label:        "credential broker enforces the per-session rate limit",
 		command:      goCmd("test", "./internal/credbroker", "-run", "TestRateLimitIsAFixedWindowForValidTokens", "-count=1"),
