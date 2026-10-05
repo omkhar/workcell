@@ -81,7 +81,7 @@ codex_normalize_config_key() {
 # under a profile. Returns 0 (guarded) / 1 (not).
 codex_config_key_is_guarded() {
   case "$1" in
-    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | approvals_reviewer | project_doc_fallback_filenames | project_root_markers | projects | projects.* | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
+    profile | sandbox | sandbox_mode | sandbox_permissions | web_search | approval_policy | project_doc_fallback_filenames | project_root_markers | projects | projects.* | mcp* | plugins | plugins.* | marketplaces | marketplaces.* | hooks | hooks.* | features.plugins | features.plugin_sharing | features.plugin_hooks | features.remote_plugin | features.remote_control | shell_environment_policy | shell_environment_policy.* | sandbox_workspace_write | sandbox_workspace_write.*)
       return 0
       ;;
   esac
@@ -313,8 +313,8 @@ reject_unsafe_codex_args() {
       # not swallow Claude's `--dangerously-skip-permissions` passed as data to `codex
       # execpolicy check`. --yolo is Codex's hidden alias for --dangerously-bypass-
       # approvals-and-sandbox (the glob does not reach a hidden alias, so block it and its
-      # =value form explicitly). --approve-for-me/--not-so-yolo pick auto review.
-      --dangerously-bypass-* | --yolo | --yolo=* | --approve-for-me | --approve-for-me=* | --not-so-yolo | --not-so-yolo=* | --ignore-rules | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | -s | --sandbox | --enable | --disable)
+      # =value form explicitly).
+      --dangerously-bypass-* | --yolo | --yolo=* | --search | --add-dir | --remote | --remote-auth-token-env | --full-auto | -a | --ask-for-approval | -s | --sandbox | --enable | --disable)
         workcell_die "Workcell blocked unsafe Codex override: ${arg}"
         ;;
       # ATTACHED/GLUED short value-flags (Codex P1 review). Codex (clap) also accepts a
@@ -351,7 +351,7 @@ reject_unsafe_codex_args() {
       --ask-for-approval=*)
         workcell_die "Workcell blocked unsafe Codex override: --ask-for-approval"
         ;;
-      --add-dir=* | --remote=* | --remote-auth-token-env=* | --enable=* | --disable=* | --full-auto=* | --search=* | --ignore-rules=*)
+      --add-dir=* | --remote=* | --remote-auth-token-env=* | --enable=* | --disable=*)
         workcell_die "Workcell blocked unsafe Codex override: ${arg%%=*}"
         ;;
       --cd=*)
@@ -384,17 +384,10 @@ reject_unsafe_codex_args() {
 reject_unsafe_claude_args() {
   local arg
   local saw_command=0
-  local after_bare_option=0
 
   provider_policy_allows_breakglass && return 0
 
   for arg in "$@"; do
-    # Claude reads everything after a bare -- as prompt text, unless the option
-    # before it takes a value: `--debug-file -- --permission-mode x` names the
-    # file "--" and then applies the mode. Arity is unknown here, so a -- right
-    # after a bare option never ends the scan (fail closed).
-    [[ "${arg}" != "--" ]] || [[ "${after_bare_option}" -eq 1 ]] || break
-    if [[ "${arg}" == -* && "${arg}" != *=* ]]; then after_bare_option=1; else after_bare_option=0; fi
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
       case "${arg}" in
@@ -406,14 +399,13 @@ reject_unsafe_claude_args() {
     fi
 
     case "${arg}" in
-      --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --allowed-tools | --mcp-config | --plugin-dir | --plugin-url | --settings | --setting-sources | --system-prompt | --system-prompt-file | --append-system-prompt | --append-system-prompt-file | --append-subagent-system-prompt | --append-subagent-system-prompt-file | --agents | --permission-prompt-tool)
+      --dangerously-skip-permissions | --allow-dangerously-skip-permissions | --add-dir | --allowedTools | --allowed-tools | --mcp-config | --plugin-dir | --plugin-url | --settings | --setting-sources | --system-prompt | --system-prompt-file | --append-system-prompt | --append-system-prompt-file | --append-subagent-system-prompt | --append-subagent-system-prompt-file | --agents)
         workcell_die "Workcell blocked unsafe Claude override: ${arg}"
         ;;
       --permission-mode | --permission-mode=*)
         workcell_die "Workcell blocked Claude autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
-      --cloud | --cloud=* | --remote | --remote=* | --environment | --environment=*) workcell_die "Workcell blocked Claude cloud execution: ${arg%%=*}" ;; # cloud sessions leave the sandbox
-      --dangerously-skip-permissions=* | --allow-dangerously-skip-permissions=* | --add-dir=* | --allowedTools=* | --allowed-tools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --append-subagent-system-prompt-file=* | --agents=* | --permission-prompt-tool=*)
+      --add-dir=* | --allowedTools=* | --allowed-tools=* | --mcp-config=* | --plugin-dir=* | --plugin-url=* | --settings=* | --setting-sources=* | --system-prompt=* | --system-prompt-file=* | --append-system-prompt=* | --append-system-prompt-file=* | --append-subagent-system-prompt=* | --append-subagent-system-prompt-file=* | --agents=*)
         workcell_die "Workcell blocked unsafe Claude override: ${arg%%=*}"
         ;;
     esac
@@ -424,9 +416,6 @@ reject_unsafe_gemini_args() {
   local expect_value=""
   local arg
   local arg_lower=""
-  local short_group=""
-  local short_char=""
-  local arg_key=""
 
   provider_policy_allows_breakglass && return 0
 
@@ -441,42 +430,15 @@ reject_unsafe_gemini_args() {
       continue
     fi
 
-    [[ "${arg}" != "--" ]] || break # yargs: a bare -- ends options; --- is a positional
     arg_lower="${arg,,}"
-    # yargs also accepts the camel-case spelling of a dashed option
-    # (--allowedTools for --allowed-tools). Drop the dashes after the leading
-    # -- so each spelling reaches the same pattern.
-    if [[ "${arg_lower}" == --* ]]; then
-      arg_key="${arg_lower:2}"
-      arg_key="--${arg_key//-/}"
-    else
-      arg_key="${arg_lower}"
-    fi
-    case "${arg_key}" in
-      --*dangerously* | --*bypass*permission* | --sandbox | --sandbox=* | --adddir | --adddir=* | --includedirectories | --includedirectories=* | --allowedtools | --allowedtools=* | --policy | --policy=* | --adminpolicy | --adminpolicy=* | --yolo | --yolo=*)
+    case "${arg_lower}" in
+      --*dangerously* | --*bypass*permission* | --sandbox | --sandbox=* | --add-dir | --add-dir=* | -y | --yolo)
         workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
         ;;
-      -[!-]*)
-        # yargs reads -dy as -d and -y. Scan the short group up to the first
-        # option that takes a value; the rest of the group is that value.
-        short_group="${arg_lower#-}"
-        while [[ -n "${short_group}" ]]; do
-          short_char="${short_group:0:1}"
-          short_group="${short_group:1}"
-          case "${short_char}" in
-            y | s)
-              workcell_die "Workcell blocked unsafe Gemini override: ${arg}"
-              ;;
-            m | p | i | w | e | r | o)
-              break
-              ;;
-          esac
-        done
-        ;;
-      --approvalmode)
+      --approval-mode)
         expect_value="approval-mode"
         ;;
-      --approvalmode=*)
+      --approval-mode=*)
         workcell_die "Workcell blocked Gemini autonomy override: use the host workcell --agent-autonomy option instead."
         ;;
     esac
@@ -515,10 +477,10 @@ reject_unsafe_copilot_args() {
 
     arg_lower="${arg,,}"
     case "${arg_lower}" in
-      --acp | --add-dir | --add-github-mcp-tool | --add-github-mcp-toolset | --additional-mcp-config | --agent | --allow-all | --allow-all-mcp-server-instructions | --allow-all-paths | --allow-all-tools | --allow-all-urls | --allow-tool | --allow-url | --assisted-approval | --attachment | --autopilot | --available-tools | --bash-env | -c | --config-dir | --connect | --continue | --deny-tool | --deny-url | --disable-builtin-mcps | --disable-mcp-server | --disallow-temp-dir | --dynamic-retrieval | --enable-all-github-mcp-tools | --enable-memory | --excluded-tools | --experimental | --extension-sdk-path | --interactive | --log-dir | --max-autopilot-continues | --mode | --name | --no-ask-user | --no-auto-update | --no-bash-env | --no-custom-instructions | --no-remote | --no-remote-export | --no-sandbox | --output-format | --plan | --plugin-dir | --remote | --remote-export | --resume | --sandbox | --secret-env-vars | --session-id | --share | --share-gist | --worktree | --yolo)
+      --acp | --add-dir | --add-github-mcp-tool | --add-github-mcp-toolset | --additional-mcp-config | --agent | --allow-all | --allow-all-mcp-server-instructions | --allow-all-paths | --allow-all-tools | --allow-all-urls | --allow-tool | --allow-url | --attachment | --autopilot | --available-tools | --bash-env | -c | --config-dir | --connect | --continue | --deny-tool | --deny-url | --disable-builtin-mcps | --disable-mcp-server | --disallow-temp-dir | --dynamic-retrieval | --enable-all-github-mcp-tools | --enable-memory | --excluded-tools | --experimental | --extension-sdk-path | --interactive | --log-dir | --max-autopilot-continues | --mode | --name | --no-ask-user | --no-auto-update | --no-bash-env | --no-custom-instructions | --no-remote | --no-remote-export | --no-sandbox | --output-format | --plan | --plugin-dir | --remote | --remote-export | --resume | --sandbox | --secret-env-vars | --session-id | --share | --share-gist | --worktree | --yolo)
         workcell_die "Workcell blocked unsafe Copilot override: ${arg}"
         ;;
-      --acp=* | --add-dir=* | --add-github-mcp-tool=* | --add-github-mcp-toolset=* | --additional-mcp-config=* | --agent=* | --allow-all=* | --allow-all-mcp-server-instructions=* | --allow-all-paths=* | --allow-all-tools=* | --allow-all-urls=* | --allow-tool=* | --allow-url=* | --assisted-approval=* | --attachment=* | --autopilot=* | --available-tools=* | --bash-env=* | -c=* | --config-dir=* | --connect=* | --continue=* | --deny-tool=* | --deny-url=* | --disable-builtin-mcps=* | --disable-mcp-server=* | --disallow-temp-dir=* | --dynamic-retrieval=* | --enable-all-github-mcp-tools=* | --enable-memory=* | --excluded-tools=* | --experimental=* | --extension-sdk-path=* | --interactive=* | --log-dir=* | --max-autopilot-continues=* | --mode=* | --name=* | --no-ask-user=* | --no-auto-update=* | --no-bash-env=* | --no-custom-instructions=* | --no-remote=* | --no-remote-export=* | --no-sandbox=* | --output-format=* | --plan=* | --plugin-dir=* | --remote=* | --remote-export=* | --resume=* | --sandbox=* | --secret-env-vars=* | --session-id=* | --share=* | --share-gist=* | --worktree=* | --yolo=*)
+      --acp=* | --add-dir=* | --add-github-mcp-tool=* | --add-github-mcp-toolset=* | --additional-mcp-config=* | --agent=* | --allow-all=* | --allow-all-mcp-server-instructions=* | --allow-all-paths=* | --allow-all-tools=* | --allow-all-urls=* | --allow-tool=* | --allow-url=* | --attachment=* | --autopilot=* | --available-tools=* | --bash-env=* | -c=* | --config-dir=* | --connect=* | --continue=* | --deny-tool=* | --deny-url=* | --disable-builtin-mcps=* | --disable-mcp-server=* | --disallow-temp-dir=* | --dynamic-retrieval=* | --enable-all-github-mcp-tools=* | --enable-memory=* | --excluded-tools=* | --experimental=* | --extension-sdk-path=* | --interactive=* | --log-dir=* | --max-autopilot-continues=* | --mode=* | --name=* | --no-ask-user=* | --no-auto-update=* | --no-bash-env=* | --no-custom-instructions=* | --no-remote=* | --no-remote-export=* | --no-sandbox=* | --output-format=* | --plan=* | --plugin-dir=* | --remote=* | --remote-export=* | --resume=* | --sandbox=* | --secret-env-vars=* | --session-id=* | --share=* | --share-gist=* | --worktree=* | --yolo=*)
         workcell_die "Workcell blocked unsafe Copilot override: ${arg%%=*}"
         ;;
     esac
