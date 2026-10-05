@@ -70,6 +70,6 @@ deny = [
   "--append-subagent-system-prompt-file", "--append-system-prompt",
   "--append-system-prompt-file", "--cloud", "--dangerously-skip-permissions",
   "--environment", "--mcp-config", "--permission-mode", "--permission-prompt-tool",
-  "--plugin-dir", "--plugin-url",
+  "--plugin-dir", "--plugin-url", "--remote",
   "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
 ]
