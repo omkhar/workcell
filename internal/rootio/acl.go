@@ -7,7 +7,7 @@ import "errors"
 
 // ErrExtendedACL reports that a file or directory carries an extended ACL,
 // which can grant rights that its mode bits do not show. RejectExtendedACL
-// returns it, wrapped, so callers decide how to classify the refusal.
+// returns it, so callers decide how to classify the refusal.
 var ErrExtendedACL = errors.New("extended ACLs are not permitted")
 
 func isExtendedACLName(name string) bool {
