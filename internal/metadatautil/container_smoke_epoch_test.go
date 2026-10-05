@@ -47,11 +47,11 @@ func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := metadatautil.ValidateContainerSmokeFlagInventory(string(script)); err != nil {
-		t.Fatalf("real script rejected: %v", err)
+		t.Fatal(err)
 	}
 	RequireRejectsAllEvasions(t, string(script), "WORKCELL_GO_BIN=\"${GO_BIN}\" \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
 	RequireRejectsAllEvasions(t, string(script), "SOURCE_DATE_EPOCH=\"${BUILD_SOURCE_DATE_EPOCH}\" buildx_cmd build \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
-	if err := metadatautil.ValidateContainerSmokeFlagInventory(strings.Replace(string(script), "-t \"${IMAGE_TAG}\"", "-t \"${IMAGE_TAG}-other\"", 1)); err == nil {
+	if err := metadatautil.ValidateContainerSmokeFlagInventory(strings.Replace(string(script), "-t \"${IMAGE_TAG}\"", "--label \"k= -t ${IMAGE_TAG} decoy\" -t \"${IMAGE_TAG}-other\"", 1)); err == nil {
 		t.Fatal("a build that tags another image satisfied the validator")
 	}
 }

@@ -27,11 +27,10 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 	return nil
 }
 
-// ValidateContainerSmokeFlagInventory requires scripts/container-smoke.sh to run scripts/check-flag-inventory.sh once, after the Dockerfile build tags ${IMAGE_TAG}, with that tag and no other arguments.
 func ValidateContainerSmokeFlagInventory(script string) error {
 	build := -1
 	for _, invocation := range ShellInvocations(script, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
-		if args := " " + strings.Join(invocation.Args, " ") + " "; strings.Contains(args, " -f ${ROOT_DIR}/runtime/container/Dockerfile ") && strings.Contains(args, " -t ${IMAGE_TAG} ") {
+		if hasPair(invocation.Args, "-f", "${ROOT_DIR}/runtime/container/Dockerfile") && hasPair(invocation.Args, "-t", "${IMAGE_TAG}") {
 			build = invocation.Position
 		}
 	}
@@ -45,4 +44,8 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 		return errors.New("Expected the smoke lane to run the flag inventory once against the built image tag after the image build")
 	}
 	return nil
+}
+
+func hasPair(args []string, flag, value string) bool { // adjacent argv elements; a word cannot contain NUL
+	return strings.Contains("\x00"+strings.Join(args, "\x00")+"\x00", "\x00"+flag+"\x00"+value+"\x00")
 }
