@@ -229,6 +229,12 @@ func main() {
 			dieUsage(fmt.Errorf("usage: %s %s %s", os.Args[0], sub.name, sub.usage))
 		}
 		if err := sub.handler(args); err != nil {
+			// A handler's typed exit code (such as a usage error's 2) reaches
+			// the caller instead of die()'s fixed 1.
+			if ec, ok := cliexit.IsExitCodeError(err); ok {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(ec.Code)
+			}
 			die(err)
 		}
 		return

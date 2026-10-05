@@ -27,13 +27,34 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 	return nil
 }
 
+// effectiveDockerfile is the Dockerfile buildx would use: the last of -f X,
+// --file X, --file=X or -fX wins, so a later decoy cannot hide behind the
+// required pair.
+func effectiveDockerfile(args []string) string {
+	file := ""
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "-f" || arg == "--file":
+			if i+1 < len(args) {
+				i++
+				file = args[i]
+			}
+		case strings.HasPrefix(arg, "--file="):
+			file = strings.TrimPrefix(arg, "--file=")
+		case strings.HasPrefix(arg, "-f") && !strings.HasPrefix(arg, "--"):
+			file = strings.TrimPrefix(arg[2:], "=")
+		}
+	}
+	return file
+}
+
 func ValidateContainerSmokeFlagInventory(script string) error {
 	build := -1
 	for _, invocation := range ShellInvocations(script, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
 		// NUL-joined argv makes each check exact: a word cannot contain NUL, and
 		// the last --load spelling wins, so a later --load=false is not a load.
 		args := "\x00" + strings.Join(invocation.Args, "\x00") + "\x00"
-		if strings.Contains(args, "\x00-f\x00${ROOT_DIR}/runtime/container/Dockerfile\x00") && strings.Contains(args, "\x00-t\x00${IMAGE_TAG}\x00") && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
+		if effectiveDockerfile(invocation.Args) == "${ROOT_DIR}/runtime/container/Dockerfile" && strings.Contains(args, "\x00-t\x00${IMAGE_TAG}\x00") && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
 			build = invocation.Position
 		}
 	}

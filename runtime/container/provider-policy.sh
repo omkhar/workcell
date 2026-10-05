@@ -384,11 +384,17 @@ reject_unsafe_codex_args() {
 reject_unsafe_claude_args() {
   local arg
   local saw_command=0
+  local after_bare_option=0
 
   provider_policy_allows_breakglass && return 0
 
   for arg in "$@"; do
-    [[ "${arg}" != "--" ]] || break # Claude reads everything after a bare -- as prompt text
+    # Claude reads everything after a bare -- as prompt text, unless the option
+    # before it takes a value: `--debug-file -- --permission-mode x` names the
+    # file "--" and then applies the mode. Arity is unknown here, so a -- right
+    # after a bare option never ends the scan (fail closed).
+    [[ "${arg}" != "--" ]] || [[ "${after_bare_option}" -eq 1 ]] || break
+    if [[ "${arg}" == -* && "${arg}" != *=* ]]; then after_bare_option=1; else after_bare_option=0; fi
     if [[ "${saw_command}" -eq 0 ]] && [[ "${arg}" != -* ]]; then
       saw_command=1
       case "${arg}" in

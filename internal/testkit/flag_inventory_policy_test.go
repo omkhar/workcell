@@ -118,7 +118,8 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 				probe{[]string{"-y", "--", "text"}, "2"}, probe{[]string{"---", "-y"}, "2"}) // --- is a positional
 		}
 		if m.ID == "claude" { // text after a bare -- is prompt text, not options
-			probes = append(probes, probe{[]string{"--", "--remote", "task"}, "0"}, probe{[]string{"--remote", "--", "task"}, "2"})
+			probes = append(probes, probe{[]string{"--", "--remote", "task"}, "0"}, probe{[]string{"--remote", "--", "task"}, "2"},
+				probe{[]string{"--debug-file", "--", "--permission-mode", "bypassPermissions"}, "2"}) // -- after a bare option may be its value
 		}
 		if m.ID == "codex" { // every config override spelling reaches approvals_reviewer, first or after another option
 			for _, form := range [][]string{{"-c", "approvals_reviewer=auto_review"}, {"-capprovals_reviewer=auto_review"}, {"-c=approvals_reviewer=auto_review"}, {"--config", "approvals_reviewer=auto_review"}, {"--config=approvals_reviewer=auto_review"}, {"--config=profiles.x.approvals_reviewer=auto_review"}} {
