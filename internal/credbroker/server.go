@@ -98,6 +98,7 @@ type server struct {
 	count       int
 	conns       map[*net.UnixConn]struct{}
 	handlers    sync.WaitGroup
+	logFailed   error
 }
 
 func newServer(config Config) (*server, error) {
@@ -296,14 +297,24 @@ func (s *server) record(request Request, key, result string) error {
 	line = append(line, '\n')
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A failed write or sync may have left a partial record; nothing is
+	// appended after it, so the ledger never carries a release it cannot
+	// account for. The broker answers log_failed from then on.
+	if s.logFailed != nil {
+		return s.logFailed
+	}
 	n, err := s.log.Write(line)
 	if err == nil && n != len(line) {
 		err = io.ErrShortWrite
 	}
-	if err != nil {
-		return err
+	if err == nil {
+		err = s.log.Sync()
 	}
-	return s.log.Sync()
+	if err != nil {
+		s.logFailed = fmt.Errorf("request log failed; no further grants: %w", err)
+		return s.logFailed
+	}
+	return nil
 }
 
 // requireAncestryWritableOnlyBy refuses a socket directory when any ancestor

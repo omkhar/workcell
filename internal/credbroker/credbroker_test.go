@@ -391,6 +391,32 @@ func TestGrantIsWithheldWhenTheRecordIsNotDurable(t *testing.T) {
 	}
 }
 
+// recoveringLog fails its first write and then accepts everything.
+type recoveringLog struct{ writes int }
+
+func (r *recoveringLog) Write(p []byte) (int, error) {
+	r.writes++
+	if r.writes == 1 {
+		return len(p) / 2, errors.New("disk full")
+	}
+	return len(p), nil
+}
+
+func (r *recoveringLog) Sync() error { return nil }
+
+func TestLogStaysFailedAfterAPartialWrite(t *testing.T) {
+	s, err := newServer(Config{Token: []byte(testToken), Credentials: map[string]string{"claude_api_key": "sk-claude"}, Log: &recoveringLog{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := listenServer(t, s)
+	for i := 0; i < 2; i++ {
+		if v, err := Lookup(context.Background(), path, testToken, "api.anthropic.com", "x-api-key"); err != DenyError(ErrLogFailed) || v != "" {
+			t.Fatalf("lookup %d after a partial write = (%q, %v), want withheld with %s", i, v, err, ErrLogFailed)
+		}
+	}
+}
+
 func TestLookupStopsWhenCancelledAfterConnecting(t *testing.T) {
 	path := filepath.Join(socketDir(t), "b.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
