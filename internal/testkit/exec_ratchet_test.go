@@ -74,6 +74,14 @@ func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 // reference to exec.Command that is not a call (a saved function value) is
 // counted too, because whatever it later runs is not checked here.
 func rawExecSites(t *testing.T, name, src string) int {
+	return rawExecSitesIn(t, name, src, false)
+}
+
+// rawExecSitesIn is rawExecSites for a file whose package may rewrite the
+// process PATH elsewhere: a helper in another file can prepend a fixture
+// directory before this file resolves a slashless tool, so that rewrite
+// counts here too.
+func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool) int {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
@@ -105,7 +113,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 		}
 		return ""
 	}
-	pathRewritten := rewritesProcessPath(file)
+	pathRewritten := packageRewritesPath || rewritesProcessPath(file)
 	aliases := commandAliases(file, execCommandName)
 	count := 0
 	called := map[ast.Expr]bool{}
@@ -321,7 +329,7 @@ func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[s
 		added := false
 		for i, value := range values {
 			if isAlias(value) && i < len(names) {
-				if id, ok := names[i].(*ast.Ident); ok && !aliases[id.Name] {
+				if id, ok := unparen(names[i]).(*ast.Ident); ok && !aliases[id.Name] {
 					aliases[id.Name] = true
 					added = true
 				}
@@ -442,9 +450,10 @@ func r(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.R
 func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return exec.Command(p) }().Run(); return exec.Command("git") }) }
 func u(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = func() string { c.Run(); return "/" }(); return c }) }
 func v(p string) { run := (exec.Command); run(p); (exec.Command)(p) }
+func w(p string) { var run func(string, ...string) *exec.Cmd; (run) = exec.Command; run(p) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 21 {
-		t.Fatalf("rawExecSites = %d, want 21 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 23 {
+		t.Fatalf("rawExecSites = %d, want 23 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call, w's parenthesized assignment target plus its call; o builds and returns its command under the retry)", got)
 	}
 	// A function that declares its own helper of the same name shadows the
 	// package helper, so nothing in that file is exempt.
@@ -486,6 +495,17 @@ func a(t *testing.T) { t.Setenv(pathKey, "/tmp/fixtures"); exec.Command("git") }
 `
 	if got := rawExecSites(t, "const_shadowed.go", constShadowed); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a constant-keyed PATH rewrite)", got)
+	}
+	// A rewrite in another file of the package reaches this file's lookups.
+	const plain = `package x
+import "os/exec"
+func a() { exec.Command("git", "init") }
+`
+	if got := rawExecSitesIn(t, "plain.go", plain, true); got != 1 {
+		t.Fatalf("rawExecSitesIn = %d, want 1 (git after a PATH rewrite elsewhere in the package)", got)
+	}
+	if got := rawExecSitesIn(t, "plain.go", plain, false); got != 0 {
+		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
@@ -545,13 +565,24 @@ func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
-	counts := map[string]int{}
+	// A PATH rewrite in any file of the package reaches every file's lookups.
+	sources := map[string]string{}
+	packageRewritesPath := false
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n := rawExecSites(t, f, string(src)); n > 0 {
+		sources[f] = string(src)
+		parsed, err := parser.ParseFile(token.NewFileSet(), f, src, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", f, err)
+		}
+		packageRewritesPath = packageRewritesPath || rewritesProcessPath(parsed)
+	}
+	counts := map[string]int{}
+	for _, f := range files {
+		if n := rawExecSitesIn(t, f, sources[f], packageRewritesPath); n > 0 {
 			counts["internal/testkit/"+filepath.Base(f)] = n
 		}
 	}
