@@ -30,7 +30,10 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 func ValidateContainerSmokeFlagInventory(script string) error {
 	build := -1
 	for _, invocation := range ShellInvocations(script, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
-		if hasPair(invocation.Args, "-f", "${ROOT_DIR}/runtime/container/Dockerfile") && hasPair(invocation.Args, "-t", "${IMAGE_TAG}") && strings.Contains("\x00"+strings.Join(invocation.Args, "\x00")+"\x00", "\x00--load\x00") {
+		// NUL-joined argv makes each check exact: a word cannot contain NUL, and
+		// the last --load spelling wins, so a later --load=false is not a load.
+		args := "\x00" + strings.Join(invocation.Args, "\x00") + "\x00"
+		if strings.Contains(args, "\x00-f\x00${ROOT_DIR}/runtime/container/Dockerfile\x00") && strings.Contains(args, "\x00-t\x00${IMAGE_TAG}\x00") && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
 			build = invocation.Position
 		}
 	}
@@ -44,8 +47,4 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 		return errors.New("Expected the smoke lane to run the flag inventory once against the built image tag after the image build")
 	}
 	return nil
-}
-
-func hasPair(args []string, flag, value string) bool { // adjacent argv elements; a word cannot contain NUL
-	return strings.Contains("\x00"+strings.Join(args, "\x00")+"\x00", "\x00"+flag+"\x00"+value+"\x00")
 }

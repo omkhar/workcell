@@ -547,7 +547,7 @@ func cmdFlagInventory(args []string) error {
 		}
 		return err
 	}
-	return fmt.Errorf("usage: workcell-citools flag-inventory plan|check ROOT | render ROOT ID HELP_FILE...")
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-citools flag-inventory plan|check ROOT | render ROOT ID HELP_FILE..."}
 }
 
 func cmdGenerateBuildInputManifest(args []string) error {
