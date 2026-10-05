@@ -11,13 +11,17 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 const testToken = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
@@ -447,17 +451,31 @@ func TestLookupStopsWhenCancelledAfterConnecting(t *testing.T) {
 
 func TestListenRefusesAnAncestorAnotherUIDCouldReplace(t *testing.T) {
 	dir := socketDir(t)
-	for name, mode := range map[string]os.FileMode{"open": 0o777, "sticky": 0o777 | os.ModeSticky} {
-		parent := filepath.Join(dir, name, "p")
-		if err := os.MkdirAll(parent, 0o700); err != nil {
+	// An ACL can grant another uid rights the mode bits do not show, so one
+	// refuses the ancestor like an open mode does; only the sticky one is admitted.
+	addACL := []string{"/bin/chmod", "+a", "everyone deny write"}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("setfacl"); err != nil {
+			t.Skip("setfacl is not installed")
+		}
+		addACL = []string{"setfacl", "-n", "-m", "u:" + strconv.Itoa(os.Getuid()+1) + ":r-x"}
+	}
+	for name, mode := range map[string]os.FileMode{"open": 0o777, "sticky": 0o777 | os.ModeSticky, "acl": 0o700} {
+		ancestor := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Join(ancestor, "p"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(filepath.Join(dir, name), mode); err != nil {
+		if err := os.Chmod(ancestor, mode); err != nil {
 			t.Fatal(err)
 		}
-		socket, err := listen(filepath.Join(parent, "b.sock"))
-		if (err == nil) != (mode&os.ModeSticky != 0) {
-			t.Fatalf("listen under a %s world-writable ancestor = %v; only the sticky one is admitted", name, err)
+		if name == "acl" {
+			if out, err := exec.Command(addACL[0], append(addACL[1:], ancestor)...).CombinedOutput(); err != nil {
+				t.Fatalf("add ACL: %v: %s", err, out)
+			}
+		}
+		socket, err := listen(filepath.Join(ancestor, "p", "b.sock"))
+		if (err == nil) != (mode&os.ModeSticky != 0) || (name == "acl" && !errors.Is(err, rootio.ErrExtendedACL)) {
+			t.Fatalf("listen under a %s ancestor = %v; only the sticky one is admitted", name, err)
 		}
 		if err == nil {
 			socket.close()

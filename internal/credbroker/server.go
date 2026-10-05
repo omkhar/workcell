@@ -359,12 +359,14 @@ func (s *server) record(request Request, key, result string) error {
 
 // requireAncestryWritableOnlyBy refuses a socket directory when any ancestor
 // could be renamed or replaced by a uid other than root or uid: every
-// ancestor must be a real directory owned by root or uid and either not
-// group or world writable or sticky, since a sticky directory lets another
-// uid add entries but not rename or remove ours. Without this, the pathname
-// bind(2) could land in a replacement tree between the checked walk and the
-// bind. The apt broker keeps its own root-only rule, which admits no sticky
-// directory, because its socket lives under a root-owned run directory.
+// ancestor must be a real directory owned by root or uid, either not group or
+// world writable or sticky, since a sticky directory lets another uid add
+// entries but not rename or remove ours, and free of extended ACLs, which
+// can grant another uid those rights without showing in the mode bits.
+// Without this, the pathname bind(2) could land in a replacement tree between
+// the checked walk and the bind. The apt broker keeps its own root-only rule,
+// which admits no sticky directory, because its socket lives under a
+// root-owned run directory.
 func requireAncestryWritableOnlyBy(dir string, uid uint32) error {
 	current, err := filepath.Abs(dir)
 	if err != nil {
@@ -383,12 +385,29 @@ func requireAncestryWritableOnlyBy(dir string, uid uint32) error {
 		if (owner != 0 && owner != uid) || (mode.Perm()&0o022 != 0 && mode&os.ModeSticky == 0) {
 			return fmt.Errorf("credential broker socket ancestor %s is writable by another uid", current)
 		}
+		if err := rejectDirectoryACL(current); err != nil {
+			return err
+		}
 		next := filepath.Dir(current)
 		if next == current {
 			return nil
 		}
 		current = next
 	}
+}
+
+// rejectDirectoryACL opens dir without following a symlink and refuses it
+// when it carries an extended ACL.
+func rejectDirectoryACL(dir string) error {
+	file, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := rootio.RejectExtendedACL(int(file.Fd())); err != nil {
+		return fmt.Errorf("credential broker socket ancestor %s: %w", dir, err)
+	}
+	return nil
 }
 
 // boundSocket is a listening socket with the parent directory descriptor it
@@ -445,6 +464,10 @@ func listen(path string) (*boundSocket, error) {
 	if parentStat.Mode&unix.S_IFMT != unix.S_IFDIR || parentStat.Mode&0o022 != 0 || parentStat.Uid != uint32(os.Getuid()) {
 		_ = parent.Close()
 		return nil, errors.New("credential broker socket directory must be owned by the broker uid and not group or world writable")
+	}
+	if err := rootio.RejectExtendedACL(int(parent.Fd())); err != nil {
+		_ = parent.Close()
+		return nil, fmt.Errorf("credential broker socket directory: %w", err)
 	}
 	name := filepath.Base(cleaned)
 	var leaf unix.Stat_t
