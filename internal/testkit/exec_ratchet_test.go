@@ -84,18 +84,14 @@ func rawExecSites(t *testing.T, name, src string) int {
 func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int {
 	t.Helper()
 	var parsed []*ast.File
-	packageAliases := map[string]bool{}
 	for name, src := range sources {
 		file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
 		parsed = append(parsed, file)
-		execCommandName, _ := execCommandNameIn(file)
-		for alias := range commandAliases(file, execCommandName) {
-			packageAliases[alias] = true
-		}
 	}
+	packageAliases := packageCommandAliases(parsed)
 	rewrites := packageRewritesProcessPath(parsed)
 	counts := map[string]int{}
 	for name, src := range sources {
@@ -366,12 +362,37 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
+// packageCommandAliases lists the saved exec.Command aliases of every file
+// together, to a fixed point, so an alias declared from another file's alias
+// is known too. Each file is read through its own os/exec import spelling.
+func packageCommandAliases(files []*ast.File) map[string]bool {
+	aliases := map[string]bool{}
+	for {
+		added := false
+		for _, file := range files {
+			execCommandName, _ := execCommandNameIn(file)
+			added = collectCommandAliases(aliases, file, execCommandName) || added
+		}
+		if !added {
+			return aliases
+		}
+	}
+}
+
 // commandAliases lists the identifiers assigned from exec.Command or
 // exec.CommandContext anywhere in the file, such as run := exec.Command, and
 // every identifier assigned from one of those in turn, until no new name
 // appears.
 func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[string]bool {
 	aliases := map[string]bool{}
+	for collectCommandAliases(aliases, file, execCommandName) {
+	}
+	return aliases
+}
+
+// collectCommandAliases adds one pass of file's command aliases to aliases
+// and reports whether any name was new.
+func collectCommandAliases(aliases map[string]bool, file *ast.File, execCommandName func(ast.Expr) string) bool {
 	isAlias := func(value ast.Expr) bool {
 		if execCommandName(value) != "" {
 			return true
@@ -391,25 +412,21 @@ func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[s
 		}
 		return added
 	}
-	for {
-		added := false
-		ast.Inspect(file, func(c ast.Node) bool {
-			switch n := c.(type) {
-			case *ast.AssignStmt:
-				added = record(n.Lhs, n.Rhs) || added
-			case *ast.ValueSpec:
-				names := make([]ast.Expr, len(n.Names))
-				for i, name := range n.Names {
-					names[i] = name
-				}
-				added = record(names, n.Values) || added
+	added := false
+	ast.Inspect(file, func(c ast.Node) bool {
+		switch n := c.(type) {
+		case *ast.AssignStmt:
+			added = record(n.Lhs, n.Rhs) || added
+		case *ast.ValueSpec:
+			names := make([]ast.Expr, len(n.Names))
+			for i, name := range n.Names {
+				names[i] = name
 			}
-			return true
-		})
-		if !added {
-			return aliases
+			added = record(names, n.Values) || added
 		}
-	}
+		return true
+	})
+	return added
 }
 
 // savedSetenvAliases lists the identifiers that hold a Setenv function value
@@ -695,6 +712,14 @@ func a() { exec.Command("git", "init") }
 	})
 	if counts["decl.go"] != 1 || counts["call.go"] != 2 {
 		t.Fatalf("package counts = %v, want decl.go:1 call.go:2 (a saved alias declared in another file)", counts)
+	}
+	// An alias of another file's alias propagates to a fixed point.
+	counts = packageRawExecSites(t, map[string]string{
+		"decl.go":  "package x\nimport \"os/exec\"\nvar first = exec.Command\n",
+		"chain.go": "package x\nvar second = first\nfunc a(p string) { second(p) }\n",
+	})
+	if counts["decl.go"] != 1 || counts["chain.go"] != 1 {
+		t.Fatalf("package counts = %v, want decl.go:1 chain.go:1 (an alias of another file's alias)", counts)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
