@@ -969,6 +969,7 @@ certified_publish_output="$(
     2>"${TMP_DIR}/publish-certified-adapter.stderr"
 )"
 grep -q 'PR shape check passed with approved certified-adapter override' <<<"${certified_publish_output}"
+grep -q '^PR shape budget remaining: files=[0-9]* lines=[0-9]* areas=[0-9]* binary_files=0 margin=' <<<"${certified_publish_output}"
 grep -q '^publish_branch=feature/publish-certified-adapter$' <<<"${certified_publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${certified_publish_output}"
 grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-certified-adapter --title Certified adapter scenario title --label approved-large-certified-adapter --draft --body Certified adapter scenario body$" "${GH_LOG}"
@@ -1051,6 +1052,15 @@ test "${margin_half_rc}" -eq 2
 grep -q 'changed_files=8 (limit=5)' <<<"${margin_half_output}"
 test "${margin_bad_rc}" -eq 2
 grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
+# An explicit limit of 0 is not raised to 1 by the margin floor.
+set +e
+margin_zero_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --max-files 0 --max-lines 1200 --max-areas 8 --max-binaries 0 --margin 1.0 2>&1)"
+margin_zero_rc=$?
+set -e
+test "${margin_zero_rc}" -eq 2
+grep -q 'changed_files=8 (limit=0)' <<<"${margin_zero_output}"
 
 git -C "${FIXTURE}" switch -C main >/dev/null
 git -C "${FIXTURE}" reset -q --hard origin/main

@@ -288,10 +288,11 @@ if [[ "${MARGIN}" == 0.* ]]; then
   margin_fraction="${MARGIN#0.}0"
   margin_hundredths=$((10#${margin_fraction:0:2}))
 fi
-# Floor, but never below 1 so a small margin cannot make a limit unreachable.
+# Floor, but never below 1 so a small margin cannot make a limit unreachable;
+# an explicit limit of 0 stays 0.
 scale_limit() {
   local scaled=$(($1 * margin_hundredths / 100))
-  ((scaled >= 1)) || scaled=1
+  ((scaled >= 1 || $1 == 0)) || scaled=1
   printf '%d\n' "${scaled}"
 }
 MAX_FILES="$(scale_limit "${MAX_FILES}")"
@@ -429,6 +430,11 @@ if ((normal_shape_ok == 0)); then
       "${CERTIFIED_ADAPTER_MAX_AREAS}" \
       "${binary_files}" \
       "${CERTIFIED_ADAPTER_MAX_BINARY_FILES}"
+    MAX_FILES="${CERTIFIED_ADAPTER_MAX_FILES}"
+    MAX_LINES="${CERTIFIED_ADAPTER_MAX_LINES}"
+    MAX_AREAS="${CERTIFIED_ADAPTER_MAX_AREAS}"
+    MAX_BINARY_FILES="${CERTIFIED_ADAPTER_MAX_BINARY_FILES}"
+    print_budget_remaining
     exit 0
   fi
   fail_pr_shape

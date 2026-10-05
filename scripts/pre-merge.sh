@@ -132,12 +132,15 @@ run_from_local_snapshot() {
   if [[ "${LOCAL_KEEP_DIR}" -eq 1 ]]; then
     snapshot_cmd+=(--keep-snapshot)
   fi
+  # The snapshot's only remote is this directory, so gh cannot learn whether
+  # a PR exists from inside it: resolve the margin here and pass it along.
   snapshot_cmd+=(
     --
     env
     WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1
     ./scripts/pre-merge.sh
     "${ORIGINAL_ARGS[@]}"
+    --shape-margin "$(resolve_shape_margin)"
   )
 
   "${snapshot_cmd[@]}" || status=$?
