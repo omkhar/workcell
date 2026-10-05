@@ -43,7 +43,7 @@ func TestValidateContainerSmokeBuildEpochRejectsEvasions(t *testing.T) {
 
 func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
 	script, _ := os.ReadFile(filepath.Join("..", "..", "scripts", "container-smoke.sh")) // an unreadable script fails below
-	for src, pass := range map[string]bool{string(script): true, strings.Replace(string(script), "-t \"${IMAGE_TAG}\"", "--label \"k= -t ${IMAGE_TAG} decoy\" -t \"${IMAGE_TAG}-other\"", 1): false} {
+	for src, pass := range map[string]bool{string(script): true, strings.Replace(string(script), "-t \"${IMAGE_TAG}\"", "--label \"k= -t ${IMAGE_TAG} decoy\" -t \"${IMAGE_TAG}-other\"", 1): false, strings.Replace(string(script), "  --load \\\n", "", 1): false} {
 		if err := metadatautil.ValidateContainerSmokeFlagInventory(src); (err == nil) != pass {
 			t.Fatalf("validator = %v, want pass %v", err, pass)
 		}

@@ -121,7 +121,7 @@ func TestFlagInventoryEntriesMatchProviderPolicy(t *testing.T) {
 			probes = append(probes, probe{[]string{"--", "--remote", "task"}, "0"}, probe{[]string{"--remote", "--", "task"}, "2"})
 		}
 		if m.ID == "codex" { // every config override spelling reaches approvals_reviewer, first or after another option
-			for _, form := range [][]string{{"-c", "approvals_reviewer=auto_review"}, {"-capprovals_reviewer=auto_review"}, {"--config", "approvals_reviewer=auto_review"}, {"--config=approvals_reviewer=auto_review"}, {"--config=profiles.x.approvals_reviewer=auto_review"}} {
+			for _, form := range [][]string{{"-c", "approvals_reviewer=auto_review"}, {"-capprovals_reviewer=auto_review"}, {"-c=approvals_reviewer=auto_review"}, {"--config", "approvals_reviewer=auto_review"}, {"--config=approvals_reviewer=auto_review"}, {"--config=profiles.x.approvals_reviewer=auto_review"}} {
 				probes = append(probes, probe{form, "2"}, probe{append([]string{m.Flags.Allow[0]}, form...), "2"})
 			}
 		}

@@ -30,7 +30,7 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 func ValidateContainerSmokeFlagInventory(script string) error {
 	build := -1
 	for _, invocation := range ShellInvocations(script, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
-		if hasPair(invocation.Args, "-f", "${ROOT_DIR}/runtime/container/Dockerfile") && hasPair(invocation.Args, "-t", "${IMAGE_TAG}") {
+		if hasPair(invocation.Args, "-f", "${ROOT_DIR}/runtime/container/Dockerfile") && hasPair(invocation.Args, "-t", "${IMAGE_TAG}") && strings.Contains("\x00"+strings.Join(invocation.Args, "\x00")+"\x00", "\x00--load\x00") {
 			build = invocation.Position
 		}
 	}
