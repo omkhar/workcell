@@ -429,6 +429,10 @@ func collectCommandAliases(aliases map[string]bool, file *ast.File, execCommandN
 	return added
 }
 
+// envWriters are the functions that set a process environment variable:
+// t.Setenv, os.Setenv and os.Putenv all can rewrite PATH.
+var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
+
 // savedSetenvAliases lists the identifiers that hold a Setenv function value
 // anywhere in files, such as setenv := t.Setenv or var setenv = os.Setenv,
 // propagated to a fixed point so an alias assigned from another alias counts
@@ -439,7 +443,7 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	isSetenv := func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.SelectorExpr:
-			return v.Sel.Name == "Setenv"
+			return envWriters[v.Sel.Name]
 		case *ast.Ident:
 			return savedSetenv[v.Name]
 		}
@@ -506,7 +510,7 @@ func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
 		}
 		switch fn := unparen(call.Fun).(type) {
 		case *ast.SelectorExpr:
-			if fn.Sel.Name != "Setenv" {
+			if !envWriters[fn.Sel.Name] {
 				return true
 			}
 		case *ast.Ident:
@@ -671,6 +675,13 @@ func a(t *testing.T) { var setenv = t.Setenv; setenv("PATH", "/tmp/fixtures"); e
 `
 	if got := rawExecSites(t, "var_setenv.go", varSetenv); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a var-declared Setenv value)", got)
+	}
+	const putenv = `package x
+import ("os"; "os/exec")
+func a() { os.Putenv("PATH", "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "putenv.go", putenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through os.Putenv)", got)
 	}
 	const chainedSetenv = `package x
 import ("os/exec"; "testing")
