@@ -155,8 +155,10 @@ func TestPeerWithAnotherUIDGetsNoAnswer(t *testing.T) {
 	s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
 	s.uid++
 	path := listenServer(t, s)
-	if _, err := Lookup(context.Background(), path, testToken, "api.anthropic.com", "x-api-key"); !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatalf("lookup from another uid = %v, want EOF or reset", err)
+	// The broker closes without reading, so the client sees EOF, a reset, or
+	// a broken pipe depending on whether its write raced the close.
+	if _, err := Lookup(context.Background(), path, testToken, "api.anthropic.com", "x-api-key"); !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) && !errors.Is(err, syscall.EPIPE) {
+		t.Fatalf("lookup from another uid = %v, want EOF, reset or broken pipe", err)
 	}
 	if records := log.records(t); len(records) != 1 || records[0].Result != "peer_rejected" {
 		t.Fatalf("records = %+v, want one peer_rejected", records)
