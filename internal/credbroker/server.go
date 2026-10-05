@@ -34,6 +34,10 @@ const (
 	rateWindow   = time.Minute
 	maxLineBytes = 4096
 	ioTimeout    = 5 * time.Second
+	// maxConns bounds the handlers alive at once: an idle connection holds a
+	// goroutine and a descriptor for ioTimeout, and the rate limit applies
+	// only after a complete request, so admission is limited first.
+	maxConns = 64
 )
 
 // Error codes a broker response can carry.
@@ -99,6 +103,7 @@ type server struct {
 	conns       map[*net.UnixConn]struct{}
 	handlers    sync.WaitGroup
 	logFailed   error
+	admissions  chan struct{}
 }
 
 func newServer(config Config) (*server, error) {
@@ -118,7 +123,7 @@ func newServer(config Config) (*server, error) {
 			creds[g] = credential{key: key, value: value}
 		}
 	}
-	return &server{token: config.Token, creds: creds, uid: uint32(os.Getuid()), now: time.Now, log: config.Log, conns: map[*net.UnixConn]struct{}{}}, nil
+	return &server{token: config.Token, creds: creds, uid: uint32(os.Getuid()), now: time.Now, log: config.Log, conns: map[*net.UnixConn]struct{}{}, admissions: make(chan struct{}, maxConns)}, nil
 }
 
 // track registers an accepted connection so shutdown can close it.
@@ -189,12 +194,22 @@ func Serve(ctx context.Context, config Config) error {
 			}
 			break
 		}
+		// Admit at most maxConns handlers; an excess connection is closed
+		// before any handler starts, so a burst of idle connections cannot
+		// exhaust descriptors and end Serve.
+		select {
+		case s.admissions <- struct{}{}:
+		default:
+			_ = connection.Close()
+			continue
+		}
 		// Track before the handler starts: stopHandlers runs only after this
 		// loop has exited, so every accepted connection is registered by then.
 		s.track(connection)
 		s.handlers.Add(1)
 		go func() {
 			defer s.handlers.Done()
+			defer func() { <-s.admissions }()
 			s.serve(connection)
 		}()
 	}

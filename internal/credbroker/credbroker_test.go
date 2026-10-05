@@ -511,3 +511,43 @@ func TestServeClosesAcceptedConnectionsOnCancel(t *testing.T) {
 		t.Fatal("accepted connection still open after Serve returned")
 	}
 }
+
+func TestServeRefusesConnectionsOverTheAdmissionLimit(t *testing.T) {
+	path := filepath.Join(socketDir(t), "b.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Serve(ctx, Config{SocketPath: path, Token: []byte(testToken), Credentials: map[string]string{"claude_api_key": "sk"}, Log: discardLog{}})
+	}()
+	var idle []net.Conn
+	defer func() {
+		for _, c := range idle {
+			_ = c.Close()
+		}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); len(idle) < maxConns; {
+		c, err := net.Dial("unix", path)
+		if err != nil {
+			if time.Now().After(deadline) {
+				t.Fatalf("broker never listened: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		idle = append(idle, c)
+	}
+	extra, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	_ = extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("connection over the limit was not closed promptly: %v", err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Serve = %v", err)
+	}
+}
