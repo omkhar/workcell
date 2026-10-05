@@ -551,3 +551,18 @@ func TestServeRefusesConnectionsOverTheAdmissionLimit(t *testing.T) {
 		t.Fatalf("Serve = %v", err)
 	}
 }
+
+func TestRejectedRequestsHaveTheirOwnBoundAndLeaveTheGrantQuotaAlone(t *testing.T) {
+	s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
+	path := listenServer(t, s)
+	ctx := context.Background()
+	for i := 0; i < rateLimit+5; i++ {
+		_, _ = Lookup(ctx, path, "", "api.anthropic.com", "x-api-key")
+	}
+	if n := len(log.records(t)); n != rateLimit {
+		t.Fatalf("rejections recorded = %d, want the window bound %d", n, rateLimit)
+	}
+	if v, err := Lookup(ctx, path, testToken, "api.anthropic.com", "x-api-key"); err != nil || v != "sk-claude" {
+		t.Fatalf("authenticated lookup after a rejection flood = (%q, %v), want granted", v, err)
+	}
+}

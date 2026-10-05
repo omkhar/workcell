@@ -100,6 +100,10 @@ type server struct {
 	log         RequestLog
 	windowStart time.Time
 	count       int
+	// Rejected requests have their own window so an unauthenticated caller
+	// can neither spend the authenticated quota nor fill the ledger.
+	rejectStart time.Time
+	rejected    int
 	conns       map[*net.UnixConn]struct{}
 	handlers    sync.WaitGroup
 	logFailed   error
@@ -237,6 +241,9 @@ func (s *server) serve(connection *net.UnixConn) {
 	if result == "" {
 		result = "granted"
 	}
+	if result != "granted" && !s.allowRejected() {
+		return // over the rejection budget: no record, no answer
+	}
 	// The record is the ledger of every release: a grant whose record is not
 	// durable is withheld, so the log never under-reports what left the host.
 	if err := s.record(request, key, result); err != nil {
@@ -280,14 +287,24 @@ func (s *server) answer(request Request) (Response, string) {
 func (s *server) allow() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
-	if now.Sub(s.windowStart) >= rateWindow {
-		s.windowStart, s.count = now, 0
+	return fixedWindow(s.now(), &s.windowStart, &s.count)
+}
+
+// allowRejected bounds the rejected requests recorded per rateWindow.
+func (s *server) allowRejected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fixedWindow(s.now(), &s.rejectStart, &s.rejected)
+}
+
+func fixedWindow(now time.Time, start *time.Time, count *int) bool {
+	if now.Sub(*start) >= rateWindow {
+		*start, *count = now, 0
 	}
-	if s.count >= rateLimit {
+	if *count >= rateLimit {
 		return false
 	}
-	s.count++
+	*count++
 	return true
 }
 
