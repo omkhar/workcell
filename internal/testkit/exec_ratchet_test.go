@@ -113,7 +113,7 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool) in
 		}
 		return ""
 	}
-	pathRewritten := packageRewritesPath || rewritesProcessPath(file)
+	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
 	aliases := commandAliases(file, execCommandName)
 	count := 0
 	called := map[ast.Expr]bool{}
@@ -374,14 +374,12 @@ func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[s
 	}
 }
 
-// rewritesProcessPath reports whether the file sets the process PATH through
-// t.Setenv or os.Setenv, called directly or through a saved method value such
-// as setenv := t.Setenv, after which a slashless program name can resolve to
-// a freshly written fixture. A key that is not a string literal, such as a
-// named constant, is treated as PATH, since its value is not resolved here.
-func rewritesProcessPath(file *ast.File) bool {
-	// Saved Setenv values propagate to a fixed point, so an alias assigned
-	// from another alias counts too.
+// savedSetenvAliases lists the identifiers that hold a Setenv function value
+// anywhere in files, such as setenv := t.Setenv or var setenv = os.Setenv,
+// propagated to a fixed point so an alias assigned from another alias counts
+// too. The files are read together, so a package-level alias declared in one
+// file is known when another file calls it.
+func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	savedSetenv := map[string]bool{}
 	isSetenv := func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
@@ -406,23 +404,45 @@ func rewritesProcessPath(file *ast.File) bool {
 	}
 	for {
 		added := false
-		ast.Inspect(file, func(c ast.Node) bool {
-			switch n := c.(type) {
-			case *ast.AssignStmt:
-				added = record(n.Lhs, n.Rhs) || added
-			case *ast.ValueSpec:
-				names := make([]ast.Expr, len(n.Names))
-				for i, name := range n.Names {
-					names[i] = name
+		for _, file := range files {
+			ast.Inspect(file, func(c ast.Node) bool {
+				switch n := c.(type) {
+				case *ast.AssignStmt:
+					added = record(n.Lhs, n.Rhs) || added
+				case *ast.ValueSpec:
+					names := make([]ast.Expr, len(n.Names))
+					for i, name := range n.Names {
+						names[i] = name
+					}
+					added = record(names, n.Values) || added
 				}
-				added = record(names, n.Values) || added
-			}
-			return true
-		})
+				return true
+			})
+		}
 		if !added {
-			break
+			return savedSetenv
 		}
 	}
+}
+
+// packageRewritesProcessPath reports whether any file of the package rewrites
+// the process PATH, with Setenv aliases collected across all of them.
+func packageRewritesProcessPath(files []*ast.File) bool {
+	aliases := savedSetenvAliases(files...)
+	for _, file := range files {
+		if rewritesProcessPath(file, aliases) {
+			return true
+		}
+	}
+	return false
+}
+
+// rewritesProcessPath reports whether the file sets the process PATH through
+// t.Setenv or os.Setenv, called directly or through one of the savedSetenv
+// aliases, after which a slashless program name can resolve to a freshly
+// written fixture. A key that is not a string literal, such as a named
+// constant, is treated as PATH, since its value is not resolved here.
+func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
 		call, ok := c.(*ast.CallExpr)
@@ -604,6 +624,20 @@ func a(t *testing.T) { first := t.Setenv; second := first; second("PATH", "/tmp/
 	if got := rawExecSites(t, "chained_setenv.go", chainedSetenv); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a chained Setenv alias)", got)
 	}
+	// A Setenv alias declared in one file and called in another is a rewrite.
+	decl := "package x\nimport \"os\"\nvar setenv = os.Setenv\n"
+	call := "package x\nimport \"os/exec\"\nfunc a() { setenv(\"PATH\", \"/tmp/fixtures\"); exec.Command(\"git\") }\n"
+	var twoFiles []*ast.File
+	for name, src := range map[string]string{"decl.go": decl, "call.go": call} {
+		file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		twoFiles = append(twoFiles, file)
+	}
+	if !packageRewritesProcessPath(twoFiles) {
+		t.Fatal("a Setenv alias declared in one file and called in another was not seen as a PATH rewrite")
+	}
 	// A rewrite in another file of the package reaches this file's lookups.
 	const plain = `package x
 import "os/exec"
@@ -673,21 +707,23 @@ func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
-	// A PATH rewrite in any file of the package reaches every file's lookups.
+	// A PATH rewrite in any file of the package reaches every file's lookups,
+	// and a Setenv alias declared in one file may be called from another.
 	sources := map[string]string{}
-	packageRewritesPath := false
+	var parsed []*ast.File
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
 		sources[f] = string(src)
-		parsed, err := parser.ParseFile(token.NewFileSet(), f, src, 0)
+		file, err := parser.ParseFile(token.NewFileSet(), f, src, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", f, err)
 		}
-		packageRewritesPath = packageRewritesPath || rewritesProcessPath(parsed)
+		parsed = append(parsed, file)
 	}
+	packageRewritesPath := packageRewritesProcessPath(parsed)
 	counts := map[string]int{}
 	for _, f := range files {
 		if n := rawExecSitesIn(t, f, sources[f], packageRewritesPath); n > 0 {
