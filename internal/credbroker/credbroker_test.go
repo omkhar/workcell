@@ -447,37 +447,22 @@ func TestLookupStopsWhenCancelledAfterConnecting(t *testing.T) {
 
 func TestListenRefusesAnAncestorAnotherUIDCouldReplace(t *testing.T) {
 	dir := socketDir(t)
-	open := filepath.Join(dir, "open")
-	if err := os.Mkdir(open, 0o777); err != nil {
-		t.Fatal(err)
+	for name, mode := range map[string]os.FileMode{"open": 0o777, "sticky": 0o777 | os.ModeSticky} {
+		parent := filepath.Join(dir, name, "p")
+		if err := os.MkdirAll(parent, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(filepath.Join(dir, name), mode); err != nil {
+			t.Fatal(err)
+		}
+		socket, err := listen(filepath.Join(parent, "b.sock"))
+		if (err == nil) != (mode&os.ModeSticky != 0) {
+			t.Fatalf("listen under a %s world-writable ancestor = %v; only the sticky one is admitted", name, err)
+		}
+		if err == nil {
+			socket.close()
+		}
 	}
-	if err := os.Chmod(open, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	parent := filepath.Join(open, "p")
-	if err := os.Mkdir(parent, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if socket, err := listen(filepath.Join(parent, "b.sock")); err == nil {
-		socket.close()
-		t.Fatal("listen accepted a world-writable, non-sticky ancestor")
-	}
-	sticky := filepath.Join(dir, "sticky")
-	if err := os.Mkdir(sticky, 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(sticky, 0o777|os.ModeSticky); err != nil {
-		t.Fatal(err)
-	}
-	parent = filepath.Join(sticky, "p")
-	if err := os.Mkdir(parent, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	socket, err := listen(filepath.Join(parent, "b.sock"))
-	if err != nil {
-		t.Fatalf("listen refused a sticky ancestor: %v", err)
-	}
-	socket.close()
 }
 
 func TestServeClosesAcceptedConnectionsOnCancel(t *testing.T) {
@@ -522,28 +507,23 @@ func TestServeRefusesConnectionsOverTheAdmissionLimit(t *testing.T) {
 	go func() {
 		done <- Serve(ctx, Config{SocketPath: path, Token: []byte(testToken), Credentials: map[string]string{"claude_api_key": "sk"}, Log: discardLog{}})
 	}()
-	var idle []net.Conn
+	var conns []net.Conn
 	defer func() {
-		for _, c := range idle {
+		for _, c := range conns {
 			_ = c.Close()
 		}
 	}()
-	for deadline := time.Now().Add(5 * time.Second); len(idle) < maxConns; {
-		c, err := net.Dial("unix", path)
-		if err != nil {
-			if time.Now().After(deadline) {
-				t.Fatalf("broker never listened: %v", err)
-			}
+	for deadline := time.Now().Add(5 * time.Second); len(conns) <= maxConns && time.Now().Before(deadline); {
+		if c, err := net.Dial("unix", path); err == nil {
+			conns = append(conns, c)
+		} else {
 			time.Sleep(10 * time.Millisecond)
-			continue
 		}
-		idle = append(idle, c)
 	}
-	extra, err := net.Dial("unix", path)
-	if err != nil {
-		t.Fatal(err)
+	if len(conns) != maxConns+1 {
+		t.Fatalf("dialed %d connections, want %d", len(conns), maxConns+1)
 	}
-	defer extra.Close()
+	extra := conns[maxConns]
 	_ = extra.SetReadDeadline(time.Now().Add(2 * time.Second))
 	if _, err := extra.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("connection over the limit was not closed promptly: %v", err)
@@ -554,37 +534,28 @@ func TestServeRefusesConnectionsOverTheAdmissionLimit(t *testing.T) {
 	}
 }
 
-func TestRejectedRequestsHaveTheirOwnBoundAndLeaveTheGrantQuotaAlone(t *testing.T) {
-	s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
-	path := listenServer(t, s)
+func TestRejectionsSpendTheirOwnBudgetAndLeaveTheGrantQuotaAlone(t *testing.T) {
 	ctx := context.Background()
-	for i := 0; i < rateLimit+5; i++ {
-		_, _ = Lookup(ctx, path, "", "api.anthropic.com", "x-api-key")
-	}
-	if n := len(log.records(t)); n != rateLimit {
-		t.Fatalf("rejections recorded = %d, want the window bound %d", n, rateLimit)
-	}
-	if v, err := Lookup(ctx, path, testToken, "api.anthropic.com", "x-api-key"); err != nil || v != "sk-claude" {
-		t.Fatalf("authenticated lookup after a rejection flood = (%q, %v), want granted", v, err)
-	}
-}
-
-func TestMalformedRequestsSpendTheRejectionBudget(t *testing.T) {
-	s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
-	path := listenServer(t, s)
-	for i := 0; i < rateLimit+5; i++ {
-		connection, err := net.Dial("unix", path)
-		if err != nil {
-			t.Fatal(err)
+	for name, reject := range map[string]func(path string){
+		"bad token": func(path string) { _, _ = Lookup(ctx, path, "", "api.anthropic.com", "x-api-key") },
+		"malformed": func(path string) {
+			if c, err := net.Dial("unix", path); err == nil {
+				_, _ = c.Write([]byte("\n"))
+				_, _ = c.Read(make([]byte, 1))
+				_ = c.Close()
+			}
+		},
+	} {
+		s, log := testServer(t, map[string]string{"claude_api_key": "sk-claude"})
+		path := listenServer(t, s)
+		for i := 0; i < rateLimit+5; i++ {
+			reject(path)
 		}
-		_, _ = connection.Write([]byte("\n"))
-		_, _ = connection.Read(make([]byte, 1))
-		_ = connection.Close()
-	}
-	if n := len(log.records(t)); n != rateLimit {
-		t.Fatalf("malformed rejections recorded = %d, want the window bound %d", n, rateLimit)
-	}
-	if v, err := Lookup(context.Background(), path, testToken, "api.anthropic.com", "x-api-key"); err != nil || v != "sk-claude" {
-		t.Fatalf("authenticated lookup after a malformed flood = (%q, %v), want granted", v, err)
+		if n := len(log.records(t)); n != rateLimit {
+			t.Fatalf("%s rejections recorded = %d, want the window bound %d", name, n, rateLimit)
+		}
+		if v, err := Lookup(ctx, path, testToken, "api.anthropic.com", "x-api-key"); err != nil || v != "sk-claude" {
+			t.Fatalf("authenticated lookup after a %s flood = (%q, %v), want granted", name, v, err)
+		}
 	}
 }

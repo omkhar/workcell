@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/omkhar/workcell/internal/aptbroker"
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
@@ -229,7 +230,7 @@ func (s *server) serve(connection *net.UnixConn) {
 	// Every rejection, including one before the request parses, spends the
 	// rejection budget before it is recorded, so an unauthenticated caller
 	// cannot fill the ledger through any path.
-	if uid, err := peerUID(connection); err != nil || uid != s.uid {
+	if uid, err := aptbroker.SocketPeerUID(connection); err != nil || uid != s.uid {
 		if s.allowRejected() {
 			_ = s.record(Request{}, "", "peer_rejected")
 		}

@@ -3,7 +3,7 @@
 
 //go:build darwin
 
-package credbroker
+package aptbroker
 
 import (
 	"net"
@@ -11,7 +11,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func peerUID(connection *net.UnixConn) (uint32, error) {
+// SocketPeerUID returns the uid of the process on the other end of connection.
+func SocketPeerUID(connection *net.UnixConn) (uint32, error) {
 	raw, err := connection.SyscallConn()
 	if err != nil {
 		return 0, err
