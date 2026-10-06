@@ -241,7 +241,8 @@ func main() {
 	dieUsage(rootUsageError(os.Args[1]))
 }
 
-func rootUsageErrorMessage() string {
+// knownCommandLines lists every top-level command, one per indented line.
+func knownCommandLines() string {
 	names := make([]string, 0, len(subcommands())+2)
 	for _, sub := range subcommands() {
 		names = append(names, sub.name)
@@ -257,29 +258,18 @@ func rootUsageErrorMessage() string {
 		lines.WriteString(name)
 		lines.WriteString("\n")
 	}
-	return fmt.Sprintf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], lines.String())
+	return lines.String()
+}
+
+func rootUsageErrorMessage() string {
+	return fmt.Sprintf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], knownCommandLines())
 }
 
 func rootUsageError(badCommand string) error {
-	names := make([]string, 0, len(subcommands())+2)
-	for _, sub := range subcommands() {
-		names = append(names, sub.name)
-	}
-	// scenario-manifest is dispatched directly in main() and so is not
-	// part of the subcommands() table, but it is still a known command
-	// for help/error output purposes.
-	names = append(names, "scenario-manifest", "startup-bench")
-	sort.Strings(names)
-	var lines strings.Builder
-	for _, name := range names {
-		lines.WriteString("  ")
-		lines.WriteString(name)
-		lines.WriteString("\n")
-	}
 	if badCommand == "" {
-		return fmt.Errorf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], lines.String())
+		return fmt.Errorf("%s", rootUsageErrorMessage())
 	}
-	return fmt.Errorf("unknown command: %s\n\nKnown commands:\n%s", badCommand, lines.String())
+	return fmt.Errorf("unknown command: %s\n\nKnown commands:\n%s", badCommand, knownCommandLines())
 }
 
 func cmdGenerateControlPlaneManifest(args []string) error {
