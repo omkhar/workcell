@@ -78,9 +78,10 @@ func rawExecSites(t *testing.T, name, src string) int {
 }
 
 // packageRawExecSites counts the raw sites of every file in sources together:
-// a PATH rewrite or a saved exec.Command alias declared in one file reaches the
-// others, so each file is counted with the package-wide rewrite flag and alias
-// set. It returns the count per file name.
+// a PATH rewrite, a saved exec.Command alias, an exec.Cmd type alias or a
+// command holder declared in one file reaches the others, so each file is
+// counted with the package-wide rewrite flag and names. It returns the count
+// per file name.
 func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int {
 	t.Helper()
 	var parsed []*ast.File
@@ -91,11 +92,11 @@ func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int
 		}
 		parsed = append(parsed, file)
 	}
-	packageAliases := packageCommandAliases(parsed)
+	names := packageExecNames(parsed)
 	rewrites := packageRewritesProcessPath(parsed)
 	counts := map[string]int{}
 	for name, src := range sources {
-		if n := rawExecSitesIn(t, name, src, rewrites, packageAliases); n > 0 {
+		if n := rawExecSitesIn(t, name, src, rewrites, &names); n > 0 {
 			counts[name] = n
 		}
 	}
@@ -143,12 +144,23 @@ func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bo
 	}, func(expr ast.Expr) bool { return member(expr) == "Cmd" }, execPkgs["."]
 }
 
+// execNames are the names a package gives to os/exec values: saved
+// exec.Command aliases, types that are exec.Cmd, and command holders.
+type execNames struct{ aliases, cmdTypes, holders map[string]bool }
+
+// packageExecNames collects the execNames of files read together.
+func packageExecNames(files []*ast.File) execNames {
+	aliases := packageCommandAliases(files)
+	return execNames{aliases, cmdTypeNames(files), commandHolders(files, aliases)}
+}
+
 // rawExecSitesIn is rawExecSites for a file whose package may rewrite the
-// process PATH or save exec.Command under an alias elsewhere: a helper in
-// another file can prepend a fixture directory before this file resolves a
-// slashless tool, and a call through an alias declared in another file is a
-// raw site here, so both reach this file's count.
-func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, packageAliases map[string]bool) int {
+// process PATH or declare exec names elsewhere: a helper in another file can
+// prepend a fixture directory before this file resolves a slashless tool, and
+// a call through an alias, a literal of a type alias or a Path assignment on a
+// holder declared in another file is a raw site here, so all reach this
+// file's count. A nil names reads the file alone.
+func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, names *execNames) int {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
@@ -156,10 +168,12 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, pa
 	}
 	execCommandName, isCmdType, dotImported := execCommandNameIn(file)
 	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
-	aliases := commandAliases(file, execCommandName)
-	for alias := range packageAliases {
-		aliases[alias] = true
+	if names == nil {
+		own := packageExecNames([]*ast.File{file})
+		names = &own
 	}
+	aliases := names.aliases
+	isCommand, _ := commandValueIn(execCommandName, isCmdType, names.holders)
 	count := 0
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the package
@@ -194,16 +208,18 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, pa
 		case *ast.AssignStmt:
 			// A command whose Path field is reassigned runs a program that
 			// exec.Command never saw, so each such assignment is a raw site.
+			// A Path field of a value that holds no command starts nothing.
 			for _, lhs := range n.Lhs {
-				if sel, ok := unparen(lhs).(*ast.SelectorExpr); ok && sel.Sel.Name == "Path" {
+				if sel, ok := unparen(lhs).(*ast.SelectorExpr); ok && sel.Sel.Name == "Path" && isCommand(sel.X) {
 					count++
 				}
 			}
 			return true
 		case *ast.CompositeLit:
 			// A Cmd built as a literal names its program in Path rather than
-			// through exec.Command, so it is a raw site.
-			if isCmdType(n.Type) {
+			// through exec.Command, so it is a raw site, also through a local
+			// type such as type command = exec.Cmd.
+			if id, ok := n.Type.(*ast.Ident); isCmdType(n.Type) || ok && names.cmdTypes[id.Name] {
 				count++
 			}
 			return true
@@ -413,17 +429,6 @@ func packageCommandAliases(files []*ast.File) map[string]bool {
 	}
 }
 
-// commandAliases lists the identifiers assigned from exec.Command or
-// exec.CommandContext anywhere in the file, such as run := exec.Command, and
-// every identifier assigned from one of those in turn, until no new name
-// appears.
-func commandAliases(file *ast.File, execCommandName func(ast.Expr) string) map[string]bool {
-	aliases := map[string]bool{}
-	for collectCommandAliases(aliases, file, execCommandName) {
-	}
-	return aliases
-}
-
 // collectCommandAliases adds one pass of file's command aliases to aliases
 // and reports whether any name was new.
 func collectCommandAliases(aliases map[string]bool, file *ast.File, execCommandName func(ast.Expr) string) bool {
@@ -461,6 +466,154 @@ func collectCommandAliases(aliases map[string]bool, file *ast.File, execCommandN
 		return true
 	})
 	return added
+}
+
+// cmdTypeNames lists the types declared as exec.Cmd in files, such as type
+// command = exec.Cmd or type command exec.Cmd, and every type declared from
+// one of those in turn, until no new name appears.
+func cmdTypeNames(files []*ast.File) map[string]bool {
+	cmdTypes := map[string]bool{}
+	for added := true; added; {
+		added = false
+		for _, file := range files {
+			_, isCmdType, _ := execCommandNameIn(file)
+			ast.Inspect(file, func(c ast.Node) bool {
+				if spec, ok := c.(*ast.TypeSpec); ok && !cmdTypes[spec.Name.Name] {
+					if id, ok := spec.Type.(*ast.Ident); isCmdType(spec.Type) || ok && cmdTypes[id.Name] {
+						cmdTypes[spec.Name.Name] = true
+						added = true
+					}
+				}
+				return true
+			})
+		}
+	}
+	return cmdTypes
+}
+
+// commandValueIn returns the function that reports whether an expression
+// yields a command: a call to exec.Command or to a holder (a saved alias, a
+// function returning a command, a conversion to a command type), new or a
+// literal of a type that mentions exec.Cmd, or a holder variable or field
+// reached through &, *, an index or a selector. A type mentions exec.Cmd when
+// it names it or a holder type anywhere outside a function's parameters.
+func commandValueIn(execCommandName func(ast.Expr) string, isCmdType func(ast.Expr) bool, holders map[string]bool) (func(ast.Expr) bool, func(ast.Node) bool) {
+	var mentionsCmd func(ast.Node) bool
+	mentionsCmd = func(typ ast.Node) bool {
+		found := false
+		ast.Inspect(typ, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.FuncType:
+				found = found || n.Results != nil && mentionsCmd(n.Results)
+				return false
+			case *ast.Ident:
+				found = found || holders[n.Name] || isCmdType(n)
+			case *ast.SelectorExpr:
+				found = found || isCmdType(n)
+			}
+			return !found
+		})
+		return found
+	}
+	var isCommand func(ast.Expr) bool
+	isCommand = func(expr ast.Expr) bool {
+		switch v := unparen(expr).(type) {
+		case *ast.UnaryExpr:
+			return v.Op == token.AND && isCommand(v.X)
+		case *ast.StarExpr:
+			return isCommand(v.X)
+		case *ast.IndexExpr:
+			return isCommand(v.X)
+		case *ast.Ident:
+			return holders[v.Name]
+		case *ast.SelectorExpr:
+			return holders[v.Sel.Name]
+		case *ast.CompositeLit:
+			return v.Type != nil && mentionsCmd(v.Type)
+		case *ast.FuncLit:
+			return mentionsCmd(v.Type)
+		case *ast.CallExpr:
+			if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "new" && len(v.Args) == 1 {
+				return mentionsCmd(v.Args[0])
+			}
+			return execCommandName(v.Fun) != "" || isCommand(v.Fun)
+		}
+		return false
+	}
+	return isCommand, mentionsCmd
+}
+
+// commandHolders lists the names that can hold a command, to a fixed point
+// across files: the saved exec.Command aliases, a variable, parameter, result
+// or struct field declared with a type that mentions exec.Cmd, a variable
+// assigned or ranged from a command value, a function returning a command and
+// a type that mentions exec.Cmd. Names are not scoped, so a holder name reused
+// for an unrelated value elsewhere only makes the count stricter.
+func commandHolders(files []*ast.File, aliases map[string]bool) map[string]bool {
+	holders := map[string]bool{}
+	for name := range aliases {
+		holders[name] = true
+	}
+	for added := true; added; {
+		added = false
+		for _, file := range files {
+			execCommandName, isCmdType, _ := execCommandNameIn(file)
+			isCommand, mentionsCmd := commandValueIn(execCommandName, isCmdType, holders)
+			mark := func(exprs ...ast.Expr) {
+				for _, expr := range exprs {
+					if id, ok := unparen(expr).(*ast.Ident); ok && id.Name != "_" && !holders[id.Name] {
+						holders[id.Name] = true
+						added = true
+					}
+				}
+			}
+			assign := func(names, values []ast.Expr) {
+				if len(values) == 1 && len(names) > 1 && isCommand(values[0]) {
+					mark(names...)
+				}
+				for i, value := range values {
+					if i < len(names) && isCommand(value) {
+						mark(names[i])
+					}
+				}
+			}
+			ast.Inspect(file, func(c ast.Node) bool {
+				switch n := c.(type) {
+				case *ast.AssignStmt:
+					assign(n.Lhs, n.Rhs)
+				case *ast.ValueSpec:
+					names := make([]ast.Expr, len(n.Names))
+					for i, name := range n.Names {
+						names[i] = name
+					}
+					if n.Type != nil && mentionsCmd(n.Type) {
+						mark(names...)
+					}
+					assign(names, n.Values)
+				case *ast.Field:
+					if mentionsCmd(n.Type) {
+						for _, name := range n.Names {
+							mark(name)
+						}
+					}
+				case *ast.FuncDecl:
+					if n.Type.Results != nil && mentionsCmd(n.Type.Results) {
+						mark(n.Name)
+					}
+				case *ast.TypeSpec:
+					if mentionsCmd(n.Type) {
+						mark(n.Name)
+					}
+				case *ast.RangeStmt:
+					if isCommand(n.X) {
+						mark(n.Key, n.Value)
+					}
+				}
+				return true
+			})
+		}
+	}
+	return holders
 }
 
 // envWriters are the functions that set a process environment variable:
@@ -636,9 +789,25 @@ func v(p string) { run := (exec.Command); run(p); (exec.Command)(p) }
 func w(p string) { var run func(string, ...string) *exec.Cmd; (run) = exec.Command; run(p) }
 func x(p string) { c := exec.Command("/bin/true"); c.Path = p; c.Run() }
 func y(p string) { (&exec.Cmd{Path: p}).Run() }
+func z(p string) { type command = exec.Cmd; type named exec.Cmd; (&command{Path: p}).Run(); _ = named{Path: p} }
+type request struct{ Path string }
+func aa(p string) { var r request; r.Path = p }
+func ab(p string) { var c exec.Cmd; c.Path = p; c.Run() }
+func ac(c *exec.Cmd, p string) { c.Path = p; c.Run() }
+type suite struct{ cmd *exec.Cmd }
+func ad(s suite, p string) { s.cmd.Path = p; s.cmd.Run() }
+func ae(p string) { c := new(exec.Cmd); c.Path = p; c.Run() }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 25 {
-		t.Fatalf("rawExecSites = %d, want 25 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call, w's parenthesized assignment target plus its call, x's Path reassignment, y's Cmd literal; o builds and returns its command under the retry)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 31 {
+		t.Fatalf("rawExecSites = %d, want 31 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call, w's parenthesized assignment target plus its call, x's Path reassignment, y's Cmd literal, z's literals of an exec.Cmd alias and defined type, the Path reassignments of ab's declared Cmd, ac's Cmd parameter, ad's Cmd field and ae's new Cmd; o builds and returns its command under the retry, and aa's request.Path starts nothing)", got)
+	}
+	// A Path field of an unrelated type is not a command's program.
+	const unrelatedPath = `package x
+type request struct{ Path string }
+func a(request *request, value string) { request.Path = value }
+`
+	if got := rawExecSites(t, "unrelated_path.go", unrelatedPath); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a Path assignment on a value that holds no command)", got)
 	}
 	// A function that declares its own helper of the same name shadows the
 	// package helper, so nothing in that file is exempt.
@@ -786,6 +955,15 @@ func a() { exec.Command("git", "init") }
 	})
 	if counts["decl.go"] != 1 || counts["chain.go"] != 1 {
 		t.Fatalf("package counts = %v, want decl.go:1 chain.go:1 (an alias of another file's alias)", counts)
+	}
+	// An exec.Cmd type alias and a command variable declared in one file
+	// count their literal and Path reassignment in another.
+	counts = packageRawExecSites(t, map[string]string{
+		"decl.go": "package x\nimport \"os/exec\"\ntype command = exec.Cmd\nvar shared *exec.Cmd\n",
+		"use.go":  "package x\nfunc a(p string) { (&command{Path: p}).Run(); shared.Path = p }\n",
+	})
+	if counts["decl.go"] != 0 || counts["use.go"] != 2 {
+		t.Fatalf("package counts = %v, want use.go:2 (a Cmd type alias and a Cmd variable declared in another file)", counts)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
