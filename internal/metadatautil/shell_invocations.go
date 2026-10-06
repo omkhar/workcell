@@ -181,6 +181,23 @@ func parenBalance(args []word) int {
 	return balance
 }
 
+// substitutionDepth returns how many unquoted $( spans are still open after a
+// line's words, given the count open before it. A quoted "$( is the stack
+// shellWords returns; an unquoted one leaves no trace there, so a reader that
+// stops at the line end splits x=$( from the command on the next line. Only a
+// $( starts the count, so a bare subshell ( does not join lines, and the
+// count is the balance of the whole line, so $((a + 1)) split into words
+// closes on the line it opens.
+func substitutionDepth(open int, words []word) int {
+	if open == 0 && !slices.ContainsFunc(words, func(each word) bool {
+		_, unclosed := withoutExpansions(each.text)
+		return !each.quoted && unclosed > 0
+	}) {
+		return 0
+	}
+	return max(open+parenBalance(words), 0)
+}
+
 // withoutExpansions removes every $(…) and ${…} span from a word, including
 // nested ones, and returns how many of them the word leaves open. A parenthesis
 // or a brace inside an expansion is part of the expansion's own syntax -- the )
@@ -392,7 +409,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			continue
 		}
 		current.WriteString(text)
-		words, opened, quote, rest, continues := shellWords(current.String(), quotes)
+		words, opened, quote, rest, continues, _ := shellWords(current.String(), quotes)
 		if continues {
 			// The line ends with a backslash the quoting leaves as syntax, and
 			// bash joins the two halves with nothing between them. Counting
@@ -509,13 +526,14 @@ func ShellInvocations(script, commandName string) []Invocation {
 // suspended, which the caller gives back on the next line so that the ) which
 // closes the substitution also restores the quote around it; and continues says
 // the line ended on a backslash that the quoting leaves as syntax, so bash
-// reads the next physical line as the rest of this one.
+// reads the next physical line as the rest of this one; comment is the text
+// from the # that starts a comment to the end of the line, or empty.
 //
-// One pass keeps the five answers consistent. A pattern per answer cannot:
+// One pass keeps the six answers consistent. A pattern per answer cannot:
 // each has to rediscover the quoting, and the one that gets it wrong reads
 // syntax where the shell reads text.
 func shellWords(line string, stack []byte) (
-	words []word, heredocs []heredoc, open byte, rest []byte, continues bool,
+	words []word, heredocs []heredoc, open byte, rest []byte, continues bool, comment string,
 ) {
 	var text strings.Builder
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
@@ -623,9 +641,9 @@ func shellWords(line string, stack []byte) (
 			flush()
 		case character == '#' && !inWord:
 			if substituted {
-				return nil, heredocs, 0, stack, false
+				return nil, heredocs, 0, stack, false, line[index:]
 			}
-			return words, heredocs, 0, stack, false
+			return words, heredocs, 0, stack, false, line[index:]
 		case character == '$' && index+2 < len(line) && line[index+1] == '(' && line[index+2] == '(':
 			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
 			arithmetic++
@@ -692,9 +710,9 @@ func shellWords(line string, stack []byte) (
 	if len(stack) > 0 {
 		// A substitution is still open, so the logical line has not ended and
 		// the quote around it is not the caller's to skip.
-		return words, heredocs, 0, stack, continues
+		return words, heredocs, 0, stack, continues, ""
 	}
-	return words, heredocs, quote, stack, continues
+	return words, heredocs, quote, stack, continues, ""
 }
 
 // replacesShell reports whether the words are an exec that names a program,

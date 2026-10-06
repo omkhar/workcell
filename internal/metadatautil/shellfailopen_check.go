@@ -34,9 +34,11 @@ import (
 // each file carries today; a count above its row fails, and so does a count
 // below it, so the row drops with the repair.
 //
-// The scan reads lines the way ShellPortabilityFindings does. ShellInvocations
-// is not usable here: it drops the body of a compound command and the inside of
-// `$(` and `<(`, which are exactly the places this class hides in.
+// The scan reads lines with shellWords, the reader ShellInvocations uses, so
+// quotes, comments, heredocs and an open `$(` mean the same thing to both.
+// ShellInvocations itself is not usable here: it drops the body of a compound
+// command and the inside of `$(` and `<(`, which are exactly the places this
+// class hides in.
 func CheckShellFailOpen(rootDir string) error {
 	files, err := shellFailOpenFiles(rootDir)
 	if err != nil {
@@ -133,54 +135,71 @@ var (
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips
-// comment lines and heredoc bodies, reads each continued line as one
-// statement, and ignores text inside single quotes and inside double quotes
-// that open no command substitution.
+// heredoc bodies and the inside of a quoted span that runs past its line, reads
+// a continued line or an open `$(` as one statement, ignores text inside single
+// quotes and inside double quotes that open no command substitution, and takes
+// a marker only from a real shell comment.
 func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 	type logical struct {
-		number int
-		raw    string
-		code   string
+		number        int
+		code, comment string
 	}
 	var statements []logical
-	var pending, joinedRaw string
-	var heredoc string
-	startNumber, number := 0, 0
+	var current logical
+	var lines []string
+	var heredocs []heredoc
+	var stack []byte
+	var openQuote byte
+	depth, number := 0, 0
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if heredoc != "" {
-			if strings.TrimSpace(text) == heredoc {
-				heredoc = ""
+		if openQuote != 0 {
+			at := quoteCloseIndex(text, openQuote)
+			if at < 0 {
+				continue
+			}
+			openQuote = 0
+			text = ": " + text[at+1:]
+		}
+		if len(heredocs) > 0 {
+			if heredocs[0].endsAt(text) {
+				heredocs = heredocs[1:]
 			}
 			continue
 		}
-		if delimiter := heredocDelimiter(text); delimiter != "" {
-			heredoc = delimiter
+		if len(lines) == 0 {
+			current.number = number
 		}
-		if pending == "" {
-			startNumber = number
+		words, opened, quote, rest, continues, comment := shellWords(text, stack)
+		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
+		depth = substitutionDepth(depth, words)
+		code := strings.TrimSuffix(text, comment)
+		if continues {
+			code = strings.TrimSuffix(code, "\\")
 		}
-		joinedRaw += text + "\n"
-		if strings.HasSuffix(text, "\\") && !strings.HasPrefix(strings.TrimSpace(text), "#") {
-			pending += strings.TrimSuffix(text, "\\") + " "
+		lines = append(lines, code)
+		current.comment += comment
+		if continues || len(stack) > 0 || depth > 0 {
 			continue
 		}
-		code := pending + text
-		statements = append(statements, logical{startNumber, joinedRaw, shellCodeOnly(code)})
-		pending, joinedRaw = "", ""
+		current.code = shellCodeOnly(strings.Join(lines, "\n"))
+		statements = append(statements, current)
+		current, lines = logical{}, nil
+	}
+	if len(lines) > 0 {
+		// A substitution the script never closes still holds its hits.
+		current.code = shellCodeOnly(strings.Join(lines, "\n"))
+		statements = append(statements, current)
 	}
 	var findings []ShellFailOpenFinding
 	for index, statement := range statements {
 		if strings.TrimSpace(statement.code) == "" {
 			continue
 		}
-		previous := ""
-		if index > 0 {
-			previous = statements[index-1].raw
-		}
-		if shellFailClosedRe.MatchString(statement.raw) ||
-			(strings.HasPrefix(strings.TrimSpace(previous), "#") && shellFailClosedRe.MatchString(previous)) {
+		if shellFailClosedRe.MatchString(statement.comment) ||
+			(index > 0 && strings.TrimSpace(statements[index-1].code) == "" &&
+				shellFailClosedRe.MatchString(statements[index-1].comment)) {
 			continue
 		}
 		window := statement.code
@@ -209,9 +228,9 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 	return findings
 }
 
-// shellCodeOnly blanks single-quoted text, double-quoted text that holds no
-// `$(`, and a trailing comment, so a message that names git or `|| true` is
-// not a command.
+// shellCodeOnly blanks single-quoted text and double-quoted text that holds no
+// `$(`, so a message that names git or `|| true` is not a command. The caller
+// has already cut each line's comment with shellWords.
 func shellCodeOnly(line string) string {
 	var out strings.Builder
 	var quote byte
@@ -225,8 +244,6 @@ func shellCodeOnly(line string) string {
 				i++
 			case c == '\'' || c == '"':
 				quote, start = c, i
-			case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
-				return out.String()
 			default:
 				out.WriteByte(c)
 			}
