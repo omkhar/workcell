@@ -39,48 +39,93 @@ func TestDocClaimsPassOnCheckout(t *testing.T) {
 }
 
 func TestDocClaimsNegativeControls(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
-	if err != nil {
-		t.Fatal(err)
+	sources := map[string]string{}
+	for _, rel := range []string{"scripts/check-doc-links.sh", "scripts/lib/doc-claims.awk", "scripts/lib/md-unfenced.awk", "scripts/lib/lane-scripts.awk"} {
+		body, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[rel] = string(body)
 	}
-	awkSrc, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "lib", "doc-claims.awk"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The old scanner cut a claim to its first 100 characters, so a suffix
+	// change kept the old key. The key here is that cut form.
+	longClaim := "The launcher rejects every unsafe input that reaches the provider wrapper from any operator-supplied flag or file and every MCP file."
+	cutKey := longClaim[:100]
+	cutKey = cutKey[:strings.LastIndex(cutKey, " ")]
 	cases := []struct {
 		name     string
 		doc      string
+		lane     string // validate-repo.sh body; empty means it runs scripts/gate.sh
 		baseline string
+		base     string // committed baseline rows on main; empty means no commit
 		want     string // empty means the fixture must pass
 	}{
-		{"clean", "The gate `scripts/gate.sh` runs.\n", "", ""},
-		{"missing path", "See `scripts/nope.sh` here.\n", "", "missing-path"},
-		{"missing internal path", "See `internal/nope/x.go` here.\n", "", "missing-path"},
-		{"unwired script", "See `scripts/orphan.sh` here.\n", "", "unwired-script"},
-		{"unanchored claim", "The launcher rejects bad input.\n", "", "unanchored-claim"},
-		{"anchored claim", "The launcher rejects bad input.\nIt runs `scripts/gate.sh` first.\n", "", ""},
-		{"claim three lines away", "The launcher rejects bad input.\n\n\nIt runs `scripts/gate.sh` first.\n", "", "unanchored-claim"},
-		{"baselined claim", "The launcher rejects bad input.\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", ""},
-		{"stale baseline row", "Nothing here.\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "stale doc-claims baseline"},
+		{"clean", "The gate `scripts/gate.sh` runs.\n", "", "", "", ""},
+		{"missing path", "See `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"missing dot-slash path", "See `./scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"missing spaced path", "See ` scripts/nope.sh ` here.\n", "", "", "", "missing-path"},
+		{"missing internal path", "See `internal/nope/x.go` here.\n", "", "", "", "missing-path"},
+		{"unwired script", "See `scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
+		{"unwired dot-slash script", "See `./scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
+		{"wired by root variable", "See `scripts/orphan.sh` here.\n", "\"${ROOT_DIR}/scripts/orphan.sh\" --flag\n", "", "", ""},
+		{"wired after keyword", "See `scripts/orphan.sh` here.\n", "if ! ./scripts/orphan.sh; then exit 1; fi\n", "", "", ""},
+		{"comment is not wiring", "See `scripts/orphan.sh` here.\n", "# scripts/orphan.sh is intentionally not run\n", "", "", "unwired-script"},
+		{"echo is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"scripts/orphan.sh\"\n", "", "", "unwired-script"},
+		{"longer name is not wiring", "See `scripts/orphan.sh` here.\n", "scripts/orphan.sh.bak\n", "", "", "unwired-script"},
+		{"array member is not wiring", "See `scripts/orphan.sh` here.\n", "files=(\n  \"${ROOT_DIR}/scripts/orphan.sh\"\n)\n", "", "", "unwired-script"},
+		{"case pattern is not wiring", "See `scripts/orphan.sh` here.\n", "case x in\n  scripts/orphan.sh | y)\n    true\n    ;;\nesac\n", "", "", "unwired-script"},
+		{"continued argument is not wiring", "See `scripts/orphan.sh` here.\n", "shellcheck \\\n  scripts/orphan.sh\n", "", "", "unwired-script"},
+		{"unanchored claim", "The launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
+		{"blocks claim", "Workcell blocks operator launch.\n", "", "", "", "unanchored-claim"},
+		{"denies claim", "Workcell denies repository MCP files.\n", "", "", "", "unanchored-claim"},
+		{"prevents claim", "The mount prevents writes.\n", "", "", "", "unanchored-claim"},
+		{"enforces claim", "The wrapper enforces the policy.\n", "", "", "", "unanchored-claim"},
+		{"fails claim", "The check fails closed.\n", "", "", "", "unanchored-claim"},
+		{"requires claim", "The launcher requires a pinned image.\n", "", "", "", "unanchored-claim"},
+		{"guarantees claim", "The seal guarantees integrity.\n", "", "", "", "unanchored-claim"},
+		{"claim wrapped across lines", "The policy is enforced\nby the launcher.\n", "", "", "", "unanchored-claim"},
+		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
+		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "", "broken link"},
+		{"fenced claim is skipped", "```bash\nThe launcher rejects bad input.\n```\n", "", "", "", ""},
+		{"anchored claim", "The launcher rejects bad input.\nIt runs `scripts/gate.sh` first.\n", "", "", "", ""},
+		{"claim three lines away", "The launcher rejects bad input.\n\n\nIt runs `scripts/gate.sh` first.\n", "", "", "", "unanchored-claim"},
+		{"baselined claim", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", ""},
+		{"long claim keeps its full text", longClaim + "\n", "", "README.md\tunanchored-claim\t" + cutKey + "\tx\n", "", "unbaselined doc claim hit"},
+		{"stale baseline row", "Nothing here.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", "stale doc-claims baseline"},
+		{"baseline growth", "The launcher rejects bad input.\nWorkcell blocks operator launch.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "baseline grew from 1 to 2 rows"},
+		{"baseline shrink", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeFixtureFile(t, dir, "scripts/check-doc-links.sh", string(script))
-			writeFixtureFile(t, dir, "scripts/lib/doc-claims.awk", string(awkSrc))
-			writeFixtureFile(t, dir, "scripts/validate-repo.sh", "scripts/gate.sh\n")
+			for rel, body := range sources {
+				writeFixtureFile(t, dir, rel, body)
+			}
+			lane := tc.lane
+			if lane == "" {
+				lane = "scripts/gate.sh\n"
+			}
+			writeFixtureFile(t, dir, "scripts/validate-repo.sh", lane)
 			writeFixtureFile(t, dir, "scripts/ci/job-x.sh", "true\n")
 			writeFixtureFile(t, dir, ".github/workflows/x.yml", "name: x\n")
 			writeFixtureFile(t, dir, "scripts/gate.sh", "true\n")
 			writeFixtureFile(t, dir, "scripts/orphan.sh", "true\n")
 			writeFixtureFile(t, dir, "README.md", tc.doc)
+			git := func(args ...string) {
+				t.Helper()
+				full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)
+				if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+			}
+			git("init", "-q", "-b", "main")
+			if tc.base != "" {
+				writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", "# test\n"+tc.base)
+				git("add", "-A")
+				git("commit", "-q", "-m", "base")
+			}
 			writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", "# test\n"+tc.baseline)
-			if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
-				t.Fatalf("git init: %v\n%s", err, out)
-			}
-			if out, err := exec.Command("git", "-C", dir, "add", "-A").CombinedOutput(); err != nil {
-				t.Fatalf("git add: %v\n%s", err, out)
-			}
+			git("add", "-A")
 			out, err := runDocLinks(t, dir)
 			if tc.want == "" {
 				if err != nil {

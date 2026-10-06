@@ -132,15 +132,16 @@ and instructions before it can claim support.
 ## 3a. Documentation claims resolve to gates
 
 `scripts/check-doc-links.sh` reads every Markdown file. A code span that names
-a path under `scripts/`, `internal/` or `.github/workflows/` must exist. A
-`scripts/*.sh` path must also appear in `validate-repo.sh`, a CI job script or
-a workflow. So a doc cannot cite a gate that nothing runs.
+a path under `scripts/`, `internal/` or `.github/workflows/` must exist. The
+check drops a leading `./` first. `validate-repo.sh`, a CI job script or a
+workflow must run a cited `scripts/*.sh` path as a command. So a doc cannot
+cite a gate that nothing runs.
 
-A sentence that claims enforcement needs such a span within two lines; the
-check `scripts/check-doc-links.sh` lists the trigger words. The baseline
-`policy/doc-claims-baseline.tsv` holds the hits that exist today, one row per
-hit: path, rule, subject and reason. A new hit fails. A baseline row with no
-hit fails too, so the baseline only shrinks.
+A sentence that claims enforcement needs such a span within two lines, and
+it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger words. The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
+today, one row per hit: path, rule, full sentence and reason. A new hit fails.
+A row with no hit fails. `scripts/check-doc-links.sh` also fails when the
+file has more rows than at the merge base.
 
 ## 4. Network posture is explicit
 

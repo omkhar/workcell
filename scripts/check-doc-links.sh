@@ -94,7 +94,7 @@ for f in "${md_files[@]}"; do
   done < <(
     # Strip fenced code blocks, then inline code spans, so example markdown
     # (fenced or `inline`) is not treated as a navigable link.
-    awk '/^[[:space:]]*```/{fence=!fence; next} !fence' "${f}" |
+    awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
       sed -E "s/${bt}[^${bt}]*${bt}//g" |
       grep -oE '\]\([^) ]+\)' |
       sed -E 's/^\]\(//; s/\)$//' || true
@@ -122,13 +122,15 @@ while IFS= read -r doc; do
 done <<<"${docs_listing}"
 
 # --- Doc claim enforcement check ----------------------------------------------
-# A code span naming scripts/..., internal/... or .github/workflows/... must
-# exist. A scripts/*.sh path must appear in validate-repo.sh, a scripts/ci/job-*.sh,
-# or a workflow, so a doc cannot cite a gate that nothing runs. A line that says
-# "enforced by", "rejects" or "refuses" needs such a span within 2 lines.
-# Hits that exist today sit in policy/doc-claims-baseline.tsv
+# A code span naming scripts/..., internal/... or .github/workflows/... (a
+# leading ./ is dropped) must exist. validate-repo.sh, a scripts/ci/job-*.sh or
+# a workflow must run a cited scripts/*.sh path as a command, so a doc cannot
+# cite a gate that nothing runs. A sentence with an enforcement word (the claim
+# function in scripts/lib/doc-claims.awk lists them) needs such a span within 2
+# lines. Hits that exist today sit in policy/doc-claims-baseline.tsv
 # (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
-# fails too, so the baseline only shrinks. Override the baseline path with
+# fails too, and the baseline may not gain rows over the merge base with
+# origin/main (or main), so it only shrinks. Override the baseline path with
 # DOC_CLAIMS_BASELINE (tests only).
 claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
 claim_hits="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
@@ -137,11 +139,12 @@ claim_wired="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_wired}"' EXIT
 
 # Every script a lane runs: validate-repo.sh, the CI job scripts, the workflows.
-cat "${ROOT_DIR}/scripts/validate-repo.sh" "${ROOT_DIR}"/scripts/ci/job-*.sh \
-  "${ROOT_DIR}"/.github/workflows/*.yml >"${claim_wired}"
+awk -f "${ROOT_DIR}/scripts/lib/lane-scripts.awk" "${ROOT_DIR}/scripts/validate-repo.sh" \
+  "${ROOT_DIR}"/scripts/ci/job-*.sh "${ROOT_DIR}"/.github/workflows/*.yml >"${claim_wired}"
 
 for f in "${md_files[@]}"; do
-  awk -f "${ROOT_DIR}/scripts/lib/doc-claims.awk" "${f}" |
+  awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
+    awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk" |
     while IFS=$'\t' read -r kind doc subject; do
       if [[ "${kind}" == CLAIM ]]; then
         printf '%s\tunanchored-claim\t%s\n' "${doc}" "${subject}"
@@ -154,7 +157,7 @@ for f in "${md_files[@]}"; do
       case "${subject}" in
         scripts/*.sh)
           wired=0
-          grep -qF "${subject}" "${claim_wired}" || wired=$?
+          grep -qxF "${subject}" "${claim_wired}" || wired=$?
           if [[ "${wired}" -gt 1 ]]; then
             echo "check-doc-links: grep failed on ${subject}" >&2
             exit 2
@@ -167,6 +170,26 @@ for f in "${md_files[@]}"; do
 done
 
 grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
+
+# Ratchet: compare the row count with the baseline at the merge base. A base
+# with no baseline file (the change that adds it) has nothing to compare.
+claims_base_ref=""
+for ref in refs/remotes/origin/main refs/heads/main; do
+  if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+    claims_base_ref="${ref}"
+    break
+  fi
+done
+if [[ -n "${claims_base_ref}" ]] && git rev-parse --verify --quiet HEAD >/dev/null; then
+  claims_merge_base="$(git merge-base HEAD "${claims_base_ref}")"
+  if git cat-file -e "${claims_merge_base}:policy/doc-claims-baseline.tsv" 2>/dev/null; then
+    base_rows="$(git show "${claims_merge_base}:policy/doc-claims-baseline.tsv" | awk '!/^#/ { n++ } END { print n + 0 }')"
+    head_rows="$(awk 'END { print NR }' "${claim_base}")"
+    if [[ "${head_rows}" -gt "${base_rows}" ]]; then
+      note "doc-claims baseline grew from ${base_rows} to ${head_rows} rows over ${claims_base_ref}; fix the new hit instead"
+    fi
+  fi
+fi
 sort -o "${claim_hits}" "${claim_hits}"
 sort -o "${claim_base}" "${claim_base}"
 claim_new="$(comm -23 "${claim_hits}" "${claim_base}")"
