@@ -43,6 +43,12 @@ func TestHardenedIOFindings(t *testing.T) {
 		{name: "a comment is not a call", source: header + "// os.ReadFile(a)\nfunc f() {}\n"},
 		{name: "a string is not a call", source: header + "var s = \"filepath.Glob(a)\"\n"},
 		{name: "an inline exemption clears nothing", source: header + "func f() { os.Stat(a) } // hardened-fs-exempt: a reason\n", want: []string{"os.Stat"}},
+		{
+			name: "a local value that shadows an import is not the package",
+			source: header + "func f() { if os := statter(); os != nil { os.Stat(a) }; filepath := globber(); filepath.Glob(a) }\n" +
+				"func g() { os.Stat(a) }\n",
+			want: []string{"os.Stat"},
+		},
 		{name: "a different Glob is not filepath.Glob", source: header + "func f() { path.Glob(a); os.Glob(a) }\n"},
 		{
 			name:    "a dot import of path/filepath is refused",
@@ -89,6 +95,7 @@ func TestCheckHardenedIORatchet(t *testing.T) {
 	}{
 		{name: "a planted call fails and names the replacement", path: "cmd/tool/main.go", source: glob, wantErr: "use ReadDir on a parent from rootio.OpenParentDirectoryNoFollow"},
 		{name: "a planted call under internal fails", path: "internal/x/x.go", source: "package x\n\nimport \"os\"\n\nfunc f() { os.ReadFile(p) }\n", wantErr: "use rootio.ReadFileNoFollow"},
+		{name: "a planted OpenFile names the write-capable replacement", path: "internal/x/x.go", source: "package x\n\nimport \"os\"\n\nfunc f() { os.OpenFile(p, os.O_WRONLY, 0) }\n", wantErr: "a write, create or truncate needs rootio.StageAndPublishAt"},
 		{name: "a reasoned row admits the call", path: "cmd/tool/main.go", source: glob, baseline: row},
 		{name: "growth past the row fails", path: "cmd/tool/main.go", source: glob + "func g() { filepath.Glob(q) }\n", baseline: row, wantErr: "baseline allows 1"},
 		{name: "a row without a reason fails", path: "cmd/tool/main.go", source: glob, baseline: "cmd/tool/main.go\tfilepath.Glob\t1\t \n", wantErr: "expected 4 tab-separated fields"},

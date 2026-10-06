@@ -8,9 +8,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -113,12 +113,6 @@ func scanHardenedGoSources(rootDir, pkg string, visit func(rel string, content [
 		}
 		if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
 			return nil
-		}
-		// The walk reports a symlink as a symlink, and os.Root follows one
-		// whose target stays inside the root. Only a regular file is a source
-		// this check can bind to the entry it inspected.
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("%s/%s is not a regular file; the hardened filesystem rule reads only regular sources", pkg, name)
 		}
 		rel := pkg + "/" + name
 		content, readErr := hardenedFSReadSource(root, name, rel)
@@ -266,7 +260,7 @@ type HardenedFSFinding struct {
 // open(path) resolves the path by name exactly as the direct call does.
 func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, "source.go", source, parser.ParseComments|parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fileSet, "source.go", source, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse the Go source: %w", err)
 	}
@@ -284,7 +278,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok {
 			return true
 		}
-		qualifier, ok := ast.Unparen(selector.X).(*ast.Ident)
+		qualifier, ok := hardenedImportQualifier(selector)
 		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
 			return true
 		}
@@ -338,6 +332,20 @@ func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int][]in
 		}
 	}
 	return kept
+}
+
+// hardenedImportQualifier returns the identifier that qualifies selector when
+// it can name an imported package. The parser resolves each identifier to the
+// declaration in this file that it names, so a parameter or local value that
+// shadows an import name resolves to that declaration and is not the package.
+// An import name is never resolved: another file cannot redeclare it either,
+// because a package-level name that matches an import fails to compile.
+//
+// ponytail: this reads the parser's legacy object resolution, which go/ast
+// marks deprecated. Move to go/types if a Go release removes it.
+func hardenedImportQualifier(selector *ast.SelectorExpr) (*ast.Ident, bool) {
+	qualifier, ok := ast.Unparen(selector.X).(*ast.Ident)
+	return qualifier, ok && qualifier.Obj == nil
 }
 
 // hardenedFSImportName returns the name that qualifies a call of the package
@@ -398,20 +406,21 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int
 }
 
 // hardenedFSReadSource reads one source through the package's directory
-// handle. os.Root refuses a symlink inside the root, so the bytes belong to
-// the entry the walk reported.
+// handle. The walk entry is not trusted: a rename between the walk and the
+// read can put a different file or a symlink under the name, and os.Root
+// follows a symlink whose target stays inside the root. The leaf is opened
+// with rootio's no-follow discipline, and the opened descriptor must be a
+// regular file within the size limit, so the bytes come from the file that
+// was checked.
 func hardenedFSReadSource(root *os.Root, name, label string) ([]byte, error) {
-	file, err := root.Open(name)
+	parent, err := root.Open(path.Dir(name))
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close() //nolint:errcheck // read-only handle
-	content, err := io.ReadAll(io.LimitReader(file, hardenedFSMaxSourceBytes+1))
+	defer parent.Close() //nolint:errcheck // read-only handle
+	content, err := rootio.ReadFileAtNoFollow(parent, path.Base(name), label, hardenedFSMaxSourceBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", label, err)
-	}
-	if int64(len(content)) > hardenedFSMaxSourceBytes {
-		return nil, fmt.Errorf("%s is larger than %d bytes", label, hardenedFSMaxSourceBytes)
 	}
 	return content, nil
 }

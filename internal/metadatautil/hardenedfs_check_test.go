@@ -46,6 +46,11 @@ func TestHardenedFSFindings(t *testing.T) {
 			want: 22,
 		},
 		{
+			name:   "a parameter that shadows os is not the package",
+			source: header + "func f(os interface{ Stat(string) }) { os.Stat(path) }\nfunc g() { os.Stat(path) }\n",
+			want:   1,
+		},
+		{
 			name:   "an aliased import is still the os package",
 			source: "package host\n\nimport stdos \"os\"\n\nfunc f() { stdos.Open(path) }\n",
 			want:   1,

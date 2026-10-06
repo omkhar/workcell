@@ -73,7 +73,7 @@ var hardenedIOReplacements = map[string]string{
 	"ReadFile":  "rootio.ReadFileNoFollow",
 	"WriteFile": "rootio.WriteFileAtomicAtNoFollow on a parent from rootio.OpenParentDirectoryNoFollow",
 	"Open":      "rootio.OpenParentDirectoryNoFollow with rootio.OpenRegularFileAtNoFollow",
-	"OpenFile":  "rootio.OpenParentDirectoryNoFollow with rootio.OpenRegularFileAtNoFollow",
+	"OpenFile":  "rootio.OpenRegularFileAtNoFollow on a parent from rootio.OpenParentDirectoryNoFollow for a read-only open; a write, create or truncate needs rootio.StageAndPublishAt or rootio.StageAndCreateAt on that parent; an append has no rootio owner yet",
 	"Create":    "rootio.StageAndCreateAt on a parent from rootio.OpenParentDirectoryNoFollow",
 	"Stat":      "os.Lstat, or Stat on a handle from rootio.OpenRegularFileAtNoFollow",
 	"RemoveAll": "os.Root.RemoveAll on a root bound to the parent from rootio.OpenParentDirectoryNoFollow",
@@ -86,7 +86,7 @@ var hardenedIOReplacements = map[string]string{
 // counts a function value as a reference.
 func HardenedIOFindings(source string) ([]HardenedFSFinding, error) {
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, "source.go", source, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fileSet, "source.go", source, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse the Go source: %w", err)
 	}
@@ -104,7 +104,7 @@ func HardenedIOFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok {
 			return true
 		}
-		qualifier, ok := ast.Unparen(selector.X).(*ast.Ident)
+		qualifier, ok := hardenedImportQualifier(selector)
 		if !ok {
 			return true
 		}
