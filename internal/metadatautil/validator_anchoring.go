@@ -53,15 +53,16 @@ const (
 	textMatchMaxReported  = 20
 )
 
-// textMatchPackages hold the validators. A function there that reads repo
-// content and then matches text in it is the class a comment, a heredoc or a
-// longer option bypasses.
+// textMatchPackages hold the validators, and internal/testkit keeps its
+// validators in test files, so test sources are scanned too. A function there
+// that matches text in content is the class a comment, a heredoc or a longer
+// option bypasses.
 var textMatchPackages = []string{"internal/adapters", "internal/metadatautil", "internal/testkit", "internal/workcellhardening"}
 
 // checkTextMatchBaseline is a ratchet. Every function in textMatchPackages that
-// reads repo content and then matches text must have a row in the baseline
-// with a reason. A new function fails, and a row whose function no longer
-// matches text fails too, so the count only goes down.
+// matches text must have a row in the baseline with a reason. A new function
+// fails, and a row whose function no longer matches text fails too, so the
+// count only goes down.
 func checkTextMatchBaseline(rootDir string) error {
 	found := map[string]bool{}
 	for _, pkg := range textMatchPackages {
@@ -80,7 +81,7 @@ func checkTextMatchBaseline(rootDir string) error {
 				}
 				return nil
 			}
-			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			if !strings.HasSuffix(name, ".go") {
 				return nil
 			}
 			if !entry.Type().IsRegular() {
@@ -91,7 +92,7 @@ func checkTextMatchBaseline(rootDir string) error {
 				return err
 			}
 			scanned++
-			functions, err := TextMatchingReaders(string(content))
+			functions, err := TextMatchingFunctions(string(content))
 			if err != nil {
 				return fmt.Errorf("%s/%s: %w", pkg, name, err)
 			}
@@ -118,12 +119,12 @@ func checkTextMatchBaseline(rootDir string) error {
 	var failures []string
 	for key := range found {
 		if !baseline[key] {
-			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" reads repo content and matches text in it; parse it (ShellInvocations, a closed decoder) or add a baseline row with a reason")
+			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" matches text; parse the content it sees (ShellInvocations, a closed decoder) or add a baseline row with a reason")
 		}
 	}
 	for key := range baseline {
 		if !found[key] {
-			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" no longer matches text in repo content; remove its stale baseline row")
+			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" no longer matches text; remove its stale baseline row")
 		}
 	}
 	if len(failures) == 0 {
@@ -161,47 +162,70 @@ func loadTextMatchBaseline(baselinePath string) (map[string]bool, error) {
 	return baseline, nil
 }
 
-// TextMatchingReaders returns each function in source, as Name or Type.Name,
-// that reads content and later matches text with strings or bytes Contains,
-// HasPrefix or Index, or with regexp. A read is any call whose name starts
-// with Read or read, such as os.ReadFile, rootio.ReadFileNoFollow, io.ReadAll
-// or a local readRepoFile, or an exec.Command of a script.
+// TextMatchingFunctions returns each function in source, as Name or Type.Name,
+// that matches text with strings or bytes Contains, HasPrefix or Index, or with
+// regexp, and each package-level variable whose initializer does. It does not
+// ask where the text came from. Content read inside the match call, or read in
+// one function and matched in a helper, is the same bypassable class, and only
+// counting every match never misses one. A call whose arguments are all
+// literals, such as regexp.MustCompile of a constant, or that searches an error
+// message, sees no content and is skipped.
 //
-// ponytail: the scan sees the read and the match only in one function body and
-// only through the stdlib names, so a helper that receives the content, or an
-// import alias, escapes it. Follow the content through callers if one does.
-func TextMatchingReaders(source string) ([]string, error) {
+// ponytail: counting every match lists matches on decoded fields and names as
+// well, so the baseline is longer than the debt; that is the price of a scan
+// that cannot miss. The scan knows only the stdlib names, so an import alias
+// escapes it. Resolve imports if one appears.
+func TextMatchingFunctions(source string) ([]string, error) {
 	file, err := parser.ParseFile(token.NewFileSet(), "", source, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
 	}
-	var functions []string
+	var names []string
 	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Body == nil {
-			continue
-		}
-		read, matched := false, false
-		ast.Inspect(function.Body, func(node ast.Node) bool {
-			call, ok := node.(*ast.CallExpr)
-			if !ok || matched {
-				return !matched
+		switch typed := declaration.(type) {
+		case *ast.FuncDecl:
+			if typed.Body != nil && matchesContent(typed.Body) {
+				names = append(names, receiverPrefix(typed)+typed.Name.Name)
 			}
-			pkg, name := calleeName(call)
-			switch {
-			case strings.HasPrefix(name, "Read"), strings.HasPrefix(name, "read"),
-				pkg == "exec" && (name == "Command" || name == "CommandContext"):
-				read = true
-			case read && matchesText(pkg, name):
-				matched = true
+		case *ast.GenDecl:
+			for _, spec := range typed.Specs {
+				if value, ok := spec.(*ast.ValueSpec); ok && matchesContent(value) {
+					names = append(names, value.Names[0].Name)
+				}
 			}
-			return true
-		})
-		if matched {
-			functions = append(functions, receiverPrefix(function)+function.Name.Name)
 		}
 	}
-	return functions, nil
+	return names, nil
+}
+
+// matchesContent reports whether node holds a text match that can see content.
+func matchesContent(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && matchesText(calleeName(call)) && !seesNoContent(call) {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// seesNoContent reports whether a match call searches an error message, as a
+// test assertion does, or has only literal arguments.
+func seesNoContent(call *ast.CallExpr) bool {
+	if len(call.Args) > 0 {
+		if subject, ok := call.Args[0].(*ast.CallExpr); ok {
+			if _, name := calleeName(subject); name == "Error" && len(subject.Args) == 0 {
+				return true
+			}
+		}
+	}
+	for _, argument := range call.Args {
+		if _, literal := argument.(*ast.BasicLit); !literal {
+			return false
+		}
+	}
+	return true
 }
 
 // calleeName returns the package or receiver identifier and the name a call

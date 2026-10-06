@@ -102,22 +102,23 @@ func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
 		many += strings.Replace(validator[len("package metadatautil\n"):], "wrapper", fmt.Sprintf("wrapper%d", index), 1)
 	}
 	cases := []struct {
-		name, source, baseline, want string
+		name, file, source, baseline, want string
 	}{
-		{"planted violation", validator, "", "checker.wrapper reads repo content"},
-		{"listed with a reason", validator, row, ""},
-		{"stale row", "package metadatautil\n", row, "remove its stale baseline row"},
-		{"row without a reason", validator, "internal/metadatautil\tchecker.wrapper\t \n", "PACKAGE<TAB>FUNCTION<TAB>REASON"},
-		{"repeated row", validator, row + row, "repeated row"},
-		{"report is capped", many, "", "and 1 more"},
+		{"planted violation", "v.go", validator, "", "checker.wrapper matches text"},
+		{"listed with a reason", "v.go", validator, row, ""},
+		{"stale row", "v.go", "package metadatautil\n", row, "remove its stale baseline row"},
+		{"row without a reason", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t \n", "PACKAGE<TAB>FUNCTION<TAB>REASON"},
+		{"repeated row", "v.go", validator, row + row, "repeated row"},
+		{"report is capped", "v.go", many, "", "and 1 more"},
+		{"validator in a test file", "v_test.go", "package metadatautil\n\nfunc TestWorkflowRunsTool(t *testing.T) {\n\tif !strings.Contains(readText(p), \"tool run\") {\n\t\tt.Fatal(p)\n\t}\n}\n", "", "metadatautil.TestWorkflowRunsTool matches text"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := anchoringRoot(t, testCase.baseline)
 			for name, body := range map[string]string{
-				"v.go":      testCase.source,
-				"p.go":      "package metadatautil\n\nfunc ok() { ShellInvocations(script, \"tool\") }\n",
-				"p_test.go": "package metadatautil\n\nfunc run() { RequireRejectsAllEvasions(t, a, b, c, d) }\n",
+				testCase.file: testCase.source,
+				"p.go":        "package metadatautil\n\nfunc ok() { ShellInvocations(script, \"tool\") }\n",
+				"p_test.go":   "package metadatautil\n\nfunc run() { RequireRejectsAllEvasions(t, a, b, c, d) }\n",
 			} {
 				if err := os.WriteFile(filepath.Join(root, "internal", "metadatautil", name), []byte(body), 0o644); err != nil {
 					t.Fatal(err)
@@ -137,7 +138,7 @@ func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
 	}
 }
 
-func TestTextMatchingReaders(t *testing.T) {
+func TestTextMatchingFunctions(t *testing.T) {
 	cases := map[string]struct {
 		body string
 		want []string
@@ -150,20 +151,24 @@ func TestTextMatchingReaders(t *testing.T) {
 		"exec then contains":    {"func f() { o, _ := exec.Command(x).Output(); _ = bytes.Contains(o, y) }", []string{"f"}},
 		"match in a closure":    {"func f() { s := readText(p); g := func() bool { return strings.Contains(s, x) }; _ = g }", []string{"f"}},
 		"generic receiver":      {"func (c *box[T]) f() { s := readText(p); _ = strings.Contains(s, x) }", []string{"box.f"}},
-		"match before read":     {"func f() { _ = strings.Contains(a, x); _ = readText(p) }", nil},
-		"no read":               {"func f() { _ = strings.Contains(a, x) }", nil},
+		"match before read":     {"func f() { _ = strings.Contains(a, x); _ = readText(p) }", []string{"f"}},
+		"read nested in match":  {"func f() bool { return strings.Contains(string(readRepoFile(p)), x) }", []string{"f"}},
+		"helper gets content":   {"func f(workflow string) error { if !strings.Contains(workflow, x) { return e }; return nil }", []string{"f"}},
+		"package-level matcher": {"var holds = func(text string) bool { return strings.HasPrefix(text, x) }", []string{"holds"}},
+		"literal pattern":       {"var re = regexp.MustCompile(`^a$`)\nfunc f() *regexp.Regexp { return regexp.MustCompile(\"b\") }", nil},
+		"error message":         {"func f() { _ = strings.Contains(err.Error(), x) }", nil},
 		"filepath match":        {"func f() { s := readText(p); _, _ = filepath.Match(s, x) }", nil},
 		"split is not a search": {"func f() { s := readText(p); _ = strings.Split(s, x) }", nil},
 		"text about the call":   {"func f() { _ = readText(p) // strings.Contains(s, x)\n}", nil},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := metadatautil.TextMatchingReaders("package p\n\n" + testCase.body + "\n")
+			got, err := metadatautil.TextMatchingFunctions("package p\n\n" + testCase.body + "\n")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if strings.Join(got, ",") != strings.Join(testCase.want, ",") {
-				t.Fatalf("TextMatchingReaders() = %v, want %v", got, testCase.want)
+				t.Fatalf("TextMatchingFunctions() = %v, want %v", got, testCase.want)
 			}
 		})
 	}
