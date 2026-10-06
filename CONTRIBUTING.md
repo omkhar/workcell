@@ -34,8 +34,10 @@ each outgoing commit.
 
 After that walk, `pre-push` runs `scripts/githooks/pre-push`.
 That script checks generated artifacts, doc links, doc language, codespell, and
-PR shape on the files the branch changes. Set `WORKCELL_SKIP_PREPUSH_CHECKS=1`
-only for an intentional bypass.
+PR shape on the files the branch changes. These checks read the working tree.
+Push only the branch that you have checked out. Without Go, the script skips
+the generated artifacts and doc language checks. Set
+`WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional bypass.
 
 These three hooks are shell, not Go. This is the documented exception to the
 Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before

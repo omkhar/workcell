@@ -91,6 +91,7 @@ unmapped.audit.transcript_logging
 unmapped.audit.transport_status
 unmapped.audit.ts
 unmapped.audit.ui
+unmapped.audit.unexpected_fields
 unmapped.audit.v
 unmapped.audit.workspace
 unmapped.audit.workspace_control_plane

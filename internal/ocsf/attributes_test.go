@@ -33,7 +33,7 @@ func structAttributes(t reflect.Type, prefix string, out *[]string) {
 
 // currentAttributes derives the emitted attribute set from the code: the Event
 // struct tree, the session.* keys of a fully populated record, and the typed
-// audit.* properties.
+// audit.* properties, plus the bucket an unrecognized audit event fills.
 func currentAttributes(t *testing.T) []string {
 	t.Helper()
 	var attrs []string
@@ -49,15 +49,24 @@ func currentAttributes(t *testing.T) []string {
 			rv.Field(i).SetInt(1)
 		}
 	}
-	events, err := Export(sessions.SessionExport{Session: rec}, Options{Now: fixedNow})
+	unrecognized := "timestamp=2026-07-05T11:00:00Z session_id=x event=unrecognized"
+	events, err := Export(sessions.SessionExport{Session: rec, AuditRecords: []string{unrecognized}}, Options{Now: fixedNow})
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	for key := range events[0].Unmapped {
+	seen := map[string]struct{}{}
+	for _, event := range events {
+		for key := range event.Unmapped {
+			seen[key] = struct{}{}
+		}
+	}
+	for key := range seen {
 		attrs = append(attrs, "unmapped."+key)
 	}
 	for key := range knownAuditFields {
-		attrs = append(attrs, "unmapped.audit."+key)
+		if _, emitted := seen["audit."+key]; !emitted {
+			attrs = append(attrs, "unmapped.audit."+key)
+		}
 	}
 	sort.Strings(attrs)
 	return attrs

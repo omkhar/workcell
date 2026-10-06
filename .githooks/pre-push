@@ -71,6 +71,8 @@ fi
 # A destination that cannot be reached leaves this empty, so the walk covers
 # the whole ancestry and the push fails closed on any commit it cannot verify.
 
+# The fast checks read the same ref lines, so capture them once.
+IFS= read -r -d '' push_lines || true
 while read -r _ local_sha _ remote_sha; do
   [[ -n "${local_sha}" ]] || continue
   if [[ "${local_sha}" =~ ${ZERO_OID_PATTERN} ]]; then
@@ -99,6 +101,6 @@ while read -r _ local_sha _ remote_sha; do
       exit 1
     fi
   done <<<"${outgoing}"
-done
+done <<<"${push_lines}"
 
-exec "${ROOT_DIR}/scripts/githooks/pre-push"
+exec "${ROOT_DIR}/scripts/githooks/pre-push" <<<"${push_lines}"

@@ -48,11 +48,22 @@ func newPrePushChecksFixture(t *testing.T, failing string) *prePushChecksFixture
 	return f
 }
 
+// hook runs the fast checks as Git would for a push of the checked-out branch.
 func (f *prePushChecksFixture) hook(extraEnv ...string) (string, error) {
+	f.t.Helper()
+	return f.hookWithInput(pushLine(f.run("rev-parse", "HEAD")), extraEnv...)
+}
+
+func pushLine(oid string) string {
+	return "refs/heads/feature " + oid + " refs/heads/feature " + strings.Repeat("0", 40) + "\n"
+}
+
+func (f *prePushChecksFixture) hookWithInput(stdin string, extraEnv ...string) (string, error) {
 	f.t.Helper()
 	cmd := exec.Command(filepath.Join(f.root, "scripts", "githooks", "pre-push"))
 	cmd.Dir = f.root
 	cmd.Env = append(append(f.env(), "WORKCELL_SKIP_PREPUSH_CHECKS=0"), extraEnv...)
+	cmd.Stdin = strings.NewReader(stdin)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -136,6 +147,91 @@ func TestRepoPrePushChainsToFastChecks(t *testing.T) {
 	}
 	if !strings.Contains(output, "generated artifacts failed") {
 		t.Errorf("fast gate failure not shown:\n%s", output)
+	}
+}
+
+func TestFastPrePushRefusesPushedBranchOtherThanHead(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
+	pushed := f.run("rev-parse", "HEAD")
+	f.run("checkout", "--quiet", "main")
+	output, err := f.hookWithInput(pushLine(pushed))
+	if err == nil {
+		t.Fatalf("fast pre-push gated the clean checkout instead of the pushed branch:\n%s", output)
+	}
+	if !strings.Contains(output, "not the checked-out commit") {
+		t.Errorf("refusal not explained:\n%s", output)
+	}
+}
+
+func TestFastPrePushSkipsDeletesAndTags(t *testing.T) {
+	f := newPrePushChecksFixture(t, "check-generated-artifacts")
+	head := f.run("rev-parse", "HEAD")
+	zero := strings.Repeat("0", 40)
+	input := "(delete) " + zero + " refs/heads/old " + head + "\nrefs/tags/v1 " + head + " refs/tags/v1 " + zero + "\n"
+	if output, err := f.hookWithInput(input); err != nil || f.ran() != "" {
+		t.Fatalf("gates ran for a delete and a tag push: %v\n%s\nran:\n%s", err, output, f.ran())
+	}
+}
+
+func TestFastPrePushRunsDocLinksOnDeletedMarkdown(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
+	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
+	f.run("rm", "--quiet", "doc.md")
+	f.run("commit", "--quiet", "-m", fixtureSubject)
+	if output, err := f.hook(); err != nil {
+		t.Fatalf("fast pre-push failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(f.ran(), "check-doc-links") {
+		t.Errorf("doc links did not run for a deleted .md; ran:\n%s", f.ran())
+	}
+}
+
+func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
+	bin := filepath.Join(f.tmpDir, "nogo-bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"git", "mktemp", "rm", "dirname"} {
+		path, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s unavailable: %v", tool, err)
+		}
+		if err := os.Symlink(path, filepath.Join(bin, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeExecFile(t, filepath.Join(bin, "codespell"), []byte("#!/bin/bash\nexit 0\n"), 0o755)
+	output, err := f.hook("PATH=" + bin)
+	if err != nil {
+		t.Fatalf("fast pre-push failed without Go: %v\n%s", err, output)
+	}
+	if strings.Contains(f.ran(), "check-generated-artifacts") || strings.Contains(f.ran(), "check-doc-language") {
+		t.Errorf("Go gates ran without Go; ran:\n%s", f.ran())
+	}
+	if !strings.Contains(f.ran(), "check-doc-links") || !strings.Contains(output, "go is missing") {
+		t.Errorf("Go-free gates or the notice missing; ran:\n%s\noutput:\n%s", f.ran(), output)
+	}
+}
+
+func TestRepoPrePushGatesPushedBranchAfterSignatureWalk(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.configureSSHSigning()
+	f.run("config", "commit.gpgsign", "true")
+	if output, err := f.tryGit([]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1"}, "push", "--quiet", "origin", "HEAD:refs/heads/main"); err != nil {
+		t.Fatalf("seed push failed: %v\n%s", err, output)
+	}
+	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
+	f.run("checkout", "--quiet", "main")
+	output, err := f.tryGit([]string{"WORKCELL_SKIP_PREPUSH_CHECKS=0"}, "push", "--quiet", "origin", "feature")
+	if err == nil {
+		t.Fatalf("push of a non-checked-out branch passed the fast gates:\n%s", output)
+	}
+	if !strings.Contains(output, "not the checked-out commit") {
+		t.Errorf("signature walk did not hand the ref lines to the fast gates:\n%s", output)
 	}
 }
 
