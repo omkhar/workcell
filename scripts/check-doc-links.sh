@@ -140,7 +140,6 @@ trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_wired}"' 
 cat "${ROOT_DIR}/scripts/validate-repo.sh" "${ROOT_DIR}"/scripts/ci/job-*.sh \
   "${ROOT_DIR}"/.github/workflows/*.yml >"${claim_wired}"
 
-
 for f in "${md_files[@]}"; do
   awk -f "${ROOT_DIR}/scripts/lib/doc-claims.awk" "${f}" |
     while IFS=$'\t' read -r kind doc subject; do
