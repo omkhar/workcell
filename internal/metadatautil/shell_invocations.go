@@ -327,6 +327,36 @@ func quoteCloseIndex(line string, quote byte) int {
 	return -1
 }
 
+// withoutHeredocBodies blanks every heredoc body and terminator line in script,
+// for a reader that must keep the commands ShellInvocations drops as unproved.
+func withoutHeredocBodies(script string) string {
+	var out strings.Builder
+	var pending []heredoc
+	var openQuote byte
+	var stack []byte
+	for line := range strings.Lines(script) {
+		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		if len(pending) > 0 {
+			if pending[0].endsAt(text) {
+				pending = pending[1:]
+			}
+			out.WriteString("\n")
+			continue
+		}
+		out.WriteString(line)
+		if openQuote != 0 {
+			at := quoteCloseIndex(text, openQuote)
+			if at < 0 {
+				continue
+			}
+			text, openQuote = text[at+1:], 0
+		}
+		_, opened, quote, rest, _ := shellWords(text, stack)
+		pending, openQuote, stack = append(pending, opened...), quote, rest
+	}
+	return out.String()
+}
+
 // Invocation is one invocation the script proves it runs: the arguments after
 // the command name, and the ordinal of the command word in the stream of
 // commands the parser proves the script reaches. Position does not depend on

@@ -23,9 +23,7 @@ const (
 	workflowRefsMaxBytes     = 4 << 20
 )
 
-// workflowScriptRef finds ./scripts/... words in a run body. Matching text can
-// only over-report (a comment that names a missing script fails), which is the
-// safe direction for an existence check.
+// workflowScriptRef finds ./scripts/... paths in the words of a run body.
 var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
 
 // ponytail: gh list subcommands are a fixed table; derive from `gh help` if gh grows more.
@@ -110,10 +108,7 @@ func readWorkflowActionInputs(rootDir string) (map[string]map[string]bool, error
 }
 
 func loadWorkflowDocuments(rootDir string) (map[string]workflowDocument, []string, error) {
-	paths, err := filepath.Glob(filepath.Join(rootDir, ".github", "workflows", "*.yml"))
-	if err != nil {
-		return nil, nil, err
-	}
+	paths := workflowYAMLFiles(filepath.Join(rootDir, ".github", "workflows"))
 	slices.Sort(paths)
 	documents := map[string]workflowDocument{}
 	var files []string
@@ -156,9 +151,19 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				for _, match := range workflowScriptRef.FindAllString(step.Run, -1) {
+				var refs []string
+				for _, words := range shellCommands(step.Run) {
+					for _, each := range words {
+						refs = append(refs, workflowScriptRef.FindAllString(each, -1)...)
+					}
+				}
+				for _, match := range refs {
 					if strings.ContainsAny(match[len(match)-1:], "$*{[") {
 						continue // a dynamic name cannot be resolved statically
+					}
+					if slices.Contains(strings.Split(match, "/"), "..") {
+						add("script-path-escapes " + match) // never probe outside rootDir
+						continue
 					}
 					if _, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, match[2:]), "workflow script", workflowRefsMaxBytes); err != nil {
 						if !errors.Is(err, fs.ErrNotExist) {
@@ -168,9 +173,10 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
+					args = ghSubcommand(args)
 					switch {
 					case len(args) > 0 && args[0] == "api":
-						if !hasAnyArg(args, "--paginate", "--limit") {
+						if !hasAnyArg(args, "--paginate") { // gh api has no --limit
 							add("gh-api-unbounded")
 						}
 					case len(args) > 1 && args[1] == "list" && slices.Contains(ghListGroups, args[0]):
@@ -208,6 +214,18 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 		}
 	}
 	return hits, nil
+}
+
+// ghSubcommand drops the flags before the gh subcommand, such as -R owner/repo.
+func ghSubcommand(args []string) []string {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		skip := 1
+		if (args[0] == "-R" || args[0] == "--repo") && len(args) > 1 {
+			skip = 2
+		}
+		args = args[skip:]
+	}
+	return args
 }
 
 // hasAnyArg matches a flag as a whole word, as --flag=value, or (single dash) as -Fvalue.
@@ -362,12 +380,23 @@ var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
 var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time"}
 
-// commandArgs returns the arguments of every command named name in script,
-// including those in if, for, and while bodies and in $( ) substitutions. It
-// does not use ShellInvocations: that parser drops compound-command bodies
-// because they are not proved to run, and this lint must read them too.
-// Over-reporting (a heredoc line that starts with the name) is the safe error.
+// commandArgs returns the arguments of every command named name in script.
 func commandArgs(script, name string) [][]string {
+	var found [][]string
+	for _, words := range shellCommands(script) {
+		if words[0] == name {
+			found = append(found, words[1:])
+		}
+	}
+	return found
+}
+
+// shellCommands returns the words of every command in script, including those
+// in if, for, and while bodies and in $( ) substitutions, without comments and
+// heredoc bodies. It does not use ShellInvocations: that parser drops
+// compound-command bodies because they are not proved to run, and this lint
+// must read them too.
+func shellCommands(script string) [][]string {
 	var found [][]string
 	var words []string
 	var word strings.Builder
@@ -385,13 +414,13 @@ func commandArgs(script, name string) [][]string {
 		for i < len(words) && (slices.Contains(shellKeywords, words[i]) || shellAssignment.MatchString(words[i])) {
 			i++
 		}
-		if i < len(words) && words[i] == name {
-			found = append(found, words[i+1:])
+		if i < len(words) {
+			found = append(found, words[i:])
 		}
 		words = nil
 	}
 	var quote byte
-	text := flattenSubstitutions(script)
+	text := flattenSubstitutions(withoutHeredocBodies(script))
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		switch {

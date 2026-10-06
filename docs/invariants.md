@@ -77,8 +77,8 @@ reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 ## 2b. Workflow bodies reference real scripts and bounded lists
 
 `scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
-`run:` body calls a `./scripts` path that does not exist. It fails when a
-`gh api` call has no `--paginate` or `--limit`. It fails when a `gh list` call
+`run:` body calls a `./scripts` path that does not exist or that has a `..`
+component. It fails when a `gh api` call has no `--paginate`. It fails when a `gh list` call
 has no `--limit`. It fails when a `with:` key is not an input of the action.
 
 `policy/workflow-refs-baseline.tsv` records the hits that the tree carries
