@@ -76,9 +76,9 @@ reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
 ## 2b. Validators anchor to decoded structure
 
-A validator that reads content and then matches it with `strings` or `bytes`
-`Contains`, `HasPrefix` or `Index`, or with `regexp`, can match text in a
-comment or a string. Use `ShellInvocations` or a closed decoder instead.
+A validator that reads content and then matches it with `strings.Contains`,
+`bytes.Index` or `regexp` can match text in a comment or a string. Use
+`ShellInvocations` or a closed decoder instead.
 
 `scripts/check-validator-anchoring.sh` lists every such function in
 `internal/adapters`, `internal/metadatautil`, `internal/testkit` and
