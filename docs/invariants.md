@@ -129,6 +129,19 @@ retrieval overrides.
 A future Antigravity adapter must mask its settings, plugins, MCP files, hooks,
 and instructions before it can claim support.
 
+## 3a. Documentation claims resolve to gates
+
+`scripts/check-doc-links.sh` reads every Markdown file. A code span that names
+a path under `scripts/`, `internal/` or `.github/workflows/` must exist. A
+`scripts/*.sh` path must also appear in `validate-repo.sh`, a CI job script or
+a workflow. So a doc cannot cite a gate that nothing runs.
+
+A sentence that claims enforcement needs such a span within two lines; the
+check `scripts/check-doc-links.sh` lists the trigger words. The baseline
+`policy/doc-claims-baseline.tsv` holds the hits that exist today, one row per
+hit: path, rule, subject and reason. A new hit fails. A baseline row with no
+hit fails too, so the baseline only shrinks.
+
 ## 4. Network posture is explicit
 
 `strict`, `development`, `build`, and `breakglass` are separate modes. Workcell
