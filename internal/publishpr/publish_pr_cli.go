@@ -422,10 +422,10 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		}
 		EmitCommand(stdout, fetchBaseCmd)
 		EmitCommand(stdout, signatureCmd)
-		EmitCommand(stdout, slices.Concat(shapeCmd, shapeMarginArgs))
-		EmitCommand(stdout, pushCmd)
 		EmitCommand(stdout, repoViewCmd)
 		EmitCommand(stdout, prListCmd)
+		EmitCommand(stdout, slices.Concat(shapeCmd, shapeMarginArgs))
+		EmitCommand(stdout, pushCmd)
 		EmitCommand(stdout, prCmd)
 		return nil
 	}

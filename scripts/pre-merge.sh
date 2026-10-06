@@ -111,6 +111,7 @@ default_local_snapshot_parent() {
 run_from_local_snapshot() {
   local -a snapshot_cmd=()
   local snapshot_parent=""
+  local shape_margin=""
   local status=0
 
   [[ -n "${LOCAL_SNAPSHOT_MODE}" ]] || return 0
@@ -134,13 +135,14 @@ run_from_local_snapshot() {
   fi
   # The snapshot's only remote is this directory, so gh cannot learn whether
   # a PR exists from inside it: resolve the margin here and pass it along.
+  shape_margin="$(resolve_shape_margin)"
   snapshot_cmd+=(
     --
     env
     WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1
     ./scripts/pre-merge.sh
     "${ORIGINAL_ARGS[@]}"
-    --shape-margin "$(resolve_shape_margin)"
+    --shape-margin "${shape_margin}"
   )
 
   "${snapshot_cmd[@]}" || status=$?
@@ -148,9 +150,12 @@ run_from_local_snapshot() {
 }
 
 # First publication gets a smaller shape budget so review fixes still fit.
-# Any failure to learn that a PR exists keeps the stricter margin. gh's --head
-# matches the branch name in every fork, so only a PR whose head repository
-# is this one counts, as publish-pr's parseExistingPullRequest requires.
+# Without a branch or gh no PR can be found, and the stricter margin is the
+# right answer. A failed gh or jq call is not an answer: it stops pre-merge,
+# because the fallback would hide the failure and reject a valid follow-up
+# (--shape-margin skips the lookup). gh's --head matches the branch name in
+# every fork, so only a PR whose head repository is this one counts, as
+# publish-pr's parseExistingPullRequest requires.
 resolve_shape_margin() {
   local branch=""
   local repo_json=""
@@ -162,14 +167,18 @@ resolve_shape_margin() {
     return 0
   fi
   if ! branch="$(git -C "${ROOT_DIR}" symbolic-ref --short --quiet HEAD)" || [[ -z "${branch}" ]] ||
-    ! command -v gh >/dev/null 2>&1 ||
-    ! repo_json="$(cd "${ROOT_DIR}" && gh repo view --json nameWithOwner)" ||
-    ! list_json="$(cd "${ROOT_DIR}" && gh pr list --base "${BASE_BRANCH}" --head "${branch}" --state open --json headRepository --limit 100)" ||
-    ! open_count="$(jq --argjson repo "${repo_json}" '[.[] | select(.headRepository.nameWithOwner == $repo.nameWithOwner)] | length' <<<"${list_json}")"; then
+    ! command -v gh >/dev/null 2>&1; then
     printf '%s\n' "${SHAPE_MARGIN_FIRST_PUBLICATION}"
     return 0
   fi
-  if [[ "${open_count}" =~ ^[0-9]+$ ]] && ((open_count > 0)); then
+  if ! repo_json="$(cd "${ROOT_DIR}" && gh repo view --json nameWithOwner)" ||
+    ! list_json="$(cd "${ROOT_DIR}" && gh pr list --base "${BASE_BRANCH}" --head "${branch}" --state open --json headRepository --limit 100)" ||
+    ! open_count="$(jq --argjson repo "${repo_json}" '[.[] | select(.headRepository.nameWithOwner == $repo.nameWithOwner)] | length' <<<"${list_json}")" ||
+    [[ ! "${open_count}" =~ ^[0-9]+$ ]]; then
+    echo "[pre-merge] cannot look up the open PR for ${branch}; retry or pass --shape-margin" >&2
+    return 1
+  fi
+  if ((open_count > 0)); then
     printf '1.0\n'
   else
     printf '%s\n' "${SHAPE_MARGIN_FIRST_PUBLICATION}"

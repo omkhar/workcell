@@ -280,6 +280,14 @@ test -n "${worktree_signature_line}"
 test -n "${worktree_shape_line}"
 test "${worktree_fetch_line}" -lt "${worktree_signature_line}"
 test "${worktree_signature_line}" -lt "${worktree_shape_line}"
+# Live publish looks up the PR before it picks the shape margin and pushes.
+worktree_pr_list_line="$(grep -n -- "gh pr list -R ${ORIGIN} " <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_push_line="$(grep -n -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_create_line="$(grep -n -- "gh pr create -R ${ORIGIN} " <<<"${worktree_dry_run}" | cut -d: -f1)"
+test "${worktree_signature_line}" -lt "$(grep -n -- "gh repo view ${ORIGIN} " <<<"${worktree_dry_run}" | cut -d: -f1)"
+test "${worktree_pr_list_line}" -lt "${worktree_shape_line}"
+test "${worktree_shape_line}" -lt "${worktree_push_line}"
+test "${worktree_push_line}" -lt "${worktree_create_line}"
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${worktree_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
@@ -1066,6 +1074,13 @@ resolve_margin() {
 }
 test "$(resolve_margin '[{"headRepository":{"nameWithOwner":"fork/publish-pr-fixture"}}]')" = "0.66"
 test "$(resolve_margin '[{"headRepository":{"nameWithOwner":"example/publish-pr-fixture"}}]')" = "1.0"
+# A failed lookup stops pre-merge instead of falling back to 0.66.
+set +e
+margin_fail_output="$(resolve_margin 'not json' 2>&1)"
+margin_fail_rc=$?
+set -e
+test "${margin_fail_rc}" -ne 0
+grep -q 'cannot look up the open PR for main; retry or pass --shape-margin' <<<"${margin_fail_output}"
 rm -f "${GH_PR_LIST_RESPONSE_FILE}"
 rm -rf "${MARGIN_GH_DIR}"
 
