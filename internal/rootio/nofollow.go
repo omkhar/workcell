@@ -42,13 +42,9 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	for _, component := range components {
-		nextFD, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		_ = unix.Close(fd)
-		if openErr != nil {
-			return nil, "", openErr
-		}
-		fd = nextFD
+	fd, err = openDirectoryChain(fd, components)
+	if err != nil {
+		return nil, "", err
 	}
 	parentFile := os.NewFile(uintptr(fd), parent)
 	if parentFile == nil {
@@ -56,6 +52,48 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 		return nil, "", fmt.Errorf("open parent directory: %s", parent)
 	}
 	return parentFile, cleaned, nil
+}
+
+// OpenDirectoryAtNoFollow opens the directory at relative under parent. Each
+// component is opened relative to the previous descriptor with O_NOFOLLOW, so
+// a symlink anywhere on the path is refused even when its target stays under
+// parent. The caller closes the directory.
+func OpenDirectoryAtNoFollow(parent *os.File, relative string) (*os.File, error) {
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return nil, err
+	}
+	// F_DUPFD_CLOEXEC rather than dup, for the reason MkdirAllSyncedAt gives.
+	fd, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	fd, err = openDirectoryChain(fd, components)
+	if err != nil {
+		return nil, err
+	}
+	name := filepath.Join(parent.Name(), filepath.Join(components...))
+	file := os.NewFile(uintptr(fd), name)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("open directory: %s", name)
+	}
+	return file, nil
+}
+
+// openDirectoryChain opens each component below fd as a directory without
+// following a symlink. It always consumes fd: it returns the last descriptor,
+// or closes every descriptor it holds and returns the error.
+func openDirectoryChain(fd int, components []string) (int, error) {
+	for _, component := range components {
+		nextFD, err := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, err
+		}
+		fd = nextFD
+	}
+	return fd, nil
 }
 
 // ReadFileNoFollow reads one regular file through a descriptor-relative,

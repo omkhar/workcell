@@ -292,3 +292,40 @@ func TestSyncDirAt(t *testing.T) {
 		}
 	}
 }
+
+// Every component is opened without following a symlink, including one whose
+// target stays under the opened parent.
+func TestOpenDirectoryAtNoFollow(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "one", "two"), 0o700); err != nil {
+		t.Fatalf("create the tree: %v", err)
+	}
+	if err := os.Symlink("one", filepath.Join(root, "link")); err != nil {
+		t.Fatalf("create the symlink: %v", err)
+	}
+	parent := openDirectory(t, root)
+	defer parent.Close() //nolint:errcheck // test fixture
+
+	opened, err := rootio.OpenDirectoryAtNoFollow(parent, "one/two")
+	if err != nil {
+		t.Fatalf("expected the nested directory to open, found %v", err)
+	}
+	defer opened.Close() //nolint:errcheck // test fixture
+	got, err := opened.Stat()
+	if err != nil {
+		t.Fatalf("stat the opened directory: %v", err)
+	}
+	want, err := os.Lstat(filepath.Join(root, "one", "two"))
+	if err != nil || !os.SameFile(got, want) {
+		t.Fatalf("opened a different directory than one/two: %v", err)
+	}
+	// Negative controls: a symlinked intermediate, a symlinked leaf, a parent
+	// escape, an absolute path, an empty path and a missing directory.
+	for _, relative := range []string{"link/two", "link", "../escape", "one/../..", root, "", "one/missing"} {
+		if dir, err := rootio.OpenDirectoryAtNoFollow(parent, relative); err == nil {
+			_ = dir.Close()
+			t.Fatalf("expected %q to fail", relative)
+		}
+	}
+}
