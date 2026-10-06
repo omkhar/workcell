@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 LOCAL_SNAPSHOT_ACTIVE="${WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE:-0}"
 PROFILE="pr-parity"
@@ -23,7 +25,6 @@ PARITY_START_STATUS_SHA256=""
 PARITY_BASE_REF=""
 PARITY_BASE_OID=""
 SHAPE_MARGIN="auto"
-SHAPE_MARGIN_FIRST_PUBLICATION="0.66"
 PARITY_SHAPE_BUDGET=""
 LIVE_LANE_PID=""
 LIVE_LANE_LOG=""
@@ -149,39 +150,17 @@ run_from_local_snapshot() {
   exit "${status}"
 }
 
-# First publication gets a smaller shape budget so review fixes still fit.
-# Without a branch or gh no PR can be found, and the stricter margin is the
-# right answer. A failed gh or jq call is not an answer: it stops pre-merge,
-# because the fallback would hide the failure and reject a valid follow-up
-# (--shape-margin skips the lookup). gh's --head matches the branch name in
-# every fork, so only a PR whose head repository is this one counts, as
-# publish-pr's parseExistingPullRequest requires.
+# publish-pr owns the margin policy and the PR lookup; this only dispatches.
+# A failed lookup stops pre-merge, because a fallback would hide the failure
+# and reject a valid follow-up (--shape-margin skips the lookup).
 resolve_shape_margin() {
-  local branch=""
-  local repo_json=""
-  local list_json=""
-  local open_count=""
-
   if [[ "${SHAPE_MARGIN}" != "auto" ]]; then
     printf '%s\n' "${SHAPE_MARGIN}"
     return 0
   fi
-  if ! branch="$(git -C "${ROOT_DIR}" symbolic-ref --short --quiet HEAD)" || [[ -z "${branch}" ]] ||
-    ! command -v gh >/dev/null 2>&1; then
-    printf '%s\n' "${SHAPE_MARGIN_FIRST_PUBLICATION}"
-    return 0
-  fi
-  if ! repo_json="$(cd "${ROOT_DIR}" && gh repo view --json nameWithOwner)" ||
-    ! list_json="$(cd "${ROOT_DIR}" && gh pr list --base "${BASE_BRANCH}" --head "${branch}" --state open --json headRepository --limit 100)" ||
-    ! open_count="$(jq --argjson repo "${repo_json}" '[.[] | select(.headRepository.nameWithOwner == $repo.nameWithOwner)] | length' <<<"${list_json}")" ||
-    [[ ! "${open_count}" =~ ^[0-9]+$ ]]; then
-    echo "[pre-merge] cannot look up the open PR for ${branch}; retry or pass --shape-margin" >&2
+  if ! run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools publish-pr-shape-margin "${ROOT_DIR}" "${BASE_BRANCH}"; then
+    echo "[pre-merge] cannot look up the open PR for the shape margin; retry or pass --shape-margin" >&2
     return 1
-  fi
-  if ((open_count > 0)); then
-    printf '1.0\n'
-  else
-    printf '%s\n' "${SHAPE_MARGIN_FIRST_PUBLICATION}"
   fi
 }
 

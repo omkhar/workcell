@@ -47,6 +47,10 @@ func TestUpstreamFetchCommandsRejectWrongArity(t *testing.T) {
 	assertCitoolsUsageExit(t, "upstream-get", "profile", "one", "two", "three")
 }
 
+func TestPublishPRShapeMarginRejectsWrongArity(t *testing.T) {
+	assertCitoolsUsageExit(t, "publish-pr-shape-margin", "only-one-root")
+}
+
 // assertCitoolsUsageExit runs the binary (via the helper-process trick) with
 // the given argv tail and asserts a usage exit (code 2 + "usage:" on stderr).
 func assertCitoolsUsageExit(t *testing.T, argv ...string) {

@@ -7,6 +7,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -147,6 +150,109 @@ func TestParseExistingPullRequest(t *testing.T) {
 				t.Errorf("parseExistingPullRequest() err = %v, want substring %q", err, tc.wantSubstring)
 			}
 		})
+	}
+}
+
+func TestShapeMarginFromLookups(t *testing.T) {
+	t.Parallel()
+	opts := &Options{Base: "main", Branch: "feature/x"}
+	repoView := `{"nameWithOwner":"example/repo"}`
+	pr := func(repository string) string {
+		return `[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"` + repository +
+			`"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]`
+	}
+	cases := []struct {
+		name          string
+		repoView      string
+		prList        string
+		want          string
+		wantSubstring string
+	}{
+		{name: "no-pr", repoView: repoView, prList: "[]", want: "0.66"},
+		{name: "same-repository-pr", repoView: repoView, prList: pr("example/repo"), want: "1.0"},
+		{name: "fork-pr-ignored", repoView: repoView, prList: pr("fork/repo"), want: "0.66"},
+		{name: "object-not-array", repoView: repoView, prList: "{}", wantSubstring: "did not return a JSON array"},
+		{name: "empty-entry", repoView: repoView, prList: "[{}]", wantSubstring: "incomplete entry at index 0"},
+		{name: "missing-name-with-owner", repoView: repoView, prList: `[{"baseRefName":"main","headRefName":"feature/x","headRepository":{},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]`, wantSubstring: "incomplete entry at index 0"},
+		{name: "repository-view-without-name", repoView: "{}", prList: "[]", wantSubstring: "could not determine the origin repository identity"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := shapeMarginFromLookups(tc.repoView, tc.prList, opts)
+			if tc.wantSubstring == "" {
+				if err != nil || got != tc.want {
+					t.Fatalf("shapeMarginFromLookups() = %q, %v; want %q", got, err, tc.want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstring) {
+				t.Fatalf("shapeMarginFromLookups() err = %v, want substring %q", err, tc.wantSubstring)
+			}
+		})
+	}
+}
+
+// TestShapeMarginMainBindsOriginPushRepository proves the lookup runs against
+// the origin push repository with GH_REPO dropped, and that a detached HEAD
+// gets the first-publication margin without asking gh.
+func TestShapeMarginMainBindsOriginPushRepository(t *testing.T) {
+	repo := t.TempDir()
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "gh.log")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "feature/x")
+	git("remote", "add", "origin", "https://github.com/fetch/repo.git")
+	git("remote", "set-url", "--push", "origin", "https://github.com/example/repo.git")
+	stub := `#!/bin/sh
+printf '%s GH_REPO=%s\n' "$*" "${GH_REPO-unset}" >>"` + logPath + `"
+case "$1 $2" in
+"repo view") echo '{"nameWithOwner":"example/repo"}' ;;
+"pr list") echo '[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"example/repo"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]' ;;
+*) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GH_REPO", "wrong/repo")
+
+	var out bytes.Buffer
+	if err := ShapeMarginMain(repo, "main", &out); err != nil {
+		t.Fatalf("ShapeMarginMain() err = %v", err)
+	}
+	if out.String() != "1.0\n" {
+		t.Fatalf("ShapeMarginMain() = %q, want 1.0", out.String())
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "repo view https://github.com/example/repo.git --json nameWithOwner GH_REPO=unset\n" +
+		"pr list -R https://github.com/example/repo.git --base main --head feature/x --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100 GH_REPO=unset\n"
+	if string(log) != want {
+		t.Fatalf("gh calls = %q, want %q", log, want)
+	}
+
+	git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "--no-gpg-sign", "-m", "init")
+	git("switch", "-q", "--detach")
+	out.Reset()
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := ShapeMarginMain(repo, "main", &out); err != nil || out.String() != "0.66\n" {
+		t.Fatalf("detached ShapeMarginMain() = %q, %v; want 0.66", out.String(), err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("detached HEAD should not call gh; stat err = %v", err)
 	}
 }
 

@@ -1060,27 +1060,38 @@ test "${margin_half_rc}" -eq 2
 grep -q 'changed_files=8 (limit=5)' <<<"${margin_half_output}"
 test "${margin_bad_rc}" -eq 2
 grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
-# pre-merge lifts the margin only for an open PR from this repository: a fork's
-# PR on the same branch name keeps the first-publication margin.
+# pre-merge asks publish-pr's Go owner for the margin: only an open PR from
+# this repository lifts it, and a lookup that is not an array of complete
+# entries stops pre-merge instead of falling back to 0.66.
 MARGIN_GH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/publish-pr-margin-gh.XXXXXX")"
 ln -s "${TRUSTED_GH_STUB}" "${MARGIN_GH_DIR}/gh"
+(cd "${ROOT_DIR}" && go build -o "${MARGIN_GH_DIR}/workcell-citools" ./cmd/workcell-citools)
+# ROOT_DIR is the fixture here, so the go run seam runs the prebuilt binary.
 resolve_margin() {
   printf '%s\n' "$1" >"${GH_PR_LIST_RESPONSE_FILE}"
-  PATH="${MARGIN_GH_DIR}:${PATH}" bash -c '
+  PATH="${MARGIN_GH_DIR}:${PATH}" GH_REPO=wrong/repo bash -c '
     set -euo pipefail
-    ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto; SHAPE_MARGIN_FIRST_PUBLICATION=0.66
+    ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto
     eval "$(sed -n "/^resolve_shape_margin()/,/^}/p" "$2")"
+    run_go_in_repo() { shift 3; workcell-citools "$@"; }
     resolve_shape_margin' _ "${FIXTURE}" "${ROOT_DIR}/scripts/pre-merge.sh"
 }
-test "$(resolve_margin '[{"headRepository":{"nameWithOwner":"fork/publish-pr-fixture"}}]')" = "0.66"
-test "$(resolve_margin '[{"headRepository":{"nameWithOwner":"example/publish-pr-fixture"}}]')" = "1.0"
-# A failed lookup stops pre-merge instead of falling back to 0.66.
-set +e
-margin_fail_output="$(resolve_margin 'not json' 2>&1)"
-margin_fail_rc=$?
-set -e
-test "${margin_fail_rc}" -ne 0
-grep -q 'cannot look up the open PR for main; retry or pass --shape-margin' <<<"${margin_fail_output}"
+margin_pr() {
+  printf '[{"baseRefName":"main","headRefName":"main","headRepository":{"nameWithOwner":"%s"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]' "$1"
+}
+: >"${GH_LOG}"
+test "$(resolve_margin "$(margin_pr fork/publish-pr-fixture)")" = "0.66"
+test "$(resolve_margin "$(margin_pr example/publish-pr-fixture)")" = "1.0"
+test "$(resolve_margin '[]')" = "0.66"
+grep -q "^pr list -R ${ORIGIN} --base main --head main --state open " "${GH_LOG}"
+for bad_list in 'not json' '{}' '[{}]' '[{"baseRefName":"main","headRefName":"main","headRepository":{},"isDraft":false,"labels":[],"url":"u"}]'; do
+  set +e
+  margin_fail_output="$(resolve_margin "${bad_list}" 2>&1)"
+  margin_fail_rc=$?
+  set -e
+  test "${margin_fail_rc}" -ne 0
+  grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_fail_output}"
+done
 rm -f "${GH_PR_LIST_RESPONSE_FILE}"
 rm -rf "${MARGIN_GH_DIR}"
 

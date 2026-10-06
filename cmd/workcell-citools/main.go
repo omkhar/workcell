@@ -36,6 +36,7 @@ import (
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/publishpr"
 	"github.com/omkhar/workcell/internal/scenarios"
 	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
@@ -133,6 +134,7 @@ func subcommands() []subcommand {
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
+		{"publish-pr-shape-margin", "REPO_ROOT BASE_BRANCH", 2, 2, cmdPublishPRShapeMargin},
 		{"upstream-get", "PROFILE [VERSION TARGET]", 1, 3, cmdUpstreamGet},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.Check)},
@@ -183,6 +185,10 @@ func subcommands() []subcommand {
 		{"workcell-trusted-docker-client-rg", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.CheckTrustedDockerClientRg)},
 		{"workcell-check-batch", "ROOT_DIR CHECK[=ARG] [CHECK...]", 2, -1, cmdWorkcellCheckBatch},
 	}
+}
+
+func cmdPublishPRShapeMargin(args []string) error {
+	return publishpr.ShapeMarginMain(args[0], args[1], os.Stdout)
 }
 
 func cmdCreateReleaseImageHandoff(args []string) error {
