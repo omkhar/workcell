@@ -3,7 +3,7 @@
 
 //go:build linux
 
-package release
+package rootio
 
 import (
 	"errors"
@@ -13,7 +13,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func rejectExtendedACL(fd int) error {
+// RejectExtendedACL is the Linux check: an ACL is stored as a system
+// extended attribute, so the attribute names are listed.
+func RejectExtendedACL(fd int) error {
 	for attempt := 0; attempt < 3; attempt++ {
 		size, err := unix.Flistxattr(fd, nil)
 		if err != nil {
@@ -35,7 +37,7 @@ func rejectExtendedACL(fd int) error {
 		}
 		for _, name := range strings.Split(string(buffer[:read]), "\x00") {
 			if isExtendedACLName(name) {
-				return inputErrorf("extended ACLs are not permitted")
+				return ErrExtendedACL
 			}
 		}
 		return nil
