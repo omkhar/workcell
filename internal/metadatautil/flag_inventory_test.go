@@ -137,6 +137,15 @@ func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
 	if err := CheckFlagInventory(writeFlagInventoryRepo(t, good)); err != nil {
 		t.Fatalf("good fixture: %v", err)
 	}
+	root := writeFlagInventoryRepo(t, "")
+	secret := filepath.Join(root, "secret.txt")
+	mustWriteText(t, secret, good)
+	if err := os.Symlink(secret, FlagFixturePath(root, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFlagInventory(root); err == nil {
+		t.Fatal("symlinked fixture: CheckFlagInventory() = nil, want error")
+	}
 }
 
 // TestFlagInventoryRealRepo keeps the checked-in fixtures classified and

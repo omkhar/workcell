@@ -54,6 +54,12 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 		// NUL-joined argv makes each check exact: a word cannot contain NUL, and
 		// the last --load spelling wins, so a later --load=false is not a load.
 		args := "\x00" + strings.Join(invocation.Args, "\x00") + "\x00"
+		// The last build that tags ${IMAGE_TAG} decides the image, so a later
+		// retagging build must itself comply.
+		if !strings.Contains(args, "${IMAGE_TAG}") {
+			continue
+		}
+		build = -1
 		if effectiveDockerfile(invocation.Args) == "${ROOT_DIR}/runtime/container/Dockerfile" && strings.Contains(args, "\x00-t\x00${IMAGE_TAG}\x00") && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
 			build = invocation.Position
 		}

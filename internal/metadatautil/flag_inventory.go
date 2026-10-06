@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/adapters"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // The flag inventory binds each certified adapter's CLI options to its manifest.
@@ -158,7 +159,8 @@ func CheckFlagInventory(root string) error {
 }
 
 func readFlagFixture(path, id string) (string, []string, error) {
-	data, err := os.ReadFile(path)
+	// An untrusted checkout can swap the fixture for a symlink to a host file.
+	data, err := rootio.ReadFileNoFollow(path, "flag fixture", 1<<20)
 	if err != nil {
 		return "", nil, err
 	}

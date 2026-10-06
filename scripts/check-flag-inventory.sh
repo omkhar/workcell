@@ -84,6 +84,10 @@ while read -r -a fields; do
     cp "${work_dir}/${id}.txt" "${staged}"
     chmod 644 "${staged}"
     mv -f -- "${staged}" "${fixture}"
+  elif [[ -L "${ROOT_DIR}/tests" || -L "${ROOT_DIR}/tests/fixtures" || -L "${fixture%/*}" || -L "${fixture}" || ! -f "${fixture}" ]]; then
+    # diff follows a symlink and would print its target into the CI log.
+    echo "Flag inventory: ${fixture} is not a regular file under real directories; refusing to diff a missing, special or symlinked fixture. Run scripts/check-flag-inventory.sh --write." >&2
+    status=1
   elif ! diff -u "${fixture}" "${work_dir}/${id}.txt" >&2; then
     echo "Flag inventory: ${fixture} does not match the ${binary} CLI in ${IMAGE_TAG}. Run scripts/check-flag-inventory.sh --write, then classify each new flag in adapters/${id}/adapter.toml [flags]." >&2
     status=1
