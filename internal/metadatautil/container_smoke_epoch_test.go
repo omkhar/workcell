@@ -63,6 +63,7 @@ func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
 		retag(`buildx_cmd build --load -t index.docker.io/library/workcell:smoke -f /tmp/o .`): false,
 		retag(`buildx_cmd build --load -t library/workcell:smoke -f /tmp/o .`):                 false,
 		retag(`buildx_cmd build --load -t other/workcell:smoke -f /tmp/o .`):                   true,
+		retag(`buildx_cmd build --load -t index.workcell:smoke -f /tmp/o .`):                   true,
 	} {
 		if err := metadatautil.ValidateContainerSmokeFlagInventory(src); (err == nil) != pass {
 			t.Errorf("validator = %v, want pass %v", err, pass)

@@ -55,7 +55,7 @@ var smokeImageTagDefaultRE = regexp.MustCompile(`IMAGE_TAG="?\$\{WORKCELL_IMAGE_
 // canonicalImageRef applies Docker's reference defaults: registry docker.io,
 // namespace library for a single-segment name, and tag latest.
 func canonicalImageRef(ref string) string {
-	ref = strings.TrimPrefix(strings.TrimPrefix(ref, "index."), "docker.io/")
+	ref = strings.TrimPrefix(strings.TrimPrefix(ref, "index.docker.io/"), "docker.io/")
 	if name := strings.TrimPrefix(ref, "library/"); !strings.Contains(name, "/") {
 		ref = name
 	}
