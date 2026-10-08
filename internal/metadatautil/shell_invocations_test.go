@@ -234,6 +234,10 @@ func TestShellInvocations(t *testing.T) {
 			script: ": >| oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
 			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
 		},
+		{name: "command eval ends the scan", script: "oras cp one\ncommand eval 'oras(){ :; }'\noras cp two\n", want: [][]string{{"one"}}},
+		{name: "builtin eval ends the scan", script: "builtin -- eval x\noras cp two\n"},
+		{name: "sh -c eval ends the scan", script: "sh -c 'eval x'\noras cp two\n"},
+		{name: "bash -c eval ends the scan", script: "/bin/bash -c \"eval\"\noras cp two\n"},
 		{
 			name:   "a hashed path over the command proves no invocation of it",
 			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",

@@ -25,6 +25,7 @@ type Evasion struct {
 var anyRejection = map[string]bool{
 	"unrelated placement":       true,
 	"eval-assembled definition": true,
+	"wrapped eval definition":   true,
 	"step condition if: false":  true,
 	"step condition && false":   true,
 }
@@ -212,6 +213,9 @@ var Evasions = []Evasion{
 	{"eval-assembled definition", replaceAnchor(func(a string) string {
 		name := strings.Fields(a)[0]
 		return indentOf(a) + "eval '" + name[:1] + "''" + name[1:] + "() { :; }'\n" + a
+	})},
+	{"wrapped eval definition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "command eval '" + strings.Fields(a)[0] + "() { :; }'\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

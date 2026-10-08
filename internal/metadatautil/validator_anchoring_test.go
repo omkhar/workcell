@@ -96,7 +96,7 @@ func anchoringRoot(t *testing.T, baseline string) string {
 
 func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
 	const validator = "package metadatautil\n\nfunc (c *checker) wrapper(p string) bool {\n\ttext, _ := readText(p)\n\treturn strings.Contains(text, \"tool run\")\n}\n"
-	const row = "internal/metadatautil\tchecker.wrapper\treviewed\n"
+	const row = "internal/metadatautil\tchecker.wrapper\t1\treviewed\n"
 	many := validator
 	for index := range 20 {
 		many += strings.Replace(validator[len("package metadatautil\n"):], "wrapper", fmt.Sprintf("wrapper%d", index), 1)
@@ -107,7 +107,9 @@ func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
 		{"planted violation", "v.go", validator, "", "checker.wrapper matches text"},
 		{"listed with a reason", "v.go", validator, row, ""},
 		{"stale row", "v.go", "package metadatautil\n", row, "remove its stale baseline row"},
-		{"row without a reason", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t \n", "PACKAGE<TAB>FUNCTION<TAB>REASON"},
+		{"row without a reason", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t1\t \n", "PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON"},
+		{"row without a count", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t0\treviewed\n", "CALLS must be a positive count"},
+		{"new match in a listed function", "v.go", strings.Replace(validator, "return ", "_ = strings.HasPrefix(text, \"x\")\n\treturn ", 1), row, "checker.wrapper has 2 match call(s) but its baseline row says 1"},
 		{"repeated row", "v.go", validator, row + row, "repeated row"},
 		{"report is capped", "v.go", many, "", "and 1 more"},
 		{"validator in a test file", "v_test.go", "package metadatautil\n\nfunc TestWorkflowRunsTool(t *testing.T) {\n\tif !strings.Contains(readText(p), \"tool run\") {\n\t\tt.Fatal(p)\n\t}\n}\n", "", "metadatautil.TestWorkflowRunsTool matches text"},
@@ -146,7 +148,11 @@ func TestTextMatchingFunctions(t *testing.T) {
 		"read then contains":    {"func f() { b, _ := os.ReadFile(p); _ = bytes.Contains(b, x) }", []string{"f"}},
 		"read then has prefix":  {"func f() { s := readText(p); _ = strings.HasPrefix(s, x) }", []string{"f"}},
 		"read then index":       {"func f() { s := readRepoFile(p); _ = strings.Index(s, x) }", []string{"f"}},
-		"read then regexp":      {"func f() { s := readText(p); _ = regexp.MustCompile(x).MatchString(s) }", []string{"f"}},
+		"read then regexp":      {"func f() { s := readText(p); _ = regexp.MustCompile(x).MatchString(s) }", []string{"f", "f"}},
+		"one name per match":    {"func f() { _ = strings.Contains(a, x); _ = strings.HasPrefix(a, y) }", []string{"f", "f"}},
+		"aliased strings":       {"import str \"strings\"\nfunc f() { _ = str.Contains(a, x) }", []string{"f"}},
+		"aliased regexp":        {"import re \"regexp\"\nfunc f() { _ = re.MustCompile(x) }", []string{"f"}},
+		"dot import":            {"import . \"strings\"\nfunc f() { _ = Contains(a, x) }", []string{"f"}},
 		"read then compiled re": {"func f() { s := readText(p); _ = re.FindStringSubmatch(s) }", []string{"f"}},
 		"exec then contains":    {"func f() { o, _ := exec.Command(x).Output(); _ = bytes.Contains(o, y) }", []string{"f"}},
 		"match in a closure":    {"func f() { s := readText(p); g := func() bool { return strings.Contains(s, x) }; _ = g }", []string{"f"}},

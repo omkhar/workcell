@@ -84,12 +84,13 @@ A validator that reads content and then matches it with `strings.Contains`,
 this way. It scans `internal/adapters`, `internal/metadatautil`,
 `internal/testkit` and `internal/workcellhardening`, test files included. It
 does not track where the text came from. A helper that matches content from its
-caller is listed too.
+caller is listed too. An import alias or a dot import does not hide the package.
 
 `policy/validator-anchoring-baseline.tsv` holds one row per function: package,
-function, and the reason that the match is safe or still debt. A function with
-no row fails. A row whose function no longer matches this way fails. The list
-only gets shorter. Port a debt row, then delete it in the same change.
+function, number of match calls, and the reason that the match is safe or still
+debt. A function with no row fails. A row whose count differs fails, so a new
+match in a listed function fails too. A row whose function no longer matches
+this way fails. Port a debt row, then delete it in the same change.
 
 ## 3. Repo policy must not silently widen trust
 

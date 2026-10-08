@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"path"
 	"slices"
 	"strings"
 )
@@ -481,7 +482,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 				// The step ends here; nothing written after it runs.
 				return invocations
 			}
-			if names[0] == "eval" {
+			if evaluates(names) {
 				// eval runs text this reader never sees as code, and that text
 				// can define a function or an alias with the command's name,
 				// as eval 'or''as() { :; }' does. No later call is proved to
@@ -702,6 +703,28 @@ func shellWords(line string, stack []byte) (
 		return words, heredocs, 0, stack, continues
 	}
 	return words, heredocs, quote, stack, continues
+}
+
+// evaluates reports whether the words run eval: bare, behind command or
+// builtin, which run it in this shell, or as the script of sh -c or bash -c.
+// A child shell cannot shadow the command here, but the barrier only loses
+// invocations, so it holds for every spelling.
+func evaluates(names []string) bool {
+	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || strings.HasPrefix(names[0], "-")) {
+		names = names[1:]
+	}
+	if names[0] == "eval" {
+		return true
+	}
+	if shell := path.Base(names[0]); shell != "sh" && shell != "bash" {
+		return false
+	}
+	at := slices.Index(names, "-c")
+	if at < 0 || at+1 == len(names) {
+		return false
+	}
+	script := strings.Fields(names[at+1])
+	return len(script) > 0 && script[0] == "eval"
 }
 
 // replacesShell reports whether the words are an exec that names a program,
