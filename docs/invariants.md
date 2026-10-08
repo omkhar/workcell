@@ -138,9 +138,10 @@ fails, and the check does not look it up. Go probes each path through no-follow
 descriptors.
 
 `validate-repo.sh`, a CI job script or a workflow must run a cited
-`scripts/*.sh` path as a command. A command after `false &&`, inside
-`if false` or after a top-level `exit` does not count. So a doc cannot cite a
-gate that nothing runs.
+`scripts/*.sh` path as a command. A command after `false &&` or inside
+`if false` does not count. Nor does a command after an `exit` that surely
+runs, as in `false || exit`. The check does not follow a symlink to a lane
+file. So a doc cannot cite a gate that nothing runs.
 
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.

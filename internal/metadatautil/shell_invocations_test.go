@@ -366,7 +366,13 @@ func TestShellCommandWords(t *testing.T) {
 		{"a literal status decides && and ||", "false && a\ntrue || b\n: || c\nfalse && d && e || f\n! false && g\nfalse | h && i\n", []string{"false", "true", ":", "false", "f", "false", "g", "false", "h", "i"}},
 		{"a literal condition skips its branch", "if false; then a; elif x; then b; else c; fi\nwhile false; do d; done\nuntil :; do e; done\nfor i in j; do k; done\nif x; false; then l; fi\n", []string{"false", "x", "b", "c", "false", ":", "for", "k", "x", "false"}},
 		{"an exit before a closer the reader never saw opened ends nothing", "if ! v=\"$(x)\"; then\n  exit 1\nfi\na\n(\n  exit\n)\nb\n", []string{"exit", "a", "exit", "b"}},
-		{"an unconditional top-level exit ends the listing", "exit | cat\nfalse || exit\nf() {\n  exit\n}\nif x; then exit; fi\n( exit )\nz\nexit; y\nw\n", []string{"exit", "cat", "false", "exit", "x", "exit", "exit", "z", "exit"}},
+		{"an unconditional top-level exit ends the listing", "exit | cat\nv || exit\nf() {\n  exit\n}\nif x; then exit; fi\n( exit )\nz\nexit; y\nw\n", []string{"exit", "cat", "v", "exit", "x", "exit", "exit", "z", "exit"}},
+		{"a surely run conditional exit ends the listing", "false || exit\na\n", []string{"false", "exit"}},
+		{"a true && exit ends the listing", "x || true && exit\na\n", []string{"x", "true", "exit"}},
+		{"an exit in if true ends the listing", "if true; then exit; fi\na\n", []string{"true", "exit"}},
+		{"an exit after an unsure false stays open", "x || false || exit\nfalse | true && exit\na\n", []string{"x", "false", "exit", "false", "true", "exit", "a"}},
+		{"a redefinition replaces the body for later calls", "f() { a; }\nf\nf() { b; }\nf\n", []string{"f", "a", "f", "b"}},
+		{"--help and --version run no operand", "bash --help scripts/a.sh\nenv --version scripts/b.sh\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

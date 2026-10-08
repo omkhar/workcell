@@ -40,4 +40,14 @@ func TestLaneScripts(t *testing.T) {
 	if _, err := metadatautil.LaneScripts(t.TempDir()); err == nil {
 		t.Fatal("LaneScripts() on a tree with no validate-repo.sh: want an error")
 	}
+	outside := filepath.Join(t.TempDir(), "job-y.sh")
+	if err := os.WriteFile(outside, []byte("scripts/z.sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "scripts", "ci", "job-y.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := metadatautil.LaneScripts(root); err == nil {
+		t.Fatal("LaneScripts() with a symlinked lane file: want an error")
+	}
 }

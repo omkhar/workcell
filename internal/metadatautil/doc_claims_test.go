@@ -20,6 +20,8 @@ func TestDocClaimHits(t *testing.T) {
 	}
 	for rel, body := range map[string]string{
 		"scripts/validate-repo.sh": "scripts/gate.sh\n",
+		"scripts/ci/job-x.sh":      "true\n",
+		".github/workflows/x.yml":  "name: x\n",
 		"scripts/gate.sh":          "true\n",
 		"scripts/orphan.sh":        "true\n",
 		"outside/x.sh":             "true\n",

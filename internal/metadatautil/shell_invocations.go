@@ -749,9 +749,13 @@ var laneWrappers = map[string]bool{
 }
 
 // inspectsOnly reports whether option turns wrapper into a command that only
-// describes or parses its operand: command -v or -V, and bash or sh -n.
+// describes or parses its operand: command -v or -V, bash or sh -n, and
+// --help or --version, which print text and exit.
 func inspectsOnly(wrapper, option string) bool {
 	short := !strings.HasPrefix(option, "--")
+	if option == "--help" || option == "--version" {
+		return true
+	}
 	switch wrapper {
 	case "command":
 		return short && strings.ContainsAny(option, "vV")
@@ -775,10 +779,13 @@ var assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\+?=`)
 //
 // Three unreachable forms name nothing: the right side of && after a bare
 // false or of || after a bare true or :, the body of if false, while false or
-// until true, and every command after a top-level exit. A later fi, done, esac,
-// } or ) with no opener the reader saw puts that exit back inside a block, so it
-// ends nothing. Any other status is unknown, so its commands count. A return,
-// an exit in a group, function or case, and a dead else stay counted.
+// until true, and every command after a top-level exit that surely runs, as in
+// false || exit or if true; then exit; fi. A later fi, done, esac, } or ) with
+// no opener the reader saw puts that exit back inside a block, so it ends
+// nothing. Any other status is unknown, so its commands count. A return, an
+// exit in a loop, function, case or multi-line group, and a dead else stay
+// counted. A call runs the body defined before it, so a redefinition replaces
+// the body for later calls only.
 func ShellCommandWords(script string) []string {
 	var top []string
 	bodies := map[string][]string{}
@@ -786,10 +793,10 @@ func ShellCommandWords(script string) []string {
 	// a branch body.
 	var cases []byte
 	// blocks holds one entry per open if, while, until, for or select: its
-	// keyword, and whether the branch being read can never run.
+	// keyword, and whether the branch being read is dead (d) or surely runs (l).
 	type block struct {
 		keyword string
-		dead    bool
+		state   byte
 	}
 	var blocks []block
 	var depth, definedAt, array int
@@ -807,6 +814,7 @@ func ShellCommandWords(script string) []string {
 			// which no function name can spell.
 			if name := definedName(words); name != "" && !strings.Contains(name, "=") {
 				defining, definedAt, bodyOpened = name, depth, false
+				bodies[name] = nil
 				words = words[definitionHeaderLength(words):]
 			}
 		}
@@ -852,13 +860,16 @@ func ShellCommandWords(script string) []string {
 					blocks = append(blocks, block{keyword: text})
 				case "then", "do":
 					if open := len(blocks) - 1; open >= 0 {
-						keyword := blocks[open].keyword
-						blocks[open].dead = (status == 'f' && (keyword == "if" || keyword == "while")) ||
-							(status == 't' && keyword == "until")
+						switch keyword := blocks[open].keyword; {
+						case (status == 'f' && (keyword == "if" || keyword == "while")) || (status == 't' && keyword == "until"):
+							blocks[open].state = 'd'
+						case status == 't' && keyword == "if":
+							blocks[open].state = 'l'
+						}
 					}
 				case "else", "elif":
 					if open := len(blocks) - 1; open >= 0 {
-						blocks[open].dead = false
+						blocks[open].state = 0
 					}
 				case "fi", "done":
 					if len(blocks) == 0 {
@@ -888,7 +899,7 @@ func ShellCommandWords(script string) []string {
 				// The program is a later word.
 			default:
 				start = false
-				if skip || slices.ContainsFunc(blocks, func(each block) bool { return each.dead }) {
+				if skip || slices.ContainsFunc(blocks, func(each block) bool { return each.state == 'd' }) {
 					continue
 				}
 				name := text
@@ -898,15 +909,32 @@ func ShellCommandWords(script string) []string {
 				if defining != "" {
 					bodies[defining] = append(bodies[defining], name)
 				} else {
+					// A call runs the body defined before it, which may call
+					// another function.
 					top = append(top, name)
+					for at, seen := len(top)-1, map[string]bool{}; at < len(top); at++ {
+						if body, found := bodies[top[at]]; found && !seen[top[at]] {
+							seen[top[at]] = true
+							top = append(top, body...)
+						}
+					}
 				}
+				// A command that && or || may skip, or that ends a pipeline,
+				// leaves a status only both paths share.
+				before := status
 				status = literalStatus(wrapper, each)
-				// An exit in a group, a block, a case, a subshell, a pipeline or
-				// behind && or || may leave the lines after it reachable.
-				if bare && text == "exit" && wrapper == "" && depth == 0 &&
-					defining == "" && len(blocks) == 0 && len(cases) == 0 &&
-					!slices.Contains([]string{"&&", "||", "|", "|&"}, operator) &&
-					!pipedAfter(words[index+1:]) && exitedAt < 0 {
+				if operator == "|" || operator == "|&" || (operator == "&&" && before != 't' && status != 'f') ||
+					(operator == "||" && before != 'f' && status != 't') {
+					status = 0
+				}
+				sure := operator == "&&" && before == 't' || operator == "||" && before == 'f' ||
+					!slices.Contains([]string{"&&", "||", "|", "|&"}, operator)
+				// An exit in a group, a loop, an unsure block, a case, a
+				// subshell, a pipeline or behind an unsure && or || may leave
+				// the lines after it reachable.
+				if bare && text == "exit" && slices.Contains(reservedWrappers, wrapper) && depth == 0 && defining == "" && sure &&
+					!slices.ContainsFunc(blocks, func(each block) bool { return each.state != 'l' }) &&
+					len(cases) == 0 && !pipedAfter(words[index+1:]) && exitedAt < 0 {
 					exitedAt = len(top)
 				}
 			}
@@ -927,14 +955,6 @@ func ShellCommandWords(script string) []string {
 	if exitedAt >= 0 {
 		top = top[:exitedAt]
 	}
-	// A called function runs its body, which may call another function.
-	seen := map[string]bool{}
-	for index := 0; index < len(top); index++ {
-		if body, found := bodies[top[index]]; found && !seen[top[index]] {
-			seen[top[index]] = true
-			top = append(top, body...)
-		}
-	}
 	return top
 }
 
@@ -950,12 +970,15 @@ func pipedAfter(words []word) bool {
 	return false
 }
 
+// reservedWrappers are the words before a program that leave its effect whole.
+var reservedWrappers = []string{"", "if", "elif", "while", "until", "then", "do", "else", "{"}
+
 // literalStatus returns the exit status a bare false, true or : always gives,
 // as f or t, or 0 when the program or a wrapper such as ! or bash leaves it
 // unknown. A reserved word before the program changes nothing.
 func literalStatus(wrapper string, program word) byte {
 	switch {
-	case program.quoted || !slices.Contains([]string{"", "if", "elif", "while", "until", "then", "do", "else", "{"}, wrapper):
+	case program.quoted || !slices.Contains(reservedWrappers, wrapper):
 		return 0
 	case program.text == "false":
 		return 'f'
