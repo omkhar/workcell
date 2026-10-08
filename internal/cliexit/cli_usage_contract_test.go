@@ -60,11 +60,20 @@ func mainPackageDirs(t *testing.T, moduleRoot, pattern string) []string {
 	if err != nil {
 		t.Fatalf("go list %s: %v", pattern, err)
 	}
-	return strings.Fields(string(out))
+	// One directory per line: split on newlines only so a path containing
+	// spaces stays whole. Non-main packages print an empty line.
+	var dirs []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSuffix(line, "\r"); line != "" {
+			dirs = append(dirs, line)
+		}
+	}
+	return dirs
 }
 
 func TestMainPackageDirsFindsMainOutsideMainGo(t *testing.T) {
-	root := t.TempDir()
+	// The space in the module directory name guards against whitespace splitting.
+	root := filepath.Join(t.TempDir(), "module with space")
 	tool := filepath.Join(root, "cmd", "tool")
 	if err := os.MkdirAll(tool, 0o755); err != nil {
 		t.Fatal(err)
