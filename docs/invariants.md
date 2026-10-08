@@ -186,10 +186,14 @@ runs. The check reads every command that a lane can run, so a command after
 does not count. A workflow path starts from the working directory of its step,
 and a `cd` before it moves that directory.
 
-A lane fails the check when it can change what a later command runs. An
-`alias` does this, and so does a source of a path outside `${ROOT_DIR}`. A
-program name that the check cannot read also fails. The check does not follow
-a symlink to a lane file.
+`internal/metadatautil/lane_scripts.go` reads the lanes. A lane fails the
+check when it can change what a later command runs. An `alias` does this, and
+so does a source of a path outside `${ROOT_DIR}`. A program name that the check
+cannot read also fails. The check does not follow a symlink to a lane file.
+
+A sentence that claims enforcement needs such a span within two lines, and
+it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger
+words.
 
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.
