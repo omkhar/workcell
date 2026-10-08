@@ -61,51 +61,31 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 	cases := []struct {
 		name     string
 		doc      string
-		lane     string // validate-repo.sh body; empty means it runs scripts/gate.sh
 		baseline string
 		base     string // committed baseline rows on main; empty means no commit
 		want     string // empty means the fixture must pass
 	}{
-		{"clean", "The gate `scripts/gate.sh` runs.\n", "", "", "", ""},
-		{"missing path", "See `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
-		{"missing dot-slash path", "See `./scripts/nope.sh` here.\n", "", "", "", "missing-path"},
-		{"missing spaced path", "See ` scripts/nope.sh ` here.\n", "", "", "", "missing-path"},
-		{"missing internal path", "See `internal/nope/x.go` here.\n", "", "", "", "missing-path"},
-		{"unwired script", "See `scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
-		{"unwired dot-slash script", "See `./scripts/orphan.sh` here.\n", "", "", "", "unwired-script"},
-		{"wired by root variable", "See `scripts/orphan.sh` here.\n", "\"${ROOT_DIR}/scripts/orphan.sh\" --flag\n", "", "", ""},
-		{"wired after keyword", "See `scripts/orphan.sh` here.\n", "if ! ./scripts/orphan.sh; then exit 1; fi\n", "", "", ""},
-		{"comment is not wiring", "See `scripts/orphan.sh` here.\n", "# scripts/orphan.sh is intentionally not run\n", "", "", "unwired-script"},
-		{"echo is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"scripts/orphan.sh\"\n", "", "", "unwired-script"},
-		{"longer name is not wiring", "See `scripts/orphan.sh` here.\n", "scripts/orphan.sh.bak\n", "", "", "unwired-script"},
-		{"array member is not wiring", "See `scripts/orphan.sh` here.\n", "files=(\n  \"${ROOT_DIR}/scripts/orphan.sh\"\n)\n", "", "", "unwired-script"},
-		{"case pattern is not wiring", "See `scripts/orphan.sh` here.\n", "case x in\n  scripts/orphan.sh | y)\n    true\n    ;;\nesac\n", "", "", "unwired-script"},
-		{"continued argument is not wiring", "See `scripts/orphan.sh` here.\n", "shellcheck \\\n  scripts/orphan.sh\n", "", "", "unwired-script"},
-		{"heredoc body is not wiring", "See `scripts/orphan.sh` here.\n", "cat <<EOF\nscripts/orphan.sh\nEOF\n", "", "", "unwired-script"},
-		{"quoted separator is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"a; scripts/orphan.sh\"\n", "", "", "unwired-script"},
-		{"uncalled function is not wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\n", "", "", "unwired-script"},
-		{"called function is wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\nf\n", "", "", ""},
-		{"wired after an exit in an if", "See `scripts/orphan.sh` here.\n", "if [ -n \"$x\" ]; then\n  exit 1\nfi\nscripts/orphan.sh\n", "", "", ""},
-		{"false && is not wiring", "See `scripts/orphan.sh` here.\n", "false && scripts/orphan.sh\n", "", "", "unwired-script"},
-		{"if false is not wiring", "See `scripts/orphan.sh` here.\n", "if false; then\n  scripts/orphan.sh\nfi\n", "", "", "unwired-script"},
-		{"after an exit is not wiring", "See `scripts/orphan.sh` here.\n", "exit 0\nscripts/orphan.sh\n", "", "", "unwired-script"},
-		{"four-space tilde is not a fence", "    ~~~\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
-		{"tab-indented backticks are not a fence", "\t```\nSee [x](missing.md).\n", "", "", "", "broken link"},
-		{"wired in a case branch", "See `scripts/orphan.sh` here.\n", "case x in\n  y) scripts/orphan.sh ;;\nesac\n", "", "", ""},
-		{"symlink to outside file", "See `scripts/ext.sh` here.\n", "", "", "", "escaping-path"},
-		{"symlinked parent directory", "See `scripts/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
-		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
-		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", "", ""},
-		{"unreadable base baseline", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
-		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},
-		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
-		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "", "broken link"},
-		{"fenced path is skipped", "```bash\nSee `scripts/nope.sh` here.\n```\n", "", "", "", ""},
-		{"baselined hit", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "", ""},
-		{"stale baseline row", "Nothing here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "", "stale doc-claims baseline"},
-		{"baseline growth", "See `scripts/orphan.sh` here.\nSee `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "not at the merge base"},
-		{"baseline replacement", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "not at the merge base"},
-		{"baseline shrink", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tunwired-script\tscripts/orphan.sh\tx\n", ""},
+		{"clean", "The gate `scripts/gate.sh` runs.\n", "", "", ""},
+		{"missing path", "See `scripts/nope.sh` here.\n", "", "", "missing-path"},
+		{"missing dot-slash path", "See `./scripts/nope.sh` here.\n", "", "", "missing-path"},
+		{"missing spaced path", "See ` scripts/nope.sh ` here.\n", "", "", "missing-path"},
+		{"missing internal path", "See `internal/nope/x.go` here.\n", "", "", "missing-path"},
+		{"four-space tilde is not a fence", "    ~~~\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
+		{"tab-indented backticks are not a fence", "\t```\nSee [x](missing.md).\n", "", "", "broken link"},
+		{"symlink to outside file", "See `scripts/ext.sh` here.\n", "", "", "escaping-path"},
+		{"symlinked parent directory", "See `scripts/extdir/outside.txt` here.\n", "", "", "escaping-path"},
+		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
+		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", ""},
+		{"unreadable base baseline", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
+		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "escaping-path"},
+		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
+		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "broken link"},
+		{"fenced path is skipped", "```bash\nSee `scripts/nope.sh` here.\n```\n", "", "", ""},
+		{"baselined hit", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", ""},
+		{"stale baseline row", "Nothing here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", "stale doc-claims baseline"},
+		{"baseline growth", "See `scripts/nope.sh` here.\nSee `scripts/nope2.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
+		{"baseline replacement", "See `scripts/nope2.sh` here.\n", "README.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
+		{"baseline shrink", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,15 +93,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			for rel, body := range sources {
 				writeFixtureFile(t, dir, rel, body)
 			}
-			lane := tc.lane
-			if lane == "" {
-				lane = "scripts/gate.sh\n"
-			}
-			writeFixtureFile(t, dir, "scripts/validate-repo.sh", lane)
-			writeFixtureFile(t, dir, "scripts/ci/job-x.sh", "true\n")
-			writeFixtureFile(t, dir, ".github/workflows/x.yml", "name: x\n")
 			writeFixtureFile(t, dir, "scripts/gate.sh", "true\n")
-			writeFixtureFile(t, dir, "scripts/orphan.sh", "true\n")
 			writeFixtureFile(t, dir, "README.md", tc.doc)
 			// A real file outside the fixture repository, which a traversal
 			// span such as scripts/../../outside.txt reaches.

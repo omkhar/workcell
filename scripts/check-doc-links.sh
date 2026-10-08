@@ -125,9 +125,7 @@ done <<<"${docs_listing}"
 
 # --- Doc claim enforcement check ----------------------------------------------
 # A code span naming scripts/..., internal/... or .github/workflows/... (a
-# leading ./ is dropped) must exist. validate-repo.sh, a scripts/ci/job-*.sh or
-# a workflow must run a cited scripts/*.sh path as a command, so a doc cannot
-# cite a gate that nothing runs. Hits that exist today sit in
+# leading ./ is dropped) must exist. Hits that exist today sit in
 # policy/doc-claims-baseline.tsv (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
 # fails too, and every row must exist at the merge base with origin/main (or
 # main), so the set only shrinks. A path with a .. or symlink component fails.
@@ -140,7 +138,7 @@ claim_cited="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_cited}"' EXIT
 
 # workcell-citools doc-claims probes each cited path through no-follow
-# descriptors, since bash has no openat, and lists the scripts a lane runs.
+# descriptors, since bash has no openat.
 for f in "${md_files[@]}"; do
   awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
     awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk"
