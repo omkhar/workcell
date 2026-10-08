@@ -166,3 +166,42 @@ func TestRemoveAllAtNoFollowRemovesTheTraversedTree(t *testing.T) {
 		t.Fatalf("expected only the replacement to remain, found %v, %v", entries, err)
 	}
 }
+
+// A replacement placed at the staged name after the traversal is kept, and
+// the call names the swap. Not parallel: the test sets the package hook.
+func TestRemoveAllAtNoFollowRefusesAStagedNameSwap(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var staged string
+	removeAllHook = func() {
+		removeAllHook = func() {}
+		matches, _ := filepath.Glob(filepath.Join(base, ".workcell-rm-*"))
+		if len(matches) != 1 {
+			t.Errorf("expected one staged entry, found %v", matches)
+			return
+		}
+		staged = matches[0]
+		if err := os.Rename(staged, filepath.Join(base, "moved")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(staged, 0o700); err != nil {
+			t.Error(err)
+		}
+	}
+	defer func() { removeAllHook = func() {} }()
+	parent, err := os.Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	if err := RemoveAllAtNoFollow(parent, "tree"); err == nil || !strings.Contains(err.Error(), "swapped") {
+		t.Fatalf("RemoveAllAtNoFollow() error = %v, want a swap error", err)
+	}
+	for _, kept := range []string{staged, filepath.Join(base, "moved")} {
+		if _, err := os.Lstat(kept); err != nil {
+			t.Fatalf("expected %s to remain, found %v", kept, err)
+		}
+	}
+}

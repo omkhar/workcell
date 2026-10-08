@@ -342,7 +342,8 @@ func TestRemoveAllAtNoFollow(t *testing.T) {
 		}
 	}
 	for _, file := range []string{filepath.Join(tree, "a", "b", "leaf"), filepath.Join(outside, "keep")} {
-		if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		// Mode 0000: the leaf cannot be opened, so Fstatat binds it.
+		if err := os.WriteFile(file, []byte("x"), 0o000); err != nil {
 			t.Fatal(err)
 		}
 	}

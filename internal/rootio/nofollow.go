@@ -103,8 +103,18 @@ func openDirectoryChain(fd int, components []string) (int, error) {
 //
 // Each entry is renamed to a random staged name first, and the walk and the
 // unlink use that name, so a directory swapped in at the original name is
-// kept. Residual risk: an actor that can rename in the parent can swap the
-// staged name too; that actor is the same user, outside the threat model.
+// kept. Before each unlink, the entry at the staged name must match the
+// directory descriptor that was traversed, or the regular file descriptor
+// that was opened, by device, inode and mode; a mismatch is an error, and
+// both entries stay.
+//
+// Residual risk, accepted: the check and the unlink address the entry by name
+// under the parent descriptor, and POSIX has no unlink by inode, so a process
+// that can write that directory could swap the entry between the two calls.
+// That process is the same user or root, which already controls the tree; the
+// check exists to keep this call from removing an entry it did not traverse,
+// not to defend against a hostile same-uid process, which is outside the
+// threat model.
 func RemoveAllAtNoFollow(parent *os.File, name string) error {
 	if err := validateLeafName(name); err != nil {
 		return err
@@ -127,7 +137,7 @@ func removeAllAt(parentFD int, name string) error {
 	fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
 		// A file or a symlink: remove the entry itself, never its target.
-		return unix.Unlinkat(parentFD, staged, 0)
+		return unlinkLeafAt(parentFD, staged)
 	}
 	if err != nil {
 		return err
@@ -139,6 +149,10 @@ func removeAllAt(parentFD int, name string) error {
 			err = removeAllAt(fd, child)
 		}
 	}
+	var traversed unix.Stat_t
+	if err == nil {
+		err = unix.Fstat(fd, &traversed)
+	}
 	if closeErr := dir.Close(); err == nil {
 		err = closeErr
 	}
@@ -146,7 +160,48 @@ func removeAllAt(parentFD int, name string) error {
 		return err
 	}
 	removeAllHook()
+	if err := requireStagedEntry(parentFD, staged, &traversed); err != nil {
+		return err
+	}
 	return unix.Unlinkat(parentFD, staged, unix.AT_REMOVEDIR)
+}
+
+// unlinkLeafAt removes one staged non-directory. A regular file is opened
+// without following a symlink and bound by its descriptor; other entries, and
+// a regular file this user cannot open, are bound by the Fstatat taken here.
+func unlinkLeafAt(parentFD int, staged string) error {
+	var held unix.Stat_t
+	if err := unix.Fstatat(parentFD, staged, &held, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if held.Mode&unix.S_IFMT == unix.S_IFREG {
+		fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
+		if err == nil {
+			err = unix.Fstat(fd, &held)
+			_ = unix.Close(fd)
+		} else if errors.Is(err, unix.EACCES) {
+			err = nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if err := requireStagedEntry(parentFD, staged, &held); err != nil {
+		return err
+	}
+	return unix.Unlinkat(parentFD, staged, 0)
+}
+
+// requireStagedEntry fails when the entry at staged is not the held inode.
+func requireStagedEntry(parentFD int, staged string, held *unix.Stat_t) error {
+	var current unix.Stat_t
+	if err := unix.Fstatat(parentFD, staged, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if current.Dev != held.Dev || current.Ino != held.Ino || current.Mode != held.Mode {
+		return fmt.Errorf("refusing to remove %s: the staged entry was swapped after it was traversed", staged)
+	}
+	return nil
 }
 
 // removeAllHook lets a test rename entries before a directory is removed.
