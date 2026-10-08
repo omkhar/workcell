@@ -4563,11 +4563,13 @@ rm -rf "${PREMERGE_HARNESS_ROOT}"
 mkdir -p \
   "${PREMERGE_HARNESS_ROOT}/scripts" \
   "${PREMERGE_HARNESS_ROOT}/scripts/ci" \
+  "${PREMERGE_HARNESS_ROOT}/scripts/lib" \
   "${PREMERGE_HARNESS_ROOT}/tools/validator" \
   "${PREMERGE_HARNESS_ROOT}/.git" \
   "${PREMERGE_FAKEBIN}" \
   "${PREMERGE_DEFAULT_HOME}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
+install -m 0644 "${ROOT_DIR}/scripts/lib/go-run-env.sh" "${PREMERGE_HARNESS_ROOT}/scripts/lib/go-run-env.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4824,6 +4826,15 @@ fi
 exit 0
 EOF
 chmod 0755 "${PREMERGE_FAKEBIN}/docker"
+# The shape-margin lookup is the only Go call pre-merge makes itself; the
+# harness answers it with the first-publication margin.
+cat >"${PREMERGE_FAKEBIN}/go" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'go %s\n' "$*" >>"${PREMERGE_LOG}"
+printf '0.66\n'
+EOF
+chmod 0755 "${PREMERGE_FAKEBIN}/go"
 
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
@@ -4869,7 +4880,8 @@ grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}
 for expected in \
   'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
   'check-workflows.sh ' \
-  'ci/job-pr-shape.sh --base main' \
+  "go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main" \
+  'ci/job-pr-shape.sh --base main --margin 0.66' \
   'ci/job-validate.sh --profile pr-parity --skip-host-invariants' \
   'verify-invariants.sh --live-lane-only' \
   'live-lane colima-start-timeout=360' \
