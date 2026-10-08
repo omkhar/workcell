@@ -325,6 +325,24 @@ func TestCheckHardenedFSRejectsASymlinkedPackageRoot(t *testing.T) {
 	}
 }
 
+// A symlinked directory below a package root must fail. The walk cannot
+// descend it without following the link, and skipping it would hide every
+// source behind it, though Go still builds the package through the link.
+func TestCheckHardenedFSRejectsASymlinkedPackageDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
+	writeHardenedFSPackageFixtures(t, root)
+	writeHardenedFSFixture(t, filepath.Join(root, "outside", "state.go"),
+		"package outside\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
+	if err := os.Symlink(filepath.Join(root, "outside"), filepath.Join(root, "internal", "host", "hidden")); err != nil {
+		t.Fatalf("create the symlinked package directory: %v", err)
+	}
+	if err := metadatautil.CheckHardenedFS(root); err == nil {
+		t.Fatal("expected a symlinked directory below a trust-boundary package to fail")
+	}
+}
+
 // writeHardenedFSPackageFixtures gives every trust-boundary package one source,
 // because the check requires each one to contribute a scanned file. The list
 // comes from the check itself, so a new package needs no fixture edit.

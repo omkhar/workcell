@@ -8,6 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -402,9 +403,9 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int
 // walkHardenedGoSources hands visit each non-test Go source below dir, in
 // name order, skipping testdata. Each child directory is opened relative to
 // dir without following a symlink, and each source is read relative to dir
-// with rootio's no-follow leaf read, so no name is resolved twice. A symlinked
-// directory entry is not descended, as fs.WalkDir does not descend one; a
-// symlinked .go entry fails the read.
+// with rootio's no-follow leaf read, so no name is resolved twice. A symlink
+// entry fails the walk whatever its name: skipping one would hide a symlinked
+// package directory, whose sources Go still builds through the link.
 func walkHardenedGoSources(dir *os.File, rel string, visit func(rel string, content []byte) error) error {
 	entries, err := dir.ReadDir(-1)
 	if err != nil {
@@ -414,6 +415,9 @@ func walkHardenedGoSources(dir *os.File, rel string, visit func(rel string, cont
 	for _, entry := range entries {
 		base := entry.Name()
 		name := rel + "/" + base
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; the hardened filesystem rule cannot scan behind it", name)
+		}
 		if entry.IsDir() {
 			if base == "testdata" {
 				continue
