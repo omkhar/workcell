@@ -132,7 +132,7 @@ done <<<"${docs_listing}"
 # lines. Hits that exist today sit in policy/doc-claims-baseline.tsv
 # (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
 # fails too, and every row must exist at the merge base with origin/main (or
-# main), so the set only shrinks. A path with a .. component fails unprobed.
+# main), so the set only shrinks. A path with a .. or symlink component fails.
 # Override the baseline path with DOC_CLAIMS_BASELINE and the workcell-citools
 # binary with DOC_CLAIMS_CITOOLS (tests only).
 claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
@@ -160,6 +160,20 @@ for f in "${md_files[@]}"; do
         printf '%s\tescaping-path\t%s\n' "${doc}" "${subject}"
         continue
       fi
+      # No-follow probe: a symlink in any component may lead outside the
+      # checkout, so it anchors nothing and fails like a .. path.
+      probe=""
+      linked=0
+      IFS=/ read -r -a parts <<<"${subject}"
+      for part in "${parts[@]}"; do
+        [[ -n "${part}" ]] || continue
+        probe="${probe:+${probe}/}${part}"
+        [[ ! -L "${probe}" ]] || linked=1
+      done
+      if [[ "${linked}" -eq 1 ]]; then
+        printf '%s\tescaping-path\t%s\n' "${doc}" "${subject}"
+        continue
+      fi
       if [[ ! -e "${subject}" ]]; then
         printf '%s\tmissing-path\t%s\n' "${doc}" "${subject}"
         continue
@@ -184,8 +198,8 @@ sort -o "${claim_hits}" "${claim_hits}"
 sort -o "${claim_base}" "${claim_base}"
 
 # Ratchet: every row must exist in the baseline at the merge base, so a fixed
-# hit cannot hand its row to a new one. A base with no baseline file (the
-# change that adds it) has nothing to compare.
+# hit cannot hand its row to a new one. Every lookup error fails closed. The
+# one skip is a merge base without the baseline file (the change that adds it).
 claims_base_ref=""
 for ref in refs/remotes/origin/main refs/heads/main; do
   if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
@@ -193,10 +207,26 @@ for ref in refs/remotes/origin/main refs/heads/main; do
     break
   fi
 done
-if [[ -n "${claims_base_ref}" ]] && git rev-parse --verify --quiet HEAD >/dev/null; then
-  claims_merge_base="$(git merge-base HEAD "${claims_base_ref}")"
-  if git cat-file -e "${claims_merge_base}:policy/doc-claims-baseline.tsv" 2>/dev/null; then
-    base_rows="$(git show "${claims_merge_base}:policy/doc-claims-baseline.tsv" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
+claims_file=policy/doc-claims-baseline.tsv
+if [[ -z "${claims_base_ref}" ]]; then
+  echo "check-doc-links: no origin/main or main ref; baseline merge-base ratchet skipped" >&2
+else
+  claims_merge_base="$(git merge-base HEAD "${claims_base_ref}")" || {
+    echo "check-doc-links: no merge base between HEAD and ${claims_base_ref}" >&2
+    exit 2
+  }
+  claims_listed="$(git ls-tree --name-only "${claims_merge_base}" -- "${claims_file}")" || {
+    echo "check-doc-links: cannot read the tree at merge base ${claims_merge_base}" >&2
+    exit 2
+  }
+  if [[ -z "${claims_listed}" ]]; then
+    echo "check-doc-links: ${claims_file} is not at the merge base (this change adds it); baseline merge-base ratchet skipped" >&2
+  else
+    base_rows="$(git show "${claims_merge_base}:${claims_file}")" || {
+      echo "check-doc-links: cannot read ${claims_file} at merge base ${claims_merge_base}" >&2
+      exit 2
+    }
+    base_rows="$(printf '%s\n' "${base_rows}" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
     claim_unbased="$(comm -23 "${claim_base}" <(printf '%s\n' "${base_rows}"))"
     while IFS= read -r row; do
       [[ -n "${row}" ]] || continue

@@ -92,6 +92,10 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"called function is wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\nf\n", "", "", ""},
 		{"wired after an exit in an if", "See `scripts/orphan.sh` here.\n", "if true; then\n  exit 1\nfi\nscripts/orphan.sh\n", "", "", ""},
 		{"wired in a case branch", "See `scripts/orphan.sh` here.\n", "case x in\n  y) scripts/orphan.sh ;;\nesac\n", "", "", ""},
+		{"symlink to outside file", "See `scripts/ext.sh` here.\n", "", "", "", "escaping-path"},
+		{"symlinked parent directory", "See `scripts/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
+		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", "", ""},
+		{"unreadable base baseline", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
 		{"escaping path", "The launcher rejects bad input.\nSee `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"unanchored claim", "The launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
 		{"blocks claim", "Workcell blocks operator launch.\n", "", "", "", "unanchored-claim"},
@@ -133,6 +137,12 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			// A real file outside the fixture repository, which a traversal
 			// span such as scripts/../../outside.txt reaches.
 			writeFixtureFile(t, filepath.Dir(dir), "outside.txt", "x\n")
+			// Symlinks that lead out of the fixture with no .. component.
+			for link, target := range map[string]string{"scripts/ext.sh": "outside.txt", "scripts/extdir": ""} {
+				if err := os.Symlink(filepath.Join(filepath.Dir(dir), target), filepath.Join(dir, link)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			git := func(args ...string) {
 				t.Helper()
 				full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)
@@ -148,6 +158,17 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			}
 			writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", "# test\n"+tc.baseline)
 			git("add", "-A")
+			if tc.name == "unreadable base baseline" {
+				// Drop the committed baseline blob so the merge-base read fails.
+				blob, err := exec.Command("git", "-C", dir, "rev-parse", "main:policy/doc-claims-baseline.tsv").Output()
+				if err != nil {
+					t.Fatal(err)
+				}
+				id := strings.TrimSpace(string(blob))
+				if err := os.Remove(filepath.Join(dir, ".git", "objects", id[:2], id[2:])); err != nil {
+					t.Fatal(err)
+				}
+			}
 			out, err := runDocLinks(t, dir, citools)
 			if tc.want == "" {
 				if err != nil {
