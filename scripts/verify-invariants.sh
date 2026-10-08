@@ -4881,6 +4881,7 @@ for expected in \
   'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
   'check-workflows.sh ' \
   "go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main" \
+  '-- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot head --shape-margin 0.66' \
   'ci/job-pr-shape.sh --base main --margin 0.66' \
   'ci/job-validate.sh --profile pr-parity --skip-host-invariants' \
   'verify-invariants.sh --live-lane-only' \
@@ -4925,6 +4926,30 @@ test "$(jq -r '.timings.total_seconds' "${PREMERGE_HARNESS_ROOT}/.git/workcell-p
 
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
+
+# A repo-core snapshot plans no shape job, so it makes no GitHub margin lookup.
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  HOME="${PREMERGE_DEFAULT_HOME}" \
+  XDG_CACHE_HOME='' \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n' \
+  WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --profile repo-core \
+  --local-snapshot head </dev/null >/tmp/workcell-premerge-repo-core-snapshot.out 2>&1; then
+  echo "Expected a repo-core --local-snapshot head pre-merge run to succeed" >&2
+  cat /tmp/workcell-premerge-repo-core-snapshot.out >&2
+  exit 1
+fi
+grep -q -- '--mode head -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile repo-core --local-snapshot head$' "${PREMERGE_LOG}"
+grep -q 'ci/job-validate.sh --profile repo-core --skip-host-invariants' "${PREMERGE_LOG}"
+if grep -q -e 'publish-pr-shape-margin' -e '--shape-margin' -e '^ci/job-pr-shape.sh ' "${PREMERGE_LOG}"; then
+  echo "Expected a repo-core snapshot run to skip the PR shape margin lookup" >&2
+  cat "${PREMERGE_LOG}" >&2
+  exit 1
+fi
 
 # A failed live lane fails the gate after the other lanes, with no evidence.
 : >"${PREMERGE_LOG}"

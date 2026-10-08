@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -165,22 +164,42 @@ func shapeMarginFromLookups(repoViewJSON, prListJSON string, opts *Options) (str
 
 // ShapeMarginMain prints the PR shape margin that publish-pr would apply to
 // the branch checked out in workspace against base, so pre-merge checks the
-// same budget. A detached HEAD or a missing gh cannot have a PR and gets the
-// first-publication margin; any other lookup or parse failure is an error.
-// gh runs without GH_REPO (RunPublishHostCommandInDir drops it) and with -R
-// set to the origin push repository, as publish-pr does.
+// same budget. git and gh resolve as publish-pr resolves them, because the
+// lookups run with the host credentials. A detached HEAD or a missing gh
+// cannot have a PR and gets the first-publication margin; any other lookup or
+// parse failure is an error.
 func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
-	gitBin, err := exec.LookPath("git")
+	ctx := &BashContext{
+		WorkspaceRoot:   workspace,
+		TrustedHostPath: os.Getenv("PATH"),
+		RealHome:        os.Getenv("HOME"),
+		HostGitBin:      os.Getenv("HOST_GIT_BIN"),
+		HostGhBin:       os.Getenv("HOST_GH_BIN"),
+	}
+	resolvedWorkspace, err := resolveExistingDirectoryOrDie(ctx, workspace)
 	if err != nil {
 		return err
 	}
-	ctx := &BashContext{HostGitBin: gitBin, TrustedHostPath: os.Getenv("PATH"), RealHome: os.Getenv("HOME")}
+	// The workspace is also the repository root that pre-merge validates.
+	ctx.RootDir = resolvedWorkspace
+	if ctx.HostGitBin, err = resolveHostGit(ctx); err != nil {
+		return err
+	}
+	if ctx.HostGhBin, err = resolveHostGh(ctx, false); err != nil {
+		return err
+	}
+	return writeShapeMargin(ctx, workspace, base, stdout)
+}
+
+// writeShapeMargin runs the publish-pr lookups with the resolved ctx tools.
+// gh runs without GH_REPO (RunPublishHostCommandInDir drops it) and with -R
+// set to the origin push repository, as publish-pr does.
+func writeShapeMargin(ctx *BashContext, workspace, base string, stdout io.Writer) error {
 	if !workspaceIsGitWorkTree(ctx, workspace) {
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a git worktree: %s", workspace)}
 	}
 	branch := currentBranch(ctx, workspace)
-	ghBin, ghErr := exec.LookPath("gh")
-	if branch == "" || ghErr != nil {
+	if branch == "" || ctx.HostGhBin == "" {
 		_, err := fmt.Fprintln(stdout, firstPublicationShapeMargin)
 		return err
 	}
@@ -194,12 +213,12 @@ func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
 		err := RunPublishHostCommandInDir(workspace, env, args, nil, &out, os.Stderr)
 		return out.String(), err
 	}
-	repoViewJSON, err := run(repoViewArgs(ghBin, repositorySelector))
+	repoViewJSON, err := run(repoViewArgs(ctx.HostGhBin, repositorySelector))
 	if err != nil {
 		return err
 	}
 	opts := &Options{Base: base, Branch: branch}
-	prListJSON, err := run(prListArgs(ghBin, repositorySelector, opts))
+	prListJSON, err := run(prListArgs(ctx.HostGhBin, repositorySelector, opts))
 	if err != nil {
 		return err
 	}
@@ -209,6 +228,25 @@ func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
 	}
 	_, err = fmt.Fprintln(stdout, margin)
 	return err
+}
+
+// resolveHostGit resolves git as publish-pr does: HOST_GIT_BIN when set, else
+// a trusted candidate or trusted PATH entry outside the workspace.
+func resolveHostGit(ctx *BashContext) (string, error) {
+	if ctx.HostGitBin != "" {
+		return ResolveExistingExecutableOrDie(ctx, ctx.HostGitBin, "HOST_GIT_BIN")
+	}
+	return ResolveHostTool(ctx, "git", true, []string{"/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"})
+}
+
+// resolveHostGh resolves gh as publish-pr does: HOST_GH_BIN when set, else a
+// trusted candidate or trusted PATH entry outside the workspace. When
+// required is false, a missing gh returns "".
+func resolveHostGh(ctx *BashContext, required bool) (string, error) {
+	if ctx.HostGhBin != "" {
+		return ResolveExistingExecutableOrDie(ctx, ctx.HostGhBin, "HOST_GH_BIN")
+	}
+	return ResolveHostTool(ctx, "gh", required, []string{"/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"})
 }
 
 func parseExistingPullRequest(raw, repositoryNameWithOwner string, opts *Options) (string, error) {
@@ -326,12 +364,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		return err
 	}
 
-	if ctx.HostGitBin != "" {
-		ctx.HostGitBin, err = ResolveExistingExecutableOrDie(ctx, ctx.HostGitBin, "HOST_GIT_BIN")
-	} else {
-		ctx.HostGitBin, err = ResolveHostTool(ctx, "git", true, []string{"/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"})
-	}
-	if err != nil {
+	if ctx.HostGitBin, err = resolveHostGit(ctx); err != nil {
 		return err
 	}
 
@@ -345,18 +378,13 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	// gh resolution precedence mirrors bash: --gh-bin flag → HOST_GH_BIN
 	// env → resolve_host_tool (or _optional under --dry-run falling back
 	// to a bare `gh`).
-	switch {
-	case opts.GhBin != "":
+	if opts.GhBin != "" {
 		ctx.HostGhBin, err = ResolveExistingExecutableOrDie(ctx, opts.GhBin, "gh-bin")
-	case ctx.HostGhBin != "":
-		ctx.HostGhBin, err = ResolveExistingExecutableOrDie(ctx, ctx.HostGhBin, "HOST_GH_BIN")
-	case opts.DryRun:
-		ctx.HostGhBin, err = ResolveHostTool(ctx, "gh", false, []string{"/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"})
+	} else {
+		ctx.HostGhBin, err = resolveHostGh(ctx, !opts.DryRun)
 		if err == nil && ctx.HostGhBin == "" {
 			ctx.HostGhBin = "gh"
 		}
-	default:
-		ctx.HostGhBin, err = ResolveHostTool(ctx, "gh", true, []string{"/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"})
 	}
 	if err != nil {
 		return err

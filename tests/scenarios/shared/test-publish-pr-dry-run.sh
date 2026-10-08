@@ -1063,13 +1063,12 @@ grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
 # pre-merge asks publish-pr's Go owner for the margin: only an open PR from
 # this repository lifts it, and a lookup that is not an array of complete
 # entries stops pre-merge instead of falling back to 0.66.
-MARGIN_GH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/publish-pr-margin-gh.XXXXXX")"
-ln -s "${TRUSTED_GH_STUB}" "${MARGIN_GH_DIR}/gh"
-(cd "${ROOT_DIR}" && go build -o "${MARGIN_GH_DIR}/workcell-citools" ./cmd/workcell-citools)
+MARGIN_BIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/publish-pr-margin-bin.XXXXXX")"
+(cd "${ROOT_DIR}" && go build -o "${MARGIN_BIN_DIR}/workcell-citools" ./cmd/workcell-citools)
 # ROOT_DIR is the fixture here, so the go run seam runs the prebuilt binary.
 resolve_margin() {
   printf '%s\n' "$1" >"${GH_PR_LIST_RESPONSE_FILE}"
-  PATH="${MARGIN_GH_DIR}:${PATH}" GH_REPO=wrong/repo bash -c '
+  PATH="${MARGIN_BIN_DIR}:${PATH}" HOST_GH_BIN="${TRUSTED_GH_STUB}" GH_REPO=wrong/repo bash -c '
     set -euo pipefail
     ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto
     eval "$(sed -n "/^resolve_shape_margin()/,/^}/p" "$2")"
@@ -1093,7 +1092,7 @@ for bad_list in 'not json' '{}' '[{}]' '[{"baseRefName":"main","headRefName":"ma
   grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_fail_output}"
 done
 rm -f "${GH_PR_LIST_RESPONSE_FILE}"
-rm -rf "${MARGIN_GH_DIR}"
+rm -rf "${MARGIN_BIN_DIR}"
 
 # An explicit limit of 0 is not raised to 1 by the margin floor.
 set +e

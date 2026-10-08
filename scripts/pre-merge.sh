@@ -112,6 +112,10 @@ default_local_snapshot_parent() {
 run_from_local_snapshot() {
   local -a snapshot_cmd=()
   local snapshot_parent=""
+  local -a plan_args=()
+  local -a margin_args=()
+  local plan_json=""
+  local selected_scripts=""
   local shape_margin=""
   local status=0
 
@@ -135,15 +139,22 @@ run_from_local_snapshot() {
     snapshot_cmd+=(--keep-snapshot)
   fi
   # The snapshot's only remote is this directory, so gh cannot learn whether
-  # a PR exists from inside it: resolve the margin here and pass it along.
-  shape_margin="$(resolve_shape_margin)"
+  # a PR exists from inside it: resolve the margin here and pass it along when
+  # the plan runs the shape job, so other profiles need no GitHub lookup.
+  build_plan_args plan_args
+  plan_json="$("${ROOT_DIR}/scripts/ci-plan.sh" "${plan_args[@]}" --format json)"
+  selected_scripts="$(collect_selected_scripts "${plan_json}")"
+  if grep -q $'\tscripts/ci/job-pr-shape.sh$' <<<"${selected_scripts}"; then
+    shape_margin="$(resolve_shape_margin)"
+    margin_args=(--shape-margin "${shape_margin}")
+  fi
   snapshot_cmd+=(
     --
     env
     WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1
     ./scripts/pre-merge.sh
     "${ORIGINAL_ARGS[@]}"
-    --shape-margin "${shape_margin}"
+    "${margin_args[@]}"
   )
 
   "${snapshot_cmd[@]}" || status=$?
