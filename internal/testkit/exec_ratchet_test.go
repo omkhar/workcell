@@ -232,6 +232,10 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 			count++
 			return true
 		}
+		if sel, ok := fun.(*ast.SelectorExpr); ok && calls[commandField(sel.Sel.Name)] {
+			count++
+			return true
+		}
 		if name := execCommandName(call.Fun); name != "" {
 			called[call.Fun] = true
 			called[unparen(call.Fun)] = true
@@ -439,14 +443,17 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
+// commandField keys a struct field given a command constructor by its name alone, since the AST cannot always type the value a call selects the field from; a same-named field of another struct type counts too, which only makes the count stricter.
+type commandField string
+
 // packageCommandAliases lists, to a fixed point, exec.Command aliases and factories that return one.
 func packageCommandAliases(files []*ast.File) (map[any]bool, map[any]bool) {
-	aliases, factories, params := map[any]bool{}, map[any]bool{}, funcParams(files)
+	aliases, factories, params, fields := map[any]bool{}, map[any]bool{}, funcParams(files), structFields(files)
 	for {
 		added := false
 		for _, file := range files {
 			execCommandName, _, _ := execCommandNameIn(file)
-			added = collectCommandAliases(aliases, factories, params, file, execCommandName) || added
+			added = collectCommandAliases(aliases, factories, params, fields, file, execCommandName) || added
 		}
 		if !added {
 			return aliases, factories
@@ -487,8 +494,33 @@ func funcParams(files []*ast.File) map[string][][]*ast.Ident {
 	return params
 }
 
+// structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
+func structFields(files []*ast.File) map[string][][]string {
+	fields := map[string][][]string{}
+	for _, file := range files {
+		ast.Inspect(file, func(c ast.Node) bool {
+			if spec, ok := c.(*ast.TypeSpec); ok {
+				if st, ok := spec.Type.(*ast.StructType); ok {
+					var names []string
+					for _, field := range st.Fields.List {
+						if len(field.Names) == 0 {
+							names = append(names, "")
+						}
+						for _, name := range field.Names {
+							names = append(names, name.Name)
+						}
+					}
+					fields[spec.Name.Name] = append(fields[spec.Name.Name], names)
+				}
+			}
+			return true
+		})
+	}
+	return fields
+}
+
 // collectCommandAliases adds one pass of file's aliases and factories, including a parameter that receives one, and reports whether any was new.
-func collectCommandAliases(aliases, factories map[any]bool, params map[string][][]*ast.Ident, file *ast.File, execCommandName func(ast.Expr) string) bool {
+func collectCommandAliases(aliases, factories map[any]bool, params map[string][][]*ast.Ident, fields map[string][][]string, file *ast.File, execCommandName func(ast.Expr) string) bool {
 	added := false
 	add := func(set map[any]bool, name any) {
 		if !set[name] {
@@ -499,6 +531,8 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 		switch v := unparen(value).(type) {
 		case *ast.Ident:
 			return aliases[v.Name] || aliases[v.Obj] || execCommandName(v) != ""
+		case *ast.SelectorExpr:
+			return aliases[commandField(v.Sel.Name)] || execCommandName(v) != ""
 		case *ast.CallExpr: // a factory's result
 			id, ok := factoryName(v).(*ast.Ident)
 			return ok && factories[id.Name]
@@ -522,6 +556,9 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 			values = slices.Repeat(values, len(names))
 		}
 		for i := 0; i < len(values) && i < len(names); i++ {
+			if sel, ok := unparen(names[i]).(*ast.SelectorExpr); ok && isAlias(values[i]) {
+				add(aliases, commandField(sel.Sel.Name))
+			}
 			id, ok := unparen(names[i]).(*ast.Ident)
 			lit, isLit := unparen(values[i]).(*ast.FuncLit)
 			from, isIdent := unparen(values[i]).(*ast.Ident)
@@ -547,6 +584,21 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 		case *ast.FuncDecl:
 			if n.Body != nil && returnsAlias(n.Body) {
 				add(factories, n.Name.Name)
+			}
+		case *ast.CompositeLit: // a struct field given a command constructor, by key or by position
+			typ, _ := unparen(n.Type).(*ast.Ident)
+			for i, elt := range n.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					if key, ok := kv.Key.(*ast.Ident); ok && isAlias(kv.Value) {
+						add(aliases, commandField(key.Name))
+					}
+				} else if typ != nil && isAlias(elt) {
+					for _, names := range fields[typ.Name] {
+						if i < len(names) {
+							add(aliases, commandField(names[i]))
+						}
+					}
+				}
 			}
 		case *ast.CallExpr: // a parameter given a command constructor is an alias in its callee's scope
 			if callee, ok := factoryName(n).(*ast.Ident); ok {
@@ -869,31 +921,6 @@ func calleeName(fn ast.Expr) string {
 			return ""
 		}
 	}
-}
-
-// structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
-func structFields(files []*ast.File) map[string][][]string {
-	fields := map[string][][]string{}
-	for _, file := range files {
-		ast.Inspect(file, func(c ast.Node) bool {
-			if spec, ok := c.(*ast.TypeSpec); ok {
-				if st, ok := spec.Type.(*ast.StructType); ok {
-					var names []string
-					for _, field := range st.Fields.List {
-						if len(field.Names) == 0 {
-							names = append(names, "")
-						}
-						for _, name := range field.Names {
-							names = append(names, name.Name)
-						}
-					}
-					fields[spec.Name.Name] = append(fields[spec.Name.Name], names)
-				}
-			}
-			return true
-		})
-	}
-	return fields
 }
 
 // literalType names the struct type a composite literal builds, through a pointer, a package qualifier or generic instantiation; "" when the type is elided.
@@ -1345,6 +1372,28 @@ func a(m maker, p string) { m.factory()(p); launch := m.factory(); launch(p); m.
 `
 	if got := rawExecSites(t, "method_factory.go", methodFactory); got != 6 {
 		t.Fatalf("rawExecSites = %d, want 6 (factory's saved value, calls through m.factory() directly and saved, build's command, and pair's saved value plus a call through its second result)", got)
+	}
+	// A constructor stored in a struct field, keyed, positional, assigned or through an alias, counts at each call through the field; a field matches by name in every struct type, so logger's run counts too.
+	const fieldConstructor = `package x
+import "os/exec"
+type runner struct{ run func(string, ...string) *exec.Cmd; name string }
+type logger struct{ run func(string) }
+func a(p string) { r := runner{run: exec.Command}; r.run(p); f := r.run; f(p) }
+func b(p string, r *runner) { r.run = exec.Command; r.run(p).Run() }
+func c(p string) { alias := exec.Command; r := &runner{run: alias}; r.run(p); r.run(p) }
+func d(p string) { r := runner{exec.Command, "x"}; r.run(p) }
+func e(l logger, p string) { l.run(p) }
+`
+	if got := rawExecSites(t, "field_constructor.go", fieldConstructor); got != 11 {
+		t.Fatalf("rawExecSites = %d, want 11 (a: reference, field call and saved field; b: reference and call; c: reference and two calls; d: reference and call; e: same-named field)", got)
+	}
+	const fieldStable = `package x
+import "os/exec"
+type runner struct{ run func(string, ...string) *exec.Cmd }
+func a(p string) { r := runner{run: func(string, ...string) *exec.Cmd { return exec.Command("git") }}; r.run(p).Run() }
+`
+	if got := rawExecSites(t, "field_stable.go", fieldStable); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a field that only holds a stable closure)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
