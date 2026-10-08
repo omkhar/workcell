@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -456,6 +457,9 @@ func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, e
 		return found
 	}
 	record := func(names []ast.Expr, values []ast.Expr) {
+		if len(values) == 1 && len(names) > 1 { // any result of a tuple call may be the alias
+			values = slices.Repeat(values, len(names))
+		}
 		for i := 0; i < len(values) && i < len(names); i++ {
 			id, ok := unparen(names[i]).(*ast.Ident)
 			lit, isLit := unparen(values[i]).(*ast.FuncLit)
@@ -1042,10 +1046,11 @@ import "os/exec"
 type maker struct{}
 func (maker) factory() func(string, ...string) *exec.Cmd { return exec.Command }
 func (maker) build(p string) *exec.Cmd { return exec.Command(p) }
-func a(m maker, p string) { m.factory()(p); launch := m.factory(); launch(p); m.build(p).Run() }
+func (maker) pair() (int, func(string, ...string) *exec.Cmd) { return 0, exec.Command }
+func a(m maker, p string) { m.factory()(p); launch := m.factory(); launch(p); m.build(p).Run(); _, run := m.pair(); run(p) }
 `
-	if got := rawExecSites(t, "method_factory.go", methodFactory); got != 4 {
-		t.Fatalf("rawExecSites = %d, want 4 (factory's saved value, calls through m.factory() directly and saved, and build's command)", got)
+	if got := rawExecSites(t, "method_factory.go", methodFactory); got != 6 {
+		t.Fatalf("rawExecSites = %d, want 6 (factory's saved value, calls through m.factory() directly and saved, build's command, and pair's saved value plus a call through its second result)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
