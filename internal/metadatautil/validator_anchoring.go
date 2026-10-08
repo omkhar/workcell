@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,22 +56,17 @@ const (
 	textMatchMaxReported  = 20
 )
 
-// textMatchPackages hold the validators, and internal/testkit keeps its
-// validators in test files, so test sources are scanned too. A function there
-// that matches text in content is the class a comment, a heredoc or a longer
-// option bypasses.
+// textMatchPackages hold the validators. internal/testkit keeps its validators
+// in test files, so test sources are scanned too.
 var textMatchPackages = []string{"internal/adapters", "internal/metadatautil", "internal/testkit", "internal/workcellhardening"}
 
 // checkTextMatchBaseline is a ratchet. Every function in textMatchPackages that
-// matches text must have a row in the baseline with its number of match calls
-// and a reason. A new function fails, a row whose count differs fails, and a
-// row whose function no longer matches text fails too, so the count only goes
-// down.
+// matches text needs a baseline row with each match call's identity and a
+// reason, so a match can only go away and cannot be swapped for another.
 func checkTextMatchBaseline(rootDir string) error {
-	found := map[string]int{}
+	found := map[string][]string{}
 	for _, pkg := range textMatchPackages {
-		// An alias declared in one file is called in another, so each package
-		// directory is read as a whole.
+		// An alias in one file is called in another, so read whole packages.
 		packages := map[string]map[string]string{}
 		root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: every read below is relative to this handle
 		if err != nil {
@@ -116,12 +112,12 @@ func checkTextMatchBaseline(rootDir string) error {
 			return fmt.Errorf("no Go source under the validator package %s; refusing a vacuous pass", pkg)
 		}
 		for dir, sources := range packages {
-			functions, err := TextMatchingFunctions(sources)
+			functions, identities, err := TextMatchingFunctions(sources)
 			if err != nil {
 				return err
 			}
-			for _, function := range functions {
-				found[dir+"\t"+function]++
+			for at, function := range functions {
+				found[dir+"\t"+function] = append(found[dir+"\t"+function], identities[at])
 			}
 		}
 	}
@@ -135,8 +131,8 @@ func checkTextMatchBaseline(rootDir string) error {
 		switch {
 		case !ok:
 			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" matches text; parse the content it sees (ShellInvocations, a closed decoder) or add a baseline row with a reason")
-		case listed != calls:
-			failures = append(failures, fmt.Sprintf("%s has %d match call(s) but its baseline row says %d; parse the new match or update the row", strings.Replace(key, "\t", ".", 1), calls, listed))
+		case !slices.Equal(listed, slices.Sorted(slices.Values(calls))):
+			failures = append(failures, fmt.Sprintf("%s has match call(s) %s but its baseline row says %s; parse the new match or update the row", strings.Replace(key, "\t", ".", 1), strings.Join(calls, ","), strings.Join(listed, ",")))
 		}
 	}
 	for key := range baseline {
@@ -154,15 +150,16 @@ func checkTextMatchBaseline(rootDir string) error {
 	return fmt.Errorf("%s ratchet failed:\n  %s", textMatchBaselinePath, strings.Join(failures, "\n  "))
 }
 
-// loadTextMatchBaseline reads PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON rows.
-// A row with no reason, a count that is not positive, or a repeated row, is an
-// error.
-func loadTextMatchBaseline(baselinePath string) (map[string]int, error) {
+// textMatchCalls is the CALLS column.
+var textMatchCalls = regexp.MustCompile(`^[0-9a-f]{8}(,[0-9a-f]{8})*$`)
+
+// loadTextMatchBaseline reads rows; a missing reason or identity is an error.
+func loadTextMatchBaseline(baselinePath string) (map[string][]string, error) {
 	content, err := rootio.ReadFileNoFollow(baselinePath, textMatchBaselinePath, hardenedFSMaxSourceBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", textMatchBaselinePath, err)
 	}
-	baseline := map[string]int{}
+	baseline := map[string][]string{}
 	for number, line := range strings.Split(string(content), "\n") {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -171,10 +168,11 @@ func loadTextMatchBaseline(baselinePath string) (map[string]int, error) {
 		if len(fields) != 4 || strings.TrimSpace(fields[3]) == "" {
 			return nil, fmt.Errorf("%s:%d: expected PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON", textMatchBaselinePath, number+1)
 		}
-		calls, err := strconv.Atoi(fields[2])
-		if err != nil || calls < 1 {
-			return nil, fmt.Errorf("%s:%d: CALLS must be a positive count", textMatchBaselinePath, number+1)
+		if !textMatchCalls.MatchString(fields[2]) {
+			return nil, fmt.Errorf("%s:%d: CALLS must list 8-hex match identities, comma-separated", textMatchBaselinePath, number+1)
 		}
+		calls := strings.Split(fields[2], ",")
+		slices.Sort(calls)
 		key := fields[0] + "\t" + fields[1]
 		if _, ok := baseline[key]; ok {
 			return nil, fmt.Errorf("%s:%d: repeated row for %s.%s", textMatchBaselinePath, number+1, fields[0], fields[1])
@@ -184,89 +182,78 @@ func loadTextMatchBaseline(baselinePath string) (map[string]int, error) {
 	return baseline, nil
 }
 
-// TextMatchingFunctions returns each function in the sources of one package,
-// keyed by file name, as Name or Type.Name, that matches text with strings or
-// bytes Contains, HasPrefix or Index, or with regexp, and each package-level
-// variable whose initializer does. A name
-// appears once per match call, so a new match in a listed function changes
-// its count. A package is known by its import path, so an alias or a dot
-// import does not hide it, and a call through a function value bound to a
-// match, as contains := strings.Contains binds one, is a match too. It does not
-// ask where the text came from. Content read inside the match call, or read in
-// one function and matched in a helper, is the same bypassable class, and only
-// counting every match never misses one. A call whose arguments are all
-// literals, such as regexp.MustCompile of a constant, or that searches an error
-// message, sees no content and is skipped.
-//
-// ponytail: counting every match lists matches on decoded fields and names as
-// well, so the baseline is longer than the debt; that is the price of a scan
-// that cannot miss.
-func TextMatchingFunctions(sources map[string]string) ([]string, error) {
+// matchIdentity names one call in a ratchet baseline, the hardened-io one too:
+// 8 hex digits of the SHA-256 of its function and its text without whitespace.
+func matchIdentity(function, call string) string {
+	return sha256HexString(function + strings.Join(strings.Fields(call), ""))[:8]
+}
+
+// TextMatchingFunctions returns the function, as Name or Type.Name, and the
+// identity of each strings or bytes Contains, HasPrefix or Index call, or regexp
+// call, in one package's sources keyed by file name. An import alias, a dot
+// import or a function value such as contains := strings.Contains hides none.
+// It does not ask where the text came from, so it never misses a helper. A
+// call with only literal arguments, or on an error message, is skipped.
+// ponytail: this lists matches on decoded fields too, so the baseline is
+// longer than the debt; that is the price of a scan that cannot miss.
+func TextMatchingFunctions(sources map[string]string) ([]string, []string, error) {
 	fileSet := token.NewFileSet()
 	var files []*ast.File
 	var imports []map[string]string
-	for _, name := range slices.Sorted(maps.Keys(sources)) {
+	names := slices.Sorted(maps.Keys(sources))
+	for _, name := range names {
 		file, err := parser.ParseFile(fileSet, name, sources[name], parser.SkipObjectResolution)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		fileImports, err := importNames(file)
-		if err != nil {
-			return nil, err
+		// A dot import is under "." and its path, and its functions have bare names.
+		fileImports := map[string]string{}
+		for _, spec := range file.Imports {
+			importPath, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			local := path.Base(importPath)
+			if spec.Name != nil {
+				local = spec.Name.Name
+			}
+			if local == "." {
+				local += importPath
+			}
+			fileImports[local] = path.Base(importPath)
 		}
 		files, imports = append(files, file), append(imports, fileImports)
 	}
 	aliases := matchAliases(files, imports)
-	var names []string
+	var functions, identities []string
 	for index, file := range files {
+		collect := func(function string, node ast.Node) {
+			for _, call := range contentMatches(node, imports[index], aliases) {
+				text := sources[names[index]][fileSet.Position(call.Pos()).Offset:fileSet.Position(call.End()).Offset]
+				functions, identities = append(functions, function), append(identities, matchIdentity(function, text))
+			}
+		}
 		for _, declaration := range file.Decls {
 			switch typed := declaration.(type) {
 			case *ast.FuncDecl:
 				if typed.Body != nil {
-					for range contentMatches(typed.Body, imports[index], aliases) {
-						names = append(names, receiverPrefix(typed)+typed.Name.Name)
-					}
+					collect(receiverPrefix(typed)+typed.Name.Name, typed.Body)
 				}
 			case *ast.GenDecl:
 				for _, spec := range typed.Specs {
 					if value, ok := spec.(*ast.ValueSpec); ok {
-						for range contentMatches(value, imports[index], aliases) {
-							names = append(names, value.Names[0].Name)
-						}
+						collect(value.Names[0].Name, value)
 					}
 				}
 			}
 		}
 	}
-	return names, nil
+	return functions, identities, nil
 }
 
-// importNames maps each local package name in file to the package it imports.
-// A dot import is under "." and its path, and its functions have bare names.
-func importNames(file *ast.File) (map[string]string, error) {
-	imports := map[string]string{}
-	for _, spec := range file.Imports {
-		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil {
-			return nil, err
-		}
-		local := path.Base(importPath)
-		if spec.Name != nil {
-			local = spec.Name.Name
-		}
-		if local == "." {
-			local += importPath
-		}
-		imports[local] = path.Base(importPath)
-	}
-	return imports, nil
-}
-
-// matchAliases returns each name in the package bound to a match function
-// value, by := , = or var, as in var has = strings.HasPrefix. It repeats
-// until no name is new, so an alias of an alias in another file counts too.
-// ponytail: a name is an alias package-wide, scope ignored, so a shadowing
-// local of the same name over-counts; that only lists more.
+// matchAliases returns each name in the package bound to a match function value,
+// as var has = strings.HasPrefix binds one, repeated until no name is new.
+// ponytail: scope is ignored, so a shadowing local over-counts; that only lists more.
 func matchAliases(files []*ast.File, imports []map[string]string) map[string]bool {
 	aliases := map[string]bool{}
 	for added := true; added; {
@@ -296,17 +283,16 @@ func matchAliases(files []*ast.File, imports []map[string]string) map[string]boo
 	return aliases
 }
 
-// contentMatches returns the number of text matches in node that can see
-// content.
-func contentMatches(node ast.Node, imports map[string]string, aliases map[string]bool) int {
-	count := 0
+// contentMatches returns the text match calls in node that can see content.
+func contentMatches(node ast.Node, imports map[string]string, aliases map[string]bool) []*ast.CallExpr {
+	var calls []*ast.CallExpr
 	ast.Inspect(node, func(node ast.Node) bool {
 		if call, ok := node.(*ast.CallExpr); ok && !seesNoContent(call) && namesMatch(call.Fun, imports, aliases) {
-			count++
+			calls = append(calls, call)
 		}
 		return true
 	})
-	return count
+	return calls
 }
 
 // namesMatch reports whether a callee or a function value names a text match:

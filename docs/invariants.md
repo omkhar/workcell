@@ -88,10 +88,11 @@ caller is listed too. An import alias or a dot import does not hide the package.
 A call through a function value such as `contains := strings.Contains` counts.
 
 `policy/validator-anchoring-baseline.tsv` holds one row per function: package,
-function, number of match calls, and the reason that the match is safe or still
-debt. A function with no row fails. A row whose count differs fails, so a new
-match in a listed function fails too. A row whose function no longer matches
-this way fails. Port a debt row, then delete it in the same change.
+function, an identity per match call, and the reason that the match is safe or
+still debt. A function with no row fails. A row whose identities differ fails,
+so a new or a swapped match in a listed function fails too. A row whose function
+no longer matches this way fails. Port a debt row, then delete it in the same
+change.
 
 ## 3. Repo policy must not silently widen trust
 

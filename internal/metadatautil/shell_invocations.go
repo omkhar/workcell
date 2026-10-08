@@ -731,9 +731,8 @@ func evaluates(names []string) bool {
 	return evaluates(strings.Fields(names[at+1]))
 }
 
-// assignmentPrefix returns how many leading words are assignments that bash
-// applies to the command word after them. The command word has no "=", so any
-// word with one counts; a stray a-b=1 is then read as an assignment too.
+// assignmentPrefix returns how many leading words are assignments bash applies
+// to the command word after them. Any word with "=" counts, even a-b=1.
 func assignmentPrefix(words []string) int {
 	count := 0
 	for count < len(words) && strings.Contains(words[count], "=") {

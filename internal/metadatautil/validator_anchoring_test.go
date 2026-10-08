@@ -96,7 +96,8 @@ func anchoringRoot(t *testing.T, baseline string) string {
 
 func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
 	const validator = "package metadatautil\n\nfunc (c *checker) wrapper(p string) bool {\n\ttext, _ := readText(p)\n\treturn strings.Contains(text, \"tool run\")\n}\n"
-	const row = "internal/metadatautil\tchecker.wrapper\t1\treviewed\n"
+	// The identity of strings.Contains(text, "tool run") in checker.wrapper.
+	const row = "internal/metadatautil\tchecker.wrapper\tc4b2302e\treviewed\n"
 	many := validator
 	for index := range 20 {
 		many += strings.Replace(validator[len("package metadatautil\n"):], "wrapper", fmt.Sprintf("wrapper%d", index), 1)
@@ -107,9 +108,11 @@ func TestCheckValidatorAnchoringTextMatchRatchet(t *testing.T) {
 		{"planted violation", "v.go", validator, "", "checker.wrapper matches text"},
 		{"listed with a reason", "v.go", validator, row, ""},
 		{"stale row", "v.go", "package metadatautil\n", row, "remove its stale baseline row"},
-		{"row without a reason", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t1\t \n", "PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON"},
-		{"row without a count", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t0\treviewed\n", "CALLS must be a positive count"},
-		{"new match in a listed function", "v.go", strings.Replace(validator, "return ", "_ = strings.HasPrefix(text, \"x\")\n\treturn ", 1), row, "checker.wrapper has 2 match call(s) but its baseline row says 1"},
+		{"row without a reason", "v.go", validator, "internal/metadatautil\tchecker.wrapper\tc4b2302e\t \n", "PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON"},
+		{"row with a count", "v.go", validator, "internal/metadatautil\tchecker.wrapper\t1\treviewed\n", "CALLS must list 8-hex match identities"},
+		{"new match in a listed function", "v.go", strings.Replace(validator, "return ", "_ = strings.HasPrefix(text, \"x\")\n\treturn ", 1), row, "checker.wrapper has match call(s) 6c20884e,c4b2302e but its baseline row says c4b2302e"},
+		{"match swapped for another", "v.go", strings.Replace(validator, "Contains", "HasPrefix", 1), row, "checker.wrapper has match call(s) 977be4d4 but its baseline row says c4b2302e"},
+		{"reformatted match keeps its identity", "v.go", strings.Replace(validator, "(text, ", "(\n\t\ttext,\n\t\t", 1), row, ""},
 		{"repeated row", "v.go", validator, row + row, "repeated row"},
 		{"report is capped", "v.go", many, "", "and 1 more"},
 		{"validator in a test file", "v_test.go", "package metadatautil\n\nfunc TestWorkflowRunsTool(t *testing.T) {\n\tif !strings.Contains(readText(p), \"tool run\") {\n\t\tt.Fatal(p)\n\t}\n}\n", "", "metadatautil.TestWorkflowRunsTool matches text"},
@@ -172,7 +175,7 @@ func TestTextMatchingFunctions(t *testing.T) {
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := metadatautil.TextMatchingFunctions(map[string]string{"a.go": "package p\n\n" + testCase.body + "\n"})
+			got, _, err := metadatautil.TextMatchingFunctions(map[string]string{"a.go": "package p\n\n" + testCase.body + "\n"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -184,7 +187,7 @@ func TestTextMatchingFunctions(t *testing.T) {
 }
 
 func TestTextMatchingFunctionsResolvesAnAliasFromAnotherFile(t *testing.T) {
-	got, err := metadatautil.TextMatchingFunctions(map[string]string{
+	got, _, err := metadatautil.TextMatchingFunctions(map[string]string{
 		"a.go": "package p\n\nimport \"strings\"\n\nvar has = strings.HasPrefix\n",
 		"b.go": "package p\n\nfunc f(s string) bool { return has(s, x) }\n",
 	})
