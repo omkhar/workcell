@@ -44,6 +44,15 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"if body is not the test", "if true; then local out=$(git ls-files); fi\n", "command-substitution"},
 		{"handler of a later command", "x=$(git ls-files); cd /y || exit 1\n", "command-substitution"},
 		{"unrelated wait later", "files=$(git ls-files)\na=1\nb=2\nwait \"$pid\"\n", "command-substitution"},
+		{"local in an if test", "if local out=$(git ls-files); then :; fi\n", "command-substitution"},
+		{"test of a substitution", "if [[ -n \"$(git ls-files)\" ]]; then :; fi\n", "command-substitution"},
+		{"local before a handler", "local out=$(git ls-files) || exit 1\n", "command-substitution"},
+		{"status read before the call", "prior=$? out=$(git ls-files)\n", "command-substitution"},
+		{"status read on the continued line before", "prior=$? \\\n  out=$(git ls-files)\n", "command-substitution"},
+		{"tool attached to ||", "git||true\n", "or-true"},
+		{"tool attached to &&", "git&&gh||true\n", "or-true"},
+		{"tool attached to a subshell closer", "(git)2>/dev/null\n", "dev-null"},
+		{"tool attached to a redirection", "docker>/dev/null 2>/dev/null\n", "dev-null"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
 		{"status handler after a multi-line substitution", "x=\"$(\n  git ls-files\n)\" || exit 1\n", ""},
@@ -65,7 +74,10 @@ func TestShellFailOpenFindings(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			findings := metadatautil.ShellFailOpenFindings(testCase.script)
+			findings, err := metadatautil.ShellFailOpenFindings(testCase.script)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if testCase.rule == "" {
 				if len(findings) != 0 {
 					t.Fatalf("findings = %v, want none", findings)
@@ -74,6 +86,24 @@ func TestShellFailOpenFindings(t *testing.T) {
 			}
 			if len(findings) == 0 || findings[0].Rule != testCase.rule {
 				t.Fatalf("findings = %v, want rule %s", findings, testCase.rule)
+			}
+		})
+	}
+}
+
+// A heredoc body this reader cannot end could hide any command, so the scan
+// fails closed instead of skipping the rest of the script.
+func TestShellFailOpenFindingsRejectsUnendedHeredocs(t *testing.T) {
+	t.Parallel()
+	for name, script := range map[string]string{
+		"ANSI-C delimiter":          ": <<$'\\x50LAN'\nx\nPLAN\ngit fetch || true\n",
+		"locale delimiter":          ": <<$\"PLAN\"\nx\nPLAN\ngit fetch || true\n",
+		"heredoc that never closes": "cat <<EOF\ngit fetch || true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if findings, err := metadatautil.ShellFailOpenFindings(script); err == nil {
+				t.Fatalf("findings = %v, want an error", findings)
 			}
 		})
 	}

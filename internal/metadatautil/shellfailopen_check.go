@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,7 +56,11 @@ func CheckShellFailOpen(rootDir string) error {
 		if !isShellSource(rel, content) {
 			continue
 		}
-		for _, finding := range ShellFailOpenFindings(string(content)) {
+		findings, scanErr := ShellFailOpenFindings(string(content))
+		if scanErr != nil {
+			return fmt.Errorf("%s: %w", rel, scanErr)
+		}
+		for _, finding := range findings {
 			key := shellFailOpenKey{path: rel, rule: finding.Rule}
 			counts[key]++
 			details[key] = append(details[key], fmt.Sprintf("%s:%d", rel, finding.Line))
@@ -113,7 +118,9 @@ var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
 	// toolCommand matches a tool word in command position, so `git` inside a
 	// path or an argument is not a call.
-	shellToolCommand = regexp.MustCompile("(^|[\\s;&|(`])" + shellFailOpenTools + `\s`)
+	// The tool word ends at a blank, an operator, a closer or a redirection,
+	// since bash reads git||true as git then ||.
+	shellToolCommand = regexp.MustCompile("(^|[\\s;&|(`])" + shellFailOpenTools + `[\s;&|)<>]`)
 	shellToolSubst   = regexp.MustCompile(`\$\(\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+|command\s+|builtin\s+)*` + shellFailOpenTools + `\b`)
 	shellOrTrue      = regexp.MustCompile(`\|\|\s*true\b`)
 	// shellProcessSubst is an input redirection from a process substitution,
@@ -134,14 +141,18 @@ var (
 	// header, where the loop's own while says nothing about the inner command.
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b|&&\s*\S`)
 	shellFailClosedRe   = regexp.MustCompile(`#\s*` + shellFailClosedTag + `\s*\S`)
+	// shellAssignment is a word that assigns a name, the only word that may
+	// stand before a substitution whose status the command keeps.
+	shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips
 // heredoc bodies, reads a continued line, an open `$(` or a quoted span that
 // runs past its line as one statement, ignores text inside single quotes and
 // inside double quotes that open no command substitution, and takes a marker
-// only from a real shell comment.
-func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
+// only from a real shell comment. A heredoc whose end it cannot find is an
+// error, since the body it skips could hold any command.
+func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	type logical struct {
 		number        int
 		code, comment string
@@ -171,6 +182,11 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 			current.number = number
 		}
 		words, opened, quote, rest, continues, comment := shellWords(reopen+text, stack)
+		for _, body := range opened {
+			if body.unresolved {
+				return nil, fmt.Errorf("line %d: heredoc delimiter %q is spelled in a form this reader cannot resolve; use a plain or quoted word", number, body.delimiter)
+			}
+		}
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
 		code := strings.TrimSuffix(text, comment)
@@ -195,6 +211,9 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 		current.code = shellCodeOnly(strings.TrimSuffix(strings.Join(lines, ""), "\n"))
 		statements = append(statements, current)
 		current, lines = logical{}, nil
+	}
+	if len(heredocs) > 0 {
+		return nil, fmt.Errorf("heredoc ended by %q never closes", heredocs[0].delimiter)
 	}
 	if len(lines) > 0 {
 		// A substitution the script never closes still holds its hits.
@@ -226,11 +245,12 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 			hasTool := shellToolCommand.MatchString(" "+command+" ") || shellToolSubst.MatchString(command)
 			// A loop reports its inner status only through a check after it, such
 			// as the walk_completed sentinel, so the next command may capture it.
-			captured := shellFailOpenCapture.MatchString(command)
+			// A status read or a handler covers only a call written before it.
+			captured := shellFailOpenCapture.MatchString(command[shellFailOpenFirstCall(command):])
 			looped := captured || shellFailOpenCapture.MatchString(after)
 			tested := captured || shellFailOpenStatusRead.MatchString(after) || shellFailOpenTested.MatchString(command)
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command) && !looped
-			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || shellToolSubst.MatchString(command) && !tested
+			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || shellToolSubst.MatchString(command) && (!tested || shellSubstMasked(command))
 			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
 			hits[ruleDevNull] = hits[ruleDevNull] || hasTool && shellDevNull.MatchString(command) && !tested
 		}
@@ -240,7 +260,42 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 			}
 		}
 	}
-	return findings
+	return findings, nil
+}
+
+// shellFailOpenFirstCall returns where the first tool call or process
+// substitution in a command starts, or the command's length when it has none.
+func shellFailOpenFirstCall(command string) int {
+	first := len(command)
+	if loc := shellToolCommand.FindStringIndex(" " + command + " "); loc != nil {
+		first = min(first, max(loc[0]-1, 0))
+	}
+	for _, re := range []*regexp.Regexp{shellToolSubst, shellProcessSubst} {
+		if loc := re.FindStringIndex(command); loc != nil {
+			first = min(first, loc[0])
+		}
+	}
+	return first
+}
+
+// shellSubstMasked reports whether a tool substitution is an argument of a
+// command, as in local x=$(git ...) or [[ -n "$(git ...)" ]]. That command's
+// own status replaces the substitution's, so no test or handler can see it.
+// Only a command made of assignments keeps the status of its substitution.
+func shellSubstMasked(command string) bool {
+	for _, loc := range shellToolSubst.FindAllStringIndex(command, -1) {
+		prefix := command[:loc[0]]
+		words := strings.Fields(prefix[strings.LastIndexAny(prefix, ";&|(`")+1:])
+		for len(words) > 0 && slices.Contains([]string{"if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"}, words[0]) {
+			words = words[1:]
+		}
+		for _, each := range words {
+			if !shellAssignment.MatchString(each) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // shellFailOpenCommands splits a statement's code at each ; and line end that
