@@ -74,6 +74,12 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
+`policy/testkit-exec-baseline.tsv` lists the test sites that run a script by
+path without `execRetryETXTBSY`. A raw exec runs into ETXTBSY under load.
+`internal/testkit/exec_ratchet_test.go` counts these sites. The count may only
+go down. A stale-high count also fails, and so does a row above its value at
+the merge base with `origin/main`.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only
