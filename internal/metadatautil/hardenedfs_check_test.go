@@ -219,13 +219,13 @@ func TestCheckHardenedFSRatchet(t *testing.T) {
 			name:     "growth fails",
 			source:   oneCall + "func more() { os.ReadFile(other) }\n",
 			baseline: "internal/host/state.go\tos.ReadFile\t1\n",
-			wantErr:  "baseline allows 1",
+			wantErr:  "call not in the baseline row",
 		},
 		{
 			name:     "an unlisted call fails",
 			source:   oneCall,
 			baseline: "",
-			wantErr:  "baseline allows 0",
+			wantErr:  "call not in the baseline row",
 		},
 		{
 			name:     "a stale row fails",

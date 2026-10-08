@@ -329,3 +329,47 @@ func TestOpenDirectoryAtNoFollow(t *testing.T) {
 		}
 	}
 }
+
+// A symlink anywhere in the tree is removed as an entry; its target stays.
+func TestRemoveAllAtNoFollow(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside")
+	tree := filepath.Join(base, "parent", "tree")
+	for _, dir := range []string{filepath.Join(tree, "a", "b"), outside} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range []string{filepath.Join(tree, "a", "b", "leaf"), filepath.Join(outside, "keep")} {
+		if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(tree, "a", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tree, filepath.Join(base, "parent", "treelink")); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := os.Open(filepath.Join(base, "parent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	if err := rootio.RemoveAllAtNoFollow(parent, "treelink/a"); err == nil {
+		t.Fatal("expected a path through a symlinked intermediate to be refused")
+	}
+	if err := rootio.RemoveAllAtNoFollow(parent, "tree"); err != nil {
+		t.Fatalf("RemoveAllAtNoFollow() error = %v", err)
+	}
+	if _, err := os.Lstat(tree); !os.IsNotExist(err) {
+		t.Fatalf("expected the tree to be gone, found %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Fatalf("expected the symlink target to survive, found %v", err)
+	}
+	if err := rootio.RemoveAllAtNoFollow(parent, "tree"); err != nil {
+		t.Fatalf("expected a missing name to succeed, found %v", err)
+	}
+}

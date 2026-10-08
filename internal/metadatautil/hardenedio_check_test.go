@@ -85,7 +85,11 @@ func TestHardenedIOFindings(t *testing.T) {
 func TestCheckHardenedIORatchet(t *testing.T) {
 	t.Parallel()
 	const glob = "package tool\n\nimport \"path/filepath\"\n\nfunc f() { filepath.Glob(p) }\n"
-	const row = "cmd/tool/main.go\tfilepath.Glob\t1\trepository sources only\n"
+	findings, err := metadatautil.HardenedIOFindings(glob)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("HardenedIOFindings() = %v, %v", findings, err)
+	}
+	row := "cmd/tool/main.go\tfilepath.Glob\t" + findings[0].Call + "\trepository sources only\n"
 	cases := []struct {
 		name     string
 		path     string
@@ -97,7 +101,13 @@ func TestCheckHardenedIORatchet(t *testing.T) {
 		{name: "a planted call under internal fails", path: "internal/x/x.go", source: "package x\n\nimport \"os\"\n\nfunc f() { os.ReadFile(p) }\n", wantErr: "use rootio.ReadFileNoFollow"},
 		{name: "a planted OpenFile names the write-capable replacement", path: "internal/x/x.go", source: "package x\n\nimport \"os\"\n\nfunc f() { os.OpenFile(p, os.O_WRONLY, 0) }\n", wantErr: "a write, create or truncate needs rootio.StageAndPublishAt"},
 		{name: "a reasoned row admits the call", path: "cmd/tool/main.go", source: glob, baseline: row},
-		{name: "growth past the row fails", path: "cmd/tool/main.go", source: glob + "func g() { filepath.Glob(q) }\n", baseline: row, wantErr: "baseline allows 1"},
+		{name: "a planted directory Open names the directory replacement", path: "internal/x/x.go", source: "package x\n\nimport \"os\"\n\nfunc f() { os.Open(p) }\n", wantErr: "a directory needs rootio.OpenDirectoryAtNoFollow"},
+		{name: "a planted RemoveAll names the no-follow replacement", path: "internal/x/x.go", source: "package x\n\nimport \"os\"\n\nfunc f() { os.RemoveAll(p) }\n", wantErr: "use rootio.RemoveAllAtNoFollow"},
+		{name: "growth past the row fails", path: "cmd/tool/main.go", source: glob + "func g() { filepath.Glob(q) }\n", baseline: row, wantErr: "call not in the baseline row"},
+		{name: "a call swapped for another under the same total fails", path: "cmd/tool/main.go", source: "package tool\n\nimport \"path/filepath\"\n\nfunc f() { filepath.Glob(q) }\n", baseline: row, wantErr: "stale baseline entry"},
+		{name: "a call moved to another function fails", path: "cmd/tool/main.go", source: "package tool\n\nimport \"path/filepath\"\n\nfunc g() { filepath.Glob(p) }\n", baseline: row, wantErr: "call not in the baseline row"},
+		{name: "an edit above the call keeps its identity", path: "cmd/tool/main.go", source: "package tool\n\nimport \"path/filepath\"\n\nvar x = 1\n\nfunc f() {\n\tfilepath.Glob(\n\t\tp)\n}\n", baseline: row},
+		{name: "a malformed identity fails", path: "cmd/tool/main.go", source: glob, baseline: "cmd/tool/main.go\tfilepath.Glob\t1\tcount rows are gone\n", wantErr: "call identity must be 8 lowercase hex digits"},
 		{name: "a row without a reason fails", path: "cmd/tool/main.go", source: glob, baseline: "cmd/tool/main.go\tfilepath.Glob\t1\t \n", wantErr: "expected 4 tab-separated fields"},
 		{name: "a duplicate row fails", path: "cmd/tool/main.go", source: glob, baseline: row + row, wantErr: "duplicate row"},
 		{name: "a stale row fails", path: "cmd/tool/main.go", source: "package tool\n", baseline: row, wantErr: "stale baseline row"},

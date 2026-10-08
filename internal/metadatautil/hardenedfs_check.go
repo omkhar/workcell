@@ -4,13 +4,17 @@
 package metadatautil
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,8 +44,7 @@ import (
 // string literal exempt nothing. One comment clears one call, so a line with
 // two raw calls needs two lines and two reasons.
 func CheckHardenedFS(rootDir string) error {
-	counts := map[hardenedFSKey]int{}
-	details := map[hardenedFSKey][]string{}
+	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, pkg := range hardenedFSPackages {
 		err := scanHardenedGoSources(rootDir, pkg, func(rel string, content []byte) error {
 			fileFindings, scanErr := HardenedFSFindings(string(content))
@@ -50,8 +53,7 @@ func CheckHardenedFS(rootDir string) error {
 			}
 			for _, finding := range fileFindings {
 				key := hardenedFSKey{path: rel, symbol: finding.Symbol}
-				counts[key]++
-				details[key] = append(details[key], fmt.Sprintf("%s:%d: %s", rel, finding.Line, finding.Symbol))
+				found[key] = append(found[key], finding)
 			}
 			return nil
 		})
@@ -63,7 +65,7 @@ func CheckHardenedFS(rootDir string) error {
 	if err != nil {
 		return err
 	}
-	failures := compareHardenedBaseline(counts, details, baseline, func(string) string {
+	failures := compareHardenedBaseline(found, baseline, func(string) string {
 		return "use internal/rootio, or state the reason with // " + hardenedFSExemptTag + " <reason>"
 	})
 	if len(failures) == 0 {
@@ -130,38 +132,52 @@ func scanHardenedGoSources(rootDir, pkg string, visit func(rel string, content [
 	return nil
 }
 
-// compareHardenedBaseline returns one sorted failure per count that differs
-// from its baseline row and per stale row. advice names the fix for a symbol.
-func compareHardenedBaseline(counts map[hardenedFSKey]int, details map[hardenedFSKey][]string, baseline map[hardenedFSKey]int, advice func(symbol string) string) []string {
+// compareHardenedBaseline returns one sorted failure per call that its
+// baseline row does not list and per listed call the file no longer makes.
+// advice names the fix for a symbol. A row lists call identities, not a count,
+// so a reviewed call cannot be swapped for a new one under the same total.
+func compareHardenedBaseline(found map[hardenedFSKey][]HardenedFSFinding, baseline map[hardenedFSKey][]string, advice func(symbol string) string) []string {
 	var failures []string
-	for key, count := range counts {
-		allowed := baseline[key]
-		switch {
-		case count == allowed:
-			continue
-		case count < allowed:
-			// A count below its row leaves the difference as unused headroom
-			// that a later change can spend, which is a ratchet that does not
-			// hold. Lower the row with the repair.
-			failures = append(failures, fmt.Sprintf(
-				"%s: %d reference(s) to %s, baseline still allows %d; lower the baseline row to %d",
-				key.path, count, key.symbol, allowed, count))
-		default:
-			reported := details[key]
-			if len(reported) > hardenedFSMaxReported {
-				reported = reported[:hardenedFSMaxReported]
+	for key, findings := range found {
+		listed := map[string]int{}
+		for _, call := range baseline[key] {
+			listed[call]++
+		}
+		var unlisted []string
+		for _, finding := range findings {
+			// A count row lists unnamed entries, and each one admits any call.
+			for _, call := range []string{finding.Call, ""} {
+				if listed[call] > 0 {
+					listed[call]--
+					finding.Call = ""
+					break
+				}
 			}
-			failures = append(failures, fmt.Sprintf(
-				"%s: %d reference(s) to %s, baseline allows %d; %s\n    %s",
-				key.path, count, key.symbol, allowed, advice(key.symbol), strings.Join(reported, "\n    ")))
+			if finding.Call == "" {
+				continue
+			}
+			unlisted = append(unlisted, fmt.Sprintf("%s:%d: %s call %s", key.path, finding.Line, key.symbol, finding.Call))
+		}
+		if len(unlisted) > hardenedFSMaxReported {
+			unlisted = unlisted[:hardenedFSMaxReported]
+		}
+		if len(unlisted) > 0 {
+			failures = append(failures, fmt.Sprintf("%s: %s call not in the baseline row; %s\n    %s",
+				key.path, key.symbol, advice(key.symbol), strings.Join(unlisted, "\n    ")))
+		}
+		for call, left := range listed {
+			// An unused entry is headroom that a later change could spend.
+			for ; left > 0; left-- {
+				failures = append(failures, fmt.Sprintf(
+					"%s: stale baseline entry %q for %s; the file no longer makes that call, so remove it or lower the count", key.path, call, key.symbol))
+			}
 		}
 	}
-	for key := range baseline {
-		if _, ok := counts[key]; ok {
-			continue
+	for key, calls := range baseline {
+		if _, ok := found[key]; !ok {
+			failures = append(failures, fmt.Sprintf(
+				"%s: stale baseline row for %s (%s); the file no longer makes that call, so remove the row", key.path, key.symbol, strings.Join(calls, ",")))
 		}
-		failures = append(failures, fmt.Sprintf(
-			"%s: stale baseline row for %s; the file no longer makes that call, so remove the row", key.path, key.symbol))
 	}
 	sort.Strings(failures)
 	return failures
@@ -236,11 +252,14 @@ type hardenedFSKey struct {
 	symbol string
 }
 
-// HardenedFSFinding is one reference to a raw os pathname call.
+// HardenedFSFinding is one reference to a raw os pathname call. Call is the
+// identity a baseline row lists for it: a hash of the enclosing function name
+// and the call's source text, so an edit elsewhere in the file leaves it alone.
 type HardenedFSFinding struct {
 	Line   int
 	Column int
 	Symbol string
+	Call   string
 }
 
 // HardenedFSFindings reports each raw os file call in one Go source.
@@ -267,26 +286,82 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		return nil, nil // the file does not import os
 	}
 	exempt := hardenedFSExemptLines(fileSet, file)
-	var findings []HardenedFSFinding
-	ast.Inspect(file, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			return true
+	findings := hardenedFindings(fileSet, file, source, func(qualifier, symbol string) string {
+		if qualifier != name || !hardenedFSSymbols[symbol] {
+			return ""
 		}
-		qualifier, ok := hardenedImportQualifier(selector)
-		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
-			return true
-		}
-		position := fileSet.PositionFor(selector.Pos(), false)
-		findings = append(findings, HardenedFSFinding{
-			Line:   position.Line,
-			Column: position.Column,
-			Symbol: name + "." + selector.Sel.Name,
-		})
-		return true
+		return name + "." + symbol
 	})
-	sort.Slice(findings, func(i, j int) bool { return findings[i].Line < findings[j].Line })
 	return applyHardenedFSExemptions(findings, exempt), nil
+}
+
+// hardenedFindings reports each package selector that symbolOf names, sorted
+// by line. symbolOf returns the empty string for a selector that is allowed.
+func hardenedFindings(fileSet *token.FileSet, file *ast.File, source string, symbolOf func(qualifier, symbol string) string) []HardenedFSFinding {
+	var findings []HardenedFSFinding
+	for _, decl := range file.Decls {
+		scope := ""
+		if function, ok := decl.(*ast.FuncDecl); ok {
+			scope = function.Name.Name
+			if function.Recv != nil && len(function.Recv.List) > 0 {
+				scope = types.ExprString(function.Recv.List[0].Type) + "." + scope
+			}
+		}
+		var stack []ast.Node
+		ast.Inspect(decl, func(node ast.Node) bool {
+			if node == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			stack = append(stack, node)
+			selector, ok := node.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			qualifier, ok := hardenedImportQualifier(selector)
+			if !ok {
+				return true
+			}
+			symbol := symbolOf(qualifier.Name, selector.Sel.Name)
+			if symbol == "" {
+				return true
+			}
+			position := fileSet.PositionFor(selector.Pos(), false)
+			findings = append(findings, HardenedFSFinding{
+				Line:   position.Line,
+				Column: position.Column,
+				Symbol: symbol,
+				Call:   hardenedCallIdentity(fileSet, source, scope, selector, stack),
+			})
+			return true
+		})
+	}
+	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Line < findings[j].Line })
+	return findings
+}
+
+// hardenedCallIdentity hashes the enclosing function name and the source text
+// of the call that selector heads, or of selector itself when it is a value.
+// Whitespace is removed, so a gofmt reflow keeps the identity. A line number
+// is not part of it, because an unrelated edit above the call would move it.
+func hardenedCallIdentity(fileSet *token.FileSet, source, scope string, selector *ast.SelectorExpr, stack []ast.Node) string {
+	var expr ast.Node = selector
+	parent := len(stack) - 2
+	for parent >= 0 {
+		if _, paren := stack[parent].(*ast.ParenExpr); !paren {
+			break
+		}
+		parent--
+	}
+	if parent >= 0 {
+		if call, ok := stack[parent].(*ast.CallExpr); ok && ast.Unparen(call.Fun) == selector {
+			expr = call
+		}
+	}
+	start := fileSet.PositionFor(expr.Pos(), false).Offset
+	end := fileSet.PositionFor(expr.End(), false).Offset
+	sum := sha256.Sum256([]byte(scope + "\x00" + strings.Join(strings.Fields(source[start:end]), "")))
+	return hex.EncodeToString(sum[:4])
 }
 
 // applyHardenedFSExemptions clears the reference each exemption sits beside.
@@ -452,19 +527,24 @@ func HardenedFSPackages() []string {
 	return append([]string(nil), hardenedFSPackages...)
 }
 
-// loadHardenedBaseline reads a PATH<TAB>SYMBOL<TAB>COUNT ratchet file. When
-// withReason is set, each row carries a fourth REASON field. The line is
-// trimmed first, so an empty trailing reason leaves too few fields.
-func loadHardenedBaseline(rootDir, rel string, withReason bool) (map[hardenedFSKey]int, error) {
+// loadHardenedBaseline reads a ratchet file. An identified file has
+// PATH<TAB>SYMBOL<TAB>CALLS<TAB>REASON rows, where CALLS lists one identity per
+// reviewed call. Otherwise a row is PATH<TAB>SYMBOL<TAB>COUNT, read as COUNT
+// unnamed entries. The line is trimmed first, so an empty trailing reason
+// leaves too few fields.
+//
+// ponytail: policy/hardened-fs-baseline.tsv still counts, so one call can be
+// swapped for another in the same file. Give it identities in its own change.
+func loadHardenedBaseline(rootDir, rel string, identified bool) (map[hardenedFSKey][]string, error) {
 	content, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, rel), rel, hardenedFSMaxSourceBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
 	want := 3
-	if withReason {
+	if identified {
 		want = 4
 	}
-	baseline := map[hardenedFSKey]int{}
+	baseline := map[hardenedFSKey][]string{}
 	for number, line := range strings.Split(string(content), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -474,15 +554,28 @@ func loadHardenedBaseline(rootDir, rel string, withReason bool) (map[hardenedFSK
 		if len(fields) != want {
 			return nil, fmt.Errorf("%s:%d: expected %d tab-separated fields, found %d", rel, number+1, want, len(fields))
 		}
-		count, convErr := strconv.Atoi(fields[2])
-		if convErr != nil || count <= 0 {
-			return nil, fmt.Errorf("%s:%d: count must be a positive integer, found %q", rel, number+1, fields[2])
+		var calls []string
+		if identified {
+			calls = strings.Split(fields[2], ",")
+			for _, call := range calls {
+				if !hardenedCallIdentityPattern.MatchString(call) {
+					return nil, fmt.Errorf("%s:%d: call identity must be 8 lowercase hex digits, found %q", rel, number+1, call)
+				}
+			}
+		} else {
+			count, convErr := strconv.Atoi(fields[2])
+			if convErr != nil || count <= 0 {
+				return nil, fmt.Errorf("%s:%d: count must be a positive integer, found %q", rel, number+1, fields[2])
+			}
+			calls = make([]string, count)
 		}
 		key := hardenedFSKey{path: fields[0], symbol: fields[1]}
 		if _, dup := baseline[key]; dup {
 			return nil, fmt.Errorf("%s:%d: duplicate row for %s %s", rel, number+1, fields[0], fields[1])
 		}
-		baseline[key] = count
+		baseline[key] = calls
 	}
 	return baseline, nil
 }
+
+var hardenedCallIdentityPattern = regexp.MustCompile(`^[0-9a-f]{8}$`)

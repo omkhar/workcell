@@ -96,6 +96,47 @@ func openDirectoryChain(fd int, components []string) (int, error) {
 	return fd, nil
 }
 
+// RemoveAllAtNoFollow removes name under parent and every entry below it,
+// like os.RemoveAll. Each directory opens relative to its parent's descriptor
+// with O_NOFOLLOW, so a symlink is unlinked as a leaf and its target is kept.
+// A missing name is not an error.
+func RemoveAllAtNoFollow(parent *os.File, name string) error {
+	if err := validateLeafName(name); err != nil {
+		return err
+	}
+	return removeAllAt(int(parent.Fd()), name)
+}
+
+func removeAllAt(parentFD int, name string) error {
+	fd, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		return nil
+	case errors.Is(err, unix.ENOTDIR), errors.Is(err, unix.ELOOP):
+		// A file or a symlink: remove the entry itself, never its target.
+		if err := unix.Unlinkat(parentFD, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+			return err
+		}
+		return nil
+	case err != nil:
+		return err
+	}
+	dir := os.NewFile(uintptr(fd), name)
+	names, err := dir.Readdirnames(-1)
+	for _, child := range names {
+		if err == nil {
+			err = removeAllAt(fd, child)
+		}
+	}
+	if closeErr := dir.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR)
+}
+
 // ReadFileNoFollow reads one regular file through a descriptor-relative,
 // no-follow traversal. It accepts files up to limit bytes.
 func ReadFileNoFollow(path, label string, limit int64) ([]byte, error) {

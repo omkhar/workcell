@@ -5,10 +5,8 @@ package metadatautil
 
 import (
 	"fmt"
-	"go/ast"
 	"go/parser"
 	"go/token"
-	"sort"
 	"strings"
 )
 
@@ -21,12 +19,12 @@ import (
 // resolves a path by name, so it follows a symlink and races a rename.
 //
 // policy/hardened-io-baseline.tsv records the calls the tree carries today,
-// one row per file and symbol, each with a reason. A count that does not match
-// its row fails, so the count can only go down. There is no inline exemption:
-// a new call needs a reviewed baseline row.
+// one row per file and symbol, each with a reason. A row lists the identity of
+// each call it admits, so a call it does not list fails, and so does a listed
+// call the file no longer makes. There is no inline exemption: a new call
+// needs a reviewed baseline entry.
 func CheckHardenedIO(rootDir string) error {
-	counts := map[hardenedFSKey]int{}
-	details := map[hardenedFSKey][]string{}
+	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, tree := range []string{"cmd", "internal"} {
 		err := scanHardenedGoSources(rootDir, tree, func(rel string, content []byte) error {
 			if strings.HasPrefix(rel, hardenedIOAllowedTree) {
@@ -38,8 +36,7 @@ func CheckHardenedIO(rootDir string) error {
 			}
 			for _, finding := range findings {
 				key := hardenedFSKey{path: rel, symbol: finding.Symbol}
-				counts[key]++
-				details[key] = append(details[key], fmt.Sprintf("%s:%d: %s", rel, finding.Line, finding.Symbol))
+				found[key] = append(found[key], finding)
 			}
 			return nil
 		})
@@ -51,7 +48,7 @@ func CheckHardenedIO(rootDir string) error {
 	if err != nil {
 		return err
 	}
-	failures := compareHardenedBaseline(counts, details, baseline, func(symbol string) string {
+	failures := compareHardenedBaseline(found, baseline, func(symbol string) string {
 		_, name, _ := strings.Cut(symbol, ".")
 		return "use " + hardenedIOReplacements[name] + ", or add a row with a reason to " + hardenedIOBaselinePath
 	})
@@ -72,11 +69,11 @@ const (
 var hardenedIOReplacements = map[string]string{
 	"ReadFile":  "rootio.ReadFileNoFollow",
 	"WriteFile": "rootio.WriteFileAtomicAtNoFollow on a parent from rootio.OpenParentDirectoryNoFollow",
-	"Open":      "rootio.OpenParentDirectoryNoFollow with rootio.OpenRegularFileAtNoFollow",
+	"Open":      "rootio.OpenRegularFileAtNoFollow on a parent from rootio.OpenParentDirectoryNoFollow; a directory needs rootio.OpenDirectoryAtNoFollow on that parent",
 	"OpenFile":  "rootio.OpenRegularFileAtNoFollow on a parent from rootio.OpenParentDirectoryNoFollow for a read-only open; a write, create or truncate needs rootio.StageAndPublishAt or rootio.StageAndCreateAt on that parent; an append has no rootio owner yet",
 	"Create":    "rootio.StageAndCreateAt on a parent from rootio.OpenParentDirectoryNoFollow",
 	"Stat":      "os.Lstat, or Stat on a handle from rootio.OpenRegularFileAtNoFollow",
-	"RemoveAll": "os.Root.RemoveAll on a root bound to the parent from rootio.OpenParentDirectoryNoFollow",
+	"RemoveAll": "rootio.RemoveAllAtNoFollow on a parent from rootio.OpenParentDirectoryNoFollow",
 	"Glob":      "ReadDir on a parent from rootio.OpenParentDirectoryNoFollow, then filepath.Match on each name",
 }
 
@@ -98,32 +95,14 @@ func HardenedIOFindings(source string) ([]HardenedFSFinding, error) {
 	if err != nil {
 		return nil, err
 	}
-	var findings []HardenedFSFinding
-	ast.Inspect(file, func(node ast.Node) bool {
-		selector, ok := node.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		qualifier, ok := hardenedImportQualifier(selector)
-		if !ok {
-			return true
-		}
-		symbol := selector.Sel.Name
-		banned := (qualifier.Name == osName && symbol != "Glob" && hardenedIOReplacements[symbol] != "") ||
-			(qualifier.Name == filepathName && symbol == "Glob")
+	return hardenedFindings(fileSet, file, source, func(qualifier, symbol string) string {
+		banned := (qualifier == osName && symbol != "Glob" && hardenedIOReplacements[symbol] != "") ||
+			(qualifier == filepathName && symbol == "Glob")
 		if !banned {
-			return true
+			return ""
 		}
-		position := fileSet.PositionFor(selector.Pos(), false)
-		findings = append(findings, HardenedFSFinding{
-			Line:   position.Line,
-			Column: position.Column,
-			Symbol: hardenedIOCanonical(qualifier.Name, osName, symbol),
-		})
-		return true
-	})
-	sort.Slice(findings, func(i, j int) bool { return findings[i].Line < findings[j].Line })
-	return findings, nil
+		return hardenedIOCanonical(qualifier, osName, symbol)
+	}), nil
 }
 
 // hardenedIOCanonical names a finding by package, not by local alias, so a
