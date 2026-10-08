@@ -269,7 +269,7 @@ func rootUsageError(badCommand string) error {
 	if badCommand == "" {
 		return fmt.Errorf("%s", rootUsageErrorMessage())
 	}
-	return fmt.Errorf("unknown command: %s\n\nKnown commands:\n%s", badCommand, knownCommandLines())
+	return fmt.Errorf("unknown command: %s\n\n%s", badCommand, rootUsageErrorMessage())
 }
 
 func cmdGenerateControlPlaneManifest(args []string) error {

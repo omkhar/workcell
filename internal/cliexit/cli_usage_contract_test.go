@@ -93,14 +93,11 @@ func TestMainPackageDirsFindsMainOutsideMainGo(t *testing.T) {
 }
 
 func testBinaryCLIContract(t *testing.T, binName, binPath string) {
-	// Binaries that accept positional arguments (subcommands or command args).
-	// For these, we skip the "stray positional" test because they may
-	// interpret the positional as a subcommand or argument.
+	// Binaries that forward arbitrary positionals as command arguments.
+	// Subcommand dispatchers are not listed: "stray-arg" is not one of
+	// their commands, so they must reject it like any other binary.
 	acceptsPositionals := map[string]bool{
-		"workcell-apt-broker-client": true, // passes command args
-		"workcell-citools":           true, // subcommand-based
-		"workcell-hostutil":          true, // subcommand-based
-		"workcell-runtimeutil":       true, // subcommand-based
+		"workcell-apt-broker-client": true, // forwards apt command args
 	}
 
 	type contractCase struct {
@@ -119,7 +116,7 @@ func testBinaryCLIContract(t *testing.T, binName, binPath string) {
 		{name: "unknown-flag", args: []string{"--this-flag-does-not-exist"}, wantExit: 2},
 	}
 
-	// Stray positionals must exit 2 for binaries that don't accept them
+	// Stray positionals (or an unknown top-level command) must exit 2
 	if !acceptsPositionals[binName] {
 		tests = append(tests, contractCase{name: "stray-positional", args: []string{"stray-arg"}, wantExit: 2, wantUsage: true})
 	}

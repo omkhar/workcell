@@ -25,19 +25,22 @@ import (
 	"github.com/omkhar/workcell/internal/runtimeutil"
 )
 
+// usageMessage is the root usage text; it lists every top-level command.
+const usageMessage = "usage: workcell-runtimeutil <canonicalize-path|resolve-ips|rewrite-bundle-credential-source|list-direct-mounts|extract-direct-mounts|render-injection-bundle> [args...]"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: workcell-runtimeutil <command> [args...]")
+		fmt.Fprintln(stderr, usageMessage)
 		return 2
 	}
 
 	// Support -h and --help flags at the top level (exit 0)
 	if args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(stdout, "usage: workcell-runtimeutil <command> [args...]")
+		fmt.Fprintln(stdout, usageMessage)
 		return 0
 	}
 
@@ -94,7 +97,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "render-injection-bundle":
 		return runRenderInjectionBundle(args[1:], stderr)
 	default:
-		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
+		fmt.Fprintf(stderr, "unknown command: %s\n%s\n", args[0], usageMessage)
 		return 2
 	}
 
