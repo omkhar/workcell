@@ -707,11 +707,16 @@ func shellWords(line string, stack []byte) (
 
 // evaluates reports whether the words run eval: bare, behind command or
 // builtin, which run it in this shell, or as the script of sh -c or bash -c.
-// A child shell cannot shadow the command here, but the barrier only loses
-// invocations, so it holds for every spelling.
+// Assignments before any of these, as in X=1 eval, still run it here. A child
+// shell cannot shadow the command, but the barrier only loses invocations, so
+// it holds for every spelling.
 func evaluates(names []string) bool {
+	names = names[assignmentPrefix(names):]
 	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || strings.HasPrefix(names[0], "-")) {
 		names = names[1:]
+	}
+	if len(names) == 0 {
+		return false
 	}
 	if names[0] == "eval" {
 		return true
@@ -723,8 +728,7 @@ func evaluates(names []string) bool {
 	if at < 0 || at+1 == len(names) {
 		return false
 	}
-	script := strings.Fields(names[at+1])
-	return len(script) > 0 && script[0] == "eval"
+	return evaluates(strings.Fields(names[at+1]))
 }
 
 // assignmentPrefix returns how many leading words are assignments that bash

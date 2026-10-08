@@ -26,6 +26,7 @@ var anyRejection = map[string]bool{
 	"unrelated placement":       true,
 	"eval-assembled definition": true,
 	"wrapped eval definition":   true,
+	"assigned eval definition":  true,
 	"step condition if: false":  true,
 	"step condition && false":   true,
 }
@@ -216,6 +217,9 @@ var Evasions = []Evasion{
 	})},
 	{"wrapped eval definition", replaceAnchor(func(a string) string {
 		return indentOf(a) + "command eval '" + strings.Fields(a)[0] + "() { :; }'\n" + a
+	})},
+	{"assigned eval definition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "X=1 command eval '" + strings.Fields(a)[0] + "() { :; }'\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

@@ -238,6 +238,10 @@ func TestShellInvocations(t *testing.T) {
 		{name: "builtin eval ends the scan", script: "builtin -- eval x\noras cp two\n"},
 		{name: "sh -c eval ends the scan", script: "sh -c 'eval x'\noras cp two\n"},
 		{name: "bash -c eval ends the scan", script: "/bin/bash -c \"eval\"\noras cp two\n"},
+		{name: "eval behind an assignment ends the scan", script: "X=1 eval 'oras(){ :; }'\noras cp two\n"},
+		{name: "command eval behind assignments ends the scan", script: "FOO=bar Y= command eval x\noras cp two\n"},
+		{name: "sh -c eval behind an assignment ends the scan", script: "sh -c 'X=1 eval x'\noras cp two\n"},
+		{name: "an assignment alone is not a barrier", script: "X=1\noras cp two\n", want: [][]string{{"two"}}},
 		{
 			name:   "a hashed path over the command proves no invocation of it",
 			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
