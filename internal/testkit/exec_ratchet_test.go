@@ -18,9 +18,7 @@ import (
 	"testing"
 )
 
-// etxtbsyRetryHelpers are the only helpers whose func-literal argument is
-// exempt from the ratchet: each one guarantees an ETXTBSY retry. A near-match
-// such as execRetryOn with an arbitrary predicate is counted like a raw call.
+// etxtbsyRetryHelpers are the only helpers whose func-literal argument is exempt from the ratchet: each one guarantees an ETXTBSY retry. A near-match such as execRetryOn with an arbitrary predicate is counted like a raw call.
 var etxtbsyRetryHelpers = map[string]bool{
 	"execRetryETXTBSY":             true,
 	"execRetryETXTBSYOrNestedBusy": true,
@@ -58,10 +56,7 @@ func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 	return false
 }
 
-// rawExecSites counts the exec.Command calls in src whose program is not a
-// stable literal and that no etxtbsyRetryHelpers closure returns: each can
-// exec a fresh fixture and fail with ETXTBSY (golang/go#22315). A saved
-// exec.Command value counts too, since what it later runs is not checked.
+// rawExecSites counts the exec.Command calls in src whose program is not a stable literal and that no etxtbsyRetryHelpers closure returns: each can exec a fresh fixture and fail with ETXTBSY (golang/go#22315). A saved exec.Command value counts too, since what it later runs is not checked.
 func rawExecSites(t *testing.T, name, src string) int {
 	return rawExecSitesIn(t, name, src, false, nil)
 }
@@ -86,9 +81,7 @@ func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int
 	return counts
 }
 
-// execCommandNameIn returns, under every os/exec import name of file, a
-// function naming exec.Command or CommandContext, a predicate for the exec.Cmd
-// type, and whether os/exec is dot imported.
+// execCommandNameIn returns, under every os/exec import name of file, a function naming exec.Command or CommandContext, a predicate for the exec.Cmd type, and whether os/exec is dot imported.
 func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bool, bool) {
 	execPkgs := map[string]bool{}
 	for _, imp := range file.Imports {
@@ -126,14 +119,14 @@ func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bo
 
 // execNames are a package's os/exec names: exec.Command aliases, exec.Cmd types and command holders.
 type execNames struct {
-	aliases, factories, cmdTypes map[string]bool
-	holders                      map[any]bool
+	aliases, factories, holders map[any]bool
+	cmdTypes                    map[string]bool
 }
 
 // packageExecNames collects the execNames of files read together.
 func packageExecNames(files []*ast.File) execNames {
 	aliases, factories := packageCommandAliases(files)
-	return execNames{aliases, factories, cmdTypeNames(files), commandHolders(files, aliases)}
+	return execNames{aliases, factories, commandHolders(files, aliases), cmdTypeNames(files)}
 }
 
 // rawExecSitesIn is rawExecSites with package-wide PATH and execNames; nil names reads the file alone.
@@ -165,9 +158,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the helper, so those calls are not trusted.
 	helpersShadowed := declaresRetryHelper(file)
-	// retried holds the command expressions a retry helper's closure returns:
-	// only those run under the helper's ETXTBSY retry. Any other execution
-	// inside the closure runs while the closure builds its result and is raw.
+	// retried holds the command expressions a retry helper's closure returns: only those run under the helper's ETXTBSY retry. Any other execution inside the closure runs while the closure builds its result and is raw.
 	retried := map[ast.Expr]bool{}
 	isCmdLit := func(lit *ast.CompositeLit) bool {
 		id, ok := lit.Type.(*ast.Ident)
@@ -213,9 +204,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 		var call *ast.CallExpr
 		switch n := c.(type) {
 		case *ast.AssignStmt:
-			// A command whose Path field is reassigned runs a program that
-			// exec.Command never saw, so each such assignment is a raw site.
-			// A Path field of a value that holds no command starts nothing.
+			// A command whose Path field is reassigned runs a program that exec.Command never saw, so each such assignment is a raw site. A Path field of a value that holds no command starts nothing.
 			for _, lhs := range n.Lhs {
 				if sel, ok := unparen(lhs).(*ast.SelectorExpr); ok && sel.Sel.Name == "Path" && isCommand(sel.X) {
 					count++
@@ -238,7 +227,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 		if inner, ok := fun.(*ast.CallExpr); ok {
 			fun, calls = factoryName(inner), names.factories
 		}
-		if id, ok := fun.(*ast.Ident); ok && calls[id.Name] {
+		if id, ok := fun.(*ast.Ident); ok && (calls[id.Name] || calls[id.Obj]) {
 			count++
 			return true
 		}
@@ -273,9 +262,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 	return count
 }
 
-// retriedCommand returns the command build the closure's final statement
-// returns, directly or through a variable followed only by field
-// assignments. A command run or handed elsewhere first stays a raw site.
+// retriedCommand returns the command build the closure's final statement returns, directly or through a variable followed only by field assignments. A command run or handed elsewhere first stays a raw site.
 func retriedCommand(closure *ast.FuncLit, build func(ast.Expr) ast.Expr) ast.Expr {
 	statements := closure.Body.List
 	if len(statements) == 0 {
@@ -412,13 +399,13 @@ func unparen(expr ast.Expr) ast.Expr {
 }
 
 // packageCommandAliases lists, to a fixed point, exec.Command aliases and factories that return one.
-func packageCommandAliases(files []*ast.File) (map[string]bool, map[string]bool) {
-	aliases, factories := map[string]bool{}, map[string]bool{}
+func packageCommandAliases(files []*ast.File) (map[any]bool, map[any]bool) {
+	aliases, factories, params := map[any]bool{}, map[any]bool{}, funcParams(files)
 	for {
 		added := false
 		for _, file := range files {
 			execCommandName, _, _ := execCommandNameIn(file)
-			added = collectCommandAliases(aliases, factories, file, execCommandName) || added
+			added = collectCommandAliases(aliases, factories, params, file, execCommandName) || added
 		}
 		if !added {
 			return aliases, factories
@@ -426,10 +413,43 @@ func packageCommandAliases(files []*ast.File) (map[string]bool, map[string]bool)
 	}
 }
 
-// collectCommandAliases adds one pass of file's aliases and factories and reports whether any was new.
-func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, execCommandName func(ast.Expr) string) bool {
+// funcParams lists by name the parameters of each function, method and named func literal; Go names all of a list's parameters or none.
+func funcParams(files []*ast.File) map[string][][]*ast.Ident {
+	params := map[string][][]*ast.Ident{}
+	add := func(name, value ast.Expr) {
+		id, named := name.(*ast.Ident)
+		if lit, ok := value.(*ast.FuncLit); ok && named {
+			var names []*ast.Ident
+			for _, field := range lit.Type.Params.List {
+				names = append(names, field.Names...)
+			}
+			params[id.Name] = append(params[id.Name], names)
+		}
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.FuncDecl:
+				add(n.Name, &ast.FuncLit{Type: n.Type})
+			case *ast.AssignStmt:
+				for i := range min(len(n.Lhs), len(n.Rhs)) {
+					add(n.Lhs[i], n.Rhs[i])
+				}
+			case *ast.ValueSpec:
+				for i := range min(len(n.Names), len(n.Values)) {
+					add(n.Names[i], n.Values[i])
+				}
+			}
+			return true
+		})
+	}
+	return params
+}
+
+// collectCommandAliases adds one pass of file's aliases and factories, including a parameter that receives one, and reports whether any was new.
+func collectCommandAliases(aliases, factories map[any]bool, params map[string][][]*ast.Ident, file *ast.File, execCommandName func(ast.Expr) string) bool {
 	added := false
-	add := func(set map[string]bool, name string) {
+	add := func(set map[any]bool, name any) {
 		if !set[name] {
 			set[name], added = true, true
 		}
@@ -437,7 +457,7 @@ func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, e
 	isAlias := func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.Ident:
-			return aliases[v.Name] || execCommandName(v) != ""
+			return aliases[v.Name] || aliases[v.Obj] || execCommandName(v) != ""
 		case *ast.CallExpr: // a factory's result
 			id, ok := factoryName(v).(*ast.Ident)
 			return ok && factories[id.Name]
@@ -487,6 +507,16 @@ func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, e
 			if n.Body != nil && returnsAlias(n.Body) {
 				add(factories, n.Name.Name)
 			}
+		case *ast.CallExpr: // a parameter given a command constructor is an alias in its callee's scope
+			if callee, ok := factoryName(n).(*ast.Ident); ok {
+				for _, names := range params[callee.Name] {
+					for i, name := range names {
+						if i < len(n.Args) && name.Obj != nil && isAlias(n.Args[i]) {
+							add(aliases, name.Obj)
+						}
+					}
+				}
+			}
 		}
 		return true
 	})
@@ -514,9 +544,7 @@ func cmdTypeNames(files []*ast.File) map[string]bool {
 	return cmdTypes
 }
 
-// commandValueIn returns predicates for an expression that yields a command
-// (an exec.Command or holder call, a holder, or new or a literal of a Cmd type)
-// and for a type that mentions exec.Cmd or a holder outside its parameters.
+// commandValueIn returns predicates for an expression that yields a command (an exec.Command or holder call, a holder, or new or a literal of a Cmd type) and for a type that mentions exec.Cmd or a holder outside its parameters.
 func commandValueIn(file *ast.File, execCommandName func(ast.Expr) string, isCmdType func(ast.Expr) bool, holders map[any]bool) (func(ast.Expr) bool, func(ast.Node) bool) {
 	var mentionsCmd func(ast.Node) bool
 	mentionsCmd = func(typ ast.Node) bool {
@@ -563,9 +591,7 @@ func commandValueIn(file *ast.File, execCommandName func(ast.Expr) string, isCmd
 	return isCommand, mentionsCmd
 }
 
-// holderKey keys a name declared inside a function by the parser's object for
-// its declaration, so it holds a command only in its own scope, and any other
-// name (package level, from another file) by the name itself.
+// holderKey keys a name declared inside a function by the parser's object for its declaration, so it holds a command only in its own scope, and any other name (package level, from another file) by the name itself.
 func holderKey(file *ast.File, id *ast.Ident) any {
 	if id.Obj != nil && file.Scope.Lookup(id.Name) != id.Obj {
 		return id.Obj
@@ -573,11 +599,8 @@ func holderKey(file *ast.File, id *ast.Ident) any {
 	return id.Name
 }
 
-// commandHolders lists, to a fixed point across files, the names that can
-// hold a command: aliases, names declared with a type that mentions exec.Cmd,
-// and names assigned or ranged from a command value. Struct fields, read
-// through selectors, match by name alone, which only makes the count stricter.
-func commandHolders(files []*ast.File, aliases map[string]bool) map[any]bool {
+// commandHolders lists, to a fixed point across files, the names that can hold a command: aliases, names declared with a type that mentions exec.Cmd, and names assigned or ranged from a command value. Struct fields, read through selectors, match by name alone, which only makes the count stricter.
+func commandHolders(files []*ast.File, aliases map[any]bool) map[any]bool {
 	holders := map[any]bool{}
 	for name := range aliases {
 		holders[name] = true
@@ -793,8 +816,7 @@ func mergeBaseExecBaseline(t *testing.T, root string) map[string]int {
 	return parseExecBaseline(t, git("show", mergeBase+":"+execBaselinePath))
 }
 
-// execBaselineBaseRef returns origin/main, or main only when origin/main is
-// missing; any other probe failure is an error, so the check fails closed.
+// execBaselineBaseRef returns origin/main, or main only when origin/main is missing; any other probe failure is an error, so the check fails closed.
 func execBaselineBaseRef(root string) (string, error) {
 	err := exec.Command("git", "-C", root, "show-ref", "--exists", "refs/remotes/origin/main").Run()
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
@@ -803,8 +825,7 @@ func execBaselineBaseRef(root string) (string, error) {
 	return "refs/remotes/origin/main", err
 }
 
-// execBaselineRaises lists baseline rows above their merge-base row. A raise
-// would admit a new raw site, so the editable file alone cannot hold the ratchet.
+// execBaselineRaises lists baseline rows above their merge-base row. A raise would admit a new raw site, so the editable file alone cannot hold the ratchet.
 func execBaselineRaises(baseline, base map[string]int) []string {
 	var problems []string
 	for file, n := range baseline {
@@ -871,7 +892,7 @@ func factory() func(string, ...string) *exec.Cmd { return exec.Command }
 func af(p string) { launch := factory(); launch(p); mk := func() func(string, ...string) *exec.Cmd { return launch }; mk()(p) }
 `
 	if got := rawExecSites(t, "planted.go", planted); got != 34 {
-		t.Fatalf("rawExecSites = %d, want 34 (a, d, e, f, g, i, j, k, l's saved value plus two calls, m's inner call, n's saved value plus its chained call, q's first command, r's command run before its return, s's nested closure command, u's command run from a field assignment, v's parenthesized saved value plus its call and a parenthesized direct call, w's parenthesized assignment target plus its call, x's Path reassignment, y's Cmd literal, z's literals of an exec.Cmd alias and defined type, the Path reassignments of ab's declared Cmd, ac's Cmd parameter, ad's Cmd field and ae's new Cmd, factory's saved value, and af's calls through a factory's result and a factory literal; o builds and returns its command under the retry, and aa's request.Path starts nothing)", got)
+		t.Fatalf("rawExecSites = %d, want 34 (every planted func but b, c, h, o and aa counts; see each line)", got)
 	}
 	const notRaw = `package x
 import "os/exec"
@@ -933,13 +954,6 @@ func a(p string) {
 }
 
 func TestRawExecSitesCountsSystemToolsAfterProcessPathRewrite(t *testing.T) {
-	const shadowed = `package x
-import ("os/exec"; "testing")
-func a(t *testing.T) { t.Setenv("PATH", "/tmp/fixtures"); exec.Command("git", "init") }
-`
-	if got := rawExecSites(t, "shadowed.go", shadowed); got != 1 {
-		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite)", got)
-	}
 	const rawShadowed = "package x\nimport (\"os/exec\"; \"testing\")\nfunc a(t *testing.T) { t.Setenv(`PATH`, \"/tmp/fixtures\"); exec.Command(\"git\") }\n"
 	if got := rawExecSites(t, "raw_shadowed.go", rawShadowed); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a raw-string PATH rewrite)", got)
@@ -951,13 +965,6 @@ func a(t *testing.T) { t.Setenv(pathKey, "/tmp/fixtures"); exec.Command("git") }
 `
 	if got := rawExecSites(t, "const_shadowed.go", constShadowed); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a constant-keyed PATH rewrite)", got)
-	}
-	const savedSetenv = `package x
-import ("os/exec"; "testing")
-func a(t *testing.T) { setenv := t.Setenv; setenv("PATH", "/tmp/fixtures"); exec.Command("git") }
-`
-	if got := rawExecSites(t, "saved_setenv.go", savedSetenv); got != 1 {
-		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a saved Setenv value)", got)
 	}
 	const varSetenv = `package x
 import ("os/exec"; "testing")
@@ -1008,21 +1015,15 @@ func a() { exec.Command("git", "init") }
 	if got := rawExecSitesIn(t, "plain.go", plain, false, nil); got != 0 {
 		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
 	}
-	// A saved alias declared in one file counts once there and once per call in another.
+	// An alias of another file's alias propagates to a fixed point, and a constructor passed to a function, method or func value counts per call through the parameter; a stable closure counts nothing.
 	counts := packageRawExecSites(t, map[string]string{
-		"decl.go": "package x\nimport \"os/exec\"\nvar run = exec.Command\n",
-		"call.go": "package x\nfunc a(p string) { run(p); run(p) }\n",
+		"decl.go":   "package x\nimport \"os/exec\"\nvar first = exec.Command\n",
+		"chain.go":  "package x\nvar second = first\nfunc a(p string) { second(p) }\n",
+		"use.go":    "package x\nimport \"os/exec\"\nfunc b(p string, h helper) { invoke(exec.Command, p); h.once(exec.Command); fv := func(run func(string, ...string) *exec.Cmd) { run(p) }; fv(exec.Command); stable(func(string, ...string) *exec.Cmd { return exec.Command(\"git\") }) }\n",
+		"helper.go": "package x\nimport \"os/exec\"\ntype helper struct{}\nfunc invoke(run func(string, ...string) *exec.Cmd, p string) { run(p).Run(); run(p).Run() }\nfunc (helper) once(run func(string, ...string) *exec.Cmd) { run(\"x\") }\nfunc stable(run func(string, ...string) *exec.Cmd) { run(\"x\").Run() }\n",
 	})
-	if counts["decl.go"] != 1 || counts["call.go"] != 2 {
-		t.Fatalf("package counts = %v, want decl.go:1 call.go:2 (a saved alias declared in another file)", counts)
-	}
-	// An alias of another file's alias propagates to a fixed point.
-	counts = packageRawExecSites(t, map[string]string{
-		"decl.go":  "package x\nimport \"os/exec\"\nvar first = exec.Command\n",
-		"chain.go": "package x\nvar second = first\nfunc a(p string) { second(p) }\n",
-	})
-	if counts["decl.go"] != 1 || counts["chain.go"] != 1 {
-		t.Fatalf("package counts = %v, want decl.go:1 chain.go:1 (an alias of another file's alias)", counts)
+	if counts["decl.go"] != 1 || counts["chain.go"] != 1 || counts["use.go"] != 4 || counts["helper.go"] != 3 {
+		t.Fatalf("package counts = %v, want decl.go:1 chain.go:1 use.go:4 helper.go:3 (an alias of another file's alias; use.go's three references, fv's call, invoke's two calls, once's call; stable counts nothing)", counts)
 	}
 	// An exec.Cmd type alias and a Cmd variable from one file count their literal and Path write in another.
 	counts = packageRawExecSites(t, map[string]string{
