@@ -1,6 +1,5 @@
 # Doc claim scanner over md-unfenced.awk output for the file doc. Prints
-# "PATH<TAB>doc<TAB>path" per cited path, and "ESCAPE<TAB>doc<TAB>path" per path
-# with a .. component, which may leave the repository and anchors nothing.
+# "doc<TAB>path" per cited path for workcell-citools doc-claims to probe.
 function span_path(s, p) {
   gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
   sub(/^\.\//, "", s)
@@ -16,10 +15,6 @@ function span_path(s, p) {
   while (match(s, /`[^`]+`/)) {
     c = span_path(substr(s, RSTART + 1, RLENGTH - 2))
     s = substr(s, RSTART + RLENGTH)
-    if (c ~ /(^|\/)\.\.(\/|$)/) {
-      print "ESCAPE\t" doc "\t" c
-    } else if (c != "") {
-      print "PATH\t" doc "\t" c
-    }
+    if (c != "") print doc "\t" c
   }
 }

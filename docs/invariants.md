@@ -134,9 +134,13 @@ and instructions before it can claim support.
 `scripts/check-doc-links.sh` reads every Markdown file. A code span that names
 a path under `scripts/`, `internal/` or `.github/workflows/` must exist. The
 check drops a leading `./` first. A path with a `..` or symlink component
-fails, and the check does not look it up. `validate-repo.sh`, a CI job script or a
-workflow must run a cited `scripts/*.sh` path as a command. So a doc cannot
-cite a gate that nothing runs.
+fails, and the check does not look it up. Go probes each path through no-follow
+descriptors.
+
+`validate-repo.sh`, a CI job script or a workflow must run a cited
+`scripts/*.sh` path as a command. A command after `false &&`, inside
+`if false` or after a top-level `exit` does not count. So a doc cannot cite a
+gate that nothing runs.
 
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.

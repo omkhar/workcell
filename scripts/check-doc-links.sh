@@ -2,7 +2,7 @@
 # Offline Markdown integrity check over tracked docs: fails on broken intra-repo
 # relative links and on orphaned docs/ pages that nothing navigably links to. No
 # network calls and no dependencies beyond git, awk, sed, grep and Go (for the
-# lane listing) so it can run host-side in the docs CI lane. Kept bash-3.2
+# claim probe) so it can run host-side in the docs CI lane. Kept bash-3.2
 # compatible (no mapfile, no associative arrays) because the host baseline is
 # macOS /bin/bash 3.2; see scripts/lib/shellproto.sh.
 #
@@ -136,56 +136,20 @@ done <<<"${docs_listing}"
 claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
 claim_hits="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 claim_base="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
-claim_wired="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
-trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_wired}"' EXIT
+claim_cited="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_cited}"' EXIT
 
-# Every script a lane runs: validate-repo.sh, the CI job scripts, the workflows.
-if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
-  "${DOC_CLAIMS_CITOOLS}" lane-scripts "${ROOT_DIR}" >"${claim_wired}"
-else
-  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools lane-scripts "${ROOT_DIR}" >"${claim_wired}"
-fi
-
+# workcell-citools doc-claims probes each cited path through no-follow
+# descriptors, since bash has no openat, and lists the scripts a lane runs.
 for f in "${md_files[@]}"; do
   awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
-    awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk" |
-    while IFS=$'\t' read -r kind doc subject; do
-      if [[ "${kind}" == ESCAPE ]]; then
-        printf '%s\tescaping-path\t%s\n' "${doc}" "${subject}"
-        continue
-      fi
-      # No-follow probe: a symlink in any component may lead outside the
-      # checkout, so it anchors nothing and fails like a .. path.
-      probe=""
-      linked=0
-      IFS=/ read -r -a parts <<<"${subject}"
-      for part in "${parts[@]}"; do
-        [[ -n "${part}" ]] || continue
-        probe="${probe:+${probe}/}${part}"
-        [[ ! -L "${probe}" ]] || linked=1
-      done
-      if [[ "${linked}" -eq 1 ]]; then
-        printf '%s\tescaping-path\t%s\n' "${doc}" "${subject}"
-        continue
-      fi
-      if [[ ! -e "${subject}" ]]; then
-        printf '%s\tmissing-path\t%s\n' "${doc}" "${subject}"
-        continue
-      fi
-      case "${subject}" in
-        scripts/*.sh)
-          wired=0
-          grep -qxF "${subject}" "${claim_wired}" || wired=$?
-          if [[ "${wired}" -gt 1 ]]; then
-            echo "check-doc-links: grep failed on ${subject}" >&2
-            exit 2
-          fi
-          [[ "${wired}" -eq 0 ]] || printf '%s\tunwired-script\t%s\n' "${doc}" "${subject}"
-          ;;
-        *) : ;;
-      esac
-    done >>"${claim_hits}"
-done
+    awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk"
+done >"${claim_cited}"
+if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
+  "${DOC_CLAIMS_CITOOLS}" doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
+else
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
+fi
 
 grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
 sort -o "${claim_hits}" "${claim_hits}"

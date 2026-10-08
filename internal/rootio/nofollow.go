@@ -144,6 +144,40 @@ func SameFileAtNoFollow(firstParent *os.File, firstName string, secondParent *os
 	return first.Dev == second.Dev && first.Ino == second.Ino, nil
 }
 
+// LstatAtNoFollow returns the status of relative under parent without
+// following a symlink in any component. A symlink before the leaf fails with
+// ELOOP, and a symlink leaf reports itself. Each directory is opened from the
+// descriptor of the one before it, so a component swapped mid-walk fails.
+func LstatAtNoFollow(parent *os.File, relative string) (unix.Stat_t, error) {
+	var info unix.Stat_t
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return info, err
+	}
+	current, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return info, err
+	}
+	defer func() { _ = unix.Close(current) }()
+	for _, component := range components[:len(components)-1] {
+		// Linux reports ENOTDIR, not ELOOP, for a symlink opened with
+		// O_DIRECTORY|O_NOFOLLOW, so stat it first to name the cause.
+		if err := unix.Fstatat(current, component, &info, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return info, err
+		}
+		if info.Mode&unix.S_IFMT == unix.S_IFLNK {
+			return info, fmt.Errorf("%s: %w", component, unix.ELOOP)
+		}
+		next, err := unix.Openat(current, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return info, err
+		}
+		_ = unix.Close(current)
+		current = next
+	}
+	return info, unix.Fstatat(current, components[len(components)-1], &info, unix.AT_SYMLINK_NOFOLLOW)
+}
+
 // MarshalCompactJSON returns compact newline-terminated JSON when it fits limit.
 func MarshalCompactJSON(value any, label string, limit int64) ([]byte, error) {
 	if limit < 0 {

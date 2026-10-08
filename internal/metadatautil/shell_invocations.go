@@ -772,16 +772,36 @@ var assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\+?=`)
 // quoted text name no program. A case pattern, an array member, an option and
 // an assignment do not either. A function body counts only when the script
 // calls the function, so an uncalled definition wires nothing.
+//
+// Three unreachable forms name nothing: the right side of && after a bare
+// false or of || after a bare true or :, the body of if false, while false or
+// until true, and every command after a top-level exit. A later fi, done, esac,
+// } or ) with no opener the reader saw puts that exit back inside a block, so it
+// ends nothing. Any other status is unknown, so its commands count. A return,
+// an exit in a group, function or case, and a dead else stay counted.
 func ShellCommandWords(script string) []string {
 	var top []string
 	bodies := map[string][]string{}
 	// cases holds one state per open case: h before in, p in a pattern, b in
 	// a branch body.
 	var cases []byte
+	// blocks holds one entry per open if, while, until, for or select: its
+	// keyword, and whether the branch being read can never run.
+	type block struct {
+		keyword string
+		dead    bool
+	}
+	var blocks []block
 	var depth, definedAt, array int
-	defining, bodyOpened, wrapper := "", false, ""
+	defining, bodyOpened := "", false
+	// status is the known exit status of the last command, f or t, or 0 when
+	// unknown. skip marks a command that && or || never reaches. exitedAt is
+	// the length of top at the first top-level exit, or -1.
+	var status byte
+	exitedAt := -1
 	for words := range logicalLines(script) {
 		line := words
+		operator, skip, wrapper := "", false, ""
 		if defining == "" {
 			// definedName reads the empty array x=() as a definition of x=,
 			// which no function name can spell.
@@ -791,7 +811,7 @@ func ShellCommandWords(script string) []string {
 			}
 		}
 		start := true
-		for _, each := range words {
+		for index, each := range words {
 			text, bare := each.text, !each.quoted
 			if array > 0 {
 				array += parenBalance([]word{each})
@@ -814,11 +834,42 @@ func ShellCommandWords(script string) []string {
 				if text == ";;" && len(cases) > 0 {
 					cases[len(cases)-1] = 'p'
 				}
-				start, wrapper = true, ""
+				if text == "|" || text == "|&" || text == "&" {
+					status = 0
+				}
+				// A skipped command leaves the status as it was, so false && a && b
+				// skips b too and false && a || b runs b.
+				skip = (text == "&&" && status == 'f') || (text == "||" && status == 't')
+				start, wrapper, operator = true, "", text
 				continue
 			}
 			if !start {
 				continue
+			}
+			if bare {
+				switch text {
+				case "if", "while", "until", "for", "select":
+					blocks = append(blocks, block{keyword: text})
+				case "then", "do":
+					if open := len(blocks) - 1; open >= 0 {
+						keyword := blocks[open].keyword
+						blocks[open].dead = (status == 'f' && (keyword == "if" || keyword == "while")) ||
+							(status == 't' && keyword == "until")
+					}
+				case "else", "elif":
+					if open := len(blocks) - 1; open >= 0 {
+						blocks[open].dead = false
+					}
+				case "fi", "done":
+					if len(blocks) == 0 {
+						// A closer with no opener ends a block this reader
+						// dropped, so an exit before it may sit inside it.
+						exitedAt = -1
+					}
+					blocks, status = blocks[:max(len(blocks)-1, 0)], 0
+				case ")", "esac":
+					exitedAt = -1
+				}
 			}
 			switch {
 			case bare && text == "case":
@@ -836,6 +887,10 @@ func ShellCommandWords(script string) []string {
 			case assignmentWord.MatchString(text):
 				// The program is a later word.
 			default:
+				start = false
+				if skip || slices.ContainsFunc(blocks, func(each block) bool { return each.dead }) {
+					continue
+				}
 				name := text
 				if bare {
 					name = strings.TrimLeft(text, "(")
@@ -845,7 +900,15 @@ func ShellCommandWords(script string) []string {
 				} else {
 					top = append(top, name)
 				}
-				start = false
+				status = literalStatus(wrapper, each)
+				// An exit in a group, a block, a case, a subshell, a pipeline or
+				// behind && or || may leave the lines after it reachable.
+				if bare && text == "exit" && wrapper == "" && depth == 0 &&
+					defining == "" && len(blocks) == 0 && len(cases) == 0 &&
+					!slices.Contains([]string{"&&", "||", "|", "|&"}, operator) &&
+					!pipedAfter(words[index+1:]) && exitedAt < 0 {
+					exitedAt = len(top)
+				}
 			}
 		}
 		for _, each := range splitCommands(line) {
@@ -857,6 +920,12 @@ func ShellCommandWords(script string) []string {
 		if defining != "" && bodyOpened && depth <= definedAt {
 			defining = ""
 		}
+		if depth < 0 {
+			exitedAt = -1 // A } with no { the reader saw, as for a fi.
+		}
+	}
+	if exitedAt >= 0 {
+		top = top[:exitedAt]
 	}
 	// A called function runs its body, which may call another function.
 	seen := map[string]bool{}
@@ -867,6 +936,33 @@ func ShellCommandWords(script string) []string {
 		}
 	}
 	return top
+}
+
+// pipedAfter reports whether the command that ends at the first operator in
+// words runs in a pipeline or in the background, where an exit leaves only a
+// subshell.
+func pipedAfter(words []word) bool {
+	for _, each := range words {
+		if !each.quoted && isOperator(each.text) {
+			return each.text == "|" || each.text == "|&" || each.text == "&"
+		}
+	}
+	return false
+}
+
+// literalStatus returns the exit status a bare false, true or : always gives,
+// as f or t, or 0 when the program or a wrapper such as ! or bash leaves it
+// unknown. A reserved word before the program changes nothing.
+func literalStatus(wrapper string, program word) byte {
+	switch {
+	case program.quoted || !slices.Contains([]string{"", "if", "elif", "while", "until", "then", "do", "else", "{"}, wrapper):
+		return 0
+	case program.text == "false":
+		return 'f'
+	case program.text == "true" || program.text == ":":
+		return 't'
+	}
+	return 0
 }
 
 // groupBrace is commandBrace without subshells. A subshell that spans && splits
