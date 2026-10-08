@@ -863,6 +863,38 @@ func replacesShell(args []string) bool {
 	})
 }
 
+// commandWrappers maps each command that runs the command after it to its own
+// options that take a value.
+var commandWrappers = map[string][]string{"command": nil, "exec": {"-a"}, "env": {"-u", "-C", "-P", "-S"}, "nice": {"-n"}, "nohup": nil}
+
+// wrappedCommand returns words from the command that a chain of wrappers, such
+// as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
+func wrappedCommand(words []string) []string {
+	for {
+		valued, wraps := commandWrappers[words[0]]
+		if !wraps {
+			return words
+		}
+		i := 1
+		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || words[0] == "env" && shellAssignment.MatchString(words[i])); i++ {
+			if words[0] == "command" && strings.ContainsAny(words[i], "vV") {
+				return words
+			}
+			if words[i] == "--" {
+				i++
+				break
+			}
+			if slices.Contains(valued, words[i]) {
+				i++
+			}
+		}
+		if i >= len(words) {
+			return words
+		}
+		words = words[i:]
+	}
+}
+
 // shadowsByAlias reports whether an alias command rebinds name, as in
 // alias oras=':' after shopt -s expand_aliases.
 func shadowsByAlias(args []string, name string) bool {

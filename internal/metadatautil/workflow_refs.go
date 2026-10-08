@@ -302,29 +302,36 @@ func ghSubcommand(args []string) []string {
 // ghBoolFlags are the gh list flags that take no value.
 var ghBoolFlags = map[string]bool{"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true}
 
-// ghFlagValues returns the value of each spelling of a gh flag in args. Every
-// other option but a ghBoolFlags one consumes the next word, as cobra does, so
-// a value that looks like the flag is not counted. gh drops an empty base and
-// a later spelling overrides an earlier one, so callers want exactly one value.
+// ghFlagValues returns the value of each spelling of a gh flag in args. gh
+// drops an empty base and a later spelling overrides an earlier one, so callers
+// want exactly one value. An option this list does not know may or may not take
+// a value, so args are read both ways, and a disagreement returns no value.
 func ghFlagValues(args []string, long, short string) []string {
-	var values []string
-	for i := 0; i < len(args) && args[i] != "--"; i++ {
-		name, value, attached := strings.Cut(args[i], "=")
-		if !strings.HasPrefix(name, "-") {
-			continue
+	read := func(unknownTakesValue bool) []string {
+		var values []string
+		for i := 0; i < len(args) && args[i] != "--"; i++ {
+			name, value, attached := strings.Cut(args[i], "=")
+			if !strings.HasPrefix(name, "-") {
+				continue
+			}
+			if !strings.HasPrefix(name, "--") && len(name) > 2 {
+				name, value, attached = name[:2], strings.TrimPrefix(args[i][2:], "="), true
+			}
+			mine := name == long || name == short
+			if !attached && !ghBoolFlags[name] && (unknownTakesValue || mine) {
+				i++
+				value = strings.Join(args[min(i, len(args)):min(i+1, len(args))], "")
+			}
+			if mine {
+				values = append(values, value)
+			}
 		}
-		if !strings.HasPrefix(name, "--") && len(name) > 2 {
-			name, value, attached = name[:2], strings.TrimPrefix(args[i][2:], "="), true
-		}
-		if !attached && !ghBoolFlags[name] {
-			i++
-			value = strings.Join(args[min(i, len(args)):min(i+1, len(args))], "")
-		}
-		if name == long || name == short {
-			values = append(values, value)
-		}
+		return values
 	}
-	return values
+	if values := read(true); slices.Equal(values, read(false)) {
+		return values
+	}
+	return nil
 }
 
 func positiveInt(text string) bool {
@@ -436,19 +443,19 @@ func commandArgs(script, name string) [][]string {
 // a word of a command read, so a function nobody calls runs nothing.
 func shellCommands(script string) [][]string {
 	outside, bodies := functionBodies(flattenSubstitutions(withoutHeredocBodies(script)))
-	return expandCalls(flatCommands(outside), bodies)
+	return expandCalls(flatCommands(outside), bodies, nil)
 }
 
-// expandCalls puts each called function's body right after the command that
-// names it, so a cd in the body moves the commands after the call.
-func expandCalls(commands [][]string, bodies map[string]string) [][]string {
+// expandCalls puts each called function's body right after every command that
+// names it, so a cd in the body moves the commands after the call. calling
+// holds the functions being expanded, so a recursive call is read once.
+func expandCalls(commands [][]string, bodies map[string]string, calling []string) [][]string {
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
 		for _, each := range words {
-			if body, defined := bodies[each]; defined {
-				delete(bodies, each)
-				found = append(found, expandCalls(flatCommands(body), bodies)...)
+			if body, defined := bodies[each]; defined && !slices.Contains(calling, each) {
+				found = append(found, expandCalls(flatCommands(body), bodies, append(calling, each))...)
 			}
 		}
 	}
@@ -476,7 +483,7 @@ func flatCommands(text string) [][]string {
 			i++
 		}
 		if i < len(words) {
-			found = append(found, words[i:])
+			found = append(found, wrappedCommand(words[i:]))
 		}
 		words = nil
 	}

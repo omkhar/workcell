@@ -98,6 +98,11 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh list with a word limit", runStep("gh issue list --limit=abc"), "", "gh-issue-list-unbounded"},
 		{"gh list with a negative limit", runStep("gh issue list -L -1"), "", "gh-issue-list-unbounded"},
 		{"gh list limit overridden", runStep("gh issue list -L 5 --limit 0"), "", "gh-issue-list-unbounded"},
+		{"gh behind wrappers", runStep("command gh api a\ncommand -p gh api b\nenv -u X A=1 nice -n 5 gh api c\nexec gh api d"), "", "gh-api-unbounded#4"},
+		{"command -v only names gh", runStep("command -v gh api a"), "", ""},
+		{"duplicate limit behind a value-less flag", runStep("gh discussion list --limit 5 --answered --limit abc"), "", "gh-discussion-list-unbounded"},
+		{"every call of a function is expanded", runStep("g() { gh api x; }\nf() { g; g; }\nf\ny=$(g)"), "gh-api-unbounded\tw.yml\tj\ts\treason\ngh-api-unbounded#2\tw.yml\tj\ts\treason\n", "gh-api-unbounded#3"},
+		{"recursive function is expanded once per call", runStep("f() { gh api x; f; }\nf"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", ""},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
