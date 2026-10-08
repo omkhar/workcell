@@ -52,10 +52,23 @@ func optionValues(args []string, short, long string) []string {
 // smokeImageTagDefaultRE reads the literal default tag that IMAGE_TAG takes.
 var smokeImageTagDefaultRE = regexp.MustCompile(`IMAGE_TAG="?\$\{WORKCELL_IMAGE_TAG:-([^}"]+)\}`)
 
+// canonicalImageRef applies Docker's reference defaults: registry docker.io,
+// namespace library for a single-segment name, and tag latest.
+func canonicalImageRef(ref string) string {
+	ref = strings.TrimPrefix(strings.TrimPrefix(ref, "index."), "docker.io/")
+	if name := strings.TrimPrefix(ref, "library/"); !strings.Contains(name, "/") {
+		ref = name
+	}
+	if !strings.ContainsAny(ref[strings.LastIndex(ref, "/")+1:], ":@") {
+		ref += ":latest"
+	}
+	return ref
+}
+
 func ValidateContainerSmokeFlagInventory(script string) error {
 	var defaults []string
 	for _, match := range smokeImageTagDefaultRE.FindAllStringSubmatch(script, -1) {
-		defaults = append(defaults, match[1])
+		defaults = append(defaults, canonicalImageRef(match[1]))
 	}
 	// Every buildx_cmd call counts, with or without the epoch prefix.
 	var builds []Invocation
@@ -73,7 +86,7 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 		// retagging build must itself comply.
 		files := optionValues(invocation.Args, "-f", "--file")
 		tags := optionValues(invocation.Args, "-t", "--tag")
-		if !strings.Contains(args, "IMAGE_TAG") && !slices.ContainsFunc(tags, func(tag string) bool { return slices.Contains(defaults, tag) }) {
+		if !strings.Contains(args, "IMAGE_TAG") && !slices.ContainsFunc(tags, func(tag string) bool { return slices.Contains(defaults, canonicalImageRef(tag)) }) {
 			continue
 		}
 		build = -1

@@ -53,12 +53,16 @@ func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
 		return strings.Replace(string(script), "\n# Fail on a CLI flag", "\n"+build+"\n# Fail on a CLI flag", 1)
 	}
 	for src, pass := range map[string]bool{
-		strings.Replace(string(script), `-t "${IMAGE_TAG}"`, `--tag="${IMAGE_TAG}"`, 1): true,
-		retag(`buildx_cmd build --load -t "${IMAGE_TAG}" -f /tmp/o .`):                  false,
-		retag(`buildx_cmd build --load --tag $IMAGE_TAG -f /tmp/o .`):                   false,
-		retag(`buildx_cmd build --load -t"$IMAGE_TAG" -f /tmp/o .`):                     false,
-		retag(`buildx_cmd build --load --tag=${IMAGE_TAG} -f /tmp/o .`):                 false,
-		retag(`buildx_cmd build --load -t workcell:smoke -f /tmp/o .`):                  false,
+		strings.Replace(string(script), `-t "${IMAGE_TAG}"`, `--tag="${IMAGE_TAG}"`, 1):        true,
+		retag(`buildx_cmd build --load -t "${IMAGE_TAG}" -f /tmp/o .`):                         false,
+		retag(`buildx_cmd build --load --tag $IMAGE_TAG -f /tmp/o .`):                          false,
+		retag(`buildx_cmd build --load -t"$IMAGE_TAG" -f /tmp/o .`):                            false,
+		retag(`buildx_cmd build --load --tag=${IMAGE_TAG} -f /tmp/o .`):                        false,
+		retag(`buildx_cmd build --load -t workcell:smoke -f /tmp/o .`):                         false,
+		retag(`buildx_cmd build --load -t docker.io/library/workcell:smoke -f /tmp/o .`):       false,
+		retag(`buildx_cmd build --load -t index.docker.io/library/workcell:smoke -f /tmp/o .`): false,
+		retag(`buildx_cmd build --load -t library/workcell:smoke -f /tmp/o .`):                 false,
+		retag(`buildx_cmd build --load -t other/workcell:smoke -f /tmp/o .`):                   true,
 	} {
 		if err := metadatautil.ValidateContainerSmokeFlagInventory(src); (err == nil) != pass {
 			t.Errorf("validator = %v, want pass %v", err, pass)
