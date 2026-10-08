@@ -74,18 +74,16 @@ func rawExecSites(t *testing.T, name, src string) int {
 func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int {
 	t.Helper()
 	var parsed []*ast.File
+	byName := map[string]*ast.File{}
 	for name, src := range sources {
-		file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
-		}
-		parsed = append(parsed, file)
+		byName[name] = parseSource(t, name, src)
+		parsed = append(parsed, byName[name])
 	}
 	names := packageExecNames(parsed)
 	rewrites := packageRewritesProcessPath(parsed)
 	counts := map[string]int{}
-	for name, src := range sources {
-		if n := rawExecSitesIn(t, name, src, rewrites, &names); n > 0 {
+	for name, file := range byName {
+		if n := rawExecSitesInFile(file, rewrites, &names); n > 0 {
 			counts[name] = n
 		}
 	}
@@ -132,7 +130,10 @@ func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bo
 
 // execNames are the names a package gives to os/exec values: saved
 // exec.Command aliases, types that are exec.Cmd, and command holders.
-type execNames struct{ aliases, factories, cmdTypes, holders map[string]bool }
+type execNames struct {
+	aliases, factories, cmdTypes map[string]bool
+	holders                      map[any]bool
+}
 
 // packageExecNames collects the execNames of files read together.
 func packageExecNames(files []*ast.File) execNames {
@@ -144,10 +145,21 @@ func packageExecNames(files []*ast.File) execNames {
 // execNames from other files. A nil names reads the file alone.
 func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, names *execNames) int {
 	t.Helper()
+	return rawExecSitesInFile(parseSource(t, name, src), packageRewritesPath, names)
+}
+
+func parseSource(t *testing.T, name, src string) *ast.File {
+	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
+	return file
+}
+
+// rawExecSitesInFile counts file, which must be the parse names was built
+// from: holders of local names are keyed by that parse's objects.
+func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNames) int {
 	execCommandName, isCmdType, dotImported := execCommandNameIn(file)
 	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
 	if names == nil {
@@ -155,7 +167,7 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, na
 		names = &own
 	}
 	aliases := names.aliases
-	isCommand, _ := commandValueIn(execCommandName, isCmdType, names.holders)
+	isCommand, _ := commandValueIn(file, execCommandName, isCmdType, names.holders)
 	count := 0
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the package
@@ -234,7 +246,7 @@ func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, na
 		// factory returns, is a raw site: its program is never checked here.
 		fun, calls := unparen(call.Fun), aliases
 		if inner, ok := fun.(*ast.CallExpr); ok {
-			fun, calls = unparen(inner.Fun), names.factories
+			fun, calls = factoryName(inner), names.factories
 		}
 		if id, ok := fun.(*ast.Ident); ok && calls[id.Name] {
 			count++
@@ -392,6 +404,15 @@ func declaresRetryHelper(file *ast.File) bool {
 	return found
 }
 
+// factoryName returns the callee of a factory call, with a method such as
+// m.factory() read by its name, as factories collect methods by name too.
+func factoryName(call *ast.CallExpr) ast.Expr {
+	if sel, ok := unparen(call.Fun).(*ast.SelectorExpr); ok {
+		return sel.Sel
+	}
+	return unparen(call.Fun)
+}
+
 // unparen strips parentheses, so (exec.Command) and (run) are read as the
 // expressions they wrap.
 func unparen(expr ast.Expr) ast.Expr {
@@ -434,7 +455,7 @@ func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, e
 		case *ast.Ident:
 			return aliases[v.Name] || execCommandName(v) != ""
 		case *ast.CallExpr: // a factory's result
-			id, ok := unparen(v.Fun).(*ast.Ident)
+			id, ok := factoryName(v).(*ast.Ident)
 			return ok && factories[id.Name]
 		}
 		return execCommandName(value) != ""
@@ -510,7 +531,7 @@ func cmdTypeNames(files []*ast.File) map[string]bool {
 // commandValueIn returns predicates for an expression that yields a command
 // (an exec.Command or holder call, a holder, or new or a literal of a Cmd type)
 // and for a type that mentions exec.Cmd or a holder outside its parameters.
-func commandValueIn(execCommandName func(ast.Expr) string, isCmdType func(ast.Expr) bool, holders map[string]bool) (func(ast.Expr) bool, func(ast.Node) bool) {
+func commandValueIn(file *ast.File, execCommandName func(ast.Expr) string, isCmdType func(ast.Expr) bool, holders map[any]bool) (func(ast.Expr) bool, func(ast.Node) bool) {
 	var mentionsCmd func(ast.Node) bool
 	mentionsCmd = func(typ ast.Node) bool {
 		found := false
@@ -520,7 +541,7 @@ func commandValueIn(execCommandName func(ast.Expr) string, isCmdType func(ast.Ex
 				found = found || n.Results != nil && mentionsCmd(n.Results)
 				return false
 			case *ast.Ident:
-				found = found || holders[n.Name] || isCmdType(n)
+				found = found || holders[holderKey(file, n)] || isCmdType(n)
 			case *ast.SelectorExpr:
 				found = found || isCmdType(n)
 			}
@@ -538,7 +559,7 @@ func commandValueIn(execCommandName func(ast.Expr) string, isCmdType func(ast.Ex
 		case *ast.IndexExpr:
 			return isCommand(v.X)
 		case *ast.Ident:
-			return holders[v.Name]
+			return holders[holderKey(file, v)]
 		case *ast.SelectorExpr:
 			return holders[v.Sel.Name]
 		case *ast.CompositeLit:
@@ -556,12 +577,22 @@ func commandValueIn(execCommandName func(ast.Expr) string, isCmdType func(ast.Ex
 	return isCommand, mentionsCmd
 }
 
+// holderKey keys a name declared inside a function by the parser's object for
+// its declaration, so it holds a command only in its own scope, and any other
+// name (package level, from another file) by the name itself.
+func holderKey(file *ast.File, id *ast.Ident) any {
+	if id.Obj != nil && file.Scope.Lookup(id.Name) != id.Obj {
+		return id.Obj
+	}
+	return id.Name
+}
+
 // commandHolders lists, to a fixed point across files, the names that can
 // hold a command: aliases, names declared with a type that mentions exec.Cmd,
-// and names assigned or ranged from a command value. Names are not scoped,
-// which only makes the count stricter.
-func commandHolders(files []*ast.File, aliases map[string]bool) map[string]bool {
-	holders := map[string]bool{}
+// and names assigned or ranged from a command value. Struct fields, read
+// through selectors, match by name alone, which only makes the count stricter.
+func commandHolders(files []*ast.File, aliases map[string]bool) map[any]bool {
+	holders := map[any]bool{}
 	for name := range aliases {
 		holders[name] = true
 	}
@@ -569,12 +600,16 @@ func commandHolders(files []*ast.File, aliases map[string]bool) map[string]bool 
 		added = false
 		for _, file := range files {
 			execCommandName, isCmdType, _ := execCommandNameIn(file)
-			isCommand, mentionsCmd := commandValueIn(execCommandName, isCmdType, holders)
+			isCommand, mentionsCmd := commandValueIn(file, execCommandName, isCmdType, holders)
+			markKey := func(key any) {
+				if !holders[key] {
+					holders[key], added = true, true
+				}
+			}
 			mark := func(exprs ...ast.Expr) {
 				for _, expr := range exprs {
-					if id, ok := unparen(expr).(*ast.Ident); ok && id.Name != "_" && !holders[id.Name] {
-						holders[id.Name] = true
-						added = true
+					if id, ok := unparen(expr).(*ast.Ident); ok && id.Name != "_" {
+						markKey(holderKey(file, id))
 					}
 				}
 			}
@@ -601,6 +636,14 @@ func commandHolders(files []*ast.File, aliases map[string]bool) map[string]bool 
 						mark(names...)
 					}
 					assign(names, n.Values)
+				case *ast.StructType:
+					for _, field := range n.Fields.List {
+						for _, name := range field.Names {
+							if mentionsCmd(field.Type) {
+								markKey(name.Name)
+							}
+						}
+					}
 				case *ast.Field:
 					if mentionsCmd(n.Type) {
 						for _, name := range n.Names {
@@ -960,11 +1003,7 @@ func a(t *testing.T) { first := t.Setenv; second := first; second("PATH", "/tmp/
 	call := "package x\nimport \"os/exec\"\nfunc a() { setenv(\"PATH\", \"/tmp/fixtures\"); exec.Command(\"git\") }\n"
 	var twoFiles []*ast.File
 	for name, src := range map[string]string{"decl.go": decl, "call.go": call} {
-		file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		twoFiles = append(twoFiles, file)
+		twoFiles = append(twoFiles, parseSource(t, name, src))
 	}
 	if !packageRewritesProcessPath(twoFiles) {
 		t.Fatal("a Setenv alias declared in one file and called in another was not seen as a PATH rewrite")
@@ -1005,6 +1044,25 @@ func a() { exec.Command("git", "init") }
 	})
 	if counts["decl.go"] != 0 || counts["use.go"] != 2 {
 		t.Fatalf("package counts = %v, want use.go:2 (a Cmd type alias and a Cmd variable declared in another file)", counts)
+	}
+	// A holder resolves in its own scope, not as c in another file or block.
+	counts = packageRawExecSites(t, map[string]string{
+		"cmd.go":   "package x\nimport \"os/exec\"\nfunc a(c *exec.Cmd, p string) { c.Path = p; { c := request{}; c.Path = p } }\n",
+		"other.go": "package x\ntype request struct{ Path string }\nfunc b(c request, p string) { c.Path = p }\n",
+	})
+	if counts["cmd.go"] != 1 || counts["other.go"] != 0 {
+		t.Fatalf("package counts = %v, want cmd.go:1 (an unrelated c in another file or an inner scope)", counts)
+	}
+	// Method factories count like function factories; a returned Cmd counts where it is built.
+	const methodFactory = `package x
+import "os/exec"
+type maker struct{}
+func (maker) factory() func(string, ...string) *exec.Cmd { return exec.Command }
+func (maker) build(p string) *exec.Cmd { return exec.Command(p) }
+func a(m maker, p string) { m.factory()(p); launch := m.factory(); launch(p); m.build(p).Run() }
+`
+	if got := rawExecSites(t, "method_factory.go", methodFactory); got != 4 {
+		t.Fatalf("rawExecSites = %d, want 4 (factory's saved value, calls through m.factory() directly and saved, and build's command)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
