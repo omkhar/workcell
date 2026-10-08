@@ -325,6 +325,29 @@ func TestCheckHardenedFSRejectsASymlinkedPackageRoot(t *testing.T) {
 	}
 }
 
+// A symlinked ancestor of a package root must fail. A pathname open of
+// <repo>/internal/host follows <repo>/internal, so the scan would read a
+// package tree outside the repository and report it against that tree's own
+// baseline.
+func TestCheckHardenedFSRejectsASymlinkedPackageAncestor(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeHardenedFSPackageFixtures(t, outside, "internal/host")
+	writeHardenedFSFixture(t, filepath.Join(outside, "internal", "host", "state.go"),
+		"package host\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
+	// The row matches the outside tree, so only the refused ancestor can fail.
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"),
+		"internal/host/state.go\tos.ReadFile\t1\n")
+	if err := os.Symlink(filepath.Join(outside, "internal"), filepath.Join(root, "internal")); err != nil {
+		t.Fatalf("create the symlinked ancestor: %v", err)
+	}
+	err := metadatautil.CheckHardenedFS(root)
+	if err == nil || !strings.Contains(err.Error(), "open the scan root") {
+		t.Fatalf("expected the symlinked ancestor to be refused, found %v", err)
+	}
+}
+
 // A symlinked directory below a package root must fail. The walk cannot
 // descend it without following the link, and skipping it would hide every
 // source behind it, though Go still builds the package through the link.

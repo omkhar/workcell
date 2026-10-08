@@ -103,49 +103,28 @@ func CheckHardenedFS(rootDir string) error {
 // scanHardenedGoSources hands visit each non-test Go source under pkg, named
 // relative to the repository. A testdata directory is skipped.
 func scanHardenedGoSources(rootDir, pkg string, visit func(rel string, content []byte) error) error {
-	// A symlinked package root is not walked: a walk reports the
-	// link entry and returns success, so every source below it would escape
-	// the scan while the check still reported a clean result.
-	info, statErr := os.Lstat(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this proves the package root is a real directory before the walk opens it
-	if statErr != nil || !info.IsDir() {
-		return fmt.Errorf("scan root %s is not a directory; the hardened filesystem rule cannot read it", pkg)
-	}
-	// Walk and read through one directory handle. A pathname walk resolves
-	// the package name again for every entry, so a rename between the check
-	// and the read hands the scan a different tree than the one it verified.
-	// Every later open is relative to this handle.
-	root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this opens the handle that every later read is relative to
+	// Reach the package root through descriptors opened one component at a
+	// time from "/" with O_NOFOLLOW. A pathname open follows a symlinked
+	// ancestor such as <repo>/internal, so the scan would read a tree outside
+	// the repository. A symlinked package root is refused the same way: a
+	// walk would report the link entry and pass while every source escaped.
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(rootDir, filepath.FromSlash(pkg)))
 	if err != nil {
 		return fmt.Errorf("open the scan root %s: %w", pkg, err)
 	}
-	// os.OpenRoot resolves its own argument, so the handle can name a
-	// directory other than the one Lstat proved. Compare the two before
-	// anything is read through it.
-	opened, err := root.Stat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		_ = root.Close()
-		return fmt.Errorf("the scan root %s changed between the check and the open", pkg)
-	}
-	// The walk lists and reads through descriptors opened from this one. A
-	// walk over root.FS() resolves each directory again by name when it lists
-	// it, and os.Root follows a symlink whose target stays inside the root, so
-	// a directory swapped after its parent was listed could hand the scan a
-	// decoy tree under the original name.
-	top, err := root.Open(".")
-	closeErr := root.Close()
+	top, err := rootio.OpenDirectoryAtNoFollow(parent, filepath.Base(cleaned))
+	_ = parent.Close()
 	if err != nil {
 		return fmt.Errorf("open the scan root %s: %w", pkg, err)
 	}
-	if closeErr != nil {
-		_ = top.Close()
-		return closeErr
-	}
+	// The walk lists and reads through descriptors opened from this one, so
+	// no name is resolved again by path.
 	scanned := 0
 	err = walkHardenedGoSources(top, pkg, func(rel string, content []byte) error {
 		scanned++
 		return visit(rel, content)
 	})
-	closeErr = top.Close()
+	closeErr := top.Close()
 	if err != nil {
 		return fmt.Errorf("scan %s for raw pathname references: %w", pkg, err)
 	}
