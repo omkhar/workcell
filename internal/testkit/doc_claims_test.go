@@ -12,10 +12,15 @@ import (
 )
 
 // runDocLinks runs scripts/check-doc-links.sh in dir and returns its output.
-func runDocLinks(t *testing.T, dir string) (string, error) {
+// A non-empty citools is the workcell-citools binary the script runs, for a
+// fixture that holds no Go module.
+func runDocLinks(t *testing.T, dir, citools string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("bash", filepath.Join(dir, "scripts", "check-doc-links.sh"))
 	cmd.Dir = dir
+	if citools != "" {
+		cmd.Env = append(os.Environ(), "DOC_CLAIMS_CITOOLS="+citools)
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -32,15 +37,21 @@ func writeFixtureFile(t *testing.T, dir, rel, body string) {
 }
 
 func TestDocClaimsPassOnCheckout(t *testing.T) {
-	out, err := runDocLinks(t, repoRoot(t))
+	out, err := runDocLinks(t, repoRoot(t), "")
 	if err != nil {
 		t.Fatalf("check-doc-links.sh failed on the checkout: %v\n%s", err, out)
 	}
 }
 
 func TestDocClaimsNegativeControls(t *testing.T) {
+	citools := filepath.Join(t.TempDir(), "workcell-citools")
+	build := exec.Command("go", "build", "-o", citools, "./cmd/workcell-citools")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build workcell-citools: %v\n%s", err, out)
+	}
 	sources := map[string]string{}
-	for _, rel := range []string{"scripts/check-doc-links.sh", "scripts/lib/doc-claims.awk", "scripts/lib/md-unfenced.awk", "scripts/lib/lane-scripts.awk"} {
+	for _, rel := range []string{"scripts/check-doc-links.sh", "scripts/lib/doc-claims.awk", "scripts/lib/md-unfenced.awk", "scripts/lib/go-run-env.sh"} {
 		body, err := os.ReadFile(filepath.Join(repoRoot(t), rel))
 		if err != nil {
 			t.Fatal(err)
@@ -75,6 +86,13 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"array member is not wiring", "See `scripts/orphan.sh` here.\n", "files=(\n  \"${ROOT_DIR}/scripts/orphan.sh\"\n)\n", "", "", "unwired-script"},
 		{"case pattern is not wiring", "See `scripts/orphan.sh` here.\n", "case x in\n  scripts/orphan.sh | y)\n    true\n    ;;\nesac\n", "", "", "unwired-script"},
 		{"continued argument is not wiring", "See `scripts/orphan.sh` here.\n", "shellcheck \\\n  scripts/orphan.sh\n", "", "", "unwired-script"},
+		{"heredoc body is not wiring", "See `scripts/orphan.sh` here.\n", "cat <<EOF\nscripts/orphan.sh\nEOF\n", "", "", "unwired-script"},
+		{"quoted separator is not wiring", "See `scripts/orphan.sh` here.\n", "echo \"a; scripts/orphan.sh\"\n", "", "", "unwired-script"},
+		{"uncalled function is not wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\n", "", "", "unwired-script"},
+		{"called function is wiring", "See `scripts/orphan.sh` here.\n", "f() {\n  scripts/orphan.sh\n}\nf\n", "", "", ""},
+		{"wired after an exit in an if", "See `scripts/orphan.sh` here.\n", "if true; then\n  exit 1\nfi\nscripts/orphan.sh\n", "", "", ""},
+		{"wired in a case branch", "See `scripts/orphan.sh` here.\n", "case x in\n  y) scripts/orphan.sh ;;\nesac\n", "", "", ""},
+		{"escaping path", "The launcher rejects bad input.\nSee `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"unanchored claim", "The launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
 		{"blocks claim", "Workcell blocks operator launch.\n", "", "", "", "unanchored-claim"},
 		{"denies claim", "Workcell denies repository MCP files.\n", "", "", "", "unanchored-claim"},
@@ -92,7 +110,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"baselined claim", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", ""},
 		{"long claim keeps its full text", longClaim + "\n", "", "README.md\tunanchored-claim\t" + cutKey + "\tx\n", "", "unbaselined doc claim hit"},
 		{"stale baseline row", "Nothing here.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", "stale doc-claims baseline"},
-		{"baseline growth", "The launcher rejects bad input.\nWorkcell blocks operator launch.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "baseline grew from 1 to 2 rows"},
+		{"baseline growth", "The launcher rejects bad input.\nWorkcell blocks operator launch.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "not at the merge base"},
+		{"baseline replacement", "Workcell blocks operator launch.\n", "", "README.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "not at the merge base"},
 		{"baseline shrink", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", ""},
 	}
 	for _, tc := range cases {
@@ -111,6 +130,9 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			writeFixtureFile(t, dir, "scripts/gate.sh", "true\n")
 			writeFixtureFile(t, dir, "scripts/orphan.sh", "true\n")
 			writeFixtureFile(t, dir, "README.md", tc.doc)
+			// A real file outside the fixture repository, which a traversal
+			// span such as scripts/../../outside.txt reaches.
+			writeFixtureFile(t, filepath.Dir(dir), "outside.txt", "x\n")
 			git := func(args ...string) {
 				t.Helper()
 				full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)
@@ -126,7 +148,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			}
 			writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", "# test\n"+tc.baseline)
 			git("add", "-A")
-			out, err := runDocLinks(t, dir)
+			out, err := runDocLinks(t, dir, citools)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("want pass, got %v\n%s", err, out)

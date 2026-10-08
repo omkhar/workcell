@@ -1,5 +1,7 @@
 # Doc claim scanner over md-unfenced.awk output for the file doc. Prints
-# "PATH<TAB>doc<TAB>path" per cited path and "CLAIM<TAB>doc<TAB>sentence" per
+# "PATH<TAB>doc<TAB>path" per cited path, "ESCAPE<TAB>doc<TAB>path" per path
+# with a .. component, which may leave the repository and anchors nothing, and
+# "CLAIM<TAB>doc<TAB>sentence" per
 # enforcement sentence with no path span within 2 lines of it. A sentence runs
 # across line wraps inside one paragraph, list item, quote or table row.
 function span_path(s, p) {
@@ -52,7 +54,9 @@ function flush(upto, rest, start, len, k, first, last, s) {
   while (match(s, /`[^`]+`/)) {
     c = span_path(substr(s, RSTART + 1, RLENGTH - 2))
     s = substr(s, RSTART + RLENGTH)
-    if (c != "") {
+    if (c ~ /(^|\/)\.\.(\/|$)/) {
+      print "ESCAPE\t" doc "\t" c
+    } else if (c != "") {
       spans[NR]++
       print "PATH\t" doc "\t" c
     }

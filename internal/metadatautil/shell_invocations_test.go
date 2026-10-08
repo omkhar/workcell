@@ -348,3 +348,27 @@ func TestShellInvocations(t *testing.T) {
 		})
 	}
 }
+
+func TestShellCommandWords(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, script string
+		want         []string
+	}{
+		{"reserved words, wrappers, options and assignments step aside", "if ! X=1 bash -e a.sh; then exec b; fi\n", []string{"a.sh", "b"}},
+		{"a guarded command after an exit still counts", "if x; then\n  exit 1\nfi\nc\n", []string{"x", "exit", "c"}},
+		{"heredoc bodies, comments and quoted text name nothing", "cat <<EOF\nd\nEOF\n# e\necho \"f; g\"\n", []string{"cat", "echo"}},
+		{"case patterns and array members name nothing", "case v in\n  h | i) j ;;\n  k) l ;;\nesac\nm=(\n  n\n)\n", []string{"j", "l"}},
+		{"a subshell across && leaves no function open", "f() {\n  (cd p && q)\n}\nr\n", []string{"r"}},
+		{"an empty array is not a definition", "s=()\nt\n", []string{"t"}},
+		{"a called function runs its body, transitively", "u() { v; }\nw() {\n  u\n}\nw\n", []string{"w", "u", "v"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := metadatautil.ShellCommandWords(tc.script); !slices.Equal(got, tc.want) {
+				t.Fatalf("ShellCommandWords() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

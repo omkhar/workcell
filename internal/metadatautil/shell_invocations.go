@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"iter"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -735,4 +736,142 @@ func shadowsByAlias(args []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// laneWrappers are the words that name no program: the reserved words and the
+// group braces, and the wrappers that run their first operand, so bash
+// scripts/x.sh names x.sh.
+var laneWrappers = map[string]bool{
+	"if": true, "then": true, "do": true, "else": true, "elif": true, "fi": true,
+	"while": true, "until": true, "done": true, "!": true, "time": true, "{": true,
+	"}": true, "(": true, ")": true, "exec": true, "command": true, "env": true,
+	"bash": true, "sh": true,
+}
+
+var assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\+?=`)
+
+// ShellCommandWords returns the program word of every command written in
+// script, whatever control flow guards it. ShellInvocations answers a
+// different question, which commands the script is proved to run, so it stops
+// at the first exit and skips compound bodies. This listing reads them all,
+// for a check that asks whether a script is wired into a lane at all. It reads
+// the logical lines ShellInvocations reads, so a comment, a heredoc body and
+// quoted text name no program. A case pattern, an array member, an option and
+// an assignment do not either. A function body counts only when the script
+// calls the function, so an uncalled definition wires nothing.
+func ShellCommandWords(script string) []string {
+	var top []string
+	bodies := map[string][]string{}
+	// cases holds one state per open case: h before in, p in a pattern, b in
+	// a branch body.
+	var cases []byte
+	var depth, definedAt, array int
+	defining, bodyOpened := "", false
+	for words := range logicalLines(script) {
+		line := words
+		if defining == "" {
+			// definedName reads the empty array x=() as a definition of x=,
+			// which no function name can spell.
+			if name := definedName(words); name != "" && !strings.Contains(name, "=") {
+				defining, definedAt, bodyOpened = name, depth, false
+				words = words[definitionHeaderLength(words):]
+			}
+		}
+		start := true
+		for _, each := range words {
+			text, bare := each.text, !each.quoted
+			if array > 0 {
+				array += parenBalance([]word{each})
+				continue
+			}
+			if open := len(cases) - 1; open >= 0 && cases[open] != 'b' {
+				switch {
+				case bare && text == "esac":
+					cases = cases[:open]
+				case cases[open] == 'h':
+					if bare && text == "in" {
+						cases[open] = 'p'
+					}
+				case bare && strings.HasSuffix(text, ")"):
+					cases[open], start = 'b', true
+				}
+				continue
+			}
+			if bare && isOperator(text) {
+				if text == ";;" && len(cases) > 0 {
+					cases[len(cases)-1] = 'p'
+				}
+				start = true
+				continue
+			}
+			if !start {
+				continue
+			}
+			switch {
+			case bare && text == "case":
+				cases, start = append(cases, 'h'), false
+			case bare && text == "esac" && len(cases) > 0:
+				cases, start = cases[:len(cases)-1], false
+			case bare && assignmentWord.MatchString(text) && parenBalance([]word{each}) > 0:
+				array, start = parenBalance([]word{each}), false
+			case (bare && laneWrappers[text]) || strings.HasPrefix(text, "-") || assignmentWord.MatchString(text):
+				// The program is a later word.
+			default:
+				name := text
+				if bare {
+					name = strings.TrimLeft(text, "(")
+				}
+				if defining != "" {
+					bodies[defining] = append(bodies[defining], name)
+				} else {
+					top = append(top, name)
+				}
+				start = false
+			}
+		}
+		for _, each := range splitCommands(line) {
+			// Each command moves the depth, so a body that opens and closes on
+			// one line, as in f() { g; }, still opens.
+			depth += groupBrace(each)
+			bodyOpened = bodyOpened || depth > definedAt
+		}
+		if defining != "" && bodyOpened && depth <= definedAt {
+			defining = ""
+		}
+	}
+	// A called function runs its body, which may call another function.
+	seen := map[string]bool{}
+	for index := 0; index < len(top); index++ {
+		if body, found := bodies[top[index]]; found && !seen[top[index]] {
+			seen[top[index]] = true
+			top = append(top, body...)
+		}
+	}
+	return top
+}
+
+// groupBrace is commandBrace without subshells. A subshell that spans && splits
+// into commands whose parentheses commandBrace cannot pair, as in
+// (cd x && go build y), and an unpaired one would hold the rest of the script
+// inside a function body.
+func groupBrace(each command) int {
+	if slices.ContainsFunc(each.args, func(each word) bool {
+		return !each.quoted && (each.text == "{" || each.text == "}" || strings.HasSuffix(each.text, "(){"))
+	}) {
+		return commandBrace(each)
+	}
+	return 0
+}
+
+// definitionHeaderLength returns how many words of a definition line name the
+// function, so the body that may follow on the same line is read as commands.
+func definitionHeaderLength(words []word) int {
+	length := 1
+	if words[0].text == "function" {
+		length = 2
+	}
+	if length < len(words) && words[length].text == "()" {
+		length++
+	}
+	return length
 }

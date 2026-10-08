@@ -1,10 +1,10 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 # Offline Markdown integrity check over tracked docs: fails on broken intra-repo
 # relative links and on orphaned docs/ pages that nothing navigably links to. No
-# network calls and no dependencies beyond git, awk, sed, and grep so it can run
-# host-side in the docs CI lane. Kept bash-3.2 compatible (no mapfile, no
-# associative arrays) because the host baseline is macOS /bin/bash 3.2; see
-# scripts/lib/shellproto.sh.
+# network calls and no dependencies beyond git, awk, sed, grep and Go (for the
+# lane listing) so it can run host-side in the docs CI lane. Kept bash-3.2
+# compatible (no mapfile, no associative arrays) because the host baseline is
+# macOS /bin/bash 3.2; see scripts/lib/shellproto.sh.
 #
 # Scope (intentional limits, documented so they read as choices, not gaps):
 # - Only space-free inline links of the form [text](target) are checked;
@@ -20,6 +20,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "${ROOT_DIR}"
+# shellcheck source=scripts/lib/go-run-env.sh
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 bt='`'
 failures=0
@@ -129,9 +131,10 @@ done <<<"${docs_listing}"
 # function in scripts/lib/doc-claims.awk lists them) needs such a span within 2
 # lines. Hits that exist today sit in policy/doc-claims-baseline.tsv
 # (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
-# fails too, and the baseline may not gain rows over the merge base with
-# origin/main (or main), so it only shrinks. Override the baseline path with
-# DOC_CLAIMS_BASELINE (tests only).
+# fails too, and every row must exist at the merge base with origin/main (or
+# main), so the set only shrinks. A path with a .. component fails unprobed.
+# Override the baseline path with DOC_CLAIMS_BASELINE and the workcell-citools
+# binary with DOC_CLAIMS_CITOOLS (tests only).
 claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
 claim_hits="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 claim_base="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
@@ -139,8 +142,11 @@ claim_wired="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_wired}"' EXIT
 
 # Every script a lane runs: validate-repo.sh, the CI job scripts, the workflows.
-awk -f "${ROOT_DIR}/scripts/lib/lane-scripts.awk" "${ROOT_DIR}/scripts/validate-repo.sh" \
-  "${ROOT_DIR}"/scripts/ci/job-*.sh "${ROOT_DIR}"/.github/workflows/*.yml >"${claim_wired}"
+if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
+  "${DOC_CLAIMS_CITOOLS}" lane-scripts "${ROOT_DIR}" >"${claim_wired}"
+else
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools lane-scripts "${ROOT_DIR}" >"${claim_wired}"
+fi
 
 for f in "${md_files[@]}"; do
   awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
@@ -148,6 +154,10 @@ for f in "${md_files[@]}"; do
     while IFS=$'\t' read -r kind doc subject; do
       if [[ "${kind}" == CLAIM ]]; then
         printf '%s\tunanchored-claim\t%s\n' "${doc}" "${subject}"
+        continue
+      fi
+      if [[ "${kind}" == ESCAPE ]]; then
+        printf '%s\tescaping-path\t%s\n' "${doc}" "${subject}"
         continue
       fi
       if [[ ! -e "${subject}" ]]; then
@@ -170,9 +180,12 @@ for f in "${md_files[@]}"; do
 done
 
 grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
+sort -o "${claim_hits}" "${claim_hits}"
+sort -o "${claim_base}" "${claim_base}"
 
-# Ratchet: compare the row count with the baseline at the merge base. A base
-# with no baseline file (the change that adds it) has nothing to compare.
+# Ratchet: every row must exist in the baseline at the merge base, so a fixed
+# hit cannot hand its row to a new one. A base with no baseline file (the
+# change that adds it) has nothing to compare.
 claims_base_ref=""
 for ref in refs/remotes/origin/main refs/heads/main; do
   if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
@@ -183,15 +196,14 @@ done
 if [[ -n "${claims_base_ref}" ]] && git rev-parse --verify --quiet HEAD >/dev/null; then
   claims_merge_base="$(git merge-base HEAD "${claims_base_ref}")"
   if git cat-file -e "${claims_merge_base}:policy/doc-claims-baseline.tsv" 2>/dev/null; then
-    base_rows="$(git show "${claims_merge_base}:policy/doc-claims-baseline.tsv" | awk '!/^#/ { n++ } END { print n + 0 }')"
-    head_rows="$(awk 'END { print NR }' "${claim_base}")"
-    if [[ "${head_rows}" -gt "${base_rows}" ]]; then
-      note "doc-claims baseline grew from ${base_rows} to ${head_rows} rows over ${claims_base_ref}; fix the new hit instead"
-    fi
+    base_rows="$(git show "${claims_merge_base}:policy/doc-claims-baseline.tsv" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
+    claim_unbased="$(comm -23 "${claim_base}" <(printf '%s\n' "${base_rows}"))"
+    while IFS= read -r row; do
+      [[ -n "${row}" ]] || continue
+      note "doc-claims baseline row is not at the merge base with ${claims_base_ref}; fix the hit instead: ${row//$'\t'/ | }"
+    done <<<"${claim_unbased}"
   fi
 fi
-sort -o "${claim_hits}" "${claim_hits}"
-sort -o "${claim_base}" "${claim_base}"
 claim_new="$(comm -23 "${claim_hits}" "${claim_base}")"
 claim_stale="$(comm -13 "${claim_hits}" "${claim_base}")"
 while IFS= read -r row; do
