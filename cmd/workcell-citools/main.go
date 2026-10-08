@@ -134,7 +134,7 @@ func subcommands() []subcommand {
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
-		{"publish-pr-shape-margin", "REPO_ROOT BASE_BRANCH", 2, 2, cmdPublishPRShapeMargin},
+		{"publish-pr-shape-margin", "REPO_ROOT BASE_BRANCH PUBLISH_BRANCH", 3, 3, cmdPublishPRShapeMargin},
 		{"upstream-get", "PROFILE [VERSION TARGET]", 1, 3, cmdUpstreamGet},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.Check)},
@@ -188,7 +188,7 @@ func subcommands() []subcommand {
 }
 
 func cmdPublishPRShapeMargin(args []string) error {
-	return publishpr.ShapeMarginMain(args[0], args[1], os.Stdout)
+	return publishpr.ShapeMarginMain(args[0], args[1], args[2], os.Stdout)
 }
 
 func cmdCreateReleaseImageHandoff(args []string) error {

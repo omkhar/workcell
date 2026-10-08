@@ -48,7 +48,7 @@ func TestUpstreamFetchCommandsRejectWrongArity(t *testing.T) {
 }
 
 func TestPublishPRShapeMarginRejectsWrongArity(t *testing.T) {
-	assertCitoolsUsageExit(t, "publish-pr-shape-margin", "only-one-root")
+	assertCitoolsUsageExit(t, "publish-pr-shape-margin", "root", "main")
 }
 
 // assertCitoolsUsageExit runs the binary (via the helper-process trick) with

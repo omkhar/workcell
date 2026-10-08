@@ -4807,6 +4807,9 @@ case "${1-}" in
       find scripts tests tools -type f -print0 | LC_ALL=C sort -z
     )
     ;;
+  branch)
+    printf '%s\n' "${WORKCELL_FAKE_GIT_BRANCH-feature/harness}"
+    ;;
   init|config|add|commit)
     ;;
   *)
@@ -4880,7 +4883,8 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   GH_CONFIG_DIR="${PREMERGE_DEFAULT_HOME}" \
   SSH_AUTH_SOCK=/nonexistent/agent.sock \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
-  --local-snapshot head </dev/null >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
+  --local-snapshot head \
+  --publish-branch feature/publication </dev/null >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
   echo "Expected --local-snapshot head pre-merge harness to succeed on a dirty worktree" >&2
   cat /tmp/workcell-premerge-local-snapshot.out >&2
   exit 1
@@ -4890,8 +4894,8 @@ grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}
 for expected in \
   'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
   'check-workflows.sh ' \
-  "go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main" \
-  '-- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --local-snapshot head --shape-margin 0.66' \
+  "go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main feature/publication" \
+  '--publish-branch feature/publication --shape-margin 0.66' \
   'ci/job-pr-shape.sh --base main --margin 0.66' \
   'ci/job-validate.sh --profile pr-parity --skip-host-invariants' \
   'verify-invariants.sh --live-lane-only' \
@@ -4903,8 +4907,9 @@ for expected in \
   grep -q -- "${expected}" "${PREMERGE_LOG}"
 done
 test "$(grep -c '^verify-invariants.sh ' "${PREMERGE_LOG}")" = 2
-# The trusted go ran the lookup without the GitHub or SSH credentials.
-grep -q "^go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main credentials=\$" "${PREMERGE_LOG}"
+# The trusted go ran the lookup without the GitHub or SSH credentials, for the
+# publication branch rather than the checked-out feature/harness.
+grep -q "^go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main feature/publication credentials=\$" "${PREMERGE_LOG}"
 grep -q '^live-lane-output$' /tmp/workcell-premerge-local-snapshot.out
 grep -q '^\[pre-merge\] live invariants lane passed$' /tmp/workcell-premerge-local-snapshot.out
 for lane in check-workflows job-pr-shape job-validate job-docs container-smoke verify-reproducible-build live-invariants; do
@@ -4920,6 +4925,7 @@ fi
 for expected in \
   '"profile": "pr-parity"' \
   '"base_branch": "main"' \
+  '"publish_branch": "feature/publication"' \
   '"base_ref": "refs/remotes/origin/main"' \
   '"base_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   '"head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
@@ -4956,7 +4962,8 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   cat /tmp/workcell-premerge-repo-core-snapshot.out >&2
   exit 1
 fi
-grep -q -- '--mode head -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile repo-core --local-snapshot head$' "${PREMERGE_LOG}"
+# Without --publish-branch the snapshot gets the checked-out branch.
+grep -q -- '--mode head -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile repo-core --local-snapshot head --publish-branch feature/harness$' "${PREMERGE_LOG}"
 grep -q 'ci/job-validate.sh --profile repo-core --skip-host-invariants' "${PREMERGE_LOG}"
 if grep -q -e 'publish-pr-shape-margin' -e '--shape-margin' -e '^ci/job-pr-shape.sh ' "${PREMERGE_LOG}"; then
   echo "Expected a repo-core snapshot run to skip the PR shape margin lookup" >&2
@@ -4965,7 +4972,9 @@ if grep -q -e 'publish-pr-shape-margin' -e '--shape-margin' -e '^ci/job-pr-shape
 fi
 
 # A go inside the repository never runs, first on PATH or as WORKCELL_GO_BIN,
-# so it cannot read the credentials pre-merge was started with.
+# so it cannot read the credentials pre-merge was started with. Nor does a
+# WORKCELL_GO_BIN in a directory another user can write, since that user could
+# swap it between the check and the exec.
 PREMERGE_WORKSPACE_GO="${PREMERGE_HARNESS_ROOT}/workspace-bin/go"
 mkdir -p "${PREMERGE_WORKSPACE_GO%/go}"
 cat >"${PREMERGE_WORKSPACE_GO}" <<'EOF'
@@ -4974,7 +4983,11 @@ printf 'workspace go ran with GH_TOKEN=%s\n' "${GH_TOKEN-}" >>"${PREMERGE_LOG}"
 printf '1.0\n'
 EOF
 chmod 0755 "${PREMERGE_WORKSPACE_GO}"
-for workspace_go_bin in '' "${PREMERGE_WORKSPACE_GO}"; do
+PREMERGE_SHARED_GO="${BARRIER_VERIFY_ROOT}/premerge-shared-go/go"
+mkdir -p "${PREMERGE_SHARED_GO%/go}"
+install -m 0755 "${PREMERGE_WORKSPACE_GO}" "${PREMERGE_SHARED_GO}"
+chmod 0777 "${PREMERGE_SHARED_GO%/go}"
+for workspace_go_bin in '' "${PREMERGE_WORKSPACE_GO}" "${PREMERGE_SHARED_GO}"; do
   : >"${PREMERGE_LOG}"
   PATH="${PREMERGE_WORKSPACE_GO%/go}:${PREMERGE_FAKEBIN}:${PATH}" \
     WORKCELL_GO_BIN="${workspace_go_bin}" \
@@ -4988,12 +5001,14 @@ for workspace_go_bin in '' "${PREMERGE_WORKSPACE_GO}"; do
     "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
     --local-snapshot head </dev/null >/tmp/workcell-premerge-workspace-go.out 2>&1 || true
   if grep -q '^workspace go ran' "${PREMERGE_LOG}" || grep -q -- '--shape-margin 1.0' "${PREMERGE_LOG}"; then
-    echo "Expected pre-merge to refuse a go inside the repository (WORKCELL_GO_BIN='${workspace_go_bin}')" >&2
+    echo "Expected pre-merge to refuse an untrusted go (WORKCELL_GO_BIN='${workspace_go_bin}')" >&2
     cat "${PREMERGE_LOG}" /tmp/workcell-premerge-workspace-go.out >&2
     exit 1
   fi
+  if [[ -n "${workspace_go_bin}" ]]; then
+    grep -q "WORKCELL_GO_BIN must be an absolute go outside the repository that only root or this user can replace: ${workspace_go_bin}" /tmp/workcell-premerge-workspace-go.out
+  fi
 done
-grep -q "WORKCELL_GO_BIN must be an absolute go outside the repository: ${PREMERGE_WORKSPACE_GO}" /tmp/workcell-premerge-workspace-go.out
 
 # A failed live lane fails the gate after the other lanes, with no evidence.
 : >"${PREMERGE_LOG}"

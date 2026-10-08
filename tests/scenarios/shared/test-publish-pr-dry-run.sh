@@ -371,11 +371,14 @@ current_tree_oid="$(compute_worktree_tree_oid "${FIXTURE}")"
 current_head_oid="$(git -C "${FIXTURE}" rev-parse HEAD)"
 current_base_oid="$(git -C "${FIXTURE}" rev-parse refs/remotes/origin/main)"
 current_status_sha256="$(compute_worktree_status_sha256 "${FIXTURE}")"
-cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<EOF
+# write_parity_evidence BRANCH records evidence for publication branch BRANCH.
+write_parity_evidence() {
+  cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<EOF
 {
   "version": 1,
   "profile": "pr-parity",
   "base_branch": "main",
+  "publish_branch": "$1",
   "base_ref": "refs/remotes/origin/main",
   "base_oid": "${current_base_oid}",
   "head_oid": "${current_head_oid}",
@@ -384,6 +387,23 @@ cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-par
   "status_sha256": "${current_status_sha256}"
 }
 EOF
+}
+# Evidence for another publication branch was sized with that branch's PR
+# shape margin, so it does not cover this one.
+write_parity_evidence feature/repo-wrapper-other
+set +e
+branch_mismatch_output="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-ok \
+  --title "Repo wrapper title" \
+  --commit-message "Repo wrapper commit" \
+  --dry-run 2>&1)"
+branch_mismatch_rc=$?
+set -e
+test "${branch_mismatch_rc}" -eq 2
+grep -q 'Local PR-parity evidence does not match the tree being published' <<<"${branch_mismatch_output}"
+grep -q -- '--publish-branch feature/repo-wrapper-ok' <<<"${branch_mismatch_output}"
+write_parity_evidence feature/repo-wrapper-ok
 wrapper_dry_run="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
   --workspace "${FIXTURE}" \
   --branch feature/repo-wrapper-ok \
@@ -405,6 +425,7 @@ exit 99
 EOF
   chmod +x "${POISON_BIN}/${tool}"
 done
+write_parity_evidence feature/repo-wrapper-poisoned-path
 poisoned_wrapper_dry_run="$(PATH="${POISON_BIN}:${PATH}" "${ROOT_DIR}/scripts/repo-publish-pr.sh" \
   --workspace "${FIXTURE}" \
   --branch feature/repo-wrapper-poisoned-path \
@@ -1066,14 +1087,15 @@ grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
 MARGIN_BIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/publish-pr-margin-bin.XXXXXX")"
 (cd "${ROOT_DIR}" && go build -o "${MARGIN_BIN_DIR}/workcell-citools" ./cmd/workcell-citools)
 # ROOT_DIR is the fixture here, so the go run seam runs the prebuilt binary.
+# $2 is the publication branch (default main, the checked-out branch).
 resolve_margin() {
   printf '%s\n' "$1" >"${GH_PR_LIST_RESPONSE_FILE}"
   PATH="${MARGIN_BIN_DIR}:${PATH}" HOST_GH_BIN="${TRUSTED_GH_STUB}" GH_REPO=wrong/repo bash -c '
     set -euo pipefail
-    ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto
+    ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto; PUBLISH_BRANCH="$3"
     eval "$(sed -n "/^resolve_shape_margin()/,/^}/p" "$2")"
     run_go_in_repo() { shift 3; workcell-citools "$@"; }
-    resolve_shape_margin' _ "${FIXTURE}" "${ROOT_DIR}/scripts/pre-merge.sh"
+    resolve_shape_margin' _ "${FIXTURE}" "${ROOT_DIR}/scripts/pre-merge.sh" "${2-main}"
 }
 margin_pr() {
   printf '[{"baseRefName":"main","headRefName":"main","headRepository":{"nameWithOwner":"%s"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]' "$1"
@@ -1083,6 +1105,11 @@ test "$(resolve_margin "$(margin_pr fork/publish-pr-fixture)")" = "0.66"
 test "$(resolve_margin "$(margin_pr example/publish-pr-fixture)")" = "1.0"
 test "$(resolve_margin '[]')" = "0.66"
 grep -q "^pr list -R ${ORIGIN} --base main --head main --state open " "${GH_LOG}"
+# The lookup follows the publication branch, not the checked-out main: the
+# open PR for main does not lift the margin for feature/next.
+: >"${GH_LOG}"
+test "$(resolve_margin "$(margin_pr example/publish-pr-fixture)" feature/next)" = "0.66"
+grep -q "^pr list -R ${ORIGIN} --base main --head feature/next --state open " "${GH_LOG}"
 for bad_list in 'not json' '{}' '[{}]' '[{"baseRefName":"main","headRefName":"main","headRepository":{},"isDraft":false,"labels":[],"url":"u"}]'; do
   set +e
   margin_fail_output="$(resolve_margin "${bad_list}" 2>&1)"
@@ -1091,15 +1118,14 @@ for bad_list in 'not json' '{}' '[{}]' '[{"baseRefName":"main","headRefName":"ma
   test "${margin_fail_rc}" -ne 0
   grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_fail_output}"
 done
-# A detached HEAD may still head an open PR, so the lookup fails closed.
-git -C "${FIXTURE}" switch -q --detach
+# A detached HEAD gives pre-merge no branch, and it may still head an open
+# PR, so the lookup fails closed.
 set +e
-margin_detached_output="$(resolve_margin '[]' 2>&1)"
+margin_detached_output="$(resolve_margin '[]' '' 2>&1)"
 margin_detached_rc=$?
 set -e
-git -C "${FIXTURE}" switch -q main
 test "${margin_detached_rc}" -ne 0
-grep -q 'publish-pr shape margin requires a checked-out branch' <<<"${margin_detached_output}"
+grep -q 'publish-pr shape margin requires a publication branch' <<<"${margin_detached_output}"
 grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_detached_output}"
 rm -f "${GH_PR_LIST_RESPONSE_FILE}"
 rm -rf "${MARGIN_BIN_DIR}"

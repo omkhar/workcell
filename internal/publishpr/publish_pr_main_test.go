@@ -196,7 +196,8 @@ func TestShapeMarginFromLookups(t *testing.T) {
 }
 
 // TestShapeMarginMainBindsOriginPushRepository proves the lookup runs against
-// the origin push repository with GH_REPO dropped, and that a detached HEAD
+// the origin push repository with GH_REPO dropped and for the publication
+// branch rather than the checked-out one, and that an empty or invalid branch
 // or a missing gh fails closed without asking gh.
 func TestShapeMarginMainBindsOriginPushRepository(t *testing.T) {
 	repo := t.TempDir()
@@ -209,7 +210,8 @@ func TestShapeMarginMainBindsOriginPushRepository(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	git("init", "-q", "-b", "feature/x")
+	// HEAD differs from the publication branch, which alone selects the PR.
+	git("init", "-q", "-b", "checked-out")
 	git("remote", "add", "origin", "https://github.com/fetch/repo.git")
 	git("remote", "set-url", "--push", "origin", "https://github.com/example/repo.git")
 	stub := `#!/bin/sh
@@ -233,7 +235,7 @@ esac
 	ctx := &BashContext{HostGitBin: gitBin, HostGhBin: filepath.Join(binDir, "gh"), TrustedHostPath: os.Getenv("PATH"), RealHome: os.Getenv("HOME")}
 
 	var out bytes.Buffer
-	if err := writeShapeMargin(ctx, repo, "main", &out); err != nil {
+	if err := writeShapeMargin(ctx, repo, "main", "feature/x", &out); err != nil {
 		t.Fatalf("writeShapeMargin() err = %v", err)
 	}
 	if out.String() != "1.0\n" {
@@ -249,27 +251,27 @@ esac
 		t.Fatalf("gh calls = %q, want %q", log, want)
 	}
 
-	git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "--no-gpg-sign", "-m", "init")
-	// A detached HEAD may still be the head of an open PR, so it fails
-	// closed instead of claiming first publication.
-	git("switch", "-q", "--detach")
-	out.Reset()
+	// A detached HEAD (no branch) may still be the head of an open PR, and
+	// an invalid name is no branch at all, so both fail closed instead of
+	// claiming first publication.
 	if err := os.Remove(logPath); err != nil {
 		t.Fatal(err)
 	}
-	err = writeShapeMargin(ctx, repo, "main", &out)
-	if err == nil || !strings.Contains(err.Error(), "requires a checked-out branch") || out.Len() != 0 {
-		t.Fatalf("detached writeShapeMargin() = %q, %v; want a checked-out branch error", out.String(), err)
+	for branch, want := range map[string]string{"": "requires a publication branch", "bad..name": "Invalid publish branch name"} {
+		out.Reset()
+		err = writeShapeMargin(ctx, repo, "main", branch, &out)
+		if err == nil || !strings.Contains(err.Error(), want) || out.Len() != 0 {
+			t.Fatalf("writeShapeMargin(branch %q) = %q, %v; want %q", branch, out.String(), err, want)
+		}
 	}
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("detached HEAD should not call gh; stat err = %v", err)
+		t.Fatalf("an empty or invalid branch should not call gh; stat err = %v", err)
 	}
 
 	// Without a trusted gh the lookup cannot run, so it fails closed instead
 	// of reporting the first-publication margin.
-	git("switch", "-q", "feature/x")
 	ctx.HostGhBin = ""
-	err = writeShapeMargin(ctx, repo, "main", &out)
+	err = writeShapeMargin(ctx, repo, "main", "feature/x", &out)
 	if err == nil || !strings.Contains(err.Error(), "requires a trusted gh") || out.Len() != 0 {
 		t.Fatalf("writeShapeMargin() without gh = %q, %v; want a trusted gh error", out.String(), err)
 	}
@@ -304,18 +306,41 @@ func TestShapeMarginMainRefusesWorkspaceGh(t *testing.T) {
 	t.Setenv("HOST_GIT_BIN", "")
 
 	t.Setenv("HOST_GH_BIN", "")
-	_ = ShapeMarginMain(repo, "main", io.Discard)
+	_ = ShapeMarginMain(repo, "main", "feature/x", io.Discard)
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("workspace gh on PATH ran with host credentials; stat err = %v", err)
 	}
 
 	t.Setenv("HOST_GH_BIN", fakeGh)
-	err := ShapeMarginMain(repo, "main", io.Discard)
+	err := ShapeMarginMain(repo, "main", "feature/x", io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "HOST_GH_BIN must point to a trusted host executable path") {
 		t.Fatalf("ShapeMarginMain() with workspace HOST_GH_BIN err = %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("workspace HOST_GH_BIN ran; stat err = %v", err)
+	}
+}
+
+// TestShapeMarginMainUsesResolvedWorkspace proves the lookups run in the
+// canonical workspace that was validated, not through the caller's symlink,
+// which could be retargeted after validation.
+func TestShapeMarginMainUsesResolvedWorkspace(t *testing.T) {
+	target := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "workspace-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOST_GIT_BIN", "")
+	t.Setenv("HOST_GH_BIN", "")
+	// target is no git worktree, so the first lookup fails and names the
+	// directory it ran in.
+	err = ShapeMarginMain(link, "main", "feature/x", io.Discard)
+	if err == nil || !strings.HasSuffix(err.Error(), "requires a git worktree: "+resolved) {
+		t.Fatalf("ShapeMarginMain(symlink) err = %v, want a git worktree error for %s", err, resolved)
 	}
 }
 

@@ -25,6 +25,7 @@ PARITY_START_STATUS_SHA256=""
 PARITY_BASE_REF=""
 PARITY_BASE_OID=""
 SHAPE_MARGIN="auto"
+PUBLISH_BRANCH=""
 PARITY_SHAPE_BUDGET=""
 LIVE_LANE_PID=""
 LIVE_LANE_LOG=""
@@ -48,7 +49,9 @@ Options:
   --base BRANCH             Base branch for PR-parity planning (default: main)
   --label LABEL             Repeatable PR label input for planner selection
   --shape-margin auto|F     PR shape limit scale (default: auto = 0.66 while no PR is
-                            open for the branch, else 1.0)
+                            open for the publication branch, else 1.0)
+  --publish-branch BRANCH   Branch publish-pr will push (default: the checked-out
+                            branch); the shape margin and parity evidence bind to it
   --allow-dirty             Run against the live worktree even when it is dirty
   --local-snapshot <mode>   Run from a disposable snapshot: head, index, worktree
   --local-include-untracked Include untracked files with --local-snapshot worktree
@@ -114,6 +117,7 @@ run_from_local_snapshot() {
   local snapshot_parent=""
   local -a plan_args=()
   local -a margin_args=()
+  local -a branch_args=()
   local plan_json=""
   local selected_scripts=""
   local shape_margin=""
@@ -148,12 +152,17 @@ run_from_local_snapshot() {
     shape_margin="$(resolve_shape_margin)"
     margin_args=(--shape-margin "${shape_margin}")
   fi
+  # The snapshot checks out no branch, so it gets the publication branch here.
+  if [[ -n "${PUBLISH_BRANCH}" ]]; then
+    branch_args=(--publish-branch "${PUBLISH_BRANCH}")
+  fi
   snapshot_cmd+=(
     --
     env
     WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1
     ./scripts/pre-merge.sh
     "${ORIGINAL_ARGS[@]}"
+    "${branch_args[@]}"
     "${margin_args[@]}"
   )
 
@@ -173,7 +182,7 @@ resolve_shape_margin() {
   fi
   if ! (
     unset GH_TOKEN GITHUB_TOKEN GH_CONFIG_DIR SSH_AUTH_SOCK
-    run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools publish-pr-shape-margin "${ROOT_DIR}" "${BASE_BRANCH}"
+    run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools publish-pr-shape-margin "${ROOT_DIR}" "${BASE_BRANCH}" "${PUBLISH_BRANCH}"
   ); then
     echo "[pre-merge] cannot look up the open PR for the shape margin; retry or pass --shape-margin" >&2
     return 1
@@ -367,11 +376,13 @@ write_pr_parity_evidence() {
     --argjson plan "${plan_json}" \
     --argjson timings "${timings}" \
     --arg shape_budget "${PARITY_SHAPE_BUDGET}" \
+    --arg publish_branch "${PUBLISH_BRANCH}" \
     '{
       version: 1,
       profile: $profile,
       event: $event,
       base_branch: $base,
+      publish_branch: $publish_branch,
       base_ref: $base_ref,
       base_oid: $base_oid,
       head_oid: $head_oid,
@@ -592,6 +603,15 @@ while [[ $# -gt 0 ]]; do
       }
       shift 2
       ;;
+    --publish-branch)
+      PUBLISH_BRANCH="${2-}"
+      [[ -n "${PUBLISH_BRANCH}" ]] || {
+        echo "Option --publish-branch requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
     --allow-dirty)
       ALLOW_DIRTY=1
       shift
@@ -675,6 +695,12 @@ require_tool shellcheck
 if [[ "${LOCAL_INCLUDE_UNTRACKED}" -eq 1 ]] && [[ "${LOCAL_SNAPSHOT_MODE}" != "worktree" ]]; then
   echo "--local-include-untracked requires --local-snapshot worktree." >&2
   exit 2
+fi
+
+# publish-pr pushes --branch, so repo-publish-pr.sh requires the evidence to
+# name that branch; without --publish-branch it is the checked-out branch.
+if [[ -z "${PUBLISH_BRANCH}" ]]; then
+  PUBLISH_BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
 fi
 
 run_from_local_snapshot

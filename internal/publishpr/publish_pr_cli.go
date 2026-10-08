@@ -163,12 +163,13 @@ func shapeMarginFromLookups(repoViewJSON, prListJSON string, opts *Options) (str
 }
 
 // ShapeMarginMain prints the PR shape margin that publish-pr would apply to
-// the branch checked out in workspace against base, so pre-merge checks the
-// same budget. git and gh resolve as publish-pr resolves them, because the
-// lookups run with the host credentials. A missing trusted gh, a detached
-// HEAD (it may still head an open PR), and any lookup or parse failure are
-// errors, never PR absence; pre-merge --shape-margin skips the lookup.
-func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
+// publication branch branch against base, so pre-merge checks the same budget.
+// git and gh resolve as publish-pr resolves them, because the lookups run with
+// the host credentials, and every lookup runs in the canonical workspace. A
+// missing trusted gh, an empty branch (a detached HEAD may still head an open
+// PR), and any lookup or parse failure are errors, never PR absence;
+// pre-merge --shape-margin skips the lookup.
+func ShapeMarginMain(workspace, base, branch string, stdout io.Writer) error {
 	ctx := &BashContext{
 		WorkspaceRoot:   workspace,
 		TrustedHostPath: os.Getenv("PATH"),
@@ -185,25 +186,28 @@ func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
 	if ctx.HostGitBin, err = resolveHostGit(ctx); err != nil {
 		return err
 	}
-	if ctx.HostGhBin, err = resolveHostGh(ctx, true); err != nil {
+	// writeShapeMargin reports a missing gh with the --shape-margin hint.
+	if ctx.HostGhBin, err = resolveHostGh(ctx, false); err != nil {
 		return err
 	}
-	return writeShapeMargin(ctx, workspace, base, stdout)
+	return writeShapeMargin(ctx, resolvedWorkspace, base, branch, stdout)
 }
 
 // writeShapeMargin runs the publish-pr lookups with the resolved ctx tools.
 // gh runs without GH_REPO (RunPublishHostCommandInDir drops it) and with -R
 // set to the origin push repository, as publish-pr does.
-func writeShapeMargin(ctx *BashContext, workspace, base string, stdout io.Writer) error {
+func writeShapeMargin(ctx *BashContext, workspace, base, branch string, stdout io.Writer) error {
 	if !workspaceIsGitWorkTree(ctx, workspace) {
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a git worktree: %s", workspace)}
 	}
 	if ctx.HostGhBin == "" {
 		return &cliexit.ExitCodeError{Code: 2, Message: "publish-pr shape margin requires a trusted gh to look up the open PR; install gh or pass --shape-margin"}
 	}
-	branch := currentBranch(ctx, workspace)
 	if branch == "" {
-		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a checked-out branch to look up the open PR: %s; pass --shape-margin", workspace)}
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a publication branch to look up the open PR: %s; check out a branch, pass --publish-branch, or pass --shape-margin", workspace)}
+	}
+	if _, err := runCleanGit(ctx, workspace, []string{"check-ref-format", "--branch", branch}); err != nil {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Invalid publish branch name: %s", branch)}
 	}
 	repositorySelector, err := originRepositorySelector(ctx, workspace)
 	if err != nil {
