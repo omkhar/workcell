@@ -26,8 +26,15 @@ const (
 // workflowScriptRef finds ./scripts/... paths in the words of a run body.
 var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
 
-// ponytail: gh list subcommands are a fixed table; derive from `gh help` if gh grows more.
-var ghListGroups = []string{"cache", "codespace", "gist", "gpg-key", "issue", "label", "pr", "project", "release", "repo", "ruleset", "run", "secret", "ssh-key", "variable", "workflow"}
+// ghListTakesLimit maps each gh group with a list (or ls) subcommand, aliases
+// included, to whether that list takes --limit, per gh 2.102 help. A list with
+// no --limit cannot be bounded, so every call of it is a hit.
+// ponytail: a fixed table; derive from `gh help` if gh grows more.
+var ghListTakesLimit = map[string]bool{
+	"cache": true, "codespace": true, "cs": true, "gist": true, "issue": true, "label": true, "pr": true, "project": true,
+	"release": true, "repo": true, "ruleset": true, "rs": true, "run": true, "workflow": true,
+	"gpg-key": false, "secret": false, "ssh-key": false, "variable": false,
+}
 
 type workflowRefHit struct{ kind, file, job, step string }
 
@@ -151,36 +158,52 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				var refs []string
-				for _, words := range shellCommands(step.Run) {
-					for _, each := range words {
-						refs = append(refs, workflowScriptRef.FindAllString(each, -1)...)
-					}
+				dir, err := stepWorkDir(documents[file], definition, step)
+				if err != nil {
+					return nil, fmt.Errorf("%s job %s: %w", file, job, err)
 				}
-				for _, match := range refs {
-					if strings.ContainsAny(match[len(match)-1:], "$*{[") {
-						continue // a dynamic name cannot be resolved statically
-					}
-					if slices.Contains(strings.Split(match, "/"), "..") {
-						add("script-path-escapes " + match) // never probe outside rootDir
-						continue
-					}
-					if _, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, match[2:]), "workflow script", workflowRefsMaxBytes); err != nil {
-						if !errors.Is(err, fs.ErrNotExist) {
-							return nil, err
+				// A relative path resolves from the step's directory. An
+				// expression or an absolute directory is not under rootDir,
+				// and a cd moves the directory for every later command, so
+				// a path after either is a hit rather than a probe.
+				moved := strings.Contains(dir, "${{") || filepath.IsAbs(dir)
+				for _, words := range shellCommands(step.Run) {
+					moved = moved || words[0] == "cd" || words[0] == "pushd"
+					for _, match := range scriptRefs(words) {
+						switch {
+						case strings.ContainsAny(match[len(match)-1:], "$*{["):
+							// a dynamic name cannot be resolved statically
+						case slices.Contains(strings.Split(dir+"/"+match, "/"), ".."):
+							add("script-path-escapes " + match) // never probe outside rootDir
+						case moved:
+							add("script-cwd-unresolved " + match)
+						default:
+							if _, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, dir, match[2:]), "workflow script", workflowRefsMaxBytes); err != nil {
+								if !errors.Is(err, fs.ErrNotExist) {
+									return nil, err
+								}
+								_, err := os.Lstat(filepath.Join(rootDir, dir))
+								switch {
+								case errors.Is(err, fs.ErrNotExist):
+									add("script-cwd-unresolved " + match) // the job makes the directory at run time
+								case err != nil:
+									return nil, err
+								default:
+									add("missing-script " + match)
+								}
+							}
 						}
-						add("missing-script " + match)
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
 					args = ghSubcommand(args)
 					switch {
 					case len(args) > 0 && args[0] == "api":
-						if !hasAnyArg(args, "--paginate") { // gh api has no --limit
+						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
 						}
-					case len(args) > 1 && args[1] == "list" && slices.Contains(ghListGroups, args[0]):
-						if !hasAnyArg(args, "--limit", "-L") {
+					case len(args) > 1 && (args[1] == "list" || args[1] == "ls"):
+						if limited, listed := ghListTakesLimit[args[0]]; listed && !(limited && hasAnyArg(args, "--limit", "-L")) {
 							add("gh-" + args[0] + "-list-unbounded")
 						}
 						if args[0] == "pr" && !hasAnyArg(args, "--base", "-B") {
@@ -214,6 +237,50 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 		}
 	}
 	return hits, nil
+}
+
+// stepWorkDir returns the directory a step's run: body starts in, relative to
+// the checkout: the step's working-directory, else the job default, else the
+// workflow default.
+func stepWorkDir(document workflowDocument, job workflowJob, step workflowStep) (string, error) {
+	if step.WorkDir != "" {
+		return step.WorkDir, nil
+	}
+	var defaults workflowDefaults
+	if job.Defaults.Kind != 0 {
+		if err := job.Defaults.Decode(&defaults); err != nil {
+			return "", err
+		}
+	}
+	if dir := defaults.Run["working-directory"]; dir != "" {
+		return dir, nil
+	}
+	return document.Def.Run["working-directory"], nil
+}
+
+// scriptRefs returns the ./scripts paths in one command's words that the shell
+// can run. The arguments of echo, printf and :, a here-string, and an
+// assignment are data, so a path written there is not a reference.
+func scriptRefs(words []string) []string {
+	if slices.Contains([]string{"echo", "printf", ":"}, words[0]) {
+		return nil
+	}
+	var refs []string
+	for index, each := range words {
+		if shellAssignment.MatchString(each) || strings.HasPrefix(each, "<<<") || (index > 0 && words[index-1] == "<<<") {
+			continue
+		}
+		refs = append(refs, workflowScriptRef.FindAllString(each, -1)...)
+	}
+	return refs
+}
+
+// ghPaginates reports whether gh api args turn pagination on in exactly one
+// spelling. A --paginate=false, or a second spelling that can override the
+// first, leaves the call unbounded.
+func ghPaginates(args []string) bool {
+	spellings := slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return !hasAnyArg([]string{arg}, "--paginate") })
+	return len(spellings) == 1 && (spellings[0] == "--paginate" || spellings[0] == "--paginate=true")
 }
 
 // ghSubcommand drops the flags before the gh subcommand, such as -R owner/repo.
@@ -299,13 +366,19 @@ func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram,
 			}
 			flags = append(flags, arg, args[i+1], value)
 			i += 2
-		case arg == "-L" && i+1 < len(args):
+		case (arg == "-L" || arg == "--library-path") && i+1 < len(args):
 			flags = append(flags, "-L", filepath.Join(rootDir, args[i+1]))
+			i++
+		case arg == "--indent" && i+1 < len(args):
+			flags = append(flags, arg, args[i+1])
 			i++
 		case arg == "-f" || arg == "--from-file" || arg == "--args" || arg == "--jsonargs":
 			return WorkflowJQProgram{}, false // program is in a file, or the rest are data
 		case strings.HasPrefix(arg, "-"):
-			// output flags such as -r -c -e -n -S do not change compilation
+			// Every other option goes to jq as written. jq rejects one it does
+			// not know, so an option this parser misreads fails the compile
+			// check instead of hiding the program behind its value.
+			flags = append(flags, arg)
 		default:
 			return WorkflowJQProgram{Where: where, Program: arg, Flags: flags}, true
 		}
@@ -378,7 +451,7 @@ func joinQuotedNewline(c byte) byte {
 
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
-var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time"}
+var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}
 
 // commandArgs returns the arguments of every command named name in script.
 func commandArgs(script, name string) [][]string {

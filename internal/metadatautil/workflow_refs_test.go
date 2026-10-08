@@ -6,6 +6,7 @@ package metadatautil_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ func refsRoot(t *testing.T, step, baseline string) string {
 		"policy/workflow-refs-baseline.tsv": baseline,
 		"tests/fixtures/actions/inputs.tsv": refsActionsTSV,
 		"scripts/present.sh":                "#!/bin/sh\n",
+		"sub/README":                        "",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
@@ -68,6 +70,16 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"known input", "      - uses: actions/checkout@" + refsSHA + "\n        with:\n          Path: x\n", "", ""},
 		{"unknown input", "      - uses: actions/checkout@" + refsSHA + "\n        with:\n          app-id: x\n", "", "with-unknown-input actions/checkout@" + refsSHA + " app-id"},
 		{"uncached action", "      - uses: actions/other@" + refsSHA + "\n", "", "uses-not-cached"},
+		{"gh list in a brace group", runStep("{ gh pr list --base main; }"), "", "gh-pr-list-unbounded"},
+		{"gh ls alias", runStep("gh pr ls --base main"), "", "gh-pr-list-unbounded"},
+		{"gh group and ls aliases", runStep("gh rs ls"), "", "gh-rs-list-unbounded"},
+		{"gh api pagination disabled", runStep("gh api --paginate=false repos/x"), "", "gh-api-unbounded"},
+		{"gh api pagination overridden", runStep("gh api --paginate repos/x --paginate=false"), "", "gh-api-unbounded"},
+		{"gh list without a limit flag", runStep("gh secret list --limit 1"), "", "gh-secret-list-unbounded"},
+		{"script under the step working directory", "      - name: s\n        working-directory: sub\n        run: ./scripts/present.sh\n", "", "missing-script ./scripts/present.sh"},
+		{"script under a directory made at run time", "      - name: s\n        working-directory: gen\n        run: ./scripts/present.sh\n", "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"script after a cd", runStep("cd sub\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -93,6 +105,24 @@ func TestCheckWorkflowRefsReadsYAMLExtension(t *testing.T) {
 	}
 	if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "v.yaml") {
 		t.Fatalf("CheckWorkflowRefs() error = %v, want a v.yaml hit", err)
+	}
+}
+
+func TestCheckWorkflowRefsReadsJobWorkingDirectory(t *testing.T) {
+	root := refsRoot(t, runStep("true"), "")
+	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: sub\n    steps:\n" + runStep("./scripts/present.sh")
+	if err := os.WriteFile(filepath.Join(root, ".github/workflows/v.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "missing-script ./scripts/present.sh") {
+		t.Fatalf("CheckWorkflowRefs() error = %v, want a missing-script hit under sub", err)
+	}
+}
+
+func TestWorkflowInlineJQProgramsSkipOptionValues(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --indent 2 --bogus -r '.a'"), ""))
+	if err != nil || len(programs) != 1 || programs[0].Program != ".a" || !slices.Equal(programs[0].Flags, []string{"--indent", "2", "--bogus", "-r"}) {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want program .a with every option passed to jq", programs, err)
 	}
 }
 
