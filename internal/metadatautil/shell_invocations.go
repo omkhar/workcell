@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"iter"
 	"slices"
 	"strings"
 )
@@ -353,10 +354,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 		return nil
 	}
 	var invocations []Invocation
-	var current strings.Builder
-	var heredocs []heredoc
-	var openQuote byte
-	var quotes []byte
 	var position int
 	var depth, definedAt, control int
 	var defining, bodyOpened bool
@@ -366,52 +363,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// group on one exit status, so nothing written inside false && { … } is
 	// proved to run.
 	conditionalGroup, groupDepth := -1, 0
-	for line := range strings.Lines(script) {
-		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if openQuote != 0 {
-			// Bash reads these lines as text inside one word, which runs no
-			// command. What follows the closing byte on that line is syntax
-			// again, so read it: a closer such as " <<PLAN opens a heredoc.
-			at := quoteCloseIndex(text, openQuote)
-			if at < 0 {
-				continue
-			}
-			openQuote = 0
-			// The words after the closer still belong to the command the
-			// quoted word is an argument of, and that command word was read
-			// before the span opened. A null command carries them, so
-			// : " … " oras cp … stays one run of : rather than becoming an
-			// oras invocation. A control operator in the rest still ends it
-			// and starts a command of its own.
-			text = ": " + text[at+1:]
-		}
-		if len(heredocs) > 0 {
-			if heredocs[0].endsAt(text) {
-				heredocs = heredocs[1:]
-			}
-			continue
-		}
-		current.WriteString(text)
-		words, opened, quote, rest, continues := shellWords(current.String(), quotes)
-		if continues {
-			// The line ends with a backslash the quoting leaves as syntax, and
-			// bash joins the two halves with nothing between them. Counting
-			// backslashes in the text before any quote state exists reads the
-			// literal one of 'or\ <newline> as' as a continuation and joins a
-			// command word bash keeps apart, in the fail-open direction.
-			joined := current.String()
-			current.Reset()
-			current.WriteString(joined[:len(joined)-1])
-			continue
-		}
-		if last := len(words) - 1; last >= 0 && !words[last].quoted &&
-			continuesLine(words[last].text) {
-			current.WriteString(" ")
-			continue
-		}
-		current.Reset()
-		openQuote, quotes = quote, rest
-		heredocs = append(heredocs, opened...)
+	for words := range logicalLines(script) {
 		// A function definition is not a call. Bash reads the body and runs
 		// nothing, so a required command written inside a function that
 		// nobody calls does not satisfy a rule about what the step runs.
@@ -496,6 +448,69 @@ func ShellInvocations(script, commandName string) []Invocation {
 		}
 	}
 	return invocations
+}
+
+// logicalLines yields the words of each logical line of script, the way bash
+// reads them. It joins line continuations and a line that ends on && or || or
+// |, and drops comments, heredoc bodies and the rest of a quoted word that runs
+// past the end of its line, so no decoy text reaches a caller as syntax.
+func logicalLines(script string) iter.Seq[[]word] {
+	return func(yield func([]word) bool) {
+		var current strings.Builder
+		var heredocs []heredoc
+		var openQuote byte
+		var quotes []byte
+		for line := range strings.Lines(script) {
+			text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			if openQuote != 0 {
+				// Bash reads these lines as text inside one word, which runs no
+				// command. What follows the closing byte on that line is syntax
+				// again, so read it: a closer such as " <<PLAN opens a heredoc.
+				at := quoteCloseIndex(text, openQuote)
+				if at < 0 {
+					continue
+				}
+				openQuote = 0
+				// The words after the closer still belong to the command the
+				// quoted word is an argument of, and that command word was read
+				// before the span opened. A null command carries them, so
+				// : " … " oras cp … stays one run of : rather than becoming an
+				// oras invocation. A control operator in the rest still ends it
+				// and starts a command of its own.
+				text = ": " + text[at+1:]
+			}
+			if len(heredocs) > 0 {
+				if heredocs[0].endsAt(text) {
+					heredocs = heredocs[1:]
+				}
+				continue
+			}
+			current.WriteString(text)
+			words, opened, quote, rest, continues := shellWords(current.String(), quotes)
+			if continues {
+				// The line ends with a backslash the quoting leaves as syntax, and
+				// bash joins the two halves with nothing between them. Counting
+				// backslashes in the text before any quote state exists reads the
+				// literal one of 'or\ <newline> as' as a continuation and joins a
+				// command word bash keeps apart, in the fail-open direction.
+				joined := current.String()
+				current.Reset()
+				current.WriteString(joined[:len(joined)-1])
+				continue
+			}
+			if last := len(words) - 1; last >= 0 && !words[last].quoted &&
+				continuesLine(words[last].text) {
+				current.WriteString(" ")
+				continue
+			}
+			current.Reset()
+			openQuote, quotes = quote, rest
+			heredocs = append(heredocs, opened...)
+			if !yield(words) {
+				return
+			}
+		}
+	}
 }
 
 // shellWords splits one logical line the way bash reads it. Quotes and
