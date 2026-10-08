@@ -126,9 +126,11 @@ done <<<"${docs_listing}"
 # --- Doc claim enforcement check ----------------------------------------------
 # A code span naming scripts/..., internal/... or .github/workflows/... (a
 # leading ./ is dropped) must exist. Hits that exist today sit in
-# policy/doc-claims-baseline.tsv (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
-# fails too, and every row must exist at the merge base with origin/main (or
-# main), so the set only shrinks. A path with a .. or symlink component fails.
+# policy/doc-claims-baseline.tsv (PATH, RULE, SUBJECT, REASON), whose comment
+# lines name every rule. A new hit fails. A baseline row with no hit fails too,
+# and every row must exist at the merge base with origin/main (or main), so the
+# set only shrinks. A rule the merge-base baseline does not name is new, so its
+# rows may enter once. A path with a .. or symlink component fails.
 # Override the baseline path with DOC_CLAIMS_BASELINE and the workcell-citools
 # binary with DOC_CLAIMS_CITOOLS (tests only).
 claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
@@ -148,6 +150,17 @@ if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
 else
   run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
 fi
+
+# A rule is declared when a comment line of the baseline text names it.
+declares_rule() {
+  printf '%s\n' "$1" | grep '^#' | grep -qE "(^|[^a-z-])$2([^a-z-]|$)"
+}
+claims_text="$(cat "${claims_baseline}")"
+while IFS= read -r rule; do
+  [[ -n "${rule}" ]] || continue
+  declares_rule "${claims_text}" "${rule}" ||
+    note "doc-claims rule ${rule} is not named in the comment lines of ${claims_baseline}"
+done < <(cut -f2 "${claim_hits}" | sort -u)
 
 grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
 sort -o "${claim_hits}" "${claim_hits}"
@@ -178,14 +191,19 @@ else
   if [[ -z "${claims_listed}" ]]; then
     echo "check-doc-links: ${claims_file} is not at the merge base (this change adds it); baseline merge-base ratchet skipped" >&2
   else
-    base_rows="$(git show "${claims_merge_base}:${claims_file}")" || {
+    base_text="$(git show "${claims_merge_base}:${claims_file}")" || {
       echo "check-doc-links: cannot read ${claims_file} at merge base ${claims_merge_base}" >&2
       exit 2
     }
-    base_rows="$(printf '%s\n' "${base_rows}" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
+    base_rows="$(printf '%s\n' "${base_text}" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
     claim_unbased="$(comm -23 "${claim_base}" <(printf '%s\n' "${base_rows}"))"
     while IFS= read -r row; do
       [[ -n "${row}" ]] || continue
+      rule="${row#*$'\t'}"
+      rule="${rule%%$'\t'*}"
+      # A rule that the merge-base baseline does not name is new in this
+      # change, so its rows have no base to match.
+      declares_rule "${base_text}" "${rule}" || continue
       note "doc-claims baseline row is not at the merge base with ${claims_base_ref}; fix the hit instead: ${row//$'\t'/ | }"
     done <<<"${claim_unbased}"
   fi

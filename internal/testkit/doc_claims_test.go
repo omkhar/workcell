@@ -58,6 +58,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		}
 		sources[rel] = string(body)
 	}
+	// The comment lines of a baseline name the rules it governs.
+	rules := "# Rules: missing-path escaping-path\n"
 	cases := []struct {
 		name     string
 		doc      string
@@ -85,6 +87,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"stale baseline row", "Nothing here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", "stale doc-claims baseline"},
 		{"baseline growth", "See `scripts/nope.sh` here.\nSee `scripts/nope2.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
 		{"baseline replacement", "See `scripts/nope2.sh` here.\n", "README.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
+		{"undeclared rule", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", "rule missing-path is not named"},
+		{"new rule rows need no base", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tescaping-path\tscripts/ext.sh\tx\n", ""},
 		{"baseline shrink", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", ""},
 	}
 	for _, tc := range cases {
@@ -113,11 +117,20 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 			}
 			git("init", "-q", "-b", "main")
 			if tc.base != "" {
-				writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", "# test\n"+tc.base)
+				header := rules
+				if tc.name == "new rule rows need no base" {
+					// The merge-base baseline predates the missing-path rule.
+					header = strings.ReplaceAll(rules, "missing-path", "x")
+				}
+				writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", header+tc.base)
 				git("add", "-A")
 				git("commit", "-q", "-m", "base")
 			}
-			writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", "# test\n"+tc.baseline)
+			baselineHeader := rules
+			if tc.name == "undeclared rule" {
+				baselineHeader = strings.ReplaceAll(rules, "missing-path", "x")
+			}
+			writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", baselineHeader+tc.baseline)
 			git("add", "-A")
 			if tc.name == "unreadable base baseline" {
 				// Drop the committed baseline blob so the merge-base read fails.

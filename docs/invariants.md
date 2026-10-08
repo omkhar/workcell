@@ -140,7 +140,8 @@ descriptors.
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.
 A row with no hit fails. `scripts/check-doc-links.sh` also fails on a row
-that the file at the merge base does not hold.
+that the file at the merge base does not hold. The one exception is a rule
+that the baseline at the merge base does not name.
 
 ## 4. Network posture is explicit
 
