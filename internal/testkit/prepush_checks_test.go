@@ -241,7 +241,7 @@ func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"git", "mktemp", "rm", "dirname", "bash", "env", "grep", "sort", "xargs"} {
+	for _, tool := range []string{"git", "mktemp", "rm", "dirname", "bash", "env", "grep", "sort", "xargs", "tr", "awk"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("%s unavailable: %v", tool, err)
@@ -308,28 +308,35 @@ func TestFastPrePushRunsDocLinksOnMarkdownRenamedAway(t *testing.T) {
 }
 
 func TestFastPrePushRejectsChangedSymlink(t *testing.T) {
-	f := newPrePushChecksFixture(t, "")
-	links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
-	f.run("add", "scripts/check-doc-links.sh")
-	host := filepath.Join(f.tmpDir, "host-secret.txt")
-	if err := os.WriteFile(host, []byte("We recieve [secret](host-derived-token).\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(host, filepath.Join(f.root, "link.md")); err != nil {
-		t.Fatal(err)
-	}
-	f.run("add", "link.md")
-	f.run("commit", "--quiet", "-m", fixtureSubject)
-	output, err := f.hook()
-	if err == nil {
-		t.Fatalf("fast pre-push accepted a changed symlink:\n%s", output)
-	}
-	if strings.Contains(output, "recieve") || strings.Contains(output, "host-derived-token") || !strings.Contains(output, "link.md is a symlink") {
-		t.Errorf("a gate read the host file or the refusal is missing:\n%s", output)
+	// With core.symlinks=false the checkout holds a regular file, so only the
+	// tree check (mode 120000) can refuse it; an on-disk -L test cannot.
+	for _, symlinks := range []string{"true", "false"} {
+		t.Run("core.symlinks="+symlinks, func(t *testing.T) {
+			f := newPrePushChecksFixture(t, "")
+			links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
+			f.run("add", "scripts/check-doc-links.sh")
+			host := filepath.Join(f.tmpDir, "host-secret.txt")
+			if err := os.WriteFile(host, []byte("We recieve [secret](host-derived-token).\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(host, filepath.Join(f.root, "link.md")); err != nil {
+				t.Fatal(err)
+			}
+			f.run("add", "link.md")
+			f.run("commit", "--quiet", "-m", fixtureSubject)
+			f.run("config", "core.symlinks", symlinks)
+			output, err := f.hook()
+			if err == nil {
+				t.Fatalf("fast pre-push accepted a changed symlink:\n%s", output)
+			}
+			if strings.Contains(output, "recieve") || strings.Contains(output, "host-derived-token") || !strings.Contains(output, "link.md is a symlink") {
+				t.Errorf("a gate read the host file or the refusal is missing:\n%s", output)
+			}
+		})
 	}
 }
 

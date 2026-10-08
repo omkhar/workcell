@@ -8,6 +8,16 @@
 # the result. The checkers come from this script's own tree, never from the
 # pushed commit: a pushed ref is untrusted code, and this hook holds the host
 # credentials. Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
+#
+# Language boundary: the doc gates read every tracked Markdown file, and
+# codespell follows links, so a committed symlink could make them print a host
+# file. The hook refuses a changed path whose mode is 120000 in the pushed
+# tree. It does not test the disk: git builds the checkout from that tree in a
+# private mktemp -d directory, so the tree is the source of truth. The native
+# checkers (awk and grep in check-doc-links.sh, workcell-citools, codespell)
+# then open the files by path. Bash has no descriptor-relative no-follow open.
+# A process that swaps a link into that private checkout is same-user malware
+# (docs/threat-model.md, Exclusions).
 set -euo pipefail
 
 if [[ "${WORKCELL_SKIP_PREPUSH_CHECKS:-0}" == "1" ]]; then
@@ -74,17 +84,23 @@ gate_commit() {
   # Without rename detection a renamed or deleted .md lists its old path.
   git diff -z --no-renames --name-only "${merge_base}" HEAD >"${changed_list}"
 
+  # Symlink-ness comes from the pushed tree, not the disk; see the header.
+  local links="" link
+  if [[ -s "${changed_list}" ]]; then
+    links="$(xargs -0 git --literal-pathspecs ls-tree -r -z "${oid}" -- <"${changed_list}" | tr '\0' '\n' | awk -F'\t' '/^120000 / { print $2 }')"
+  fi
+
   local changed_files=() markdown_changed=0 target_removed=0 symlinked=0
+  if [[ -n "${links}" ]]; then
+    while IFS= read -r link; do
+      echo "pre-push: ${link} is a symlink in ${oid}; the gates must not follow it into the host." >&2
+    done <<<"${links}"
+    symlinked=1
+  fi
   while IFS= read -r -d '' file; do
     # A deleted .md can break a link, so it counts; codespell needs a file.
     [[ "${file}" != *.md ]] || markdown_changed=1
-    # The doc gates read every tracked Markdown file, and codespell follows
-    # links, so a committed link could make them print a host file. Residual:
-    # a link swapped in after this check is a same-user race.
-    if [[ -L "${file}" ]]; then
-      echo "pre-push: ${file} is a symlink; the gates must not follow it into the host." >&2
-      symlinked=1
-    elif [[ -e "${file}" ]]; then
+    if [[ -e "${file}" ]]; then
       changed_files+=("${file}")
     else
       # A Markdown link can name any file type, so any removal can break one.

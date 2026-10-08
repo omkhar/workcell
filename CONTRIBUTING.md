@@ -42,7 +42,8 @@ skips the generated artifacts and doc language checks. Set
 These checks run in a temporary detached checkout of each pushed commit.
 Working-tree edits and untracked files do not change the result. The doc link
 check runs when a Markdown file or any other file is deleted or renamed. A changed
-symlink fails the push before any check reads the checkout.
+symlink fails the push before any check runs. The hook reads the file mode from
+the pushed commit, not from the disk.
 
 The checks come from your checked-out tree, not from the pushed commit. A pushed
 commit is untrusted code, and the hook holds your credentials. The generated
