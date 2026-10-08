@@ -727,6 +727,17 @@ func evaluates(names []string) bool {
 	return len(script) > 0 && script[0] == "eval"
 }
 
+// assignmentPrefix returns how many leading words are assignments that bash
+// applies to the command word after them. The command word has no "=", so any
+// word with one counts; a stray a-b=1 is then read as an assignment too.
+func assignmentPrefix(words []string) int {
+	count := 0
+	for count < len(words) && strings.Contains(words[count], "=") {
+		count++
+	}
+	return count
+}
+
 // replacesShell reports whether the words are an exec that names a program,
 // which replaces the shell so that nothing written after it runs. An exec
 // carrying only redirections, as in exec 2>&1, changes the shell's own

@@ -75,7 +75,8 @@ internal/metadatautil	ValidateRequirements	1	the prefix checks a requirement ID 
 internal/metadatautil	ValidateUpstreamRefreshWorkflow	2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	afterDeclaration	1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	applyPlanText	2	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	assignsInRun	2	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	assignmentPrefix	1	the match reads the parsed argv words of one command
+internal/metadatautil	assignsInRun	1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	assignsWord	1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	carriesParen	2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	checkIngVerbs	1	unreviewed debt: review the subject, then port or justify

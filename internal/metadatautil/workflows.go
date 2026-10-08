@@ -304,14 +304,8 @@ func assignsInRun(script, name string) bool {
 			}
 			continue
 		}
-		for _, word := range words {
-			if assignsWord(word, name) {
-				return true
-			}
-			// A plain assignment prefix precedes the command word, which has no "=".
-			if !strings.Contains(word, "=") {
-				break
-			}
+		if slices.ContainsFunc(words[:assignmentPrefix(words)], func(word string) bool { return assignsWord(word, name) }) {
+			return true
 		}
 	}
 	return false
