@@ -136,3 +136,33 @@ func TestRelativePathWithinRejectsOutsideRoot(t *testing.T) {
 		t.Fatal("RelativePathWithin unexpectedly accepted a path outside the root")
 	}
 }
+
+// A directory swapped in at the name during the recursion survives, and the
+// traversed tree goes. Not parallel: the test sets the package hook.
+func TestRemoveAllAtNoFollowRemovesTheTraversedTree(t *testing.T) {
+	base := t.TempDir()
+	tree := filepath.Join(base, "tree")
+	if err := os.MkdirAll(filepath.Join(tree, "a"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	removeAllHook = func() {
+		removeAllHook = func() {}
+		_ = os.Rename(tree, filepath.Join(base, "moved")) // the name is already staged after the fix
+		if err := os.Mkdir(tree, 0o700); err != nil {
+			t.Error(err)
+		}
+	}
+	defer func() { removeAllHook = func() {} }()
+	parent, err := os.Open(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	if err := RemoveAllAtNoFollow(parent, "tree"); err != nil {
+		t.Fatalf("RemoveAllAtNoFollow() error = %v", err)
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "tree" {
+		t.Fatalf("expected only the replacement to remain, found %v, %v", entries, err)
+	}
+}

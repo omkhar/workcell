@@ -138,6 +138,26 @@ func TestCheckHardenedIORatchet(t *testing.T) {
 	}
 }
 
+// A literal is part of the call, so changing it breaks the identity, while a
+// reflow of the same call keeps it.
+func TestHardenedCallIdentityKeepsLiterals(t *testing.T) {
+	t.Parallel()
+	identity := func(call string) string {
+		findings, err := metadatautil.HardenedIOFindings("package x\n\nimport \"os\"\n\nfunc f() {\n\t" + call + "\n}\n")
+		if err != nil || len(findings) != 1 {
+			t.Fatalf("HardenedIOFindings(%q) = %v, %v", call, findings, err)
+		}
+		return findings[0].Call
+	}
+	spaced := identity(`os.ReadFile("safe path")`)
+	if spaced == identity(`os.ReadFile("safepath")`) {
+		t.Fatal("a changed literal kept the identity")
+	}
+	if spaced != identity("os.ReadFile(\n\t\t\"safe path\",\n\t)") {
+		t.Fatal("a reflowed call lost its identity")
+	}
+}
+
 // A missing tree must fail rather than pass over source it never read.
 func TestCheckHardenedIORejectsAMissingTree(t *testing.T) {
 	t.Parallel()

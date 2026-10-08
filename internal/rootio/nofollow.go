@@ -100,6 +100,11 @@ func openDirectoryChain(fd int, components []string) (int, error) {
 // like os.RemoveAll. Each directory opens relative to its parent's descriptor
 // with O_NOFOLLOW, so a symlink is unlinked as a leaf and its target is kept.
 // A missing name is not an error.
+//
+// Each entry is renamed to a random staged name first, and the walk and the
+// unlink use that name, so a directory swapped in at the original name is
+// kept. Residual risk: an actor that can rename in the parent can swap the
+// staged name too; that actor is the same user, outside the threat model.
 func RemoveAllAtNoFollow(parent *os.File, name string) error {
 	if err := validateLeafName(name); err != nil {
 		return err
@@ -108,20 +113,26 @@ func RemoveAllAtNoFollow(parent *os.File, name string) error {
 }
 
 func removeAllAt(parentFD int, name string) error {
-	fd, err := unix.Openat(parentFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	switch {
-	case errors.Is(err, unix.ENOENT):
-		return nil
-	case errors.Is(err, unix.ENOTDIR), errors.Is(err, unix.ELOOP):
-		// A file or a symlink: remove the entry itself, never its target.
-		if err := unix.Unlinkat(parentFD, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
-			return err
-		}
-		return nil
-	case err != nil:
+	suffix, err := randomSuffix()
+	if err != nil {
 		return err
 	}
-	dir := os.NewFile(uintptr(fd), name)
+	staged := ".workcell-rm-" + suffix
+	// renameNoReplaceAt refuses a staged name that already exists.
+	if err := renameNoReplaceAt(parentFD, name, staged); errors.Is(err, unix.ENOENT) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+		// A file or a symlink: remove the entry itself, never its target.
+		return unix.Unlinkat(parentFD, staged, 0)
+	}
+	if err != nil {
+		return err
+	}
+	dir := os.NewFile(uintptr(fd), staged)
 	names, err := dir.Readdirnames(-1)
 	for _, child := range names {
 		if err == nil {
@@ -134,8 +145,12 @@ func removeAllAt(parentFD int, name string) error {
 	if err != nil {
 		return err
 	}
-	return unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR)
+	removeAllHook()
+	return unix.Unlinkat(parentFD, staged, unix.AT_REMOVEDIR)
 }
+
+// removeAllHook lets a test rename entries before a directory is removed.
+var removeAllHook = func() {}
 
 // ReadFileNoFollow reads one regular file through a descriptor-relative,
 // no-follow traversal. It accepts files up to limit bytes.

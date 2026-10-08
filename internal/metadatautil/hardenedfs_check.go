@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"go/types"
 	"io/fs"
@@ -342,9 +343,10 @@ func hardenedFindings(fileSet *token.FileSet, file *ast.File, source string, sym
 
 // hardenedCallIdentity hashes the enclosing function name and the source text
 // of the call that selector heads, or of selector itself when it is a value.
-// Whitespace is removed, so a gofmt reflow keeps the identity. A line number
-// is not part of it, because an unrelated edit above the call would move it.
-func hardenedCallIdentity(fileSet *token.FileSet, source, scope string, selector *ast.SelectorExpr, stack []ast.Node) string {
+// The text is reprinted from the syntax tree with no positions, so a reflow
+// keeps the identity while a changed literal breaks it. A line number is not
+// part of it, because an unrelated edit above the call would move it.
+func hardenedCallIdentity(_ *token.FileSet, _, scope string, selector *ast.SelectorExpr, stack []ast.Node) string {
 	var expr ast.Node = selector
 	parent := len(stack) - 2
 	for parent >= 0 {
@@ -358,9 +360,9 @@ func hardenedCallIdentity(fileSet *token.FileSet, source, scope string, selector
 			expr = call
 		}
 	}
-	start := fileSet.PositionFor(expr.Pos(), false).Offset
-	end := fileSet.PositionFor(expr.End(), false).Offset
-	sum := sha256.Sum256([]byte(scope + "\x00" + strings.Join(strings.Fields(source[start:end]), "")))
+	var text strings.Builder
+	_ = printer.Fprint(&text, token.NewFileSet(), expr) // a parsed expression always prints
+	sum := sha256.Sum256([]byte(scope + "\x00" + text.String()))
 	return hex.EncodeToString(sum[:4])
 }
 
