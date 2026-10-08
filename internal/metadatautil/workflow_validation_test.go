@@ -1354,14 +1354,37 @@ jobs:
       contents: read
       issues: write
     steps:
+      - id: secrets
+        shell: bash --noprofile --norc -euo pipefail {0}
+        env:
+          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRIVATE_KEY}" ]]; then
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md."
+            exit 0
+          fi
+          echo "present=true" >> "${GITHUB_OUTPUT}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          name: upstream-refresh-candidate
+          path: ${{ runner.temp }}/candidate
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        if: steps.secrets.outputs.present == 'true'
         with:
           client-id: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}
           private-key: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
       - shell: bash --noprofile --norc -euo pipefail {0}
+        if: steps.secrets.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SCOPE_GUARD_RESULT: ${{ needs.scope-guard.outputs.result }}
@@ -1385,7 +1408,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 	}{
 		{"refresh job PR creation", `gh issue create --title "Upstream refresh candidate" --body "metadata.json"`, "gh issue create --title x\n          gh pr create --draft", "refresh job must not contain"},
 		{"refresh job contents write", "      contents: read\n      issues: write", "      contents: write\n      issues: write", "refresh job must grant exactly"},
-		{"publish pull-requests write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: read\n      pull-requests: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must grant exactly"},
+		{"publish pull-requests write", "      contents: read\n      issues: write\n    steps:\n      - id: secrets", "      contents: read\n      pull-requests: write\n      issues: write\n    steps:\n      - id: secrets", "publish job must grant exactly"},
 		{"refresh job environment", "  refresh:\n", "  refresh:\n    environment:\n      name: upstream-refresh\n", "refresh job must not bind an environment"},
 		{"refresh job mints App token", "      - run: |\n          jq -n", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - run: |\n          jq -n", "must not mint the GitHub App token"},
 		{"scope-guard extra permission", "      contents: read\n    steps:\n      - uses: actions/checkout", "      contents: read\n      issues: write\n    steps:\n      - uses: actions/checkout", "scope-guard job must run the scope guard"},
@@ -1394,7 +1417,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"scope-guard shell override", "        shell: bash --noprofile --norc -euo pipefail {0}\n        continue-on-error", "        shell: sh -c 'exit 0' {0}\n        continue-on-error", "scope-guard job must run the scope guard as its only run step"},
 		{"scope-guard second run step", "      - id: guard\n", "      - run: echo 'exit 0' > ./scripts/ci/upstream-refresh-scope-guard.sh\n      - id: guard\n", "reviewed checkout, candidate download"},
 		{"scope-guard renamed step", "      - id: guard\n", "      - id: check\n", "scope-guard job must run the scope guard as its only run step"},
-		{"publish contents write", "      contents: read\n      issues: write\n    steps:\n      - id: app-token", "      contents: write\n      issues: write\n    steps:\n      - id: app-token", "publish job must grant exactly"},
+		{"publish contents write", "      contents: read\n      issues: write\n    steps:\n      - id: secrets", "      contents: write\n      issues: write\n    steps:\n      - id: secrets", "publish job must grant exactly"},
 		{"publish missing environment", "    environment:\n      name: upstream-refresh\n", "", "publish job must bind the upstream-refresh environment"},
 		{"scope-guard checkout from another repository", "          persist-credentials: false\n      - uses: actions/download", "          persist-credentials: false\n          repository: evil/other\n      - uses: actions/download", "reviewed checkout, candidate download"},
 		{"refresh publishes behind a line continuation", "          gh issue create --title \"Upstream refresh candidate\"", "          gh pr \\\n            create --fill\n          gh issue create --title \"Upstream refresh candidate\"", "must not contain \"gh pr create\""},
@@ -1408,8 +1431,8 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 		{"scope-guard job env sets BASH_ENV", "  scope-guard:\n", "  scope-guard:\n    env:\n      BASH_ENV: ./exit0.sh\n", "not inherit workflow or job env"},
 		{"workflow env sets NODE_OPTIONS", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n", "env:\n  WORKCELL_COSIGN_VERSION: v3.0.6\n  NODE_OPTIONS: --require=${{ github.workspace }}/wrapper.js\n", "not inherit workflow or job env"},
 		{"publish job env sets BASH_ENV", "    environment:\n      name: upstream-refresh\n", "    environment:\n      name: upstream-refresh\n    env:\n      BASH_ENV: ./wrapper.sh\n", "not inherit workflow or job env"},
-		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - env:", "must run only the publish script"},
-		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:", "must not run other steps before the publish script"},
+		{"publisher drops its shell pin", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        if: steps.secrets.outputs.present == 'true'\n", "      - if: steps.secrets.outputs.present == 'true'\n", "must run only the publish script"},
+		{"publish replaces the script before running it", "      - shell: bash --noprofile --norc -euo pipefail {0}\n        if:", "      - run: echo x > scripts/ci/upstream-refresh-publish.sh\n      - shell: bash --noprofile --norc -euo pipefail {0}\n        if:", "must not run other steps before the publish script"},
 		{"publish step reads the whole steps context", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n", "          ./scripts/ci/upstream-refresh-publish.sh candidate \"${SCOPE_GUARD_RESULT}\" audit.md\n      - env:\n          T: ${{ toJSON(STEPS) }}\n        run: echo\n", "App token only in the publish script step"},
 		{"scope-guard runs in a container", "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "    container: attacker/image\n    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout", "must run on ubuntu-latest and must not run in a container"},
 		{"publish runs on a self-hosted runner", "  publish:\n    runs-on: ubuntu-latest\n", "  publish:\n    runs-on: self-hosted\n", "must run on ubuntu-latest"},
@@ -1456,13 +1479,7 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T) {
 	t.Parallel()
 	const gate = "        if: steps.secrets.outputs.present == 'true'\n"
-	gated := strings.Replace(upstreamRefreshWorkflowFixture, "    steps:\n      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n",
-		"    steps:\n      - id: secrets\n        shell: bash --noprofile --norc -euo pipefail {0}\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: |\n"+
-			"          if [[ -z \"${APP_CLIENT_ID}\" || -z \"${APP_PRIVATE_KEY}\" ]]; then\n            echo \"present=false\" >> \"${GITHUB_OUTPUT}\"\n            echo \"::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md.\"\n            exit 0\n          fi\n          echo \"present=true\" >> \"${GITHUB_OUTPUT}\"\n"+
-			"      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"+gate+"        with:\n          persist-credentials: false\n"+
-			"      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n"+gate+"        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n"+
-			"      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n"+gate, 1)
-	gated = strings.Replace(gated, "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:\n          GH_TOKEN:", "      - shell: bash --noprofile --norc -euo pipefail {0}\n"+gate+"        env:\n          GH_TOKEN:", 1)
+	gated := upstreamRefreshWorkflowFixture
 	if strings.Count(gated, gate) != 4 {
 		t.Fatalf("gated fixture has %d conditions, want 4", strings.Count(gated, gate))
 	}
@@ -1479,7 +1496,11 @@ func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T)
 		"checkout skipped": func(s string) string {
 			return strings.Replace(s, "# v7.0.1\n"+gate, "# v7.0.1\n        if: false\n", 1)
 		},
-		"download ungated":                   func(s string) string { return strings.Replace(s, "# v8.0.1\n"+gate, "# v8.0.1\n", 1) },
+		"download ungated":   func(s string) string { return strings.Replace(s, "# v8.0.1\n"+gate, "# v8.0.1\n", 1) },
+		"every gate removed": func(s string) string { return strings.ReplaceAll(s, gate, "") },
+		"publisher gate differs": func(s string) string {
+			return strings.Replace(s, "{0}\n"+gate+"        env:\n          GH_TOKEN:", "{0}\n        if: always() && steps.secrets.outputs.present == 'true'\n        env:\n          GH_TOKEN:", 1)
+		},
 		"checkout after the publisher":       func(s string) string { return moveStepToEnd(s, "      - uses: actions/checkout@") },
 		"download after the publisher":       func(s string) string { return moveStepToEnd(s, "      - uses: actions/download-artifact@") },
 		"App token mint after the publisher": func(s string) string { return moveStepToEnd(s, "      - id: app-token\n") },

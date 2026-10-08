@@ -906,6 +906,10 @@ const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRI
 fi
 echo "present=true" >> "${GITHUB_OUTPUT}"`
 
+// upstreamRefreshPresenceGate is the exact condition that gates the publisher
+// and each prerequisite on the presence check.
+const upstreamRefreshPresenceGate = "steps.secrets.outputs.present == 'true'"
+
 func commandRuns(run, command string) []Invocation { return ShellInvocations(run, command) }
 
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
@@ -1048,7 +1052,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 		// A step skipped by its condition runs nothing. Only the reviewed
 		// credential check may gate the publisher.
 		publishRun := step.Run
-		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != "steps.secrets.outputs.present == 'true'" {
+		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != upstreamRefreshPresenceGate {
 			publishRun = ""
 		}
 		publisher := len(commandRuns(publishRun, "./scripts/ci/upstream-refresh-publish.sh")) > 0
@@ -1113,8 +1117,10 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	if appTokenSteps != 1 || publishRuns != 1 {
 		return fmt.Errorf("%s publish job must mint one App token and run the publish script once", path)
 	}
-	if publisherCondition != "" && presenceChecks != 1 {
-		return fmt.Errorf("%s publish job must check the App credentials once before the publish script", path)
+	// Without the gate the token action runs on empty credentials and the
+	// skip notice never applies.
+	if publisherCondition != upstreamRefreshPresenceGate || presenceChecks != 1 {
+		return fmt.Errorf("%s publish job must check the App credentials once before the publish script and run it only when %s", path, upstreamRefreshPresenceGate)
 	}
 	for _, prerequisite := range prerequisiteConditions {
 		if prerequisite != publisherCondition {
