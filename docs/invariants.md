@@ -88,6 +88,9 @@ A `$(...)` that is an argument of a command such as `local` or `[[` cannot
 be captured that way. A heredoc that the check cannot end fails the check.
 A line can instead state its reason with a `# fail-closed: <reason>` comment.
 
+A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
+those tools. Only `wait "$!"` captures a process substitution.
+
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
 today. A count that does not match its baseline fails the check. Repair a hit,
 then lower the count in the same change.

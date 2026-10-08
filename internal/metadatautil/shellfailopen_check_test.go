@@ -4,9 +4,11 @@
 package metadatautil_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,6 +62,21 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"substitution right of &&", "true && out=$(git ls-files)\n", "command-substitution"},
 		{"command word after the substitution", "OUT=$(git ls-files) true || exit 1\n", "command-substitution"},
 		{"later substitution owns the status", "out=$(git ls-files) filler=$(true)\nrc=$?\n", "command-substitution"},
+		{"tool after && in a substitution", "out=$(cd x && git ls-files)\n", "command-substitution"},
+		{"tool after ; in a substitution", "out=$(printf ready; git ls-files)\n", "command-substitution"},
+		{"|| true inside a substitution", "out=$(git ls-files || true) || exit 1\n", "command-substitution"},
+		{"later command inside a substitution", "out=$(git ls-files; true) || exit 1\n", "command-substitution"},
+		{"wait for another job", "out=$(git ls-files)\nwait \"$pid\"\n", "command-substitution"},
+		{"process substitution then wait for another job", "while read -r f; do :; done < <(find . -type f)\nwait \"$pid\"\n", "process-substitution"},
+		{"tool behind env", "env LC_ALL=C git fetch || true\n", "or-true"},
+		{"tool behind command", "command git fetch || true\n", "or-true"},
+		{"tool behind nice", "nice -n 5 git gc || true\n", "or-true"},
+		{"tool behind xargs", "xargs git rm 2>/dev/null\n", "dev-null"},
+		{"tool behind sudo", "sudo git fetch || true\n", "or-true"},
+		{"eval in a substitution", "out=$(eval \"$cmd\")\n", "command-substitution"},
+		{"variable command word in a substitution", "out=$(\"${tool}\" ls)\n", "command-substitution"},
+		{"source in a substitution", "out=$(source ./x.sh)\n", "command-substitution"},
+		{"|| true behind a quote nested in a substitution", "x=\"$(getent passwd \"${uid}\" | cut -d: -f1 || true)\"\n", "or-true"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
 		{"status handler after a multi-line substitution", "x=\"$(\n  git ls-files\n)\" || exit 1\n", ""},
@@ -79,6 +96,13 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"heredoc body", "cat <<'EOF'\ngit fetch || true\nEOF\n", ""},
 		{"not a tool call", "grep -q x file || true\n", ""},
 		{"path is not a tool", "ls .git/hooks 2>/dev/null\n", ""},
+		{"tool name as an argument", "printf '%s\\n' git || true\n", ""},
+		{"tool name after echo", "echo gh 2>/dev/null\n", ""},
+		{"handled tool after &&", "out=$(cd x && git ls-files) || exit 1\n", ""},
+		{"handler inside the substitution", "out=$(git ls-files || exit 1) || exit 1\n", ""},
+		{"command -v runs nothing", "bin=$(command -v docker 2>/dev/null || true)\n", ""},
+		{"|| inside a [[ ]] test", "x=\"$([[ \"$a\" == b || \"$c\" == d ]] && printf y)\"\n", ""},
+		{"escaped ; is an argument", "if ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -93,11 +117,33 @@ func TestShellFailOpenFindings(t *testing.T) {
 				}
 				return
 			}
-			if len(findings) == 0 || findings[0].Rule != testCase.rule {
+			if !slices.ContainsFunc(findings, func(each metadatautil.ShellFailOpenFinding) bool { return each.Rule == testCase.rule }) {
 				t.Fatalf("findings = %v, want rule %s", findings, testCase.rule)
 			}
 		})
 	}
+}
+
+// The wait a process substitution needs is a command the script must run, so
+// every row of the shared corpus hides it and must leave the hit reported.
+func TestShellFailOpenFindingsRejectsEvasions(t *testing.T) {
+	t.Parallel()
+	anchor := `wait "$!"`
+	script := "while read -r f; do :; done < <(find . -type f)\n" + anchor + "\n"
+	validate := func(script string) error {
+		findings, err := metadatautil.ShellFailOpenFindings(script)
+		if err != nil {
+			return fmt.Errorf("process-substitution unproven: %w", err)
+		}
+		if len(findings) > 0 {
+			return fmt.Errorf("%s at line %d", findings[0].Rule, findings[0].Line)
+		}
+		return nil
+	}
+	if err := validate(script); err != nil {
+		t.Fatal(err)
+	}
+	RequireRejectsAllEvasions(t, script, anchor, "process-substitution", validate)
 }
 
 // A heredoc body this reader cannot end could hide any command, so the scan

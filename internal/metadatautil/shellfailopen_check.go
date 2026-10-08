@@ -38,9 +38,10 @@ import (
 //
 // The scan reads lines with shellWords, the reader ShellInvocations uses, so
 // quotes, comments, heredocs and an open `$(` mean the same thing to both.
-// ShellInvocations itself is not usable here: it drops the body of a compound
-// command and the inside of `$(` and `<(`, which are exactly the places this
-// class hides in.
+// ShellInvocations drops the body of a compound command and the inside of `$(`
+// and `<(`, where this class hides, so it reads only the `wait "$!"` that
+// captures a process substitution: that wait is a command the script must
+// run, which the shared evasion corpus can hide.
 func CheckShellFailOpen(rootDir string) error {
 	files, err := shellFailOpenFiles(rootDir)
 	if err != nil {
@@ -116,27 +117,42 @@ type ShellFailOpenFinding struct {
 
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
-	// toolCommand matches a tool word in command position, so `git` inside a
-	// path or an argument is not a call.
+	// shellCommandPosition ends where a command word starts: after the start,
+	// an operator or an opener, then any reserved word, assignment, or wrapper
+	// that runs the word after it (env, command, nice, xargs, sudo) with its
+	// options. `git` in a path or an argument, or after command -v, is not a call.
+	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|command(?:\\s+-p)?|nice(?:\\s+-n\\s*-?[0-9]+)?|(?:env|exec|xargs|sudo)(?:\\s+-\\S+)*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
-	shellToolCommand = regexp.MustCompile("(^|[\\s;&|(`])" + shellFailOpenTools + `[\s;&|)<>]`)
-	shellToolName    = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
-	shellToolSubst   = regexp.MustCompile(`\$\(\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+|command\s+|builtin\s+)*` + shellFailOpenTools + `\b`)
-	shellOrTrue      = regexp.MustCompile(`\|\|\s*true\b`)
+	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
+	// shellUnnamedCommand is a command word this reader cannot name: an
+	// expansion, a quoted word or a command that runs text. It may run a tool,
+	// so a substitution that holds one counts as a tool substitution.
+	shellUnnamedCommand = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)
+	shellToolName       = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
+	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
+	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
+	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
+	// shellInnerMask is a command after the tool inside a substitution that
+	// does not run only on its success, so its status replaces the tool's.
+	// shellInnerHandler is a failure branch, which keeps a failed status.
+	shellInnerMask    = regexp.MustCompile(`(?:[;\n&]|\|\|)\s*[^\s;&|)]`)
+	shellInnerHandler = regexp.MustCompile(`&&|[<>]&|\|\|\s*(?:exit|return|die|false)\b`)
+	shellOrTrue       = regexp.MustCompile(`\|\|\s*true\b`)
 	// shellProcessSubst is an input redirection from a process substitution,
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
 	// shellFailOpenCapture is a status capture or a completion sentinel: the
-	// status is read ($?, PIPESTATUS, wait), a failure branch runs
+	// status is read ($?, PIPESTATUS), a failure branch runs
 	// (|| exit, || return, || die, || fail*, || { ... }), the call is the test
 	// of an if/while, or the block records completion (walk_completed, the house form of
 	// scripts/verify-release-outputs.sh) or names a sentinel that proves it finished.
-	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|\bwait\b|\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)|sentinel|\w_completed\b`)
+	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)|sentinel|\w_completed\b`)
 	// shellFailOpenStatusRead reads the status the command before it left, so
-	// it captures a hit only in the command right after the hit.
-	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS|\bwait\b`)
+	// it captures a hit only in the command right after the hit. A wait
+	// returns the status of the job it names, never of a substitution.
+	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
 	// shellFailOpenTested is a command that is the test of an if/while. It
 	// covers a substitution, never a `done < <(` loop header, where the loop's
 	// own while says nothing about the inner command.
@@ -244,27 +260,30 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		}
 		// The last entry is the first command of the next statement, which
 		// reads the status this statement leaves.
-		commands := append(shellFailOpenCommands(statement.code, statement.raw), "")
+		commands, raws := shellFailOpenCommands(statement.code, statement.raw)
+		commands, raws = append(commands, ""), append(raws, "")
 		for next := index + 1; next < len(statements); next++ {
 			if strings.TrimSpace(statements[next].code) != "" {
-				commands[len(commands)-1] = shellFailOpenCommands(statements[next].code, statements[next].raw)[0]
+				nextCommands, nextRaws := shellFailOpenCommands(statements[next].code, statements[next].raw)
+				commands[len(commands)-1], raws[len(raws)-1] = nextCommands[0], nextRaws[0]
 				break
 			}
 		}
 		hits := map[string]bool{}
 		for at, command := range commands[:len(commands)-1] {
 			after := commands[at+1]
-			hasTool := shellToolCommand.MatchString(" "+command+" ") || shellToolSubst.MatchString(command)
+			toolSubst := len(shellToolSubsts(command)) > 0
+			hasTool := shellToolCommand.MatchString(command) || toolSubst
 			// A loop reports its inner status only through a check after it, such
 			// as the walk_completed sentinel, so the next command may capture it.
 			// A status read or a handler covers only a call written before it.
 			rest := command[shellFailOpenFirstCall(command):]
 			captured := shellFailOpenCapture.MatchString(rest)
-			looped := captured || shellFailOpenCapture.MatchString(after)
+			looped := captured || shellFailOpenCapture.MatchString(after) || shellFailOpenWaited(raws[at+1])
 			tested := captured || shellFailOpenStatusRead.MatchString(after) || shellFailOpenTested.MatchString(command) ||
-				shellFailOpenAnd.MatchString(rest)
+				shellFailOpenAnd.MatchString(shellOutsideSubsts(rest))
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command) && !looped
-			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || shellToolSubst.MatchString(command) && (!tested || shellSubstMasked(command))
+			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && (!tested || shellSubstMasked(command))
 			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
 			hits[ruleDevNull] = hits[ruleDevNull] || hasTool && shellDevNull.MatchString(command) && !tested
 		}
@@ -281,15 +300,49 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 // substitution in a command starts, or the command's length when it has none.
 func shellFailOpenFirstCall(command string) int {
 	first := len(command)
-	if loc := shellToolCommand.FindStringIndex(" " + command + " "); loc != nil {
-		first = min(first, max(loc[0]-1, 0))
-	}
-	for _, re := range []*regexp.Regexp{shellToolSubst, shellProcessSubst} {
+	for _, re := range []*regexp.Regexp{shellToolCommand, shellProcessSubst} {
 		if loc := re.FindStringIndex(command); loc != nil {
 			first = min(first, loc[0])
 		}
 	}
+	if starts := shellToolSubsts(command); len(starts) > 0 {
+		first = min(first, starts[0])
+	}
 	return first
+}
+
+// shellOutsideSubsts returns the command with each $(...) body removed, so
+// an operator inside a substitution is not read as one of the command's.
+func shellOutsideSubsts(command string) string {
+	outside, _ := withoutExpansions(command)
+	return outside
+}
+
+// shellToolSubsts returns where each $( starts whose body runs a tool or a
+// command this reader cannot name, in any command of the body.
+func shellToolSubsts(command string) []int {
+	var starts []int
+	for _, loc := range shellSubstOpen.FindAllStringIndex(command, -1) {
+		body := shellSubstBody(command, loc[0])
+		if shellToolCommand.MatchString(body) || shellUnnamedCommand.MatchString(shellTestExpr.ReplaceAllString(body, "")) {
+			starts = append(starts, loc[0])
+		}
+	}
+	return starts
+}
+
+// shellSubstBody returns the text between the $( at start and its ).
+func shellSubstBody(command string, start int) string {
+	return strings.TrimSuffix(command[start+2:shellSubstEnd(command, start)], ")")
+}
+
+// shellFailOpenWaited reports whether a command is wait "$!", the one wait
+// that returns a process substitution's status. ShellInvocations proves the
+// wait runs and is the command's first.
+func shellFailOpenWaited(raw string) bool {
+	return slices.ContainsFunc(ShellInvocations(raw, "wait"), func(each Invocation) bool {
+		return each.Position == 1 && slices.Equal(each.Args, []string{"$!"})
+	})
 }
 
 // shellSubstMasked reports whether a tool substitution is an argument of a
@@ -297,17 +350,23 @@ func shellFailOpenFirstCall(command string) int {
 // true, or is followed by a later substitution, as in x=$(git ...) y=$(true).
 // That command's or that substitution's status replaces the tool's, so no
 // test or handler can see it. Only a command made of assignments and
-// redirections keeps the status of its last substitution.
+// redirections keeps the status of its last substitution. A command after
+// the tool inside the substitution masks it too, as in $(git ... || true).
 func shellSubstMasked(command string) bool {
-	for _, loc := range shellToolSubst.FindAllStringIndex(command, -1) {
-		prefix := command[:loc[0]]
+	for _, start := range shellToolSubsts(command) {
+		body := shellSubstBody(command, start)
+		if tools := shellToolCommand.FindAllStringIndex(body, -1); len(tools) > 0 &&
+			shellInnerMask.MatchString(shellInnerHandler.ReplaceAllString(body[tools[len(tools)-1][1]-1:], " ")) {
+			return true
+		}
+		prefix := command[:start]
 		words := strings.Fields(prefix[strings.LastIndexAny(prefix, ";&|(`")+1:])
 		for len(words) > 0 && slices.Contains([]string{"if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"}, words[0]) {
 			words = words[1:]
 		}
 		// The simple command runs on past the substitution to the next
 		// operator or closer.
-		tail := command[shellSubstEnd(command, loc[0]):]
+		tail := command[shellSubstEnd(command, start):]
 		tail = tail[:strings.IndexAny(tail+";", ";&|)")]
 		if shellLaterSubst.MatchString(tail) {
 			return true
@@ -355,9 +414,9 @@ func shellSubstEnd(command string, start int) int {
 // no parenthesis encloses, so a test, a handler or a status read covers only
 // the command it is written on. The list always holds one command. raw is
 // the statement before shellCodeOnly, which keeps its length, so each command
-// is cut at the same place in both and read through shellFailOpenNamed.
-func shellFailOpenCommands(code, raw string) []string {
-	var commands []string
+// is cut at the same place in both, read through shellFailOpenNamed, and
+// returned raw as well.
+func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
 		switch code[index] {
@@ -370,11 +429,12 @@ func shellFailOpenCommands(code, raw string) []string {
 		case ';', '\n':
 			if depth == 0 {
 				commands = append(commands, shellFailOpenNamed(code[start:index], raw[start:index]))
+				raws = append(raws, raw[start:index])
 				start = index + 1
 			}
 		}
 	}
-	return append(commands, shellFailOpenNamed(code[start:], raw[start:]))
+	return append(commands, shellFailOpenNamed(code[start:], raw[start:])), append(raws, raw[start:])
 }
 
 // shellFailOpenNamed returns the command as bash names its words when a quoted
@@ -402,48 +462,51 @@ func shellFailOpenNamed(code, raw string) string {
 	return strings.Join(named, " ")
 }
 
-// shellCodeOnly blanks single-quoted text and double-quoted text that holds no
-// `$(`, so a message that names git or `|| true` is not a command. The caller
-// has already cut each line's comment with shellWords. The result keeps the
-// line's length, so an offset in it is the same offset in the line.
+// shellCodeOnly blanks quoted text, so a message that names git or `|| true`
+// is not a command. A $( inside double quotes opens code again, with quoting
+// of its own, until the ) that closes it. The caller has already cut each
+// line's comment with shellWords. The result keeps the line's length, so an
+// offset in it is the same offset in the line.
 func shellCodeOnly(line string) string {
-	var out strings.Builder
-	var quote byte
-	start := 0
+	out := []byte(line)
+	type frame struct {
+		quote  byte
+		parens int
+	}
+	stack := []frame{{}}
 	for i := 0; i < len(line); i++ {
-		c := line[i]
-		if quote == 0 {
-			switch {
-			case c == '\\' && i+1 < len(line):
-				out.WriteString(line[i : i+2])
-				i++
-			case c == '\'' || c == '"':
-				quote, start = c, i
-			default:
-				out.WriteByte(c)
+		top, c := &stack[len(stack)-1], line[i]
+		switch {
+		case top.quote == '\'':
+			if c == '\'' {
+				top.quote = 0
 			}
-			continue
-		}
-		if quote == '"' && c == '\\' {
+			out[i] = '"'
+		case top.quote == '"' && c == '$' && i+1 < len(line) && line[i+1] == '(':
+			stack = append(stack, frame{})
 			i++
-			continue
+		case top.quote == '"':
+			out[i] = '"'
+			if c == '\\' && i+1 < len(line) {
+				i++
+				out[i] = '"'
+			} else if c == '"' {
+				top.quote = 0
+			}
+		case c == '\\' && i+1 < len(line):
+			out[i+1] = '"' // an escaped byte is quoted text, as in \;
+			i++
+		case c == '\'' || c == '"':
+			top.quote, out[i] = c, '"'
+		case c == '(':
+			top.parens++
+		case c == ')' && top.parens == 0 && len(stack) > 1:
+			stack = stack[:len(stack)-1]
+		case c == ')':
+			top.parens = max(top.parens-1, 0)
 		}
-		if c == quote {
-			out.WriteString(quotedSegment(line[start:i+1], quote))
-			quote = 0
-		}
 	}
-	if quote != 0 {
-		out.WriteString(quotedSegment(line[start:], quote))
-	}
-	return out.String()
-}
-
-func quotedSegment(segment string, quote byte) string {
-	if quote == '"' && strings.Contains(segment, "$(") {
-		return segment
-	}
-	return strings.Repeat(`"`, len(segment))
+	return string(out)
 }
 
 func isShellSource(rel string, content []byte) bool {
