@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -68,6 +69,9 @@ var textMatchPackages = []string{"internal/adapters", "internal/metadatautil", "
 func checkTextMatchBaseline(rootDir string) error {
 	found := map[string]int{}
 	for _, pkg := range textMatchPackages {
+		// An alias declared in one file is called in another, so each package
+		// directory is read as a whole.
+		packages := map[string]map[string]string{}
 		root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: every read below is relative to this handle
 		if err != nil {
 			return fmt.Errorf("open validator package %s: %w", pkg, err)
@@ -94,13 +98,11 @@ func checkTextMatchBaseline(rootDir string) error {
 				return err
 			}
 			scanned++
-			functions, err := TextMatchingFunctions(string(content))
-			if err != nil {
-				return fmt.Errorf("%s/%s: %w", pkg, name, err)
+			dir := path.Join(pkg, path.Dir(name))
+			if packages[dir] == nil {
+				packages[dir] = map[string]string{}
 			}
-			for _, function := range functions {
-				found[path.Join(pkg, path.Dir(name))+"\t"+function]++
-			}
+			packages[dir][pkg+"/"+name] = string(content)
 			return nil
 		})
 		closeErr := root.Close()
@@ -112,6 +114,15 @@ func checkTextMatchBaseline(rootDir string) error {
 		}
 		if scanned == 0 {
 			return fmt.Errorf("no Go source under the validator package %s; refusing a vacuous pass", pkg)
+		}
+		for dir, sources := range packages {
+			functions, err := TextMatchingFunctions(sources)
+			if err != nil {
+				return err
+			}
+			for _, function := range functions {
+				found[dir+"\t"+function]++
+			}
 		}
 	}
 	baseline, err := loadTextMatchBaseline(filepath.Join(rootDir, textMatchBaselinePath))
@@ -173,12 +184,14 @@ func loadTextMatchBaseline(baselinePath string) (map[string]int, error) {
 	return baseline, nil
 }
 
-// TextMatchingFunctions returns each function in source, as Name or Type.Name,
-// that matches text with strings or bytes Contains, HasPrefix or Index, or with
-// regexp, and each package-level variable whose initializer does. A name
+// TextMatchingFunctions returns each function in the sources of one package,
+// keyed by file name, as Name or Type.Name, that matches text with strings or
+// bytes Contains, HasPrefix or Index, or with regexp, and each package-level
+// variable whose initializer does. A name
 // appears once per match call, so a new match in a listed function changes
 // its count. A package is known by its import path, so an alias or a dot
-// import does not hide it. It does not
+// import does not hide it, and a call through a function value bound to a
+// match, as contains := strings.Contains binds one, is a match too. It does not
 // ask where the text came from. Content read inside the match call, or read in
 // one function and matched in a helper, is the same bypassable class, and only
 // counting every match never misses one. A call whose arguments are all
@@ -188,11 +201,49 @@ func loadTextMatchBaseline(baselinePath string) (map[string]int, error) {
 // ponytail: counting every match lists matches on decoded fields and names as
 // well, so the baseline is longer than the debt; that is the price of a scan
 // that cannot miss.
-func TextMatchingFunctions(source string) ([]string, error) {
-	file, err := parser.ParseFile(token.NewFileSet(), "", source, parser.SkipObjectResolution)
-	if err != nil {
-		return nil, err
+func TextMatchingFunctions(sources map[string]string) ([]string, error) {
+	fileSet := token.NewFileSet()
+	var files []*ast.File
+	var imports []map[string]string
+	for _, name := range slices.Sorted(maps.Keys(sources)) {
+		file, err := parser.ParseFile(fileSet, name, sources[name], parser.SkipObjectResolution)
+		if err != nil {
+			return nil, err
+		}
+		fileImports, err := importNames(file)
+		if err != nil {
+			return nil, err
+		}
+		files, imports = append(files, file), append(imports, fileImports)
 	}
+	aliases := matchAliases(files, imports)
+	var names []string
+	for index, file := range files {
+		for _, declaration := range file.Decls {
+			switch typed := declaration.(type) {
+			case *ast.FuncDecl:
+				if typed.Body != nil {
+					for range contentMatches(typed.Body, imports[index], aliases) {
+						names = append(names, receiverPrefix(typed)+typed.Name.Name)
+					}
+				}
+			case *ast.GenDecl:
+				for _, spec := range typed.Specs {
+					if value, ok := spec.(*ast.ValueSpec); ok {
+						for range contentMatches(value, imports[index], aliases) {
+							names = append(names, value.Names[0].Name)
+						}
+					}
+				}
+			}
+		}
+	}
+	return names, nil
+}
+
+// importNames maps each local package name in file to the package it imports.
+// A dot import is under "." and its path, and its functions have bare names.
+func importNames(file *ast.File) (map[string]string, error) {
 	imports := map[string]string{}
 	for _, spec := range file.Imports {
 		importPath, err := strconv.Unquote(spec.Path.Value)
@@ -208,47 +259,49 @@ func TextMatchingFunctions(source string) ([]string, error) {
 		}
 		imports[local] = path.Base(importPath)
 	}
-	var names []string
-	for _, declaration := range file.Decls {
-		switch typed := declaration.(type) {
-		case *ast.FuncDecl:
-			if typed.Body != nil {
-				for range contentMatches(typed.Body, imports) {
-					names = append(names, receiverPrefix(typed)+typed.Name.Name)
-				}
-			}
-		case *ast.GenDecl:
-			for _, spec := range typed.Specs {
-				if value, ok := spec.(*ast.ValueSpec); ok {
-					for range contentMatches(value, imports) {
-						names = append(names, value.Names[0].Name)
-					}
-				}
+	return imports, nil
+}
+
+// matchAliases returns each name in the package bound to a match function
+// value, by := , = or var, as in var has = strings.HasPrefix. It repeats
+// until no name is new, so an alias of an alias in another file counts too.
+// ponytail: a name is an alias package-wide, scope ignored, so a shadowing
+// local of the same name over-counts; that only lists more.
+func matchAliases(files []*ast.File, imports []map[string]string) map[string]bool {
+	aliases := map[string]bool{}
+	for added := true; added; {
+		added = false
+		bind := func(name ast.Expr, value ast.Expr, imports map[string]string) {
+			if ident, ok := ast.Unparen(name).(*ast.Ident); ok && ident.Name != "_" &&
+				!aliases[ident.Name] && namesMatch(value, imports, aliases) {
+				aliases[ident.Name], added = true, true
 			}
 		}
+		for index, file := range files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				switch typed := node.(type) {
+				case *ast.AssignStmt:
+					for at := range min(len(typed.Lhs), len(typed.Rhs)) {
+						bind(typed.Lhs[at], typed.Rhs[at], imports[index])
+					}
+				case *ast.ValueSpec:
+					for at := range min(len(typed.Names), len(typed.Values)) {
+						bind(typed.Names[at], typed.Values[at], imports[index])
+					}
+				}
+				return true
+			})
+		}
 	}
-	return names, nil
+	return aliases
 }
 
 // contentMatches returns the number of text matches in node that can see
-// content. imports maps each local package name to the package it imports; a
-// dot import is under "." and its path, and its functions have bare names.
-func contentMatches(node ast.Node, imports map[string]string) int {
+// content.
+func contentMatches(node ast.Node, imports map[string]string, aliases map[string]bool) int {
 	count := 0
 	ast.Inspect(node, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok || seesNoContent(call) {
-			return true
-		}
-		pkg, name := calleeName(call)
-		if imported, ok := imports[pkg]; ok {
-			pkg = imported
-		}
-		matched := matchesText(pkg, name)
-		for local, imported := range imports {
-			matched = matched || pkg == "" && local[0] == '.' && matchesText(imported, name)
-		}
-		if matched {
+		if call, ok := node.(*ast.CallExpr); ok && !seesNoContent(call) && namesMatch(call.Fun, imports, aliases) {
 			count++
 		}
 		return true
@@ -256,12 +309,29 @@ func contentMatches(node ast.Node, imports map[string]string) int {
 	return count
 }
 
+// namesMatch reports whether a callee or a function value names a text match:
+// a package function, a method, or a name in aliases.
+func namesMatch(callee ast.Expr, imports map[string]string, aliases map[string]bool) bool {
+	if ident, ok := ast.Unparen(callee).(*ast.Ident); ok && aliases[ident.Name] {
+		return true
+	}
+	pkg, name := calleeName(callee)
+	if imported, ok := imports[pkg]; ok {
+		pkg = imported
+	}
+	matched := matchesText(pkg, name)
+	for local, imported := range imports {
+		matched = matched || pkg == "" && local[0] == '.' && matchesText(imported, name)
+	}
+	return matched
+}
+
 // seesNoContent reports whether a match call searches an error message, as a
 // test assertion does, or has only literal arguments.
 func seesNoContent(call *ast.CallExpr) bool {
 	if len(call.Args) > 0 {
 		if subject, ok := call.Args[0].(*ast.CallExpr); ok {
-			if _, name := calleeName(subject); name == "Error" && len(subject.Args) == 0 {
+			if _, name := calleeName(subject.Fun); name == "Error" && len(subject.Args) == 0 {
 				return true
 			}
 		}
@@ -274,10 +344,10 @@ func seesNoContent(call *ast.CallExpr) bool {
 	return true
 }
 
-// calleeName returns the package or receiver identifier and the name a call
+// calleeName returns the package or receiver identifier and the name a callee
 // names, such as strings and Contains, or "" and the name of a plain call.
-func calleeName(call *ast.CallExpr) (string, string) {
-	switch callee := call.Fun.(type) {
+func calleeName(callee ast.Expr) (string, string) {
+	switch callee := ast.Unparen(callee).(type) {
 	case *ast.Ident:
 		return "", callee.Name
 	case *ast.SelectorExpr:

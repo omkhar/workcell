@@ -85,6 +85,7 @@ this way. It scans `internal/adapters`, `internal/metadatautil`,
 `internal/testkit` and `internal/workcellhardening`, test files included. It
 does not track where the text came from. A helper that matches content from its
 caller is listed too. An import alias or a dot import does not hide the package.
+A call through a function value such as `contains := strings.Contains` counts.
 
 `policy/validator-anchoring-baseline.tsv` holds one row per function: package,
 function, number of match calls, and the reason that the match is safe or still

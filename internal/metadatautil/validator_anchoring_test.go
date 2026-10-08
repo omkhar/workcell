@@ -166,10 +166,13 @@ func TestTextMatchingFunctions(t *testing.T) {
 		"filepath match":        {"func f() { s := readText(p); _, _ = filepath.Match(s, x) }", nil},
 		"split is not a search": {"func f() { s := readText(p); _ = strings.Split(s, x) }", nil},
 		"text about the call":   {"func f() { _ = readText(p) // strings.Contains(s, x)\n}", nil},
+		"function value alias":  {"func f() { contains := strings.Contains; _ = contains(a, x) }", []string{"f"}},
+		"alias of an alias":     {"func f() { c := strings.Contains; var d = c; _ = d(a, x) }", []string{"f"}},
+		"method value alias":    {"var match = regexp.MustCompile(`x`).MatchString\nfunc f() { _ = match(s) }", []string{"f"}},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := metadatautil.TextMatchingFunctions("package p\n\n" + testCase.body + "\n")
+			got, err := metadatautil.TextMatchingFunctions(map[string]string{"a.go": "package p\n\n" + testCase.body + "\n"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,5 +180,15 @@ func TestTextMatchingFunctions(t *testing.T) {
 				t.Fatalf("TextMatchingFunctions() = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+func TestTextMatchingFunctionsResolvesAnAliasFromAnotherFile(t *testing.T) {
+	got, err := metadatautil.TextMatchingFunctions(map[string]string{
+		"a.go": "package p\n\nimport \"strings\"\n\nvar has = strings.HasPrefix\n",
+		"b.go": "package p\n\nfunc f(s string) bool { return has(s, x) }\n",
+	})
+	if err != nil || strings.Join(got, ",") != "f" {
+		t.Fatalf("TextMatchingFunctions() = %v, %v, want [f]", got, err)
 	}
 }
