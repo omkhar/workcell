@@ -101,7 +101,7 @@ func subcommands() []subcommand {
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE [NOW_RFC3339]", 4, 5, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
-		{"flag-inventory", "plan|check ROOT | render ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
+		{"flag-inventory", "plan|check ROOT | render|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -552,8 +552,10 @@ func cmdFlagInventory(args []string) error {
 			_, err = os.Stdout.Write(fixture)
 		}
 		return err
+	case action == "write" && len(args) >= 4:
+		return metadatautil.WriteFlagFixture(root, args[2], args[3:])
 	}
-	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-citools flag-inventory plan|check ROOT | render ROOT ID HELP_FILE..."}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-citools flag-inventory plan|check ROOT | render|write ROOT ID HELP_FILE..."}
 }
 
 func cmdGenerateBuildInputManifest(args []string) error {

@@ -77,14 +77,13 @@ while read -r -a fields; do
     exit 1
   fi
   fixture="${ROOT_DIR}/tests/fixtures/flags/${id}.txt"
-  citools render "${ROOT_DIR}" "${id}" "${help_path}" >"${work_dir}/${id}.txt"
   if [[ "${write}" -eq 1 ]]; then
-    mkdir -p "$(dirname "${fixture}")"
-    staged="$(mktemp "${fixture}.XXXXXX")"
-    cp "${work_dir}/${id}.txt" "${staged}"
-    chmod 644 "${staged}"
-    mv -f -- "${staged}" "${fixture}"
-  elif [[ -L "${ROOT_DIR}/tests" || -L "${ROOT_DIR}/tests/fixtures" || -L "${fixture%/*}" || -L "${fixture}" || ! -f "${fixture}" ]]; then
+    # The Go writer refuses symlinked parents, so the write stays in the checkout.
+    citools write "${ROOT_DIR}" "${id}" "${help_path}"
+    continue
+  fi
+  citools render "${ROOT_DIR}" "${id}" "${help_path}" >"${work_dir}/${id}.txt"
+  if [[ -L "${ROOT_DIR}/tests" || -L "${ROOT_DIR}/tests/fixtures" || -L "${fixture%/*}" || -L "${fixture}" || ! -f "${fixture}" ]]; then
     # diff follows a symlink and would print its target into the CI log.
     echo "Flag inventory: ${fixture} is not a regular file under real directories; refusing to diff a missing, special or symlinked fixture. Run scripts/check-flag-inventory.sh --write." >&2
     status=1

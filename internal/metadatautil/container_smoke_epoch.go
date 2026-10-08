@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -27,40 +28,48 @@ func ValidateContainerSmokeBuildEpoch(script string) error {
 	return nil
 }
 
-// effectiveDockerfile is the Dockerfile buildx would use: the last of -f X,
-// --file X, --file=X or -fX wins, so a later decoy cannot hide behind the
-// required pair.
-func effectiveDockerfile(args []string) string {
-	file := ""
+// optionValues returns, in order, each value buildx reads for one option
+// spelled -s X, --long X, --long=X, -sX or -s=X.
+func optionValues(args []string, short, long string) []string {
+	var values []string
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
-		case arg == "-f" || arg == "--file":
+		case arg == short || arg == long:
 			if i+1 < len(args) {
 				i++
-				file = args[i]
+				values = append(values, args[i])
 			}
-		case strings.HasPrefix(arg, "--file="):
-			file = strings.TrimPrefix(arg, "--file=")
-		case strings.HasPrefix(arg, "-f") && !strings.HasPrefix(arg, "--"):
-			file = strings.TrimPrefix(arg[2:], "=")
+		case strings.HasPrefix(arg, long+"="):
+			values = append(values, strings.TrimPrefix(arg, long+"="))
+		case strings.HasPrefix(arg, short) && !strings.HasPrefix(arg, "--"):
+			values = append(values, strings.TrimPrefix(arg[len(short):], "="))
 		}
 	}
-	return file
+	return values
 }
 
 func ValidateContainerSmokeFlagInventory(script string) error {
+	// Every buildx_cmd call counts, with or without the epoch prefix.
+	var builds []Invocation
+	for _, name := range []string{"buildx_cmd", "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd"} {
+		builds = append(builds, ShellInvocations(script, name)...)
+	}
+	slices.SortFunc(builds, func(a, b Invocation) int { return a.Position - b.Position })
 	build := -1
-	for _, invocation := range ShellInvocations(script, "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd") {
+	for _, invocation := range builds {
 		// NUL-joined argv makes each check exact: a word cannot contain NUL, and
 		// the last --load spelling wins, so a later --load=false is not a load.
 		args := "\x00" + strings.Join(invocation.Args, "\x00") + "\x00"
-		// The last build that tags ${IMAGE_TAG} decides the image, so a later
-		// retagging build must itself comply.
-		if !strings.Contains(args, "${IMAGE_TAG}") {
+		// The last build that names IMAGE_TAG in any spelling decides the
+		// image, so a later retagging build must itself comply.
+		if !strings.Contains(args, "IMAGE_TAG") {
 			continue
 		}
 		build = -1
-		if effectiveDockerfile(invocation.Args) == "${ROOT_DIR}/runtime/container/Dockerfile" && strings.Contains(args, "\x00-t\x00${IMAGE_TAG}\x00") && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
+		// The last -f wins; every -t tags the image.
+		files := optionValues(invocation.Args, "-f", "--file")
+		tags := optionValues(invocation.Args, "-t", "--tag")
+		if len(files) > 0 && files[len(files)-1] == "${ROOT_DIR}/runtime/container/Dockerfile" && (slices.Contains(tags, "${IMAGE_TAG}") || slices.Contains(tags, "$IMAGE_TAG")) && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
 			build = invocation.Position
 		}
 	}

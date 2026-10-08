@@ -39,7 +39,7 @@ func TestParseHelpFlags(t *testing.T) {
 		t.Fatalf("ParseHelpFlags() = %q, %v, want %q", got, err, want)
 	}
 	// An option-looking line with unread syntax fails instead of truncating.
-	for _, line := range []string{"  --model_name <M>", "  --model.foo", "  --model:x", "  -u --unsafe"} {
+	for _, line := range []string{"  --model_name <M>", "  --model.foo", "  --model:x", "  -u --unsafe", "  -?, --help", "  --[no-]color", "  -h -?"} {
 		if got, err := ParseHelpFlags("Options:\n" + line + "\n"); err == nil {
 			t.Errorf("ParseHelpFlags(%q) = %q, want an error", line, got)
 		}
@@ -145,6 +145,35 @@ func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
 	}
 	if err := CheckFlagInventory(root); err == nil {
 		t.Fatal("symlinked fixture: CheckFlagInventory() = nil, want error")
+	}
+}
+
+func TestWriteFlagFixtureRefusesSymlinkedParent(t *testing.T) {
+	t.Parallel()
+
+	root := writeFlagInventoryRepo(t, "")
+	help := filepath.Join(root, "help.txt")
+	mustWriteText(t, help, "Options:\n  --model <M>\n")
+	if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
+		t.Fatalf("WriteFlagFixture() = %v", err)
+	}
+	if _, err := os.Stat(FlagFixturePath(root, "demo")); err != nil {
+		t.Fatal(err)
+	}
+	// An untrusted checkout can point the fixture directory outside itself.
+	outside := t.TempDir()
+	flags := filepath.Dir(FlagFixturePath(root, "demo"))
+	if err := os.RemoveAll(flags); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, flags); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFlagFixture(root, "demo", []string{help}); err == nil {
+		t.Fatal("WriteFlagFixture() through a symlinked parent = nil, want error")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("wrote %v outside the checkout", entries)
 	}
 }
 

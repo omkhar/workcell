@@ -24,13 +24,14 @@ var (
 	// An option line starts with at most six spaces of indentation, so the
 	// deeper-indented description text that names other flags is not read.
 	helpOptionLinePattern = regexp.MustCompile(`^ {1,6}(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*(?:, *-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)*)(?:[ =<\[]|$)`)
-	// helpOptionLikePattern matches a line that starts like an option line. One
-	// that helpOptionLinePattern does not match uses syntax the parser does not
-	// read, so the inventory fails instead of recording a truncated name.
-	helpOptionLikePattern = regexp.MustCompile(`^ {1,6}-{1,2}[A-Za-z0-9]`)
+	// helpOptionLikePattern matches a line that starts like an option line, as
+	// "  -?" or "  --[no-]color" do. One that helpOptionLinePattern does not
+	// match uses syntax the parser does not read, so the inventory fails instead
+	// of dropping or truncating a name.
+	helpOptionLikePattern = regexp.MustCompile(`^ {1,6}-{1,2}\S`)
 	// helpSecondOptionPattern matches text after an option list that starts
 	// another option, as in "  -u --unsafe".
-	helpSecondOptionPattern = regexp.MustCompile(`^ +-{1,2}[A-Za-z0-9]`)
+	helpSecondOptionPattern = regexp.MustCompile(`^ +-{1,2}\S`)
 	flagFixtureStampRE      = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
 )
 
@@ -121,6 +122,21 @@ func RenderFlagFixtureFromHelp(root, id string, helpPaths []string) ([]byte, err
 		return nil, fmt.Errorf("%s help declares no flags", id)
 	}
 	return RenderFlagFixture(m, version, flags), nil
+}
+
+// WriteFlagFixture renders adapter id's fixture and replaces it through a
+// no-follow parent, so a symlinked directory cannot redirect the write.
+func WriteFlagFixture(root, id string, helpPaths []string) error {
+	fixture, err := RenderFlagFixtureFromHelp(root, id, helpPaths)
+	if err != nil {
+		return err
+	}
+	parent, path, err := rootio.OpenParentDirectoryNoFollow(FlagFixturePath(root, id))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), fixture, 0o644, ".flag-fixture-")
 }
 
 // CheckFlagInventory fails when a certified adapter has no fixture, a fixture
