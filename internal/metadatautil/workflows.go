@@ -1049,13 +1049,9 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	condition := func(step workflowStep) string { return strings.TrimSpace(step.If.Value) }
 	publisherCondition, prerequisiteConditions, presenceChecks := "", []string{}, 0
 	for _, step := range publish.Steps {
-		// A step skipped by its condition runs nothing. Only the reviewed
-		// credential check may gate the publisher.
-		publishRun := step.Run
-		if step.If.Kind != 0 && strings.TrimSpace(step.If.Value) != upstreamRefreshPresenceGate {
-			publishRun = ""
-		}
-		publisher := len(commandRuns(publishRun, "./scripts/ci/upstream-refresh-publish.sh")) > 0
+		// Every publisher counts whatever its condition, because GitHub may run
+		// it. The count and the gate check below then reject a second one.
+		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
 		usesToken := false
 		presence := step.ID == "secrets" && step.Uses == "" && step.Shell == upstreamRefreshPublishShell && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
 			strings.TrimSpace(step.Run) == strings.TrimSpace(upstreamRefreshPresenceRun)
@@ -1099,7 +1095,7 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				return fmt.Errorf("%s publish job must mint the App token as step app-token from the client-id secret and private-key secret with only contents and pull-requests write", path)
 			}
 		}
-		for _, run := range commandRuns(publishRun, "./scripts/ci/upstream-refresh-publish.sh") {
+		for _, run := range commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh") {
 			publishRuns++
 			// A literal second argument would pass an out-of-scope candidate.
 			if len(run.Args) != 3 || run.Args[1] != "${SCOPE_GUARD_RESULT}" {
