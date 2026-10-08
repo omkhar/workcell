@@ -48,7 +48,6 @@ unmapped.audit.container_assurance
 unmapped.audit.container_name
 unmapped.audit.debug_log_enabled
 unmapped.audit.endpoints
-unmapped.audit.event
 unmapped.audit.execution_path
 unmapped.audit.exit_status
 unmapped.audit.final_assurance
@@ -77,7 +76,6 @@ unmapped.audit.record_digest
 unmapped.audit.runtime_api
 unmapped.audit.session_assurance_final
 unmapped.audit.session_assurance_initial
-unmapped.audit.session_id
 unmapped.audit.shared_auth_modes
 unmapped.audit.source
 unmapped.audit.ssh_config_assurance
@@ -86,10 +84,8 @@ unmapped.audit.stdin_mode
 unmapped.audit.target_id
 unmapped.audit.target_kind
 unmapped.audit.target_provider
-unmapped.audit.timestamp
 unmapped.audit.transcript_logging
 unmapped.audit.transport_status
-unmapped.audit.ts
 unmapped.audit.ui
 unmapped.audit.unexpected_fields
 unmapped.audit.v

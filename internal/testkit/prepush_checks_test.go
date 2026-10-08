@@ -217,6 +217,41 @@ func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
 	}
 }
 
+func TestFastPrePushRefusesTrackedEdits(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
+	if err := os.WriteFile(filepath.Join(f.root, "doc.md"), []byte("We receive input.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := f.hook()
+	if err == nil {
+		t.Fatalf("fast pre-push gated the edited worktree instead of the pushed commit:\n%s", output)
+	}
+	if !strings.Contains(output, "tracked files differ from the pushed commit") {
+		t.Errorf("refusal not explained:\n%s", output)
+	}
+}
+
+func TestFastPrePushRejectsChangedSymlink(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	host := filepath.Join(f.tmpDir, "host-secret.txt")
+	if err := os.WriteFile(host, []byte("We recieve input.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(host, filepath.Join(f.root, "link.md")); err != nil {
+		t.Fatal(err)
+	}
+	f.run("add", "link.md")
+	f.run("commit", "--quiet", "-m", fixtureSubject)
+	output, err := f.hook()
+	if err == nil {
+		t.Fatalf("fast pre-push accepted a changed symlink:\n%s", output)
+	}
+	if strings.Contains(output, "recieve") || !strings.Contains(output, "link.md is a symlink") {
+		t.Errorf("codespell read the host file or the refusal is missing:\n%s", output)
+	}
+}
+
 func TestRepoPrePushGatesPushedBranchAfterSignatureWalk(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	f.configureSSHSigning()

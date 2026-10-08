@@ -4,8 +4,8 @@
 # of the CI checks that failed most often after a push: generated artifacts,
 # doc links, doc language, codespell, and PR shape. It reads the pre-push lines
 # Git writes on stdin and gates each pushed branch. The gates read the working
-# tree, so a pushed branch must be the checked-out commit. Set
-# WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
+# tree, so a pushed branch must be the checked-out commit with no tracked
+# edits. Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
 set -euo pipefail
 
 if [[ "${WORKCELL_SKIP_PREPUSH_CHECKS:-0}" == "1" ]]; then
@@ -29,6 +29,12 @@ while read -r _ local_oid remote_ref _; do
   gate_head=1
 done
 [[ "${gate_head}" -eq 1 ]] || exit 0
+# Staged or unstaged edits would let the gates pass or fail a different tree.
+if ! git diff --quiet HEAD --; then
+  echo "pre-push: tracked files differ from the pushed commit, and the gates read the working tree." >&2
+  echo "Commit or stash the changes and push again, or set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
+  exit 1
+fi
 
 if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null; then
   echo "pre-push: base ref ${BASE_REF} is missing; run git fetch origin main." >&2
@@ -40,15 +46,22 @@ changed_list="$(mktemp "${TMPDIR:-/tmp}/workcell-prepush.XXXXXX")"
 trap 'rm -f "${changed_list}"' EXIT
 git diff -z --name-only "${merge_base}" HEAD >"${changed_list}"
 
+failures=0
 changed_files=()
 markdown_changed=0
 while IFS= read -r -d '' file; do
   # A deleted .md can break a link, so it counts; codespell needs a file.
   [[ "${file}" != *.md ]] || markdown_changed=1
-  [[ ! -e "${file}" ]] || changed_files+=("${file}")
+  # codespell follows symlinks, so a committed link could make it read a host
+  # file. Residual: a link swapped in after this check is a same-user race.
+  if [[ -L "${file}" ]]; then
+    echo "pre-push: ${file} is a symlink; codespell must not follow it into the host." >&2
+    failures=$((failures + 1))
+  elif [[ -e "${file}" ]]; then
+    changed_files+=("${file}")
+  fi
 done <"${changed_list}"
 
-failures=0
 run_gate() {
   local name="$1"
   shift
