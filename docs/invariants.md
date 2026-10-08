@@ -74,17 +74,6 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
-The same script also rejects a narrower set of calls in all non-test Go under
-`cmd/` and `internal/`. The set is `os.ReadFile`, `os.WriteFile`, `os.Open`,
-`os.OpenFile`, `os.Create`, `os.Stat`, `os.RemoveAll` and `filepath.Glob`.
-Only `internal/rootio` is exempt. Each failure names the `internal/rootio`
-replacement.
-
-`policy/hardened-io-baseline.tsv` records the calls that the tree carries
-today, with one reason per row. Each row lists one identity per call.
-The identity hashes the enclosing function and the call text. A new call needs
-a reviewed entry, even when it replaces another call in the same file.
-
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only
