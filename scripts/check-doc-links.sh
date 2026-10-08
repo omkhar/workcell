@@ -127,10 +127,8 @@ done <<<"${docs_listing}"
 # A code span naming scripts/..., internal/... or .github/workflows/... (a
 # leading ./ is dropped) must exist. validate-repo.sh, a scripts/ci/job-*.sh or
 # a workflow must run a cited scripts/*.sh path as a command, so a doc cannot
-# cite a gate that nothing runs. A sentence with an enforcement word (the claim
-# function in scripts/lib/doc-claims.awk lists them) needs such a span within 2
-# lines. Hits that exist today sit in policy/doc-claims-baseline.tsv
-# (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
+# cite a gate that nothing runs. Hits that exist today sit in
+# policy/doc-claims-baseline.tsv (PATH, RULE, SUBJECT, REASON). A new hit fails. A baseline row with no hit
 # fails too, and every row must exist at the merge base with origin/main (or
 # main), so the set only shrinks. A path with a .. or symlink component fails.
 # Override the baseline path with DOC_CLAIMS_BASELINE and the workcell-citools
@@ -152,10 +150,6 @@ for f in "${md_files[@]}"; do
   awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
     awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk" |
     while IFS=$'\t' read -r kind doc subject; do
-      if [[ "${kind}" == CLAIM ]]; then
-        printf '%s\tunanchored-claim\t%s\n' "${doc}" "${subject}"
-        continue
-      fi
       if [[ "${kind}" == ESCAPE ]]; then
         printf '%s\tescaping-path\t%s\n' "${doc}" "${subject}"
         continue

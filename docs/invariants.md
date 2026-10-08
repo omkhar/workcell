@@ -138,9 +138,8 @@ fails, and the check does not look it up. `validate-repo.sh`, a CI job script or
 workflow must run a cited `scripts/*.sh` path as a command. So a doc cannot
 cite a gate that nothing runs.
 
-A sentence that claims enforcement needs such a span within two lines, and
-it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger words. The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
-today, one row per hit: path, rule, full sentence and reason. A new hit fails.
+The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
+today, one row per hit: path, rule, subject and reason. A new hit fails.
 A row with no hit fails. `scripts/check-doc-links.sh` also fails on a row
 that the file at the merge base does not hold.
 

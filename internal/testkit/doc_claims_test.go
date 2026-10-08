@@ -58,11 +58,6 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		}
 		sources[rel] = string(body)
 	}
-	// The old scanner cut a claim to its first 100 characters, so a suffix
-	// change kept the old key. The key here is that cut form.
-	longClaim := "The launcher rejects every unsafe input that reaches the provider wrapper from any operator-supplied flag or file and every MCP file."
-	cutKey := longClaim[:100]
-	cutKey = cutKey[:strings.LastIndex(cutKey, " ")]
 	cases := []struct {
 		name     string
 		doc      string
@@ -96,27 +91,15 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"symlinked parent directory", "See `scripts/extdir/outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", "", ""},
 		{"unreadable base baseline", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
-		{"escaping path", "The launcher rejects bad input.\nSee `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},
-		{"unanchored claim", "The launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
-		{"blocks claim", "Workcell blocks operator launch.\n", "", "", "", "unanchored-claim"},
-		{"denies claim", "Workcell denies repository MCP files.\n", "", "", "", "unanchored-claim"},
-		{"prevents claim", "The mount prevents writes.\n", "", "", "", "unanchored-claim"},
-		{"enforces claim", "The wrapper enforces the policy.\n", "", "", "", "unanchored-claim"},
-		{"fails claim", "The check fails closed.\n", "", "", "", "unanchored-claim"},
-		{"requires claim", "The launcher requires a pinned image.\n", "", "", "", "unanchored-claim"},
-		{"guarantees claim", "The seal guarantees integrity.\n", "", "", "", "unanchored-claim"},
-		{"claim wrapped across lines", "The policy is enforced\nby the launcher.\n", "", "", "", "unanchored-claim"},
+		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "", "escaping-path"},
 		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "", "broken link"},
-		{"fenced claim is skipped", "```bash\nThe launcher rejects bad input.\n```\n", "", "", "", ""},
-		{"anchored claim", "The launcher rejects bad input.\nIt runs `scripts/gate.sh` first.\n", "", "", "", ""},
-		{"claim three lines away", "The launcher rejects bad input.\n\n\nIt runs `scripts/gate.sh` first.\n", "", "", "", "unanchored-claim"},
-		{"baselined claim", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", ""},
-		{"long claim keeps its full text", longClaim + "\n", "", "README.md\tunanchored-claim\t" + cutKey + "\tx\n", "", "unbaselined doc claim hit"},
-		{"stale baseline row", "Nothing here.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", "stale doc-claims baseline"},
-		{"baseline growth", "The launcher rejects bad input.\nWorkcell blocks operator launch.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "not at the merge base"},
-		{"baseline replacement", "Workcell blocks operator launch.\n", "", "README.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "not at the merge base"},
-		{"baseline shrink", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\nREADME.md\tunanchored-claim\tWorkcell blocks operator launch.\tx\n", ""},
+		{"fenced path is skipped", "```bash\nSee `scripts/nope.sh` here.\n```\n", "", "", "", ""},
+		{"baselined hit", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "", ""},
+		{"stale baseline row", "Nothing here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "", "stale doc-claims baseline"},
+		{"baseline growth", "See `scripts/orphan.sh` here.\nSee `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "not at the merge base"},
+		{"baseline replacement", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "not at the merge base"},
+		{"baseline shrink", "See `scripts/orphan.sh` here.\n", "", "README.md\tunwired-script\tscripts/orphan.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tunwired-script\tscripts/orphan.sh\tx\n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

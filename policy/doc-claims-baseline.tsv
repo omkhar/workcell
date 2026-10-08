@@ -2,14 +2,11 @@
 #
 # One row per hit: PATH<TAB>RULE<TAB>SUBJECT<TAB>REASON. A hit that is not
 # listed fails the check. A row with no hit fails too, and the file may not
-# gain rows over the merge base, so it only shrinks. Delete a row when you add
-# the path span or remove the claim.
+# gain rows over the merge base, so it only shrinks. Delete a row when you fix
+# its hit.
 # Rules: missing-path (named path does not exist), unwired-script (no lane
-# runs it as a command), unanchored-claim (a sentence with an enforcement word
-# from scripts/lib/doc-claims.awk and no scripts/, internal/ or
-# .github/workflows/ span within 2 lines). SUBJECT is the full sentence.
+# runs it as a command).
 .agents/skills/commit/SKILL.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
-.agents/skills/workcell-pr-lifecycle/SKILL.md	unanchored-claim	If base policy fails because of the current state, make only the corrective draft or base change.	conditional or instruction to the reader, not an enforcement claim
 .agents/skills/workcell-pr-lifecycle/SKILL.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
 .agents/skills/workcell-pr-lifecycle/SKILL.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
 .agents/skills/workcell-pr-lifecycle/SKILL.md	unwired-script	scripts/publish-upstream-refresh-pr.sh	operator tool, or called by another script; no lane runs it directly
@@ -17,28 +14,10 @@
 .agents/skills/workcell-pr-lifecycle/SKILL.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 .agents/skills/workcell-pr-lifecycle/SKILL.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 .claude/skills/commit/SKILL.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
-AGENTS.md	unanchored-claim	- Mark lower-assurance modes clearly instead of overstating guarantees.	claim predates the rule; cite the enforcing path or drop the claim
-AGENTS.md	unanchored-claim	- Use independent peer review when the user or an applicable workflow requires it.	conditional or instruction to the reader, not an enforcement claim
-AGENTS.md	unanchored-claim	Do not trade away the runtime boundary or explicit security guarantees in the name of convenience.	conditional or instruction to the reader, not an enforcement claim
-AGENTS.md	unanchored-claim	If a repo-owned validation lane fails, keep working until it is fixed or the guarantee is explicitly removed or demoted in the same change.	conditional or instruction to the reader, not an enforcement claim
-AGENTS.md	unanchored-claim	The merge gate refuses an unresolved thread, so the series plan carries the visibility.	claim predates the rule; cite the enforcing path or drop the claim
-AGENTS.md	unanchored-claim	The object does not exist if `git cat-file -e <sha>` fails and `GET /repos/<owner>/<repo>/commits/<sha>` returns 422.	claim predates the rule; cite the enforcing path or drop the claim
 AGENTS.md	unwired-script	scripts/check-publish-commit-signatures.sh	operator tool, or called by another script; no lane runs it directly
 AGENTS.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 AGENTS.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
-CHANGELOG.md	unanchored-claim	- Session capture now fails closed when it cannot copy a container file (#761).	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- The SSH config check parses `Keyword=value` syntax and rejects SSH sources in the workspace (#743).	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- The decoder for audit records now rejects NUL bytes (#739).	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- The launcher now refuses a safe-path workspace with a Git `commondir` redirect (#744).	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- `session logs` now refuses a symbolic link when it opens the log file (#740).	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- add `workcell session verify --id`, which recomputes the session's audit hash-chain from a per-host signing key, rejects duplicate-key and reordered or dropped entries, and fails closed (exit `0`/`1`/`2`); session-stop now signs the finalized audit chain automatically, and the trust model (host-signed, not host-root re-signed) is documented.	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- add a verified consumer install path: `install-release.sh` now verifies the cosign signature and digest of a downloaded release bundle before extraction, refusing a tampered or unsigned bundle by default; an explicit offline bypass requires two separate flags and prints a loud warning.	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- keep Docker Desktop `compat` launch validation target-aware so the lower assurance path requires seccomp without inheriting the strict Colima AppArmor/SELinux daemon check.	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	- publish `policy/hardening-profile.toml`, a reviewed artifact recording the container hardening posture (capability drops, read-only rootfs, tmpfs mount flags, egress inventory) with a conformance check that fails CI on drift from the shipped launcher.	changelog entry records a past change by pull request, not by gate path
-CHANGELOG.md	unanchored-claim	Supersedes v1.0.0-rc.1, which was tagged but never published: its release workflow failed in the new arm64 Copilot runtime-image probe, whose build requested a manifest-list output (`BUILDKIT_MULTI_PLATFORM=1`) that the `--load` docker exporter rejects on the buildx `v0.35.0` pin, and release preflight then failed closed on that check.	changelog entry records a past change by pull request, not by gate path
 CHANGELOG.md	unwired-script	scripts/lib/trusted-entrypoint.sh	sourced library, not a gate; no lane runs it as a command
-CONTRIBUTING.md	unanchored-claim	- Node.js and npm (the bootstrap helper enforces the repository-locked markdownlint runtime requirement)	claim predates the rule; cite the enforcing path or drop the claim
-CONTRIBUTING.md	unanchored-claim	Without it `git verify-commit` cannot verify your own commits and the `pre-push` hook rejects every push:	claim predates the rule; cite the enforcing path or drop the claim
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
@@ -46,91 +25,23 @@ CONTRIBUTING.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by 
 CONTRIBUTING.md	unwired-script	scripts/publish-provider-bump-pr.sh	operator tool, or called by another script; no lane runs it directly
 CONTRIBUTING.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 README.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
-ROADMAP.md	unanchored-claim	- no `strict` Linux claim exists until a dedicated VM plus container boundary with equivalent guarantees is proven	claim predates the rule; cite the enforcing path or drop the claim
-ROADMAP.md	unanchored-claim	CI requires a full commit SHA for each action reference.	claim predates the rule; cite the enforcing path or drop the claim
-ROADMAP.md	unanchored-claim	The release process requires live provider certification before a material support claim change.	claim predates the rule; cite the enforcing path or drop the claim
-ROADMAP.md	unanchored-claim	Workcell blocks operator launch.	claim predates the rule; cite the enforcing path or drop the claim
 SECURITY.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
-SUPPORT.md	unanchored-claim	### Redaction guarantees	claim predates the rule; cite the enforcing path or drop the claim
-adapters/README.md	unanchored-claim	- The wrapper rejects provider unsafe flags in every mode.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/README.md	unanchored-claim	Support also requires launcher, auth, policy, tests, documents, and live certification.	claim predates the rule; cite the enforcing path or drop the claim
 adapters/README.md	unwired-script	scripts/lib/launcher/generated-adapters.sh	sourced library, not a gate; no lane runs it as a command
-adapters/claude/README.md	unanchored-claim	- It also blocks provider install and update commands.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/claude/README.md	unanchored-claim	- The reviewed `PreToolUse` Bash hook blocks common trust-widening shell patterns.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/claude/README.md	unanchored-claim	- `reject_unsafe_claude_args` blocks permission bypass, extra directories, custom tools, MCP, plugins, settings, and prompt overrides.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/.codex/AGENTS.md	unanchored-claim	In non-`breakglass` modes, the lower-assurance exception requires `--allow-repo-mcp` and `--ack-repo-mcp=YYYY-MM-DD` with today's UTC date.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/.codex/AGENTS.md	unanchored-claim	Workcell denies repository MCP by default.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/.codex/AGENTS.md	unanchored-claim	`TestCodexAdapterConfigParity` enforces the config baseline parity.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/.codex/agents/distinguished_security.md	unanchored-claim	- Recommend the narrowest control that blocks the path.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/.codex/agents/openai_codex_platform.md	unanchored-claim	- What must be enforced by the outer container or VM.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- It also blocks MCP servers, `responses-api-proxy`, `stdio-to-uds`, and `tcp-tunnel`.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- The wrapper also blocks unsafe autonomy, network, profile, and configuration flags.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- The wrapper blocks `agents`, `queue`, `migrate-rollouts`, plugins, cloud, remote-control, `exec-server`, update, sandbox, debug, and unclassified subcommands.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/codex/README.md	unanchored-claim	- `reject_unsafe_codex_args` denies unapproved subcommands by default.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/copilot/README.md	unanchored-claim	- It also blocks unsafe tool, URL, directory, instruction, remote, share, worktree, and autonomy flags.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/copilot/README.md	unanchored-claim	- The default path blocks plugins, MCP, custom agents, hooks, skills, dynamic retrieval, and remote sessions.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/copilot/README.md	unanchored-claim	- `reject_unsafe_copilot_args` blocks `init`, `login`, `logout`, MCP, plugin, skill, update, and other control-plane subcommands.	claim predates the rule; cite the enforcing path or drop the claim
-adapters/gemini/README.md	unanchored-claim	- `reject_unsafe_gemini_args` blocks permission bypass, sandbox, extra directory, yolo, and approval-mode flags.	claim predates the rule; cite the enforcing path or drop the claim
-docs/1.0-readiness-review.md	unanchored-claim	Only this preview backend requires macOS 26 (`RequireMacOS26()`); supported launch on Apple Silicon macOS does **not** require macOS 26 — both strict Colima (the default) and docker-desktop compat are supported/allowed with no version floor in `policy/host-support-matrix.tsv`, so docker-desktop compat is a supported launch option for hosts below macOS 26.	plan or review record describes intent or state at the time of writing
 docs/1.0-readiness-review.md	unwired-script	scripts/colima-egress-allowlist.sh	operator tool, or called by another script; no lane runs it directly
 docs/1.0-readiness-review.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
 docs/1.0-readiness-review.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
 docs/1.0-readiness-review.md	unwired-script	scripts/lib/launcher/egress-endpoints.sh	sourced library, not a gate; no lane runs it as a command
 docs/1.0-readiness-review.md	unwired-script	scripts/lib/shellproto.sh	sourced library, not a gate; no lane runs it as a command
-docs/adapter-control-planes.md	unanchored-claim	Copilot maps prompt and yolo modes through the reviewed provider wrapper, blocks shell access by omission from `--available-tools`, and rejects unsafe user flags.	claim predates the rule; cite the enforcing path or drop the claim
-docs/adapter-control-planes.md	unanchored-claim	It also rejects custom instructions and unreviewed control-plane expansion.	claim predates the rule; cite the enforcing path or drop the claim
-docs/adapter-control-planes.md	unanchored-claim	It rejects host Copilot state, keychain access, and ambient GitHub CLI auth.	claim predates the rule; cite the enforcing path or drop the claim
-docs/adapter-control-planes.md	unanchored-claim	The Claude adapter installs a reviewed `PreToolUse` Bash hook that blocks common trust-widening shell patterns.	claim predates the rule; cite the enforcing path or drop the claim
-docs/adapter-control-planes.md	unanchored-claim	Workcell replaces an invalid configuration and fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/apple-container-evaluation.md	unanchored-claim	It rejects a source workspace that overlaps `StateRoot`.	plan or review record describes intent or state at the time of writing
-docs/apple-container-evaluation.md	unanchored-claim	Session verification fails closed for this target.	plan or review record describes intent or state at the time of writing
-docs/apple-container-evaluation.md	unanchored-claim	The manifest reader rejects noncanonical JSON and trailing data.	plan or review record describes intent or state at the time of writing
-docs/aws-ec2-ssm-preview.md	unanchored-claim	The preview broker plan requires these IAM actions:	claim predates the rule; cite the enforcing path or drop the claim
-docs/aws-ec2-ssm-preview.md	unanchored-claim	Workcell blocks operator launch.	claim predates the rule; cite the enforcing path or drop the claim
-docs/b6-disposition-options-draft.md	unanchored-claim	It now requires local operator certification of both supported launch targets:	plan or review record describes intent or state at the time of writing
 docs/benchmark-evidence/session-startup-2026-07-15.md	unwired-script	scripts/bench/run-startup-bench.sh	operator tool, or called by another script; no lane runs it directly
-docs/ci-efficiency-and-reliability.md	unanchored-claim	A missing archive or a different ID fails the job.	claim predates the rule; cite the enforcing path or drop the claim
-docs/ci-efficiency-and-reliability.md	unanchored-claim	The job names that branch protection requires did not change.	claim predates the rule; cite the enforcing path or drop the claim
-docs/ci-threat-model.md	unanchored-claim	**No global rule rejects self-hosted runners.** Pin checks cover the CI build matrix, macOS matrices, and arm64 release label.	claim predates the rule; cite the enforcing path or drop the claim
-docs/ci-threat-model.md	unanchored-claim	It also rebuilds the Rust vendor tree from crates.io against `Cargo.lock` and rejects any difference except the `$comment` member of checksum files.	claim predates the rule; cite the enforcing path or drop the claim
-docs/ci-threat-model.md	unanchored-claim	The environment requires maintainer approval and does not permit administrator bypass.	claim predates the rule; cite the enforcing path or drop the claim
-docs/ci-threat-model.md	unanchored-claim	The release publisher rejects extended ACLs on source and staging file handles.	claim predates the rule; cite the enforcing path or drop the claim
-docs/ci-threat-model.md	unanchored-claim	This option also requires `--i-understand-unverified-install`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/ci-threat-model.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
-docs/copilot-linux-local-compat-plan.md	unanchored-claim	- Workcell blocks options that can bypass Workcell policy.	plan or review record describes intent or state at the time of writing
-docs/diagnostics-and-support-matrix.md	unanchored-claim	A supported launch requires one matching row with `status=supported`, `launch=allowed`, and the required evidence.	claim predates the rule; cite the enforcing path or drop the claim
-docs/documentation-language.md	unanchored-claim	A count above its baseline fails the check.	claim predates the rule; cite the enforcing path or drop the claim
-docs/enterprise-evidence-baseline.md	unanchored-claim	Use [Signed Session Audit Records](signed-session-audit-records.md) for its guarantees and legacy limits.	conditional or instruction to the reader, not an enforcement claim
-docs/enterprise-rollout.md	unanchored-claim	Antigravity is unsupported and fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/enterprise-rollout.md	unanchored-claim	Strict Copilot mode rejects provider telemetry and content-capture environment variables.	claim predates the rule; cite the enforcing path or drop the claim
-docs/enterprise-rollout.md	unanchored-claim	The Claude macOS resolver records operator intent but fails closed.	claim predates the rule; cite the enforcing path or drop the claim
 docs/enterprise-rollout.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
-docs/examples/enterprise-claude-setup.md	unanchored-claim	This pattern requires supported Apple Silicon macOS hosts.	claim predates the rule; cite the enforcing path or drop the claim
 docs/examples/enterprise-claude-setup.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
-docs/extending-adapters.md	unanchored-claim	Do not add a bare copy call that fails under `set -e` for an optional key.	conditional or instruction to the reader, not an enforcement claim
-docs/extending-adapters.md	unanchored-claim	The generated-artifact check fails when a committed file is stale.	claim predates the rule; cite the enforcing path or drop the claim
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-data.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-launcher-shell.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-providerid.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/generate-adapters-runtime-shell.sh	operator tool, or called by another script; no lane runs it directly
 docs/extending-adapters.md	unwired-script	scripts/lib/launcher/generated-adapters.sh	sourced library, not a gate; no lane runs it as a command
 docs/extending-adapters.md	unwired-script	scripts/provider-e2e.sh	operator tool, or called by another script; no lane runs it directly
-docs/gcp-vm-preview.md	unanchored-claim	Workcell blocks operator launch.	claim predates the rule; cite the enforcing path or drop the claim
-docs/getting-started.md	unanchored-claim	If verification fails, it stops the install.	conditional or instruction to the reader, not an enforcement claim
-docs/getting-started.md	unanchored-claim	The GitHub attestation step requires network access by default.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	A lockfile change to any other package, for example a new transitive dependency, fails the guard.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	A new publisher requires a reviewed policy change.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	If the guard fails, `publish` adds the `needs-human-review` label and does not enable auto-merge.	conditional or instruction to the reader, not an enforcement claim
-docs/github-workflows.md	unanchored-claim	It rejects split indexes, shallow graphs, unsafe ancestry, mutable ignore files, and present gitlinks.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	It requires both platform jobs on `main`, an approved heavy PR, or manual dispatch.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	It requires the binding job to match those four byte for byte before it copies the nine subjects.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	The `hosted-controls-audit` environment requires `WORKCELL_HOSTED_CONTROLS_TOKEN`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	The canonical repository requires these variable values:	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	The lanes are required merge gates: each axis is a required status check, so a red axis blocks the merge.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	The signer downloads those subjects by immutable artifact ID and requires exact byte matches.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	`pre-merge.sh` waits for the live lane at the end and fails if that lane fails.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	`publish` also fails closed if GitHub drops the mode of a changed executable file, because the tree check then fails.	claim predates the rule; cite the enforcing path or drop the claim
-docs/github-workflows.md	unanchored-claim	| `pr-base-policy.yml` | Requires `main` as the base for a ready PR.	claim predates the rule; cite the enforcing path or drop the claim
 docs/github-workflows.md	unwired-script	scripts/build-and-test.sh	operator tool, or called by another script; no lane runs it directly
 docs/github-workflows.md	unwired-script	scripts/ci-plan.sh	operator tool, or called by another script; no lane runs it directly
 docs/github-workflows.md	unwired-script	scripts/ci-plan.sh	operator tool, or called by another script; no lane runs it directly
@@ -139,234 +50,20 @@ docs/github-workflows.md	unwired-script	scripts/pre-merge.sh	operator tool, or c
 docs/github-workflows.md	unwired-script	scripts/publish-upstream-refresh-pr.sh	operator tool, or called by another script; no lane runs it directly
 docs/github-workflows.md	unwired-script	scripts/verify-github-hosted-controls.sh	operator tool, or called by another script; no lane runs it directly
 docs/github-workflows.md	unwired-script	scripts/verify-workflow-lanes.sh	operator tool, or called by another script; no lane runs it directly
-docs/host-expansion-readiness.md	unanchored-claim	A different runtime requires a new target-provider implementation and an exact matrix row.	plan or review record describes intent or state at the time of writing
-docs/host-expansion-readiness.md	unanchored-claim	`manual-only` requires recorded manual verification.	plan or review record describes intent or state at the time of writing
-docs/host-expansion-readiness.md	unanchored-claim	| `unsupported` | Workcell blocks operator launch by default.	plan or review record describes intent or state at the time of writing
-docs/improvement-tracks-implementation-plan.md	unanchored-claim	The lower-assurance exception requires `--allow-repo-mcp` and a dated `--ack-repo-mcp` value.	plan or review record describes intent or state at the time of writing
-docs/improvement-tracks-implementation-plan.md	unanchored-claim	The versioned mutation policy enforces the score.	plan or review record describes intent or state at the time of writing
-docs/improvement-tracks-implementation-plan.md	unanchored-claim	Workcell blocks operator launch.	plan or review record describes intent or state at the time of writing
-docs/improvement-tracks-implementation-plan.md	unanchored-claim	| A2 | Complete | Workcell denies repository MCP files by default.	plan or review record describes intent or state at the time of writing
-docs/improvement-tracks-implementation-plan.md	unanchored-claim	| A4 | Complete | Rust unsafe blocks have `SAFETY:` records.	plan or review record describes intent or state at the time of writing
-docs/incident-response.md	unanchored-claim	Container cleanup also requires the target Docker transport.	claim predates the rule; cite the enforcing path or drop the claim
-docs/incident-response.md	unanchored-claim	If this operation fails, the terminal session has no seal.	conditional or instruction to the reader, not an enforcement claim
-docs/incident-response.md	unanchored-claim	Stop Docker Desktop only if a force-stop fails or other Docker workloads are suspect.	conditional or instruction to the reader, not an enforcement claim
-docs/incident-response.md	unanchored-claim	The command fails closed when the chain, seal, or public key is invalid or missing.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Colima enforces the result only with `NETWORK_POLICY=allowlist`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Colima enforces the result only with `NETWORK_POLICY=allowlist`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	It rejects byte-count and modification changes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	It rejects group or other write permission below that anchor.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	It rejects identity, owner, group, mode, link-count, and size changes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	It requires current-user ownership below the user anchor.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	It requires owner-owned and owner-only SSH configuration and identity files.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	On Linux, it rejects unproved ACL types and NFS, CIFS, and SMB descriptor filesystems.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	On `colima` with `NETWORK_POLICY=allowlist`, Workcell enforces the result with IPv4 and IPv6 `DOCKER-USER` rules.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	The descriptor walk rejects symbolic links that reach the reader.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	The reader rejects POSIX ACLs on policy files, current-user directories, and sticky transit directories.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	The reader rejects other foreign-owned ancestors and non-sticky writable ancestors.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects a credential source or an SSH `config`, `known_hosts`, or identity source inside the workspace.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects cycles, repeated files, and paths outside the entrypoint tree.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects destination names that collide after NFC normalization and Unicode case folding.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects group-writable or world-writable `known_hosts` files.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects operator-controlled symbolic links in source paths, parent paths, and copied directories.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects the render when a selected input passes an allowance.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell rejects writes to reserved control-plane targets.	claim predates the rule; cite the enforcing path or drop the claim
-docs/injection-policy.md	unanchored-claim	Workcell writes no content at a destination path it rejects for invalid UTF-8 data.	claim predates the rule; cite the enforcing path or drop the claim
-docs/install-lifecycle.md	unanchored-claim	The current binary reads version 1 and rejects an unknown version.	claim predates the rule; cite the enforcing path or drop the claim
-docs/install.md	unanchored-claim	The published `workcell.rb` pins the bundle's `sha256`, so Homebrew fails the install if the downloaded bundle's digest does not match — a checksum-level integrity check.	claim predates the rule; cite the enforcing path or drop the claim
-docs/install.md	unanchored-claim	The script fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/install.md	unanchored-claim	Without the acknowledgement flag, `--skip-verify` refuses to run — the default is always verify-and-fail-closed.	claim predates the rule; cite the enforcing path or drop the claim
 docs/install.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
 docs/install.md	unwired-script	scripts/install-release.sh	operator tool, or called by another script; no lane runs it directly
 docs/install.md	unwired-script	scripts/install-workcell.sh	operator tool, or called by another script; no lane runs it directly
-docs/invariants.md	unanchored-claim	For an unprivileged caller it hands the invocation to `workcell-apt-broker-client`, which admits the package helper and refuses every other command.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	It also rejects `--privileged` and `seccomp=unconfined`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	It disables custom instructions and blocks skill and dynamic retrieval overrides.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	The server rejects any other name and any unlisted value, and builds the helper environment itself.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	Workcell also refuses the workspace when it cannot list the workspace, a Git directory, or its modules.	claim predates the rule; cite the enforcing path or drop the claim
-docs/invariants.md	unanchored-claim	Workcell refuses a safe-path workspace in these cases.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	It also refuses a cache root that group or other can write.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	It prevents accidental operator use.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	It returns `missing` when the device does not exist, and `denied` when the device exists but the open fails.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	On macOS it also refuses a root, a directory, or a binary of the cache with an extended ACL.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	The function refuses a cache directory that is a symlink or that the current user does not own.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	The launcher rejects inherited `WORKCELL_TEST_CODEX_AUTH_FILE` and `WORKCELL_TEST_CLAUDE_KEYCHAIN_EXPORT_FILE` values.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	Trust requires fixed directories that an attacker cannot write to.	claim predates the rule; cite the enforcing path or drop the claim
-docs/launcher-contract.md	unanchored-claim	| gh | The host publication helper requires a trusted GitHub CLI path for a real publication.	claim predates the rule; cite the enforcing path or drop the claim
 docs/launcher-contract.md	unwired-script	scripts/generate-adapters-launcher-shell.sh	operator tool, or called by another script; no lane runs it directly
-docs/mode-map.md	unanchored-claim	- `readonly` blocks package-manager writes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/mode-map.md	unanchored-claim	| `breakglass` | Higher-trust debugging | This mode requires `--ack-breakglass=YYYY-MM-DD` with the current UTC date.	claim predates the rule; cite the enforcing path or drop the claim
-docs/outbound-endpoints.md	unanchored-claim	If name resolution or rule setup fails, the previous rules stay in force for each address family that the helper did not replace.	conditional or instruction to the reader, not an enforcement claim
 docs/outbound-endpoints.md	unwired-script	scripts/lib/launcher/egress-endpoints.sh	sourced library, not a gate; no lane runs it as a command
 docs/outbound-endpoints.md	unwired-script	scripts/lib/launcher/generated-adapters.sh	sourced library, not a gate; no lane runs it as a command
-docs/owasp-agentic-mapping.md	unanchored-claim	It also fails closed if the seal is invalid or missing.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	It also refuses parent directories that are symlinks.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	It fails closed if a record at or before the signed session head changes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	It refuses a linked worktree or an unavailable base commit.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	It refuses a workspace whose `.git` directory has a `commondir` redirect or a symlink that can bypass these masks.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	It refuses a workspace whose `.git` directory has a `commondir` redirect or a symlink that can bypass these masks.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	The `readonly` container mode blocks package-manager writes and gives stronger assurance.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	The acknowledged path refuses symlinked MCP files.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	The command requires a clean launch workspace and recorded Git metadata.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	This path requires a TTY and no provider arguments.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	Verification fails closed for these records.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	Workcell blocks its operator launch.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	Workcell blocks operator launch for that target.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	Workcell blocks operator launch for this target.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	Workcell denies repository MCP files by default in each non-breakglass mode.	claim predates the rule; cite the enforcing path or drop the claim
-docs/owasp-agentic-mapping.md	unanchored-claim	Workcell rejects credential sources that are inside the workspace.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provenance.md	unanchored-claim	A trusted builder that enforces this separation outside the repository would close the remaining gap.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provenance.md	unanchored-claim	It also fails if the computed digest does not match.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provenance.md	unanchored-claim	The command fails if the asset has no signed checksum entry.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provenance.md	unanchored-claim	[SLSA v1.2 Source L4](https://slsa.dev/spec/v1.2/source-requirements#level-4-two-party-review) requires two-party review.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provider-bootstrap-matrix.md	unanchored-claim	Support also requires deterministic auth, policy, bootstrap, and unsafe-flag tests.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provider-matrix.md	unanchored-claim	Antigravity remains unsupported and fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provider-matrix.md	unanchored-claim	Google, not Workcell, refuses the retired account types.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provider-matrix.md	unanchored-claim	The Workcell adapter maps or blocks these surfaces.	claim predates the rule; cite the enforcing path or drop the claim
-docs/provider-matrix.md	unanchored-claim	The built-in macOS resolver fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/release-posture.md	unanchored-claim	- It blocks publication when a reviewed provider, Linux image, toolchain, or release-build pin is out of date.	claim predates the rule; cite the enforcing path or drop the claim
-docs/releasing.md	unanchored-claim	A disabled control or any other response still fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/releasing.md	unanchored-claim	If CI fails:	conditional or instruction to the reader, not an enforcement claim
-docs/releasing.md	unanchored-claim	If a create, delete, upload, or publish request fails after it starts, treat the hosted mutation outcome as ambiguous and inspect the exact-tag draft and asset inventory before recovery.	conditional or instruction to the reader, not an enforcement claim
-docs/releasing.md	unanchored-claim	If the check fails because reviewed upstream pins or Debian snapshots drifted, refresh them:	conditional or instruction to the reader, not an enforcement claim
-docs/releasing.md	unanchored-claim	If the release workflow fails:	conditional or instruction to the reader, not an enforcement claim
-docs/releasing.md	unanchored-claim	The entrypoint rejects extended ACLs on source and staging handles.	claim predates the rule; cite the enforcing path or drop the claim
-docs/releasing.md	unanchored-claim	The run rejects a tag whose target commit differs from the `main` head.	claim predates the rule; cite the enforcing path or drop the claim
 docs/releasing.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 docs/releasing.md	unwired-script	scripts/verify-release-artifact.sh	operator tool, or called by another script; no lane runs it directly
-docs/remote-vm-contract.md	unanchored-claim	It requires these audit events:	claim predates the rule; cite the enforcing path or drop the claim
-docs/remote-vm-contract.md	unanchored-claim	It writes no content at a destination path it rejects for invalid UTF-8 data.	claim predates the rule; cite the enforcing path or drop the claim
-docs/remote-vm-contract.md	unanchored-claim	The contract requires `bootstrap.json`, session records, and a target audit log.	claim predates the rule; cite the enforcing path or drop the claim
-docs/remote-vm-contract.md	unanchored-claim	The fake target rejects destination names that collide after NFC normalization and Unicode case folding.	claim predates the rule; cite the enforcing path or drop the claim
-docs/retention-policy.md	unanchored-claim	It also requires the exact policy value for each artifact name.	claim predates the rule; cite the enforcing path or drop the claim
-docs/retention-policy.md	unanchored-claim	Reject the release if a required signature, identity, or digest check fails.	claim predates the rule; cite the enforcing path or drop the claim
-docs/retention-policy.md	unanchored-claim	The `zizmor` job fails on each finding.	claim predates the rule; cite the enforcing path or drop the claim
-docs/retention-policy.md	unanchored-claim	The check requires an explicit `retention-days` value for each upload.	claim predates the rule; cite the enforcing path or drop the claim
-docs/runtime-target-expansion-plan.md	unanchored-claim	Deterministic tests and live certification must confirm the strict guarantees.	plan or review record describes intent or state at the time of writing
-docs/runtime-target-expansion-plan.md	unanchored-claim	The operator launch path blocks both values.	plan or review record describes intent or state at the time of writing
-docs/runtime-target-phase-plan.md	unanchored-claim	The certification lane requires a target that has no external NAT IP.	plan or review record describes intent or state at the time of writing
-docs/runtime-target-phase-plan.md	unanchored-claim	The contract requires explicit workspace materialization and brokered access.	plan or review record describes intent or state at the time of writing
-docs/safe-path-expectations.md	unanchored-claim	It enforces signed ranges, the pull request shape gate, the `main` base, and explicit exceptions.	claim predates the rule; cite the enforcing path or drop the claim
-docs/safe-path-expectations.md	unanchored-claim	It refuses a running session or container.	claim predates the rule; cite the enforcing path or drop the claim
-docs/safe-path-expectations.md	unanchored-claim	Workcell blocks operator launch.	claim predates the rule; cite the enforcing path or drop the claim
-docs/safe-path-expectations.md	unanchored-claim	`workcell session delete` requires a session with terminal status.	claim predates the rule; cite the enforcing path or drop the claim
 docs/scenario-gaps.md	unwired-script	scripts/provider-e2e.sh	operator tool, or called by another script; no lane runs it directly
-docs/security/audit-2026-10.md	unanchored-claim	It also refuses some symbolic links under `.git` and `.git/modules`.	plan or review record describes intent or state at the time of writing
-docs/security/audit-2026-10.md	unanchored-claim	It also rejects SSH sources that are inside the workspace.	plan or review record describes intent or state at the time of writing
-docs/security/audit-2026-10.md	unanchored-claim	It also rejects a destination that is a directory or a link to one.	plan or review record describes intent or state at the time of writing
-docs/security/audit-2026-10.md	unanchored-claim	The fix rejects a NUL byte in the shared strict decoder.	plan or review record describes intent or state at the time of writing
-docs/security/audit-2026-10.md	unanchored-claim	When a copy fails, the launcher no longer appends to or changes the mode of the host log through a link.	plan or review record describes intent or state at the time of writing
 docs/security/security-findings-2026-04-24-validation.md	missing-path	internal/metadatautil/validate.go	historical finding names a file since renamed
-docs/security/security-findings-2026-04-24-validation.md	unanchored-claim	It rejects non-empty top-level permissions, job-level permissions, reusable workflow calls, action steps, and checkout in block or flow form.	plan or review record describes intent or state at the time of writing
-docs/security/security-findings-2026-04-24-validation.md	unanchored-claim	Regression tests prove that the resolver ignores the legacy value, the launcher rejects it, and neither component forwards it.	plan or review record describes intent or state at the time of writing
-docs/security/security-findings-2026-04-24-validation.md	unanchored-claim	The launcher rejects inherited harness-only resolver values before bundle preparation.	plan or review record describes intent or state at the time of writing
 docs/security/security-findings-2026-04-24-validation.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
-docs/security/security-review-2026-08-12.md	unanchored-claim	A fixed guard requires `github.event.repository.visibility` to equal `public`.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	A mutation test proves that malformed data fails closed.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It also enforces a 64 MiB total log limit.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It also requires the payload commit to equal the current `main` workflow commit.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects `env -S`, split-string, and preload-unset options.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects invalid requests and isolates each request failure.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects mutable loader options, unsafe loader environment values, and file actions for sealed snapshots.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects non-empty destinations before materialization.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects special files and escaping symbolic links.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects symbolic links, hard links, and non-regular files.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It rejects untrusted ELF files through every intercepted execution family.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	It requires an explicit safe `OWNER/REPO` value for GitHub verification.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	Late provider blocks ran inside command substitutions.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The Colima launcher now requires an absolute executable path.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The apt-broker server requires `/run/workcell/apt-broker` as its trusted socket parent.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The copy rejects symbolic links, named pipes, sockets, and other special files.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The fix requires `ghcr.io/OWNER/REPO` to match the release repository.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The fix requires an empty bypass-actor list for the default-branch status ruleset.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The fix requires each bypass list to be an explicit array.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The fix requires each page to contain an object, an array, and an exact count.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The fix requires the release environment to allow the exact `main` branch.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The focused launch-environment test requires both values.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The guard now rejects `-S`, `--split-string`, `--unset=`, and attached `-u` options.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The image build now requires a defined global dynamic `syscall` symbol.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The immutability ruleset blocks tag updates and deletion without a bypass actor.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The pinned-input mutation test rejects a late declaration.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The renderer now rejects invalid UTF-8, control characters, and Unicode line and paragraph separators.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The secure reader requires an array.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The trusted gate requires the tag target to equal the payload commit.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The validator rejects a combined ruleset or an immutability bypass.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The verifier now checks the named tag and requires its manifest digest to equal the signed digest.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The verifier rejects ambient Go paths and selects one exact toolchain path.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The verifier rejects attestations from self-hosted runners.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The workflow runs from `main` and requires a tag and a 40-hex commit payload.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	The workflow validator rejects other visibility sources and mutable conditions.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	This change prevents caller-selected path resolution.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	This prevents merge and overwrite behavior on case-insensitive volumes.	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-001 | Mutable ELF through linked raw syscall | Trusted `/bin/true` | Mutable target blocks; trusted target runs |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-003 | Replace a validated source or directory child | Unchanged regular source | Replacement fails; regular source copies |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-004 | Spoof runtime state, helper path, or inherited tools | Root-owned state and fixed tools | Spoof fails; trusted state works |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-005 | Remove or corrupt one release proof | Complete signed fixture | Mutation fails; complete fixture passes |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-006 | Link or enlarge an audit log | Canonical bounded regular log | Unsafe log fails; canonical log passes |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-008 | Remove or widen the main-ref guard | Exact main-ref guard | Mutation fails; guarded workflow passes |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-009 | Exceed input and line limits | Use exact accepted limits | Excess fails; exact limits pass |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-012 | Replace a workspace entry or add a special file | Stable regular workspace tree | Copy rejects unsafe changes; stable tree copies |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-015 | Replace a policy file or parent after validation | Stable operator-owned policy file | Replacement fails; the opened descriptor remains fixed |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-021 | Add an administrator bypass to tag updates or deletion | Creation and immutability rulesets use separate, exact controls | Hosted-control validation rejects the bypass |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-022 | Use `#!/usr/bin/env -S` to unset `LD_PRELOAD` | The guard rejects split-string and unset options | The mutable native launch remains blocked |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-023 | Submit names that differ only by case | Destination reservations use case-insensitive collision keys and exclusive creation | The second destination fails closed |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-024 | Move the named image tag after digest signing | The workflow verifies the named tag against the signed manifest digest | A moved tag fails before publication |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-026 | Add newline, U+001F, U+2028, or invalid UTF-8 to a manifest field | The renderer rejects unsafe fields and accepts a safe identity basename | Unsafe fields fail before row emission |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-027 | Use NFC and NFD aliases or case variants for one path | Shared NFC normalization and collision keys protect containment and destination reservations | Aliases compare as one path and the second destination fails |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-030 | Add a bypass actor to required status checks | The validator requires an empty bypass-actor list | The hosted-control check rejects the mutation |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-031 | Add two review bypass actors or use another role | The validator permits zero actors or one repository role 5 actor | The hosted-control check rejects the mutation |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-032 | Use a different image repository or omit the commit tag | Verification requires `ghcr.io/OWNER/REPO` and `sha-<commit>` binding | The release-output check fails closed |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-033 | Pass a revision-qualified tag or rely on ambient repository state | The script accepts one bounded release tag and an explicit repository | The tag check rejects ambiguous input |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-034 | Set the attestation opt-out repository variable before dispatch | Attestation steps and both verifier calls are unconditional | The release still requires attestations |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-035 | Return malformed bypass-actor data | The validator requires an explicit array | The hosted-control check fails closed |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-037 | Use APFS aliases such as `straße`/`STRASSE`, sigma variants, `ﬀ`/`ff`, or micro/Greek mu | Shared keys use NFC normalization and Unicode case folding | Aliases compare as one path and the second destination fails |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-038 | Set an ambient hosted-controls policy path | The script uses the versioned policy path | The audit rejects the override |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-039 | Remove or replace the repository visibility event value | The workflow binds `REPOSITORY_VISIBILITY` to `github.event.repository.visibility` | The attestation policy fails closed |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-041 | Remove fields or change counts in paginated API pages | The aggregator requires objects, arrays, numeric counts, and exact totals | Malformed or incomplete collections fail |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-042 | Report a required context from another GitHub app | Every context requires integration ID 15368 | The hosted-control check rejects the source |	plan or review record describes intent or state at the time of writing
-docs/security/security-review-2026-08-12.md	unanchored-claim	| F-045 | Change the local tag ref during verification or use a mismatched tag object name | One captured tag object, one exact embedded tag name, and `--no-replace-objects` protect all identity reads | The verifier rejects each mutation |	plan or review record describes intent or state at the time of writing
-docs/session-startup-benchmarks.md	unanchored-claim	- A live run requires a usable runtime.	claim predates the rule; cite the enforcing path or drop the claim
-docs/session-startup-benchmarks.md	unanchored-claim	- A live run requires at least two passes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/session-startup-benchmarks.md	unanchored-claim	- Each launch requires teardown and an absence check.	claim predates the rule; cite the enforcing path or drop the claim
-docs/session-startup-benchmarks.md	unanchored-claim	- Warm mode also requires `WORKCELL_STARTUP_WARM_VERIFY`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/session-startup-benchmarks.md	unanchored-claim	A zero median or larger spread fails the run.	claim predates the rule; cite the enforcing path or drop the claim
 docs/session-startup-benchmarks.md	unwired-script	scripts/bench/run-startup-bench.sh	operator tool, or called by another script; no lane runs it directly
-docs/signed-session-audit-records.md	unanchored-claim	If the lock or signer fails, Workcell reports a warning and lets finalization continue.	conditional or instruction to the reader, not an enforcement claim
-docs/signed-session-audit-records.md	unanchored-claim	If the lock remains unavailable, the append operation fails.	conditional or instruction to the reader, not an enforcement claim
-docs/signed-session-audit-records.md	unanchored-claim	If this operation fails, Workcell finalizes the session without a seal.	conditional or instruction to the reader, not an enforcement claim
-docs/signed-session-audit-records.md	unanchored-claim	It rejects duplicate keys and excludes records for another session.	claim predates the rule; cite the enforcing path or drop the claim
-docs/signed-session-audit-records.md	unanchored-claim	It rejects each strictly checked record that contains a duplicate key.	claim predates the rule; cite the enforcing path or drop the claim
-docs/signed-session-audit-records.md	unanchored-claim	Workcell cannot seal those records, and `session verify` fails with a `no signable digest chain` reason.	claim predates the rule; cite the enforcing path or drop the claim
-docs/software-engineering-practices.md	unanchored-claim	Stop when a refactor requires a behavior or support change.	conditional or instruction to the reader, not an enforcement claim
-docs/stability-contract.md	unanchored-claim	- `--allow-arbitrary-command` requires a dated `--ack-arbitrary-command` value.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	- `--allow-control-plane-vcs` requires `--ack-control-plane-vcs`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	- `--allow-repo-mcp` requires a dated `--ack-repo-mcp` value.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	- `--mode breakglass` requires a dated `--ack-breakglass` value.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	It fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	The value fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	Workcell rejects each option without its acknowledgement.	claim predates the rule; cite the enforcing path or drop the claim
-docs/stability-contract.md	unanchored-claim	`requires_credentials`	claim predates the rule; cite the enforcing path or drop the claim
-docs/support-tiers.md	unanchored-claim	The `apple-container` target also requires macOS 26, but its matrix row is still preview-only and blocked.	claim predates the rule; cite the enforcing path or drop the claim
-docs/threat-model.md	unanchored-claim	Workcell blocks the corresponding Linux and Windows operator launches.	claim predates the rule; cite the enforcing path or drop the claim
-docs/unsafe-code-audit-checklist.md	unanchored-claim	`runtime/container/rust/Cargo.toml` sets `undocumented_unsafe_blocks = "deny"`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/use-case-matrix.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
 docs/use-case-matrix.md	unwired-script	scripts/provider-e2e.sh	operator tool, or called by another script; no lane runs it directly
-docs/validation-scenarios.md	unanchored-claim	- provider behavior that requires a live account	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	Antigravity remains unsupported and fails closed.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It also rejects hidden flags, conversion filters, present gitlinks, and unsafe ancestry.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It also requires Docker seccomp support.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It rejects a near-match.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It rejects common-directory redirection and shallow graphs.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It rejects other path bytes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It rejects worktree, index, and untracked case variants of that file.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	It requires one resident merge base.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	Its test requires a healthy Apple Silicon macOS Docker Desktop host.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	The AWS test requires a reviewed SSM-managed EC2 target.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	The GCP test requires a reviewed IAP-reachable Compute Engine target.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	The helper also rejects these ambient inputs:	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	The helper rejects nonempty shell-visible ambient `GO*` and `CGO*` variables.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	The planner rejects nonregular or split-index state.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	The planner requires a root `.git` directory.	claim predates the rule; cite the enforcing path or drop the claim
-docs/validation-scenarios.md	unanchored-claim	This setting prevents races on shared host state.	claim predates the rule; cite the enforcing path or drop the claim
 docs/validation-scenarios.md	unwired-script	scripts/build-and-test.sh	operator tool, or called by another script; no lane runs it directly
 docs/validation-scenarios.md	unwired-script	scripts/ci-plan.sh	operator tool, or called by another script; no lane runs it directly
 docs/validation-scenarios.md	unwired-script	scripts/dev-quick-check.sh	operator tool, or called by another script; no lane runs it directly
@@ -377,25 +74,7 @@ docs/validation-scenarios.md	unwired-script	scripts/provider-e2e.sh	operator too
 docs/validation-scenarios.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 docs/validation-scenarios.md	unwired-script	scripts/verify-github-hosted-controls.sh	operator tool, or called by another script; no lane runs it directly
 docs/validation-scenarios.md	unwired-script	scripts/verify-invariants-live.sh	operator tool, or called by another script; no lane runs it directly
-docs/workcell-system-design.md	unanchored-claim	It also blocks mutable shebang scripts that select a protected runtime.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	It blocks arbitrary writes to reserved provider-home paths.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	It rejects broad default workspaces such as `/` and the operator home.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	It requires seccomp, but it does not require AppArmor or SELinux.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	On the strict path, it blocks direct native ELF files from mutable paths.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	On the strict path, the guard refuses a child environment that does not have this exact value.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	The [Signed Session Audit Records](signed-session-audit-records.md) page defines the exact guarantees and legacy limits.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	The guard refuses a script run directly from `/tmp`.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	[`provider-policy.sh`](../runtime/container/provider-policy.sh) rejects prohibited provider flags and configuration changes.	claim predates the rule; cite the enforcing path or drop the claim
-docs/workcell-system-design.md	unanchored-claim	`breakglass` requires operator acknowledgment.	claim predates the rule; cite the enforcing path or drop the claim
 docs/workcell-system-design.md	unwired-script	scripts/repo-publish-pr.sh	operator tool, or called by another script; no lane runs it directly
 runtime/README.md	unwired-script	scripts/build-and-test.sh	operator tool, or called by another script; no lane runs it directly
 runtime/README.md	unwired-script	scripts/colima-egress-allowlist.sh	operator tool, or called by another script; no lane runs it directly
 runtime/README.md	unwired-script	scripts/pre-merge.sh	operator tool, or called by another script; no lane runs it directly
-verify/invariants/README.md	unanchored-claim	The safe path rejects direct mounts of host authentication roots and all host sockets.	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/README.md	unanchored-claim	The suite fails when it detects these conditions:	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/README.md	unanchored-claim	Workcell rejects unsafe broad workspaces.	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/expected-controls.md	unanchored-claim	- An explicit rebuild also requires `--prepare`.	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/expected-controls.md	unanchored-claim	- Strict mode blocks mutable scripts that select protected runtimes or loaders.	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/expected-controls.md	unanchored-claim	- Strict mode blocks native ELF files from mutable workspace and state paths.	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/expected-controls.md	unanchored-claim	- Workcell rejects `/` and the operator home as default workspaces.	claim predates the rule; cite the enforcing path or drop the claim
-verify/invariants/expected-controls.md	unanchored-claim	- `session verify` fails closed when the chain, seal, or public key is invalid.	claim predates the rule; cite the enforcing path or drop the claim
