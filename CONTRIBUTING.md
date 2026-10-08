@@ -40,7 +40,8 @@ skips the generated artifacts and doc language checks. Set
 `WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional bypass.
 
 These checks run in a temporary detached checkout of each pushed commit.
-Working-tree edits and untracked files do not change the result. A changed
+Working-tree edits and untracked files do not change the result. The doc link
+check runs when a Markdown file or any other file is deleted or renamed. A changed
 symlink fails the codespell check.
 
 These three hooks are shell, not Go. This is the documented exception to the

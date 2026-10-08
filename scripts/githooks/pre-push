@@ -70,7 +70,7 @@ gate_commit() {
   # Without rename detection a renamed or deleted .md lists its old path.
   git diff -z --no-renames --name-only "${merge_base}" HEAD >"${changed_list}"
 
-  local changed_files=() markdown_changed=0
+  local changed_files=() markdown_changed=0 target_removed=0
   while IFS= read -r -d '' file; do
     # A deleted .md can break a link, so it counts; codespell needs a file.
     [[ "${file}" != *.md ]] || markdown_changed=1
@@ -81,13 +81,18 @@ gate_commit() {
       failures=$((failures + 1))
     elif [[ -e "${file}" ]]; then
       changed_files+=("${file}")
+    else
+      # A Markdown link can name any file type, so any removal can break one.
+      target_removed=1
     fi
   done <"${changed_list}"
 
   [[ "${have_go}" -eq 0 ]] || run_gate "generated artifacts" ./scripts/check-generated-artifacts.sh
-  if [[ "${markdown_changed}" -eq 1 ]]; then
+  if [[ "${markdown_changed}" -eq 1 || "${target_removed}" -eq 1 ]]; then
     run_gate "doc links" ./scripts/check-doc-links.sh
-    [[ "${have_go}" -eq 0 ]] || run_gate "doc language" ./scripts/check-doc-language.sh
+  fi
+  if [[ "${markdown_changed}" -eq 1 && "${have_go}" -eq 1 ]]; then
+    run_gate "doc language" ./scripts/check-doc-language.sh
   fi
   if [[ "${#changed_files[@]}" -gt 0 ]]; then
     if command -v codespell >/dev/null; then

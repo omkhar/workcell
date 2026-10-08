@@ -215,6 +215,25 @@ func TestFastPrePushRunsDocLinksOnDeletedMarkdown(t *testing.T) {
 	}
 }
 
+func TestFastPrePushRejectsDeletedNonMarkdownLinkTarget(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
+	f.run("add", "scripts/check-doc-links.sh")
+	f.commitFile("img.png", "image\n", fixtureSubject)
+	f.commitFile("doc.md", "See [the image](img.png).\n", fixtureSubject)
+	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
+	f.run("rm", "--quiet", "img.png")
+	f.run("commit", "--quiet", "-m", fixtureSubject)
+	output, err := f.hook()
+	if err == nil || !strings.Contains(output, "doc links failed") {
+		t.Fatalf("deleting a non-Markdown link target skipped the link check: %v\n%s", err, output)
+	}
+}
+
 func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
