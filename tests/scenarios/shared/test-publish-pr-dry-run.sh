@@ -280,6 +280,14 @@ test -n "${worktree_signature_line}"
 test -n "${worktree_shape_line}"
 test "${worktree_fetch_line}" -lt "${worktree_signature_line}"
 test "${worktree_signature_line}" -lt "${worktree_shape_line}"
+# Live publish looks up the PR before it picks the shape margin and pushes.
+worktree_pr_list_line="$(grep -n -- "gh pr list -R ${ORIGIN} " <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_push_line="$(grep -n -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}" | cut -d: -f1)"
+worktree_create_line="$(grep -n -- "gh pr create -R ${ORIGIN} " <<<"${worktree_dry_run}" | cut -d: -f1)"
+test "${worktree_signature_line}" -lt "$(grep -n -- "gh repo view ${ORIGIN} " <<<"${worktree_dry_run}" | cut -d: -f1)"
+test "${worktree_pr_list_line}" -lt "${worktree_shape_line}"
+test "${worktree_shape_line}" -lt "${worktree_push_line}"
+test "${worktree_push_line}" -lt "${worktree_create_line}"
 grep -q -- 'check-publish-commit-signatures\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD' <<<"${worktree_dry_run}"
 grep -q -- 'check-pr-shape\.sh --repo-root .* --base-ref refs/remotes/origin/main --head-ref HEAD --max-files 25 --max-lines 1200 --max-areas 8 --max-binaries 0' <<<"${worktree_dry_run}"
 grep -q -- ' push --no-verify -u origin feature/publish-scenario ' <<<"${worktree_dry_run}"
@@ -363,11 +371,14 @@ current_tree_oid="$(compute_worktree_tree_oid "${FIXTURE}")"
 current_head_oid="$(git -C "${FIXTURE}" rev-parse HEAD)"
 current_base_oid="$(git -C "${FIXTURE}" rev-parse refs/remotes/origin/main)"
 current_status_sha256="$(compute_worktree_status_sha256 "${FIXTURE}")"
-cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<EOF
+# write_parity_evidence BRANCH records evidence for publication branch BRANCH.
+write_parity_evidence() {
+  cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-parity.json" <<EOF
 {
   "version": 1,
   "profile": "pr-parity",
   "base_branch": "main",
+  "publish_branch": "$1",
   "base_ref": "refs/remotes/origin/main",
   "base_oid": "${current_base_oid}",
   "head_oid": "${current_head_oid}",
@@ -376,6 +387,23 @@ cat >"$(git -C "${FIXTURE}" rev-parse --absolute-git-dir)/workcell-parity/pr-par
   "status_sha256": "${current_status_sha256}"
 }
 EOF
+}
+# Evidence for another publication branch was sized with that branch's PR
+# shape margin, so it does not cover this one.
+write_parity_evidence feature/repo-wrapper-other
+set +e
+branch_mismatch_output="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
+  --workspace "${FIXTURE}" \
+  --branch feature/repo-wrapper-ok \
+  --title "Repo wrapper title" \
+  --commit-message "Repo wrapper commit" \
+  --dry-run 2>&1)"
+branch_mismatch_rc=$?
+set -e
+test "${branch_mismatch_rc}" -eq 2
+grep -q 'Local PR-parity evidence does not match the tree being published' <<<"${branch_mismatch_output}"
+grep -q -- '--publish-branch feature/repo-wrapper-ok' <<<"${branch_mismatch_output}"
+write_parity_evidence feature/repo-wrapper-ok
 wrapper_dry_run="$("${ROOT_DIR}/scripts/repo-publish-pr.sh" \
   --workspace "${FIXTURE}" \
   --branch feature/repo-wrapper-ok \
@@ -397,6 +425,7 @@ exit 99
 EOF
   chmod +x "${POISON_BIN}/${tool}"
 done
+write_parity_evidence feature/repo-wrapper-poisoned-path
 poisoned_wrapper_dry_run="$(PATH="${POISON_BIN}:${PATH}" "${ROOT_DIR}/scripts/repo-publish-pr.sh" \
   --workspace "${FIXTURE}" \
   --branch feature/repo-wrapper-poisoned-path \
@@ -810,6 +839,7 @@ grep -q '^publish_branch=feature/publish-live$' <<<"${publish_output}"
 grep -q '^publish_base=main$' <<<"${publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${publish_output}"
 grep -q '^publish_snapshot=worktree$' <<<"${publish_output}"
+grep -q '^PR shape budget remaining: .* margin=0\.66$' <<<"${publish_output}"
 grep -q "^repo view ${ORIGIN} --json nameWithOwner$" "${GH_LOG}"
 grep -q "^pr list -R ${ORIGIN} --base main --head feature/publish-live --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100$" "${GH_LOG}"
 grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-live --title Live scenario title --draft --body-file " "${GH_LOG}"
@@ -856,6 +886,7 @@ existing_publish_output="$(
 )"
 grep -q '^publish_branch=feature/publish-live$' <<<"${existing_publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/existing$' <<<"${existing_publish_output}"
+grep -q '^PR shape budget remaining: .* margin=1\.0$' <<<"${existing_publish_output}"
 grep -q "^pr list -R ${ORIGIN} --base main --head feature/publish-live --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100$" "${GH_LOG}"
 if grep -q '^pr create ' "${GH_LOG}"; then
   echo "publish-pr should reuse the matching open pull request instead of creating another" >&2
@@ -967,6 +998,7 @@ certified_publish_output="$(
     2>"${TMP_DIR}/publish-certified-adapter.stderr"
 )"
 grep -q 'PR shape check passed with approved certified-adapter override' <<<"${certified_publish_output}"
+grep -q '^PR shape budget remaining: files=[0-9]* lines=[0-9]* areas=[0-9]* binary_files=0 margin=' <<<"${certified_publish_output}"
 grep -q '^publish_branch=feature/publish-certified-adapter$' <<<"${certified_publish_output}"
 grep -q '^publish_pr_url=https://example.invalid/pr/123$' <<<"${certified_publish_output}"
 grep -q "^pr create -R ${ORIGIN} --base main --head feature/publish-certified-adapter --title Certified adapter scenario title --label approved-large-certified-adapter --draft --body Certified adapter scenario body$" "${GH_LOG}"
@@ -1021,6 +1053,92 @@ certified_binary_shape_rc=$?
 set -e
 test "${certified_binary_shape_rc}" -eq 2
 grep -q 'certified_adapter_binary_files=1 (limit=0)' <<<"${certified_binary_shape_output}"
+
+git -C "${FIXTURE}" switch -C main >/dev/null
+git -C "${FIXTURE}" reset -q --hard origin/main
+for index in $(seq 1 8); do
+  printf 'margin fixture %02d\n' "${index}" >"${FIXTURE}/margin-${index}.txt"
+done
+git -C "${FIXTURE}" add .
+git -C "${FIXTURE}" commit -q --no-verify -m "margin shape fixture"
+
+# Negative control: 8 files fit a 10-file limit at full margin and overflow it at 0.5.
+margin_full_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --max-files 10 --max-lines 1200 --max-areas 8 --max-binaries 0 --margin 1.0 2>&1)"
+grep -q '^PR shape budget remaining: files=2 lines=1192 areas=7 binary_files=0 margin=1\.0$' <<<"${margin_full_output}"
+set +e
+margin_half_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --max-files 10 --max-lines 1200 --max-areas 8 --max-binaries 0 --margin 0.5 2>&1)"
+margin_half_rc=$?
+margin_bad_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --margin 1.5 2>&1)"
+margin_bad_rc=$?
+set -e
+test "${margin_half_rc}" -eq 2
+grep -q 'changed_files=8 (limit=5)' <<<"${margin_half_output}"
+test "${margin_bad_rc}" -eq 2
+grep -q -- '--margin must be 0.01 to 1.0' <<<"${margin_bad_output}"
+# pre-merge asks publish-pr's Go owner for the margin: only an open PR from
+# this repository lifts it, and a lookup that is not an array of complete
+# entries stops pre-merge instead of falling back to 0.66.
+MARGIN_BIN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/publish-pr-margin-bin.XXXXXX")"
+(cd "${ROOT_DIR}" && go build -o "${MARGIN_BIN_DIR}/workcell-citools" ./cmd/workcell-citools)
+# ROOT_DIR is the fixture here, so the go run seam runs the prebuilt binary.
+# $2 is the publication branch (default main, the checked-out branch).
+resolve_margin() {
+  printf '%s\n' "$1" >"${GH_PR_LIST_RESPONSE_FILE}"
+  PATH="${MARGIN_BIN_DIR}:${PATH}" HOST_GH_BIN="${TRUSTED_GH_STUB}" GH_REPO=wrong/repo bash -c '
+    set -euo pipefail
+    ROOT_DIR="$1"; BASE_BRANCH=main; SHAPE_MARGIN=auto; PUBLISH_BRANCH="$3"
+    eval "$(sed -n "/^resolve_shape_margin()/,/^}/p" "$2")"
+    run_go_in_repo() { shift 3; workcell-citools "$@"; }
+    resolve_shape_margin' _ "${FIXTURE}" "${ROOT_DIR}/scripts/pre-merge.sh" "${2-main}"
+}
+margin_pr() {
+  printf '[{"baseRefName":"main","headRefName":"main","headRepository":{"nameWithOwner":"%s"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]' "$1"
+}
+: >"${GH_LOG}"
+test "$(resolve_margin "$(margin_pr fork/publish-pr-fixture)")" = "0.66"
+test "$(resolve_margin "$(margin_pr example/publish-pr-fixture)")" = "1.0"
+test "$(resolve_margin '[]')" = "0.66"
+grep -q "^pr list -R ${ORIGIN} --base main --head main --state open " "${GH_LOG}"
+# The lookup follows the publication branch, not the checked-out main: the
+# open PR for main does not lift the margin for feature/next.
+: >"${GH_LOG}"
+test "$(resolve_margin "$(margin_pr example/publish-pr-fixture)" feature/next)" = "0.66"
+grep -q "^pr list -R ${ORIGIN} --base main --head feature/next --state open " "${GH_LOG}"
+for bad_list in 'not json' '{}' '[{}]' '[{"baseRefName":"main","headRefName":"main","headRepository":{},"isDraft":false,"labels":[],"url":"u"}]'; do
+  set +e
+  margin_fail_output="$(resolve_margin "${bad_list}" 2>&1)"
+  margin_fail_rc=$?
+  set -e
+  test "${margin_fail_rc}" -ne 0
+  grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_fail_output}"
+done
+# A detached HEAD gives pre-merge no branch, and it may still head an open
+# PR, so the lookup fails closed.
+set +e
+margin_detached_output="$(resolve_margin '[]' '' 2>&1)"
+margin_detached_rc=$?
+set -e
+test "${margin_detached_rc}" -ne 0
+grep -q 'publish-pr shape margin requires a publication branch' <<<"${margin_detached_output}"
+grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_detached_output}"
+rm -f "${GH_PR_LIST_RESPONSE_FILE}"
+rm -rf "${MARGIN_BIN_DIR}"
+
+# An explicit limit of 0 is not raised to 1 by the margin floor.
+set +e
+margin_zero_output="$("${ROOT_DIR}/scripts/check-pr-shape.sh" \
+  --repo-root "${FIXTURE}" --base-ref refs/remotes/origin/main --head-ref HEAD \
+  --max-files 0 --max-lines 1200 --max-areas 8 --max-binaries 0 --margin 1.0 2>&1)"
+margin_zero_rc=$?
+set -e
+test "${margin_zero_rc}" -eq 2
+grep -q 'changed_files=8 (limit=0)' <<<"${margin_zero_output}"
 
 git -C "${FIXTURE}" switch -C main >/dev/null
 git -C "${FIXTURE}" reset -q --hard origin/main

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT_DIR}" log -1 --pretty=%ct 2>/dev/null || printf '0')}"
 LOCAL_SNAPSHOT_ACTIVE="${WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE:-0}"
 PROFILE="pr-parity"
@@ -22,6 +24,9 @@ PARITY_START_HEAD_OID=""
 PARITY_START_STATUS_SHA256=""
 PARITY_BASE_REF=""
 PARITY_BASE_OID=""
+SHAPE_MARGIN="auto"
+PUBLISH_BRANCH=""
+PARITY_SHAPE_BUDGET=""
 LIVE_LANE_PID=""
 LIVE_LANE_LOG=""
 LIVE_LANE_START=0
@@ -43,6 +48,10 @@ Options:
   --event EVENT             Planner event for pr-parity (default: pull_request)
   --base BRANCH             Base branch for PR-parity planning (default: main)
   --label LABEL             Repeatable PR label input for planner selection
+  --shape-margin auto|F     PR shape limit scale (default: auto = 0.66 while no PR is
+                            open for the publication branch, else 1.0)
+  --publish-branch BRANCH   Branch publish-pr will push (default: the checked-out
+                            branch); the shape margin and parity evidence bind to it
   --allow-dirty             Run against the live worktree even when it is dirty
   --local-snapshot <mode>   Run from a disposable snapshot: head, index, worktree
   --local-include-untracked Include untracked files with --local-snapshot worktree
@@ -106,6 +115,12 @@ default_local_snapshot_parent() {
 run_from_local_snapshot() {
   local -a snapshot_cmd=()
   local snapshot_parent=""
+  local -a plan_args=()
+  local -a margin_args=()
+  local -a branch_args=()
+  local plan_json=""
+  local selected_scripts=""
+  local shape_margin=""
   local status=0
 
   [[ -n "${LOCAL_SNAPSHOT_MODE}" ]] || return 0
@@ -127,16 +142,51 @@ run_from_local_snapshot() {
   if [[ "${LOCAL_KEEP_DIR}" -eq 1 ]]; then
     snapshot_cmd+=(--keep-snapshot)
   fi
+  # The snapshot's only remote is this directory, so gh cannot learn whether
+  # a PR exists from inside it: resolve the margin here and pass it along when
+  # the plan runs the shape job, so other profiles need no GitHub lookup.
+  build_plan_args plan_args
+  plan_json="$("${ROOT_DIR}/scripts/ci-plan.sh" "${plan_args[@]}" --format json)"
+  selected_scripts="$(collect_selected_scripts "${plan_json}")"
+  if grep -q $'\tscripts/ci/job-pr-shape.sh$' <<<"${selected_scripts}"; then
+    shape_margin="$(resolve_shape_margin)"
+    margin_args=(--shape-margin "${shape_margin}")
+  fi
+  # The snapshot checks out no branch, so it gets the publication branch here.
+  if [[ -n "${PUBLISH_BRANCH}" ]]; then
+    branch_args=(--publish-branch "${PUBLISH_BRANCH}")
+  fi
   snapshot_cmd+=(
     --
     env
     WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1
     ./scripts/pre-merge.sh
     "${ORIGINAL_ARGS[@]}"
+    "${branch_args[@]}"
+    "${margin_args[@]}"
   )
 
   "${snapshot_cmd[@]}" || status=$?
   exit "${status}"
+}
+
+# publish-pr owns the margin policy and the PR lookup; this only dispatches.
+# A failed lookup stops pre-merge, because a fallback would hide the failure
+# and reject a valid follow-up (--shape-margin skips the lookup). go and the
+# helper get no GitHub token, gh config path, or SSH agent: gh then reads the
+# operator's own config under HOME.
+resolve_shape_margin() {
+  if [[ "${SHAPE_MARGIN}" != "auto" ]]; then
+    printf '%s\n' "${SHAPE_MARGIN}"
+    return 0
+  fi
+  if ! (
+    unset GH_TOKEN GITHUB_TOKEN GH_CONFIG_DIR SSH_AUTH_SOCK
+    run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools publish-pr-shape-margin "${ROOT_DIR}" "${BASE_BRANCH}" "${PUBLISH_BRANCH}"
+  ); then
+    echo "[pre-merge] cannot look up the open PR for the shape margin; retry or pass --shape-margin" >&2
+    return 1
+  fi
 }
 
 parity_evidence_dir() {
@@ -325,11 +375,14 @@ write_pr_parity_evidence() {
     --argjson labels "${labels_json}" \
     --argjson plan "${plan_json}" \
     --argjson timings "${timings}" \
+    --arg shape_budget "${PARITY_SHAPE_BUDGET}" \
+    --arg publish_branch "${PUBLISH_BRANCH}" \
     '{
       version: 1,
       profile: $profile,
       event: $event,
       base_branch: $base,
+      publish_branch: $publish_branch,
       base_ref: $base_ref,
       base_oid: $base_oid,
       head_oid: $head_oid,
@@ -339,7 +392,12 @@ write_pr_parity_evidence() {
       status_sha256: $status_sha256,
       generated_at: $generated_at,
       plan: $plan,
-      timings: $timings
+      timings: $timings,
+      pr_shape_budget: (
+        if $shape_budget == "" then null
+        else ($shape_budget | split(" ") | map(split("=") | {key: .[0], value: .[1]}) | from_entries
+          | with_entries(if .key == "margin" then . else .value |= tonumber end))
+        end)
     }' >"${tmp_path}"
   mv "${tmp_path}" "${evidence_path}"
   echo "[pre-merge] wrote PR parity evidence to ${evidence_path}"
@@ -425,12 +483,17 @@ execute_plan() {
         ;;
       scripts/ci/job-pr-shape.sh)
         echo "[pre-merge] pull request shape"
-        local -a shape_args=(--base "${BASE_BRANCH}")
+        local shape_margin=""
+        local shape_out=""
+        shape_margin="$(resolve_shape_margin)"
+        local -a shape_args=(--base "${BASE_BRANCH}" --margin "${shape_margin}")
         local shape_label=""
         for shape_label in "${LABELS[@]}"; do
           shape_args+=(--label "${shape_label}")
         done
-        WORKCELL_PR_BASE_REF="${BASE_BRANCH}" "${ROOT_DIR}/${script}" "${shape_args[@]}"
+        shape_out="$(WORKCELL_PR_BASE_REF="${BASE_BRANCH}" "${ROOT_DIR}/${script}" "${shape_args[@]}")"
+        printf '%s\n' "${shape_out}"
+        PARITY_SHAPE_BUDGET="$(sed -n 's/^PR shape budget remaining: //p' <<<"${shape_out}")"
         ;;
       scripts/ci/job-validate.sh)
         echo "[pre-merge] shared validate job (${PROFILE})"
@@ -531,6 +594,24 @@ while [[ $# -gt 0 ]]; do
       }
       shift 2
       ;;
+    --shape-margin)
+      SHAPE_MARGIN="${2-}"
+      [[ -n "${SHAPE_MARGIN}" ]] || {
+        echo "Option --shape-margin requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
+    --publish-branch)
+      PUBLISH_BRANCH="${2-}"
+      [[ -n "${PUBLISH_BRANCH}" ]] || {
+        echo "Option --publish-branch requires a value." >&2
+        usage >&2
+        exit 2
+      }
+      shift 2
+      ;;
     --allow-dirty)
       ALLOW_DIRTY=1
       shift
@@ -614,6 +695,12 @@ require_tool shellcheck
 if [[ "${LOCAL_INCLUDE_UNTRACKED}" -eq 1 ]] && [[ "${LOCAL_SNAPSHOT_MODE}" != "worktree" ]]; then
   echo "--local-include-untracked requires --local-snapshot worktree." >&2
   exit 2
+fi
+
+# publish-pr pushes --branch, so repo-publish-pr.sh requires the evidence to
+# name that branch; without --publish-branch it is the checked-out branch.
+if [[ -z "${PUBLISH_BRANCH}" ]]; then
+  PUBLISH_BRANCH="$(git -C "${ROOT_DIR}" branch --show-current)"
 fi
 
 run_from_local_snapshot

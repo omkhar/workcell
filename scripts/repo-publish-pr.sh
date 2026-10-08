@@ -7,6 +7,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="${PWD}"
 BASE_BRANCH="main"
 SNAPSHOT="worktree"
+PUBLISH_BRANCH=""
 ALLOW_PARITY_OVERRIDE=0
 PARITY_OVERRIDE_REASON=""
 HOST_GIT_BIN=""
@@ -123,6 +124,7 @@ verify_pr_parity_evidence() {
   local workspace="$1"
   local snapshot_mode="$2"
   local base_branch="$3"
+  local publish_branch="$4"
   local evidence_dir=""
   local evidence_path=""
   local expected_tree=""
@@ -147,6 +149,7 @@ verify_pr_parity_evidence() {
   # shellcheck disable=SC2016
   "${HOST_JQ_BIN}" -e \
     --arg base "${base_branch}" \
+    --arg publish_branch "${publish_branch}" \
     --arg base_ref "${base_ref}" \
     --arg base_oid "${base_oid}" \
     --arg head_oid "${expected_head}" \
@@ -157,6 +160,7 @@ verify_pr_parity_evidence() {
       .version == 1 and
       .profile == "pr-parity" and
       .base_branch == $base and
+      .publish_branch == $publish_branch and
       .base_ref == $base_ref and
       .base_oid == $base_oid and
       .head_oid == $head_oid and
@@ -165,8 +169,8 @@ verify_pr_parity_evidence() {
       .status_sha256 == $status_sha256
     ' "${evidence_path}" >/dev/null || {
     echo "Local PR-parity evidence does not match the tree being published." >&2
-    echo "Expected base=${base_branch} base_oid=${base_oid} head_oid=${expected_head} snapshot=${snapshot_mode} tree_oid=${expected_tree}." >&2
-    echo "Re-run ./scripts/pre-merge.sh --profile pr-parity before publishing, or use --allow-parity-override with a reason." >&2
+    echo "Expected base=${base_branch} publish_branch=${publish_branch} base_oid=${base_oid} head_oid=${expected_head} snapshot=${snapshot_mode} tree_oid=${expected_tree}." >&2
+    echo "Re-run ./scripts/pre-merge.sh --profile pr-parity --publish-branch ${publish_branch} before publishing, or use --allow-parity-override with a reason." >&2
     exit 2
   }
 }
@@ -185,6 +189,12 @@ while [[ $# -gt 0 ]]; do
       }
       PASSTHROUGH_ARGS+=("$1" "$BASE_BRANCH")
       shift 2
+      ;;
+    --branch)
+      # Pre-merge sized the PR shape margin for this branch.
+      PUBLISH_BRANCH="${2-}"
+      PASSTHROUGH_ARGS+=("${@:1:2}")
+      shift "$(($# > 1 ? 2 : 1))"
       ;;
     --snapshot)
       SNAPSHOT="${2:-}"
@@ -229,7 +239,7 @@ if [[ "${ALLOW_PARITY_OVERRIDE}" -eq 1 ]]; then
   fi
   echo "repo-publish-pr parity override: ${PARITY_OVERRIDE_REASON}" >&2
 elif [[ "${BASE_BRANCH}" == "main" ]]; then
-  verify_pr_parity_evidence "${WORKSPACE}" "${SNAPSHOT}" "${BASE_BRANCH}"
+  verify_pr_parity_evidence "${WORKSPACE}" "${SNAPSHOT}" "${BASE_BRANCH}" "${PUBLISH_BRANCH}"
 fi
 
 if [[ "${#PASSTHROUGH_ARGS[@]}" -eq 0 ]]; then

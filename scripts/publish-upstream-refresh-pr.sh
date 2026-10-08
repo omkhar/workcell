@@ -310,10 +310,10 @@ if [[ "${local_changed_files}" != "${candidate_changed_files}" ]]; then
   exit 2
 fi
 
-"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty
+branch_name="codex/upstream-refresh-${CANDIDATE_KIND}-${RUN_ID}"
+"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty --publish-branch "${branch_name}"
 
 title="Refresh pinned upstreams (${CANDIDATE_KIND})"
-branch_name="codex/upstream-refresh-${CANDIDATE_KIND}-${RUN_ID}"
 
 printf '%s\n' "${title}" >"${title_file}"
 cat >"${body_file}" <<EOF

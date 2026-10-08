@@ -21,6 +21,19 @@ import (
 
 const approvedLargeCertifiedAdapterLabel = "approved-large-certified-adapter"
 
+// firstPublicationShapeMargin scales the PR shape limits until a PR exists.
+const firstPublicationShapeMargin = "0.66"
+
+// shapeMargin is the PR shape margin for a publication: first publication
+// keeps a smaller budget so review fixes still fit, and an open PR (prURL)
+// gets the full budget.
+func shapeMargin(prURL string) string {
+	if prURL != "" {
+		return "1.0"
+	}
+	return firstPublicationShapeMargin
+}
+
 type pullRequestListEntry struct {
 	BaseRefName    string          `json:"baseRefName"`
 	HeadRefName    string          `json:"headRefName"`
@@ -107,6 +120,139 @@ func repositorySelectorFromRemoteURL(raw string) (string, error) {
 	}
 
 	return "", &cliexit.ExitCodeError{Code: 2, Message: "publish-pr could not derive a GitHub repository selector from the origin push URL."}
+}
+
+// originRepositorySelector binds GitHub lookups to the origin push repository.
+func originRepositorySelector(ctx *BashContext, workspace string) (string, error) {
+	originPushURL, err := remoteOriginPushURL(ctx, workspace)
+	if err != nil {
+		return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires exactly one origin push URL in %s.", workspace)}
+	}
+	return repositorySelectorFromRemoteURL(originPushURL)
+}
+
+func repoViewArgs(ghBin, repositorySelector string) []string {
+	return []string{ghBin, "repo", "view", repositorySelector, "--json", "nameWithOwner"}
+}
+
+func prListArgs(ghBin, repositorySelector string, opts *Options) []string {
+	return []string{
+		ghBin,
+		"pr", "list",
+		"-R", repositorySelector,
+		"--base", opts.Base,
+		"--head", opts.Branch,
+		"--state", "open",
+		"--json", "baseRefName,headRefName,headRepository,isDraft,labels,url",
+		"--limit", "100",
+	}
+}
+
+// shapeMarginFromLookups applies publish-pr's validated parsing of the
+// repository view and open-PR list, then its margin policy.
+func shapeMarginFromLookups(repoViewJSON, prListJSON string, opts *Options) (string, error) {
+	repositoryNameWithOwner, err := parseRepositoryNameWithOwner(repoViewJSON)
+	if err != nil {
+		return "", err
+	}
+	prURL, err := parseExistingPullRequest(prListJSON, repositoryNameWithOwner, opts)
+	if err != nil {
+		return "", err
+	}
+	return shapeMargin(prURL), nil
+}
+
+// ShapeMarginMain prints the PR shape margin that publish-pr would apply to
+// publication branch branch against base, so pre-merge checks the same budget.
+// git and gh resolve as publish-pr resolves them, because the lookups run with
+// the host credentials, and every lookup runs in the canonical workspace. A
+// missing trusted gh, an empty branch (a detached HEAD may still head an open
+// PR), and any lookup or parse failure are errors, never PR absence;
+// pre-merge --shape-margin skips the lookup.
+func ShapeMarginMain(workspace, base, branch string, stdout io.Writer) error {
+	ctx := &BashContext{
+		WorkspaceRoot:   workspace,
+		TrustedHostPath: os.Getenv("PATH"),
+		RealHome:        os.Getenv("HOME"),
+		HostGitBin:      os.Getenv("HOST_GIT_BIN"),
+		HostGhBin:       os.Getenv("HOST_GH_BIN"),
+	}
+	resolvedWorkspace, err := resolveExistingDirectoryOrDie(ctx, workspace)
+	if err != nil {
+		return err
+	}
+	// The workspace is also the repository root that pre-merge validates.
+	ctx.RootDir = resolvedWorkspace
+	if ctx.HostGitBin, err = resolveHostGit(ctx); err != nil {
+		return err
+	}
+	// writeShapeMargin reports a missing gh with the --shape-margin hint.
+	if ctx.HostGhBin, err = resolveHostGh(ctx, false); err != nil {
+		return err
+	}
+	return writeShapeMargin(ctx, resolvedWorkspace, base, branch, stdout)
+}
+
+// writeShapeMargin runs the publish-pr lookups with the resolved ctx tools.
+// gh runs without GH_REPO (RunPublishHostCommandInDir drops it) and with -R
+// set to the origin push repository, as publish-pr does.
+func writeShapeMargin(ctx *BashContext, workspace, base, branch string, stdout io.Writer) error {
+	if !workspaceIsGitWorkTree(ctx, workspace) {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a git worktree: %s", workspace)}
+	}
+	if ctx.HostGhBin == "" {
+		return &cliexit.ExitCodeError{Code: 2, Message: "publish-pr shape margin requires a trusted gh to look up the open PR; install gh or pass --shape-margin"}
+	}
+	if branch == "" {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a publication branch to look up the open PR: %s; check out a branch, pass --publish-branch, or pass --shape-margin", workspace)}
+	}
+	if _, err := runCleanGit(ctx, workspace, []string{"check-ref-format", "--branch", branch}); err != nil {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Invalid publish branch name: %s", branch)}
+	}
+	repositorySelector, err := originRepositorySelector(ctx, workspace)
+	if err != nil {
+		return err
+	}
+	env := &PublishEnv{Path: ctx.TrustedHostPath, Home: ctx.RealHome}
+	run := func(args []string) (string, error) {
+		var out strings.Builder
+		err := RunPublishHostCommandInDir(workspace, env, args, nil, &out, os.Stderr)
+		return out.String(), err
+	}
+	repoViewJSON, err := run(repoViewArgs(ctx.HostGhBin, repositorySelector))
+	if err != nil {
+		return err
+	}
+	opts := &Options{Base: base, Branch: branch}
+	prListJSON, err := run(prListArgs(ctx.HostGhBin, repositorySelector, opts))
+	if err != nil {
+		return err
+	}
+	margin, err := shapeMarginFromLookups(repoViewJSON, prListJSON, opts)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, margin)
+	return err
+}
+
+// resolveHostGit resolves git as publish-pr does: HOST_GIT_BIN when set, else
+// a trusted candidate or trusted PATH entry outside the workspace.
+func resolveHostGit(ctx *BashContext) (string, error) {
+	if ctx.HostGitBin != "" {
+		return ResolveExistingExecutableOrDie(ctx, ctx.HostGitBin, "HOST_GIT_BIN")
+	}
+	return ResolveHostTool(ctx, "git", true, []string{"/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"})
+}
+
+// resolveHostGh resolves gh as publish-pr does: HOST_GH_BIN when set, else a
+// trusted candidate or trusted PATH entry outside the workspace. When
+// required is false, a missing gh returns "".
+func resolveHostGh(ctx *BashContext, required bool) (string, error) {
+	if ctx.HostGhBin != "" {
+		return ResolveExistingExecutableOrDie(ctx, ctx.HostGhBin, "HOST_GH_BIN")
+	}
+	return ResolveHostTool(ctx, "gh", required, []string{"/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"})
 }
 
 func parseExistingPullRequest(raw, repositoryNameWithOwner string, opts *Options) (string, error) {
@@ -224,12 +370,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		return err
 	}
 
-	if ctx.HostGitBin != "" {
-		ctx.HostGitBin, err = ResolveExistingExecutableOrDie(ctx, ctx.HostGitBin, "HOST_GIT_BIN")
-	} else {
-		ctx.HostGitBin, err = ResolveHostTool(ctx, "git", true, []string{"/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"})
-	}
-	if err != nil {
+	if ctx.HostGitBin, err = resolveHostGit(ctx); err != nil {
 		return err
 	}
 
@@ -243,18 +384,13 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	// gh resolution precedence mirrors bash: --gh-bin flag → HOST_GH_BIN
 	// env → resolve_host_tool (or _optional under --dry-run falling back
 	// to a bare `gh`).
-	switch {
-	case opts.GhBin != "":
+	if opts.GhBin != "" {
 		ctx.HostGhBin, err = ResolveExistingExecutableOrDie(ctx, opts.GhBin, "gh-bin")
-	case ctx.HostGhBin != "":
-		ctx.HostGhBin, err = ResolveExistingExecutableOrDie(ctx, ctx.HostGhBin, "HOST_GH_BIN")
-	case opts.DryRun:
-		ctx.HostGhBin, err = ResolveHostTool(ctx, "gh", false, []string{"/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"})
+	} else {
+		ctx.HostGhBin, err = resolveHostGh(ctx, !opts.DryRun)
 		if err == nil && ctx.HostGhBin == "" {
 			ctx.HostGhBin = "gh"
 		}
-	default:
-		ctx.HostGhBin, err = ResolveHostTool(ctx, "gh", true, []string{"/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"})
 	}
 	if err != nil {
 		return err
@@ -264,11 +400,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires a git worktree: %s", resolvedWorkspace)}
 	}
 	resolveRepositorySelector := func() (string, error) {
-		originPushURL, originErr := remoteOriginPushURL(ctx, resolvedWorkspace)
-		if originErr != nil {
-			return "", &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr requires exactly one origin push URL in %s.", resolvedWorkspace)}
-		}
-		return repositorySelectorFromRemoteURL(originPushURL)
+		return originRepositorySelector(ctx, resolvedWorkspace)
 	}
 	for _, line := range preflight.LowerAssuranceNotice {
 		fmt.Fprintln(stderr, line)
@@ -364,6 +496,8 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	if opts.ApprovedLargeCertifiedAdapter {
 		shapeCmd = append(shapeCmd, "--allow-certified-adapter-shape")
 	}
+	// Dry run cannot query GitHub and plans for first publication.
+	shapeMarginArgs := []string{"--margin", shapeMargin("")}
 	pushCmd := clone("push", "--no-verify", "-u", "origin", opts.Branch)
 
 	draft := !preflight.Ready
@@ -376,17 +510,8 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		}
 	}
 	buildGitHubCommands := func(repositorySelector string) (repoViewCmd, prListCmd, prCmd []string) {
-		repoViewCmd = []string{ctx.HostGhBin, "repo", "view", repositorySelector, "--json", "nameWithOwner"}
-		prListCmd = []string{
-			ctx.HostGhBin,
-			"pr", "list",
-			"-R", repositorySelector,
-			"--base", opts.Base,
-			"--head", opts.Branch,
-			"--state", "open",
-			"--json", "baseRefName,headRefName,headRepository,isDraft,labels,url",
-			"--limit", "100",
-		}
+		repoViewCmd = repoViewArgs(ctx.HostGhBin, repositorySelector)
+		prListCmd = prListArgs(ctx.HostGhBin, repositorySelector, opts)
 		prCmd = []string{ctx.HostGhBin, "pr", "create", "-R", repositorySelector, "--base", opts.Base, "--head", opts.Branch, "--title", preflight.TitleText}
 		if opts.ApprovedLargeCertifiedAdapter {
 			prCmd = append(prCmd, "--label", approvedLargeCertifiedAdapterLabel)
@@ -416,10 +541,10 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 		}
 		EmitCommand(stdout, fetchBaseCmd)
 		EmitCommand(stdout, signatureCmd)
-		EmitCommand(stdout, shapeCmd)
-		EmitCommand(stdout, pushCmd)
 		EmitCommand(stdout, repoViewCmd)
 		EmitCommand(stdout, prListCmd)
+		EmitCommand(stdout, slices.Concat(shapeCmd, shapeMarginArgs))
+		EmitCommand(stdout, pushCmd)
 		EmitCommand(stdout, prCmd)
 		return nil
 	}
@@ -456,7 +581,7 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 			return err
 		}
 	}
-	for _, step := range [][]string{fetchBaseCmd, signatureCmd, shapeCmd, pushCmd} {
+	for _, step := range [][]string{fetchBaseCmd, signatureCmd} {
 		if err := run(step, nil); err != nil {
 			return err
 		}
@@ -479,6 +604,12 @@ func PublishPRMain(args []string, stdin io.Reader, stdout, stderr io.Writer) err
 	prURL, err := lookupExistingPR()
 	if err != nil {
 		return err
+	}
+	shapeMarginArgs = []string{"--margin", shapeMargin(prURL)}
+	for _, step := range [][]string{slices.Concat(shapeCmd, shapeMarginArgs), pushCmd} {
+		if err := run(step, nil); err != nil {
+			return err
+		}
 	}
 	if prURL == "" {
 		var prOut strings.Builder

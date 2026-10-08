@@ -7,6 +7,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -147,6 +151,196 @@ func TestParseExistingPullRequest(t *testing.T) {
 				t.Errorf("parseExistingPullRequest() err = %v, want substring %q", err, tc.wantSubstring)
 			}
 		})
+	}
+}
+
+func TestShapeMarginFromLookups(t *testing.T) {
+	t.Parallel()
+	opts := &Options{Base: "main", Branch: "feature/x"}
+	repoView := `{"nameWithOwner":"example/repo"}`
+	pr := func(repository string) string {
+		return `[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"` + repository +
+			`"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]`
+	}
+	cases := []struct {
+		name          string
+		repoView      string
+		prList        string
+		want          string
+		wantSubstring string
+	}{
+		{name: "no-pr", repoView: repoView, prList: "[]", want: "0.66"},
+		{name: "same-repository-pr", repoView: repoView, prList: pr("example/repo"), want: "1.0"},
+		{name: "fork-pr-ignored", repoView: repoView, prList: pr("fork/repo"), want: "0.66"},
+		{name: "object-not-array", repoView: repoView, prList: "{}", wantSubstring: "did not return a JSON array"},
+		{name: "empty-entry", repoView: repoView, prList: "[{}]", wantSubstring: "incomplete entry at index 0"},
+		{name: "missing-name-with-owner", repoView: repoView, prList: `[{"baseRefName":"main","headRefName":"feature/x","headRepository":{},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]`, wantSubstring: "incomplete entry at index 0"},
+		{name: "repository-view-without-name", repoView: "{}", prList: "[]", wantSubstring: "could not determine the origin repository identity"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := shapeMarginFromLookups(tc.repoView, tc.prList, opts)
+			if tc.wantSubstring == "" {
+				if err != nil || got != tc.want {
+					t.Fatalf("shapeMarginFromLookups() = %q, %v; want %q", got, err, tc.want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstring) {
+				t.Fatalf("shapeMarginFromLookups() err = %v, want substring %q", err, tc.wantSubstring)
+			}
+		})
+	}
+}
+
+// TestShapeMarginMainBindsOriginPushRepository proves the lookup runs against
+// the origin push repository with GH_REPO dropped and for the publication
+// branch rather than the checked-out one, and that an empty or invalid branch
+// or a missing gh fails closed without asking gh.
+func TestShapeMarginMainBindsOriginPushRepository(t *testing.T) {
+	repo := t.TempDir()
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "gh.log")
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// HEAD differs from the publication branch, which alone selects the PR.
+	git("init", "-q", "-b", "checked-out")
+	git("remote", "add", "origin", "https://github.com/fetch/repo.git")
+	git("remote", "set-url", "--push", "origin", "https://github.com/example/repo.git")
+	stub := `#!/bin/sh
+printf '%s GH_REPO=%s\n' "$*" "${GH_REPO-unset}" >>"` + logPath + `"
+case "$1 $2" in
+"repo view") echo '{"nameWithOwner":"example/repo"}' ;;
+"pr list") echo '[{"baseRefName":"main","headRefName":"feature/x","headRepository":{"nameWithOwner":"example/repo"},"isDraft":false,"labels":[],"url":"https://example.invalid/pr/1"}]' ;;
+*) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_REPO", "wrong/repo")
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stub sits in an untrusted temp dir, so the test passes the resolved
+	// tools directly; TestShapeMarginMainRefusesWorkspaceGh covers resolution.
+	ctx := &BashContext{HostGitBin: gitBin, HostGhBin: filepath.Join(binDir, "gh"), TrustedHostPath: os.Getenv("PATH"), RealHome: os.Getenv("HOME")}
+
+	var out bytes.Buffer
+	if err := writeShapeMargin(ctx, repo, "main", "feature/x", &out); err != nil {
+		t.Fatalf("writeShapeMargin() err = %v", err)
+	}
+	if out.String() != "1.0\n" {
+		t.Fatalf("ShapeMarginMain() = %q, want 1.0", out.String())
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "repo view https://github.com/example/repo.git --json nameWithOwner GH_REPO=unset\n" +
+		"pr list -R https://github.com/example/repo.git --base main --head feature/x --state open --json baseRefName,headRefName,headRepository,isDraft,labels,url --limit 100 GH_REPO=unset\n"
+	if string(log) != want {
+		t.Fatalf("gh calls = %q, want %q", log, want)
+	}
+
+	// A detached HEAD (no branch) may still be the head of an open PR, and
+	// an invalid name is no branch at all, so both fail closed instead of
+	// claiming first publication.
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	for branch, want := range map[string]string{"": "requires a publication branch", "bad..name": "Invalid publish branch name"} {
+		out.Reset()
+		err = writeShapeMargin(ctx, repo, "main", branch, &out)
+		if err == nil || !strings.Contains(err.Error(), want) || out.Len() != 0 {
+			t.Fatalf("writeShapeMargin(branch %q) = %q, %v; want %q", branch, out.String(), err, want)
+		}
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("an empty or invalid branch should not call gh; stat err = %v", err)
+	}
+
+	// Without a trusted gh the lookup cannot run, so it fails closed instead
+	// of reporting the first-publication margin.
+	ctx.HostGhBin = ""
+	err = writeShapeMargin(ctx, repo, "main", "feature/x", &out)
+	if err == nil || !strings.Contains(err.Error(), "requires a trusted gh") || out.Len() != 0 {
+		t.Fatalf("writeShapeMargin() without gh = %q, %v; want a trusted gh error", out.String(), err)
+	}
+}
+
+// TestShapeMarginMainRefusesWorkspaceGh proves a workspace-local gh never runs
+// with the forwarded host credentials, whether it comes first on PATH or
+// through HOST_GH_BIN.
+func TestShapeMarginMainRefusesWorkspaceGh(t *testing.T) {
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "fake-gh-ran")
+	cmd := exec.Command("git", "-C", repo, "init", "-q", "-b", "feature/x")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	// A local origin path keeps any trusted host gh offline.
+	cmd = exec.Command("git", "-C", repo, "remote", "add", "origin", filepath.Join(repo, "origin.git"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+	fakeGh := filepath.Join(repo, "bin", "gh")
+	if err := os.MkdirAll(filepath.Dir(fakeGh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fakeGh, []byte("#!/bin/sh\nprintf '%s\\n' \"${GH_TOKEN-}\" >\""+marker+"\"\necho '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(fakeGh)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GH_TOKEN", "host-secret")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("HOST_GIT_BIN", "")
+
+	t.Setenv("HOST_GH_BIN", "")
+	_ = ShapeMarginMain(repo, "main", "feature/x", io.Discard)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("workspace gh on PATH ran with host credentials; stat err = %v", err)
+	}
+
+	t.Setenv("HOST_GH_BIN", fakeGh)
+	err := ShapeMarginMain(repo, "main", "feature/x", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "HOST_GH_BIN must point to a trusted host executable path") {
+		t.Fatalf("ShapeMarginMain() with workspace HOST_GH_BIN err = %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("workspace HOST_GH_BIN ran; stat err = %v", err)
+	}
+}
+
+// TestShapeMarginMainUsesResolvedWorkspace proves the lookups run in the
+// canonical workspace that was validated, not through the caller's symlink,
+// which could be retargeted after validation.
+func TestShapeMarginMainUsesResolvedWorkspace(t *testing.T) {
+	target := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "workspace-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOST_GIT_BIN", "")
+	t.Setenv("HOST_GH_BIN", "")
+	// target is no git worktree, so the first lookup fails and names the
+	// directory it ran in.
+	err = ShapeMarginMain(link, "main", "feature/x", io.Discard)
+	if err == nil || !strings.HasSuffix(err.Error(), "requires a git worktree: "+resolved) {
+		t.Fatalf("ShapeMarginMain(symlink) err = %v, want a git worktree error for %s", err, resolved)
 	}
 }
 
