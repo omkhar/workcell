@@ -347,7 +347,7 @@ case "${EGRESS_DROP_ALL_PLAN}" in
     exit 1
     ;;
 esac
-if printf '%s\n' "${EGRESS_DROP_ALL_PLAN}" | grep -q -- '--dport [0-9]* -j ACCEPT'; then
+if grep -q -- '--dport [0-9]* -j ACCEPT' <<<"${EGRESS_DROP_ALL_PLAN}"; then
   echo "empty egress plan unexpectedly emitted a per-endpoint ACCEPT rule" >&2
   exit 1
 fi

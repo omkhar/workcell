@@ -4203,12 +4203,12 @@ if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/gemin
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if ! printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq "^direct_mount=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$"; then
+if ! grep -Eq "^direct_mount=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$" <<<"${STAGING_PROBE_OUTPUT}"; then
   echo "Expected staging probe to restage direct credential mounts under the injection bundle root" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Fq "direct_mount=${AUTH_STATUS_ROOT}/gemini.env:/opt/workcell/host-inputs/credentials/gemini.env:ro"; then
+if grep -Fq "direct_mount=${AUTH_STATUS_ROOT}/gemini.env:/opt/workcell/host-inputs/credentials/gemini.env:ro" <<<"${STAGING_PROBE_OUTPUT}"; then
   echo "Expected staging probe to avoid binding the original host credential path directly into the runtime" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
@@ -4223,7 +4223,7 @@ if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/workspace-control-plane:ro'* 
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq '^(direct_mount|shadow_mount|workspace_import_mount)=/tmp/workcell-docker\.'; then
+if grep -Eq '^(direct_mount|shadow_mount|workspace_import_mount)=/tmp/workcell-docker\.' <<<"${STAGING_PROBE_OUTPUT}"; then
   echo "Expected staging probe mount sources to avoid the temporary Docker client sandbox home" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
