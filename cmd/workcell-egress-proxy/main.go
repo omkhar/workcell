@@ -50,6 +50,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return usageError(err)
 	}
 	if flags.NArg() != 0 {
+		flags.Usage()
 		return usageError(fmt.Errorf("unexpected argument: %q", flags.Arg(0)))
 	}
 	if (*allowPath == "") == (*allowText == "") {
