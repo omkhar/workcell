@@ -95,10 +95,30 @@ func TestFastPrePushRunsGatesOnChangedMarkdown(t *testing.T) {
 	if output, err := f.hook(); err != nil {
 		t.Fatalf("fast pre-push failed on a clean change: %v\n%s", err, output)
 	}
-	for _, want := range []string{"check-generated-artifacts", "check-doc-links", "check-doc-language", "check-pr-shape"} {
+	for _, want := range []string{"check-doc-links", "check-doc-language", "check-pr-shape"} {
 		if !strings.Contains(f.ran(), want) {
 			t.Errorf("gate %s did not run; ran:\n%s", want, f.ran())
 		}
+	}
+	// That check runs the pushed commit's generators, so CI owns it.
+	if strings.Contains(f.ran(), "check-generated-artifacts") {
+		t.Errorf("generated artifacts ran on the host; ran:\n%s", f.ran())
+	}
+}
+
+func TestFastPrePushRunsNoHookFromPushedCommit(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	marker := filepath.Join(f.tmpDir, "pushed-hook-ran")
+	// The fixture sets core.hooksPath=.githooks, as bootstrap does.
+	writeExecFile(t, filepath.Join(f.root, ".githooks", "post-checkout"), []byte("#!/bin/bash\ntouch \""+marker+"\"\n"), 0o755)
+	f.run("add", ".githooks/post-checkout")
+	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
+	output, err := f.hook()
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatalf("the hook ran post-checkout from the pushed commit:\n%s", output)
+	}
+	if err != nil || !strings.Contains(f.ran(), "check-doc-links") {
+		t.Errorf("gates did not run on the hook-free checkout: %v\n%s\nran:\n%s", err, output, f.ran())
 	}
 }
 
@@ -138,22 +158,22 @@ func TestFastPrePushSpellchecksOnlyCIDocFiles(t *testing.T) {
 }
 
 func TestFastPrePushReportsEveryFailedGate(t *testing.T) {
-	f := newPrePushChecksFixture(t, "check-generated-artifacts")
+	f := newPrePushChecksFixture(t, "check-doc-links")
 	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
 	output, err := f.hook()
 	if err == nil {
-		t.Fatal("fast pre-push accepted a failing generated-artifacts gate")
+		t.Fatal("fast pre-push accepted a failing doc-links gate")
 	}
 	if !strings.Contains(f.ran(), "check-pr-shape") {
 		t.Errorf("later gates must still run after a failure; ran:\n%s", f.ran())
 	}
-	if !strings.Contains(output, "generated artifacts failed") {
+	if !strings.Contains(output, "doc links failed") {
 		t.Errorf("failure not named:\n%s", output)
 	}
 }
 
 func TestFastPrePushHonorsBypass(t *testing.T) {
-	f := newPrePushChecksFixture(t, "check-generated-artifacts")
+	f := newPrePushChecksFixture(t, "check-pr-shape")
 	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
 	if output, err := f.hook("WORKCELL_SKIP_PREPUSH_CHECKS=1"); err != nil {
 		t.Fatalf("bypass failed: %v\n%s", err, output)
@@ -161,13 +181,13 @@ func TestFastPrePushHonorsBypass(t *testing.T) {
 }
 
 func TestRepoPrePushChainsToFastChecks(t *testing.T) {
-	f := newPrePushChecksFixture(t, "check-generated-artifacts")
+	f := newPrePushChecksFixture(t, "check-pr-shape")
 	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
 	output, err := f.tryGit([]string{"WORKCELL_SKIP_PUSH_SIGNATURES=1", "WORKCELL_SKIP_PREPUSH_CHECKS=0"}, "push", "--quiet", "origin", "feature")
 	if err == nil {
 		t.Fatalf("push passed although the fast gate fails:\n%s", output)
 	}
-	if !strings.Contains(output, "generated artifacts failed") {
+	if !strings.Contains(output, "PR shape failed") {
 		t.Errorf("fast gate failure not shown:\n%s", output)
 	}
 }
@@ -192,7 +212,7 @@ func TestFastPrePushFailsClosedWhenCheckoutFails(t *testing.T) {
 }
 
 func TestFastPrePushSkipsDeletesAndTags(t *testing.T) {
-	f := newPrePushChecksFixture(t, "check-generated-artifacts")
+	f := newPrePushChecksFixture(t, "check-pr-shape")
 	head := f.run("rev-parse", "HEAD")
 	zero := strings.Repeat("0", 40)
 	input := "(delete) " + zero + " refs/heads/old " + head + "\nrefs/tags/v1 " + head + " refs/tags/v1 " + zero + "\n"

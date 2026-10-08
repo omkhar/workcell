@@ -1,13 +1,16 @@
 #!/bin/bash -p
 # Fast pre-push gates on the files this branch changes. .githooks/pre-push
 # hands off to this script after its signature walk. It runs the local halves
-# of the CI checks that failed most often after a push: generated artifacts,
-# doc links, doc language, codespell, and PR shape. It reads the pre-push lines
+# of the CI checks that failed most often after a push: doc links, doc
+# language, codespell, and PR shape. It reads the pre-push lines
 # Git writes on stdin and gates each pushed branch in a detached checkout of
 # the pushed commit, so working-tree edits and untracked files cannot change
 # the result. The checkers come from this script's own tree, never from the
 # pushed commit: a pushed ref is untrusted code, and this hook holds the host
-# credentials. Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
+# credentials. Generated artifacts are not checked here: that check runs the
+# commit's own generators, so CI's validate job and the pre-merge gate own it.
+# The detached checkout runs with hooks disabled, so no pushed hook runs either.
+# Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
 #
 # Language boundary: the doc gates read every tracked Markdown file, and
 # codespell follows links, so a committed symlink could make them print a host
@@ -28,7 +31,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPTS="${ROOT_DIR}/scripts"
 BASE_REF="${WORKCELL_PREPUSH_BASE_REF:-origin/main}"
 cd "${ROOT_DIR}"
-TRUSTED_HEAD="$(git rev-parse HEAD)"
 
 pushed_oids=()
 while read -r _ local_oid remote_ref _; do
@@ -43,12 +45,12 @@ if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null; then
   exit 1
 fi
 
-# CONTRIBUTING.md promises this hook works without Go; those gates need it.
+# CONTRIBUTING.md promises this hook works without Go; doc language needs it.
 have_go=0
 if command -v go >/dev/null; then
   have_go=1
 else
-  echo "pre-push: go is missing; skipping the generated artifacts and doc language gates." >&2
+  echo "pre-push: go is missing; skipping the doc language gate." >&2
 fi
 
 checkout=""
@@ -75,7 +77,10 @@ run_gate() {
 gate_commit() {
   local oid="$1" merge_base file
   checkout="$(mktemp -d "${TMPDIR:-/tmp}/workcell-prepush-tree.XXXXXX")"
-  if ! git -C "${ROOT_DIR}" worktree add --quiet --detach "${checkout}" "${oid}"; then
+  # A plain worktree add runs post-checkout, and core.hooksPath can point into
+  # the pushed tree. Add the worktree empty, then check out with hooks disabled.
+  if ! git -C "${ROOT_DIR}" worktree add --quiet --no-checkout --detach "${checkout}" "${oid}" ||
+    ! git -C "${checkout}" -c core.hooksPath=/dev/null -c core.fsmonitor=false checkout --quiet --detach "${oid}"; then
     echo "pre-push: cannot check out ${oid} for the gates; set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
     exit 1
   fi
@@ -113,12 +118,6 @@ gate_commit() {
     failures=$((failures + 1))
   else
     # Each checker takes the detached tree as its root and reads it as data.
-    if [[ "${have_go}" -eq 1 && "${oid}" == "${TRUSTED_HEAD}" ]]; then
-      run_gate "generated artifacts" "${SCRIPTS}/check-generated-artifacts.sh" "${checkout}"
-    elif [[ "${have_go}" -eq 1 ]]; then
-      # That check runs the generators of the tree it checks.
-      echo "pre-push: generated artifacts runs only for the checked-out commit; CI checks ${oid}." >&2
-    fi
     if [[ "${markdown_changed}" -eq 1 || "${target_removed}" -eq 1 ]]; then
       run_gate "doc links" "${SCRIPTS}/check-doc-links.sh" "${checkout}"
     fi

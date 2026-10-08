@@ -33,13 +33,18 @@ Commit Notation subject format. The `pre-push` hook verifies the signature of
 each outgoing commit.
 
 After that walk, `pre-push` runs `scripts/githooks/pre-push`.
-That script checks generated artifacts, doc links, doc language, codespell, and
-PR shape on the files the branch changes. Codespell scans only the changed
-files that `scripts/ci/run-codespell.sh` scans in CI. Without Go, the script
-skips the generated artifacts and doc language checks. Set
-`WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional bypass.
+That script checks doc links, doc language, codespell, and PR shape on the
+files the branch changes. Codespell scans only the changed files that
+`scripts/ci/run-codespell.sh` scans in CI. Without Go, the script skips the doc
+language check. Set `WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional
+bypass.
+
+The script does not check generated artifacts. That check runs the generators of
+the pushed commit, which is untrusted code. The CI validate job and the
+pre-merge gate check generated artifacts.
 
 These checks run in a temporary detached checkout of each pushed commit.
+Git hooks are disabled for that checkout, so no hook from the pushed commit runs.
 Working-tree edits and untracked files do not change the result. The doc link
 check runs when a Markdown file or any other file is deleted or renamed. A changed
 symlink fails the push before any check runs. The hook reads the file mode from
