@@ -82,7 +82,8 @@ nothing. The idioms are a `< <(` process substitution and a `$(...)` around
 `2>/dev/null` on those tools.
 
 `scripts/check-shell-portability.sh` rejects each of them in `scripts/` and
-`runtime/container/`. The block must capture the status or record completion.
+`runtime/container/`. The command, or the command after it, must capture the
+status or record completion.
 A line can instead state its reason with a `# fail-closed: <reason>` comment.
 
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries

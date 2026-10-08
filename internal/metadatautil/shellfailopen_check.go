@@ -25,8 +25,9 @@ import (
 // an empty answer. Review history holds about 26 accepted findings of this
 // class. shellcheck does not flag it.
 //
-// A hit is accepted when the same block captures the status (see
-// shellFailOpenCapture) or when the line states its case with a marker:
+// A hit is accepted when its own command or the command right after it
+// captures the status (see shellFailOpenCapture) or when the line states its
+// case with a marker:
 //
 //	# fail-closed: <reason>
 //
@@ -94,11 +95,6 @@ const (
 	shellFailClosedTag        = "fail-closed:"
 	shellFailOpenMaxBytes     = 8 << 20
 
-	// shellFailOpenWindow is how many lines after a hit still count as its
-	// block, so a status test after a multi-line `$(` or a `done < <(` loop
-	// header is found.
-	shellFailOpenWindow = 6
-
 	ruleProcessSubstitution = "process-substitution"
 	ruleCommandSubstitution = "command-substitution"
 	ruleOrTrue              = "or-true"
@@ -120,25 +116,31 @@ var (
 	shellToolCommand = regexp.MustCompile("(^|[\\s;&|(`])" + shellFailOpenTools + `\s`)
 	shellToolSubst   = regexp.MustCompile(`\$\(\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+|command\s+|builtin\s+)*` + shellFailOpenTools + `\b`)
 	shellOrTrue      = regexp.MustCompile(`\|\|\s*true\b`)
-	shellDevNull     = regexp.MustCompile(`2>\s*/dev/null`)
+	// shellProcessSubst is an input redirection from a process substitution,
+	// with any blanks or a continued line between the < and the <(.
+	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
+	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
 	// shellFailOpenCapture is a status capture or a completion sentinel: the
 	// status is read ($?, PIPESTATUS, wait), a failure branch runs
 	// (|| exit, || return, || die, || fail*, || { ... }), the call is the test
 	// of an if/while, or the block records completion (walk_completed, the house form of
 	// scripts/verify-release-outputs.sh) or names a sentinel that proves it finished.
 	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|\bwait\b|\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)|sentinel|\w_completed\b`)
-	// shellFailOpenTested is a call that is the test of an if/while or the left
-	// side of &&. It covers a substitution, never a `done < <(` loop header,
-	// where the loop's own while says nothing about the inner command.
+	// shellFailOpenStatusRead reads the status the command before it left, so
+	// it captures a hit only in the command right after the hit.
+	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS|\bwait\b`)
+	// shellFailOpenTested is a command that is the test of an if/while or the
+	// left side of &&. It covers a substitution, never a `done < <(` loop
+	// header, where the loop's own while says nothing about the inner command.
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b|&&\s*\S`)
 	shellFailClosedRe   = regexp.MustCompile(`#\s*` + shellFailClosedTag + `\s*\S`)
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips
-// heredoc bodies and the inside of a quoted span that runs past its line, reads
-// a continued line or an open `$(` as one statement, ignores text inside single
-// quotes and inside double quotes that open no command substitution, and takes
-// a marker only from a real shell comment.
+// heredoc bodies, reads a continued line, an open `$(` or a quoted span that
+// runs past its line as one statement, ignores text inside single quotes and
+// inside double quotes that open no command substitution, and takes a marker
+// only from a real shell comment.
 func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 	type logical struct {
 		number        int
@@ -154,15 +156,12 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		// Bash still runs a $( inside a double-quoted span that runs past its
+		// line, so the line is read inside the span rather than skipped.
+		reopen := ""
 		if openQuote != 0 {
-			at := quoteCloseIndex(text, openQuote)
-			if at < 0 {
-				continue
-			}
-			openQuote = 0
-			text = ": " + text[at+1:]
-		}
-		if len(heredocs) > 0 {
+			reopen = quoteOpener(openQuote)
+		} else if len(heredocs) > 0 {
 			if heredocs[0].endsAt(text) {
 				heredocs = heredocs[1:]
 			}
@@ -171,25 +170,35 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 		if len(lines) == 0 {
 			current.number = number
 		}
-		words, opened, quote, rest, continues, comment := shellWords(text, stack)
+		words, opened, quote, rest, continues, comment := shellWords(reopen+text, stack)
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
 		code := strings.TrimSuffix(text, comment)
-		if continues {
+		// A line that ends on && || or | carries its command onto the next one,
+		// so a handler written there belongs to the same command.
+		fields := strings.Fields(shellCodeOnly(code))
+		operator := len(fields) > 0 && continuesLine(fields[len(fields)-1])
+		switch {
+		case continues:
+			// Bash joins a continued line with nothing between the halves.
 			code = strings.TrimSuffix(code, "\\")
+		case operator:
+			code += " "
+		default:
+			code += "\n"
 		}
 		lines = append(lines, code)
 		current.comment += comment
-		if continues || len(stack) > 0 || depth > 0 {
+		if continues || operator || len(stack) > 0 || depth > 0 || openQuote != 0 {
 			continue
 		}
-		current.code = shellCodeOnly(strings.Join(lines, "\n"))
+		current.code = shellCodeOnly(strings.TrimSuffix(strings.Join(lines, ""), "\n"))
 		statements = append(statements, current)
 		current, lines = logical{}, nil
 	}
 	if len(lines) > 0 {
 		// A substitution the script never closes still holds its hits.
-		current.code = shellCodeOnly(strings.Join(lines, "\n"))
+		current.code = shellCodeOnly(strings.TrimSuffix(strings.Join(lines, ""), "\n"))
 		statements = append(statements, current)
 	}
 	var findings []ShellFailOpenFinding
@@ -202,30 +211,60 @@ func ShellFailOpenFindings(script string) []ShellFailOpenFinding {
 				shellFailClosedRe.MatchString(statements[index-1].comment)) {
 			continue
 		}
-		window := statement.code
-		for next := index + 1; next < len(statements) && next <= index+shellFailOpenWindow; next++ {
-			window += "\n" + statements[next].code
+		// The last entry is the first command of the next statement, which
+		// reads the status this statement leaves.
+		commands := append(shellFailOpenCommands(statement.code), "")
+		for next := index + 1; next < len(statements); next++ {
+			if strings.TrimSpace(statements[next].code) != "" {
+				commands[len(commands)-1] = shellFailOpenCommands(statements[next].code)[0]
+				break
+			}
 		}
-		hasTool := shellToolCommand.MatchString(" "+statement.code+" ") || shellToolSubst.MatchString(statement.code)
-		captured := shellFailOpenCapture.MatchString(window)
-		tested := captured || shellFailOpenTested.MatchString(statement.code)
-		add := func(rule string) {
-			findings = append(findings, ShellFailOpenFinding{Rule: rule, Line: statement.number})
+		hits := map[string]bool{}
+		for at, command := range commands[:len(commands)-1] {
+			after := commands[at+1]
+			hasTool := shellToolCommand.MatchString(" "+command+" ") || shellToolSubst.MatchString(command)
+			// A loop reports its inner status only through a check after it, such
+			// as the walk_completed sentinel, so the next command may capture it.
+			captured := shellFailOpenCapture.MatchString(command)
+			looped := captured || shellFailOpenCapture.MatchString(after)
+			tested := captured || shellFailOpenStatusRead.MatchString(after) || shellFailOpenTested.MatchString(command)
+			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command) && !looped
+			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || shellToolSubst.MatchString(command) && !tested
+			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
+			hits[ruleDevNull] = hits[ruleDevNull] || hasTool && shellDevNull.MatchString(command) && !tested
 		}
-		if strings.Contains(statement.code, "< <(") && !captured {
-			add(ruleProcessSubstitution)
-		}
-		if shellToolSubst.MatchString(statement.code) && !tested {
-			add(ruleCommandSubstitution)
-		}
-		if hasTool && shellOrTrue.MatchString(statement.code) {
-			add(ruleOrTrue)
-		}
-		if hasTool && shellDevNull.MatchString(statement.code) && !tested {
-			add(ruleDevNull)
+		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
+			if hits[rule] {
+				findings = append(findings, ShellFailOpenFinding{Rule: rule, Line: statement.number})
+			}
 		}
 	}
 	return findings
+}
+
+// shellFailOpenCommands splits a statement's code at each ; and line end that
+// no parenthesis encloses, so a test, a handler or a status read covers only
+// the command it is written on. The list always holds one command.
+func shellFailOpenCommands(code string) []string {
+	var commands []string
+	depth, start := 0, 0
+	for index := 0; index < len(code); index++ {
+		switch code[index] {
+		case '\\':
+			index++
+		case '(':
+			depth++
+		case ')':
+			depth = max(depth-1, 0)
+		case ';', '\n':
+			if depth == 0 {
+				commands = append(commands, code[start:index])
+				start = index + 1
+			}
+		}
+	}
+	return append(commands, code[start:])
 }
 
 // shellCodeOnly blanks single-quoted text and double-quoted text that holds no

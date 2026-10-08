@@ -324,6 +324,15 @@ func definedName(words []word) string {
 // after it, which a plain single-quoted span does not.
 const ansiCQuote = '$'
 
+// quoteOpener returns the text that opens a span of the kind quote names, so a
+// reader can resume a span that runs past its line by reading the opener first.
+func quoteOpener(quote byte) string {
+	if quote == ansiCQuote {
+		return "$'"
+	}
+	return string(quote)
+}
+
 // quoteCloseIndex returns the index of the byte that closes an open quote, or
 // -1 when the line does not close it. A backslash escapes the next byte inside
 // a double-quoted or an ANSI-C span; a plain single-quoted span has no escapes.
