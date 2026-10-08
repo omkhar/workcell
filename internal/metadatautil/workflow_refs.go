@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -197,6 +198,11 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
+					if help := ghFlagValues(args, "--help", "-h"); len(help) > 0 {
+						if on, err := strconv.ParseBool(cmp.Or(help[len(help)-1], "true")); err != nil || on {
+							continue // gh prints usage and runs nothing
+						}
+					}
 					args = ghSubcommand(args)
 					sub := ghSubcommand(args[min(1, len(args)):]) // gh pr -R o/r list runs pr list
 					switch {
@@ -300,7 +306,7 @@ func ghSubcommand(args []string) []string {
 }
 
 // ghBoolFlags are the gh list flags that take no value.
-var ghBoolFlags = map[string]bool{"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true}
+var ghBoolFlags = map[string]bool{"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true, "-h": true}
 
 // ghFlagValues returns the value of each spelling of a gh flag in args. gh
 // drops an empty base and a later spelling overrides an earlier one, so callers
@@ -406,6 +412,8 @@ func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram,
 		case arg == "--indent" && i+1 < len(args):
 			flags = append(flags, arg, args[i+1])
 			i++
+		case arg == "--" && i+1 < len(args):
+			return WorkflowJQProgram{Where: where, Program: args[i+1], Flags: append(flags, arg)}, true
 		case arg == "-f" || arg == "--from-file":
 			return WorkflowJQProgram{}, false // the program is in a file
 		case strings.HasPrefix(arg, "-"):
@@ -439,24 +447,34 @@ func commandArgs(script, name string) [][]string {
 // in if, for, and while bodies and in $( ) substitutions, without comments and
 // heredoc bodies. It does not use ShellInvocations: that parser drops
 // compound-command bodies because they are not proved to run, and this lint
-// must read them too. A function body is read only when the function's name is
-// a word of a command read, so a function nobody calls runs nothing.
+// must read them too. A function body is read only when a command or a trap
+// action calls the function, with the last definition before the call, so a
+// function nobody calls runs nothing.
 func shellCommands(script string) [][]string {
-	outside, bodies := functionBodies(flattenSubstitutions(withoutHeredocBodies(script)))
-	return expandCalls(flatCommands(outside), bodies, nil)
+	var found [][]string
+	bodies := map[string]string{}
+	for _, part := range functionBodies(flattenSubstitutions(withoutHeredocBodies(script))) {
+		if part.name != "" {
+			bodies[part.name] = part.text
+			continue
+		}
+		found = append(found, expandCalls(flatCommands(part.text), bodies, nil)...)
+	}
+	return found
 }
 
 // expandCalls puts each called function's body right after every command that
-// names it, so a cd in the body moves the commands after the call. calling
+// calls it, so a cd in the body moves the commands after the call. calling
 // holds the functions being expanded, so a recursive call is read once.
 func expandCalls(commands [][]string, bodies map[string]string, calling []string) [][]string {
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
-		for _, each := range words {
-			if body, defined := bodies[each]; defined && !slices.Contains(calling, each) {
-				found = append(found, expandCalls(flatCommands(body), bodies, append(calling, each))...)
-			}
+		if words[0] == "trap" && len(words) > 1 {
+			found = append(found, expandCalls(flatCommands(words[1]), bodies, calling)...)
+		}
+		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
+			found = append(found, expandCalls(flatCommands(body), bodies, append(calling, words[0]))...)
 		}
 	}
 	return found

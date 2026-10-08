@@ -103,6 +103,12 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"duplicate limit behind a value-less flag", runStep("gh discussion list --limit 5 --answered --limit abc"), "", "gh-discussion-list-unbounded"},
 		{"every call of a function is expanded", runStep("g() { gh api x; }\nf() { g; g; }\nf\ny=$(g)"), "gh-api-unbounded\tw.yml\tj\ts\treason\ngh-api-unbounded#2\tw.yml\tj\ts\treason\n", "gh-api-unbounded#3"},
 		{"recursive function is expanded once per call", runStep("f() { gh api x; f; }\nf"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", ""},
+		{"gh behind long wrapper options", runStep("env --unset X gh api a\nenv --unset=X gh api b\nnice --adjustment 5 gh api c\nnice --adj 5 gh api d"), "", "gh-api-unbounded#4"},
+		{"function name as data is not a call", runStep("f() { gh api repos/x; }\nprintf '%s\\n' f"), "", ""},
+		{"redefined function runs its last body", runStep("f() { gh api repos/x; }\nf() { :; }\nf"), "", ""},
+		{"call before a redefinition runs the first body", runStep("f() { gh api repos/x; }\nf\nf() { :; }"), "", "gh-api-unbounded"},
+		{"gh help runs nothing", runStep("gh api --help\ngh pr list -h\ngh api repos/x --help=true"), "", ""},
+		{"gh help turned off", runStep("gh api --help=false repos/x"), "", "gh-api-unbounded"},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
@@ -180,10 +186,10 @@ func TestWorkflowInlineJQProgramsReadAttachedGHFilters(t *testing.T) {
 }
 
 func TestWorkflowInlineJQProgramsReadPastArgumentModes(t *testing.T) {
-	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --args '.a' x\njq -n --jsonargs '.b' 1"), ""))
-	if err != nil || len(programs) != 2 || programs[0].Program != ".a" || programs[1].Program != ".b" ||
-		!slices.Equal(programs[1].Flags, []string{"-n", "--jsonargs"}) {
-		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a and .b after the argument modes", programs, err)
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --args '.a' x\njq -n --jsonargs '.b' 1\njq -n -- '-1' x"), ""))
+	if err != nil || len(programs) != 3 || programs[0].Program != ".a" || programs[1].Program != ".b" || programs[2].Program != "-1" ||
+		!slices.Equal(programs[1].Flags, []string{"-n", "--jsonargs"}) || !slices.Equal(programs[2].Flags, []string{"-n", "--"}) {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a, .b and -1 after the argument modes and --", programs, err)
 	}
 }
 

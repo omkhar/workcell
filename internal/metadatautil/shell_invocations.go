@@ -312,15 +312,27 @@ func definitionEnds(depth, definedAt int, opened *bool) bool {
 	return *opened && depth <= definedAt
 }
 
-// functionBodies splits text into the lines outside every function definition
-// and the lines of each definition by name, for a reader that keeps compound
-// bodies and so must read a body only when the function is called. A line that
+// functionPart is a run of lines outside every definition, with no name, or
+// one function definition.
+type functionPart struct{ name, text string }
+
+// functionBodies splits text, in order, into the lines outside every function
+// definition and the lines of each definition, for a reader that keeps
+// compound bodies and so must read a body only when the function is called. A
+// later definition replaces an earlier one for the calls after it. A line that
 // mixes a definition with a command outside it stays outside, and so does a
 // definition that never closes: both read too much rather than too little.
 // text holds no heredoc body and no line that ends inside a quote.
-func functionBodies(text string) (string, map[string]string) {
-	var outside, current strings.Builder
-	bodies := map[string]string{}
+func functionBodies(text string) []functionPart {
+	var current strings.Builder
+	parts := []functionPart{{}}
+	emit := func(name, text string) {
+		if last := &parts[len(parts)-1]; name == "" && last.name == "" {
+			last.text += text // keep a continued command in one part
+		} else {
+			parts = append(parts, functionPart{name, text})
+		}
+	}
 	name, depth, definedAt, opened := "", 0, 0, false
 	for line := range strings.Lines(text) {
 		words, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
@@ -340,19 +352,19 @@ func functionBodies(text string) (string, map[string]string) {
 		}
 		switch {
 		case mixed:
-			outside.WriteString(current.String() + line)
+			emit("", current.String()+line)
 			current.Reset()
 		case closed != "" && name == "":
-			bodies[closed] += current.String() + line
+			emit(closed, current.String()+line)
 			current.Reset()
 		case name != "":
 			current.WriteString(line)
 		default:
-			outside.WriteString(line)
+			emit("", line)
 		}
 	}
-	outside.WriteString(current.String())
-	return outside.String(), bodies
+	emit("", current.String())
+	return parts
 }
 
 // ansiCQuote names an open $'…' span in the one byte the reader carries between
@@ -864,8 +876,12 @@ func replacesShell(args []string) bool {
 }
 
 // commandWrappers maps each command that runs the command after it to its own
-// options that take a value.
-var commandWrappers = map[string][]string{"command": nil, "exec": {"-a"}, "env": {"-u", "-C", "-P", "-S"}, "nice": {"-n"}, "nohup": nil}
+// options that take a value. A long option matches any unique abbreviation of
+// three or more bytes, as getopt allows.
+var commandWrappers = map[string][]string{
+	"command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
+	"env": {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
+}
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
@@ -884,7 +900,9 @@ func wrappedCommand(words []string) []string {
 				i++
 				break
 			}
-			if slices.Contains(valued, words[i]) {
+			if slices.ContainsFunc(valued, func(option string) bool {
+				return option == words[i] || len(words[i]) > 2 && strings.HasPrefix(option, "--") && strings.HasPrefix(option, words[i])
+			}) {
 				i++
 			}
 		}
