@@ -86,7 +86,8 @@ nothing. The idioms are a `< <(` process substitution and a `$(...)` around
 status or record completion.
 A `$(...)` that is an argument of a command such as `local` or `[[` cannot
 be captured that way. A heredoc that the check cannot end fails the check.
-A line can instead state its reason with a `# fail-closed: <reason>` comment.
+A command can state its reason with a `# fail-closed: <reason>` comment
+at its line end or alone on the line before. It covers only that command.
 
 A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
 those tools. Only `wait "$!"` captures a process substitution.
