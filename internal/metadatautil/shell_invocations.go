@@ -748,6 +748,19 @@ var laneWrappers = map[string]bool{
 	"bash": true, "sh": true,
 }
 
+// inspectsOnly reports whether option turns wrapper into a command that only
+// describes or parses its operand: command -v or -V, and bash or sh -n.
+func inspectsOnly(wrapper, option string) bool {
+	short := !strings.HasPrefix(option, "--")
+	switch wrapper {
+	case "command":
+		return short && strings.ContainsAny(option, "vV")
+	case "bash", "sh":
+		return option == "--noexec" || (short && strings.Contains(option, "n"))
+	}
+	return false
+}
+
 var assignmentWord = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\+?=`)
 
 // ShellCommandWords returns the program word of every command written in
@@ -766,7 +779,7 @@ func ShellCommandWords(script string) []string {
 	// a branch body.
 	var cases []byte
 	var depth, definedAt, array int
-	defining, bodyOpened := "", false
+	defining, bodyOpened, wrapper := "", false, ""
 	for words := range logicalLines(script) {
 		line := words
 		if defining == "" {
@@ -801,7 +814,7 @@ func ShellCommandWords(script string) []string {
 				if text == ";;" && len(cases) > 0 {
 					cases[len(cases)-1] = 'p'
 				}
-				start = true
+				start, wrapper = true, ""
 				continue
 			}
 			if !start {
@@ -814,7 +827,13 @@ func ShellCommandWords(script string) []string {
 				cases, start = cases[:len(cases)-1], false
 			case bare && assignmentWord.MatchString(text) && parenBalance([]word{each}) > 0:
 				array, start = parenBalance([]word{each}), false
-			case (bare && laneWrappers[text]) || strings.HasPrefix(text, "-") || assignmentWord.MatchString(text):
+			case bare && laneWrappers[text]:
+				wrapper = text
+			case strings.HasPrefix(text, "-"):
+				// command -v and bash -n only inspect their operand, so the
+				// command runs no program.
+				start = !inspectsOnly(wrapper, text)
+			case assignmentWord.MatchString(text):
 				// The program is a later word.
 			default:
 				name := text

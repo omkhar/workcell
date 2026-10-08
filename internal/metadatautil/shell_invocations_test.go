@@ -361,6 +361,7 @@ func TestShellCommandWords(t *testing.T) {
 		{"case patterns and array members name nothing", "case v in\n  h | i) j ;;\n  k) l ;;\nesac\nm=(\n  n\n)\n", []string{"j", "l"}},
 		{"a subshell across && leaves no function open", "f() {\n  (cd p && q)\n}\nr\n", []string{"r"}},
 		{"an empty array is not a definition", "s=()\nt\n", []string{"t"}},
+		{"inspection-only wrapper options run nothing", "command -v a.sh\ncommand -pV b.sh\nbash -n c.sh\nsh -en d.sh\nbash --noexec e.sh\ntype f.sh\nwhich g.sh\nhash h.sh\ncommand -p i.sh\n", []string{"type", "which", "hash", "i.sh"}},
 		{"a called function runs its body, transitively", "u() { v; }\nw() {\n  u\n}\nw\n", []string{"w", "u", "v"}},
 	}
 	for _, tc := range cases {

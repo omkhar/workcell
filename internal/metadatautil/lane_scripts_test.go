@@ -16,7 +16,7 @@ func TestLaneScripts(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	for rel, body := range map[string]string{
-		"scripts/validate-repo.sh":   "\"${ROOT_DIR}/scripts/a.sh\"\necho scripts/b.sh\n",
+		"scripts/validate-repo.sh":   "\"${ROOT_DIR}/scripts/a.sh\"\necho scripts/b.sh\n\"${ARTIFACT_DIR}/scripts/g.sh\"\n$ROOT_DIR/scripts/h.sh\n",
 		"scripts/ci/job-x.sh":        "./scripts/c.sh\n",
 		".github/workflows/x.yml":    "jobs:\n  x:\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n",
 		".github/workflows/notes.md": "./scripts/f.sh\n",
@@ -33,7 +33,7 @@ func TestLaneScripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"scripts/a.sh", "scripts/c.sh", "scripts/ci/job-x.sh", "scripts/d.sh", "scripts/validate-repo.sh"}
+	want := []string{"scripts/a.sh", "scripts/c.sh", "scripts/ci/job-x.sh", "scripts/d.sh", "scripts/h.sh", "scripts/validate-repo.sh"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("LaneScripts() = %q, want %q", got, want)
 	}

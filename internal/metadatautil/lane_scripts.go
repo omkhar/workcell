@@ -14,15 +14,16 @@ import (
 )
 
 var (
-	laneScriptRoot = regexp.MustCompile(`^(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/)?(\./)?`)
+	laneScriptRoot = regexp.MustCompile(`^(\$ROOT_DIR/|\$\{ROOT_DIR\}/)?(\./)?`)
 	laneScriptPath = regexp.MustCompile(`^scripts/[A-Za-z0-9_./-]+\.sh$`)
 )
 
 // LaneScripts returns each scripts/*.sh path that a lane runs as a command,
 // sorted and unique. The lanes are scripts/validate-repo.sh, the
 // scripts/ci/job-*.sh scripts and the run steps of the workflows, and a lane
-// script counts as run itself. A leading ${ROOT_DIR}/ or ./ is dropped, so
-// every spelling of one script is one path.
+// script counts as run itself. A leading ${ROOT_DIR}/, $ROOT_DIR/ or ./ is
+// dropped, so every spelling of one script is one path. Any other variable
+// names another directory, so its path is not a repository script.
 func LaneScripts(rootDir string) ([]string, error) {
 	jobs, err := filepath.Glob(filepath.Join(rootDir, "scripts", "ci", "job-*.sh"))
 	if err != nil {
