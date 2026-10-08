@@ -163,13 +163,18 @@ run_from_local_snapshot() {
 
 # publish-pr owns the margin policy and the PR lookup; this only dispatches.
 # A failed lookup stops pre-merge, because a fallback would hide the failure
-# and reject a valid follow-up (--shape-margin skips the lookup).
+# and reject a valid follow-up (--shape-margin skips the lookup). go and the
+# helper get no GitHub token, gh config path, or SSH agent: gh then reads the
+# operator's own config under HOME.
 resolve_shape_margin() {
   if [[ "${SHAPE_MARGIN}" != "auto" ]]; then
     printf '%s\n' "${SHAPE_MARGIN}"
     return 0
   fi
-  if ! run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools publish-pr-shape-margin "${ROOT_DIR}" "${BASE_BRANCH}"; then
+  if ! (
+    unset GH_TOKEN GITHUB_TOKEN GH_CONFIG_DIR SSH_AUTH_SOCK
+    run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools publish-pr-shape-margin "${ROOT_DIR}" "${BASE_BRANCH}"
+  ); then
     echo "[pre-merge] cannot look up the open PR for the shape margin; retry or pass --shape-margin" >&2
     return 1
   fi

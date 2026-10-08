@@ -197,7 +197,7 @@ func TestShapeMarginFromLookups(t *testing.T) {
 
 // TestShapeMarginMainBindsOriginPushRepository proves the lookup runs against
 // the origin push repository with GH_REPO dropped, and that a detached HEAD
-// gets the first-publication margin without asking gh.
+// or a missing gh fails closed without asking gh.
 func TestShapeMarginMainBindsOriginPushRepository(t *testing.T) {
 	repo := t.TempDir()
 	binDir := t.TempDir()
@@ -250,16 +250,28 @@ esac
 	}
 
 	git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "--no-gpg-sign", "-m", "init")
+	// A detached HEAD may still be the head of an open PR, so it fails
+	// closed instead of claiming first publication.
 	git("switch", "-q", "--detach")
 	out.Reset()
 	if err := os.Remove(logPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeShapeMargin(ctx, repo, "main", &out); err != nil || out.String() != "0.66\n" {
-		t.Fatalf("detached writeShapeMargin() = %q, %v; want 0.66", out.String(), err)
+	err = writeShapeMargin(ctx, repo, "main", &out)
+	if err == nil || !strings.Contains(err.Error(), "requires a checked-out branch") || out.Len() != 0 {
+		t.Fatalf("detached writeShapeMargin() = %q, %v; want a checked-out branch error", out.String(), err)
 	}
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
 		t.Fatalf("detached HEAD should not call gh; stat err = %v", err)
+	}
+
+	// Without a trusted gh the lookup cannot run, so it fails closed instead
+	// of reporting the first-publication margin.
+	git("switch", "-q", "feature/x")
+	ctx.HostGhBin = ""
+	err = writeShapeMargin(ctx, repo, "main", &out)
+	if err == nil || !strings.Contains(err.Error(), "requires a trusted gh") || out.Len() != 0 {
+		t.Fatalf("writeShapeMargin() without gh = %q, %v; want a trusted gh error", out.String(), err)
 	}
 }
 

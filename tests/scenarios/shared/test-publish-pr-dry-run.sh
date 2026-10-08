@@ -1091,6 +1091,16 @@ for bad_list in 'not json' '{}' '[{}]' '[{"baseRefName":"main","headRefName":"ma
   test "${margin_fail_rc}" -ne 0
   grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_fail_output}"
 done
+# A detached HEAD may still head an open PR, so the lookup fails closed.
+git -C "${FIXTURE}" switch -q --detach
+set +e
+margin_detached_output="$(resolve_margin '[]' 2>&1)"
+margin_detached_rc=$?
+set -e
+git -C "${FIXTURE}" switch -q main
+test "${margin_detached_rc}" -ne 0
+grep -q 'publish-pr shape margin requires a checked-out branch' <<<"${margin_detached_output}"
+grep -q 'cannot look up the open PR for the shape margin; retry or pass --shape-margin' <<<"${margin_detached_output}"
 rm -f "${GH_PR_LIST_RESPONSE_FILE}"
 rm -rf "${MARGIN_BIN_DIR}"
 

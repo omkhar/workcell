@@ -165,9 +165,9 @@ func shapeMarginFromLookups(repoViewJSON, prListJSON string, opts *Options) (str
 // ShapeMarginMain prints the PR shape margin that publish-pr would apply to
 // the branch checked out in workspace against base, so pre-merge checks the
 // same budget. git and gh resolve as publish-pr resolves them, because the
-// lookups run with the host credentials. A detached HEAD or a missing gh
-// cannot have a PR and gets the first-publication margin; any other lookup or
-// parse failure is an error.
+// lookups run with the host credentials. A missing trusted gh, a detached
+// HEAD (it may still head an open PR), and any lookup or parse failure are
+// errors, never PR absence; pre-merge --shape-margin skips the lookup.
 func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
 	ctx := &BashContext{
 		WorkspaceRoot:   workspace,
@@ -185,7 +185,7 @@ func ShapeMarginMain(workspace, base string, stdout io.Writer) error {
 	if ctx.HostGitBin, err = resolveHostGit(ctx); err != nil {
 		return err
 	}
-	if ctx.HostGhBin, err = resolveHostGh(ctx, false); err != nil {
+	if ctx.HostGhBin, err = resolveHostGh(ctx, true); err != nil {
 		return err
 	}
 	return writeShapeMargin(ctx, workspace, base, stdout)
@@ -198,10 +198,12 @@ func writeShapeMargin(ctx *BashContext, workspace, base string, stdout io.Writer
 	if !workspaceIsGitWorkTree(ctx, workspace) {
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a git worktree: %s", workspace)}
 	}
+	if ctx.HostGhBin == "" {
+		return &cliexit.ExitCodeError{Code: 2, Message: "publish-pr shape margin requires a trusted gh to look up the open PR; install gh or pass --shape-margin"}
+	}
 	branch := currentBranch(ctx, workspace)
-	if branch == "" || ctx.HostGhBin == "" {
-		_, err := fmt.Fprintln(stdout, firstPublicationShapeMargin)
-		return err
+	if branch == "" {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin requires a checked-out branch to look up the open PR: %s; pass --shape-margin", workspace)}
 	}
 	repositorySelector, err := originRepositorySelector(ctx, workspace)
 	if err != nil {
