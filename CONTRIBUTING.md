@@ -39,9 +39,9 @@ files that `scripts/ci/run-codespell.sh` scans in CI. Without Go, the script
 skips the generated artifacts and doc language checks. Set
 `WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional bypass.
 
-These checks read the working tree. Push only the branch that you have checked
-out, and commit or stash tracked edits first. A changed symlink fails the
-codespell check.
+These checks run in a temporary detached checkout of each pushed commit.
+Working-tree edits and untracked files do not change the result. A changed
+symlink fails the codespell check.
 
 These three hooks are shell, not Go. This is the documented exception to the
 Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before

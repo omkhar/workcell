@@ -50,6 +50,8 @@ func newPrePushChecksFixture(t *testing.T, failing string) *prePushChecksFixture
 		t.Fatal(err)
 	}
 	writeExecFile(t, filepath.Join(f.root, "scripts", "ci", "run-codespell.sh"), codespellScript, 0o755)
+	// The gates run from a checkout of the pushed commit, so commit them.
+	f.run("add", ".")
 	f.commitFile("base.txt", "base\n", fixtureSubject)
 	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
 	f.run("checkout", "--quiet", "-b", "feature")
@@ -170,17 +172,22 @@ func TestRepoPrePushChainsToFastChecks(t *testing.T) {
 	}
 }
 
-func TestFastPrePushRefusesPushedBranchOtherThanHead(t *testing.T) {
+func TestFastPrePushGatesPushedBranchOtherThanHead(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
 	pushed := f.run("rev-parse", "HEAD")
 	f.run("checkout", "--quiet", "main")
 	output, err := f.hookWithInput(pushLine(pushed))
-	if err == nil {
-		t.Fatalf("fast pre-push gated the clean checkout instead of the pushed branch:\n%s", output)
+	if err == nil || !strings.Contains(output, "doc.md:1: recieve") {
+		t.Fatalf("fast pre-push did not gate the pushed branch content: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "not the checked-out commit") {
-		t.Errorf("refusal not explained:\n%s", output)
+}
+
+func TestFastPrePushFailsClosedWhenCheckoutFails(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	output, err := f.hookWithInput(pushLine(strings.Repeat("1", 40)))
+	if err == nil || !strings.Contains(output, "cannot check out") {
+		t.Fatalf("fast pre-push did not fail closed on a failed checkout: %v\n%s", err, output)
 	}
 }
 
@@ -237,18 +244,47 @@ func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
 	}
 }
 
-func TestFastPrePushRefusesTrackedEdits(t *testing.T) {
+func TestFastPrePushIgnoresWorkingTreeEdits(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
 	if err := os.WriteFile(filepath.Join(f.root, "doc.md"), []byte("We receive input.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	output, err := f.hook()
-	if err == nil {
-		t.Fatalf("fast pre-push gated the edited worktree instead of the pushed commit:\n%s", output)
+	if err == nil || !strings.Contains(output, "doc.md:1: recieve") {
+		t.Fatalf("fast pre-push gated the edited worktree instead of the pushed commit: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "tracked files differ from the pushed commit") {
-		t.Errorf("refusal not explained:\n%s", output)
+}
+
+func TestFastPrePushIgnoresUntrackedLinkTarget(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
+	f.run("add", "scripts/check-doc-links.sh")
+	f.commitFile("doc.md", "See [the target](target.md).\n", fixtureSubject)
+	if err := os.WriteFile(filepath.Join(f.root, "target.md"), []byte("Untracked target.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := f.hook()
+	if err == nil || !strings.Contains(output, "doc links failed") {
+		t.Fatalf("an untracked target.md satisfied the link check: %v\n%s", err, output)
+	}
+}
+
+func TestFastPrePushRunsDocLinksOnMarkdownRenamedAway(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.commitFile("old.md", "A clean sentence.\n", fixtureSubject)
+	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
+	f.run("mv", "old.md", "old.txt")
+	f.run("commit", "--quiet", "-m", fixtureSubject)
+	if output, err := f.hook(); err != nil {
+		t.Fatalf("fast pre-push failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(f.ran(), "check-doc-links") {
+		t.Errorf("doc links did not run for old.md renamed to old.txt; ran:\n%s", f.ran())
 	}
 }
 
@@ -285,7 +321,7 @@ func TestRepoPrePushGatesPushedBranchAfterSignatureWalk(t *testing.T) {
 	if err == nil {
 		t.Fatalf("push of a non-checked-out branch passed the fast gates:\n%s", output)
 	}
-	if !strings.Contains(output, "not the checked-out commit") {
+	if !strings.Contains(output, "doc.md:1: recieve") {
 		t.Errorf("signature walk did not hand the ref lines to the fast gates:\n%s", output)
 	}
 }
