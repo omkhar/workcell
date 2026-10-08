@@ -5,7 +5,9 @@
 # doc links, doc language, codespell, and PR shape. It reads the pre-push lines
 # Git writes on stdin and gates each pushed branch in a detached checkout of
 # the pushed commit, so working-tree edits and untracked files cannot change
-# the result. Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
+# the result. The checkers come from this script's own tree, never from the
+# pushed commit: a pushed ref is untrusted code, and this hook holds the host
+# credentials. Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
 set -euo pipefail
 
 if [[ "${WORKCELL_SKIP_PREPUSH_CHECKS:-0}" == "1" ]]; then
@@ -13,8 +15,10 @@ if [[ "${WORKCELL_SKIP_PREPUSH_CHECKS:-0}" == "1" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPTS="${ROOT_DIR}/scripts"
 BASE_REF="${WORKCELL_PREPUSH_BASE_REF:-origin/main}"
 cd "${ROOT_DIR}"
+TRUSTED_HEAD="$(git rev-parse HEAD)"
 
 pushed_oids=()
 while read -r _ local_oid remote_ref _; do
@@ -70,15 +74,16 @@ gate_commit() {
   # Without rename detection a renamed or deleted .md lists its old path.
   git diff -z --no-renames --name-only "${merge_base}" HEAD >"${changed_list}"
 
-  local changed_files=() markdown_changed=0 target_removed=0
+  local changed_files=() markdown_changed=0 target_removed=0 symlinked=0
   while IFS= read -r -d '' file; do
     # A deleted .md can break a link, so it counts; codespell needs a file.
     [[ "${file}" != *.md ]] || markdown_changed=1
-    # codespell follows symlinks, so a committed link could make it read a host
-    # file. Residual: a link swapped in after this check is a same-user race.
+    # The doc gates read every tracked Markdown file, and codespell follows
+    # links, so a committed link could make them print a host file. Residual:
+    # a link swapped in after this check is a same-user race.
     if [[ -L "${file}" ]]; then
-      echo "pre-push: ${file} is a symlink; codespell must not follow it into the host." >&2
-      failures=$((failures + 1))
+      echo "pre-push: ${file} is a symlink; the gates must not follow it into the host." >&2
+      symlinked=1
     elif [[ -e "${file}" ]]; then
       changed_files+=("${file}")
     else
@@ -87,22 +92,33 @@ gate_commit() {
     fi
   done <"${changed_list}"
 
-  [[ "${have_go}" -eq 0 ]] || run_gate "generated artifacts" ./scripts/check-generated-artifacts.sh
-  if [[ "${markdown_changed}" -eq 1 || "${target_removed}" -eq 1 ]]; then
-    run_gate "doc links" ./scripts/check-doc-links.sh
-  fi
-  if [[ "${markdown_changed}" -eq 1 && "${have_go}" -eq 1 ]]; then
-    run_gate "doc language" ./scripts/check-doc-language.sh
-  fi
-  if [[ "${#changed_files[@]}" -gt 0 ]]; then
-    if command -v codespell >/dev/null; then
-      run_gate "codespell" ./scripts/ci/run-codespell.sh . "${changed_files[@]}"
-    else
-      echo "pre-push: codespell is missing; run ./scripts/install-dev-tools.sh." >&2
-      failures=$((failures + 1))
+  if [[ "${symlinked}" -eq 1 ]]; then
+    echo "pre-push: skipping every gate for ${oid}; remove the symlink." >&2
+    failures=$((failures + 1))
+  else
+    # Each checker takes the detached tree as its root and reads it as data.
+    if [[ "${have_go}" -eq 1 && "${oid}" == "${TRUSTED_HEAD}" ]]; then
+      run_gate "generated artifacts" "${SCRIPTS}/check-generated-artifacts.sh" "${checkout}"
+    elif [[ "${have_go}" -eq 1 ]]; then
+      # That check runs the generators of the tree it checks.
+      echo "pre-push: generated artifacts runs only for the checked-out commit; CI checks ${oid}." >&2
     fi
+    if [[ "${markdown_changed}" -eq 1 || "${target_removed}" -eq 1 ]]; then
+      run_gate "doc links" "${SCRIPTS}/check-doc-links.sh" "${checkout}"
+    fi
+    if [[ "${markdown_changed}" -eq 1 && "${have_go}" -eq 1 ]]; then
+      run_gate "doc language" "${SCRIPTS}/check-doc-language.sh" "${checkout}"
+    fi
+    if [[ "${#changed_files[@]}" -gt 0 ]]; then
+      if command -v codespell >/dev/null; then
+        run_gate "codespell" "${SCRIPTS}/ci/run-codespell.sh" "${checkout}" "${changed_files[@]}"
+      else
+        echo "pre-push: codespell is missing; run ./scripts/install-dev-tools.sh." >&2
+        failures=$((failures + 1))
+      fi
+    fi
+    run_gate "PR shape" "${SCRIPTS}/check-pr-shape.sh" --repo-root "${checkout}" --base-ref "${BASE_REF}"
   fi
-  run_gate "PR shape" ./scripts/check-pr-shape.sh --base-ref "${BASE_REF}"
 
   cd "${ROOT_DIR}"
   git worktree remove --force "${checkout}"

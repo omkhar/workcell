@@ -42,7 +42,12 @@ skips the generated artifacts and doc language checks. Set
 These checks run in a temporary detached checkout of each pushed commit.
 Working-tree edits and untracked files do not change the result. The doc link
 check runs when a Markdown file or any other file is deleted or renamed. A changed
-symlink fails the codespell check.
+symlink fails the push before any check reads the checkout.
+
+The checks come from your checked-out tree, not from the pushed commit. A pushed
+commit is untrusted code, and the hook holds your credentials. The generated
+artifacts check runs the generators of the tree it checks. Thus it runs only when
+the pushed commit is your checked-out commit.
 
 These three hooks are shell, not Go. This is the documented exception to the
 Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before

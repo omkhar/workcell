@@ -309,8 +309,14 @@ func TestFastPrePushRunsDocLinksOnMarkdownRenamedAway(t *testing.T) {
 
 func TestFastPrePushRejectsChangedSymlink(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
+	links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
+	f.run("add", "scripts/check-doc-links.sh")
 	host := filepath.Join(f.tmpDir, "host-secret.txt")
-	if err := os.WriteFile(host, []byte("We recieve input.\n"), 0o644); err != nil {
+	if err := os.WriteFile(host, []byte("We recieve [secret](host-derived-token).\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(host, filepath.Join(f.root, "link.md")); err != nil {
@@ -322,8 +328,41 @@ func TestFastPrePushRejectsChangedSymlink(t *testing.T) {
 	if err == nil {
 		t.Fatalf("fast pre-push accepted a changed symlink:\n%s", output)
 	}
-	if strings.Contains(output, "recieve") || !strings.Contains(output, "link.md is a symlink") {
-		t.Errorf("codespell read the host file or the refusal is missing:\n%s", output)
+	if strings.Contains(output, "recieve") || strings.Contains(output, "host-derived-token") || !strings.Contains(output, "link.md is a symlink") {
+		t.Errorf("a gate read the host file or the refusal is missing:\n%s", output)
+	}
+}
+
+func TestFastPrePushRunsOnlyTrustedCheckers(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	marker := filepath.Join(f.tmpDir, "pushed-code-ran")
+	evil := []byte("#!/bin/bash\ntouch \"" + marker + "\"\n")
+	for _, name := range []string{"check-generated-artifacts.sh", "check-doc-links.sh", "check-doc-language.sh", "check-pr-shape.sh", filepath.Join("ci", "run-codespell.sh")} {
+		writeExecFile(t, filepath.Join(f.root, "scripts", name), evil, 0o755)
+	}
+	f.run("add", "scripts")
+	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
+	pushed := f.run("rev-parse", "HEAD")
+	f.run("checkout", "--quiet", "main")
+	output, err := f.hookWithInput(pushLine(pushed))
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatalf("the hook ran a checker from the pushed commit:\n%s", output)
+	}
+	if err != nil || !strings.Contains(f.ran(), "check-doc-links") || strings.Contains(f.ran(), "check-generated-artifacts") {
+		t.Errorf("trusted gates did not run as expected: %v\n%s\nran:\n%s", err, output, f.ran())
+	}
+}
+
+func TestFastPrePushSpellchecksOptionLikePath(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	name := "--skip=*.md"
+	if err := os.WriteFile(filepath.Join(f.root, name), []byte("We recieve input.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.run("add", "--", name)
+	f.run("commit", "--quiet", "-m", fixtureSubject)
+	if output, err := f.hook(); err == nil || !strings.Contains(output, "recieve") {
+		t.Fatalf("a path shaped like a codespell option escaped the scan: %v\n%s", err, output)
 	}
 }
 

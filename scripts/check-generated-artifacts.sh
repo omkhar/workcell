@@ -40,4 +40,5 @@ resolve_go_bin() {
 
 resolve_go_bin
 
-(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-generated-artifacts "${ROOT_DIR}")
+# An optional argument names the checkout to check; the tool still builds here.
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-generated-artifacts "${1:-${ROOT_DIR}}")

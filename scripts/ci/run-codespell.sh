@@ -10,7 +10,12 @@ ROOT="${1:-/workspace}"
 
 list_candidates() {
   if [[ $# -gt 0 ]]; then
-    printf '%s\0' "$@"
+    # A path that starts with - or @ would reach codespell as an option.
+    local path
+    for path in "$@"; do
+      [[ "${path}" == /* ]] || path="./${path}"
+      printf '%s\0' "${path}"
+    done
     return
   fi
   find "${ROOT}" \
