@@ -79,6 +79,17 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"script under the step working directory", "      - name: s\n        working-directory: sub\n        run: ./scripts/present.sh\n", "", "missing-script ./scripts/present.sh"},
 		{"script under a directory made at run time", "      - name: s\n        working-directory: gen\n        run: ./scripts/present.sh\n", "", "script-cwd-unresolved ./scripts/present.sh"},
 		{"script after a cd", runStep("cd sub\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"gh discussion list without a limit", runStep("gh discussion list"), "", "gh-discussion-list-unbounded"},
+		{"gh org list with a limit", runStep("gh org list --limit 5\ngh agent-task list -L 5"), "", ""},
+		{"gh list of an unknown group", runStep("gh skill list --limit 5"), "", "gh-skill-list-unbounded"},
+		{"gh api behind --hostname", runStep("gh --hostname github.com api repos/x"), "", "gh-api-unbounded"},
+		{"gh api behind a short global flag", runStep("gh -X GET api repos/x"), "", "gh-api-unbounded"},
+		{"gh pr list with an empty base", runStep("gh pr list --base= --limit 1"), "", "gh-pr-list-no-base"},
+		{"gh pr list with an empty quoted base", runStep(`gh pr list --base "" --limit 1`), "", "gh-pr-list-no-base"},
+		{"gh pr list base overridden", runStep("gh pr list -B main --base= --limit 1"), "", "gh-pr-list-no-base"},
+		{"called function body is read", runStep("f() {\n  gh api repos/x\n}\ntrap f EXIT"), "", "gh-api-unbounded"},
+		{"one-line called function body is read", runStep("f() { gh api repos/x; }\nf"), "", "gh-api-unbounded"},
+		{"uncalled one-line function with a command after it", runStep("f() { true; }\ngh api repos/x"), "", "gh-api-unbounded"},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
@@ -123,6 +134,36 @@ func TestWorkflowInlineJQProgramsSkipOptionValues(t *testing.T) {
 	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --indent 2 --bogus -r '.a'"), ""))
 	if err != nil || len(programs) != 1 || programs[0].Program != ".a" || !slices.Equal(programs[0].Flags, []string{"--indent", "2", "--bogus", "-r"}) {
 		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want program .a with every option passed to jq", programs, err)
+	}
+}
+
+// TestCheckWorkflowRefsSkipsUncalledFunctions runs the shared corpus rows that
+// hide a command in a function definition. The body never runs, so the lint
+// must not read the command in it.
+func TestCheckWorkflowRefsSkipsUncalledFunctions(t *testing.T) {
+	const anchor = "gh api repos/x"
+	rows := 0
+	for _, evasion := range Evasions {
+		if !strings.Contains(evasion.Name, "definition") {
+			continue
+		}
+		rows++
+		t.Run(evasion.Name, func(t *testing.T) {
+			if err := metadatautil.CheckWorkflowRefs(refsRoot(t, runStep(evasion.Rewrite(anchor, anchor)), "")); err != nil {
+				t.Fatalf("CheckWorkflowRefs() error = %v, want nil", err)
+			}
+		})
+	}
+	if rows < 4 {
+		t.Fatalf("found %d definition rows in the shared corpus, want at least 4", rows)
+	}
+}
+
+func TestWorkflowInlineJQProgramsReadPastArgumentModes(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("jq --args '.a' x\njq -n --jsonargs '.b' 1"), ""))
+	if err != nil || len(programs) != 2 || programs[0].Program != ".a" || programs[1].Program != ".b" ||
+		!slices.Equal(programs[1].Flags, []string{"-n", "--jsonargs"}) {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a and .b after the argument modes", programs, err)
 	}
 }
 

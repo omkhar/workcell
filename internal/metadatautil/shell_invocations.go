@@ -301,6 +301,60 @@ func definedName(words []word) string {
 	return ""
 }
 
+// definitionEnds reports whether a definition read from nesting definedAt has
+// closed, now that the nesting is depth. A body may open on a later line, as in
+// never_called () followed by { on its own, so opened records that it has
+// opened before its end is sought.
+func definitionEnds(depth, definedAt int, opened *bool) bool {
+	if depth > definedAt {
+		*opened = true
+	}
+	return *opened && depth <= definedAt
+}
+
+// functionBodies splits text into the lines outside every function definition
+// and the lines of each definition by name, for a reader that keeps compound
+// bodies and so must read a body only when the function is called. A line that
+// mixes a definition with a command outside it stays outside, and so does a
+// definition that never closes: both read too much rather than too little.
+// text holds no heredoc body and no line that ends inside a quote.
+func functionBodies(text string) (string, map[string]string) {
+	var outside, current strings.Builder
+	bodies := map[string]string{}
+	name, depth, definedAt, opened := "", 0, 0, false
+	for line := range strings.Lines(text) {
+		words, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		mixed, closed := false, ""
+		for _, each := range splitCommands(words) {
+			if len(each.args) == 0 {
+				continue
+			}
+			if name == "" {
+				name, definedAt, opened = definedName(each.args), depth, false
+				mixed = mixed || name == ""
+			}
+			depth += commandBrace(each)
+			if name != "" && definitionEnds(depth, definedAt, &opened) {
+				closed, name = name, ""
+			}
+		}
+		switch {
+		case mixed:
+			outside.WriteString(current.String() + line)
+			current.Reset()
+		case closed != "" && name == "":
+			bodies[closed] += current.String() + line
+			current.Reset()
+		case name != "":
+			current.WriteString(line)
+		default:
+			outside.WriteString(line)
+		}
+	}
+	outside.WriteString(current.String())
+	return outside.String(), bodies
+}
+
 // ansiCQuote names an open $'…' span in the one byte the reader carries between
 // physical lines. A shell quote is only ' or ", so $ is free to stand for the
 // third case: an apostrophe closes the span, and a backslash escapes the byte
@@ -457,12 +511,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 		}
 		depth += braceDepth(commands)
 		if defining {
-			// A body may open on a later line, as in never_called ()
-			// followed by { on its own, so wait for it before seeking its end.
-			if depth > definedAt {
-				bodyOpened = true
-			}
-			if bodyOpened && depth <= definedAt {
+			if definitionEnds(depth, definedAt, &bodyOpened) {
 				defining = false
 			}
 			continue

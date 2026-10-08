@@ -26,14 +26,14 @@ const (
 // workflowScriptRef finds ./scripts/... paths in the words of a run body.
 var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
 
-// ghListTakesLimit maps each gh group with a list (or ls) subcommand, aliases
-// included, to whether that list takes --limit, per gh 2.102 help. A list with
-// no --limit cannot be bounded, so every call of it is a hit.
-// ponytail: a fixed table; derive from `gh help` if gh grows more.
+// ghListTakesLimit holds each gh group, aliases included, whose list (or ls)
+// subcommand takes --limit, per gh 2.102 help. Any other list, an extension's
+// or a later gh group's included, cannot be shown bounded, so every call of it
+// is a hit.
 var ghListTakesLimit = map[string]bool{
-	"cache": true, "codespace": true, "cs": true, "gist": true, "issue": true, "label": true, "pr": true, "project": true,
+	"agent-task": true, "agent-tasks": true, "agent": true, "agents": true, "cache": true, "codespace": true, "cs": true,
+	"discussion": true, "gist": true, "issue": true, "label": true, "org": true, "pr": true, "project": true,
 	"release": true, "repo": true, "ruleset": true, "rs": true, "run": true, "workflow": true,
-	"gpg-key": false, "secret": false, "ssh-key": false, "variable": false,
 }
 
 type workflowRefHit struct{ kind, file, job, step string }
@@ -203,10 +203,10 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 							add("gh-api-unbounded")
 						}
 					case len(args) > 1 && (args[1] == "list" || args[1] == "ls"):
-						if limited, listed := ghListTakesLimit[args[0]]; listed && !(limited && hasAnyArg(args, "--limit", "-L")) {
+						if !ghListTakesLimit[args[0]] || !hasAnyArg(args, "--limit", "-L") {
 							add("gh-" + args[0] + "-list-unbounded")
 						}
-						if args[0] == "pr" && !hasAnyArg(args, "--base", "-B") {
+						if args[0] == "pr" && ghPRBase(args) == "" {
 							add("gh-pr-list-no-base")
 						}
 					}
@@ -283,16 +283,39 @@ func ghPaginates(args []string) bool {
 	return len(spellings) == 1 && (spellings[0] == "--paginate" || spellings[0] == "--paginate=true")
 }
 
-// ghSubcommand drops the flags before the gh subcommand, such as -R owner/repo.
+// ghSubcommand drops the flags before the gh subcommand. gh finds its
+// subcommand the way cobra strips flags: a --flag or a two-byte -f with no value
+// attached takes the next word as its value, so gh --hostname h api runs api.
 func ghSubcommand(args []string) []string {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		skip := 1
-		if (args[0] == "-R" || args[0] == "--repo") && len(args) > 1 {
+		if !strings.Contains(args[0], "=") && (strings.HasPrefix(args[0], "--") || len(args[0]) == 2) {
 			skip = 2
 		}
-		args = args[skip:]
+		args = args[min(skip, len(args)):]
 	}
 	return args
+}
+
+// ghPRBase returns the base branch gh pr list args filter on, or "" when they
+// set none, set it empty, or set it in more than one spelling, where a later
+// one can override the first. gh drops an empty base and lists every base.
+func ghPRBase(args []string) string {
+	var values []string
+	for index, arg := range args {
+		switch {
+		case arg == "--base" || arg == "-B":
+			values = append(values, strings.Join(args[index+1:min(index+2, len(args))], ""))
+		case strings.HasPrefix(arg, "--base="):
+			values = append(values, strings.TrimPrefix(arg, "--base="))
+		case strings.HasPrefix(arg, "-B"):
+			values = append(values, strings.TrimPrefix(arg[2:], "="))
+		}
+	}
+	if len(values) != 1 {
+		return ""
+	}
+	return values[0]
 }
 
 // hasAnyArg matches a flag as a whole word, as --flag=value, or (single dash) as -Fvalue.
@@ -372,8 +395,8 @@ func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram,
 		case arg == "--indent" && i+1 < len(args):
 			flags = append(flags, arg, args[i+1])
 			i++
-		case arg == "-f" || arg == "--from-file" || arg == "--args" || arg == "--jsonargs":
-			return WorkflowJQProgram{}, false // program is in a file, or the rest are data
+		case arg == "-f" || arg == "--from-file":
+			return WorkflowJQProgram{}, false // the program is in a file
 		case strings.HasPrefix(arg, "-"):
 			// Every other option goes to jq as written. jq rejects one it does
 			// not know, so an option this parser misreads fails the compile
@@ -468,8 +491,25 @@ func commandArgs(script, name string) [][]string {
 // in if, for, and while bodies and in $( ) substitutions, without comments and
 // heredoc bodies. It does not use ShellInvocations: that parser drops
 // compound-command bodies because they are not proved to run, and this lint
-// must read them too.
+// must read them too. A function body is read only when the function's name is
+// a word of a command read, so a function nobody calls runs nothing.
 func shellCommands(script string) [][]string {
+	outside, bodies := functionBodies(flattenSubstitutions(withoutHeredocBodies(script)))
+	found := flatCommands(outside)
+	for index := 0; index < len(found); index++ {
+		for _, each := range found[index] {
+			if body, defined := bodies[each]; defined {
+				delete(bodies, each)
+				found = append(found, flatCommands(body)...)
+			}
+		}
+	}
+	return found
+}
+
+// flatCommands returns the words of every command in text that
+// flattenSubstitutions has already rewritten.
+func flatCommands(text string) [][]string {
 	var found [][]string
 	var words []string
 	var word strings.Builder
@@ -493,7 +533,6 @@ func shellCommands(script string) [][]string {
 		words = nil
 	}
 	var quote byte
-	text := flattenSubstitutions(withoutHeredocBodies(script))
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		switch {
