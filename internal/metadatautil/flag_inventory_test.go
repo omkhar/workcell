@@ -39,7 +39,7 @@ func TestParseHelpFlags(t *testing.T) {
 		t.Fatalf("ParseHelpFlags() = %q, %v, want %q", got, err, want)
 	}
 	// An option-looking line with unread syntax fails instead of truncating.
-	for _, line := range []string{"  --model_name <M>", "  --model.foo", "  --model:x", "  -u --unsafe", "  -?, --help", "  --[no-]color", "  -h -?"} {
+	for _, line := range []string{"  --model_name <M>", "  --model.foo", "  --model:x", "  -u --unsafe", "  -?, --help", "  --[no-]color", "  -h -?", "--new-mode"} {
 		if got, err := ParseHelpFlags("Options:\n" + line + "\n"); err == nil {
 			t.Errorf("ParseHelpFlags(%q) = %q, want an error", line, got)
 		}
@@ -146,6 +146,11 @@ func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
 	if err := CheckFlagInventory(root); err == nil {
 		t.Fatal("symlinked fixture: CheckFlagInventory() = nil, want error")
 	}
+	help := filepath.Join(root, "help.txt")
+	mustWriteText(t, help, "Options:\n  --model <M>\n  --yolo\n")
+	if err := CompareFlagFixture(root, "demo", []string{help}); err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("symlinked fixture: CompareFlagFixture() = %v, want an error that does not name the target", err)
+	}
 }
 
 func TestWriteFlagFixtureRefusesSymlinkedParent(t *testing.T) {
@@ -157,8 +162,12 @@ func TestWriteFlagFixtureRefusesSymlinkedParent(t *testing.T) {
 	if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
 		t.Fatalf("WriteFlagFixture() = %v", err)
 	}
-	if _, err := os.Stat(FlagFixturePath(root, "demo")); err != nil {
-		t.Fatal(err)
+	info, err := os.Stat(FlagFixturePath(root, "demo"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("fixture stat = %v; want mode 0600", err)
+	}
+	if err := CompareFlagFixture(root, "demo", []string{help}); err != nil {
+		t.Fatalf("CompareFlagFixture() after write = %v", err)
 	}
 	// An untrusted checkout can point the fixture directory outside itself.
 	outside := t.TempDir()

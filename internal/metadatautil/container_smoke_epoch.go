@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"errors"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -48,7 +49,14 @@ func optionValues(args []string, short, long string) []string {
 	return values
 }
 
+// smokeImageTagDefaultRE reads the literal default tag that IMAGE_TAG takes.
+var smokeImageTagDefaultRE = regexp.MustCompile(`IMAGE_TAG="?\$\{WORKCELL_IMAGE_TAG:-([^}"]+)\}`)
+
 func ValidateContainerSmokeFlagInventory(script string) error {
+	var defaults []string
+	for _, match := range smokeImageTagDefaultRE.FindAllStringSubmatch(script, -1) {
+		defaults = append(defaults, match[1])
+	}
 	// Every buildx_cmd call counts, with or without the epoch prefix.
 	var builds []Invocation
 	for _, name := range []string{"buildx_cmd", "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd"} {
@@ -60,15 +68,15 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 		// NUL-joined argv makes each check exact: a word cannot contain NUL, and
 		// the last --load spelling wins, so a later --load=false is not a load.
 		args := "\x00" + strings.Join(invocation.Args, "\x00") + "\x00"
-		// The last build that names IMAGE_TAG in any spelling decides the
-		// image, so a later retagging build must itself comply.
-		if !strings.Contains(args, "IMAGE_TAG") {
+		// The last -f wins; every -t tags the image. The last build that names
+		// IMAGE_TAG or its literal default decides the image, so a later
+		// retagging build must itself comply.
+		files := optionValues(invocation.Args, "-f", "--file")
+		tags := optionValues(invocation.Args, "-t", "--tag")
+		if !strings.Contains(args, "IMAGE_TAG") && !slices.ContainsFunc(tags, func(tag string) bool { return slices.Contains(defaults, tag) }) {
 			continue
 		}
 		build = -1
-		// The last -f wins; every -t tags the image.
-		files := optionValues(invocation.Args, "-f", "--file")
-		tags := optionValues(invocation.Args, "-t", "--tag")
 		if len(files) > 0 && files[len(files)-1] == "${ROOT_DIR}/runtime/container/Dockerfile" && (slices.Contains(tags, "${IMAGE_TAG}") || slices.Contains(tags, "$IMAGE_TAG")) && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
 			build = invocation.Position
 		}

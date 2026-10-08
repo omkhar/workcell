@@ -34,9 +34,9 @@ func TestWrongArityExitsWithUsageCode(t *testing.T) {
 }
 
 func TestHandlerUsageErrorExitsWithItsCode(t *testing.T) {
-	code, stderr := runCitools(t, "flag-inventory", "render", t.TempDir(), "claude")
+	code, stderr := runCitools(t, "flag-inventory", "compare", t.TempDir(), "claude")
 	if code != 2 || !strings.Contains(stderr, "usage:") {
-		t.Fatalf("flag-inventory render with a missing help file: exit %d, stderr %q; want 2 and usage text", code, stderr)
+		t.Fatalf("flag-inventory compare with a missing help file: exit %d, stderr %q; want 2 and usage text", code, stderr)
 	}
 }
 

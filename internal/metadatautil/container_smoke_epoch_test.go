@@ -58,6 +58,7 @@ func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
 		retag(`buildx_cmd build --load --tag $IMAGE_TAG -f /tmp/o .`):                   false,
 		retag(`buildx_cmd build --load -t"$IMAGE_TAG" -f /tmp/o .`):                     false,
 		retag(`buildx_cmd build --load --tag=${IMAGE_TAG} -f /tmp/o .`):                 false,
+		retag(`buildx_cmd build --load -t workcell:smoke -f /tmp/o .`):                  false,
 	} {
 		if err := metadatautil.ValidateContainerSmokeFlagInventory(src); (err == nil) != pass {
 			t.Errorf("validator = %v, want pass %v", err, pass)

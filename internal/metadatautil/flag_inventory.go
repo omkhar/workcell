@@ -25,10 +25,10 @@ var (
 	// deeper-indented description text that names other flags is not read.
 	helpOptionLinePattern = regexp.MustCompile(`^ {1,6}(-{1,2}[A-Za-z0-9][A-Za-z0-9-]*(?:, *-{1,2}[A-Za-z0-9][A-Za-z0-9-]*)*)(?:[ =<\[]|$)`)
 	// helpOptionLikePattern matches a line that starts like an option line, as
-	// "  -?" or "  --[no-]color" do. One that helpOptionLinePattern does not
+	// "  -?", "--x" or "  --[no-]color" do. One that helpOptionLinePattern does not
 	// match uses syntax the parser does not read, so the inventory fails instead
 	// of dropping or truncating a name.
-	helpOptionLikePattern = regexp.MustCompile(`^ {1,6}-{1,2}\S`)
+	helpOptionLikePattern = regexp.MustCompile(`^ {0,6}-{1,2}\S`)
 	// helpSecondOptionPattern matches text after an option list that starts
 	// another option, as in "  -u --unsafe".
 	helpSecondOptionPattern = regexp.MustCompile(`^ +-{1,2}\S`)
@@ -136,7 +136,25 @@ func WriteFlagFixture(root, id string, helpPaths []string) error {
 		return err
 	}
 	defer parent.Close()
-	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), fixture, 0o644, ".flag-fixture-")
+	return rootio.WriteFileAtomicAtNoFollow(parent, filepath.Base(path), fixture, 0o600, ".flag-fixture-")
+}
+
+// CompareFlagFixture fails when adapter id's fixture, read without following a
+// symlink, differs from the one its help renders.
+func CompareFlagFixture(root, id string, helpPaths []string) error {
+	want, err := RenderFlagFixtureFromHelp(root, id, helpPaths)
+	if err != nil {
+		return err
+	}
+	path := FlagFixturePath(root, id)
+	got, err := rootio.ReadFileNoFollow(path, "flag fixture", 1<<20)
+	if err != nil {
+		return err
+	}
+	if string(got) != string(want) {
+		return fmt.Errorf("%s differs from the rendered inventory:\n%s", path, want)
+	}
+	return nil
 }
 
 // CheckFlagInventory fails when a certified adapter has no fixture, a fixture
