@@ -43,7 +43,7 @@ type Manifest struct {
 
 // Flags classifies every option the pinned CLI prints in its help. The flag
 // inventory (scripts/check-flag-inventory.sh) fails on a fixture flag in neither
-// Allow nor Deny; a Go test runs each entry through reject_unsafe_<id>_args.
+// Allow nor Deny; the reject_unsafe_<id>_args parity test lands with the policy.
 type Flags struct {
 	Subcommands []string // allowed subcommands whose --help the inventory also reads
 	Allow       []string

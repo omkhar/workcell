@@ -40,7 +40,7 @@ container_path = "/opt/workcell/host-inputs/credentials/gcloud-adc.json"
 [egress]
 endpoints = ["generativelanguage.googleapis.com:443", "ai.google.dev:443"]
 
-# Classifies tests/fixtures/flags/gemini.txt as reject_unsafe_gemini_args decides.
+# Classifies tests/fixtures/flags/gemini.txt; the reject_unsafe_gemini_args parity test lands next.
 [flags]
 subcommands = [
   "mcp", "extensions", "skills", "hooks", "gemma",

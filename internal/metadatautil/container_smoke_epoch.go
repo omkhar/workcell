@@ -70,10 +70,34 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 	for _, match := range smokeImageTagDefaultRE.FindAllStringSubmatch(script, -1) {
 		defaults = append(defaults, canonicalImageRef(match[1]))
 	}
-	// Every buildx_cmd call counts, with or without the epoch prefix.
+	inventoryErr := errors.New("Expected the smoke lane to run the flag inventory once against the built image tag after the image build")
+	// Every buildx_cmd call counts, also behind NAME=value words, whose first
+	// word the reader is asked for. ponytail: fold into PR 803's shared rule.
+	names := []string{"buildx_cmd"}
+	for line := range strings.Lines(strings.ReplaceAll(script, "\\\n", "")) {
+		words, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		for _, each := range splitCommands(words) {
+			args := texts(each.args)
+			if run := assignmentRun(args); run > 0 && run < len(args) && args[run] == "buildx_cmd" {
+				if strings.ContainsAny(args[0], " \t\n") {
+					return inventoryErr // the reader cannot match a word with blanks
+				}
+				names = append(names, args[0])
+			}
+		}
+	}
+	slices.Sort(names)
 	var builds []Invocation
-	for _, name := range []string{"buildx_cmd", "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH} buildx_cmd"} {
-		builds = append(builds, ShellInvocations(script, name)...)
+	foreign := map[int]bool{} // a build under another prefix replaces the image but cannot comply
+	for _, name := range slices.Compact(names) {
+		for _, invocation := range ShellInvocations(script, name) {
+			if name == "buildx_cmd" {
+				builds = append(builds, invocation)
+			} else if run := assignmentRun(invocation.Args); run < len(invocation.Args) && invocation.Args[run] == "buildx_cmd" {
+				builds = append(builds, Invocation{invocation.Args[run+1:], invocation.Position})
+				foreign[invocation.Position] = run > 0 || name != "SOURCE_DATE_EPOCH=${BUILD_SOURCE_DATE_EPOCH}"
+			}
+		}
 	}
 	slices.SortFunc(builds, func(a, b Invocation) int { return a.Position - b.Position })
 	build := -1
@@ -90,7 +114,7 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 			continue
 		}
 		build = -1
-		if len(files) > 0 && files[len(files)-1] == "${ROOT_DIR}/runtime/container/Dockerfile" && (slices.Contains(tags, "${IMAGE_TAG}") || slices.Contains(tags, "$IMAGE_TAG")) && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
+		if !foreign[invocation.Position] && len(files) > 0 && files[len(files)-1] == "${ROOT_DIR}/runtime/container/Dockerfile" && (slices.Contains(tags, "${IMAGE_TAG}") || slices.Contains(tags, "$IMAGE_TAG")) && strings.LastIndex(args, "\x00--load\x00") > strings.LastIndex(args, "\x00--load=") {
 			build = invocation.Position
 		}
 	}
@@ -101,7 +125,16 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 		}
 	}
 	if checks != 1 {
-		return errors.New("Expected the smoke lane to run the flag inventory once against the built image tag after the image build")
+		return inventoryErr
 	}
 	return nil
+}
+
+// assignmentRun counts the leading words with "=", which bash reads as assignments.
+func assignmentRun(args []string) int {
+	run := 0
+	for run < len(args) && strings.Contains(args[run], "=") {
+		run++
+	}
+	return run
 }

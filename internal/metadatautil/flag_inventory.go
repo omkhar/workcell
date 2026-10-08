@@ -29,10 +29,7 @@ var (
 	// match uses syntax the parser does not read, so the inventory fails instead
 	// of dropping or truncating a name.
 	helpOptionLikePattern = regexp.MustCompile(`^ {0,6}-{1,2}\S`)
-	// helpSecondOptionPattern matches text after an option list that starts
-	// another option, as in "  -u --unsafe".
-	helpSecondOptionPattern = regexp.MustCompile(`^ +-{1,2}\S`)
-	flagFixtureStampRE      = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
+	flagFixtureStampRE    = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
 )
 
 // FlagFixturePath is the checked-in inventory of one adapter.
@@ -52,11 +49,20 @@ func ParseHelpFlags(help string) ([]string, error) {
 			}
 			continue
 		}
-		if helpSecondOptionPattern.MatchString(line[len(match[0])-1:]) {
-			return nil, fmt.Errorf("help option line %q lists an option that the inventory does not read", line)
+		tokens := strings.Split(match[1], ",")
+		// Options up to the two-space gap before the description all count.
+		declaration, _, _ := strings.Cut(line[len(match[0])-1:], "  ")
+		for _, field := range strings.Fields(declaration) {
+			if strings.HasPrefix(field, "-") {
+				tokens = append(tokens, strings.TrimRight(strings.SplitN(field, "=", 2)[0], ","))
+			}
 		}
-		for _, token := range strings.Split(match[1], ",") {
-			flags = append(flags, strings.TrimSpace(token))
+		for _, token := range tokens {
+			token = strings.TrimSpace(token)
+			if !adapters.FlagPattern.MatchString(token) {
+				return nil, fmt.Errorf("help option line %q lists an option that the inventory does not read", line)
+			}
+			flags = append(flags, token)
 		}
 	}
 	slices.Sort(flags)

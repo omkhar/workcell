@@ -30,16 +30,18 @@ func TestParseHelpFlags(t *testing.T) {
 		// yargs
 		"  -y, --yolo                      Automatically accept  [boolean]",
 		"  -C <directory>",
+		"  --first <value> --second <value>",
+		"  -u --unsafe",
 		"Commands:",
 		"  exec              Run Codex non-interactively [aliases: e]",
 		"  $ copilot -p \"Fix the bug\"",
 	}, "\n")
-	want := []string{"--allowed-tools", "--allowedTools", "--config", "--debug", "--enable", "--yes", "--yolo", "-C", "-c", "-d", "-y"}
+	want := []string{"--allowed-tools", "--allowedTools", "--config", "--debug", "--enable", "--first", "--second", "--unsafe", "--yes", "--yolo", "-C", "-c", "-d", "-u", "-y"}
 	if got, err := ParseHelpFlags(help); err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("ParseHelpFlags() = %q, %v, want %q", got, err, want)
 	}
 	// An option-looking line with unread syntax fails instead of truncating.
-	for _, line := range []string{"  --model_name <M>", "  --model.foo", "  --model:x", "  -u --unsafe", "  -?, --help", "  --[no-]color", "  -h -?", "--new-mode"} {
+	for _, line := range []string{"  --model_name <M>", "  --model.foo", "  --model:x", "  --first <v> --[no-]x", "  -?, --help", "  --[no-]color", "  -h -?", "--new-mode"} {
 		if got, err := ParseHelpFlags("Options:\n" + line + "\n"); err == nil {
 			t.Errorf("ParseHelpFlags(%q) = %q, want an error", line, got)
 		}

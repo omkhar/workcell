@@ -31,7 +31,7 @@ container_path = "/opt/workcell/host-inputs/credentials/codex-auth.json"
 [egress]
 endpoints = ["api.openai.com:443", "auth.openai.com:443", "chatgpt.com:443"]
 
-# Classifies tests/fixtures/flags/codex.txt as reject_unsafe_codex_args decides.
+# Classifies tests/fixtures/flags/codex.txt; the reject_unsafe_codex_args parity test lands next.
 [flags]
 subcommands = [
   "exec", "review", "login", "logout", "completion", "doctor", "apply",
