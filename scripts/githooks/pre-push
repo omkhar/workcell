@@ -86,7 +86,7 @@ if [[ "${markdown_changed}" -eq 1 ]]; then
 fi
 if [[ "${#changed_files[@]}" -gt 0 ]]; then
   if command -v codespell >/dev/null; then
-    run_gate "codespell" codespell --config .codespellrc "${changed_files[@]}"
+    run_gate "codespell" ./scripts/ci/run-codespell.sh . "${changed_files[@]}"
   else
     echo "pre-push: codespell is missing; run ./scripts/install-dev-tools.sh." >&2
     failures=$((failures + 1))

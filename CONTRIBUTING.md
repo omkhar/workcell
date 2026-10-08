@@ -34,8 +34,9 @@ each outgoing commit.
 
 After that walk, `pre-push` runs `scripts/githooks/pre-push`.
 That script checks generated artifacts, doc links, doc language, codespell, and
-PR shape on the files the branch changes. Without Go, the script skips the
-generated artifacts and doc language checks. Set
+PR shape on the files the branch changes. Codespell scans only the changed
+files that `scripts/ci/run-codespell.sh` scans in CI. Without Go, the script
+skips the generated artifacts and doc language checks. Set
 `WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional bypass.
 
 These checks read the working tree. Push only the branch that you have checked

@@ -42,6 +42,14 @@ func newPrePushChecksFixture(t *testing.T, failing string) *prePushChecksFixture
 	if err := os.WriteFile(filepath.Join(f.root, ".codespellrc"), []byte("[codespell]\nquiet-level = 2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	codespellScript, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "ci", "run-codespell.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.root, "scripts", "ci"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecFile(t, filepath.Join(f.root, "scripts", "ci", "run-codespell.sh"), codespellScript, 0o755)
 	f.commitFile("base.txt", "base\n", fixtureSubject)
 	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
 	f.run("checkout", "--quiet", "-b", "feature")
@@ -112,6 +120,18 @@ func TestFastPrePushRejectsPlantedMisspelling(t *testing.T) {
 	}
 	if !strings.Contains(output, "recieve") {
 		t.Errorf("codespell hit missing from the output:\n%s", output)
+	}
+}
+
+func TestFastPrePushSpellchecksOnlyCIDocFiles(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	f.commitFile("planted_test.go", "// We recieve input.\n", fixtureSubject)
+	if output, err := f.hook(); err != nil {
+		t.Fatalf("fast pre-push spellchecked a file CI does not scan: %v\n%s", err, output)
+	}
+	f.commitFile("doc.md", "We recieve input.\n", fixtureSubject)
+	if output, err := f.hook(); err == nil || !strings.Contains(output, "doc.md:1: recieve") {
+		t.Fatalf("fast pre-push missed a misspelling in a changed .md: %v\n%s", err, output)
 	}
 }
 
@@ -195,7 +215,7 @@ func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"git", "mktemp", "rm", "dirname"} {
+	for _, tool := range []string{"git", "mktemp", "rm", "dirname", "bash", "env", "grep", "sort", "xargs"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("%s unavailable: %v", tool, err)
