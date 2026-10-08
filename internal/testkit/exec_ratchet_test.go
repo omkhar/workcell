@@ -25,18 +25,15 @@ var etxtbsyRetryHelpers = map[string]bool{
 	"execRetryETXTBSYOrNestedBusy": true,
 }
 
-// systemBinaryDirs are the directories no test writes to, so a literal under
-// one of them names an installed binary, never a freshly written fixture.
+// systemBinaryDirs hold installed binaries only: no test writes a fixture there.
 var systemBinaryDirs = []string{"/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/"}
 
-// systemTools are the installed tools testkit resolves on PATH. Another
-// slashless name, or any name after a process PATH rewrite, can be a fixture.
+// systemTools resolve on PATH; another slashless name, or any after a PATH rewrite, may be a fixture.
 var systemTools = map[string]bool{
 	"bash": true, "chmod": true, "cp": true, "git": true, "go": true, "shasum": true, "true": true,
 }
 
-// stableProgramLiteral reports whether a string literal names a systemTools
-// tool with PATH untouched, or a binary under systemBinaryDirs.
+// stableProgramLiteral reports a systemTools name with PATH untouched, or a binary under systemBinaryDirs.
 func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 	if lit.Kind != token.STRING {
 		return false
@@ -48,8 +45,7 @@ func stableProgramLiteral(lit *ast.BasicLit, pathRewritten bool) bool {
 	if systemTools[prog] {
 		return !pathRewritten
 	}
-	// A traversal such as "/bin/../../tmp/fixture.sh" resolves outside the
-	// system directory, so only an already-clean literal can be exempt.
+	// A traversal such as "/bin/../../tmp/fixture.sh" escapes, so only a clean literal is exempt.
 	if path.Clean(prog) != prog {
 		return false
 	}
@@ -69,8 +65,7 @@ func rawExecSites(t *testing.T, name, src string) int {
 	return rawExecSitesIn(t, name, src, false, nil)
 }
 
-// packageRawExecSites returns the raw site count per file, with PATH
-// rewrites and execNames read package-wide.
+// packageRawExecSites returns raw sites per file, with PATH rewrites and execNames read package-wide.
 func packageRawExecSites(t *testing.T, sources map[string]string) map[string]int {
 	t.Helper()
 	var parsed []*ast.File
@@ -128,8 +123,7 @@ func execCommandNameIn(file *ast.File) (func(ast.Expr) string, func(ast.Expr) bo
 	}, func(expr ast.Expr) bool { return member(expr) == "Cmd" }, execPkgs["."]
 }
 
-// execNames are the names a package gives to os/exec values: saved
-// exec.Command aliases, types that are exec.Cmd, and command holders.
+// execNames are a package's os/exec names: exec.Command aliases, exec.Cmd types and command holders.
 type execNames struct {
 	aliases, factories, cmdTypes map[string]bool
 	holders                      map[any]bool
@@ -141,8 +135,7 @@ func packageExecNames(files []*ast.File) execNames {
 	return execNames{aliases, factories, cmdTypeNames(files), commandHolders(files, aliases)}
 }
 
-// rawExecSitesIn is rawExecSites with a package-wide PATH rewrite flag and
-// execNames from other files. A nil names reads the file alone.
+// rawExecSitesIn is rawExecSites with package-wide PATH and execNames; nil names reads the file alone.
 func rawExecSitesIn(t *testing.T, name, src string, packageRewritesPath bool, names *execNames) int {
 	t.Helper()
 	return rawExecSitesInFile(parseSource(t, name, src), packageRewritesPath, names)
@@ -157,8 +150,7 @@ func parseSource(t *testing.T, name, src string) *ast.File {
 	return file
 }
 
-// rawExecSitesInFile counts file, which must be the parse names was built
-// from: holders of local names are keyed by that parse's objects.
+// rawExecSitesInFile counts file, the parse names was built from, since local holders key by its objects.
 func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNames) int {
 	execCommandName, isCmdType, dotImported := execCommandNameIn(file)
 	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
@@ -170,8 +162,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 	isCommand, _ := commandValueIn(file, execCommandName, isCmdType, names.holders)
 	count := 0
 	called := map[ast.Expr]bool{}
-	// A file that declares its own execRetryETXTBSY shadows the package
-	// helper, so its calls by that name are not trusted to retry anything.
+	// A file that declares its own execRetryETXTBSY shadows the helper, so those calls are not trusted.
 	helpersShadowed := declaresRetryHelper(file)
 	// retried holds the command expressions a retry helper's closure returns:
 	// only those run under the helper's ETXTBSY retry. Any other execution
@@ -181,8 +172,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 		id, ok := lit.Type.(*ast.Ident)
 		return isCmdType(lit.Type) || ok && names.cmdTypes[id.Name]
 	}
-	// build returns the node the counter sees for an expression that builds a
-	// command: an exec.Command call, or a Cmd literal taken directly or by &.
+	// build returns the counted node for an exec.Command call or a Cmd literal, direct or by &.
 	build := func(expr ast.Expr) ast.Expr {
 		if u, ok := unparen(expr).(*ast.UnaryExpr); ok && u.Op == token.AND {
 			expr = u.X
@@ -242,8 +232,7 @@ func rawExecSitesInFile(file *ast.File, packageRewritesPath bool, names *execNam
 		default:
 			return true
 		}
-		// Every call through a saved exec.Command value, or through one a
-		// factory returns, is a raw site: its program is never checked here.
+		// Every call through a saved exec.Command value, or one a factory returns, is a raw site.
 		fun, calls := unparen(call.Fun), aliases
 		if inner, ok := fun.(*ast.CallExpr); ok {
 			fun, calls = factoryName(inner), names.factories
@@ -326,8 +315,7 @@ func retriedCommand(closure *ast.FuncLit, build func(ast.Expr) ast.Expr) ast.Exp
 	return built
 }
 
-// assignsFieldsOnly reports whether assign only sets fields of name, such as
-// c.Dir = x, with a right-hand side that never mentions name.
+// assignsFieldsOnly reports whether assign only sets fields of name, such as c.Dir = x, without reading name.
 func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
 	for _, lhs := range assign.Lhs {
 		sel, ok := lhs.(*ast.SelectorExpr)
@@ -350,8 +338,7 @@ func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
 	return !mentions
 }
 
-// declaresRetryHelper reports whether a local declaration in the file
-// shadows one of etxtbsyRetryHelpers.
+// declaresRetryHelper reports whether a local declaration in the file shadows an etxtbsyRetryHelpers name.
 func declaresRetryHelper(file *ast.File) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
@@ -404,8 +391,7 @@ func declaresRetryHelper(file *ast.File) bool {
 	return found
 }
 
-// factoryName returns the callee of a factory call, with a method such as
-// m.factory() read by its name, as factories collect methods by name too.
+// factoryName returns a factory call's callee, reading a method such as m.factory() by name.
 func factoryName(call *ast.CallExpr) ast.Expr {
 	if sel, ok := unparen(call.Fun).(*ast.SelectorExpr); ok {
 		return sel.Sel
@@ -413,8 +399,7 @@ func factoryName(call *ast.CallExpr) ast.Expr {
 	return unparen(call.Fun)
 }
 
-// unparen strips parentheses, so (exec.Command) and (run) are read as the
-// expressions they wrap.
+// unparen strips parentheses, so (exec.Command) and (run) read as what they wrap.
 func unparen(expr ast.Expr) ast.Expr {
 	for {
 		paren, ok := expr.(*ast.ParenExpr)
@@ -425,8 +410,7 @@ func unparen(expr ast.Expr) ast.Expr {
 	}
 }
 
-// packageCommandAliases lists, to a fixed point across files, the saved
-// exec.Command aliases and the factories, functions that return an alias.
+// packageCommandAliases lists, to a fixed point, exec.Command aliases and factories that return one.
 func packageCommandAliases(files []*ast.File) (map[string]bool, map[string]bool) {
 	aliases, factories := map[string]bool{}, map[string]bool{}
 	for {
@@ -441,8 +425,7 @@ func packageCommandAliases(files []*ast.File) (map[string]bool, map[string]bool)
 	}
 }
 
-// collectCommandAliases adds one pass of file's command aliases and factories
-// and reports whether any name was new.
+// collectCommandAliases adds one pass of file's aliases and factories and reports whether any was new.
 func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, execCommandName func(ast.Expr) string) bool {
 	added := false
 	add := func(set map[string]bool, name string) {
@@ -506,8 +489,7 @@ func collectCommandAliases(aliases, factories map[string]bool, file *ast.File, e
 	return added
 }
 
-// cmdTypeNames lists, to a fixed point, the types declared from exec.Cmd,
-// such as type command = exec.Cmd, or from one of those.
+// cmdTypeNames lists, to a fixed point, types declared from exec.Cmd or from one of those.
 func cmdTypeNames(files []*ast.File) map[string]bool {
 	cmdTypes := map[string]bool{}
 	for added := true; added; {
@@ -670,12 +652,10 @@ func commandHolders(files []*ast.File, aliases map[string]bool) map[any]bool {
 	return holders
 }
 
-// envWriters are the functions that can rewrite PATH, called through any
-// qualifier or bare, as under a dot import of os.
+// envWriters can rewrite PATH, called through any qualifier or bare, as under a dot import of os.
 var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 
-// savedSetenvAliases lists the names that hold a Setenv value in files, such
-// as setenv := t.Setenv, to a fixed point across all files.
+// savedSetenvAliases lists, to a fixed point, names holding a Setenv value, such as setenv := t.Setenv.
 func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	savedSetenv := map[string]bool{}
 	isSetenv := func(value ast.Expr) bool {
@@ -722,8 +702,7 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	}
 }
 
-// packageRewritesProcessPath reports whether any file of the package rewrites
-// the process PATH, with Setenv aliases collected across all of them.
+// packageRewritesProcessPath reports whether any file rewrites PATH, with Setenv aliases package-wide.
 func packageRewritesProcessPath(files []*ast.File) bool {
 	aliases := savedSetenvAliases(files...)
 	for _, file := range files {
@@ -734,8 +713,7 @@ func packageRewritesProcessPath(files []*ast.File) bool {
 	return false
 }
 
-// rewritesProcessPath reports whether the file sets the process PATH through
-// an envWriter or savedSetenv alias. A non-literal key is treated as PATH.
+// rewritesProcessPath reports a process PATH write through an envWriter or alias; any non-literal key counts.
 func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
@@ -790,9 +768,7 @@ func parseExecBaseline(t *testing.T, data string) map[string]int {
 	return baseline
 }
 
-// mergeBaseExecBaseline reads the baseline at the merge base of HEAD with
-// origin/main, or with main when origin/main is absent. It returns nil when
-// the baseline does not exist there yet.
+// mergeBaseExecBaseline reads the baseline at HEAD's merge base with execBaselineBaseRef, or nil if absent.
 func mergeBaseExecBaseline(t *testing.T, root string) map[string]int {
 	t.Helper()
 	git := func(args ...string) string {
@@ -802,15 +778,25 @@ func mergeBaseExecBaseline(t *testing.T, root string) map[string]int {
 		}
 		return string(out)
 	}
-	base := "refs/remotes/origin/main"
-	if exec.Command("git", "-C", root, "rev-parse", "--verify", "--quiet", base).Run() != nil {
-		base = "refs/heads/main"
+	base, err := execBaselineBaseRef(root)
+	if err != nil {
+		t.Fatalf("probe origin/main: %v", err)
 	}
 	mergeBase := strings.TrimSpace(git("merge-base", base, "HEAD"))
 	if git("ls-tree", "--name-only", mergeBase, "--", execBaselinePath) == "" {
 		return nil
 	}
 	return parseExecBaseline(t, git("show", mergeBase+":"+execBaselinePath))
+}
+
+// execBaselineBaseRef returns origin/main, or main only when origin/main is
+// missing; any other probe failure is an error, so the check fails closed.
+func execBaselineBaseRef(root string) (string, error) {
+	err := exec.Command("git", "-C", root, "show-ref", "--exists", "refs/remotes/origin/main").Run()
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		return "refs/heads/main", nil
+	}
+	return "refs/remotes/origin/main", err
 }
 
 // execBaselineRaises lists baseline rows above their merge-base row. A raise
@@ -893,8 +879,7 @@ func c(p string) { execRetryETXTBSY(func() *exec.Cmd { c := &exec.Cmd{Path: p}; 
 	if got := rawExecSites(t, "not_raw.go", notRaw); got != 0 {
 		t.Fatalf("rawExecSites = %d, want 0 (a Path assignment on a value that holds no command, and Cmd literals a retry helper returns)", got)
 	}
-	// A function that declares its own helper of the same name shadows the
-	// package helper, so nothing in that file is exempt.
+	// A function that declares its own same-name helper shadows it, so nothing in that file is exempt.
 	const shadowedHelper = `package x
 import "os/exec"
 func a(p string) {
@@ -1019,8 +1004,7 @@ func a() { exec.Command("git", "init") }
 	if got := rawExecSitesIn(t, "plain.go", plain, false, nil); got != 0 {
 		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
 	}
-	// A saved exec.Command alias declared in one file counts its calls in
-	// another: the declaration counts once and each cross-file call once.
+	// A saved alias declared in one file counts once there and once per call in another.
 	counts := packageRawExecSites(t, map[string]string{
 		"decl.go": "package x\nimport \"os/exec\"\nvar run = exec.Command\n",
 		"call.go": "package x\nfunc a(p string) { run(p); run(p) }\n",
@@ -1036,8 +1020,7 @@ func a() { exec.Command("git", "init") }
 	if counts["decl.go"] != 1 || counts["chain.go"] != 1 {
 		t.Fatalf("package counts = %v, want decl.go:1 chain.go:1 (an alias of another file's alias)", counts)
 	}
-	// An exec.Cmd type alias and a command variable declared in one file
-	// count their literal and Path reassignment in another.
+	// An exec.Cmd type alias and a Cmd variable from one file count their literal and Path write in another.
 	counts = packageRawExecSites(t, map[string]string{
 		"decl.go": "package x\nimport \"os/exec\"\ntype command = exec.Cmd\nvar shared *exec.Cmd\n",
 		"use.go":  "package x\nfunc a(p string) { (&command{Path: p}).Run(); shared.Path = p }\n",
@@ -1125,16 +1108,31 @@ func TestExecRatchetFailsOnPlantedViolation(t *testing.T) {
 	}
 }
 
+func TestExecBaselineBaseRefFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	ref := filepath.Join(root, ".git", "refs", "remotes", "origin", "main")
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil || os.MkdirAll(filepath.Dir(ref), 0o755) != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if base, err := execBaselineBaseRef(root); err != nil || base != "refs/heads/main" {
+		t.Fatalf("missing origin/main = %q, %v; want refs/heads/main", base, err)
+	}
+	if err := os.WriteFile(ref, []byte("garbage\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execBaselineBaseRef(root); err == nil {
+		t.Fatal("corrupt origin/main probed without an error; want the check to fail closed")
+	}
+}
+
 func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	root := repoRoot(t)
-	// Every Go file in the package, not only tests: a shared helper that execs
-	// a fixture by path is a raw site too.
+	// Every Go file in the package: a shared helper that execs a fixture by path is a raw site too.
 	files, err := filepath.Glob(filepath.Join(root, "internal", "testkit", "*.go"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
-	// A PATH rewrite, a Setenv alias or a saved exec.Command alias in any
-	// file of the package reaches every other file.
+	// A PATH rewrite, Setenv alias or exec.Command alias in any file reaches every other file.
 	sources := map[string]string{}
 	for _, f := range files {
 		src, err := os.ReadFile(f)
