@@ -27,6 +27,7 @@ var anyRejection = map[string]bool{
 	"eval-assembled definition": true,
 	"wrapped eval definition":   true,
 	"assigned eval definition":  true,
+	"sourced definition":        true,
 	"step condition if: false":  true,
 	"step condition && false":   true,
 }
@@ -220,6 +221,10 @@ var Evasions = []Evasion{
 	})},
 	{"assigned eval definition", replaceAnchor(func(a string) string {
 		return indentOf(a) + "X=1 command eval '" + strings.Fields(a)[0] + "() { :; }'\n" + a
+	})},
+	{"sourced definition", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + ". ./shadow.sh\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

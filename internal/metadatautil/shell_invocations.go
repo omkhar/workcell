@@ -483,9 +483,9 @@ func ShellInvocations(script, commandName string) []Invocation {
 				return invocations
 			}
 			if evaluates(names) {
-				// eval runs text this reader never sees as code, and that text
-				// can define a function or an alias with the command's name,
-				// as eval 'or''as() { :; }' does. No later call is proved to
+				// eval and source run text this reader never sees as code, and
+				// that text can define a function or an alias with the command's
+				// name, as eval 'or''as() { :; }' does. No later call is proved to
 				// run the program; the calls before it already ran.
 				return invocations
 			}
@@ -705,8 +705,9 @@ func shellWords(line string, stack []byte) (
 	return words, heredocs, quote, stack, continues
 }
 
-// evaluates reports whether the words run eval: bare, behind command or
-// builtin, which run it in this shell, or as the script of sh -c or bash -c.
+// evaluates reports whether the words run eval, source or ., each of which
+// runs code this reader never sees in the current shell: bare, behind command
+// or builtin, which run it in this shell, or as the script of sh -c or bash -c.
 // Assignments before any of these, as in X=1 eval, still run it here. A child
 // shell cannot shadow the command, but the barrier only loses invocations, so
 // it holds for every spelling.
@@ -718,7 +719,7 @@ func evaluates(names []string) bool {
 	if len(names) == 0 {
 		return false
 	}
-	if names[0] == "eval" {
+	if names[0] == "eval" || names[0] == "source" || names[0] == "." {
 		return true
 	}
 	if shell := path.Base(names[0]); shell != "sh" && shell != "bash" {

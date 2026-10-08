@@ -1451,8 +1451,8 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 
 // TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites gates the
 // publisher on the credential check, as the real workflow does. The check must
-// run unconditionally, and each prerequisite step must share the publisher's
-// condition, or publication cannot run while the validator passes.
+// run unconditionally, and each prerequisite step must precede the publisher
+// and share its condition, or publication cannot run while the validator passes.
 func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T) {
 	t.Parallel()
 	const gate = "        if: steps.secrets.outputs.present == 'true'\n"
@@ -1479,7 +1479,10 @@ func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T)
 		"checkout skipped": func(s string) string {
 			return strings.Replace(s, "# v7.0.1\n"+gate, "# v7.0.1\n        if: false\n", 1)
 		},
-		"download ungated": func(s string) string { return strings.Replace(s, "# v8.0.1\n"+gate, "# v8.0.1\n", 1) },
+		"download ungated":                   func(s string) string { return strings.Replace(s, "# v8.0.1\n"+gate, "# v8.0.1\n", 1) },
+		"checkout after the publisher":       func(s string) string { return moveStepToEnd(s, "      - uses: actions/checkout@") },
+		"download after the publisher":       func(s string) string { return moveStepToEnd(s, "      - uses: actions/download-artifact@") },
+		"App token mint after the publisher": func(s string) string { return moveStepToEnd(s, "      - id: app-token\n") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := mutate(gated)
@@ -1491,6 +1494,14 @@ func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T)
 			}
 		})
 	}
+}
+
+// moveStepToEnd moves the last step that starts with header to the end of the
+// workflow, after the publish job's last step.
+func moveStepToEnd(workflow, header string) string {
+	start := strings.LastIndex(workflow, header)
+	end := start + len(header) + strings.Index(workflow[start+len(header):], "\n      - ")
+	return workflow[:start] + workflow[end+1:] + workflow[start:end+1]
 }
 
 // TestValidateUpstreamRefreshWorkflowRejectsEvasions runs the shared evasion

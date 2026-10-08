@@ -1040,7 +1040,8 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	publishRuns := 0
 	stray, beforePublisher := "", true
 	// The publisher's condition reads the presence output, so the presence check
-	// runs unconditionally and every prerequisite step shares that condition.
+	// runs unconditionally and every prerequisite step precedes the publisher
+	// and shares its condition.
 	condition := func(step workflowStep) string { return strings.TrimSpace(step.If.Value) }
 	publisherCondition, prerequisiteConditions, presenceChecks := "", []string{}, 0
 	for _, step := range publish.Steps {
@@ -1067,6 +1068,10 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 			presenceChecks++
 		}
 		if mint || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false) {
+			if !beforePublisher {
+				// The publisher would run before the candidate or the App token exists.
+				return fmt.Errorf("%s publish job must run the checkout, download, and App token steps before the publish script", path)
+			}
 			prerequisiteConditions = append(prerequisiteConditions, condition(step))
 		}
 		if publisher {

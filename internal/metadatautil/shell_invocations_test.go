@@ -241,6 +241,11 @@ func TestShellInvocations(t *testing.T) {
 		{name: "eval behind an assignment ends the scan", script: "X=1 eval 'oras(){ :; }'\noras cp two\n"},
 		{name: "command eval behind assignments ends the scan", script: "FOO=bar Y= command eval x\noras cp two\n"},
 		{name: "sh -c eval behind an assignment ends the scan", script: "sh -c 'X=1 eval x'\noras cp two\n"},
+		{name: "source ends the scan", script: "oras cp one\nsource ./shadow.sh\noras cp two\n", want: [][]string{{"one"}}},
+		{name: "dot ends the scan", script: ". ./shadow.sh\noras cp two\n"},
+		{name: "builtin source behind an assignment ends the scan", script: "X=1 builtin source ./shadow.sh\noras cp two\n"},
+		{name: "command dot ends the scan", script: "command . ./shadow.sh\noras cp two\n"},
+		{name: "sh -c source ends the scan", script: "bash -c 'source ./shadow.sh'\noras cp two\n"},
 		{name: "an assignment alone is not a barrier", script: "X=1\noras cp two\n", want: [][]string{{"two"}}},
 		{
 			name:   "a hashed path over the command proves no invocation of it",
