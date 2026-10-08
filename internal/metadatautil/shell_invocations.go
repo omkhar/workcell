@@ -411,6 +411,79 @@ func withoutHeredocBodies(script string) string {
 	return out.String()
 }
 
+// flattenSubstitutions rewrites each $( ... ) and ` ... ` in a run body into its own line,
+// so ShellInvocations, which reads top-level commands, sees the commands inside.
+// It tracks quotes, so a ) or $( inside a quoted jq program is left alone. Where
+// a substitution sits inside double quotes, the quote is closed before the new
+// line and reopened after it.
+func flattenSubstitutions(script string) string {
+	var out strings.Builder
+	// One frame per open substitution: is its text inside double quotes, and
+	// the byte that closes it.
+	type frame struct {
+		quoted bool
+		closer byte
+	}
+	frames := []frame{{}}
+	single := false
+	for i := 0; i < len(script); i++ {
+		c := script[i]
+		top := &frames[len(frames)-1]
+		switch {
+		case single:
+			single = c != '\''
+			out.WriteByte(joinQuotedNewline(c))
+		case c == '\\' && i+1 < len(script):
+			out.WriteByte(c)
+			i++
+			out.WriteByte(script[i])
+		case c == '#' && !top.quoted && (i == 0 || strings.ContainsRune(" \t\n;(", rune(script[i-1]))):
+			for i < len(script) && script[i] != '\n' {
+				i++
+			}
+			out.WriteByte('\n')
+		case c == '\'' && !top.quoted:
+			single = true
+			out.WriteByte(c)
+		case c == '"':
+			top.quoted = !top.quoted
+			out.WriteByte(c)
+		case c == '`' && top.closer != '`' || strings.HasPrefix(script[i:], "$(") && !strings.HasPrefix(script[i:], "$(("):
+			if top.quoted {
+				out.WriteByte('"')
+			}
+			out.WriteByte('\n')
+			frames = append(frames, frame{closer: ')'})
+			if c == '`' {
+				frames[len(frames)-1].closer = c
+			} else {
+				i++
+			}
+		case c == top.closer && !top.quoted:
+			frames = frames[:len(frames)-1]
+			out.WriteByte('\n')
+			if frames[len(frames)-1].quoted {
+				out.WriteByte('"')
+			}
+		case top.quoted:
+			out.WriteByte(joinQuotedNewline(c))
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+// joinQuotedNewline turns a newline inside a quoted word into a space, so a
+// multi-line jq program stays one word. ShellInvocations drops the rest of a
+// quoted word that runs past the end of its line.
+func joinQuotedNewline(c byte) byte {
+	if c == '\n' {
+		return ' '
+	}
+	return c
+}
+
 // Invocation is one invocation the script proves it runs: the arguments after
 // the command name, and the ordinal of the command word in the stream of
 // commands the parser proves the script reaches. Position does not depend on

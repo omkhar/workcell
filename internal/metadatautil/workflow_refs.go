@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/omkhar/workcell/internal/rootio"
@@ -197,16 +198,17 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
 					args = ghSubcommand(args)
+					sub := ghSubcommand(args[min(1, len(args)):]) // gh pr -R o/r list runs pr list
 					switch {
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
 						}
-					case len(args) > 1 && (args[1] == "list" || args[1] == "ls"):
-						if !ghListTakesLimit[args[0]] || !hasAnyArg(args, "--limit", "-L") {
+					case len(sub) > 0 && (sub[0] == "list" || sub[0] == "ls"):
+						if limit := ghFlagValues(args, "--limit", "-L"); !ghListTakesLimit[args[0]] || len(limit) != 1 || !positiveInt(limit[0]) {
 							add("gh-" + args[0] + "-list-unbounded")
 						}
-						if args[0] == "pr" && ghPRBase(args) == "" {
+						if base := ghFlagValues(args, "--base", "-B"); args[0] == "pr" && (len(base) != 1 || base[0] == "") {
 							add("gh-pr-list-no-base")
 						}
 					}
@@ -279,7 +281,7 @@ func scriptRefs(words []string) []string {
 // spelling. A --paginate=false, or a second spelling that can override the
 // first, leaves the call unbounded.
 func ghPaginates(args []string) bool {
-	spellings := slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return !hasAnyArg([]string{arg}, "--paginate") })
+	spellings := slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg != "--paginate" && !strings.HasPrefix(arg, "--paginate=") })
 	return len(spellings) == 1 && (spellings[0] == "--paginate" || spellings[0] == "--paginate=true")
 }
 
@@ -297,37 +299,37 @@ func ghSubcommand(args []string) []string {
 	return args
 }
 
-// ghPRBase returns the base branch gh pr list args filter on, or "" when they
-// set none, set it empty, or set it in more than one spelling, where a later
-// one can override the first. gh drops an empty base and lists every base.
-func ghPRBase(args []string) string {
+// ghBoolFlags are the gh list flags that take no value.
+var ghBoolFlags = map[string]bool{"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true}
+
+// ghFlagValues returns the value of each spelling of a gh flag in args. Every
+// other option but a ghBoolFlags one consumes the next word, as cobra does, so
+// a value that looks like the flag is not counted. gh drops an empty base and
+// a later spelling overrides an earlier one, so callers want exactly one value.
+func ghFlagValues(args []string, long, short string) []string {
 	var values []string
-	for index, arg := range args {
-		switch {
-		case arg == "--base" || arg == "-B":
-			values = append(values, strings.Join(args[index+1:min(index+2, len(args))], ""))
-		case strings.HasPrefix(arg, "--base="):
-			values = append(values, strings.TrimPrefix(arg, "--base="))
-		case strings.HasPrefix(arg, "-B"):
-			values = append(values, strings.TrimPrefix(arg[2:], "="))
+	for i := 0; i < len(args) && args[i] != "--"; i++ {
+		name, value, attached := strings.Cut(args[i], "=")
+		if !strings.HasPrefix(name, "-") {
+			continue
+		}
+		if !strings.HasPrefix(name, "--") && len(name) > 2 {
+			name, value, attached = name[:2], strings.TrimPrefix(args[i][2:], "="), true
+		}
+		if !attached && !ghBoolFlags[name] {
+			i++
+			value = strings.Join(args[min(i, len(args)):min(i+1, len(args))], "")
+		}
+		if name == long || name == short {
+			values = append(values, value)
 		}
 	}
-	if len(values) != 1 {
-		return ""
-	}
-	return values[0]
+	return values
 }
 
-// hasAnyArg matches a flag as a whole word, as --flag=value, or (single dash) as -Fvalue.
-func hasAnyArg(args []string, flags ...string) bool {
-	for _, arg := range args {
-		for _, flag := range flags {
-			if arg == flag || strings.HasPrefix(arg, flag+"=") || (len(flag) == 2 && flag[0] == '-' && flag[1] != '-' && strings.HasPrefix(arg, flag)) {
-				return true
-			}
-		}
-	}
-	return false
+func positiveInt(text string) bool {
+	n, err := strconv.Atoi(text)
+	return err == nil && n > 0
 }
 
 // WorkflowJQProgram is one inline jq program from a workflow run: body. Flags
@@ -362,6 +364,8 @@ func WorkflowInlineJQPrograms(rootDir string) ([]WorkflowJQProgram, error) {
 							programs = append(programs, WorkflowJQProgram{Where: where, Program: args[i+1]})
 						case strings.HasPrefix(arg, "--jq="):
 							programs = append(programs, WorkflowJQProgram{Where: where, Program: strings.TrimPrefix(arg, "--jq=")})
+						case strings.HasPrefix(arg, "-q") && len(arg) > 2:
+							programs = append(programs, WorkflowJQProgram{Where: where, Program: strings.TrimPrefix(arg[2:], "=")})
 						}
 					}
 				}
@@ -409,69 +413,6 @@ func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram,
 	return WorkflowJQProgram{}, false
 }
 
-// flattenSubstitutions rewrites each $( ... ) in a run body into its own line,
-// so ShellInvocations, which reads top-level commands, sees the commands inside.
-// It tracks quotes, so a ) or $( inside a quoted jq program is left alone. Where
-// a substitution sits inside double quotes, the quote is closed before the new
-// line and reopened after it.
-func flattenSubstitutions(script string) string {
-	var out strings.Builder
-	frames := []bool{false} // one entry per open substitution: is it inside double quotes
-	single := false
-	for i := 0; i < len(script); i++ {
-		c := script[i]
-		top := len(frames) - 1
-		switch {
-		case single:
-			single = c != '\''
-			out.WriteByte(joinQuotedNewline(c))
-		case c == '\\' && i+1 < len(script):
-			out.WriteByte(c)
-			i++
-			out.WriteByte(script[i])
-		case c == '#' && !frames[top] && (i == 0 || strings.ContainsRune(" \t\n;(", rune(script[i-1]))):
-			for i < len(script) && script[i] != '\n' {
-				i++
-			}
-			out.WriteByte('\n')
-		case c == '\'' && !frames[top]:
-			single = true
-			out.WriteByte(c)
-		case c == '"':
-			frames[top] = !frames[top]
-			out.WriteByte(c)
-		case c == '$' && strings.HasPrefix(script[i:], "$(") && !strings.HasPrefix(script[i:], "$(("):
-			if frames[top] {
-				out.WriteByte('"')
-			}
-			out.WriteByte('\n')
-			frames = append(frames, false)
-			i++
-		case c == ')' && top > 0 && !frames[top]:
-			frames = frames[:top]
-			out.WriteByte('\n')
-			if frames[top-1] {
-				out.WriteByte('"')
-			}
-		case frames[top]:
-			out.WriteByte(joinQuotedNewline(c))
-		default:
-			out.WriteByte(c)
-		}
-	}
-	return out.String()
-}
-
-// joinQuotedNewline turns a newline inside a quoted word into a space, so a
-// multi-line jq program stays one word. ShellInvocations drops the rest of a
-// quoted word that runs past the end of its line.
-func joinQuotedNewline(c byte) byte {
-	if c == '\n' {
-		return ' '
-	}
-	return c
-}
-
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
 var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}
@@ -495,12 +436,19 @@ func commandArgs(script, name string) [][]string {
 // a word of a command read, so a function nobody calls runs nothing.
 func shellCommands(script string) [][]string {
 	outside, bodies := functionBodies(flattenSubstitutions(withoutHeredocBodies(script)))
-	found := flatCommands(outside)
-	for index := 0; index < len(found); index++ {
-		for _, each := range found[index] {
+	return expandCalls(flatCommands(outside), bodies)
+}
+
+// expandCalls puts each called function's body right after the command that
+// names it, so a cd in the body moves the commands after the call.
+func expandCalls(commands [][]string, bodies map[string]string) [][]string {
+	var found [][]string
+	for _, words := range commands {
+		found = append(found, words)
+		for _, each := range words {
 			if body, defined := bodies[each]; defined {
 				delete(bodies, each)
-				found = append(found, flatCommands(body)...)
+				found = append(found, expandCalls(flatCommands(body), bodies)...)
 			}
 		}
 	}

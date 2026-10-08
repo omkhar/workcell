@@ -53,7 +53,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"script in a heredoc body is not probed", runStep("cat <<'EOF'\n./scripts/absent.sh\nEOF"), "", ""},
 		{"script after a heredoc is probed", runStep("cat <<EOF\nx\nEOF\nbash ./scripts/absent.sh"), "", "missing-script ./scripts/absent.sh"},
 		{"script path leaving the root", runStep("./scripts/../../../../../../bin/sh"), "", "script-path-escapes"},
-		{"bounded gh calls", runStep("gh api --paginate repos/x/y/pulls\ngh pr list --base main --limit 5\ngh -R o/r pr list -B main -L 5"), "", ""},
+		{"bounded gh calls", runStep("gh api --paginate repos/x/y/pulls\ngh pr list --base main --limit 5\ngh -R o/r pr list -B main -L 5\ngh pr list --draft -Bmain --limit=5"), "", ""},
 		{"gh api without bound", runStep(`x="$(gh api repos/x/y/pulls)"`), "", "gh-api-unbounded"},
 		{"gh api has no --limit", runStep("gh api repos/x --limit 1"), "", "gh-api-unbounded"},
 		{"gh list behind a repo flag", runStep("gh --repo o/r issue list"), "", "gh-issue-list-unbounded"},
@@ -90,6 +90,14 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"called function body is read", runStep("f() {\n  gh api repos/x\n}\ntrap f EXIT"), "", "gh-api-unbounded"},
 		{"one-line called function body is read", runStep("f() { gh api repos/x; }\nf"), "", "gh-api-unbounded"},
 		{"uncalled one-line function with a command after it", runStep("f() { true; }\ngh api repos/x"), "", "gh-api-unbounded"},
+		{"gh list behind a flag after the group", runStep("gh pr -R o/r list --base main"), "", "gh-pr-list-unbounded"},
+		{"gh pr base in another option's value", runStep("gh pr list --search -Bfoo --limit 1"), "", "gh-pr-list-no-base"},
+		{"gh api in backticks", runStep("r=`gh api repos/x`"), "", "gh-api-unbounded"},
+		{"called function body runs at the call", runStep("f() {\n  cd sub\n}\nf\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
+		{"gh list with a zero limit", runStep("gh issue list --limit 0"), "", "gh-issue-list-unbounded"},
+		{"gh list with a word limit", runStep("gh issue list --limit=abc"), "", "gh-issue-list-unbounded"},
+		{"gh list with a negative limit", runStep("gh issue list -L -1"), "", "gh-issue-list-unbounded"},
+		{"gh list limit overridden", runStep("gh issue list -L 5 --limit 0"), "", "gh-issue-list-unbounded"},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
@@ -156,6 +164,13 @@ func TestCheckWorkflowRefsSkipsUncalledFunctions(t *testing.T) {
 	}
 	if rows < 4 {
 		t.Fatalf("found %d definition rows in the shared corpus, want at least 4", rows)
+	}
+}
+
+func TestWorkflowInlineJQProgramsReadAttachedGHFilters(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("gh pr list --json n -q'.a'\ngh api x --jq=.b\ngh api y -q=.c"), ""))
+	if err != nil || len(programs) != 3 || programs[0].Program != ".a" || programs[1].Program != ".b" || programs[2].Program != ".c" {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a, .b and .c", programs, err)
 	}
 }
 
