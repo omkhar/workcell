@@ -1449,6 +1449,50 @@ func TestValidateUpstreamRefreshWorkflowRejectsMutations(t *testing.T) {
 	}
 }
 
+// TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites gates the
+// publisher on the credential check, as the real workflow does. The check must
+// run unconditionally, and each prerequisite step must share the publisher's
+// condition, or publication cannot run while the validator passes.
+func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T) {
+	t.Parallel()
+	const gate = "        if: steps.secrets.outputs.present == 'true'\n"
+	gated := strings.Replace(upstreamRefreshWorkflowFixture, "    steps:\n      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n",
+		"    steps:\n      - id: secrets\n        shell: bash --noprofile --norc -euo pipefail {0}\n        env:\n          APP_CLIENT_ID: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_CLIENT_ID }}\n          APP_PRIVATE_KEY: ${{ secrets.WORKCELL_UPSTREAM_REFRESH_APP_PRIVATE_KEY }}\n        run: |\n"+
+			"          if [[ -z \"${APP_CLIENT_ID}\" || -z \"${APP_PRIVATE_KEY}\" ]]; then\n            echo \"present=false\" >> \"${GITHUB_OUTPUT}\"\n            echo \"::notice::The upstream-refresh App credentials are not configured. Publication is skipped. See docs/github-workflows.md.\"\n            exit 0\n          fi\n          echo \"present=true\" >> \"${GITHUB_OUTPUT}\"\n"+
+			"      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"+gate+"        with:\n          persist-credentials: false\n"+
+			"      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n"+gate+"        with:\n          name: upstream-refresh-candidate\n          path: ${{ runner.temp }}/candidate\n"+
+			"      - id: app-token\n        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3\n"+gate, 1)
+	gated = strings.Replace(gated, "      - shell: bash --noprofile --norc -euo pipefail {0}\n        env:\n          GH_TOKEN:", "      - shell: bash --noprofile --norc -euo pipefail {0}\n"+gate+"        env:\n          GH_TOKEN:", 1)
+	if strings.Count(gated, gate) != 4 {
+		t.Fatalf("gated fixture has %d conditions, want 4", strings.Count(gated, gate))
+	}
+	if err := metadatautil.ValidateUpstreamRefreshWorkflow(gated); err != nil {
+		t.Fatalf("metadatautil.ValidateUpstreamRefreshWorkflow(gated) error = %v", err)
+	}
+	for name, mutate := range map[string]func(string) string{
+		"credential check skipped": func(s string) string {
+			return strings.Replace(s, "      - id: secrets\n", "      - id: secrets\n        if: false\n", 1)
+		},
+		"App token mint skipped": func(s string) string {
+			return strings.Replace(s, "# v3\n"+gate, "# v3\n        if: false\n", 1)
+		},
+		"checkout skipped": func(s string) string {
+			return strings.Replace(s, "# v7.0.1\n"+gate, "# v7.0.1\n        if: false\n", 1)
+		},
+		"download ungated": func(s string) string { return strings.Replace(s, "# v8.0.1\n"+gate, "# v8.0.1\n", 1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := mutate(gated)
+			if mutated == gated {
+				t.Fatal("mutation did not apply")
+			}
+			if err := metadatautil.ValidateUpstreamRefreshWorkflow(mutated); err == nil {
+				t.Fatal("metadatautil.ValidateUpstreamRefreshWorkflow() error = nil, want a prerequisite condition error")
+			}
+		})
+	}
+}
+
 // TestValidateUpstreamRefreshWorkflowRejectsEvasions runs the shared evasion
 // corpus against the publish command in the canonical workflow. A comment,
 // heredoc body or longer name must not satisfy it. The scope-guard step needs

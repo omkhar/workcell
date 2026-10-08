@@ -1039,6 +1039,10 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	appTokenSteps := 0
 	publishRuns := 0
 	stray, beforePublisher := "", true
+	// The publisher's condition reads the presence output, so the presence check
+	// runs unconditionally and every prerequisite step shares that condition.
+	condition := func(step workflowStep) string { return strings.TrimSpace(step.If.Value) }
+	publisherCondition, prerequisiteConditions, presenceChecks := "", []string{}, 0
 	for _, step := range publish.Steps {
 		// A step skipped by its condition runs nothing. Only the reviewed
 		// credential check may gate the publisher.
@@ -1056,6 +1060,18 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 			}
 		}
 		mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@")
+		if presence && beforePublisher {
+			if step.If.Kind != 0 {
+				return fmt.Errorf("%s publish job must check the App credentials unconditionally", path)
+			}
+			presenceChecks++
+		}
+		if mint || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false) {
+			prerequisiteConditions = append(prerequisiteConditions, condition(step))
+		}
+		if publisher {
+			publisherCondition = condition(step)
+		}
 		// Only reviewed steps may precede the publisher, or they could replace its script.
 		if beforePublisher && !(publisher || mint || presence || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false)) {
 			stray = "must not run other steps before the publish script"
@@ -1091,6 +1107,14 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	if appTokenSteps != 1 || publishRuns != 1 {
 		return fmt.Errorf("%s publish job must mint one App token and run the publish script once", path)
+	}
+	if publisherCondition != "" && presenceChecks != 1 {
+		return fmt.Errorf("%s publish job must check the App credentials once before the publish script", path)
+	}
+	for _, prerequisite := range prerequisiteConditions {
+		if prerequisite != publisherCondition {
+			return fmt.Errorf("%s publish job must run the checkout, download, and App token steps under the publish script condition", path)
+		}
 	}
 	if stray != "" {
 		return fmt.Errorf("%s publish job %s", path, stray)
