@@ -174,3 +174,26 @@ func TestCheckHardenedIORejectsAMissingTree(t *testing.T) {
 		t.Fatal("expected a symlinked cmd tree to fail")
 	}
 }
+
+// A symlinked ancestor of the repository root must fail. A pathname open of
+// <repo>/cmd follows every link above it, so the scan would read the tree the
+// link names instead of refusing the path it was given.
+func TestCheckHardenedIORejectsASymlinkedAncestor(t *testing.T) {
+	t.Parallel()
+	real := t.TempDir()
+	for _, tree := range []string{"cmd", "internal"} {
+		writeHardenedFSFixture(t, filepath.Join(real, "repo", tree, "doc.go"), "package "+tree+"\n")
+	}
+	writeHardenedFSFixture(t, filepath.Join(real, "repo", "policy", "hardened-io-baseline.tsv"), "")
+	if err := metadatautil.CheckHardenedIO(filepath.Join(real, "repo")); err != nil {
+		t.Fatalf("expected the real tree to pass, found %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatalf("create the symlinked ancestor: %v", err)
+	}
+	err := metadatautil.CheckHardenedIO(filepath.Join(link, "repo"))
+	if err == nil || !strings.Contains(err.Error(), "open the scan root") {
+		t.Fatalf("expected the symlinked ancestor to be refused, found %v", err)
+	}
+}
