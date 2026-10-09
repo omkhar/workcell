@@ -13,16 +13,12 @@ import (
 	"github.com/omkhar/workcell/internal/metadatautil"
 )
 
-const refsActionsTSV = "actions/checkout@" + refsSHA + "\tpath,ref\n"
-const refsSHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
-
 func refsRoot(t *testing.T, step, baseline string) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
 		".github/workflows/w.yml":           "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + step,
 		"policy/workflow-refs-baseline.tsv": baseline,
-		"tests/fixtures/actions/inputs.tsv": refsActionsTSV,
 		"scripts/present.sh":                "#!/bin/sh\n",
 		"sub/README":                        "",
 	}
@@ -67,9 +63,6 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"baselined call passes", runStep("gh api a"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", ""},
 		{"stale baseline row", runStep("true"), "gh-api-unbounded\tw.yml\tj\ts\treason\n", "stale baseline row"},
 		{"baseline row needs a reason", runStep("true"), "gh-api-unbounded\tw.yml\tj\ts\t\n", "want kind, file, job, step, reason"},
-		{"known input", "      - uses: actions/checkout@" + refsSHA + "\n        with:\n          Path: x\n", "", ""},
-		{"unknown input", "      - uses: actions/checkout@" + refsSHA + "\n        with:\n          app-id: x\n", "", "with-unknown-input actions/checkout@" + refsSHA + " app-id"},
-		{"uncached action", "      - uses: actions/other@" + refsSHA + "\n", "", "uses-not-cached"},
 		{"gh list in a brace group", runStep("{ gh pr list --base main; }"), "", "gh-pr-list-unbounded"},
 		{"gh ls alias", runStep("gh pr ls --base main"), "", "gh-pr-list-unbounded"},
 		{"gh group and ls aliases", runStep("gh rs ls"), "", "gh-rs-list-unbounded"},

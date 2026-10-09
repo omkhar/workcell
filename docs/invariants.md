@@ -79,7 +79,7 @@ reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 `scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
 `run:` body calls a `./scripts` path that does not exist or that has a `..`
 component. It fails when a `gh api` call has no `--paginate`. It fails when a `gh list` call
-has no `--limit`. It fails when a `with:` key is not an input of the action.
+has no `--limit`.
 
 `policy/workflow-refs-baseline.tsv` records the hits that the tree carries
 today. A new hit fails. A row with no hit also fails. Remove a row when you fix

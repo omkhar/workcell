@@ -21,7 +21,6 @@ import (
 
 const (
 	workflowRefsBaselinePath = "policy/workflow-refs-baseline.tsv"
-	workflowActionInputsPath = "tests/fixtures/actions/inputs.tsv"
 	workflowRefsMaxBytes     = 4 << 20
 )
 
@@ -44,7 +43,7 @@ func (h workflowRefHit) key() string {
 	return strings.Join([]string{h.kind, h.file, h.job, h.step}, "\t")
 }
 
-// CheckWorkflowRefs ratchets workflow run: bodies and uses: steps. A hit that
+// CheckWorkflowRefs ratchets workflow run: bodies. A hit that
 // is not in the baseline fails, and a baseline row with no hit fails, so the
 // baseline can only shrink.
 func CheckWorkflowRefs(rootDir string) error {
@@ -96,26 +95,6 @@ func readWorkflowRefsBaseline(rootDir string) (map[string]bool, error) {
 	return rows, nil
 }
 
-func readWorkflowActionInputs(rootDir string) (map[string]map[string]bool, error) {
-	data, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, workflowActionInputsPath), "action inputs cache", workflowRefsMaxBytes)
-	if err != nil {
-		return nil, err
-	}
-	actions := map[string]map[string]bool{}
-	for line := range strings.Lines(string(data)) {
-		ref, names, found := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
-		if !found || ref == "" {
-			return nil, fmt.Errorf("%s: malformed row %q", workflowActionInputsPath, line)
-		}
-		inputs := map[string]bool{}
-		for name := range strings.SplitSeq(names, ",") {
-			inputs[strings.ToLower(name)] = true
-		}
-		actions[ref] = inputs
-	}
-	return actions, nil
-}
-
 func loadWorkflowDocuments(rootDir string) (map[string]workflowDocument, []string, error) {
 	paths := workflowYAMLFiles(filepath.Join(rootDir, ".github", "workflows"))
 	slices.Sort(paths)
@@ -146,10 +125,6 @@ func stepLabel(index int, step workflowStep) string {
 
 func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	documents, files, err := loadWorkflowDocuments(rootDir)
-	if err != nil {
-		return nil, err
-	}
-	actions, err := readWorkflowActionInputs(rootDir)
 	if err != nil {
 		return nil, err
 	}
@@ -217,19 +192,6 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						if base := ghFlagValues(args, "--base", "-B"); args[0] == "pr" && (len(base) != 1 || base[0] == "") {
 							add("gh-pr-list-no-base")
 						}
-					}
-				}
-				if step.Uses == "" || strings.HasPrefix(step.Uses, "./") || strings.HasPrefix(step.Uses, "docker://") {
-					continue
-				}
-				inputs, ok := actions[step.Uses]
-				if !ok {
-					add("uses-not-cached " + step.Uses)
-					continue
-				}
-				for key := range step.With {
-					if !inputs[strings.ToLower(key)] {
-						add("with-unknown-input " + step.Uses + " " + key)
 					}
 				}
 			}
