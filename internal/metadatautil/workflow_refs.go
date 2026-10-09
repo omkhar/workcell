@@ -31,9 +31,9 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
-// githubHostedPosix matches a GitHub-hosted Linux or macOS label, the only
-// runner a shell-less step surely runs bash on; a custom one may be Windows.
-var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|\d+\.\d+)(?:-arm)?|macos-(?:latest|\d+)(?:-intel|-large|-xlarge)?)$`)
+// githubHostedPosix matches the provisioned GitHub-hosted Linux and macOS
+// labels, the only runners a shell-less step surely runs bash on.
+var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|24\.04|22\.04)|ubuntu-(?:24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
 
 // stepShell returns the shell a step's run body is written for: its own
 // shell key, then the job's defaults, then the workflow's.

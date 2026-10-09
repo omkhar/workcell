@@ -1117,6 +1117,9 @@ func commandWords(text string) [][]string {
 		} else {
 			found = append(found, words)
 		}
+		if action := slices.DeleteFunc(slices.Clone(words[1:]), func(w string) bool { return w == "--" }); words[0] == "trap" && len(action) > 1 {
+			found = append(found, everyShellCommand(action[0])...) // a trap action runs as a script
+		}
 	}
 	end := func() {
 		i := 0
