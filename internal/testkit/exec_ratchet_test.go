@@ -380,18 +380,29 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	isSetenv := func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.SelectorExpr:
-			return envWriters[v.Sel.Name]
+			return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
 		case *ast.Ident:
 			return savedSetenv[v.Name] || envWriters[v.Name]
 		}
 		return false
 	}
+	// A name or a field that receives a writer holds it; a field is matched by
+	// name across the package, which only lists more.
+	holder := func(target ast.Expr) string {
+		switch t := unparen(target).(type) {
+		case *ast.Ident:
+			return t.Name
+		case *ast.SelectorExpr:
+			return t.Sel.Name
+		}
+		return ""
+	}
 	record := func(names []ast.Expr, values []ast.Expr) bool {
 		added := false
 		for i, value := range values {
 			if isSetenv(value) && i < len(names) {
-				if id, ok := unparen(names[i]).(*ast.Ident); ok && !savedSetenv[id.Name] {
-					savedSetenv[id.Name] = true
+				if name := holder(names[i]); name != "" && !savedSetenv[name] {
+					savedSetenv[name] = true
 					added = true
 				}
 			}
@@ -411,6 +422,9 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 						names[i] = name
 					}
 					added = record(names, n.Values) || added
+				case *ast.KeyValueExpr:
+					// A keyed struct literal field such as writer{set: os.Setenv}.
+					added = record([]ast.Expr{n.Key}, []ast.Expr{n.Value}) || added
 				case *ast.CallExpr:
 					// A writer passed as an argument is held by the callee's parameter, matched by callee name across the package, which only lists more.
 					var callee string
@@ -510,7 +524,7 @@ func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
 		}
 		switch fn := unparen(call.Fun).(type) {
 		case *ast.SelectorExpr:
-			if !envWriters[fn.Sel.Name] {
+			if !envWriters[fn.Sel.Name] && !savedSetenv[fn.Sel.Name] {
 				return true
 			}
 		case *ast.Ident:
@@ -783,6 +797,23 @@ func a(t *testing.T) { h{}.rewrite(t.Setenv, "/tmp/fixtures"); exec.Command("git
 `
 	if got := rawExecSites(t, "same_named.go", sameNamedCallees); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a method whose package-level namesake has other parameter names)", got)
+	}
+	const fieldSetenv = `package x
+import ("os"; "os/exec")
+type writer struct{ set func(string, string) error }
+func a(dir string) { w := writer{set: os.Setenv}; w.set("PATH", dir); exec.Command("git") }
+func b(dir string) { var w writer; w.set = os.Setenv; w.set("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "field_setenv.go", fieldSetenv); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv held in a struct field, keyed and assigned)", got)
+	}
+	const fieldNotSetenv = `package x
+import "os/exec"
+type writer struct{ set func(string, string) error }
+func a(dir string) { w := writer{set: func(string, string) error { return nil }}; w.set("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "field_not_setenv.go", fieldNotSetenv); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a field that holds no writer is not a PATH rewrite)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
