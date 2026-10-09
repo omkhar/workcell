@@ -118,6 +118,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh api behind timeout -k", runStep("timeout -k 5 30 gh api a"), "", "gh-api-unbounded"},
 		{"gh api behind timeout --signal=", runStep("timeout --signal=TERM 30 gh api a"), "", "gh-api-unbounded"},
 		{"gh api behind timeout options", runStep("timeout --preserve-status --foreground -v -s KILL --kill-after 5 30 gh api a\ntimeout -vk5 30 gh api b\ntimeout -- 30 gh api c"), "", "gh-api-unbounded#3"},
+		{"replaced trap runs only its last handler", runStep("f() { gh api x; }\ng() { :; }\ntrap f EXIT\ntrap g EXIT"), "", ""},
+		{"removed trap runs nothing", runStep("f() { gh api x; }\ntrap f EXIT\ntrap - EXIT\ntrap f INT\ntrap '' SIGINT\ntrap f 0\ntrap EXIT"), "", ""},
+		{"replaced trap runs a handler set while a command ran", runStep("f() { gh api x; }\ntrap f EXIT\nmay_fail\ntrap - EXIT"), "", "gh-api-unbounded"},
+		{"trap on another signal keeps the handler", runStep("f() { gh api x; }\ntrap f EXIT\ntrap : INT"), "", "gh-api-unbounded"},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {

@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -989,42 +990,56 @@ func shadowsByAlias(args []string, name string) bool {
 // of what a script may run must read. It drops comments, heredoc bodies,
 // redirections, and the reserved words and assignments before a command. A
 // function body is read after each call, with the last definition before the
-// call. Trap actions run at the end, when bash resolves their calls. PR 804
-// adds a ShellCommandWords reader with a similar intent; merge the two when
+// call. A trap action runs at the end, once, when bash resolves its calls. PR
+// 804 adds a ShellCommandWords reader with a similar intent; merge the two when
 // both land.
 func EveryShellCommand(script string) [][]string {
 	var found [][]string
-	var traps []string
+	traps := trapState{map[string]string{}, map[string]bool{}}
 	bodies := map[string]string{}
 	for _, part := range functionBodies(flattenSubstitutions(withoutHeredocBodies(script))) {
 		if part.name != "" {
 			bodies[part.name] = part.text
 			continue
 		}
-		found = append(found, expandCalls(commandWords(part.text), bodies, nil, &traps)...)
+		found = append(found, expandCalls(commandWords(part.text), bodies, nil, traps)...)
 	}
-	for i := 0; i < len(traps); i++ {
-		found = append(found, expandCalls(commandWords(traps[i]), bodies, nil, &traps)...)
+	// An action can set another trap, so read until every action is read.
+	for read := map[string]bool{}; ; {
+		for _, action := range traps.set {
+			traps.armed[action] = true
+		}
+		actions := slices.Sorted(maps.Keys(traps.armed))
+		at := slices.IndexFunc(actions, func(action string) bool { return !read[action] })
+		if at < 0 {
+			return found
+		}
+		read[actions[at]] = true
+		found = append(found, expandCalls(commandWords(actions[at]), bodies, nil, traps)...)
 	}
-	return found
+}
+
+// trapState holds the action set for each signal, and every action that was
+// set while a command ran. That command can fail under bash -e, or exit, and
+// run the action, so a later trap does not undo it.
+type trapState struct {
+	set   map[string]string
+	armed map[string]bool
 }
 
 // expandCalls puts each called function's body right after every command that
 // calls it, so a cd in the body moves the commands after the call. calling
 // holds the functions being expanded, so a recursive call is read once. Each
-// new trap action goes to traps.
-func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps *[]string) [][]string {
+// trap command updates traps.
+func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState) [][]string {
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
-		if action := words[1:]; words[0] == "trap" && len(action) > 0 {
-			if action[0] == "--" {
-				action = action[1:]
-			} else if len(action[0]) > 1 && action[0][0] == '-' {
-				action = nil // trap -p and trap -l print and set nothing
-			}
-			if len(action) > 0 && !slices.Contains(*traps, action[0]) {
-				*traps = append(*traps, action[0])
+		if words[0] == "trap" {
+			setTrap(words[1:], traps.set)
+		} else {
+			for _, action := range traps.set {
+				traps.armed[action] = true
 			}
 		}
 		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
@@ -1032,6 +1047,36 @@ func expandCalls(commands [][]string, bodies map[string]string, calling []string
 		}
 	}
 	return found
+}
+
+// setTrap applies the arguments of one trap command to the action set for each
+// signal. A later action for a signal replaces the earlier one, and - or an
+// empty action removes it, as does a signal named alone. trap -p and trap -l
+// print and set nothing.
+func setTrap(args []string, traps map[string]string) {
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	} else if len(args) > 0 && len(args[0]) > 1 && args[0][0] == '-' {
+		return
+	}
+	if len(args) == 0 {
+		return
+	}
+	action, signals := args[0], args[1:]
+	if len(args) == 1 {
+		action, signals = "-", args
+	}
+	for _, signal := range signals {
+		signal = strings.TrimPrefix(strings.ToUpper(signal), "SIG")
+		if signal == "0" {
+			signal = "EXIT"
+		}
+		if action == "-" || action == "" {
+			delete(traps, signal)
+		} else {
+			traps[signal] = action
+		}
+	}
 }
 
 // commandWords returns the words of every command in text that
