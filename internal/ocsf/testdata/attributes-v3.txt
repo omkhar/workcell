@@ -26,7 +26,6 @@ time
 time_dt
 type_name
 type_uid
-unmapped
 unmapped.audit.access_model
 unmapped.audit.agent
 unmapped.audit.agent_autonomy

@@ -4,6 +4,7 @@
 package ocsf
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,32 +16,29 @@ import (
 	"github.com/omkhar/workcell/internal/host/sessions"
 )
 
-// structAttributes appends the dotted JSON path of every leaf field of t.
-func structAttributes(t reflect.Type, prefix string, out *[]string) {
-	for i := 0; i < t.NumField(); i++ {
-		name := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
-		ft := t.Field(i).Type
-		for ft.Kind() == reflect.Ptr {
-			ft = ft.Elem()
+// jsonPaths appends the dotted path of every leaf in v; array elements share
+// their parent's path.
+func jsonPaths(v any, prefix string, seen map[string]struct{}) {
+	switch v := v.(type) {
+	case map[string]any:
+		for key, child := range v {
+			jsonPaths(child, prefix+key+".", seen)
 		}
-		if ft.Kind() == reflect.Struct {
-			structAttributes(ft, prefix+name+".", out)
-			continue
+	case []any:
+		for _, child := range v {
+			jsonPaths(child, prefix, seen)
 		}
-		*out = append(*out, prefix+name)
+	default:
+		seen[strings.TrimSuffix(prefix, ".")] = struct{}{}
 	}
 }
 
-// currentAttributes derives the emitted attribute set from the code: the Event
-// struct tree, the session.* keys of a fully populated record, and the audit.*
-// keys Export emits for an unrecognized event that carries every known field.
-// Keys Export consumes stay out, so a mapping that starts to emit one changes
-// the pin.
+// currentAttributes derives the attribute set from what Export emits, not from
+// the Event type: a fully populated session record plus one audit record per
+// known event name and one unrecognized event, each carrying every known field.
+// A mapping that stops populating an optional field changes the pin.
 func currentAttributes(t *testing.T) []string {
 	t.Helper()
-	var attrs []string
-	structAttributes(reflect.TypeOf(Event{}), "", &attrs)
-
 	rec := sessions.SessionRecord{}
 	rv := reflect.ValueOf(&rec).Elem()
 	for i := 0; i < rv.NumField(); i++ {
@@ -51,24 +49,37 @@ func currentAttributes(t *testing.T) []string {
 			rv.Field(i).SetInt(1)
 		}
 	}
-	// Every value is x: it matches rec.SessionID and is no known event name.
+	// Every other value is x: it matches rec.SessionID and is no known event name.
 	var fields []string
 	for key := range knownAuditFields {
-		fields = append(fields, key+"=x")
+		if key != "event" {
+			fields = append(fields, key+"=x")
+		}
 	}
-	unrecognized := strings.Join(fields, " ")
-	events, err := Export(sessions.SessionExport{Session: rec, AuditRecords: []string{unrecognized}}, Options{Now: fixedNow})
+	var records []string
+	for name := range knownAuditEvents {
+		records = append(records, "event="+name+" "+strings.Join(fields, " "))
+	}
+	records = append(records, "event=x "+strings.Join(fields, " "))
+	events, err := Export(sessions.SessionExport{Session: rec, AuditRecords: records}, Options{Now: fixedNow})
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
 	seen := map[string]struct{}{}
 	for _, event := range events {
-		for key := range event.Unmapped {
-			seen[key] = struct{}{}
+		raw, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
 		}
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		jsonPaths(v, "", seen)
 	}
+	var attrs []string
 	for key := range seen {
-		attrs = append(attrs, "unmapped."+key)
+		attrs = append(attrs, key)
 	}
 	sort.Strings(attrs)
 	return attrs
