@@ -476,16 +476,21 @@ func ShellInvocations(script, commandName string) []Invocation {
 			// the reader cannot spell, makes every call a barrier; a body whose
 			// command word is a positional parameter, such as "$@", forwards its
 			// caller's words, so a call that passes eval, source or dot is one.
+			// A body that calls a helper already known as a barrier, or hands a
+			// forwarder such words, is a barrier as well, so the barrier
+			// propagates through helpers defined before it.
 			for _, each := range commands {
 				if len(each.args) == 0 {
 					continue
 				}
-				if names := commandWords(spelled(each.args)); evaluates(names) {
-					if forwards(names) {
-						forwarders[definingName] = true
-					} else {
-						barrierFunctions[definingName] = true
-					}
+				names := commandWords(spelled(each.args))
+				switch {
+				case callsBarrier(names, barrierFunctions, forwarders):
+					barrierFunctions[definingName] = true
+				case evaluates(names) && forwards(names):
+					forwarders[definingName] = true
+				case evaluates(names):
+					barrierFunctions[definingName] = true
 				}
 			}
 			if bodyOpened && depth <= definedAt {
