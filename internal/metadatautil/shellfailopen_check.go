@@ -114,10 +114,10 @@ type ShellFailOpenFinding struct {
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
 	// shellCommandPosition ends where a command word starts: after the start,
-	// an operator or an opener, then any reserved word, assignment, or xargs or
-	// sudo with its options and their values. `git` in a path or an argument
-	// is not a call.
-	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	// an operator or an opener, then any reserved word, assignment, or xargs,
+	// sudo or env with its options and their values; env's NAME=value words
+	// are assignments. `git` in a path or an argument is not a call.
+	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
