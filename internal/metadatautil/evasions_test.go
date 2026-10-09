@@ -46,6 +46,7 @@ var anyRejection = map[string]bool{
 	"source behind a later-defined helper":   true,
 	"second positional parameter forwarder":  true,
 	"forwarder called twice":                 true,
+	"recursion that changes its words":       true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -293,6 +294,10 @@ var Evasions = []Evasion{
 	{"forwarder called twice", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner :\n" + i + "  inner source ./shadow.sh\n" + i + "}\n" + i + "inner() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "outer\n" + a
+	})},
+	{"recursion that changes its words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner \"$@\"\n" + i + "}\n" + i + "inner() {\n" + i + "  if [ \"$1\" = go ]; then\n" + i + "    outer source ./shadow.sh\n" + i + "  fi\n" + i + "  \"$@\"\n" + i + "}\n" + i + "outer go\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

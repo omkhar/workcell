@@ -922,14 +922,18 @@ func helperCallWords(names []string) (string, []string, bool) {
 // barrier, or a forwarder handed a word the reader cannot spell or eval,
 // source or dot, or a helper whose body calls such a helper. A body that hands
 // its own parameters on, as inner "$@", passes the caller's words along. The
-// visited set is scoped to the current path, so a helper called twice with
-// different words is judged on each call and only a cycle is cut.
+// visited set is scoped to the current path and keyed by the callee and its
+// words, so a helper called twice with different words, or a recursion that
+// changes its words, is judged on each call and only an exact repeat is cut.
 func (g helperGraph) reaches(callee string, args []string, visited map[string]bool) bool {
-	if visited[callee] {
+	// The path key holds the words too, so a recursive call that changes its
+	// words is followed, and only a call that repeats itself exactly is cut.
+	key := callee + "\x00" + strings.Join(args, "\x00")
+	if visited[key] {
 		return false // a cycle on this path; a sibling call may still reach a barrier
 	}
-	visited[callee] = true
-	defer delete(visited, callee)
+	visited[key] = true
+	defer delete(visited, key)
 	if g.barriers[callee] {
 		return true
 	}
