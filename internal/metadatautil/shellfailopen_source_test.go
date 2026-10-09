@@ -14,9 +14,11 @@ func TestIsShellSourceReadsTheInterpreter(t *testing.T) {
 		"#!/usr/bin/env bash -eu": true,
 		"#!/bin/bash -p":          true,
 		"#!/usr/bin/env -S -i PATH=/usr/bin:/bin BASH_ENV= ENV= /bin/bash": true,
-		"#!/usr/bin/env python3": false,
-		"#!/usr/bin/fish":        false,
-		"no shebang":             false,
+		"#!/usr/bin/env -S -u FOO bash":                                    true,
+		"#!/usr/bin/env -u FOO -S bash -eu":                                true,
+		"#!/usr/bin/env python3":                                           false,
+		"#!/usr/bin/fish":                                                  false,
+		"no shebang":                                                       false,
 	} {
 		if got := isShellSource("scripts/tool", []byte(first+"\ngit fetch || true\n")); got != want {
 			t.Errorf("isShellSource(%q) = %v, want %v", first, got, want)

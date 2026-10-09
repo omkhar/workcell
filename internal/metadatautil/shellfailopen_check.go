@@ -446,15 +446,37 @@ func isShellSource(rel string, content []byte) bool {
 	// options and assignments; the options after it name no other program.
 	interpreter := words[0]
 	if filepath.Base(interpreter) == "env" {
-		interpreter = ""
-		for _, each := range words[1:] {
-			if !strings.HasPrefix(each, "-") && !shellAssignment.MatchString(each) {
-				interpreter = each
-				break
-			}
-		}
+		interpreter = envProgram(words[1:])
 	}
 	return slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh"}, filepath.Base(interpreter))
+}
+
+// envProgram returns the program that env runs, given env's arguments. Per
+// env --help, -u NAME and -C DIR (and --unset, --chdir) take an operand, and
+// the value of -S (--split-string), attached or not, is more arguments.
+func envProgram(args []string) string {
+	for i := 0; i < len(args); i++ {
+		long, value, attached := strings.Cut(args[i], "=")
+		names := func(option string) bool { return len(long) > 3 && strings.HasPrefix(option, long) }
+		short := strings.IndexAny(args[i], "uCS")
+		switch {
+		case !strings.HasPrefix(args[i], "-"):
+			if !shellAssignment.MatchString(args[i]) {
+				return args[i]
+			}
+		case strings.HasPrefix(args[i], "--") && attached && names("--split-string"):
+			args[i], i = value, i-1
+		case strings.HasPrefix(args[i], "--"):
+			if !attached && (names("--unset") || names("--chdir")) {
+				i++
+			}
+		case short > 0 && short < len(args[i])-1 && args[i][short] == 'S':
+			args[i], i = args[i][short+1:], i-1
+		case short > 0 && short == len(args[i])-1 && args[i][short] != 'S':
+			i++
+		}
+	}
+	return ""
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {
