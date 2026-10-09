@@ -287,16 +287,20 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			list := shellFailOpenList.FindStringIndex(outside)
 			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
 				list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
-			for rule, hit := range map[string]bool{
-				ruleProcessSubstitution: shellProcessSubst.MatchString(command),
-				ruleCommandSubstitution: toolSubst && (!tested || shellSubstHidden(command)),
-				ruleOrTrue:              hasTool && shellOrTrue.MatchString(command),
-				ruleDevNull:             hasTool && shellDevNull.MatchString(command) && !tested,
-			} {
-				if hit {
-					hits[rule]++
+			// Each occurrence counts, so a || true && … || true list on one
+			// command cannot stand in for two baselined hits.
+			count := func(hit bool, pattern *regexp.Regexp) int {
+				if !hit {
+					return 0
 				}
+				return len(pattern.FindAllStringIndex(command, -1))
 			}
+			hits[ruleProcessSubstitution] += count(true, shellProcessSubst)
+			if toolSubst && (!tested || shellSubstHidden(command)) {
+				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
+			}
+			hits[ruleOrTrue] += count(hasTool, shellOrTrue)
+			hits[ruleDevNull] += count(hasTool && !tested, shellDevNull)
 		}
 		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
 			for range hits[rule] {

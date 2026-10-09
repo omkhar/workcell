@@ -31,6 +31,13 @@ func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 	if len(findings) != 2 || findings[0].Rule != "or-true" || findings[1].Rule != "or-true" {
 		t.Fatalf("findings = %v, want two or-true findings on one line", findings)
 	}
+	findings, err = metadatautil.ShellFailOpenFindings("git fetch || true && git gc || true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("findings = %v, want two or-true findings on one list", findings)
+	}
 	findings, err = metadatautil.ShellFailOpenFindings("git fetch || true\n")
 	if err != nil {
 		t.Fatal(err)
