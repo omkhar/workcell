@@ -27,16 +27,6 @@ const (
 // workflowScriptRef finds ./scripts/... paths in the words of a run body.
 var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
 
-// ghListTakesLimit holds each gh group, aliases included, whose list (or ls)
-// subcommand takes --limit, per gh 2.102 help. Any other list, an extension's
-// or a later gh group's included, cannot be shown bounded, so every call of it
-// is a hit.
-var ghListTakesLimit = map[string]bool{
-	"agent-task": true, "agent-tasks": true, "agent": true, "agents": true, "cache": true, "codespace": true, "cs": true,
-	"discussion": true, "gist": true, "issue": true, "label": true, "org": true, "pr": true, "project": true,
-	"release": true, "repo": true, "ruleset": true, "rs": true, "run": true, "workflow": true,
-}
-
 type workflowRefHit struct{ kind, file, job, step string }
 
 func (h workflowRefHit) key() string {
@@ -179,18 +169,10 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						}
 					}
 					args = ghSubcommand(args)
-					sub := ghSubcommand(args[min(1, len(args)):]) // gh pr -R o/r list runs pr list
 					switch {
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
-						}
-					case len(sub) > 0 && (sub[0] == "list" || sub[0] == "ls"):
-						if limit := ghFlagValues(args, "--limit", "-L"); !ghListTakesLimit[args[0]] || len(limit) != 1 || !positiveInt(limit[0]) {
-							add("gh-" + args[0] + "-list-unbounded")
-						}
-						if base := ghFlagValues(args, "--base", "-B"); args[0] == "pr" && (len(base) != 1 || base[0] == "") {
-							add("gh-pr-list-no-base")
 						}
 					}
 				}
@@ -267,15 +249,12 @@ func ghSubcommand(args []string) []string {
 	return args
 }
 
-// ghFlagTakesValue says whether each known gh list and gh api flag takes a
+// ghFlagTakesValue says whether each known gh api flag takes a
 // value, per gh 2.102 help. A short flag that takes a value in one checked
 // command and none in another, such as -a, stays unknown.
 var ghFlagTakesValue = map[string]bool{
-	"-d": false, "--draft": false, "-w": false, "--web": false, "--help": false, "-h": false,
+	"--help": false, "-h": false,
 	"--paginate": false, "--slurp": false, "-i": false, "--include": false, "--silent": false, "--verbose": false,
-	"--allow-escape-sequences": false, "--answered": false, "--all": false, "--exclude-drafts": false,
-	"--exclude-pre-releases": false, "--archived": false, "--no-archived": false, "--fork": false, "--source": false,
-	"--include-content": false, "--public": false, "--secret": false, "--closed": false, "--parents": false,
 	"-f": true, "--raw-field": true, "-F": true, "--field": true, "-H": true, "--header": true, "-X": true,
 	"--method": true, "-p": true, "--preview": true, "-q": true, "--jq": true, "-t": true, "--template": true,
 	"--cache": true, "--input": true, "--hostname": true,
@@ -311,11 +290,6 @@ func ghFlagValues(args []string, long, short string) []string {
 		return values
 	}
 	return nil
-}
-
-func positiveInt(text string) bool {
-	n, err := strconv.Atoi(text)
-	return err == nil && n > 0
 }
 
 // commandArgs returns the arguments of every command named name in script.
