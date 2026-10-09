@@ -258,8 +258,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			start = end + 1
-			// A process substitution loses its producer's status wherever it
-			// stands, so it needs proof, a sentinel or a captured status.
+			// A process substitution is always a hit; see the contract above.
 			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1))
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
@@ -589,8 +588,7 @@ func shellListOperands(command string) []string {
 	return append(operands, command[start:])
 }
 
-// shellBackgroundSegments joins the operands of shellListOperands back into
-// the lists a lone & separates, so a handler is read with the list it ends.
+// shellBackgroundSegments joins shellListOperands back into the lists a lone & separates.
 func shellBackgroundSegments(command string) []string {
 	var segments []string
 	segment := ""
@@ -615,8 +613,7 @@ func shellCodeOnly(line string) string {
 		parens int
 		start  int // where the quoted span opened
 	}
-	// A quoted word that spells a handler or a redirection target, as 'true',
-	// ":" or "/dev/null", is still that operand, so its text is kept.
+	// A quoted 'true', ":" or "/dev/null" is still that operand, so its text is kept.
 	keep := func(start, end int) {
 		if inner := line[start+1 : end]; inner == "true" || inner == ":" || inner == "/dev/null" {
 			copy(out[start+1:end], inner)

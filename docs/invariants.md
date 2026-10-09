@@ -87,8 +87,7 @@ status.
 
 A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
 those tools. Bash never propagates the status of a process substitution, so
-every `< <(` is a hit. To repair it, read a file the walk wrote after its
-status was checked.
+every `< <(` is a hit until a file the walk wrote replaces it.
 
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
 today. A count that does not match its baseline fails the check. Repair a hit,
