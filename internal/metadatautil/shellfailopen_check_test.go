@@ -77,6 +77,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"tool behind env", "env git fetch origin || true\n", "or-true"},
 		{"tool behind env with options", "env -i -u NAME -C /tmp A=1 git rev-parse HEAD 2>/dev/null\n", "dev-null"},
 		{"tool behind env in a substitution", "out=$(env -S 'A=1' git ls-files)\n", "command-substitution"},
+		{"status read after a later substitution in the same command", "out=$(git ls-files) discard=$(true) rc=$?\n", "command-substitution"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
 		{"bare return handler", "x=$(git ls-files) || return\n", ""},
@@ -87,6 +88,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"env in a pipeline is no tool", "env | grep X || true\n", ""},
 		{"status handler after a multi-line substitution", "x=\"$(\n  git ls-files\n)\" || exit 1\n", ""},
 		{"status read", "x=$(git ls-files)\nrc=$?\n", ""},
+		{"status read in the same command", "out=$(git ls-files) rc=$?\n", ""},
+		{"status read behind ||", "out=$(git ls-files) || rc=$?\n", ""},
+		{"status read behind || after 1>&2", "git rev-parse HEAD 2>/dev/null 1>&2 || rc=$?\n", ""},
 		{"status test", "x=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\n", ""},
 		{"handler on the continued line", "x=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
 		{"if tests the call", "if x=$(gh api /y); then :; fi\n", ""},

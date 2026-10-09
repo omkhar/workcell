@@ -145,12 +145,15 @@ var (
 	// returns the status of the job it names, never of a substitution.
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
 	// shellFailOpenRunsFirst is a substitution, a process substitution or an
-	// operator, which runs a command of its own before a later word.
-	shellFailOpenRunsFirst = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|[|&]")
+	// operator, which runs a command of its own before a later word. The & of
+	// a >& or <& redirection runs nothing.
+	shellFailOpenRunsFirst = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&")
 	// shellFailOpenTested is a command that is the test of an if/while. It
 	// covers a substitution, never a `done < <(` loop header, where the loop's
 	// own while says nothing about the inner command.
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)
+	// shellFailOpenList is a && or || operator, which joins two commands.
+	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
 	// shellFailOpenAnd is a && after the call, which makes the call its tested
 	// left operand. A call on the right of && is tested by nothing.
 	shellFailOpenAnd  = regexp.MustCompile(`&&\s*\S`)
@@ -263,7 +266,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			hasTool := shellToolCommand.MatchString(command) || toolSubst
 			// A status read or a handler covers only a call written before it.
 			rest := command[shellFailOpenFirstCall(command):]
-			captured := shellFailOpenStatusRead.MatchString(rest) || shellFailOpenHandled(rest, func() []string {
+			captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, func() []string {
 				later := slices.Clone(commands[at+1 : len(commands)-1])
 				for _, each := range statements[index+1:] {
 					codes, _ := shellFailOpenCommands(each.code, each.raw)
@@ -392,6 +395,20 @@ func shellSubstCall(command string, start int) (body string, call int) {
 func shellFailOpenReadsStatus(command string) bool {
 	read := shellFailOpenStatusRead.FindStringIndex(command)
 	return read != nil && !shellFailOpenRunsFirst.MatchString(command[:read[0]])
+}
+
+// shellFailOpenReadsOwnStatus reports whether the command that starts with a
+// call reads $? or PIPESTATUS with nothing run between the call and the read.
+// The first && or || after the call runs no command, so x=$(git a) || rc=$?
+// counts, but in x=$(git a) y=$(true) rc=$? the read sees the status of true.
+func shellFailOpenReadsOwnStatus(rest string) bool {
+	if strings.HasPrefix(rest, "$(") {
+		rest = rest[shellSubstEnd(rest, 0):]
+	}
+	if loc := shellFailOpenList.FindStringIndex(rest); loc != nil {
+		rest = rest[:loc[0]] + " " + rest[loc[1]:]
+	}
+	return shellFailOpenReadsStatus(rest)
 }
 
 // shellSubstEnd returns the index just past the ) that closes the $( at
