@@ -19,12 +19,9 @@ import (
 // CheckShellFailOpen rejects a shell idiom that hides the exit status of a
 // find, git, gh, docker or getent call.
 //
-// A `< <(` process substitution drops the status of the command inside it, a
-// `$(...)` around one of those tools drops it under `local` or in a list,
-// `|| true` discards it, and `2>/dev/null` hides the reason it failed. Each
-// turns "the tool failed" into "there was nothing to find", so a gate passes on
-// an empty answer. Review history holds about 26 accepted findings of this
-// class. shellcheck does not flag it.
+// A `< <(`, a `$(...)` under `local` or in a list, `|| true` and `2>/dev/null`
+// each turn "the tool failed" into "there was nothing to find", so a gate
+// passes on an empty answer. shellcheck does not flag them.
 //
 // A hit is accepted when its own command or the command right after it
 // captures the status (see shellFailOpenHandled). A process substitution is
@@ -170,10 +167,8 @@ var (
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips
-// heredoc bodies, reads a continued line, an open `$(` or a quoted span that
-// runs past its line as one statement, ignores text inside single quotes and
-// inside double quotes that open no command substitution, and takes a marker
-// only from a real shell comment.
+// heredoc bodies, joins a statement that runs past its line, and ignores
+// quoted text that opens no command substitution.
 func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	type logical struct {
 		number    int
@@ -360,12 +355,9 @@ func shellFailOpenNesting(command string) int {
 }
 
 // shellFailOpenBranchExits reports whether the branch that starts at the
-// first command leaves a failure, read in the branch itself rather than inside
-// an if, loop or case nested in it: a failing exit or return ends it, and
-// otherwise its last command must be a shellFailOpenExits command, since a
-// later command such as the true of { false; true; } sets the status. The
-// shared controlWords count the nesting; one of closers at the branch's own
-// depth, such as the fi of a then branch or the } of a group, ends it.
+// first command leaves a failure at its own depth: a failing exit or return,
+// or a last command that is a shellFailOpenExits command. One of closers at
+// that depth, such as fi or }, ends the branch.
 func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 	depth, failing := 0, false
 	for _, each := range codes {
@@ -467,11 +459,9 @@ func shellFailOpenReadsOwnStatus(rest string) bool {
 }
 
 // shellSubstHidden reports whether a tool substitution is an argument of a
-// command, as in local x=$(git ...), echo "$(git ...)" or x=$(git ...) true,
-// or is followed by a later substitution, as in x=$(git ...) y=$(true). That
-// command's or that substitution's status replaces the tool's, so no test,
-// handler or status read can see it. Only a command made of assignments and
-// redirections keeps the status of its last substitution.
+// command, as in local x=$(git ...), or is followed by a later substitution,
+// as in x=$(git ...) y=$(true): either status replaces the tool's. Only a
+// command made of assignments and redirections keeps it.
 func shellSubstHidden(command string) bool {
 	for _, start := range shellToolSubsts(command) {
 		prefix := command[:start]
