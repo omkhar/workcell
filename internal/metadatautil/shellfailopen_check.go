@@ -422,18 +422,9 @@ func shellToolSubsts(command string) []int {
 // ends, or -1 when it has none.
 func shellSubstCall(command string, start int) (body string, call int) {
 	body = shellTestExpr.ReplaceAllString(strings.TrimSuffix(command[start+2:shellSubstEnd(command, start)], ")"), "[[ ]]")
-	// A nested substitution owns its own tool call and is counted on its
-	// own, so its inside is blanked, keeping its $( and ), before this one
-	// is searched.
-	masked := []byte(body)
-	for _, loc := range shellSubstOpen.FindAllStringIndex(body, -1) {
-		for i := loc[0] + 2; i < shellSubstEnd(body, loc[0])-1 && i < len(masked); i++ {
-			masked[i] = ' '
-		}
-	}
 	call = -1
 	for _, re := range []*regexp.Regexp{shellToolCommand, shellUnnamedCommand} {
-		if loc := re.FindStringIndex(string(masked)); loc != nil && (call < 0 || loc[1] < call) {
+		if loc := re.FindStringIndex(body); loc != nil && (call < 0 || loc[1] < call) {
 			call = loc[1]
 		}
 	}
