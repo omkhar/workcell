@@ -74,7 +74,7 @@ scripts/uninstall.sh	process-substitution	5	process substitution drops the inner
 scripts/update-provider-pins.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/update-upstream-pins.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/validate-repo.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
-scripts/validate-repo.sh	process-substitution	8	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/validate-repo.sh	process-substitution	7	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-build-input-manifest.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-control-plane-manifest.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-control-plane-parity.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
@@ -95,4 +95,4 @@ scripts/with-validation-snapshot.sh	process-substitution	9	process substitution 
 scripts/workcell	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/workcell	dev-null	9	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
 scripts/workcell	or-true	4	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
-scripts/workcell	process-substitution	20	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/workcell	process-substitution	22	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel

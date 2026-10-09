@@ -154,7 +154,11 @@ var (
 	// (|| exit, || return, || die, || fail*, || { ... }), the call is the test
 	// of an if/while, or the block records completion (walk_completed, the house form of
 	// scripts/verify-release-outputs.sh) or names a sentinel that proves it finished.
-	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)|sentinel|\w_completed\b`)
+	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)|` + shellFailOpenSentinel.String())
+	// shellFailOpenSentinel is the completion record alone. A `$?` or a
+	// handler after a `done < <(` loop reads the loop's status, not the
+	// substitution's, so only this or wait "$!" covers the loop.
+	shellFailOpenSentinel = regexp.MustCompile(`sentinel|\w_completed\b`)
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
@@ -292,12 +296,12 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			}
 			toolSubst := len(shellToolSubsts(command)) > 0
 			hasTool := shellToolCommand.MatchString(command) || toolSubst
-			// A loop reports its inner status only through a check after it, such
-			// as the walk_completed sentinel, so the next command may capture it.
-			// A status read or a handler covers only a call written before it.
+			// A loop reports its inner status only through a sentinel such as
+			// walk_completed or a wait "$!" after it. A status read or a handler
+			// covers only a call written before it.
 			rest := command[shellFailOpenFirstCall(command):]
 			captured := shellFailOpenCapture.MatchString(rest)
-			looped := captured || shellFailOpenCapture.MatchString(after) || shellFailOpenWaited(raws[at+1])
+			looped := shellFailOpenSentinel.MatchString(raws[at+1]) || shellFailOpenWaited(raws[at+1])
 			tested := captured || shellFailOpenStatusRead.MatchString(after) || shellFailOpenTested.MatchString(command) ||
 				shellFailOpenAnd.MatchString(shellOutsideSubsts(rest))
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command) && !looped
@@ -566,7 +570,23 @@ func isShellSource(rel string, content []byte) bool {
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
-	return strings.HasPrefix(first, "#!") && (strings.Contains(first, "bash") || strings.HasSuffix(strings.TrimSpace(first), "sh"))
+	words := strings.Fields(strings.TrimPrefix(first, "#!"))
+	if !strings.HasPrefix(first, "#!") || len(words) == 0 {
+		return false
+	}
+	// The interpreter is the first word, or the first word env runs after its
+	// options and assignments; the options after it name no other program.
+	interpreter := words[0]
+	if filepath.Base(interpreter) == "env" {
+		interpreter = ""
+		for _, each := range words[1:] {
+			if !strings.HasPrefix(each, "-") && !shellAssignment.MatchString(each) {
+				interpreter = each
+				break
+			}
+		}
+	}
+	return slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh"}, filepath.Base(interpreter))
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {

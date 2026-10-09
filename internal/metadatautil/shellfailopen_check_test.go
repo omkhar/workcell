@@ -67,6 +67,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"|| true inside a substitution", "out=$(git ls-files || true) || exit 1\n", "command-substitution"},
 		{"later command inside a substitution", "out=$(git ls-files; true) || exit 1\n", "command-substitution"},
 		{"wait for another job", "out=$(git ls-files)\nwait \"$pid\"\n", "command-substitution"},
+		{"process substitution then a loop status read", "while read -r f; do :; done < <(find . -type f)\nrc=$?\n", "process-substitution"},
+		{"process substitution then a loop handler", "while read -r f; do :; done < <(find . -type f)\n[[ $? -eq 0 ]] || exit 1\n", "process-substitution"},
 		{"process substitution then wait for another job", "while read -r f; do :; done < <(find . -type f)\nwait \"$pid\"\n", "process-substitution"},
 		{"tool behind env", "env LC_ALL=C git fetch || true\n", "or-true"},
 		{"tool behind command", "command git fetch || true\n", "or-true"},
