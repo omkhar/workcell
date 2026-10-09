@@ -119,7 +119,7 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	// cluster, as in -lc or -es, counts. Each o or O in a cluster, and
 	// --rcfile or --init-file, takes the next word as its value, as in
 	// -O extglob or -euo pipefail.
-	body, fromStdin := false, false
+	body, fromStdin, noExec := false, false, false
 	i := 1
 	for ; i < len(words); i++ {
 		option := words[i]
@@ -137,10 +137,15 @@ func shellProgram(words []string, stdin string) (string, bool) {
 		if !strings.HasPrefix(option, "--") {
 			body = body || strings.Contains(option[1:], "c")
 			fromStdin = fromStdin || strings.Contains(option[1:], "s")
+			if strings.Contains(option[1:], "n") {
+				noExec = option[0] == '-' // -n reads the program and runs nothing; +n runs it
+			}
 			i += strings.Count(option[1:], "o") + strings.Count(option[1:], "O")
 		}
 	}
 	switch {
+	case noExec:
+		return "", false
 	case body && i < len(words):
 		return words[i], true
 	case body:
@@ -982,7 +987,7 @@ func replacesShell(args []string) bool {
 var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
-	"timeout": {"-k", "-s", "--kill-after", "--signal"},
+	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
 	"sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "-R", "-a", "-c", "--user", "--group",
 		"--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--command-timeout", "--other-user",
 		"--chroot", "--auth-type", "--login-class"},
@@ -1102,6 +1107,9 @@ func commandWords(text string) [][]string {
 			command = append(command, text)
 		}
 	}
+	discard := func() {
+		command, dropTarget, readStdin, stdin = nil, false, false, "$_"
+	}
 	end := func() {
 		i := 0
 		for i < len(command) && (slices.Contains(shellKeywords, command[i]) ||
@@ -1124,7 +1132,33 @@ func commandWords(text string) [][]string {
 				found = append(found, words)
 			}
 		}
-		command, dropTarget, readStdin, stdin = nil, false, false, "$_"
+		discard()
+	}
+	// A case pattern, the words from in or ;; up to ), names no command.
+	caseDepth, expectIn, pending := 0, false, false
+	addPiece := func(piece string) {
+		// An unquoted < or > starts a redirection anywhere in a
+		// word. Only an fd number or {name} before it belongs to it.
+		at := strings.IndexAny(piece, "<>")
+		if at < 0 {
+			if piece != "" {
+				add(piece)
+			}
+			return
+		}
+		if at > 0 && piece[at-1] == '&' {
+			at-- // &>file
+		}
+		if prefix := piece[:at]; prefix != "" && !shellFD.MatchString(prefix) {
+			add(prefix)
+		}
+		if text, ok := strings.CutPrefix(piece[at:], "<<<"); ok && text != "" {
+			stdin = text
+		} else if ok {
+			readStdin = true
+		} else {
+			dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
+		}
 	}
 	joined, test := "", false
 	for line := range strings.Lines(text) {
@@ -1147,36 +1181,35 @@ func commandWords(text string) [][]string {
 				stdin = each.text[3:] // <<<'text' is one word
 			case each.quoted:
 				add(each.text)
+			case each.text == "case":
+				caseDepth, expectIn = caseDepth+1, true
+				add(each.text)
+			case expectIn && each.text == "in":
+				expectIn, pending = false, true
+				add(each.text)
+			case each.text == "esac":
+				caseDepth, pending = max(caseDepth-1, 0), false
+				add(each.text)
 			case isOperator(each.text):
-				end()
+				if pending {
+					discard() // a | between patterns
+				} else {
+					end()
+				}
+				pending = pending || caseDepth > 0 && each.text != ";" && strings.HasPrefix(each.text, ";")
 			default:
-				for i, piece := range strings.Split(strings.ReplaceAll(each.text, ")", "("), "(") {
-					if i > 0 {
+				rest := each.text
+				for at := strings.IndexAny(rest, "()"); at >= 0; at = strings.IndexAny(rest, "()") {
+					addPiece(rest[:at])
+					if pending && rest[at] == ')' {
+						discard() // the pattern ends
+						pending = false
+					} else if !pending {
 						end()
 					}
-					// An unquoted < or > starts a redirection anywhere in a
-					// word. Only an fd number or {name} before it belongs to it.
-					at := strings.IndexAny(piece, "<>")
-					if at < 0 {
-						if piece != "" {
-							add(piece)
-						}
-						continue
-					}
-					if at > 0 && piece[at-1] == '&' {
-						at-- // &>file
-					}
-					if prefix := piece[:at]; prefix != "" && !shellFD.MatchString(prefix) {
-						add(prefix)
-					}
-					if text, ok := strings.CutPrefix(piece[at:], "<<<"); ok && text != "" {
-						stdin = text
-					} else if ok {
-						readStdin = true
-					} else {
-						dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
-					}
+					rest = rest[at+1:]
 				}
+				addPiece(rest)
 			}
 		}
 		if !test {

@@ -133,6 +133,13 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"sudo with a user wraps gh", runStep("sudo -u runner -- gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"sudo shell with no command is unresolved", runStep("sudo -s"), "", "command-unresolved"},
 		{"sudo help and edit run no gh", runStep("sudo -h\nsudo -e file"), "", ""},
+		{"pathname-pattern gh subcommand is unresolved", runStep("gh a?i repos/o/r/issues"), "", "command-unresolved"},
+		{"pathname-pattern command word is unresolved", runStep("g[h] api repos/o/r/issues"), "", "command-unresolved"},
+		{"test command ahead of gh is a hit", runStep("[ -f x ] && gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"setsid wraps gh", runStep("setsid -w gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"no-execute bash body is clean", runStep("bash -n -c 'gh api repos/o/r/issues'\nbash -nc 'gh api repos/o/r/issues'"), "", ""},
+		{"case pattern is not a command", runStep("case $x in\n  a|*.txt) :;;\n  *)\n    gh api repos/o/r/issues\n    ;;\nesac"), "", "gh-api-unbounded"},
+		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

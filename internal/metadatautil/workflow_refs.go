@@ -25,10 +25,12 @@ const (
 type workflowRefHit struct{ kind, file, job, step string }
 
 // unspelled reports whether bash may rewrite word before it runs it. An
-// expansion or a brace expansion, as {gh,} or {a..b}, does. The reader has
-// removed quotes, so a quoted brace also counts, which fails closed.
+// expansion, a brace expansion, as {gh,} or {a..b}, or a pathname pattern,
+// as a?i or [ab]pi, does. The reader has removed quotes, so a quoted brace
+// or pattern also counts, which fails closed. A lone [ is the test command.
 func unspelled(word string) bool {
-	return strings.ContainsAny(word, "$`") || braceExpansion.MatchString(word)
+	return strings.ContainsAny(word, "$`*?") || braceExpansion.MatchString(word) ||
+		strings.Contains(word, "[") && strings.Contains(word, "]")
 }
 
 var braceExpansion = regexp.MustCompile(`\{[^}]*(,|\.\.)[^}]*\}`)
