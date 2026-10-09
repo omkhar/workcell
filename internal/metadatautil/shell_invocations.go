@@ -474,13 +474,9 @@ func ShellInvocations(script, commandName string) []Invocation {
 				defining, definedAt, bodyOpened, definingName = true, depth, false, name
 			}
 		}
-		depth += braceDepth(commands)
-		if defining {
-			// A body may open on a later line, as in never_called ()
-			// followed by { on its own, so wait for it before seeking its end.
-			if depth > definedAt {
-				bodyOpened = true
-			}
+		if !defining {
+			depth += braceDepth(commands)
+		} else {
 			// A body that sources or evals, or runs an expanded command word
 			// the reader cannot spell, makes every call a barrier; a body whose
 			// command word is a positional parameter, such as "$@", forwards its
@@ -488,11 +484,17 @@ func ShellInvocations(script, commandName string) []Invocation {
 			// A body that calls a helper already known as a barrier, or hands a
 			// forwarder such words, is a barrier as well, so the barrier
 			// propagates through helpers defined before it.
+			// A body may open on a later line, as in never_called ()
+			// followed by { on its own, so wait for it before seeking its end;
+			// a one-line definition opens and closes within its commands.
 			for _, each := range commands {
+				if depth += commandBrace(each); depth > definedAt {
+					bodyOpened = true
+				}
 				if len(each.args) == 0 {
 					continue
 				}
-				names := commandWords(spelled(each.args))
+				names := bodyWords(commandWords(spelled(each.args)))
 				switch {
 				case rebindsCommand(names):
 					// A called body that rebinds a name may shadow every later
@@ -927,6 +929,19 @@ func helperCallWords(names []string) (string, []string, bool) {
 // helperPathBound is the longest chain of helper calls the reader follows;
 // a real script's chain is a few calls deep, and a deeper one is a recursion.
 const helperPathBound = 32
+
+// bodyWords drops the header of a one-line definition from its first
+// command, as shadow() { source x; } puts the header, the brace and the
+// first body command in one command, so the body command is classified.
+func bodyWords(names []string) []string {
+	if len(names) > 1 && names[0] == "function" {
+		names = names[2:]
+	}
+	for len(names) > 0 && (names[0] == "{" || strings.HasSuffix(names[0], "()") || strings.HasSuffix(names[0], "(){")) {
+		names = names[1:]
+	}
+	return names
+}
 
 // reaches reports whether calling callee with args runs a barrier: callee is a
 // barrier, or a forwarder handed a word the reader cannot spell or eval,

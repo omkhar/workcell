@@ -190,6 +190,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   nil,
 		},
 		{
+			name:   "a one-line helper that does nothing hides no later invocation",
+			script: "shadow() { :; }\nshadow\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "a one-line helper that sources is a barrier",
+			script: "shadow() { source <(printf 'oras() { :; }\\n'); }\nshadow\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a hash -p behind builtin proves no invocation of it",
 			script: "builtin hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

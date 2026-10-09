@@ -58,6 +58,8 @@ var anyRejection = map[string]bool{
 	"debug trap before the anchor":           true,
 	"debug trap in a called helper":          true,
 	"recursion that grows its words":         true,
+	"one-line helper that sources":           true,
+	"one-line helper that evals":             true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -350,6 +352,14 @@ var Evasions = []Evasion{
 	{"recursion that grows its words", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "loop() {\n" + i + "  loop \"$@\" x\n" + i + "}\n" + i + "loop\n" + a
+	})},
+	{"one-line helper that sources", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() { source <(printf '" + strings.Fields(a)[0] + "() { :; }\\n'); }\n" + i + "shadow\n" + a
+	})},
+	{"one-line helper that evals", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "function shadow { eval \"" + strings.Fields(a)[0] + "() { :; }\"; }\n" + i + "shadow\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
