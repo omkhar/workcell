@@ -223,13 +223,16 @@ func retriedCommand(closure *ast.FuncLit, build func(ast.Expr) ast.Expr) ast.Exp
 	for _, statement := range statements[:len(statements)-1] {
 		assign, ok := statement.(*ast.AssignStmt)
 		if !ok {
-			if built != nil {
-				return nil // the command was used before the return
+			if built != nil || usesEventualCommand(statement, returned.Name) {
+				return nil // the command was used before the return, or a deferred closure can use it
 			}
 			continue
 		}
 		if built != nil && !assignsFieldsOnly(assign, returned.Name) {
 			return nil
+		}
+		if built == nil && mentionsName(assign.Rhs, returned.Name) {
+			return nil // a closure saved before the build can run the eventual command
 		}
 		for i, value := range assign.Rhs {
 			if i >= len(assign.Lhs) {
@@ -254,16 +257,53 @@ func assignsFieldsOnly(assign *ast.AssignStmt, name string) bool {
 			return false
 		}
 	}
+	return !mentionsName(assign.Rhs, name)
+}
+
+// usesEventualCommand reports whether a statement before the command build can use the command later, such as a defer or go statement that mentions name. A declaration of name without a value is only the holder.
+func usesEventualCommand(statement ast.Stmt, name string) bool {
+	if decl, ok := statement.(*ast.DeclStmt); ok {
+		gen, ok := decl.Decl.(*ast.GenDecl)
+		if !ok {
+			return true
+		}
+		for _, spec := range gen.Specs {
+			if value, ok := spec.(*ast.ValueSpec); ok && mentionsName(value.Values, name) {
+				return true
+			}
+		}
+		return false
+	}
+	return mentionsStmt(statement, name)
+}
+
+// mentionsStmt reports whether statement mentions the identifier name.
+func mentionsStmt(statement ast.Stmt, name string) bool {
 	mentions := false
-	for _, rhs := range assign.Rhs {
-		ast.Inspect(rhs, func(c ast.Node) bool {
+	ast.Inspect(statement, func(c ast.Node) bool {
+		if id, ok := c.(*ast.Ident); ok && id.Name == name {
+			mentions = true
+		}
+		return !mentions
+	})
+	return mentions
+}
+
+// mentionsName reports whether any expression mentions the identifier name.
+func mentionsName(exprs []ast.Expr, name string) bool {
+	for _, expr := range exprs {
+		mentions := false
+		ast.Inspect(expr, func(c ast.Node) bool {
 			if id, ok := c.(*ast.Ident); ok && id.Name == name {
 				mentions = true
 			}
 			return !mentions
 		})
+		if mentions {
+			return true
+		}
 	}
-	return !mentions
+	return false
 }
 
 // declaresRetryHelper reports whether a local declaration in the file shadows an etxtbsyRetryHelpers name.
@@ -529,9 +569,12 @@ func s(p string) { execRetryETXTBSY(func() *exec.Cmd { func() *exec.Cmd { return
 func u(p string) { execRetryETXTBSY(func() *exec.Cmd { c := exec.Command(p); c.Dir = func() string { c.Run(); return "/" }(); return c }) }
 func v(p string) { run := (exec.Command); run(p); (exec.Command)(p) }
 func w(p string) { var run func(string, ...string) *exec.Cmd; (run) = exec.Command; run(p) }
+func x(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; defer func() { _ = c.Run() }(); c = exec.Command(p); return c }) }
+func y(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; run := func() { _ = c.Run() }; c = exec.Command(p); run(); return c }) }
+func z(p string) { execRetryETXTBSY(func() *exec.Cmd { var c *exec.Cmd; c = exec.Command(p); return c }) }
 `
-	if got := rawExecSites(t, "planted.go", planted); got != 18 {
-		t.Fatalf("rawExecSites = %d, want 18 (every planted func but b, c, h and o counts, and v twice; a saved exec.Command value counts where it is saved)", got)
+	if got := rawExecSites(t, "planted.go", planted); got != 20 {
+		t.Fatalf("rawExecSites = %d, want 20 (every planted func but b, c, h, o and z counts, and v twice; a saved exec.Command value counts where it is saved)", got)
 	}
 	// A function that declares its own same-name helper shadows it, so nothing in that file is exempt.
 	const shadowedHelper = `package x
