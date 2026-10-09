@@ -106,6 +106,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"trap runs the last definition", runStep("trap f EXIT\nf() { :; }\nf() { gh api repos/x; }"), "", "gh-api-unbounded"},
 		{"same-line definition is not run", runStep("f() { gh api repos/x; }; :\n: && g() { gh api repos/y; }"), "", ""},
 		{"same-line definition then its call", runStep("f() { gh api repos/x; }; f"), "", "gh-api-unbounded"},
+		{"gh api with an attached redirection", runStep("gh api>/dev/null repos/x"), "", "gh-api-unbounded"},
+		{"gh with an attached redirection", runStep("gh>/dev/null api repos/x"), "", "gh-api-unbounded"},
+		{"gh behind redirections after the command word", runStep("gh 2>&1 api a\ngh &>/dev/null api b\ngh > out api c\ngh >&2 api d"), "", "gh-api-unbounded#4"},
+		{"quoted > inside a word does not split", runStep(`gh "api>x" repos/x`), "", ""},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
@@ -187,6 +191,13 @@ func TestWorkflowInlineJQProgramsReadPastArgumentModes(t *testing.T) {
 	if err != nil || len(programs) != 3 || programs[0].Program != ".a" || programs[1].Program != ".b" || programs[2].Program != "-1" ||
 		!slices.Equal(programs[1].Flags, []string{"-n", "--jsonargs"}) || !slices.Equal(programs[2].Flags, []string{"-n", "--"}) {
 		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want programs .a, .b and -1 after the argument modes and --", programs, err)
+	}
+}
+
+func TestWorkflowInlineJQProgramsSkipOtherFlagValues(t *testing.T) {
+	programs, err := metadatautil.WorkflowInlineJQPrograms(refsRoot(t, runStep("gh pr list --search --jq --base main --limit 1\ngh api --paginate repos/x --jq '.a'"), ""))
+	if err != nil || len(programs) != 1 || programs[0].Program != ".a" {
+		t.Fatalf("WorkflowInlineJQPrograms() = %+v, %v; want only program .a", programs, err)
 	}
 }
 

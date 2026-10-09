@@ -229,15 +229,15 @@ func stepWorkDir(document workflowDocument, job workflowJob, step workflowStep) 
 }
 
 // scriptRefs returns the ./scripts paths in one command's words that the shell
-// can run. The arguments of echo, printf and :, a here-string, and an
-// assignment are data, so a path written there is not a reference.
+// can run. The arguments of echo, printf and :, and an assignment are data, so
+// a path written there is not a reference. flatCommands drops a here-string.
 func scriptRefs(words []string) []string {
 	if slices.Contains([]string{"echo", "printf", ":"}, words[0]) {
 		return nil
 	}
 	var refs []string
-	for index, each := range words {
-		if shellAssignment.MatchString(each) || strings.HasPrefix(each, "<<<") || (index > 0 && words[index-1] == "<<<") {
+	for _, each := range words {
+		if shellAssignment.MatchString(each) {
 			continue
 		}
 		refs = append(refs, workflowScriptRef.FindAllString(each, -1)...)
@@ -267,8 +267,11 @@ func ghSubcommand(args []string) []string {
 	return args
 }
 
-// ghBoolFlags are the gh list flags that take no value.
-var ghBoolFlags = map[string]bool{"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true, "-h": true}
+// ghBoolFlags are the gh list and gh api flags that take no value.
+var ghBoolFlags = map[string]bool{
+	"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true, "-h": true,
+	"--paginate": true, "--slurp": true, "-i": true, "--include": true, "--silent": true, "--verbose": true,
+}
 
 // ghFlagValues returns the value of each spelling of a gh flag in args. gh
 // drops an empty base and a later spelling overrides an earlier one, so callers
@@ -333,15 +336,9 @@ func WorkflowInlineJQPrograms(rootDir string) ([]WorkflowJQProgram, error) {
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
-					for i, arg := range args {
-						switch {
-						case (arg == "--jq" || arg == "-q") && i+1 < len(args):
-							programs = append(programs, WorkflowJQProgram{Where: where, Program: args[i+1]})
-						case strings.HasPrefix(arg, "--jq="):
-							programs = append(programs, WorkflowJQProgram{Where: where, Program: strings.TrimPrefix(arg, "--jq=")})
-						case strings.HasPrefix(arg, "-q") && len(arg) > 2:
-							programs = append(programs, WorkflowJQProgram{Where: where, Program: strings.TrimPrefix(arg[2:], "=")})
-						}
+					// another flag's value, such as --search --jq, is not a program
+					for _, program := range ghFlagValues(args, "--jq", "-q") {
+						programs = append(programs, WorkflowJQProgram{Where: where, Program: program})
 					}
 				}
 			}
@@ -393,7 +390,12 @@ func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram,
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
 // shellRedirect matches a redirection word; a bare operator takes the next word.
-var shellRedirect = regexp.MustCompile(`^([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(&>|[<>])[<>&|]*`)
+var shellRedirect = regexp.MustCompile(`^` + shellFDPattern + `?(&>|[<>])[<>&|]*`)
+
+// shellFD matches an fd number or {name} that a redirection operator follows.
+var shellFD = regexp.MustCompile(`^` + shellFDPattern + `$`)
+
+const shellFDPattern = `([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})`
 
 var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}
 
@@ -457,25 +459,28 @@ func flatCommands(text string) [][]string {
 	var found [][]string
 	var words []string
 	var word strings.Builder
-	inWord := false
+	// A redirection is not a word of the command. A bare operator such as
+	// > or <<< takes the next word as its target, so that word goes too.
+	inWord, redirect, dropTarget := false, false, false
 	endWord := func() {
 		if inWord {
-			words = append(words, word.String())
+			switch {
+			case redirect:
+				dropTarget = shellRedirect.FindString(word.String()) == word.String()
+			case dropTarget:
+				dropTarget = false
+			default:
+				words = append(words, word.String())
+			}
 			word.Reset()
-			inWord = false
+			inWord, redirect = false, false
 		}
 	}
 	endCommand := func() {
 		endWord()
+		dropTarget = false
 		i := 0
-		for i < len(words) {
-			redirect := shellRedirect.FindString(words[i])
-			if redirect == "" && !slices.Contains(shellKeywords, words[i]) && !shellAssignment.MatchString(words[i]) {
-				break
-			}
-			if redirect != "" && redirect == words[i] {
-				i++
-			}
+		for i < len(words) && (slices.Contains(shellKeywords, words[i]) || shellAssignment.MatchString(words[i])) {
 			i++
 		}
 		if i < len(words) {
@@ -508,6 +513,18 @@ func flatCommands(text string) [][]string {
 			endWord()
 		case (c == '&' || c == '|') && strings.HasSuffix(word.String(), ">"), c == '&' && strings.HasSuffix(word.String(), "<"):
 			word.WriteByte(c) // a redirection such as >&2 or >|f
+		case c == '<' || c == '>' || c == '&' && strings.HasPrefix(text[i:], "&>"):
+			// An unquoted < or > starts a redirection anywhere in a word. Only
+			// an fd number or {name} before it belongs to the redirection.
+			if !(redirect && shellRedirect.FindString(word.String()) == word.String()) && !shellFD.MatchString(word.String()) {
+				endWord()
+			}
+			word.WriteByte(c)
+			if c == '&' {
+				i++
+				word.WriteByte('>')
+			}
+			inWord, redirect = true, true
 		case c == '\n' || c == ';' || c == '&' || c == '|' || c == '(' || c == ')':
 			endCommand()
 		default:
