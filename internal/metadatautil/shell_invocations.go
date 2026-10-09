@@ -314,6 +314,28 @@ func definitionEnds(depth, definedAt int, opened *bool) bool {
 	return *opened && depth <= definedAt
 }
 
+// definitionHeaders splits each function definition header from the command
+// after its opening brace, as in f() { g() { gh api x, so that command, which
+// may define a nested function, is read on its own.
+func definitionHeaders(commands []command) []command {
+	var out []command
+	for _, each := range commands {
+		for definedName(each.args) != "" {
+			at := slices.IndexFunc(each.args, func(arg word) bool { return !arg.quoted && arg.text == "{" })
+			if strings.HasSuffix(each.args[0].text, "(){") {
+				at = 0
+			}
+			if at < 0 || at == len(each.args)-1 {
+				break
+			}
+			out = append(out, command{args: each.args[:at+1]})
+			each = command{args: each.args[at+1:]}
+		}
+		out = append(out, each)
+	}
+	return out
+}
+
 // functionPart is a run of lines outside every definition, with no name, or
 // one function definition.
 type functionPart struct{ name, text string }
@@ -339,19 +361,24 @@ func functionBodies(text string) []functionPart {
 	name, depth, definedAt, opened := "", 0, 0, false
 	for line := range strings.Lines(text) {
 		words, _, _, _, continues := shellWords(strings.TrimSuffix(line, "\n"), nil)
-		mixed, closed, defining := false, "", name != ""
+		mixed, closed, defining, header := false, "", name != "", false
 		type piece struct { // a command quoted again, and the definition it is in
 			owner, text string
 			closes      bool
 		}
 		var split []piece
-		for _, each := range splitCommands(words) {
+		for _, each := range definitionHeaders(splitCommands(words)) {
 			if len(each.args) == 0 {
 				continue
 			}
 			if name == "" {
 				name, definedAt, opened = definedName(each.args), depth, false
 				mixed = mixed || name == ""
+				if header = name != ""; header {
+					depth += commandBrace(each)
+					split = append(split, piece{owner: name}) // a body holds no header
+					continue
+				}
 			}
 			defining = defining || name != ""
 			var text strings.Builder
@@ -368,6 +395,12 @@ func functionBodies(text string) []functionPart {
 				closed, name = name, ""
 			}
 			split = append(split, piece{owner, text.String() + "\n", closes})
+		}
+		if header && !continues {
+			line = ""
+			for _, each := range split {
+				line += each.text
+			}
 		}
 		switch {
 		case mixed && defining && !continues:
@@ -454,49 +487,49 @@ func withoutHeredocBodies(script string) string {
 	return out.String()
 }
 
-// flattenSubstitutions rewrites each $( ... ) and ` ... ` in a run body into its own line,
-// so ShellInvocations, which reads top-level commands, sees the commands inside.
-// It tracks quotes, so a ) or $( inside a quoted jq program is left alone. Where
-// a substitution sits inside double quotes, the quote is closed before the new
-// line and reopened after it.
+// flattenSubstitutions moves the text of each $( ... ) and ` ... ` in a run body
+// onto its own lines, before the command that holds it, and leaves $_ in its
+// place. The commands inside are then read as top-level commands, and a
+// command word that held one keeps an expansion, so a reader cannot take it
+// for a command it can spell. It tracks quotes, so a ) or $( inside a quoted jq
+// program is left alone.
 func flattenSubstitutions(script string) string {
 	var out strings.Builder
-	// One frame per open substitution: is its text inside double quotes, and
-	// the byte that closes it.
+	// One frame per open substitution: its text since the last command
+	// boundary, whether that text is inside double quotes, and the byte that
+	// closes it.
 	type frame struct {
+		text   strings.Builder
 		quoted bool
 		closer byte
 	}
-	frames := []frame{{}}
+	frames := []*frame{{}}
 	single := false
 	for i := 0; i < len(script); i++ {
 		c := script[i]
-		top := &frames[len(frames)-1]
+		top := frames[len(frames)-1]
 		switch {
 		case single:
 			single = c != '\''
-			out.WriteByte(joinQuotedNewline(c))
+			top.text.WriteByte(joinQuotedNewline(c))
 		case c == '\\' && i+1 < len(script):
-			out.WriteByte(c)
+			top.text.WriteString(script[i : i+2])
 			i++
-			out.WriteByte(script[i])
 		case c == '#' && !top.quoted && (i == 0 || strings.ContainsRune(" \t\n;(", rune(script[i-1]))):
 			for i < len(script) && script[i] != '\n' {
 				i++
 			}
-			out.WriteByte('\n')
+			c = '\n' // the comment ends the command
+			top.text.WriteByte(c)
 		case c == '\'' && !top.quoted:
 			single = true
-			out.WriteByte(c)
+			top.text.WriteByte(c)
 		case c == '"':
 			top.quoted = !top.quoted
-			out.WriteByte(c)
+			top.text.WriteByte(c)
 		case c == '`' && top.closer != '`' || strings.HasPrefix(script[i:], "$(") && !strings.HasPrefix(script[i:], "$(("):
-			if top.quoted {
-				out.WriteByte('"')
-			}
-			out.WriteByte('\n')
-			frames = append(frames, frame{closer: ')'})
+			top.text.WriteString("$_")
+			frames = append(frames, &frame{closer: ')'})
 			if c == '`' {
 				frames[len(frames)-1].closer = c
 			} else {
@@ -504,15 +537,22 @@ func flattenSubstitutions(script string) string {
 			}
 		case c == top.closer && !top.quoted:
 			frames = frames[:len(frames)-1]
-			out.WriteByte('\n')
-			if frames[len(frames)-1].quoted {
-				out.WriteByte('"')
-			}
+			out.WriteString("\n" + top.text.String() + "\n")
 		case top.quoted:
-			out.WriteByte(joinQuotedNewline(c))
+			top.text.WriteByte(joinQuotedNewline(c))
 		default:
-			out.WriteByte(c)
+			top.text.WriteByte(c)
 		}
+		// A substitution moves to the last newline, ; or && or || before it.
+		if text := frames[0].text.String(); len(frames) == 1 && !frames[0].quoted && !single &&
+			(c == '\n' || c == ';' && !strings.HasSuffix(text, ";;") && !strings.HasPrefix(script[i+1:], ";") ||
+				strings.HasSuffix(text, "&&") || strings.HasSuffix(text, "||")) {
+			out.WriteString(text)
+			frames[0].text.Reset()
+		}
+	}
+	for _, open := range slices.Backward(frames) {
+		out.WriteString("\n" + open.text.String())
 	}
 	return out.String()
 }
@@ -990,20 +1030,15 @@ func shadowsByAlias(args []string, name string) bool {
 // of what a script may run must read. It drops comments, heredoc bodies,
 // redirections, and the reserved words and assignments before a command. A
 // function body is read after each call, with the last definition before the
-// call. A trap action runs at the end, once, when bash resolves its calls. PR
+// call. eval runs its words as a script, unless they hold an expansion; then
+// the eval stays a command, as does a command word with an expansion, since
+// the reader cannot spell what either runs. A trap action runs at the end, once, when bash resolves its calls. PR
 // 804 adds a ShellCommandWords reader with a similar intent; merge the two when
 // both land.
 func EveryShellCommand(script string) [][]string {
-	var found [][]string
 	traps := trapState{map[string]string{}, map[string]bool{}}
 	bodies := map[string]string{}
-	for _, part := range functionBodies(flattenSubstitutions(withoutHeredocBodies(script))) {
-		if part.name != "" {
-			bodies[part.name] = part.text
-			continue
-		}
-		found = append(found, expandCalls(commandWords(part.text), bodies, nil, traps)...)
-	}
+	found := readScript(flattenSubstitutions(withoutHeredocBodies(script)), bodies, nil, traps)
 	// An action can set another trap, so read until every action is read.
 	for read := map[string]bool{}; ; {
 		for _, action := range traps.set {
@@ -1017,6 +1052,20 @@ func EveryShellCommand(script string) [][]string {
 		read[actions[at]] = true
 		found = append(found, expandCalls(commandWords(actions[at]), bodies, nil, traps)...)
 	}
+}
+
+// readScript returns the commands text runs. A function definition in text
+// runs nothing: it binds the name for the calls after it, as bash does.
+func readScript(text string, bodies map[string]string, calling []string, traps trapState) [][]string {
+	var found [][]string
+	for _, part := range functionBodies(text) {
+		if part.name != "" {
+			bodies[part.name] = part.text
+			continue
+		}
+		found = append(found, expandCalls(commandWords(part.text), bodies, calling, traps)...)
+	}
+	return found
 }
 
 // trapState holds the action set for each signal, and every action that was
@@ -1043,7 +1092,7 @@ func expandCalls(commands [][]string, bodies map[string]string, calling []string
 			}
 		}
 		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
-			found = append(found, expandCalls(commandWords(body), bodies, append(calling, words[0]), traps)...)
+			found = append(found, readScript(body, bodies, append(calling, words[0]), traps)...)
 		}
 	}
 	return found
@@ -1101,11 +1150,16 @@ func commandWords(text string) [][]string {
 			i++
 		}
 		if i < len(command) {
-			found = append(found, wrappedCommand(command[i:]))
+			words := wrappedCommand(command[i:])
+			if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
+				found = append(found, commandWords(text)...) // eval runs its words as a script
+			} else {
+				found = append(found, words)
+			}
 		}
 		command, dropTarget = nil, false
 	}
-	joined := ""
+	joined, test := "", false
 	for line := range strings.Lines(text) {
 		words, _, _, _, continues := shellWords(joined+strings.TrimSuffix(line, "\n"), nil)
 		if continues {
@@ -1116,6 +1170,11 @@ func commandWords(text string) [][]string {
 		joined = ""
 		for _, each := range words {
 			switch {
+			case test || !each.quoted && each.text == "[[":
+				// [[ reads its words up to ]] as one expression: an operator,
+				// a parenthesis, a < or > and a line break are part of it.
+				test = each.quoted || each.text != "]]"
+				add(each.text)
 			case each.quoted:
 				add(each.text)
 			case isOperator(each.text):
@@ -1144,8 +1203,11 @@ func commandWords(text string) [][]string {
 				}
 			}
 		}
-		end()
+		if !test {
+			end()
+		}
 	}
+	end()
 	return found
 }
 

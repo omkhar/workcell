@@ -6,8 +6,10 @@ package metadatautil_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omkhar/workcell/internal/metadatautil"
 )
@@ -42,7 +44,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		name, step, baseline, want string
 	}{
 		{"existing script", runStep("./scripts/present.sh"), "", ""},
-		{"dynamic script name is skipped", runStep(`./scripts/ci/job-${X}.sh`), "", ""},
+		{"dynamic script name is skipped", runStep(`bash ./scripts/ci/job-${X}.sh`), "", ""},
 		{"missing script", runStep("./scripts/absent.sh"), "", "missing-script ./scripts/absent.sh"},
 		{"script in a comment is not probed", runStep("true # ./scripts/absent.sh\n# bash ./scripts/absent.sh"), "", ""},
 		{"script in a heredoc body is not probed", runStep("cat <<'EOF'\n./scripts/absent.sh\nEOF"), "", ""},
@@ -99,6 +101,13 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"removed trap runs nothing", runStep("f() { gh api x; }\ntrap f EXIT\ntrap - EXIT\ntrap f INT\ntrap '' SIGINT\ntrap f 0\ntrap EXIT"), "", ""},
 		{"replaced trap runs a handler set while a command ran", runStep("f() { gh api x; }\ntrap f EXIT\nmay_fail\ntrap - EXIT"), "", "gh-api-unbounded"},
 		{"trap on another signal keeps the handler", runStep("f() { gh api x; }\ntrap f EXIT\ntrap : INT"), "", "gh-api-unbounded"},
+		{"gh api behind eval", runStep("eval gh api repos/o/r/issues\neval \"gh api repos/o/r/issues\""), "", "gh-api-unbounded#2"},
+		{"eval of an expansion is unresolved", runStep(`eval "$CMD"`), "", "eval-unresolved"},
+		{"command word with a substitution is unresolved", runStep("g$(printf h) api repos/o/r/issues"), "", "command-unresolved"},
+		{"substitution in a command word still runs", runStep("x$(./scripts/absent.sh) y"), "command-unresolved\tw.yml\tj\ts\treason\n", "missing-script ./scripts/absent.sh"},
+		{"substitution in a gh argument", runStep(`gh api --paginate "$(cat x)"`), "", ""},
+		{"nested definition in a called body is not run", runStep("f() { g() { gh api repos/x; }; :; }; f\nh() {\n  k() { gh api repos/x; }\n  :\n}\nh"), "", ""},
+		{"nested definition called in its body", runStep("f() { g() { gh api repos/x; }; g; }; f"), "", "gh-api-unbounded"},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
@@ -114,6 +123,23 @@ func TestCheckWorkflowRefs(t *testing.T) {
 				t.Fatalf("CheckWorkflowRefs() error = %v, want %q", err, testCase.want)
 			}
 		})
+	}
+}
+
+// TestEveryShellCommandEndsOnCommandlessEnvSplit guards the env -S rewrite: a
+// split string that names no command must end the wrapper loop.
+func TestEveryShellCommandEndsOnCommandlessEnvSplit(t *testing.T) {
+	for _, script := range []string{"env -S 'env'", "env -S ''", "env -S 'env -S env'"} {
+		done := make(chan [][]string, 1)
+		go func() { done <- metadatautil.EveryShellCommand(script) }()
+		select {
+		case got := <-done:
+			if slices.ContainsFunc(got, func(words []string) bool { return words[0] == "gh" }) {
+				t.Fatalf("EveryShellCommand(%q) = %q, want no gh command", script, got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("EveryShellCommand(%q) did not return within 2s", script)
+		}
 	}
 }
 

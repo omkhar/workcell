@@ -136,6 +136,12 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				moved := strings.Contains(dir, "${{") || filepath.IsAbs(dir)
 				for _, words := range EveryShellCommand(step.Run) {
 					moved = moved || words[0] == "cd" || words[0] == "pushd"
+					// A lint of what may run fails closed on a command it cannot spell.
+					if words[0] == "eval" {
+						add("eval-unresolved")
+					} else if strings.ContainsAny(words[0], "$`") {
+						add("command-unresolved")
+					}
 					for _, match := range scriptRefs(words) {
 						switch {
 						case strings.ContainsAny(match[len(match)-1:], "$*{["):
