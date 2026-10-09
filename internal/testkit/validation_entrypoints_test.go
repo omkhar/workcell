@@ -1081,13 +1081,22 @@ func TestValidateRepoRejectsStaleMarkdownlintInstall(t *testing.T) {
 func TestDocsValidatorPrunesLockedMarkdownlintDependencies(t *testing.T) {
 	t.Parallel()
 
-	scriptPath := filepath.Join(repoRoot(t), "scripts", "ci", "run-docs-in-validator.sh")
+	// The scan list lives in run-codespell.sh; the docs validator delegates to it.
+	scriptPath := filepath.Join(repoRoot(t), "scripts", "ci", "run-codespell.sh")
 	content, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), `-path /workspace/tools/markdownlint/node_modules -prune -o`) {
+	if !strings.Contains(string(content), `-path "${ROOT}/tools/markdownlint/node_modules" -prune -o`) {
 		t.Fatalf("%s should prune locked markdownlint dependencies from documentation scans", scriptPath)
+	}
+	docsPath := filepath.Join(repoRoot(t), "scripts", "ci", "run-docs-in-validator.sh")
+	docs, err := os.ReadFile(docsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(docs), "/workspace/scripts/ci/run-codespell.sh") {
+		t.Fatalf("%s should delegate documentation scans to run-codespell.sh", docsPath)
 	}
 }
 

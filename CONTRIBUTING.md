@@ -32,6 +32,30 @@ pending pinned upstream updates. The `commit-msg` hook checks the Risk-Aware
 Commit Notation subject format. The `pre-push` hook verifies the signature of
 each outgoing commit.
 
+After that walk, `pre-push` runs `scripts/githooks/pre-push`.
+That script checks doc links, doc language, codespell, and PR shape on the
+files the branch changes. Codespell scans only the changed files that
+`scripts/ci/run-codespell.sh` scans in CI. Without Go, the script skips the doc
+language check. Set `WORKCELL_SKIP_PREPUSH_CHECKS=1` only for an intentional
+bypass.
+
+The script does not check generated artifacts. That check runs the generators of
+the pushed commit, which is untrusted code. The CI validate job and the
+pre-merge gate check generated artifacts.
+
+These checks run in a temporary detached checkout of each pushed commit.
+Git hooks are disabled for that checkout, so no hook from the pushed commit runs.
+Every filter driver in your Git config is emptied for that checkout. Thus a
+pushed `.gitattributes` cannot run a smudge command on your host.
+
+Working-tree edits and untracked files do not change the result. The doc link
+check runs when a Markdown file or any other file is deleted or renamed. A symlink
+anywhere in the pushed tree fails the push before any check runs. The hook reads
+the file mode from the pushed commit, not from the disk.
+
+The checks come from your checked-out tree, not from the pushed commit. A pushed
+commit is untrusted code, and the hook holds your credentials.
+
 These three hooks are shell, not Go. This is the documented exception to the
 Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before
 any build. The `pre-push` hook must also work when the Go toolchain and the

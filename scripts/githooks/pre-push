@@ -1,0 +1,165 @@
+#!/bin/bash -p
+# Fast pre-push gates on the files this branch changes. .githooks/pre-push
+# hands off to this script after its signature walk. It runs the local halves
+# of the CI checks that failed most often after a push: doc links, doc
+# language, codespell, and PR shape. It reads the pre-push lines
+# Git writes on stdin and gates each pushed branch in a detached checkout of
+# the pushed commit, so working-tree edits and untracked files cannot change
+# the result. The checkers come from this script's own tree, never from the
+# pushed commit: a pushed ref is untrusted code, and this hook holds the host
+# credentials. Generated artifacts are not checked here: that check runs the
+# commit's own generators, so CI's validate job and the pre-merge gate own it.
+# The detached checkout runs with hooks disabled, so no pushed hook runs either.
+# Set WORKCELL_SKIP_PREPUSH_CHECKS=1 only for an intentional bypass.
+#
+# Language boundary: the doc gates read every tracked Markdown file, and
+# codespell follows links, so a committed symlink could make them print a host
+# file. The hook refuses any path whose mode is 120000 anywhere in the pushed
+# tree. It does not test the disk: git builds the checkout from that tree in a
+# private mktemp -d directory, with every host filter driver emptied so no
+# pushed .gitattributes can run a smudge command; the tree is the source of
+# truth. The native
+# checkers (awk and grep in check-doc-links.sh, workcell-citools, codespell)
+# then open the files by path. Bash has no descriptor-relative no-follow open.
+# A process that swaps a link into that private checkout is same-user malware
+# (docs/threat-model.md, Exclusions).
+set -euo pipefail
+
+if [[ "${WORKCELL_SKIP_PREPUSH_CHECKS:-0}" == "1" ]]; then
+  exit 0
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPTS="${ROOT_DIR}/scripts"
+BASE_REF="${WORKCELL_PREPUSH_BASE_REF:-origin/main}"
+cd "${ROOT_DIR}"
+
+pushed_oids=()
+while read -r _ local_oid remote_ref _; do
+  # Deletes and tag pushes carry no branch content to gate.
+  [[ "${remote_ref}" == refs/heads/* && ! "${local_oid}" =~ ^0+$ ]] || continue
+  pushed_oids+=("${local_oid}")
+done
+[[ "${#pushed_oids[@]}" -gt 0 ]] || exit 0
+
+if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null; then
+  echo "pre-push: base ref ${BASE_REF} is missing; run git fetch origin main." >&2
+  exit 1
+fi
+
+# CONTRIBUTING.md promises this hook works without Go; doc language needs it.
+have_go=0
+if command -v go >/dev/null; then
+  have_go=1
+else
+  echo "pre-push: go is missing; skipping the doc language gate." >&2
+fi
+
+checkout=""
+changed_list="$(mktemp "${TMPDIR:-/tmp}/workcell-prepush.XXXXXX")"
+cleanup() {
+  rm -f "${changed_list}"
+  if [[ -n "${checkout}" ]]; then
+    git -C "${ROOT_DIR}" worktree remove --force "${checkout}" || rm -rf "${checkout}"
+  fi
+}
+trap cleanup EXIT
+
+failures=0
+run_gate() {
+  local name="$1"
+  shift
+  echo "[pre-push] ${name}"
+  if ! "$@"; then
+    echo "pre-push: ${name} failed" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+gate_commit() {
+  local oid="$1" merge_base file
+  checkout="$(mktemp -d "${TMPDIR:-/tmp}/workcell-prepush-tree.XXXXXX")"
+  # A plain worktree add runs post-checkout, and core.hooksPath can point into
+  # the pushed tree. Add the worktree empty, then check out with hooks disabled.
+  # A pushed .gitattributes can also select a smudge filter from the host Git
+  # config, so every configured filter driver is emptied for the checkout. A
+  # sparse checkout on the host would hide pushed files from the gates, so the
+  # detached tree is always complete.
+  local drivers driver no_filters=()
+  drivers="$(git -C "${ROOT_DIR}" config --get-regexp '^filter\.' || true)"
+  while IFS= read -r driver; do
+    [[ -n "${driver}" ]] || continue
+    driver="${driver%% *}"
+    driver="${driver#filter.}"
+    driver="${driver%.*}"
+    no_filters+=(-c "filter.${driver}.smudge=" -c "filter.${driver}.process=" -c "filter.${driver}.required=false")
+  done <<<"${drivers}"
+  if ! git -C "${ROOT_DIR}" worktree add --quiet --no-checkout --detach "${checkout}" "${oid}" ||
+    ! git -C "${checkout}" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.sparseCheckout=false ${no_filters[@]+"${no_filters[@]}"} checkout --quiet --detach "${oid}"; then
+    echo "pre-push: cannot check out ${oid} for the gates; set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
+    exit 1
+  fi
+  cd "${checkout}"
+  merge_base="$(git merge-base "${BASE_REF}" HEAD)"
+  # Without rename detection a renamed or deleted .md lists its old path.
+  git diff -z --no-renames --name-only "${merge_base}" HEAD >"${changed_list}"
+
+  # Symlink-ness comes from the pushed tree, not the disk; see the header. The
+  # gates read every tracked Markdown file, so the whole tree is scanned, not
+  # only the changed paths: a link that main already holds is followed too.
+  local links="" link
+  links="$(git ls-tree -r -z "${oid}" | tr '\0' '\n' | awk -F'\t' '/^120000 / { print $2 }')"
+
+  local changed_files=() markdown_changed=0 target_removed=0 symlinked=0
+  if [[ -n "${links}" ]]; then
+    while IFS= read -r link; do
+      echo "pre-push: ${link} is a symlink in ${oid}; the gates must not follow it into the host." >&2
+    done <<<"${links}"
+    symlinked=1
+  fi
+  while IFS= read -r -d '' file; do
+    # A deleted .md can break a link, so it counts; codespell needs a file.
+    [[ "${file}" != *.md ]] || markdown_changed=1
+    if [[ -e "${file}" ]]; then
+      changed_files+=("${file}")
+    else
+      # A Markdown link can name any file type, so any removal can break one.
+      target_removed=1
+    fi
+  done <"${changed_list}"
+
+  if [[ "${symlinked}" -eq 1 ]]; then
+    echo "pre-push: skipping every gate for ${oid}; remove the symlink." >&2
+    failures=$((failures + 1))
+  else
+    # Each checker takes the detached tree as its root and reads it as data.
+    if [[ "${markdown_changed}" -eq 1 || "${target_removed}" -eq 1 ]]; then
+      run_gate "doc links" "${SCRIPTS}/check-doc-links.sh" "${checkout}"
+    fi
+    if [[ "${markdown_changed}" -eq 1 && "${have_go}" -eq 1 ]]; then
+      run_gate "doc language" "${SCRIPTS}/check-doc-language.sh" "${checkout}"
+    fi
+    if [[ "${#changed_files[@]}" -gt 0 ]]; then
+      if command -v codespell >/dev/null; then
+        run_gate "codespell" "${SCRIPTS}/ci/run-codespell.sh" "${checkout}" "${changed_files[@]}"
+      else
+        echo "pre-push: codespell is missing; run ./scripts/install-dev-tools.sh." >&2
+        failures=$((failures + 1))
+      fi
+    fi
+    run_gate "PR shape" "${SCRIPTS}/check-pr-shape.sh" --repo-root "${checkout}" --base-ref "${BASE_REF}"
+  fi
+
+  cd "${ROOT_DIR}"
+  git worktree remove --force "${checkout}"
+  checkout=""
+}
+
+for oid in "${pushed_oids[@]}"; do
+  gate_commit "${oid}"
+done
+
+if [[ "${failures}" -ne 0 ]]; then
+  echo "pre-push: ${failures} gate(s) failed; fix them or set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
+  exit 1
+fi
