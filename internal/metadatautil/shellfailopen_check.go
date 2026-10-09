@@ -287,21 +287,21 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	return findings, nil
 }
 
-// shellFailOpenHandled reports whether a || after the call runs a failure
-// branch: a shellFailOpenExits command, or a { } group that ends in one at its
-// own depth. later returns the commands after this one, which a group spans.
+// shellFailOpenHandled reports whether the first || after the call, outside
+// any substitution, runs a failure branch: a shellFailOpenExits command, or a
+// { } group that ends in one at its own depth. A later || runs only when that
+// branch fails. later returns the commands after this one, which a group spans.
 func shellFailOpenHandled(rest string, later func() []string) bool {
-	for _, loc := range shellFailOpenOr.FindAllStringIndex(rest, -1) {
-		handler := rest[loc[1]:]
-		if group, grouped := strings.CutPrefix(handler, "{"); grouped {
-			if shellFailOpenBranchExits(append([]string{group}, later()...), "}") {
-				return true
-			}
-		} else if shellFailOpenExits.MatchString(handler[:strings.IndexAny(handler+";", ";&|)}")]) {
-			return true
-		}
+	outside := shellOutsideSubsts(rest)
+	loc := shellFailOpenOr.FindStringIndex(outside)
+	if loc == nil {
+		return false
 	}
-	return false
+	handler := outside[loc[1]:]
+	if group, grouped := strings.CutPrefix(handler, "{"); grouped {
+		return shellFailOpenBranchExits(append([]string{group}, later()...), "}")
+	}
+	return shellFailOpenExits.MatchString(handler[:strings.IndexAny(handler+";", ";&|)}")])
 }
 
 // shellFailOpenNesting returns the change in compound-command nesting that

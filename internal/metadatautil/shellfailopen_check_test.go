@@ -72,6 +72,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"assignment that starts with exit", "x=$(git ls-files) || exit_code=1\n", "command-substitution"},
 		{"assignment that names a failure", "out=$(git ls-files) || failure_count=1\n", "command-substitution"},
 		{"echo that names a failure", "out=$(git ls-files) || echo fail\n", "command-substitution"},
+		{"exit behind an echo handler", "out=$(git ls-files) || echo no list || exit 1\n", "command-substitution"},
 		{"group handler without a terminator", "out=$(git ls-files) || { echo no list; }\n", "command-substitution"},
 		{"tool behind env", "env git fetch origin || true\n", "or-true"},
 		{"tool behind env with options", "env -i -u NAME -C /tmp A=1 git rev-parse HEAD 2>/dev/null\n", "dev-null"},
