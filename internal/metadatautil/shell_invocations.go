@@ -494,6 +494,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 				}
 				names := commandWords(spelled(each.args))
 				switch {
+				case len(names) > 1 && names[0] == "alias" && slices.ContainsFunc(names[1:], func(word string) bool { return strings.Contains(word, "=") }),
+					len(names) > 1 && names[0] == "hash" && slices.Contains(names[1:], "-p"):
+					// A called body that rebinds a name may shadow every later
+					// use of the command, so the reader stops at the call.
+					barrierFunctions[definingName] = true
 				case rewritesParameters(names):
 					rewritten[definingName] = true
 				case graph.callsBarrier(names):
