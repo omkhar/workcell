@@ -401,6 +401,24 @@ func TestFastPrePushRunsNoPushedAttributeFilter(t *testing.T) {
 	}
 }
 
+func TestFastPrePushMaterializesSparseExcludedFiles(t *testing.T) {
+	// A contributor's sparse checkout must not hide a pushed file from the
+	// gates: the detached tree is checked out in full.
+	f := newPrePushChecksFixture(t, "")
+	if err := os.MkdirAll(filepath.Join(f.root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.commitFile(filepath.Join("sub", "note.md"), "We recieve it.\n", fixtureSubject)
+	f.run("sparse-checkout", "set", "--no-cone", "/*", "!/sub/")
+	output, err := f.hook()
+	if err == nil {
+		t.Fatalf("fast pre-push accepted a misspelling in a sparse-excluded file:\n%s", output)
+	}
+	if !strings.Contains(output, "recieve") {
+		t.Errorf("codespell did not see the sparse-excluded file:\n%s", output)
+	}
+}
+
 func TestFastPrePushRunsOnlyTrustedCheckers(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	marker := filepath.Join(f.tmpDir, "pushed-code-ran")

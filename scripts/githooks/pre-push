@@ -82,7 +82,9 @@ gate_commit() {
   # A plain worktree add runs post-checkout, and core.hooksPath can point into
   # the pushed tree. Add the worktree empty, then check out with hooks disabled.
   # A pushed .gitattributes can also select a smudge filter from the host Git
-  # config, so every configured filter driver is emptied for the checkout.
+  # config, so every configured filter driver is emptied for the checkout. A
+  # sparse checkout on the host would hide pushed files from the gates, so the
+  # detached tree is always complete.
   local drivers driver no_filters=()
   drivers="$(git -C "${ROOT_DIR}" config --get-regexp '^filter\.' || true)"
   while IFS= read -r driver; do
@@ -93,7 +95,7 @@ gate_commit() {
     no_filters+=(-c "filter.${driver}.smudge=" -c "filter.${driver}.process=" -c "filter.${driver}.required=false")
   done <<<"${drivers}"
   if ! git -C "${ROOT_DIR}" worktree add --quiet --no-checkout --detach "${checkout}" "${oid}" ||
-    ! git -C "${checkout}" -c core.hooksPath=/dev/null -c core.fsmonitor=false ${no_filters[@]+"${no_filters[@]}"} checkout --quiet --detach "${oid}"; then
+    ! git -C "${checkout}" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.sparseCheckout=false ${no_filters[@]+"${no_filters[@]}"} checkout --quiet --detach "${oid}"; then
     echo "pre-push: cannot check out ${oid} for the gates; set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
     exit 1
   fi
