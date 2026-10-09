@@ -162,6 +162,12 @@ var (
 	// shellAssignment is a word that assigns a name, the only word that may
 	// stand beside a substitution whose status the command keeps.
 	shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
+	// shellRedirection is a redirection word, which leaves the status alone;
+	// shellRedirectOnly is one whose target is the next word.
+	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`)
+	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
+	// shellLaterSubst is a command substitution, not an arithmetic $((.
+	shellLaterSubst = regexp.MustCompile("\\$\\((?:[^(]|$)|`")
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips
@@ -280,7 +286,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
 				list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command)
-			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && !tested
+			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && (!tested || shellSubstHidden(command))
 			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
 			hits[ruleDevNull] = hits[ruleDevNull] || hasTool && shellDevNull.MatchString(command) && !tested
 		}
@@ -412,6 +418,48 @@ func shellFailOpenReadsOwnStatus(rest string) bool {
 		rest = rest[:loc[0]] + " " + rest[loc[1]:]
 	}
 	return shellFailOpenReadsStatus(rest)
+}
+
+// shellSubstHidden reports whether a tool substitution is an argument of a
+// command, as in local x=$(git ...), echo "$(git ...)" or x=$(git ...) true,
+// or is followed by a later substitution, as in x=$(git ...) y=$(true). That
+// command's or that substitution's status replaces the tool's, so no test,
+// handler or status read can see it. Only a command made of assignments and
+// redirections keeps the status of its last substitution.
+func shellSubstHidden(command string) bool {
+	for _, start := range shellToolSubsts(command) {
+		prefix := command[:start]
+		words := strings.Fields(prefix[strings.LastIndexAny(prefix, ";&|(`")+1:])
+		for len(words) > 0 && slices.Contains([]string{"if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"}, words[0]) {
+			words = words[1:]
+		}
+		// The simple command runs on past the substitution to the next
+		// operator or closer.
+		tail := command[shellSubstEnd(command, start):]
+		tail = tail[:strings.IndexAny(tail+";", ";&|)")]
+		if shellLaterSubst.MatchString(tail) {
+			return true
+		}
+		after := strings.Fields(tail)
+		if len(after) > 0 && strings.HasPrefix(tail, after[0]) {
+			after = after[1:] // the rest of the word the substitution is in
+		}
+		for index := 0; index < len(after); index++ {
+			if shellRedirection.MatchString(after[index]) {
+				if shellRedirectOnly.MatchString(after[index]) {
+					index++
+				}
+				continue
+			}
+			words = append(words, after[index])
+		}
+		for _, each := range words {
+			if !shellAssignment.MatchString(each) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // shellSubstEnd returns the index just past the ) that closes the $( at

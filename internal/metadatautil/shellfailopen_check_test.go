@@ -76,8 +76,12 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"group handler without a terminator", "out=$(git ls-files) || { echo no list; }\n", "command-substitution"},
 		{"status read after a later substitution in the same command", "out=$(git ls-files) discard=$(true) rc=$?\n", "command-substitution"},
 		{"&& after a non-failing || handler", "out=$(git ls-files) || echo ignored && echo done\n", "command-substitution"},
+		{"handler after local", "local out=$(git ls-files) || exit 1\n", "command-substitution"},
+		{"status read after local", "local out=$(git ls-files)\nrc=$?\n", "command-substitution"},
+		{"handler after a substitution argument", "echo \"$(git ls-files)\" || exit 1\n", "command-substitution"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
+		{"handler after a separate local", "local out; out=$(git ls-files) || exit 1\n", ""},
 		{"bare return handler", "x=$(git ls-files) || return\n", ""},
 		{"fail handler", "out=$(git ls-files) || fail \"no list\"\n", ""},
 		{"die handler", "out=$(git ls-files) || die\n", ""},
