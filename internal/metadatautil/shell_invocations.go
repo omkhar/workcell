@@ -835,7 +835,11 @@ func shellWords(line string, stack []byte) (
 			index++
 			if index+1 < len(line) && line[index+1] == '<' {
 				// A here-string takes its text from the line, not from a body.
+				// The operator stays in the word, so a reader can tell the text
+				// from an argument.
 				index++
+				text.WriteString("<<<")
+				inWord = true
 				break
 			}
 			if index+1 < len(line) && line[index+1] == '-' {
@@ -849,11 +853,13 @@ func shellWords(line string, stack []byte) (
 			flush()
 		case strings.IndexByte(";&|", character) >= 0 &&
 			!(strings.IndexByte("&|", character) >= 0 && index > 0 &&
-				strings.IndexByte("<>", line[index-1]) >= 0):
-			// An operator ends the command before it. The guard keeps a
-			// redirection whole where its second byte would otherwise read as
-			// an operator: the & of 2>&1, and the | of the noclobber override
-			// >|, which redirects rather than starting a pipeline.
+				strings.IndexByte("<>", line[index-1]) >= 0) &&
+			!(character == '&' && index+1 < len(line) && line[index+1] == '>'):
+			// An operator ends the command before it. The guards keep a
+			// redirection whole where one of its bytes would otherwise read as
+			// an operator: the & of 2>&1 and of &>file, and the | of the
+			// noclobber override >|, which redirects rather than starting a
+			// pipeline.
 			flush()
 			operator := string(character)
 			if index+1 < len(line) && line[index+1] == character {
