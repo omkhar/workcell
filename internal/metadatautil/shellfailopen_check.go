@@ -151,8 +151,7 @@ var (
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
-	// shellFailOpenPipe is a pipe, whose last stage sets the status a later
-	// && reads, and shellOutWord a word of shellCodeOnly's output.
+	// shellFailOpenPipe is a pipe, whose last stage sets a later &&'s status.
 	shellFailOpenPipe = regexp.MustCompile(`(?:^|[^|])\|(?:[^|]|$)`)
 	shellOutWord      = regexp.MustCompile(`[^\s;&|<>()]+`)
 	// shellFailOpenAnd is a && that is the first && or || after the call,
@@ -512,11 +511,9 @@ func shellSubstEnd(command string, start int) int {
 	return len(command)
 }
 
-// shellFailOpenCommands splits a statement's code at each ; and line end that
-// no parenthesis encloses, so a test, a handler or a status read covers only
-// the command it is written on. The list always holds one command. raw is
-// the statement before shellCodeOnly, which keeps its length, so each command
-// is cut at the same place in both and returned raw as well.
+// shellFailOpenCommands splits a statement's code, and raw at the same places,
+// at each ; and line end that no parenthesis or brace group encloses, so a
+// test, a handler or a status read covers only the command it is written on.
 func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
@@ -528,8 +525,7 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 		case ')':
 			depth = max(depth-1, 0)
 		case '{', '}':
-			// A brace group is one command, so its redirect, as in
-			// { git fetch; } 2>/dev/null, stays with the calls inside it.
+			// A brace group is one command, so its redirect stays with its calls.
 			before := index == 0 || strings.ContainsRune(" \t;\n", rune(code[index-1]))
 			if code[index] == '{' && before && index+1 < len(code) && strings.ContainsRune(" \t\n", rune(code[index+1])) {
 				depth++
@@ -651,8 +647,7 @@ func shellCodeOnly(line string) string {
 			top.parens = max(top.parens-1, 0)
 		}
 	}
-	// A word whose quoted fragments spell true, : or /dev/null, as t'rue' or
-	// $'\164rue', is still that operand, so its value replaces the blanks.
+	// A word whose quoted fragments spell true, : or /dev/null is that operand.
 	for _, loc := range shellOutWord.FindAllStringIndex(string(out), -1) {
 		raw := line[loc[0]:loc[1]]
 		words, _, _, _, _, _ := shellWords(raw, nil)
