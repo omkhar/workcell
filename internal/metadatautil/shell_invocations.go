@@ -43,14 +43,9 @@ func (h heredoc) endsAt(line string) bool {
 // an ordinary command, and a quoted } closes no group. A reader that returns
 // plain strings cannot tell the two apart, so every caller that asks whether a
 // word is syntax reads text as syntax.
-//
-// syntax is text with each quoted byte replaced by _, so a reader that counts
-// parentheses sees only the ones bash reads as syntax, even in a word that is
-// only partly quoted, as in 'a'$( or printf x')'.
 type word struct {
 	text   string
 	quoted bool
-	syntax string
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -174,7 +169,10 @@ func carriesParen(first word) bool {
 func parenBalance(args []word) int {
 	balance := 0
 	for _, each := range args {
-		text, unclosed := withoutExpansions(each.syntax)
+		if each.quoted {
+			continue
+		}
+		text, unclosed := withoutExpansions(each.text)
 		// An expansion the word does not close is a substitution the shell is
 		// still reading, as in the foo=$( of a multi-line assignment. Its ) is
 		// a bare word on a later line, so the opener has to count.
@@ -192,8 +190,8 @@ func parenBalance(args []word) int {
 // closes on the line it opens.
 func substitutionDepth(open int, words []word) int {
 	if open == 0 && !slices.ContainsFunc(words, func(each word) bool {
-		_, unclosed := withoutExpansions(each.syntax)
-		return unclosed > 0
+		_, unclosed := withoutExpansions(each.text)
+		return !each.quoted && unclosed > 0
 	}) {
 		return 0
 	}
@@ -546,15 +544,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 func shellWords(line string, stack []byte) (
 	words []word, heredocs []heredoc, open byte, rest []byte, continues bool, comment string,
 ) {
-	var text, syntax strings.Builder
-	// emit writes one byte of the word, and _ for it in syntax when it is quoted.
-	emit := func(character byte, literal bool) {
-		text.WriteByte(character)
-		if literal {
-			character = '_'
-		}
-		syntax.WriteByte(character)
-	}
+	var text strings.Builder
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
 	ansiC, unresolved := false, false
 	arithmetic := 0
@@ -574,10 +564,9 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted, syntax.String()})
+			words = append(words, word{text.String(), quoted})
 		}
 		text.Reset()
-		syntax.Reset()
 		inWord, quoted, unresolved = false, false, false
 	}
 	for index := 0; index < len(line); index++ {
@@ -595,11 +584,11 @@ func shellWords(line string, stack []byte) (
 				// span therefore keeps the rest of the line as text, where
 				// closing on it would expose a separator bash never reads.
 				unresolved = true
-				emit(character, true)
+				text.WriteByte(character)
 				index++
-				emit(line[index], true)
+				text.WriteByte(line[index])
 			default:
-				emit(character, true)
+				text.WriteByte(character)
 			}
 		case quote == '"':
 			switch {
@@ -612,7 +601,7 @@ func shellWords(line string, stack []byte) (
 				// other one it is a literal byte of the word, so a name such
 				// as "or\as" is not the command it resembles.
 				index++
-				emit(line[index], true)
+				text.WriteByte(line[index])
 			case character == '"':
 				quote = 0
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
@@ -625,9 +614,9 @@ func shellWords(line string, stack []byte) (
 				substituted = true
 				stack = append(stack, quote)
 				quote = 0
-				emit(character, false)
+				text.WriteByte(character)
 			default:
-				emit(character, true)
+				text.WriteByte(character)
 			}
 		case character == '\\' && index+1 == len(line):
 			// The line ends on a backslash no quote made literal, so bash
@@ -640,7 +629,7 @@ func shellWords(line string, stack []byte) (
 			// no longer syntax itself, so \; is an argument rather than a
 			// separator, which is why the escape records provenance.
 			index++
-			emit(line[index], true)
+			text.WriteByte(line[index])
 			inWord, quoted = true, true
 		case character == '\'' || character == '"':
 			quote = character
@@ -668,13 +657,11 @@ func shellWords(line string, stack []byte) (
 			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
 			arithmetic++
 			text.WriteString(line[index : index+3])
-			syntax.WriteString(line[index : index+3])
 			index += 2
 			inWord = true
 		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
 			arithmetic--
 			text.WriteString("))")
-			syntax.WriteString("))")
 			index++
 			inWord = true
 		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
@@ -713,10 +700,10 @@ func shellWords(line string, stack []byte) (
 			// suspended comes back with it.
 			quote = stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			emit(character, false)
+			text.WriteByte(character)
 			inWord = true
 		default:
-			emit(character, false)
+			text.WriteByte(character)
 			inWord = true
 		}
 	}
@@ -749,44 +736,6 @@ func replacesShell(args []string) bool {
 		operand := strings.TrimLeft(word, "0123456789")
 		return !strings.HasPrefix(operand, ">") && !strings.HasPrefix(operand, "<")
 	})
-}
-
-// commandWrappers maps each command that runs the command after it to its own
-// options that take a value. A long option matches any unique abbreviation of
-// three or more bytes, as getopt allows.
-var commandWrappers = map[string][]string{
-	"command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
-	"env": {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
-}
-
-// wrappedCommand returns words from the command that a chain of wrappers, such
-// as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
-func wrappedCommand(words []string) []string {
-	for {
-		valued, wraps := commandWrappers[words[0]]
-		if !wraps {
-			return words
-		}
-		i := 1
-		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || words[0] == "env" && shellAssignment.MatchString(words[i])); i++ {
-			if words[0] == "command" && strings.ContainsAny(words[i], "vV") {
-				return words
-			}
-			if words[i] == "--" {
-				i++
-				break
-			}
-			if slices.ContainsFunc(valued, func(option string) bool {
-				return option == words[i] || len(words[i]) > 2 && strings.HasPrefix(option, "--") && strings.HasPrefix(option, words[i])
-			}) {
-				i++
-			}
-		}
-		if i >= len(words) {
-			return words
-		}
-		words = words[i:]
-	}
 }
 
 // shadowsByAlias reports whether an alias command rebinds name, as in
