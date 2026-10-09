@@ -913,15 +913,18 @@ func replacesShell(args []string) bool {
 
 // commandWrappers maps each command that runs the command after it to its own
 // options that take a value. A long option matches any unique abbreviation of
-// three or more bytes, as getopt allows.
+// three or more bytes, as getopt allows, and a short option may end a cluster
+// such as -vk with its value attached or in the next word.
 var commandWrappers = map[string][]string{
 	"command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
-	"env": {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
+	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
+	"timeout": {"-k", "-s", "--kill-after", "--signal"},
 }
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
 // env -S splits its value into words that env then reads as its own arguments.
+// timeout reads a DURATION operand before the command.
 func wrappedCommand(words []string) []string {
 	for {
 		valued, wraps := commandWrappers[words[0]]
@@ -938,8 +941,11 @@ func wrappedCommand(words []string) []string {
 				break
 			}
 			name, split, attached := strings.Cut(words[i], "=")
-			if at := strings.IndexByte(words[i], 'S'); words[0] == "env" && words[i][0] == '-' && at > 0 && strings.Trim(words[i][1:at], "0iv") == "" {
-				name, split, attached = "-S", words[i][at+1:], at+1 < len(words[i]) // -S, -iS or -S'gh api'
+			for at := 1; len(words[i]) > 2 && words[i][0] == '-' && words[i][1] != '-' && at < len(words[i]); at++ {
+				if short := "-" + words[i][at:at+1]; slices.Contains(valued, short) {
+					name, split, attached = short, words[i][at+1:], at+1 < len(words[i]) // -k5, -iS or -S'gh api'
+					break
+				}
 			}
 			if slices.ContainsFunc(valued, func(option string) bool {
 				return option == name || len(name) > 2 && strings.HasPrefix(option, "--") && strings.HasPrefix(option, name)
@@ -954,6 +960,9 @@ func wrappedCommand(words []string) []string {
 					i = 0
 				}
 			}
+		}
+		if words[0] == "timeout" {
+			i++
 		}
 		if i >= len(words) {
 			return words

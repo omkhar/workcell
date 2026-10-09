@@ -114,6 +114,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh api pagination after valued options", runStep("gh api --paginate repos/o/r/issues\ngh api -X GET --paginate repos/o/r/issues\ngh api -H 'A: b' --paginate repos/x"), "", ""},
 		{"trap action after --", runStep("trap -- f EXIT\nf() { gh api repos/x; }"), "", "gh-api-unbounded"},
 		{"gh list with a value-less flag before its limit", runStep("gh discussion list --answered --limit 5\ngh repo list --archived -L 5\ngh release list --exclude-drafts --limit 5"), "", ""},
+		{"gh api behind timeout", runStep("timeout 30 gh api a"), "", "gh-api-unbounded"},
+		{"gh api behind timeout -k", runStep("timeout -k 5 30 gh api a"), "", "gh-api-unbounded"},
+		{"gh api behind timeout --signal=", runStep("timeout --signal=TERM 30 gh api a"), "", "gh-api-unbounded"},
+		{"gh api behind timeout options", runStep("timeout --preserve-status --foreground -v -s KILL --kill-after 5 30 gh api a\ntimeout -vk5 30 gh api b\ntimeout -- 30 gh api c"), "", "gh-api-unbounded#3"},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
