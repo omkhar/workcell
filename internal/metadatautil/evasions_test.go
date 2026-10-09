@@ -23,13 +23,18 @@ type Evasion struct {
 // rejects. The validator may then fail at an earlier requirement, so any error
 // counts, except a YAML syntax error, which would mean the row broke the file.
 var anyRejection = map[string]bool{
-	"unrelated placement":       true,
-	"eval-assembled definition": true,
-	"wrapped eval definition":   true,
-	"assigned eval definition":  true,
-	"sourced definition":        true,
-	"step condition if: false":  true,
-	"step condition && false":   true,
+	"unrelated placement":         true,
+	"eval-assembled definition":   true,
+	"wrapped eval definition":     true,
+	"assigned eval definition":    true,
+	"sourced definition":          true,
+	"parameter-spliced source":    true,
+	"substituted source":          true,
+	"brace-expanded source":       true,
+	"eval in an if condition":     true,
+	"source in a while condition": true,
+	"step condition if: false":    true,
+	"step condition && false":     true,
 }
 
 // Evasions is the shared negative corpus. A validator that reads file content to
@@ -226,6 +231,13 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + ". ./shadow.sh\n" + a
 	})},
+	{"parameter-spliced source", sourcedBy("s${x-}ource ./shadow.sh")},
+	{"substituted source", sourcedBy("$(printf source) ./shadow.sh")},
+	{"brace-expanded source", sourcedBy("{source,./shadow.sh}")},
+	{"eval in an if condition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "if eval '" + strings.Fields(a)[0] + "(){ :; }'; then :; fi\n" + a
+	})},
+	{"source in a while condition", sourcedBy("while source ./shadow.sh; do :; done")},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
 	{"flattened argv", replaceAnchor(joinFirstWords)},
@@ -425,4 +437,14 @@ func stepCondition(condition string) func(artifact, anchor string) string {
 		i := indentOf(anchor)
 		return strings.Replace(artifact, anchor, hide(anchor, i+"if [[ -z x ]]; then", i+"fi"), 1)
 	}
+}
+
+// sourcedBy writes a definition of the anchored command to shadow.sh and runs
+// the line before the anchor, which sources that file in a spelling bash
+// resolves only when it runs the line.
+func sourcedBy(line string) func(artifact, anchor string) string {
+	return replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + line + "\n" + a
+	})
 }

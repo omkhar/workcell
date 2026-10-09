@@ -447,6 +447,14 @@ func ShellInvocations(script, commandName string) []Invocation {
 			position++
 			outside := groupDepth
 			groupDepth += commandBrace(each)
+			if evaluates(commandWords(texts(args))) {
+				// eval and source run text this reader never sees as code, and
+				// that text can define a function or an alias with the command's
+				// name, as eval 'or''as() { :; }' does. No later call is proved to
+				// run the program; the calls before it already ran. A condition or
+				// a guarded branch may run, so the barrier holds there too.
+				return invocations
+			}
 			if conditionalGroup >= 0 {
 				// Nothing inside the guarded group is proved to run, however
 				// many lines later the closing brace is. The commands written
@@ -480,13 +488,6 @@ func ShellInvocations(script, commandName string) []Invocation {
 			names := texts(args)
 			if names[0] == "exit" || names[0] == "return" || replacesShell(names) {
 				// The step ends here; nothing written after it runs.
-				return invocations
-			}
-			if evaluates(names) {
-				// eval and source run text this reader never sees as code, and
-				// that text can define a function or an alias with the command's
-				// name, as eval 'or''as() { :; }' does. No later call is proved to
-				// run the program; the calls before it already ran.
 				return invocations
 			}
 			if names[0] == "alias" && shadowsByAlias(names, prefix[0]) {
@@ -713,6 +714,9 @@ func shellWords(line string, stack []byte) (
 // it holds for every spelling.
 func evaluates(names []string) bool {
 	names = names[assignmentPrefix(names):]
+	// A word list that opens with an option is an argument line, such as an
+	// element of a multi-line array, so its expansions name no command.
+	optionLed := len(names) > 0 && strings.HasPrefix(names[0], "-")
 	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || strings.HasPrefix(names[0], "-")) {
 		names = names[1:]
 	}
@@ -720,6 +724,13 @@ func evaluates(names []string) bool {
 		return false
 	}
 	if names[0] == "eval" || names[0] == "source" || names[0] == "." {
+		return true
+	}
+	if !optionLed && (strings.ContainsAny(names[0], "$`") ||
+		(names[0] != "{" && strings.Contains(names[0], "{"))) {
+		// Bash expands this word before it runs it, so s${x-}ource, $(printf
+		// source) and {source,f} can each run source. The reader cannot spell
+		// the result, so the word is a barrier.
 		return true
 	}
 	if shell := path.Base(names[0]); shell != "sh" && shell != "bash" {
@@ -730,6 +741,22 @@ func evaluates(names []string) bool {
 		return false
 	}
 	return evaluates(strings.Fields(names[at+1]))
+}
+
+// commandWords drops the reserved words and the case pattern that stand in
+// front of the command a word list runs, so the command in if eval … or in
+// linux) source … is the one the barrier test reads.
+func commandWords(names []string) []string {
+	for len(names) > 0 {
+		switch {
+		case slices.Contains([]string{"if", "elif", "then", "else", "while", "until", "do", "!"}, names[0]):
+		case strings.HasSuffix(names[0], ")") && !strings.ContainsAny(names[0], "$`"):
+		default:
+			return names
+		}
+		names = names[1:]
+	}
+	return names
 }
 
 // assignmentPrefix returns how many leading words are assignments bash applies
