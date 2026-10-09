@@ -793,9 +793,16 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 		}
 		return false
 	}
-	// returnsWriter reports whether a function body returns a writer in any return statement.
-	returnsWriter := func(body *ast.BlockStmt) bool {
+	// returnsWriter reports whether a function returns a writer in any return statement, or holds one in a named result that a bare return carries.
+	returnsWriter := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
 		found := false
+		if fn.Results != nil {
+			for _, field := range fn.Results.List {
+				for _, name := range field.Names {
+					found = found || savedSetenv[name.Name]
+				}
+			}
+		}
 		ast.Inspect(body, func(c ast.Node) bool {
 			if ret, ok := c.(*ast.ReturnStmt); ok {
 				for _, result := range ret.Results {
@@ -831,7 +838,7 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 				savedSetenv[name] = true
 				added = true
 			}
-			if lit, ok := unparen(value).(*ast.FuncLit); ok && !factories[name] && returnsWriter(lit.Body) {
+			if lit, ok := unparen(value).(*ast.FuncLit); ok && !factories[name] && returnsWriter(lit.Type, lit.Body) {
 				factories[name] = true
 				added = true
 			}
@@ -853,7 +860,7 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 					added = record(names, n.Values) || added
 				case *ast.FuncDecl:
 					// A function or method that returns a writer is a factory, matched by name.
-					if n.Body != nil && !factories[n.Name.Name] && returnsWriter(n.Body) {
+					if n.Body != nil && !factories[n.Name.Name] && returnsWriter(n.Type, n.Body) {
 						factories[n.Name.Name] = true
 						added = true
 					}
@@ -1334,6 +1341,22 @@ func a(dir string) { writer()("PATH", dir); exec.Command("git") }
 `
 	if got := rawExecSites(t, "factory_not_setenv.go", factoryNotSetenv); got != 0 {
 		t.Fatalf("rawExecSites = %d, want 0 (a factory that returns no writer is not a PATH rewrite)", got)
+	}
+	const namedResultFactory = `package x
+import ("os"; "os/exec")
+func writer() (set func(string, string) error) { set = os.Setenv; return }
+func a(dir string) { writer()("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "named_result_factory.go", namedResultFactory); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a writer a bare return carries in a named result)", got)
+	}
+	const namedResultNotSetenv = `package x
+import "os/exec"
+func writer() (set func(string, string) error) { set = func(string, string) error { return nil }; return }
+func a(dir string) { writer()("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "named_result_not_setenv.go", namedResultNotSetenv); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a named result that holds no writer is not a PATH rewrite)", got)
 	}
 	// An alias of another file's alias propagates to a fixed point, and a constructor passed to a function, method or func value counts per call through the parameter; a stable closure counts nothing.
 	counts := packageRawExecSites(t, map[string]string{
