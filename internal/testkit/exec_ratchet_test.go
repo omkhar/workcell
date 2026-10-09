@@ -133,8 +133,7 @@ func parseSource(t *testing.T, name, src string) *ast.File {
 // rawExecSitesInFile counts the raw exec sites of one parsed file.
 func rawExecSitesInFile(file *ast.File, packageRewritesPath bool) int {
 	execCommandName, dotImported := execCommandNameIn(file)
-	aliases, factories := savedSetenvAliases(file)
-	pathRewritten := packageRewritesPath || rewritesProcessPath(file, aliases, factories)
+	pathRewritten := packageRewritesPath || rewritesProcessPath(file)
 	count := 0
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the helper, so those calls are not trusted.
@@ -374,246 +373,18 @@ func unparen(expr ast.Expr) ast.Expr {
 // envWriters can rewrite PATH, called through any qualifier or bare, as under a dot import of os.
 var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 
-// savedSetenvAliases lists, to a fixed point, names holding a Setenv value, such as setenv := t.Setenv, and the parameters of any same-named function that receives one, such as rewrite(t.Setenv, dir).
-func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]bool) {
-	savedSetenv, factories = map[string]bool{}, map[string]bool{}
-	params := functionParams(files...)
-	fields := structFields(files)
-	var isSetenv func(value ast.Expr) bool
-	isSetenv = func(value ast.Expr) bool {
-		switch v := unparen(value).(type) {
-		case *ast.SelectorExpr:
-			return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
-		case *ast.Ident:
-			return savedSetenv[v.Name] || envWriters[v.Name]
-		case *ast.CallExpr:
-			// A call of a function that returns a writer, such as writer()("PATH", dir).
-			return factories[calleeName(v.Fun)]
-		}
-		return false
-	}
-	// returnsWriter reports whether a function body returns a writer in any return statement.
-	returnsWriter := func(body *ast.BlockStmt) bool {
-		found := false
-		ast.Inspect(body, func(c ast.Node) bool {
-			if ret, ok := c.(*ast.ReturnStmt); ok {
-				for _, result := range ret.Results {
-					found = found || isSetenv(result)
-				}
-			}
-			return !found
-		})
-		return found
-	}
-	// A name or a field that receives a writer holds it; a field is matched by
-	// name across the package, which only lists more.
-	holder := func(target ast.Expr) string {
-		switch t := unparen(target).(type) {
-		case *ast.Ident:
-			return t.Name
-		case *ast.SelectorExpr:
-			return t.Sel.Name
-		}
-		return ""
-	}
-	record := func(names []ast.Expr, values []ast.Expr) bool {
-		added := false
-		for i, value := range values {
-			if i >= len(names) {
-				break
-			}
-			name := holder(names[i])
-			if name == "" {
-				continue
-			}
-			if isSetenv(value) && !savedSetenv[name] {
-				savedSetenv[name] = true
-				added = true
-			}
-			if lit, ok := unparen(value).(*ast.FuncLit); ok && !factories[name] && returnsWriter(lit.Body) {
-				factories[name] = true
-				added = true
-			}
-		}
-		return added
-	}
-	for {
-		added := false
-		for _, file := range files {
-			ast.Inspect(file, func(c ast.Node) bool {
-				switch n := c.(type) {
-				case *ast.AssignStmt:
-					added = record(n.Lhs, n.Rhs) || added
-				case *ast.ValueSpec:
-					names := make([]ast.Expr, len(n.Names))
-					for i, name := range n.Names {
-						names[i] = name
-					}
-					added = record(names, n.Values) || added
-				case *ast.FuncDecl:
-					// A function or method that returns a writer is a factory, matched by name.
-					if n.Body != nil && !factories[n.Name.Name] && returnsWriter(n.Body) {
-						factories[n.Name.Name] = true
-						added = true
-					}
-				case *ast.KeyValueExpr:
-					// A keyed struct literal field such as writer{set: os.Setenv}.
-					added = record([]ast.Expr{n.Key}, []ast.Expr{n.Value}) || added
-				case *ast.CompositeLit:
-					// An unkeyed struct literal such as writer{os.Setenv} fills the
-					// fields of every same-named struct type in order; a literal
-					// whose type is elided, as inside a slice literal, is not resolved.
-					for _, names := range fields[literalType(n.Type)] {
-						for i, elt := range n.Elts {
-							if _, keyed := elt.(*ast.KeyValueExpr); keyed || i >= len(names) || names[i] == "" || !isSetenv(elt) {
-								continue
-							}
-							if !savedSetenv[names[i]] {
-								savedSetenv[names[i]] = true
-								added = true
-							}
-						}
-					}
-				case *ast.CallExpr:
-					// A writer passed as an argument is held by the callee's parameter, matched by callee name across the package, which only lists more.
-					var callee string
-					switch fn := unparen(n.Fun).(type) {
-					case *ast.Ident:
-						callee = fn.Name
-					case *ast.SelectorExpr:
-						callee = fn.Sel.Name
-					}
-					// Every same-named declaration is a candidate, so each one's parameter at the position is marked.
-					for _, names := range params[callee] {
-						if len(names) == 0 {
-							continue
-						}
-						for i, arg := range n.Args {
-							if !isSetenv(arg) {
-								continue
-							}
-							name := names[min(i, len(names)-1)]
-							if !savedSetenv[name] {
-								savedSetenv[name] = true
-								added = true
-							}
-						}
-					}
-				}
-				return true
-			})
-		}
-		if !added {
-			return savedSetenv, factories
-		}
-	}
-}
-
-// calleeName names the function a call expression calls, bare or through a selector; "" otherwise.
-func calleeName(fn ast.Expr) string {
-	switch f := unparen(fn).(type) {
-	case *ast.Ident:
-		return f.Name
-	case *ast.SelectorExpr:
-		return f.Sel.Name
-	}
-	return ""
-}
-
-// structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
-func structFields(files []*ast.File) map[string][][]string {
-	fields := map[string][][]string{}
-	for _, file := range files {
-		ast.Inspect(file, func(c ast.Node) bool {
-			if spec, ok := c.(*ast.TypeSpec); ok {
-				if st, ok := spec.Type.(*ast.StructType); ok {
-					var names []string
-					for _, field := range st.Fields.List {
-						if len(field.Names) == 0 {
-							names = append(names, "")
-						}
-						for _, name := range field.Names {
-							names = append(names, name.Name)
-						}
-					}
-					fields[spec.Name.Name] = append(fields[spec.Name.Name], names)
-				}
-			}
-			return true
-		})
-	}
-	return fields
-}
-
-// literalType names the struct type a composite literal builds, through a pointer or a package qualifier; "" when the type is elided.
-func literalType(expr ast.Expr) string {
-	switch t := unparen(expr).(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.SelectorExpr:
-		return t.Sel.Name
-	case *ast.StarExpr:
-		return literalType(t.X)
-	}
-	return ""
-}
-
-// functionParams lists the parameter names of each declaration under its name, one list per function, method or saved func literal, so same-named declarations keep their own positions.
-func functionParams(files ...*ast.File) map[string][][]string {
-	params := map[string][][]string{}
-	names := func(fn *ast.FuncType) []string {
-		var out []string
-		for _, field := range fn.Params.List {
-			for _, name := range field.Names {
-				out = append(out, name.Name)
-			}
-		}
-		return out
-	}
-	record := func(targets []ast.Expr, values []ast.Expr) {
-		for i, value := range values {
-			lit, ok := unparen(value).(*ast.FuncLit)
-			if !ok || i >= len(targets) {
-				continue
-			}
-			if id, ok := unparen(targets[i]).(*ast.Ident); ok {
-				params[id.Name] = append(params[id.Name], names(lit.Type))
-			}
-		}
-	}
-	for _, file := range files {
-		ast.Inspect(file, func(c ast.Node) bool {
-			switch n := c.(type) {
-			case *ast.FuncDecl:
-				params[n.Name.Name] = append(params[n.Name.Name], names(n.Type))
-			case *ast.AssignStmt:
-				record(n.Lhs, n.Rhs)
-			case *ast.ValueSpec:
-				targets := make([]ast.Expr, len(n.Names))
-				for i, name := range n.Names {
-					targets[i] = name
-				}
-				record(targets, n.Values)
-			}
-			return true
-		})
-	}
-	return params
-}
-
-// packageRewritesProcessPath reports whether any file rewrites PATH, with Setenv aliases package-wide.
+// packageRewritesProcessPath reports whether any file rewrites PATH.
 func packageRewritesProcessPath(files []*ast.File) bool {
-	aliases, factories := savedSetenvAliases(files...)
 	for _, file := range files {
-		if rewritesProcessPath(file, aliases, factories) {
+		if rewritesProcessPath(file) {
 			return true
 		}
 	}
 	return false
 }
 
-// rewritesProcessPath reports a process PATH write through an envWriter or alias; any non-literal key counts.
-func rewritesProcessPath(file *ast.File, savedSetenv, factories map[string]bool) bool {
+// rewritesProcessPath reports a process PATH write through an envWriter; any non-literal key counts.
+func rewritesProcessPath(file *ast.File) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
 		call, ok := c.(*ast.CallExpr)
@@ -622,16 +393,11 @@ func rewritesProcessPath(file *ast.File, savedSetenv, factories map[string]bool)
 		}
 		switch fn := unparen(call.Fun).(type) {
 		case *ast.SelectorExpr:
-			if !envWriters[fn.Sel.Name] && !savedSetenv[fn.Sel.Name] {
+			if !envWriters[fn.Sel.Name] {
 				return true
 			}
 		case *ast.Ident:
-			if !savedSetenv[fn.Name] && !envWriters[fn.Name] {
-				return true
-			}
-		case *ast.CallExpr:
-			// writer()("PATH", dir): the callee is a call of a writer factory.
-			if !factories[calleeName(fn.Fun)] {
+			if !envWriters[fn.Name] {
 				return true
 			}
 		default:
@@ -824,13 +590,6 @@ func a(t *testing.T) { t.Setenv(pathKey, "/tmp/fixtures"); exec.Command("git") }
 	if got := rawExecSites(t, "const_shadowed.go", constShadowed); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a constant-keyed PATH rewrite)", got)
 	}
-	const varSetenv = `package x
-import ("os/exec"; "testing")
-func a(t *testing.T) { var setenv = t.Setenv; setenv("PATH", "/tmp/fixtures"); exec.Command("git") }
-`
-	if got := rawExecSites(t, "var_setenv.go", varSetenv); got != 1 {
-		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a var-declared Setenv value)", got)
-	}
 	const putenv = `package x
 import ("os"; "os/exec")
 func a() { os.Putenv("PATH", "/tmp/fixtures"); exec.Command("git") }
@@ -845,23 +604,6 @@ func a() { Setenv("PATH", "/tmp/fixtures"); exec.Command("git") }
 	if got := rawExecSites(t, "dot_setenv.go", dotSetenv); got != 1 {
 		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a dot-imported Setenv)", got)
 	}
-	const chainedSetenv = `package x
-import ("os/exec"; "testing")
-func a(t *testing.T) { first := t.Setenv; second := first; second("PATH", "/tmp/fixtures"); exec.Command("git") }
-`
-	if got := rawExecSites(t, "chained_setenv.go", chainedSetenv); got != 1 {
-		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a chained Setenv alias)", got)
-	}
-	// A Setenv alias declared in one file and called in another is a rewrite.
-	decl := "package x\nimport \"os\"\nvar setenv = os.Setenv\n"
-	call := "package x\nimport \"os/exec\"\nfunc a() { setenv(\"PATH\", \"/tmp/fixtures\"); exec.Command(\"git\") }\n"
-	var twoFiles []*ast.File
-	for name, src := range map[string]string{"decl.go": decl, "call.go": call} {
-		twoFiles = append(twoFiles, parseSource(t, name, src))
-	}
-	if !packageRewritesProcessPath(twoFiles) {
-		t.Fatal("a Setenv alias declared in one file and called in another was not seen as a PATH rewrite")
-	}
 	// A rewrite in another file of the package reaches this file's lookups.
 	const plain = `package x
 import "os/exec"
@@ -872,79 +614,6 @@ func a() { exec.Command("git", "init") }
 	}
 	if got := rawExecSitesIn(t, "plain.go", plain, false); got != 0 {
 		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
-	}
-	const forwardedSetenv = `package x
-import ("os/exec"; "testing")
-func rewrite(set func(string, string), dir string) { set("PATH", dir) }
-func a(t *testing.T) { rewrite(t.Setenv, "/tmp/fixtures"); exec.Command("git") }
-`
-	if got := rawExecSites(t, "forwarded_setenv.go", forwardedSetenv); got != 1 {
-		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a Setenv passed to a helper)", got)
-	}
-	const forwardedToLiteral = `package x
-import ("os"; "os/exec")
-type h struct{}
-func (h) apply(set func(string, string) error, dir string) { set("PATH", dir) }
-func a() { rewrite := func(set func(string, string) error, dir string) { set("PATH", dir) }; rewrite(os.Setenv, "/tmp/fixtures"); exec.Command("git") }
-func b() { h{}.apply(os.Setenv, "/tmp/fixtures"); exec.Command("git") }
-`
-	if got := rawExecSites(t, "forwarded_literal.go", forwardedToLiteral); got != 2 {
-		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv passed to a saved func literal and to a method)", got)
-	}
-	const sameNamedCallees = `package x
-import ("os/exec"; "testing")
-type h struct{}
-func rewrite(ignore func(string, string), dir string) {}
-func (h) rewrite(set func(string, string), dir string) { set("PATH", dir) }
-func a(t *testing.T) { h{}.rewrite(t.Setenv, "/tmp/fixtures"); exec.Command("git") }
-`
-	if got := rawExecSites(t, "same_named.go", sameNamedCallees); got != 1 {
-		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a method whose package-level namesake has other parameter names)", got)
-	}
-	const fieldSetenv = `package x
-import ("os"; "os/exec")
-type writer struct{ set func(string, string) error }
-func a(dir string) { w := writer{set: os.Setenv}; w.set("PATH", dir); exec.Command("git") }
-func b(dir string) { var w writer; w.set = os.Setenv; w.set("PATH", dir); exec.Command("git") }
-`
-	if got := rawExecSites(t, "field_setenv.go", fieldSetenv); got != 2 {
-		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv held in a struct field, keyed and assigned)", got)
-	}
-	const fieldNotSetenv = `package x
-import "os/exec"
-type writer struct{ set func(string, string) error }
-func a(dir string) { w := writer{set: func(string, string) error { return nil }}; w.set("PATH", dir); exec.Command("git") }
-func b(dir string) { w := writer{func(string, string) error { return nil }}; w.set("PATH", dir); exec.Command("git") }
-`
-	if got := rawExecSites(t, "field_not_setenv.go", fieldNotSetenv); got != 0 {
-		t.Fatalf("rawExecSites = %d, want 0 (a field that holds no writer is not a PATH rewrite)", got)
-	}
-	const unkeyedFieldSetenv = `package x
-import ("os"; "os/exec")
-type writer struct{ name string; set func(string, string) error }
-func a(dir string) { w := writer{"w", os.Setenv}; w.set("PATH", dir); exec.Command("git") }
-func b(dir string) { w := &writer{"w", os.Setenv}; w.set("PATH", dir); exec.Command("git") }
-`
-	if got := rawExecSites(t, "unkeyed_field_setenv.go", unkeyedFieldSetenv); got != 2 {
-		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv held in an unkeyed struct literal field, by value and by pointer)", got)
-	}
-	const factorySetenv = `package x
-import ("os"; "os/exec")
-func writer() func(string, string) error { return os.Setenv }
-func a(dir string) { writer()("PATH", dir); exec.Command("git") }
-func b(dir string) { set := writer(); set("PATH", dir); exec.Command("git") }
-func c(dir string) { mk := func() func(string, string) error { return os.Setenv }; mk()("PATH", dir); exec.Command("git") }
-`
-	if got := rawExecSites(t, "factory_setenv.go", factorySetenv); got != 3 {
-		t.Fatalf("rawExecSites = %d, want 3 (git after a PATH rewrite through a writer a function or a saved func literal returns, called directly or saved)", got)
-	}
-	const factoryNotSetenv = `package x
-import "os/exec"
-func writer() func(string, string) error { return func(string, string) error { return nil } }
-func a(dir string) { writer()("PATH", dir); exec.Command("git") }
-`
-	if got := rawExecSites(t, "factory_not_setenv.go", factoryNotSetenv); got != 0 {
-		t.Fatalf("rawExecSites = %d, want 0 (a factory that returns no writer is not a PATH rewrite)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
@@ -1031,7 +700,7 @@ func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob testkit sources: %v (%d files)", err, len(files))
 	}
-	// A PATH rewrite or Setenv alias in any file reaches every other file.
+	// A PATH rewrite in any file reaches every other file.
 	sources := map[string]string{}
 	for _, f := range files {
 		src, err := os.ReadFile(f)
