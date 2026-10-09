@@ -25,10 +25,10 @@ type workflowRefHit struct{ kind, file, job, step string }
 
 // unspelled reports whether bash may rewrite word before it runs it: an
 // expansion, a brace expansion as {gh,}, or a pathname pattern as a?i; a lone
-// [ is the test command.
+// [ is the test command. A Windows name, with a \ or .exe, is not read here.
 func unspelled(word string) bool {
-	return strings.ContainsAny(word, "$`*?") || braceExpansion.MatchString(word) ||
-		strings.Contains(word, "[") && strings.Contains(word, "]")
+	return strings.ContainsAny(word, "$`*?\\") || braceExpansion.MatchString(word) ||
+		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
 // stepShell returns the shell a step's run body is written for: its own
