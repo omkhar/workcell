@@ -489,7 +489,7 @@ func isShellSource(rel string, content []byte) bool {
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
-	words := strings.Fields(strings.TrimPrefix(first, "#!"))
+	words := shellFields(strings.TrimPrefix(first, "#!"))
 	if !strings.HasPrefix(first, "#!") || len(words) == 0 {
 		return false
 	}
@@ -502,9 +502,17 @@ func isShellSource(rel string, content []byte) bool {
 	return slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh"}, filepath.Base(interpreter))
 }
 
+// shellFields returns a line's words with their quotes removed, read by the
+// shared shellWords, so "bash" and 'bash' name bash.
+func shellFields(line string) []string {
+	words, _, _, _, _, _ := shellWords(line, nil)
+	return texts(words)
+}
+
 // envProgram returns the program that env runs, given env's arguments. Per
 // env --help, -u NAME and -C DIR (and --unset, --chdir) take an operand, and
-// the value of -S (--split-string), attached or not, is more arguments.
+// the value of -S (--split-string), attached or not, is more arguments, split
+// into words as env -S splits it.
 func envProgram(args []string) string {
 	for i := 0; i < len(args); i++ {
 		long, value, attached := strings.Cut(args[i], "=")
@@ -516,14 +524,18 @@ func envProgram(args []string) string {
 				return args[i]
 			}
 		case strings.HasPrefix(args[i], "--") && attached && names("--split-string"):
-			args[i], i = value, i-1
+			args, i = append(shellFields(value), args[i+1:]...), -1
+		case strings.HasPrefix(args[i], "--") && !attached && names("--split-string") && i+1 < len(args):
+			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
 		case strings.HasPrefix(args[i], "--"):
 			if !attached && (names("--unset") || names("--chdir")) {
 				i++
 			}
 		case short > 0 && short < len(args[i])-1 && args[i][short] == 'S':
-			args[i], i = args[i][short+1:], i-1
-		case short > 0 && short == len(args[i])-1 && args[i][short] != 'S':
+			args, i = append(shellFields(args[i][short+1:]), args[i+1:]...), -1
+		case short > 0 && short == len(args[i])-1 && args[i][short] == 'S' && i+1 < len(args):
+			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
+		case short > 0 && short == len(args[i])-1:
 			i++
 		}
 	}
