@@ -79,6 +79,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"tool behind env in a substitution", "out=$(env -S 'A=1' git ls-files)\n", "command-substitution"},
 		{"status read after a later substitution in the same command", "out=$(git ls-files) discard=$(true) rc=$?\n", "command-substitution"},
 		{"&& after a non-failing || handler", "out=$(git ls-files) || echo ignored && echo done\n", "command-substitution"},
+		{"tool in an env -S string", "env -S 'git fetch origin' || true\n", "or-true"},
+		{"tool in an attached env -S string", "env -S'git ls-files' 2>/dev/null\n", "dev-null"},
+		{"tool in an env --split-string value", "out=$(env --split-string='git ls-files')\n", "command-substitution"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
 		{"bare return handler", "x=$(git ls-files) || return\n", ""},
@@ -87,6 +90,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"group handler that exits", "out=$(git ls-files) || { echo no list; exit 1; }\n", ""},
 		{"env alone is no tool", "env 2>/dev/null\n", ""},
 		{"env in a pipeline is no tool", "env | grep X || true\n", ""},
+		{"env -S string without a tool", "env -S 'printf x' || true\n", ""},
 		{"status handler after a multi-line substitution", "x=\"$(\n  git ls-files\n)\" || exit 1\n", ""},
 		{"status read", "x=$(git ls-files)\nrc=$?\n", ""},
 		{"status read in the same command", "out=$(git ls-files) rc=$?\n", ""},

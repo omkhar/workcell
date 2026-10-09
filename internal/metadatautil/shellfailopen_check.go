@@ -133,6 +133,9 @@ var (
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
+	// shellEnvSplit is env, any flags, and its -S or --split-string option
+	// with the one word that holds the string env splits.
+	shellEnvSplit = regexp.MustCompile(`(\benv(?:\s+-[^\sS-]+)*\s+)(?:-S\s*|--split-string(?:=|\s+))([^\s;&|()<>]+)`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
@@ -435,7 +438,8 @@ func shellSubstEnd(command string, start int) int {
 // no parenthesis encloses, so a test, a handler or a status read covers only
 // the command it is written on. The list always holds one command. raw is
 // the statement before shellCodeOnly, which keeps its length, so each command
-// is cut at the same place in both and returned raw as well.
+// is cut at the same place in both and returned raw as well. Each command
+// then has its env -S strings split, as shellEnvUnsplit does.
 func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
@@ -454,7 +458,23 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 			}
 		}
 	}
-	return append(commands, code[start:]), append(raws, raw[start:])
+	commands, raws = append(commands, code[start:]), append(raws, raw[start:])
+	for index := range commands {
+		commands[index] = shellEnvUnsplit(commands[index], raws[index])
+	}
+	return commands, raws
+}
+
+// shellEnvUnsplit replaces each env -S STRING or --split-string=STRING in a
+// command's code with the words env splits STRING into, read from raw by the
+// shared shellFields as envProgram reads them. The program STRING names then
+// stands in command position, as in env git fetch.
+func shellEnvUnsplit(code, raw string) string {
+	for _, loc := range slices.Backward(shellEnvSplit.FindAllStringSubmatchIndex(code, -1)) {
+		words := shellFields(strings.Join(shellFields(raw[loc[4]:loc[5]]), " "))
+		code = code[:loc[3]] + strings.Join(words, " ") + code[loc[5]:]
+	}
+	return code
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git or `|| true`
