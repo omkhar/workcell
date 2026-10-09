@@ -95,6 +95,14 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"substitution in a gh argument", runStep(`gh api --paginate "$(cat x)"`), "", ""},
 		{"nested definition in a called body is not run", runStep("f() { g() { gh api repos/x; }; :; }; f\nh() {\n  k() { gh api repos/x; }\n  :\n}\nh"), "", ""},
 		{"nested definition called in its body", runStep("f() { g() { gh api repos/x; }; g; }; f"), "", "gh-api-unbounded"},
+		{"gh api behind time", runStep("time -p gh api repos/o/r/issues\ntime -- gh api repos/o/r/issues\n! time -p -- A=1 gh api repos/o/r/issues"), "", "gh-api-unbounded#3"},
+		{"time as an argument is not a prefix", runStep("echo time -p gh api repos/o/r/issues"), "", ""},
+		{"gh api behind coproc", runStep("coproc gh api repos/o/r/issues\ncoproc worker { gh api repos/o/r/issues; }"), "", "gh-api-unbounded#2"},
+		{"gh api behind builtin eval", runStep("builtin eval gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"gh api in a process substitution", runStep("cat <(gh api repos/o/r/issues)\ntee >(gh api repos/o/r/issues)"), "", "gh-api-unbounded#2"},
+		{"process substitution of another command", runStep("while read -r f; do echo \"$f\"; done < <(find . -type f)"), "", ""},
+		{"process substitution inside a quoted substitution", runStep("x=\"$(cat <(true); gh api repos/o/r/issues)\"\ny=\"$( (true); gh api repos/o/r/issues)\""), "", "gh-api-unbounded#2"},
+		{"gh subcommand with a substitution is unresolved", runStep("gh $(printf api) repos/o/r/issues"), "", "command-unresolved"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

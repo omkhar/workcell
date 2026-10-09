@@ -496,12 +496,14 @@ func withoutHeredocBodies(script string) string {
 func flattenSubstitutions(script string) string {
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
-	// boundary, whether that text is inside double quotes, and the byte that
-	// closes it.
+	// boundary, whether that text is inside double quotes, the byte that
+	// closes it, and how many unquoted parentheses inside it are open, so the
+	// ) of <(…) or of a subshell does not close a $( ).
 	type frame struct {
 		text   strings.Builder
 		quoted bool
 		closer byte
+		parens int
 	}
 	frames := []*frame{{}}
 	single := false
@@ -535,6 +537,12 @@ func flattenSubstitutions(script string) string {
 			} else {
 				i++
 			}
+		case top.closer == ')' && !top.quoted && c == '(':
+			top.parens++
+			top.text.WriteByte(c)
+		case top.closer == ')' && !top.quoted && c == ')' && top.parens > 0:
+			top.parens--
+			top.text.WriteByte(c)
 		case c == top.closer && !top.quoted:
 			frames = frames[:len(frames)-1]
 			out.WriteString("\n" + top.text.String() + "\n")
@@ -957,7 +965,7 @@ func replacesShell(args []string) bool {
 // three or more bytes, as getopt allows, and a short option may end a cluster
 // such as -vk with its value attached or in the next word.
 var commandWrappers = map[string][]string{
-	"command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
+	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
 	"timeout": {"-k", "-s", "--kill-after", "--signal"},
 }
@@ -1146,7 +1154,11 @@ func commandWords(text string) [][]string {
 	}
 	end := func() {
 		i := 0
-		for i < len(command) && (slices.Contains(shellKeywords, command[i]) || shellAssignment.MatchString(command[i])) {
+		for i < len(command) && (slices.Contains(shellKeywords, command[i]) ||
+			isCommandPrefixWord(command[i]) || shellAssignment.MatchString(command[i])) {
+			if command[i] == "coproc" && i+2 < len(command) && slices.Contains(shellKeywords, command[i+2]) {
+				i++ // coproc NAME runs the compound command after the name
+			}
 			i++
 		}
 		if i < len(command) {
@@ -1221,4 +1233,6 @@ var shellFD = regexp.MustCompile(`^` + shellFDPattern + `$`)
 
 const shellFDPattern = `([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})`
 
-var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}
+// shellKeywords are the reserved words before a command that isCommandPrefixWord
+// does not cover.
+var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "{"}
