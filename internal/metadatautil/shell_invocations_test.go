@@ -26,6 +26,11 @@ func TestShellInvocations(t *testing.T) {
 			script: "oras cpx one\n",
 		},
 		{
+			name:   "a [[ ]] test with && stays one command, so its operand is no command word",
+			script: "[[ \"${x}\" == a && \"${x}\" == b ]] || exit 1\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "continuations join into one invocation",
 			script: "oras cp \\\n  one \\\n  two\n",
 			want:   [][]string{{"one", "two"}},
@@ -85,6 +90,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"note: # here", "one"}},
 		},
 		{
+			name:   "an ANSI-C quoted argument is not a barrier",
+			script: "printf $'a\\n'\noras cp $'x' one\noras cp two\n",
+			want:   [][]string{{"x", "one"}, {"two"}},
+		},
+		{
 			name:   "a hash inside a word is an argument, not a comment",
 			script: "oras cp a#b one\n",
 			want:   [][]string{{"a#b", "one"}},
@@ -137,6 +147,91 @@ func TestShellInvocations(t *testing.T) {
 		{
 			name:   "an alias over the command proves no invocation of it",
 			script: "shopt -s expand_aliases\nalias oras=':'\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "an alias behind command proves no invocation of it",
+			script: "shopt -s expand_aliases\ncommand alias oras=':'\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "an alias behind an assignment and command proves no invocation of it",
+			script: "shopt -s expand_aliases\nX=1 command alias oras=':'\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a hash -p behind an assignment proves no invocation of it",
+			script: "X=1 hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "an alias in an if condition proves no invocation of it",
+			script: "shopt -s expand_aliases\nif command alias oras=':'; then :; fi\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a hash -p in a while condition proves no invocation of it",
+			script: "while hash -p /bin/true oras; do break; done\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a DEBUG trap proves no later invocation",
+			script: "trap 'exit 0' DEBUG\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a DEBUG trap in a condition proves no later invocation",
+			script: "if trap 'exit 0' debug; then :; fi\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a recursion that repeats its words ends the scan",
+			script: "loop() {\n  loop \"$@\"\n}\nloop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a helper that exits ends the scan",
+			script: "stop() {\n  exit 0\n}\nstop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "an assignment-prefixed call to an exiting helper ends the scan",
+			script: "stop() {\n  exit 0\n}\nX=1 stop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a helper that calls a later-defined exiting helper ends the scan",
+			script: "outer() {\n  stop\n}\nstop() {\n  exit 0\n}\nouter\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a helper that exits only on failure ends nothing",
+			script: "die() {\n  exit 1\n}\nfalse || die\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "a recursion that grows its words ends the scan",
+			script: "loop() {\n  loop \"$@\" x\n}\nloop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a one-line helper that does nothing hides no later invocation",
+			script: "shadow() { :; }\nshadow\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
+			name:   "a one-line helper with a spaced header that sources is a barrier",
+			script: "shadow () { source ./shadow.sh; }\nshadow\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a one-line helper that sources is a barrier",
+			script: "shadow() { source <(printf 'oras() { :; }\\n'); }\nshadow\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a hash -p behind builtin proves no invocation of it",
+			script: "builtin hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,
 		},
 		{
@@ -234,6 +329,19 @@ func TestShellInvocations(t *testing.T) {
 			script: ": >| oras cp --recursive --from-oci-layout one\noras cp --recursive --from-oci-layout two\n",
 			want:   [][]string{{"--recursive", "--from-oci-layout", "two"}},
 		},
+		{name: "command eval ends the scan", script: "oras cp one\ncommand eval 'oras(){ :; }'\noras cp two\n", want: [][]string{{"one"}}},
+		{name: "builtin eval ends the scan", script: "builtin -- eval x\noras cp two\n"},
+		{name: "sh -c eval ends the scan", script: "sh -c 'eval x'\noras cp two\n"},
+		{name: "bash -c eval ends the scan", script: "/bin/bash -c \"eval\"\noras cp two\n"},
+		{name: "eval behind an assignment ends the scan", script: "X=1 eval 'oras(){ :; }'\noras cp two\n"},
+		{name: "command eval behind assignments ends the scan", script: "FOO=bar Y= command eval x\noras cp two\n"},
+		{name: "sh -c eval behind an assignment ends the scan", script: "sh -c 'X=1 eval x'\noras cp two\n"},
+		{name: "source ends the scan", script: "oras cp one\nsource ./shadow.sh\noras cp two\n", want: [][]string{{"one"}}},
+		{name: "dot ends the scan", script: ". ./shadow.sh\noras cp two\n"},
+		{name: "builtin source behind an assignment ends the scan", script: "X=1 builtin source ./shadow.sh\noras cp two\n"},
+		{name: "command dot ends the scan", script: "command . ./shadow.sh\noras cp two\n"},
+		{name: "sh -c source ends the scan", script: "bash -c 'source ./shadow.sh'\noras cp two\n"},
+		{name: "an assignment alone is not a barrier", script: "X=1\noras cp two\n", want: [][]string{{"two"}}},
 		{
 			name:   "a hashed path over the command proves no invocation of it",
 			script: "hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",

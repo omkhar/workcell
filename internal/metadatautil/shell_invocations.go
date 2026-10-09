@@ -4,6 +4,8 @@
 package metadatautil
 
 import (
+	"path"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -43,9 +45,13 @@ func (h heredoc) endsAt(line string) bool {
 // an ordinary command, and a quoted } closes no group. A reader that returns
 // plain strings cannot tell the two apart, so every caller that asks whether a
 // word is syntax reads text as syntax.
+//
+// decoded records a $'…' span in the word. Bash decodes its escapes before it
+// runs the word, so $'\x73ource' runs source while its text here does not.
 type word struct {
-	text   string
-	quoted bool
+	text    string
+	quoted  bool
+	decoded bool
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -54,6 +60,18 @@ func texts(words []word) []string {
 	plain := make([]string, len(words))
 	for index, each := range words {
 		plain[index] = each.text
+	}
+	return plain
+}
+
+// spelled returns the words' text with the $ of a $'…' span put back, so the
+// barrier test reads a word bash decodes as one it expands.
+func spelled(words []word) []string {
+	plain := texts(words)
+	for index, each := range words {
+		if each.decoded {
+			plain[index] = "$" + plain[index]
+		}
 	}
 	return plain
 }
@@ -265,7 +283,24 @@ type command struct {
 // separator such as : ";" oras cp … starts a command bash never runs.
 func splitCommands(words []word) []command {
 	commands := make([]command, 1)
+	// Inside a [[ … ]] test, && and || are test operators, not command
+	// separators, so the test stays one command and its operands never
+	// become command words.
+	inTest := 0
 	for _, each := range words {
+		if !each.quoted {
+			switch each.text {
+			case "[[":
+				inTest++
+			case "]]":
+				inTest = max(inTest-1, 0)
+			}
+		}
+		if inTest > 0 && !each.quoted && (each.text == "&&" || each.text == "||") {
+			last := &commands[len(commands)-1]
+			last.args = append(last.args, each)
+			continue
+		}
 		if !each.quoted && isOperator(each.text) {
 			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||"})
 			continue
@@ -360,6 +395,37 @@ func ShellInvocations(script, commandName string) []Invocation {
 	var position int
 	var depth, definedAt, control int
 	var defining, bodyOpened bool
+	// definingName is the function whose body is being skipped, and
+	// barrierFunctions lists the defined functions whose body sources or
+	// evals: a later call runs that text in the current shell.
+	var definingName string
+	barrierFunctions, forwarders := map[string]bool{}, map[string]bool{}
+	// helperCalls records, per defined function, the helpers its body calls
+	// and the words it hands them, so a barrier reached through a helper that
+	// is defined after its caller is still found when the caller is called.
+	helperCalls := map[string][]helperCall{}
+	graph := helperGraph{barrierFunctions, forwarders, helperCalls}
+	// rewritten lists the functions whose body rewrites its positional
+	// parameters with set or shift, so what "$@" runs is not what the caller
+	// passed and the forwarder is a barrier instead.
+	rewritten := map[string]bool{}
+	// exiting names the helpers whose body ends the shell on every call, as
+	// stop() { exit 0; } does; an unconditional call to one ends the step.
+	exiting := map[string]bool{}
+	// exitCalls records the helpers each body calls unconditionally, so a
+	// helper that calls one defined later still ends the step once both exist.
+	exitCalls := map[string][]string{}
+	var terminates func(name string, seen map[string]bool) bool
+	terminates = func(name string, seen map[string]bool) bool {
+		if exiting[name] {
+			return true
+		}
+		if seen[name] {
+			return false
+		}
+		seen[name] = true
+		return slices.ContainsFunc(exitCalls[name], func(callee string) bool { return terminates(callee, seen) })
+	}
 	// conditionalGroup is the brace depth outside a command group that a && or
 	// a || guards, or -1 when no such group is open, and groupDepth is the
 	// nesting the commands read so far have opened. Bash decides the whole
@@ -422,18 +488,63 @@ func ShellInvocations(script, commandName string) []Invocation {
 					// Every later call runs the definition, not the program.
 					return nil
 				}
-				defining, definedAt, bodyOpened = true, depth, false
+				defining, definedAt, bodyOpened, definingName = true, depth, false, name
 			}
 		}
-		depth += braceDepth(commands)
-		if defining {
+		if !defining {
+			depth += braceDepth(commands)
+		} else {
+			// A body that sources or evals, or runs an expanded command word
+			// the reader cannot spell, makes every call a barrier; a body whose
+			// command word is a positional parameter, such as "$@", forwards its
+			// caller's words, so a call that passes eval, source or dot is one.
+			// A body that calls a helper already known as a barrier, or hands a
+			// forwarder such words, is a barrier as well, so the barrier
+			// propagates through helpers defined before it.
 			// A body may open on a later line, as in never_called ()
-			// followed by { on its own, so wait for it before seeking its end.
-			if depth > definedAt {
-				bodyOpened = true
+			// followed by { on its own, so wait for it before seeking its end;
+			// a one-line definition opens and closes within its commands.
+			for _, each := range commands {
+				if depth += commandBrace(each); depth > definedAt {
+					bodyOpened = true
+				}
+				if len(each.args) == 0 {
+					continue
+				}
+				names := bodyWords(commandWords(spelled(each.args)))
+				switch {
+				case rebindsCommand(names):
+					// A called body that rebinds a name may shadow every later
+					// use of the command, so the reader stops at the call.
+					barrierFunctions[definingName] = true
+				case rewritesParameters(names):
+					rewritten[definingName] = true
+				case graph.callsBarrier(names):
+					barrierFunctions[definingName] = true
+				case evaluates(names) && forwards(names):
+					forwarders[definingName] = true
+				case evaluates(names):
+					barrierFunctions[definingName] = true
+				case !each.conditional && len(names) > 0 && (names[0] == "exit" || replacesShell(names) || exiting[names[0]]):
+					// A body that exits, or replaces the shell, whenever it runs
+					// ends the step at every call; die() { exit 1; } called as
+					// cmd || die runs only on failure and ends nothing proved.
+					exiting[definingName] = true
+				default:
+					if callee, args, ok := helperCallWords(names); ok {
+						helperCalls[definingName] = append(helperCalls[definingName], helperCall{callee, args})
+						if !each.conditional {
+							exitCalls[definingName] = append(exitCalls[definingName], callee)
+						}
+					}
+				}
 			}
 			if bodyOpened && depth <= definedAt {
 				defining = false
+				if forwarders[definingName] && rewritten[definingName] {
+					delete(forwarders, definingName)
+					barrierFunctions[definingName] = true
+				}
 			}
 			continue
 		}
@@ -446,6 +557,20 @@ func ShellInvocations(script, commandName string) []Invocation {
 			position++
 			outside := groupDepth
 			groupDepth += commandBrace(each)
+			names := commandWords(spelled(args))
+			if evaluates(names) || graph.callsBarrier(names) {
+				// eval and source run text this reader never sees as code, and
+				// that text can define a function or an alias with the command's
+				// name, as eval 'or''as() { :; }' does. No later call is proved to
+				// run the program; the calls before it already ran. A condition or
+				// a guarded branch may run, so the barrier holds there too.
+				return invocations
+			}
+			if rebindsCommand(names) {
+				// An alias or a hash -p rebinds a name for every later use, in a
+				// condition or a guarded branch as well, so no use is proved.
+				return nil
+			}
 			if conditionalGroup >= 0 {
 				// Nothing inside the guarded group is proved to run, however
 				// many lines later the closing brace is. The commands written
@@ -476,19 +601,13 @@ func ShellInvocations(script, commandName string) []Invocation {
 			if nested || control > 0 || each.conditional {
 				continue
 			}
-			names := texts(args)
-			if names[0] == "exit" || names[0] == "return" || replacesShell(names) {
-				// The step ends here; nothing written after it runs.
+			names = texts(args)
+			called := names[assignmentPrefix(names):]
+			if names[0] == "exit" || names[0] == "return" || replacesShell(names) ||
+				len(called) > 0 && terminates(called[0], map[string]bool{}) {
+				// The step ends here; nothing written after it runs, also after
+				// X=1 stop or a helper that calls a later-defined stop.
 				return invocations
-			}
-			if names[0] == "alias" && shadowsByAlias(names, prefix[0]) {
-				return nil // Every later use expands to the alias.
-			}
-			if names[0] == "hash" && slices.Contains(names[1:], "-p") &&
-				slices.Contains(names[1:], prefix[0]) {
-				// hash -p pathname name makes pathname the full filename for
-				// name, so every later line runs that path, not the program.
-				return nil
 			}
 			if len(names) >= len(prefix) && slices.Equal(names[:len(prefix)], prefix) {
 				invocations = append(invocations, Invocation{names[len(prefix):], position})
@@ -519,7 +638,7 @@ func shellWords(line string, stack []byte) (
 ) {
 	var text strings.Builder
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
-	ansiC, unresolved := false, false
+	ansiC, unresolved, decoded := false, false, false
 	arithmetic := 0
 	// A line that carries a quoted command substitution donates no words. Where
 	// the substitution ends is beyond a line reader, and reading syntax over
@@ -537,10 +656,10 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted})
+			words = append(words, word{text.String(), quoted, decoded})
 		}
 		text.Reset()
-		inWord, quoted, unresolved = false, false, false
+		inWord, quoted, unresolved, decoded = false, false, false, false
 	}
 	for index := 0; index < len(line); index++ {
 		character := line[index]
@@ -617,6 +736,7 @@ func shellWords(line string, stack []byte) (
 			index++
 			quote = line[index]
 			ansiC = quote == '\''
+			decoded = decoded || ansiC
 			unresolved = unresolved || !ansiC
 			inWord, quoted = true, true
 		case character == ' ' || character == '\t':
@@ -697,6 +817,220 @@ func shellWords(line string, stack []byte) (
 	return words, heredocs, quote, stack, continues
 }
 
+// evaluates reports whether the words run eval, source or ., each of which
+// runs code this reader never sees in the current shell: bare, behind command
+// or builtin, which run it in this shell, or as the script of sh -c or bash -c.
+// Assignments before any of these, as in X=1 eval, still run it here. A child
+// shell cannot shadow the command, but the barrier only loses invocations, so
+// it holds for every spelling.
+func evaluates(names []string) bool {
+	names = names[assignmentPrefix(names):]
+	// A word list that opens with an option is an argument line, such as an
+	// element of a multi-line array, so its expansions name no command.
+	optionLed := len(names) > 0 && strings.HasPrefix(names[0], "-")
+	// time runs its command in the current shell, so time eval and time source
+	// evaluate like the bare builtins.
+	names = unwrapBuiltins(names)
+	if len(names) == 0 {
+		return false
+	}
+	if names[0] == "eval" || names[0] == "source" || names[0] == "." {
+		return true
+	}
+	if names[0] == "trap" && slices.ContainsFunc(names[1:], func(word string) bool { return strings.EqualFold(word, "DEBUG") }) {
+		// A DEBUG trap runs its action as text before every later command,
+		// and trap 'exit 0' DEBUG ends the script before the next one.
+		return true
+	}
+	if !optionLed && (strings.ContainsAny(names[0], "$`") ||
+		(names[0] != "{" && strings.Contains(names[0], "{"))) {
+		// Bash expands this word before it runs it, so s${x-}ource, $(printf
+		// source) and {source,f} can each run source. The reader cannot spell
+		// the result, so the word is a barrier.
+		return true
+	}
+	if shell := path.Base(names[0]); shell != "sh" && shell != "bash" {
+		return false
+	}
+	at := slices.Index(names, "-c")
+	if at < 0 || at+1 == len(names) {
+		return false
+	}
+	return evaluates(strings.Fields(names[at+1]))
+}
+
+// commandWords drops the reserved words and the case pattern that stand in
+// front of the command a word list runs, so the command in if eval … or in
+// linux) source … is the one the barrier test reads.
+func commandWords(names []string) []string {
+	for len(names) > 0 {
+		switch {
+		case slices.Contains([]string{"if", "elif", "then", "else", "while", "until", "do", "!"}, names[0]):
+		case strings.HasSuffix(names[0], ")") && !strings.ContainsAny(names[0], "$`"):
+		default:
+			return names
+		}
+		names = names[1:]
+	}
+	return names
+}
+
+// unwrapBuiltins drops the command, builtin and time words and the options in
+// front of the command word they run; the last word stays so a bare option
+// line keeps its first word.
+func unwrapBuiltins(names []string) []string {
+	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || names[0] == "time" || strings.HasPrefix(names[0], "-")) {
+		names = names[1:]
+	}
+	return names
+}
+
+// forwarderWord matches a command word that is the caller's first positional
+// parameter or all of them, so the command run is the caller's first word. A
+// named array such as "${cmd[@]}" holds words the caller never passed, and a
+// later parameter such as "$2" runs a word this reader does not align, so
+// neither is a forwarder: such a body is a barrier.
+var forwarderWord = regexp.MustCompile(`^\$(?:[@*1]|\{(?:[@*]|1)\})$`)
+
+// rewritesParameters reports whether the command rewrites the positional
+// parameters: shift, or set with -- or with an operand that is no option.
+func rewritesParameters(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) == 0 {
+		return false
+	}
+	if names[0] == "shift" {
+		return true
+	}
+	if names[0] != "set" {
+		return false
+	}
+	for _, arg := range names[1:] {
+		if arg == "--" || !strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "+") {
+			return true
+		}
+	}
+	return false
+}
+
+// forwards reports whether the command word, once unwrapped, is a positional
+// parameter or an array expansion, as in run() { "$@"; }.
+func forwards(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	return len(names) > 0 && forwarderWord.MatchString(names[0])
+}
+
+// callsBarrier reports whether the command word names a defined function whose
+// body sources or evals, so the call runs that text in the current shell, or a
+// forwarder such as run() { "$@"; } whose forwarded words are themselves a
+// barrier: eval, source or dot, or a word the reader cannot spell, such as
+// s${x-}ource.
+func (g helperGraph) callsBarrier(names []string) bool {
+	callee, args, ok := helperCallWords(names)
+	return ok && g.reaches(callee, args, map[string]bool{})
+}
+
+// helperCall is one call a function body makes: the helper's name and the
+// words handed to it.
+type helperCall struct {
+	callee string
+	args   []string
+}
+
+// helperGraph holds what the reader knows about defined functions: the
+// barriers, the forwarders, and the helper calls each body makes.
+type helperGraph struct {
+	barriers, forwarders map[string]bool
+	calls                map[string][]helperCall
+}
+
+// helperCallWords splits a command into its command word and arguments after
+// the assignments and builtin wrappers.
+func helperCallWords(names []string) (string, []string, bool) {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) == 0 {
+		return "", nil, false
+	}
+	return names[0], names[1:], true
+}
+
+// helperPathBound is the longest chain of helper calls the reader follows;
+// a real script's chain is a few calls deep, and a deeper one is a recursion.
+const helperPathBound = 32
+
+// bodyWords drops the header of a one-line definition from its first
+// command, as shadow() { source x; } puts the header, the brace and the
+// first body command in one command, so the body command is classified.
+func bodyWords(names []string) []string {
+	if len(names) > 1 && (names[0] == "function" || names[1] == "()" || names[1] == "(){") {
+		names = names[2:] // function NAME, or NAME () with the parentheses spaced
+	}
+	for len(names) > 0 && (names[0] == "{" || strings.HasSuffix(names[0], "()") || strings.HasSuffix(names[0], "(){")) {
+		names = names[1:]
+	}
+	return names
+}
+
+// reaches reports whether calling callee with args runs a barrier: callee is a
+// barrier, or a forwarder handed a word the reader cannot spell or eval,
+// source or dot, or a helper whose body calls such a helper. A body that hands
+// its own parameters on, as inner "$@", passes the caller's words along. The
+// visited set is scoped to the current path and keyed by the callee and its
+// words, so a helper called twice with different words, or a recursion that
+// changes its words, is judged on each call and only an exact repeat is cut.
+func (g helperGraph) reaches(callee string, args []string, visited map[string]bool) bool {
+	// The path key holds the words too, so a recursive call that changes its
+	// words is followed, and only a call that repeats itself exactly is cut.
+	key := callee + "\x00" + strings.Join(args, "\x00")
+	if visited[key] {
+		// A call that repeats itself exactly, as loop() { loop "$@"; } does,
+		// never returns in bash, so nothing after it is proved to run.
+		return true
+	}
+	if len(visited) >= helperPathBound {
+		// A path this deep is a recursion that grows its words, as loop "$@" x
+		// does, which never repeats a key; the reader stops at it as a barrier.
+		return true
+	}
+	visited[key] = true
+	defer delete(visited, key)
+	if g.barriers[callee] {
+		return true
+	}
+	if g.forwarders[callee] && evaluates(args) {
+		return true
+	}
+	for _, call := range g.calls[callee] {
+		// A forwarded word is replaced in place, so inner source "$@" keeps
+		// its literal source ahead of the caller's words.
+		var handed []string
+		for _, word := range call.args {
+			switch {
+			case !forwarderWord.MatchString(word):
+				handed = append(handed, word)
+			case strings.Contains(word, "1"):
+				handed = append(handed, args[:min(1, len(args))]...)
+			default:
+				handed = append(handed, args...)
+			}
+		}
+		if g.reaches(call.callee, handed, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// assignmentPrefix returns how many leading words are assignments bash applies
+// to the command word after them. Any word with "=" counts, even a-b=1.
+func assignmentPrefix(words []string) int {
+	count := 0
+	for count < len(words) && strings.Contains(words[count], "=") {
+		count++
+	}
+	return count
+}
+
 // replacesShell reports whether the words are an exec that names a program,
 // which replaces the shell so that nothing written after it runs. An exec
 // carrying only redirections, as in exec 2>&1, changes the shell's own
@@ -711,13 +1045,21 @@ func replacesShell(args []string) bool {
 	})
 }
 
-// shadowsByAlias reports whether an alias command rebinds name, as in
-// alias oras=':' after shopt -s expand_aliases.
-func shadowsByAlias(args []string, name string) bool {
-	for _, word := range args[1:] {
-		if bound, _, found := strings.Cut(word, "="); found && bound == name {
-			return true
-		}
+// rebindsCommand reports whether the command defines an alias or binds a
+// name with hash -p, behind any assignments, command or builtin. With
+// expand_aliases every later use of that name runs the binding, not the
+// program, and the reader does not resolve which name, so it proves no
+// later invocation.
+func rebindsCommand(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) < 2 {
+		return false
+	}
+	switch names[0] {
+	case "alias":
+		return slices.ContainsFunc(names[1:], func(word string) bool { return strings.Contains(word, "=") })
+	case "hash":
+		return slices.Contains(names[1:], "-p")
 	}
 	return false
 }
