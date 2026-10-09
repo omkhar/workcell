@@ -151,6 +151,10 @@ var (
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
+	// shellFailOpenPipe is a pipe, whose last stage sets the status a later
+	// && reads, and shellOutWord a word of shellCodeOnly's output.
+	shellFailOpenPipe = regexp.MustCompile(`(?:^|[^|])\|(?:[^|]|$)`)
+	shellOutWord      = regexp.MustCompile(`[^\s;&|<>()]+`)
 	// shellFailOpenAnd is a && that is the first && or || after the call,
 	// which makes the call its tested left operand. After a ||, the && tests
 	// the handler; a call on the right of && is tested by nothing.
@@ -273,7 +277,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				outside := shellOutsideSubsts(rest)
 				list := shellFailOpenList.FindStringIndex(outside)
 				return captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) ||
-					list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
+					list != nil && shellFailOpenAnd.MatchString(outside[list[0]:]) && !shellFailOpenPipe.MatchString(outside[:list[0]])
 			}
 			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one
@@ -338,7 +342,7 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 	}
 	handler := outside[loc[1]:]
 	if group, grouped := strings.CutPrefix(handler, "{"); grouped {
-		return shellFailOpenBranchExits(append([]string{group}, later()...), "}")
+		return shellFailOpenBranchExits(append(strings.Split(group, ";"), later()...), "}")
 	}
 	return shellFailOpenExits.MatchString(handler[:strings.IndexAny(handler+";", ";&|)}")])
 }
@@ -532,6 +536,15 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 			depth++
 		case ')':
 			depth = max(depth-1, 0)
+		case '{', '}':
+			// A brace group is one command, so its redirect, as in
+			// { git fetch; } 2>/dev/null, stays with the calls inside it.
+			before := index == 0 || strings.ContainsRune(" \t;\n", rune(code[index-1]))
+			if code[index] == '{' && before && index+1 < len(code) && strings.ContainsRune(" \t\n", rune(code[index+1])) {
+				depth++
+			} else if code[index] == '}' && before {
+				depth = max(depth-1, 0)
+			}
 		case ';', '\n':
 			if depth == 0 {
 				commands = append(commands, code[start:index])
@@ -601,17 +614,6 @@ func shellCodeOnly(line string) string {
 	type frame struct {
 		quote  byte
 		parens int
-		start  int // where the quoted span opened
-	}
-	// A quoted 'true', ":" or "/dev/null" is still that operand, so its text is kept.
-	keep := func(start, end int, ansiC bool) {
-		inner := line[start+1 : end]
-		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(inner, `"`, `\"`) + `"`); ansiC && err == nil {
-			inner = decoded // bash decodes $'\164rue' to true
-		}
-		if inner == "true" || inner == ":" || inner == "/dev/null" {
-			copy(out[start+1:end], inner)
-		}
 	}
 	stack := []frame{{}}
 	for i := 0; i < len(line); i++ {
@@ -620,7 +622,6 @@ func shellCodeOnly(line string) string {
 		case top.quote == '\'':
 			if c == '\'' {
 				top.quote = 0
-				keep(top.start, i, false)
 			}
 			out[i] = '"'
 		case top.quote == ansiCQuote:
@@ -631,7 +632,6 @@ func shellCodeOnly(line string) string {
 				out[i] = '"'
 			} else if c == '\'' {
 				top.quote = 0
-				keep(top.start, i, true)
 			}
 		case top.quote == '"' && c == '$' && i+1 < len(line) && line[i+1] == '(':
 			stack = append(stack, frame{})
@@ -643,23 +643,37 @@ func shellCodeOnly(line string) string {
 				out[i] = '"'
 			} else if c == '"' {
 				top.quote = 0
-				keep(top.start, i, false)
 			}
 		case c == '\\' && i+1 < len(line):
 			out[i+1] = '"' // an escaped byte is quoted text, as in \;
 			i++
 		case c == '$' && i+1 < len(line) && line[i+1] == '\'':
-			// The $ is blanked so a kept $'true' reads as "true" does.
-			top.quote, top.start, out[i], out[i+1] = ansiCQuote, i+1, ' ', '"'
+			top.quote, out[i+1] = ansiCQuote, '"'
 			i++
 		case c == '\'' || c == '"':
-			top.quote, top.start, out[i] = c, i, '"'
+			top.quote, out[i] = c, '"'
 		case c == '(':
 			top.parens++
 		case c == ')' && top.parens == 0 && len(stack) > 1:
 			stack = stack[:len(stack)-1]
 		case c == ')':
 			top.parens = max(top.parens-1, 0)
+		}
+	}
+	// A word whose quoted fragments spell true, : or /dev/null, as t'rue' or
+	// $'\164rue', is still that operand, so its value replaces the blanks.
+	for _, loc := range shellOutWord.FindAllStringIndex(string(out), -1) {
+		raw := line[loc[0]:loc[1]]
+		words, _, _, _, _, _ := shellWords(raw, nil)
+		if !strings.ContainsAny(raw, `'"`) || len(words) != 1 {
+			continue
+		}
+		value := words[0].text
+		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(value, `"`, `\"`) + `"`); strings.Contains(raw, "$'") && err == nil {
+			value = decoded
+		}
+		if value == "true" || value == ":" || value == "/dev/null" {
+			copy(out[loc[0]:loc[1]], value)
 		}
 	}
 	return string(out)
