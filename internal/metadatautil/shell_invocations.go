@@ -734,7 +734,9 @@ func evaluates(names []string) bool {
 	// A word list that opens with an option is an argument line, such as an
 	// element of a multi-line array, so its expansions name no command.
 	optionLed := len(names) > 0 && strings.HasPrefix(names[0], "-")
-	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || strings.HasPrefix(names[0], "-")) {
+	// time runs its command in the current shell, so time eval and time source
+	// evaluate like the bare builtins.
+	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || names[0] == "time" || strings.HasPrefix(names[0], "-")) {
 		names = names[1:]
 	}
 	if len(names) == 0 {

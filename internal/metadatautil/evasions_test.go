@@ -34,6 +34,8 @@ var anyRejection = map[string]bool{
 	"brace-expanded source":       true,
 	"eval in an if condition":     true,
 	"source in a while condition": true,
+	"time-wrapped eval":           true,
+	"time-wrapped source":         true,
 	"step condition if: false":    true,
 	"step condition && false":     true,
 }
@@ -240,6 +242,8 @@ var Evasions = []Evasion{
 		return indentOf(a) + "if eval '" + strings.Fields(a)[0] + "(){ :; }'; then :; fi\n" + a
 	})},
 	{"source in a while condition", sourcedBy("while source ./shadow.sh; do :; done")},
+	{"time-wrapped eval", sourcedBy("time eval 'f(){ :; }'")},
+	{"time-wrapped source", sourcedBy("time -p source ./shadow.sh")},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
 	{"flattened argv", replaceAnchor(joinFirstWords)},
