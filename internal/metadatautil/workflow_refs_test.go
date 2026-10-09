@@ -151,6 +151,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"source of stdin runs its program", runStep("source /dev/stdin <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded"},
 		{"source of a file is unresolved", runStep("source ./lib.sh\n. ./lib.sh"), "", "command-unresolved"},
 		{"unmodeled wrapper is unresolved", runStep("chrt 10 gh api repos/o/r/issues\ntaskset 1 gh api repos/o/r/issues"), "", "command-unresolved"},
+		{"Windows child shell is unresolved", runStep("pwsh -Command \"gh api repos/o/r/issues\"\nPowerShell.exe -c 'gh api x'\ncmd /c \"gh api x\""), "", "command-unresolved"},
+		{"builtin before a program runs nothing", runStep("builtin gh api repos/o/r/issues"), "", ""},
+		{"builtin before command wraps gh", runStep("builtin command gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"builtin before eval runs its words", runStep("builtin eval 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}

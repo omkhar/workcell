@@ -1014,6 +1014,10 @@ func commandName(word string) string {
 	return strings.TrimSuffix(name, ".exe")
 }
 
+// bashBuiltins names the builtins that run another command, which builtin
+// can run; builtin gh runs nothing, and builtin printf names no command.
+var bashBuiltins = map[string]bool{".": true, "builtin": true, "command": true, "eval": true, "exec": true, "source": true}
+
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
 // env -S splits its value into words that env then reads as its own arguments.
@@ -1030,6 +1034,9 @@ func wrappedCommand(words []string) []string {
 		valued, wraps := commandWrappers[name]
 		if !wraps {
 			return words
+		}
+		if name == "builtin" && (len(words) < 2 || !bashBuiltins[words[1]]) {
+			return words // builtin runs a builtin only; a program after it does not run
 		}
 		i, shell := 1, false
 		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || (name == "env" || name == "sudo") && shellAssignment.MatchString(words[i])); i++ {

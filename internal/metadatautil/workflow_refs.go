@@ -33,10 +33,12 @@ func unspelled(word string) bool {
 }
 
 // unmodeledWrappers run another program after options this lint does not
-// parse, so a command they run is not spelled; commandWrappers names the
+// parse, or run a program in a language it does not read, as pwsh and cmd
+// do, so a command they run is not spelled; commandWrappers names the
 // wrappers it does parse. A source of a file the lint does not see is the
 // same, while source /dev/stdin is read as the here-document it runs.
 var unmodeledWrappers = map[string]bool{
+	"pwsh": true, "powershell": true, "cmd": true,
 	"chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true,
 	"unshare": true, "nsenter": true, "strace": true, "ltrace": true, "script": true, "watch": true,
 	"unbuffer": true, "caffeinate": true, "systemd-run": true, "busybox": true, "prlimit": true,
