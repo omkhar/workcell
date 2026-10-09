@@ -168,8 +168,9 @@ sort -o "${claim_hits}" "${claim_hits}"
 sort -o "${claim_base}" "${claim_base}"
 
 # Ratchet: every row must exist in the baseline at the merge base, so a fixed
-# hit cannot hand its row to a new one. Every lookup error fails closed. The
-# one skip is a merge base without the baseline file (the change that adds it).
+# hit cannot hand its row to a new one. Every lookup error fails closed, and so
+# does a checkout with no main ref. The one skip is a merge base without the
+# baseline file (the change that adds it).
 claims_base_ref=""
 for ref in refs/remotes/origin/main refs/heads/main; do
   if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
@@ -179,7 +180,8 @@ for ref in refs/remotes/origin/main refs/heads/main; do
 done
 claims_file=policy/doc-claims-baseline.tsv
 if [[ -z "${claims_base_ref}" ]]; then
-  echo "check-doc-links: no origin/main or main ref; baseline merge-base ratchet skipped" >&2
+  echo "check-doc-links: no origin/main or main ref; fetch main to run the baseline merge-base ratchet" >&2
+  exit 2
 else
   claims_merge_base="$(git merge-base HEAD "${claims_base_ref}")" || {
     echo "check-doc-links: no merge base between HEAD and ${claims_base_ref}" >&2

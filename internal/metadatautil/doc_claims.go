@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -21,8 +22,14 @@ import (
 // for a .. or symlink component, and missing-path for a path that does not
 // exist. The probe walks descriptors from rootDir without following a link, so
 // a component swapped for a symlink during the walk fails rather than passes.
+// A symlinked rootDir, or one with a symlinked parent, is an error.
 func DocClaimHits(rootDir string, cited io.Reader, hits io.Writer) error {
-	root, err := os.Open(rootDir)
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(rootDir)
+	if err != nil {
+		return err
+	}
+	root, err := rootio.OpenDirAtNoFollow(parent, filepath.Base(cleaned))
+	_ = parent.Close()
 	if err != nil {
 		return err
 	}

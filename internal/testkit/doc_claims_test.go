@@ -64,7 +64,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		name     string
 		doc      string
 		baseline string
-		base     string // committed baseline rows on main; empty means no commit
+		base     string // committed baseline rows on main; empty means no baseline file there
 		want     string // empty means the fixture must pass
 	}{
 		{"clean", "The gate `scripts/gate.sh` runs.\n", "", "", ""},
@@ -78,6 +78,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"symlinked parent directory", "See `scripts/extdir/outside.txt` here.\n", "", "", "escaping-path"},
 		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
 		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", ""},
+		{"a CRLF fence closes", "```\r\nx\r\n```\r\nSee `scripts/nope.sh` here.\r\n", "", "", "missing-path"},
+		{"no main ref", "Nothing here.\n", "", "", "no origin/main or main ref"},
 		{"unreadable base baseline", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
 		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "escaping-path"},
 		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
@@ -115,7 +117,12 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 					t.Fatalf("git %v: %v\n%s", args, err, out)
 				}
 			}
-			git("init", "-q", "-b", "main")
+			branch := "main"
+			if tc.name == "no main ref" {
+				branch = "topic"
+			}
+			git("init", "-q", "-b", branch)
+			// The base commit holds the baseline only when tc.base names rows.
 			if tc.base != "" {
 				header := rules
 				if tc.name == "new rule rows need no base" {
@@ -123,9 +130,9 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 					header = strings.ReplaceAll(rules, "missing-path", "x")
 				}
 				writeFixtureFile(t, dir, "policy/doc-claims-baseline.tsv", header+tc.base)
-				git("add", "-A")
-				git("commit", "-q", "-m", "base")
 			}
+			git("add", "-A")
+			git("commit", "-q", "-m", "base")
 			baselineHeader := rules
 			if tc.name == "undeclared rule" {
 				baselineHeader = strings.ReplaceAll(rules, "missing-path", "x")

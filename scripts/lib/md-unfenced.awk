@@ -3,13 +3,14 @@
 # an optional info string and no other backtick, or three or more tildes. Only
 # a line of the same character, at least as long and with no info string,
 # closes it. Deeper indentation is an indented code block, so its text stays
-# checked. An inline ```code``` span is text.
+# checked. An inline ```code``` span is text. A CRLF line ending closes a fence
+# like LF.
 !fence && /^ ? ? ?(```+[^`]*|~~~+.*)$/ {
   text = $0; sub(/^ */, "", text); fence = substr(text, 1, 1)
   match(text, "^" fence "+"); size = RLENGTH; print ""; next
 }
 fence {
-  text = $0; sub(/^ ? ? ?/, "", text); sub(/[ \t]+$/, "", text)
+  text = $0; sub(/^ ? ? ?/, "", text); sub(/[ \t\r]+$/, "", text)
   long = length(text) >= size; gsub(fence, "", text)
   if (text == "" && long) fence = ""
   print ""; next

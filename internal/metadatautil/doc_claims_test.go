@@ -51,3 +51,22 @@ func TestDocClaimHits(t *testing.T) {
 		t.Fatal("DocClaimHits() on a line with no tab: want an error")
 	}
 }
+
+func TestDocClaimHitsRejectsSymlinkedRoot(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("real", link); err != nil {
+		t.Fatal(err)
+	}
+	var hits strings.Builder
+	if err := metadatautil.DocClaimHits(link, strings.NewReader(""), &hits); err == nil {
+		t.Fatal("DocClaimHits() on a symlinked root: want an error")
+	}
+}
