@@ -377,6 +377,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 	var position int
 	var depth, definedAt, control int
 	var defining, bodyOpened bool
+	// definingName is the function whose body is being skipped, and
+	// barrierFunctions lists the defined functions whose body sources or
+	// evals: a later call runs that text in the current shell.
+	var definingName string
+	barrierFunctions, forwarders := map[string]bool{}, map[string]bool{}
 	// conditionalGroup is the brace depth outside a command group that a && or
 	// a || guards, or -1 when no such group is open, and groupDepth is the
 	// nesting the commands read so far have opened. Bash decides the whole
@@ -439,7 +444,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 					// Every later call runs the definition, not the program.
 					return nil
 				}
-				defining, definedAt, bodyOpened = true, depth, false
+				defining, definedAt, bodyOpened, definingName = true, depth, false, name
 			}
 		}
 		depth += braceDepth(commands)
@@ -448,6 +453,21 @@ func ShellInvocations(script, commandName string) []Invocation {
 			// followed by { on its own, so wait for it before seeking its end.
 			if depth > definedAt {
 				bodyOpened = true
+			}
+			// A body that sources or evals makes every call a barrier; a body
+			// that runs an expanded word, such as "$@", forwards its caller's
+			// words, so a call that passes eval, source or dot is one too.
+			for _, each := range commands {
+				if len(each.args) == 0 {
+					continue
+				}
+				if names := commandWords(spelled(each.args)); evaluates(names) {
+					if sourcesLiterally(names) {
+						barrierFunctions[definingName] = true
+					} else {
+						forwarders[definingName] = true
+					}
+				}
 			}
 			if bodyOpened && depth <= definedAt {
 				defining = false
@@ -463,7 +483,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			position++
 			outside := groupDepth
 			groupDepth += commandBrace(each)
-			if evaluates(commandWords(spelled(args))) {
+			if names := commandWords(spelled(args)); evaluates(names) || callsBarrier(names, barrierFunctions, forwarders) {
 				// eval and source run text this reader never sees as code, and
 				// that text can define a function or an alias with the command's
 				// name, as eval 'or''as() { :; }' does. No later call is proved to
@@ -736,9 +756,7 @@ func evaluates(names []string) bool {
 	optionLed := len(names) > 0 && strings.HasPrefix(names[0], "-")
 	// time runs its command in the current shell, so time eval and time source
 	// evaluate like the bare builtins.
-	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || names[0] == "time" || strings.HasPrefix(names[0], "-")) {
-		names = names[1:]
-	}
+	names = unwrapBuiltins(names)
 	if len(names) == 0 {
 		return false
 	}
@@ -776,6 +794,37 @@ func commandWords(names []string) []string {
 		names = names[1:]
 	}
 	return names
+}
+
+// unwrapBuiltins drops the command, builtin and time words and the options in
+// front of the command word they run; the last word stays so a bare option
+// line keeps its first word.
+func unwrapBuiltins(names []string) []string {
+	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || names[0] == "time" || strings.HasPrefix(names[0], "-")) {
+		names = names[1:]
+	}
+	return names
+}
+
+// sourcesLiterally reports whether the command word, once unwrapped, is eval,
+// source or dot.
+func sourcesLiterally(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	return len(names) > 0 && (names[0] == "eval" || names[0] == "source" || names[0] == ".")
+}
+
+// callsBarrier reports whether the command word names a defined function whose
+// body sources or evals, so the call runs that text in the current shell, or a
+// forwarder such as run() { "$@"; } that is handed eval, source or dot.
+func callsBarrier(names []string, barriers, forwarders map[string]bool) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) == 0 {
+		return false
+	}
+	if barriers[names[0]] {
+		return true
+	}
+	return forwarders[names[0]] && slices.ContainsFunc(names[1:], func(arg string) bool { return arg == "eval" || arg == "source" || arg == "." })
 }
 
 // assignmentPrefix returns how many leading words are assignments bash applies
