@@ -921,12 +921,15 @@ func helperCallWords(names []string) (string, []string, bool) {
 // reaches reports whether calling callee with args runs a barrier: callee is a
 // barrier, or a forwarder handed a word the reader cannot spell or eval,
 // source or dot, or a helper whose body calls such a helper. A body that hands
-// its own parameters on, as inner "$@", passes the caller's words along.
+// its own parameters on, as inner "$@", passes the caller's words along. The
+// visited set is scoped to the current path, so a helper called twice with
+// different words is judged on each call and only a cycle is cut.
 func (g helperGraph) reaches(callee string, args []string, visited map[string]bool) bool {
 	if visited[callee] {
-		return false
+		return false // a cycle on this path; a sibling call may still reach a barrier
 	}
 	visited[callee] = true
+	defer delete(visited, callee)
 	if g.barriers[callee] {
 		return true
 	}
