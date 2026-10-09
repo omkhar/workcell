@@ -825,9 +825,10 @@ func unwrapBuiltins(names []string) []string {
 	return names
 }
 
-// forwarderWord matches a command word that is a positional parameter or an
-// array expansion, so the command run is whatever the caller passed.
-var forwarderWord = regexp.MustCompile(`^\$(?:[@*1-9]|\{(?:[@*]|[0-9]+|[A-Za-z_][A-Za-z0-9_]*\[[@*]\])\})$`)
+// forwarderWord matches a command word that is a positional parameter, so the
+// command run is whatever the caller passed. A named array such as
+// "${cmd[@]}" holds words the caller never passed, so it is no forwarder.
+var forwarderWord = regexp.MustCompile(`^\$(?:[@*1-9]|\{(?:[@*]|[0-9]+)\})$`)
 
 // forwards reports whether the command word, once unwrapped, is a positional
 // parameter or an array expansion, as in run() { "$@"; }.

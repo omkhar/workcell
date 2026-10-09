@@ -23,25 +23,26 @@ type Evasion struct {
 // rejects. The validator may then fail at an earlier requirement, so any error
 // counts, except a YAML syntax error, which would mean the row broke the file.
 var anyRejection = map[string]bool{
-	"unrelated placement":         true,
-	"eval-assembled definition":   true,
-	"wrapped eval definition":     true,
-	"assigned eval definition":    true,
-	"sourced definition":          true,
-	"parameter-spliced source":    true,
-	"substituted source":          true,
-	"ansi-c quoted source":        true,
-	"brace-expanded source":       true,
-	"eval in an if condition":     true,
-	"source in a while condition": true,
-	"time-wrapped eval":           true,
-	"time-wrapped source":         true,
-	"sourcing helper called":      true,
-	"sourcing forwarder called":   true,
-	"expanded source in a helper": true,
-	"expanded source forwarded":   true,
-	"step condition if: false":    true,
-	"step condition && false":     true,
+	"unrelated placement":            true,
+	"eval-assembled definition":      true,
+	"wrapped eval definition":        true,
+	"assigned eval definition":       true,
+	"sourced definition":             true,
+	"parameter-spliced source":       true,
+	"substituted source":             true,
+	"ansi-c quoted source":           true,
+	"brace-expanded source":          true,
+	"eval in an if condition":        true,
+	"source in a while condition":    true,
+	"time-wrapped eval":              true,
+	"time-wrapped source":            true,
+	"sourcing helper called":         true,
+	"sourcing forwarder called":      true,
+	"expanded source in a helper":    true,
+	"expanded source forwarded":      true,
+	"named array source in a helper": true,
+	"step condition if: false":       true,
+	"step condition && false":        true,
 }
 
 // Evasions is the shared negative corpus. A validator that reads file content to
@@ -263,6 +264,10 @@ var Evasions = []Evasion{
 	{"expanded source forwarded", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run s${x-}ource ./shadow.sh\n" + a
+	})},
+	{"named array source in a helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "cmd=(source ./shadow.sh)\n" + i + "run() {\n" + i + "  \"${cmd[@]}\"\n" + i + "}\n" + i + "run\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
