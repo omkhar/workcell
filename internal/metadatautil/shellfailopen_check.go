@@ -125,6 +125,7 @@ var (
 	// expansion, a quoted word or a command that runs text. It may run a tool,
 	// so a substitution that holds one counts as a tool substitution.
 	shellUnnamedCommand = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)
+	shellToolName       = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
@@ -438,8 +439,9 @@ func shellSubstEnd(command string, start int) int {
 // no parenthesis encloses, so a test, a handler or a status read covers only
 // the command it is written on. The list always holds one command. raw is
 // the statement before shellCodeOnly, which keeps its length, so each command
-// is cut at the same place in both and returned raw as well. Each command
-// then has its env -S strings split, as shellEnvUnsplit does.
+// is cut at the same place in both, read through shellFailOpenNamed, and
+// returned raw as well. Each command first has its env -S strings split, as
+// shellEnvUnsplit does.
 func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
@@ -460,7 +462,7 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	}
 	commands, raws = append(commands, code[start:]), append(raws, raw[start:])
 	for index := range commands {
-		commands[index] = shellEnvUnsplit(commands[index], raws[index])
+		commands[index] = shellFailOpenNamed(shellEnvUnsplit(commands[index], raws[index]), raws[index])
 	}
 	return commands, raws
 }
@@ -475,6 +477,32 @@ func shellEnvUnsplit(code, raw string) string {
 		code = code[:loc[3]] + strings.Join(words, " ") + code[loc[5]:]
 	}
 	return code
+}
+
+// shellFailOpenNamed returns the command as bash names its words when a quoted
+// or escaped fragment spells a tool, as in 'g'it, "gi""t" or g\it, which
+// shellCodeOnly blanks. shellWords joins the fragments of a word as bash
+// does; every other quoted word stays blank, so a message is still no command.
+func shellFailOpenNamed(code, raw string) string {
+	words, _, _, _, _, _ := shellWords(raw, nil)
+	named, spelled := make([]string, len(words)), false
+	for index, each := range words {
+		named[index] = each.text
+		if !each.quoted {
+			continue
+		}
+		// The name may follow the $( or ( that opens it in the same word; a
+		// quoted ( or ) is text and stays blank, so it cannot end a $( early.
+		if cut := strings.LastIndexAny(each.syntax, "(`") + 1; shellToolName.MatchString(each.text[cut:]) {
+			named[index], spelled = each.syntax[:cut]+each.text[cut:], true
+		} else {
+			named[index] = `""`
+		}
+	}
+	if !spelled {
+		return code
+	}
+	return strings.Join(named, " ")
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git or `|| true`

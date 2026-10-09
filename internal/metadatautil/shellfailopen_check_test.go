@@ -51,6 +51,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"tool attached to &&", "git&&gh||true\n", "or-true"},
 		{"tool attached to a subshell closer", "(git)2>/dev/null\n", "dev-null"},
 		{"tool attached to a redirection", "docker>/dev/null 2>/dev/null\n", "dev-null"},
+		{"tool name split by quotes", "\"gi\"\"t\" ls-files || true\n", "or-true"},
+		{"tool name with a quoted fragment", "'g'it fetch || true\n", "or-true"},
+		{"tool name with an escape", "g\\it fetch || true\n", "or-true"},
 		{"quoted tool name in a substitution", "x=$('git' ls-files)\n", "command-substitution"},
 		{"substitution right of &&", "true && out=$(git ls-files)\n", "command-substitution"},
 		{"tool after && in a substitution", "out=$(cd x && git ls-files)\n", "command-substitution"},
@@ -82,6 +85,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"tool in an env -S string", "env -S 'git fetch origin' || true\n", "or-true"},
 		{"tool in an attached env -S string", "env -S'git ls-files' 2>/dev/null\n", "dev-null"},
 		{"tool in an env --split-string value", "out=$(env --split-string='git ls-files')\n", "command-substitution"},
+		{"single-quoted tool name", "'git' fetch origin || true\n", "or-true"},
+		{"escaped tool name", "\\git fetch origin || true\n", "or-true"},
+		{"double-quoted tool name", "\"git\" rev-parse HEAD 2>/dev/null\n", "dev-null"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
 		{"bare return handler", "x=$(git ls-files) || return\n", ""},
@@ -111,6 +117,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"path is not a tool", "ls .git/hooks 2>/dev/null\n", ""},
 		{"tool name as an argument", "printf '%s\\n' git || true\n", ""},
 		{"tool name after echo", "echo gh 2>/dev/null\n", ""},
+		{"quoted tool name after echo", "echo 'git' || true\n", ""},
+		{"quoted tool name as an argument", "printf '%s\\n' \"git\" 2>/dev/null\n", ""},
 		{"quoted $( runs nothing", "x=$(echo '$(git' x) || exit 1\n", ""},
 		{"escaped ; is an argument", "if ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 	}
