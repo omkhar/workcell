@@ -111,6 +111,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"bash -c body with an expansion is unresolved", runStep(`bash -c "$CMD"`), "", "command-unresolved"},
 		{"bash -c body without gh is clean", runStep("bash -c 'echo gh api'"), "", ""},
 		{"bounded gh api in a bash -c body", runStep("bash -c 'gh api --paginate repos/o/r/issues'"), "", ""},
+		{"gh api in a bash -c -- body", runStep("bash -c -- 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"gh api in a bash -cl body", runStep("bash -cl 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"uncalled function in a bash -c body runs nothing", runStep("bash -c 'f() { gh api repos/x; }; :'"), "", ""},
+		{"called function in a bash -c body is a hit", runStep("bash -c 'f() { gh api repos/x; }; f'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

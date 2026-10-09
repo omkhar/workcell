@@ -99,12 +99,21 @@ func shellCBody(words []string) (string, bool) {
 	default:
 		return "", false
 	}
-	for i := 1; i+1 < len(words); i++ {
-		if words[i] == "--" {
+	// Options come first; c anywhere in a short cluster, as in -cl or -ec,
+	// selects the first operand as the script, and -- may end the options.
+	script := false
+	for i := 1; i < len(words); i++ {
+		switch {
+		case words[i] == "--":
+			if script && i+1 < len(words) {
+				return words[i+1], true
+			}
 			return "", false
-		}
-		if strings.HasPrefix(words[i], "-") && !strings.HasPrefix(words[i], "--") && strings.HasSuffix(words[i], "c") {
-			return words[i+1], true
+		case strings.HasPrefix(words[i], "--"):
+		case strings.HasPrefix(words[i], "-") || strings.HasPrefix(words[i], "+"):
+			script = script || strings.Contains(words[i][1:], "c")
+		default:
+			return words[i], script
 		}
 	}
 	return "", false
@@ -1069,6 +1078,12 @@ func shadowsByAlias(args []string, name string) bool {
 // 804 adds a ShellCommandWords reader with a similar intent; merge the two when
 // both land.
 func EveryShellCommand(script string) [][]string {
+	return everyShellCommand(script)
+}
+
+// everyShellCommand is EveryShellCommand for a script a child shell runs, such
+// as a sh -c body, which has its own definitions and traps.
+func everyShellCommand(script string) [][]string {
 	traps := trapState{map[string]string{}, map[string]bool{}}
 	bodies := map[string]string{}
 	found := readScript(flattenSubstitutions(withoutHeredocBodies(script)), bodies, nil, traps)
@@ -1191,7 +1206,9 @@ func commandWords(text string) [][]string {
 			if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
 				found = append(found, commandWords(text)...) // eval runs its words as a script
 			} else if body, ok := shellCBody(words); ok && !strings.ContainsAny(body, "$`") {
-				found = append(found, commandWords(body)...) // sh -c runs its body as a script
+				// sh -c runs its body as a script in a child shell with its own
+				// definitions and traps, so an uncalled function in it runs nothing.
+				found = append(found, everyShellCommand(body)...)
 			} else {
 				found = append(found, words)
 			}
