@@ -31,11 +31,9 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
-// runsOnBash reports whether a job with no shell set surely runs bash: only on
-// a GitHub-hosted ubuntu- or macos- runner; any other may be Windows, with pwsh.
-func runsOnBash(job workflowJob) bool {
-	return job.RunsOn.Kind == yaml.ScalarNode && (strings.HasPrefix(job.RunsOn.Value, "ubuntu-") || strings.HasPrefix(job.RunsOn.Value, "macos-"))
-}
+// githubHostedPosix matches a GitHub-hosted Linux or macOS label, the only
+// runner a shell-less step surely runs bash on; a custom one may be Windows.
+var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|\d+\.\d+)(?:-arm)?|macos-(?:latest|\d+)(?:-intel|-large|-xlarge)?)$`)
 
 // stepShell returns the shell a step's run body is written for: its own
 // shell key, then the job's defaults, then the workflow's.
@@ -56,11 +54,10 @@ func stepShell(document workflowDocument, job workflowJob, step workflowStep) st
 // unmodeledWrappers run another program after options this lint does not
 // parse, or a program in a language it does not read, as pwsh does.
 var unmodeledWrappers = map[string]bool{
-	"pwsh": true, "powershell": true, "cmd": true, "setsid": true, "stdbuf": true, "xargs": true, "flock": true, "ionice": true,
-	"chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true,
-	"unshare": true, "nsenter": true, "strace": true, "ltrace": true, "script": true, "watch": true,
-	"unbuffer": true, "caffeinate": true, "systemd-run": true, "busybox": true, "prlimit": true,
-	"setpriv": true, "fakeroot": true, "firejail": true, "bwrap": true, "proot": true, "cpulimit": true,
+	"pwsh": true, "powershell": true, "cmd": true, "setarch": true, "setsid": true, "stdbuf": true, "xargs": true, "flock": true,
+	"ionice": true, "chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true, "unshare": true,
+	"nsenter": true, "strace": true, "ltrace": true, "script": true, "watch": true, "unbuffer": true, "caffeinate": true,
+	"systemd-run": true, "busybox": true, "prlimit": true, "setpriv": true, "fakeroot": true, "firejail": true, "bwrap": true, "proot": true, "cpulimit": true,
 }
 
 var braceExpansion = regexp.MustCompile(`\{[^}]*(,|\.\.)[^}]*\}`)
@@ -162,7 +159,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
 				if shell := commandName(strings.Fields(stepShell(documents[file], definition, step) + " bash")[0]); step.Run != "" &&
-					(shell != "bash" && shell != "sh" || stepShell(documents[file], definition, step) == "" && !runsOnBash(definition)) {
+					(shell != "bash" && shell != "sh" || stepShell(documents[file], definition, step) == "" &&
+						(definition.RunsOn.Kind != yaml.ScalarNode || !githubHostedPosix.MatchString(definition.RunsOn.Value))) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}
