@@ -89,7 +89,8 @@ A command can state its reason with a `# fail-closed: <reason>` comment
 at its line end or alone on the line before. It covers only that command.
 
 A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
-those tools. Only `wait "$!"` captures a process substitution.
+those tools. Only `wait "$!"`, or a test of a `NAME_completed` flag that
+the loop sets, captures a process substitution.
 
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
 today. A count that does not match its baseline fails the check. Repair a hit,
