@@ -156,11 +156,12 @@ declares_rule() {
   printf '%s\n' "$1" | grep '^#' | grep -qE "(^|[^a-z-])$2([^a-z-]|$)"
 }
 claims_text="$(cat "${claims_baseline}")"
+hit_rules="$(cut -f2 "${claim_hits}" | sort -u)"
 while IFS= read -r rule; do
   [[ -n "${rule}" ]] || continue
   declares_rule "${claims_text}" "${rule}" ||
     note "doc-claims rule ${rule} is not named in the comment lines of ${claims_baseline}"
-done < <(cut -f2 "${claim_hits}" | sort -u)
+done <<<"${hit_rules}"
 
 grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
 sort -o "${claim_hits}" "${claim_hits}"
