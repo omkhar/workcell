@@ -114,7 +114,7 @@ var (
 	// an operator or an opener, then any reserved word, assignment, or xargs or
 	// sudo with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -270,9 +270,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				}
 				return later
 			}
-			// testedFrom reports whether the status of the call that starts the
-			// text, a suffix of the command, is read: by the command itself, a
-			// handler, the next command, or the && that follows it.
+			// testedFrom reports whether the status of the call that starts
+			// text, a suffix of the command, is read by anything after it.
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
 				captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later)
@@ -554,9 +553,8 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 }
 
 // shellListOperands splits a command at each && || | |& or lone & outside a
-// substitution, with the operator left on the operand it ends, so a
-// redirection stays with the operand that carries it; the & of &> >& or <&
-// is a redirection, not an operator.
+// substitution, with the operator left on the operand it ends; the & of &>
+// >& or <& is a redirection, not an operator.
 func shellListOperands(command string) []string {
 	var operands []string
 	depth, start := 0, 0
@@ -637,6 +635,7 @@ func shellCodeOnly(line string) string {
 				out[i] = '"'
 			} else if c == '\'' {
 				top.quote = 0
+				keep(top.start, i)
 			}
 		case top.quote == '"' && c == '$' && i+1 < len(line) && line[i+1] == '(':
 			stack = append(stack, frame{})
@@ -654,7 +653,8 @@ func shellCodeOnly(line string) string {
 			out[i+1] = '"' // an escaped byte is quoted text, as in \;
 			i++
 		case c == '$' && i+1 < len(line) && line[i+1] == '\'':
-			top.quote, out[i+1] = ansiCQuote, '"'
+			// The $ is blanked so a kept $'true' reads as "true" does.
+			top.quote, top.start, out[i], out[i+1] = ansiCQuote, i+1, ' ', '"'
 			i++
 		case c == '\'' || c == '"':
 			top.quote, top.start, out[i] = c, i, '"'

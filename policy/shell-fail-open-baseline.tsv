@@ -3,8 +3,7 @@
 # One row per script and rule: PATH<TAB>RULE<TAB>COUNT<TAB>REASON. COUNT is the
 # number of hits the script carries today. The check fails when a script goes
 # above its count, and when it goes below, so the row drops with the repair.
-# Repair a hit by capturing the status in the same block, or state the case
-# with "# fail-closed: <reason>" on the line. Do not add a row for new code.
+# Repair a hit by capturing the status in the same block. Do not add a row for new code.
 runtime/container/bin/git	command-substitution	1	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 runtime/container/bin/git	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a variable-named call in a substitution; predates the rule, repair by status capture
 runtime/container/bin/git	or-true	1	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
