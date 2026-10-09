@@ -84,6 +84,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"no main ref", "Nothing here.\n", "", "", "no origin/main or main ref"},
 		{"unreadable base baseline", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
 		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "escaping-path"},
+		{"traversal before the prefix", "See `./docs/../scripts/nope.sh` here.\n", "", "", "escaping-path"},
+		{"traversal outside the checked areas", "See `./docs/../README.md` here.\n", "", "", ""},
 		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
 		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "broken link"},
 		{"fenced path is skipped", "```bash\nSee `scripts/nope.sh` here.\n```\n", "", "", ""},

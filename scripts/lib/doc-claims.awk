@@ -6,11 +6,14 @@
 function span_path(s, p) {
   gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
   sub(/^\.\//, "", s)
-  if (s !~ /^(scripts|internal|\.github\/workflows)\//) return ""
   p = s
   sub(/[ :(].*$/, "", p)
   sub(/[.,;]+$/, "", p)
   if (p ~ /[*<>{}$]/) return ""
+  # A path with a .. component that names a checked area anywhere is printed
+  # whatever it starts with, so the probe reports it as escaping.
+  if (p ~ /(^|\/)\.\.(\/|$)/ && p ~ /(^|\/)(scripts|internal|\.github\/workflows)\//) return p
+  if (s !~ /^(scripts|internal|\.github\/workflows)\//) return ""
   return p
 }
 # scan prints the cited path of each code span in s. A run of n backticks opens
