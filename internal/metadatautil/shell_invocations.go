@@ -987,6 +987,7 @@ var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
 	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
+	"flock":  {"-w", "-E", "--wait", "--timeout", "--conflict-exit-code"},
 	"stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
 	"xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof", "--max-lines",
 		"--max-args", "--max-procs", "--max-chars", "--process-slot-var"},
@@ -1008,7 +1009,8 @@ func commandName(word string) string {
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
 // env -S splits its value into words that env then reads as its own arguments.
-// timeout reads a DURATION operand before the command. xargs runs its command
+// timeout reads a DURATION operand before the command, and flock a lock file,
+// then flock -c runs a shell program. xargs runs its command
 // with the words it reads; --replace and -l take an optional value only with =. A wrapper named by
 // path, as /usr/bin/env, is the same wrapper. sudo -h with a value names a
 // host. sudo -s or -i runs the command through $SHELL -c with its
@@ -1053,8 +1055,11 @@ func wrappedCommand(words []string) []string {
 				}
 			}
 		}
-		if name == "timeout" {
-			i++
+		if name == "timeout" || name == "flock" {
+			i++ // the DURATION, or the lock file, before the command
+		}
+		if name == "flock" && i+1 < len(words) && (words[i] == "-c" || words[i] == "--command") {
+			return append([]string{"sh", "-c"}, words[i+1:]...) // flock FILE -c runs a shell program
 		}
 		if i >= len(words) && shell {
 			return []string{"$SHELL"}
