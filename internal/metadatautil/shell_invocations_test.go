@@ -175,6 +175,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   nil,
 		},
 		{
+			name:   "a DEBUG trap proves no later invocation",
+			script: "trap 'exit 0' DEBUG\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a DEBUG trap in a condition proves no later invocation",
+			script: "if trap 'exit 0' debug; then :; fi\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a hash -p behind builtin proves no invocation of it",
 			script: "builtin hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

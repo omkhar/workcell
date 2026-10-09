@@ -55,6 +55,8 @@ var anyRejection = map[string]bool{
 	"assigned hash in a called helper":       true,
 	"alias in an if condition":               true,
 	"hash in a while condition":              true,
+	"debug trap before the anchor":           true,
+	"debug trap in a called helper":          true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -336,6 +338,13 @@ var Evasions = []Evasion{
 	})},
 	{"hash in a while condition", replaceAnchor(func(a string) string {
 		return indentOf(a) + "while X=1 hash -p /bin/true '" + strings.Fields(a)[0] + "'; do break; done\n" + a
+	})},
+	{"debug trap before the anchor", replaceAnchor(func(a string) string {
+		return indentOf(a) + "trap 'exit 0' DEBUG\n" + a
+	})},
+	{"debug trap in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  command trap 'exit 0' debug\n" + i + "}\n" + i + "shadow\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

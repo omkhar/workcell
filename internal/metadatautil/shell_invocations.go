@@ -807,6 +807,11 @@ func evaluates(names []string) bool {
 	if names[0] == "eval" || names[0] == "source" || names[0] == "." {
 		return true
 	}
+	if names[0] == "trap" && slices.ContainsFunc(names[1:], func(word string) bool { return strings.EqualFold(word, "DEBUG") }) {
+		// A DEBUG trap runs its action as text before every later command,
+		// and trap 'exit 0' DEBUG ends the script before the next one.
+		return true
+	}
 	if !optionLed && (strings.ContainsAny(names[0], "$`") ||
 		(names[0] != "{" && strings.Contains(names[0], "{"))) {
 		// Bash expands this word before it runs it, so s${x-}ource, $(printf
