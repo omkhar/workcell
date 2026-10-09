@@ -103,6 +103,9 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"process substitution of another command", runStep("while read -r f; do echo \"$f\"; done < <(find . -type f)"), "", ""},
 		{"process substitution inside a quoted substitution", runStep("x=\"$(cat <(true); gh api repos/o/r/issues)\"\ny=\"$( (true); gh api repos/o/r/issues)\""), "", "gh-api-unbounded#2"},
 		{"gh subcommand with a substitution is unresolved", runStep("gh $(printf api) repos/o/r/issues"), "", "command-unresolved"},
+		{"gh by path", runStep("/usr/bin/gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"alias definition is unresolved", runStep("shopt -s expand_aliases; alias g=gh; g api repos/o/r/issues"), "", "command-unresolved"},
+		{"alias as an argument is not a definition", runStep("echo alias g=gh"), "", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

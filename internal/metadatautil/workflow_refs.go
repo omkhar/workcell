@@ -6,6 +6,7 @@ package metadatautil
 import (
 	"cmp"
 	"fmt"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -119,10 +120,11 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
 				for _, words := range EveryShellCommand(step.Run) {
-					// A lint of what may run fails closed on a command it cannot spell.
+					// A lint of what may run fails closed on a command it cannot spell,
+					// and on an alias definition, which can rename any later command.
 					if words[0] == "eval" {
 						add("eval-unresolved")
-					} else if strings.ContainsAny(words[0], "$`") {
+					} else if strings.ContainsAny(words[0], "$`") || (words[0] == "alias" && len(words) > 1) {
 						add("command-unresolved")
 					}
 				}
@@ -222,11 +224,12 @@ func ghFlagValues(args []string, long, short string) []string {
 	return nil
 }
 
-// commandArgs returns the arguments of every command named name in script.
+// commandArgs returns the arguments of every command named name in script,
+// bare or by path, as /usr/bin/gh runs gh.
 func commandArgs(script, name string) [][]string {
 	var found [][]string
 	for _, words := range EveryShellCommand(script) {
-		if words[0] == name {
+		if path.Base(words[0]) == name {
 			found = append(found, words[1:])
 		}
 	}
