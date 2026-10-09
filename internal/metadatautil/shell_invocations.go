@@ -941,9 +941,18 @@ func (g helperGraph) reaches(callee string, args []string, visited map[string]bo
 		return true
 	}
 	for _, call := range g.calls[callee] {
-		handed := call.args
-		if slices.ContainsFunc(handed, forwarderWord.MatchString) {
-			handed = args
+		// A forwarded word is replaced in place, so inner source "$@" keeps
+		// its literal source ahead of the caller's words.
+		var handed []string
+		for _, word := range call.args {
+			switch {
+			case !forwarderWord.MatchString(word):
+				handed = append(handed, word)
+			case strings.Contains(word, "1"):
+				handed = append(handed, args[:min(1, len(args))]...)
+			default:
+				handed = append(handed, args...)
+			}
 		}
 		if g.reaches(call.callee, handed, visited) {
 			return true
