@@ -373,9 +373,10 @@ func unparen(expr ast.Expr) ast.Expr {
 // envWriters can rewrite PATH, called through any qualifier or bare, as under a dot import of os.
 var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 
-// savedSetenvAliases lists, to a fixed point, names holding a Setenv value, such as setenv := t.Setenv.
+// savedSetenvAliases lists, to a fixed point, names holding a Setenv value, such as setenv := t.Setenv, and the parameters of any same-named function that receives one, such as rewrite(t.Setenv, dir).
 func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	savedSetenv := map[string]bool{}
+	params := functionParams(files...)
 	isSetenv := func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.SelectorExpr:
@@ -410,6 +411,27 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 						names[i] = name
 					}
 					added = record(names, n.Values) || added
+				case *ast.CallExpr:
+					// A writer passed as an argument is held by the callee's parameter, matched by callee name across the package, which only lists more.
+					var callee string
+					switch fn := unparen(n.Fun).(type) {
+					case *ast.Ident:
+						callee = fn.Name
+					case *ast.SelectorExpr:
+						callee = fn.Sel.Name
+					}
+					if names := params[callee]; len(names) > 0 {
+						for i, arg := range n.Args {
+							if !isSetenv(arg) {
+								continue
+							}
+							name := names[min(i, len(names)-1)]
+							if !savedSetenv[name] {
+								savedSetenv[name] = true
+								added = true
+							}
+						}
+					}
 				}
 				return true
 			})
@@ -418,6 +440,49 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 			return savedSetenv
 		}
 	}
+}
+
+// functionParams lists each declared function's parameter names by name, and those of a func literal saved under a name.
+func functionParams(files ...*ast.File) map[string][]string {
+	params := map[string][]string{}
+	names := func(fn *ast.FuncType) []string {
+		var out []string
+		for _, field := range fn.Params.List {
+			for _, name := range field.Names {
+				out = append(out, name.Name)
+			}
+		}
+		return out
+	}
+	record := func(targets []ast.Expr, values []ast.Expr) {
+		for i, value := range values {
+			lit, ok := unparen(value).(*ast.FuncLit)
+			if !ok || i >= len(targets) {
+				continue
+			}
+			if id, ok := unparen(targets[i]).(*ast.Ident); ok {
+				params[id.Name] = append(params[id.Name], names(lit.Type)...)
+			}
+		}
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(c ast.Node) bool {
+			switch n := c.(type) {
+			case *ast.FuncDecl:
+				params[n.Name.Name] = append(params[n.Name.Name], names(n.Type)...)
+			case *ast.AssignStmt:
+				record(n.Lhs, n.Rhs)
+			case *ast.ValueSpec:
+				targets := make([]ast.Expr, len(n.Names))
+				for i, name := range n.Names {
+					targets[i] = name
+				}
+				record(targets, n.Values)
+			}
+			return true
+		})
+	}
+	return params
 }
 
 // packageRewritesProcessPath reports whether any file rewrites PATH, with Setenv aliases package-wide.
@@ -686,6 +751,24 @@ func a() { exec.Command("git", "init") }
 	}
 	if got := rawExecSitesIn(t, "plain.go", plain, false); got != 0 {
 		t.Fatalf("rawExecSitesIn = %d, want 0 (no PATH rewrite anywhere)", got)
+	}
+	const forwardedSetenv = `package x
+import ("os/exec"; "testing")
+func rewrite(set func(string, string), dir string) { set("PATH", dir) }
+func a(t *testing.T) { rewrite(t.Setenv, "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "forwarded_setenv.go", forwardedSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a Setenv passed to a helper)", got)
+	}
+	const forwardedToLiteral = `package x
+import ("os"; "os/exec")
+type h struct{}
+func (h) apply(set func(string, string) error, dir string) { set("PATH", dir) }
+func a() { rewrite := func(set func(string, string) error, dir string) { set("PATH", dir) }; rewrite(os.Setenv, "/tmp/fixtures"); exec.Command("git") }
+func b() { h{}.apply(os.Setenv, "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "forwarded_literal.go", forwardedToLiteral); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv passed to a saved func literal and to a method)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
