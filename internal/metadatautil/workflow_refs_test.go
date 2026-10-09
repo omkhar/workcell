@@ -79,7 +79,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh behind env split strings", runStep("env -S 'gh api a'\nenv --split-string='gh api b'\nenv -i --split-s 'A=1 gh' api c\nenv -S'gh api d'\nenv XS=1 gh api e"), "", "gh-api-unbounded#5"},
 		{"gh api pagination as another option's value", runStep("gh api --preview --paginate repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"gh api pagination after valued options", runStep("gh api --paginate repos/o/r/issues\ngh api -X GET --paginate repos/o/r/issues\ngh api -H 'A: b' --paginate repos/x"), "", ""},
-		{"literal trap action is read", runStep("trap 'gh api repos/o/r/issues' EXIT\ntrap -- 'rm -f x' EXIT"), "", "gh-api-unbounded"},
+		{"literal trap action is read", runStep("trap 'gh api repos/o/r/issues' EXIT\ntrap -- 'rm -f x' INT"), "", "gh-api-unbounded"},
 		{"trap action after --", runStep("trap -- f EXIT\nf() { gh api repos/x; }"), "", "gh-api-unbounded"},
 		{"gh api behind timeout", runStep("timeout 30 gh api a"), "", "gh-api-unbounded"},
 		{"gh api behind timeout -k", runStep("timeout -k 5 30 gh api a"), "", "gh-api-unbounded"},
