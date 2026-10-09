@@ -133,6 +133,58 @@ func TestShellFailOpenFindings(t *testing.T) {
 	}
 }
 
+// The shared evasion corpus, run against the fail-open check. The check
+// reports what may run, so a row that only gates the call, as if false, a
+// function body or a guarded group do, keeps the hit, and a row that turns
+// the call into a comment, a heredoc body or quoted text drops it. Each row
+// states its expectation, so a new row fails here until it does.
+func TestShellFailOpenFindingsUnderTheEvasionCorpus(t *testing.T) {
+	t.Parallel()
+	const anchor = "git fetch origin || true"
+	artifact := "#!/bin/bash\n" + anchor + "\n"
+	keepsHit := map[string]bool{
+		"full-line comment": false, "inline comment after || true": false, "echo-quoted": false,
+		"single heredoc": false, "multi heredoc <<A <<B": false, "arithmetic shift": false,
+		"here-string": false, "line continuation": false, "quoted line span": false,
+		"indented heredoc terminator": false, "uncalled function definition": true, "unreachable branch": true,
+		"escaped closer in a quoted span": false, "conditional right-hand side": true, "conditional across a line break": true,
+		"exit before the command": true, "definition brace on the next line": true, "heredoc opened as a quote closes": false,
+		"exec before the command": true, "noclobber redirection": false, "quoted span closing into arguments": false,
+		"quoted separator": false, "quoted compound-command closer": true, "quoted brace in a definition": true,
+		"ANSI-C heredoc delimiter": false, "ANSI-C escape in a heredoc delimiter": false, "single-quoted line break": false,
+		"locale-translated heredoc delimiter": false, "escaped apostrophe in an ANSI-C word": false, "ANSI-C span across a line break": false,
+		"negated guarded group": true, "conditional command group": true, "argument brace in a guarded group": true,
+		"argument brace in a definition body": true, "conditional subshell group": true, "negated guarded subshell": true,
+		"array assignment in a guarded subshell": true, "attached subshell opener": true, "attached subshell opener closed on its own line": true,
+		"substitution inside a subshell opener": true, "quoted fragment in a subshell opener": true, "parameter expansion in a subshell opener": true,
+		"subshell behind a reserved prefix": true, "subshell behind a named coproc": true, "paired closers in a subshell opener": true,
+		"prefix extension": false, "unrelated placement": true,
+	}
+	if len(keepsHit) != len(Evasions) {
+		t.Fatalf("%d expectations for %d corpus rows; name each row once", len(keepsHit), len(Evasions))
+	}
+	for _, evasion := range Evasions {
+		t.Run(evasion.Name, func(t *testing.T) {
+			t.Parallel()
+			want, stated := keepsHit[evasion.Name]
+			if !stated {
+				t.Fatalf("corpus row %q states no expectation", evasion.Name)
+			}
+			mutated := evasion.Rewrite(artifact, anchor)
+			if mutated == artifact {
+				t.Fatalf("evasion %q left the artifact unchanged", evasion.Name)
+			}
+			findings, err := metadatautil.ShellFailOpenFindings(mutated)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(findings) > 0; got != want {
+				t.Fatalf("findings = %v, want a hit %v", findings, want)
+			}
+		})
+	}
+}
+
 // fixtureRepo builds a git repository holding one script and a baseline.
 func fixtureRepo(t *testing.T, script, baseline string) string {
 	t.Helper()
