@@ -20,6 +20,26 @@ func TestCheckShellFailOpenAcceptsThisRepository(t *testing.T) {
 	}
 }
 
+// TestShellFailOpenFindingsCountEachCommand pins that a second hit of the same
+// rule on one line is a second finding, so the file's baseline count rises.
+func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
+	t.Parallel()
+	findings, err := metadatautil.ShellFailOpenFindings("git fetch || true; git gc || true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 || findings[0].Rule != "or-true" || findings[1].Rule != "or-true" {
+		t.Fatalf("findings = %v, want two or-true findings on one line", findings)
+	}
+	findings, err = metadatautil.ShellFailOpenFindings("git fetch || true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %v, want one or-true finding", findings)
+	}
+}
+
 func TestShellFailOpenFindings(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

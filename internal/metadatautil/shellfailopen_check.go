@@ -261,7 +261,9 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				break
 			}
 		}
-		hits := map[string]bool{}
+		// Each command in the statement counts on its own, so a second hit of
+		// the same rule on one line raises the file's count.
+		hits := map[string]int{}
 		start := 0
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
@@ -285,13 +287,19 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			list := shellFailOpenList.FindStringIndex(outside)
 			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
 				list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
-			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command)
-			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && (!tested || shellSubstHidden(command))
-			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
-			hits[ruleDevNull] = hits[ruleDevNull] || hasTool && shellDevNull.MatchString(command) && !tested
+			for rule, hit := range map[string]bool{
+				ruleProcessSubstitution: shellProcessSubst.MatchString(command),
+				ruleCommandSubstitution: toolSubst && (!tested || shellSubstHidden(command)),
+				ruleOrTrue:              hasTool && shellOrTrue.MatchString(command),
+				ruleDevNull:             hasTool && shellDevNull.MatchString(command) && !tested,
+			} {
+				if hit {
+					hits[rule]++
+				}
+			}
 		}
 		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
-			if hits[rule] {
+			for range hits[rule] {
 				findings = append(findings, ShellFailOpenFinding{Rule: rule, Line: statement.number})
 			}
 		}
