@@ -27,13 +27,8 @@ import (
 // class. shellcheck does not flag it.
 //
 // A hit is accepted when its own command or the command right after it
-// captures the status (see shellFailOpenHandled) or when the command states its
-// case with a marker:
-//
-//	# fail-closed: <reason>
-//
-// The marker does not cover a process substitution: bash never propagates
-// its status, so every one is a hit until the script repairs it.
+// captures the status (see shellFailOpenHandled). A process substitution is
+// always a hit: bash never propagates its status.
 //
 // The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits
 // each file carries today; a count above its row fails, and so does a count
@@ -79,8 +74,8 @@ func CheckShellFailOpen(rootDir string) error {
 			failures = append(failures, fmt.Sprintf("%s: %d %s hit(s), baseline still allows %d; lower the baseline row to %d",
 				key.path, count, key.rule, allowed, count))
 		default:
-			failures = append(failures, fmt.Sprintf("%s: %d %s hit(s), baseline allows %d; capture the status, or state the reason with # %s <reason>\n    %s",
-				key.path, count, key.rule, allowed, shellFailClosedTag, strings.Join(details[key], "\n    ")))
+			failures = append(failures, fmt.Sprintf("%s: %d %s hit(s), baseline allows %d; capture the status\n    %s",
+				key.path, count, key.rule, allowed, strings.Join(details[key], "\n    ")))
 		}
 	}
 	for key := range baseline {
@@ -97,7 +92,6 @@ func CheckShellFailOpen(rootDir string) error {
 
 const (
 	shellFailOpenBaselinePath = "policy/shell-fail-open-baseline.tsv"
-	shellFailClosedTag        = "fail-closed:"
 	shellFailOpenMaxBytes     = 8 << 20
 
 	ruleProcessSubstitution = "process-substitution"
@@ -163,8 +157,7 @@ var (
 	// shellFailOpenAnd is a && that is the first && or || after the call,
 	// which makes the call its tested left operand. After a ||, the && tests
 	// the handler; a call on the right of && is tested by nothing.
-	shellFailOpenAnd  = regexp.MustCompile(`^&&\s*\S`)
-	shellFailClosedRe = regexp.MustCompile(`#\s*` + shellFailClosedTag + `\s*\S`)
+	shellFailOpenAnd = regexp.MustCompile(`^&&\s*\S`)
 	// shellAssignment is a word that assigns a name, the only word that may
 	// stand beside a substitution whose status the command keeps.
 	shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
@@ -185,7 +178,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	type logical struct {
 		number    int
 		raw, code string
-		marks     []int // where each fail-closed marker sits in raw
 	}
 	var statements []logical
 	var current logical
@@ -215,9 +207,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
 		code := strings.TrimSuffix(text, comment)
-		if shellFailClosedRe.MatchString(comment) {
-			current.marks = append(current.marks, len(strings.Join(lines, ""))+len(code))
-		}
 		// A line that ends on && || or | carries its command onto the next one,
 		// so a handler written there belongs to the same command.
 		fields := strings.Fields(shellCodeOnly(code))
@@ -251,11 +240,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		if strings.TrimSpace(statement.code) == "" {
 			continue
 		}
-		// A marker covers the command it is written on, and a marker alone on
-		// the line before covers the statement's first command.
-		if index > 0 && strings.TrimSpace(statements[index-1].code) == "" && len(statements[index-1].marks) > 0 {
-			statement.marks = append(statement.marks, 0)
-		}
 		// The last entry is the first command of the next statement, which
 		// reads the status this statement leaves.
 		commands, raws := shellFailOpenCommands(statement.code, statement.raw)
@@ -273,15 +257,10 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		start := 0
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
-			marked := slices.ContainsFunc(statement.marks, func(mark int) bool { return mark >= start && mark <= end })
 			start = end + 1
-			// A marker states a reason for a lost status, but a process
-			// substitution loses its producer's status wherever it stands,
-			// so it needs proof, a sentinel or a captured status, not a reason.
+			// A process substitution loses its producer's status wherever it
+			// stands, so it needs proof, a sentinel or a captured status.
 			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1))
-			if marked {
-				continue
-			}
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {

@@ -84,13 +84,11 @@ nothing. The idioms are a `< <(` process substitution and a `$(...)` around
 `scripts/check-shell-portability.sh` rejects each of them in `scripts/` and
 `runtime/container/`. The command, or the command after it, must capture the
 status.
-A command can state its reason with a `# fail-closed: <reason>` comment
-at its line end or alone on the line before. It covers only that command.
 
 A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
-those tools. A marker does not cover a process substitution. Bash never
-propagates its status, so every `< <(` is a hit. To repair it, read a file
-the walk wrote after its status was checked.
+those tools. Bash never propagates the status of a process substitution, so
+every `< <(` is a hit. To repair it, read a file the walk wrote after its
+status was checked.
 
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
 today. A count that does not match its baseline fails the check. Repair a hit,
