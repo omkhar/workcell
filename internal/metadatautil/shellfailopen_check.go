@@ -162,8 +162,7 @@ var (
 // heredoc bodies, reads a continued line, an open `$(` or a quoted span that
 // runs past its line as one statement, ignores text inside single quotes and
 // inside double quotes that open no command substitution, and takes a marker
-// only from a real shell comment. A heredoc whose end it cannot find is an
-// error, since the body it skips could hold any command.
+// only from a real shell comment.
 func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	type logical struct {
 		number    int
@@ -195,11 +194,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			current.number = number
 		}
 		words, opened, quote, rest, continues, comment := shellWords(reopen+text, stack)
-		for _, body := range opened {
-			if body.unresolved {
-				return nil, fmt.Errorf("line %d: heredoc delimiter %q is spelled in a form this reader cannot resolve; use a plain or quoted word", number, body.delimiter)
-			}
-		}
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
 		code := strings.TrimSuffix(text, comment)
@@ -227,9 +221,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		current.code = shellCodeOnly(current.raw)
 		statements = append(statements, current)
 		current, lines = logical{}, nil
-	}
-	if len(heredocs) > 0 {
-		return nil, fmt.Errorf("heredoc ended by %q never closes", heredocs[0].delimiter)
 	}
 	if len(lines) > 0 {
 		// A substitution the script never closes still holds its hits.

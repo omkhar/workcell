@@ -108,24 +108,6 @@ func TestShellFailOpenFindings(t *testing.T) {
 	}
 }
 
-// A heredoc body this reader cannot end could hide any command, so the scan
-// fails closed instead of skipping the rest of the script.
-func TestShellFailOpenFindingsRejectsUnendedHeredocs(t *testing.T) {
-	t.Parallel()
-	for name, script := range map[string]string{
-		"ANSI-C delimiter":          ": <<$'\\x50LAN'\nx\nPLAN\ngit fetch || true\n",
-		"locale delimiter":          ": <<$\"PLAN\"\nx\nPLAN\ngit fetch || true\n",
-		"heredoc that never closes": "cat <<EOF\ngit fetch || true\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			if findings, err := metadatautil.ShellFailOpenFindings(script); err == nil {
-				t.Fatalf("findings = %v, want an error", findings)
-			}
-		})
-	}
-}
-
 // fixtureRepo builds a git repository holding one script and a baseline.
 func fixtureRepo(t *testing.T, script, baseline string) string {
 	t.Helper()

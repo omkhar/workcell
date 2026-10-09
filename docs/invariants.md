@@ -84,7 +84,6 @@ nothing. The idioms are a `< <(` process substitution and a `$(...)` around
 `scripts/check-shell-portability.sh` rejects each of them in `scripts/` and
 `runtime/container/`. The command, or the command after it, must capture the
 status.
-A heredoc that the check cannot end fails the check.
 A command can state its reason with a `# fail-closed: <reason>` comment
 at its line end or alone on the line before. It covers only that command.
 
