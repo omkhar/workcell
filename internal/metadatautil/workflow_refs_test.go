@@ -142,6 +142,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"stdbuf wraps gh", runStep("stdbuf -oL gh api repos/o/r/issues\nstdbuf -o L -e0 gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"Windows executable name is gh", runStep("gh.exe api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"Windows path to gh is gh", runStep("\"C:\\tools\\GH.EXE\" api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"upper-case names are read on Windows", runStep("GH api repos/o/r/issues\nENV Gh api repos/o/r/issues\nBASH -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}

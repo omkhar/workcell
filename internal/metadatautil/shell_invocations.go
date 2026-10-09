@@ -5,7 +5,6 @@ package metadatautil
 
 import (
 	"encoding/hex"
-	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -996,14 +995,12 @@ var commandWrappers = map[string][]string{
 
 // commandName returns the program a command word names: the last path
 // element after a / or a \, without a Windows .exe suffix, so /usr/bin/gh,
-// gh.exe and "C:\tools\GH.EXE" all name gh. Windows reads a .exe name
-// without regard to case, so that name is lowered.
+// gh.exe and "C:\tools\GH.EXE" all name gh. A Windows runner finds a name
+// without regard to case, so every name is lowered; on Linux, GH is then
+// read as gh, which over-reports and so fails closed.
 func commandName(word string) string {
-	name := word[strings.LastIndexAny(word, `/\`)+1:]
-	if strings.EqualFold(path.Ext(name), ".exe") {
-		name = strings.ToLower(name[:len(name)-len(".exe")])
-	}
-	return name
+	name := strings.ToLower(word[strings.LastIndexAny(word, `/\`)+1:])
+	return strings.TrimSuffix(name, ".exe")
 }
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
