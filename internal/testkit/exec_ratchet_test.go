@@ -133,7 +133,8 @@ func parseSource(t *testing.T, name, src string) *ast.File {
 // rawExecSitesInFile counts the raw exec sites of one parsed file.
 func rawExecSitesInFile(file *ast.File, packageRewritesPath bool) int {
 	execCommandName, dotImported := execCommandNameIn(file)
-	pathRewritten := packageRewritesPath || rewritesProcessPath(file, savedSetenvAliases(file))
+	aliases, factories := savedSetenvAliases(file)
+	pathRewritten := packageRewritesPath || rewritesProcessPath(file, aliases, factories)
 	count := 0
 	called := map[ast.Expr]bool{}
 	// A file that declares its own execRetryETXTBSY shadows the helper, so those calls are not trusted.
@@ -374,18 +375,35 @@ func unparen(expr ast.Expr) ast.Expr {
 var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 
 // savedSetenvAliases lists, to a fixed point, names holding a Setenv value, such as setenv := t.Setenv, and the parameters of any same-named function that receives one, such as rewrite(t.Setenv, dir).
-func savedSetenvAliases(files ...*ast.File) map[string]bool {
-	savedSetenv := map[string]bool{}
+func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]bool) {
+	savedSetenv, factories = map[string]bool{}, map[string]bool{}
 	params := functionParams(files...)
 	fields := structFields(files)
-	isSetenv := func(value ast.Expr) bool {
+	var isSetenv func(value ast.Expr) bool
+	isSetenv = func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.SelectorExpr:
 			return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
 		case *ast.Ident:
 			return savedSetenv[v.Name] || envWriters[v.Name]
+		case *ast.CallExpr:
+			// A call of a function that returns a writer, such as writer()("PATH", dir).
+			return factories[calleeName(v.Fun)]
 		}
 		return false
+	}
+	// returnsWriter reports whether a function body returns a writer in any return statement.
+	returnsWriter := func(body *ast.BlockStmt) bool {
+		found := false
+		ast.Inspect(body, func(c ast.Node) bool {
+			if ret, ok := c.(*ast.ReturnStmt); ok {
+				for _, result := range ret.Results {
+					found = found || isSetenv(result)
+				}
+			}
+			return !found
+		})
+		return found
 	}
 	// A name or a field that receives a writer holds it; a field is matched by
 	// name across the package, which only lists more.
@@ -401,11 +419,20 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	record := func(names []ast.Expr, values []ast.Expr) bool {
 		added := false
 		for i, value := range values {
-			if isSetenv(value) && i < len(names) {
-				if name := holder(names[i]); name != "" && !savedSetenv[name] {
-					savedSetenv[name] = true
-					added = true
-				}
+			if i >= len(names) {
+				break
+			}
+			name := holder(names[i])
+			if name == "" {
+				continue
+			}
+			if isSetenv(value) && !savedSetenv[name] {
+				savedSetenv[name] = true
+				added = true
+			}
+			if lit, ok := unparen(value).(*ast.FuncLit); ok && !factories[name] && returnsWriter(lit.Body) {
+				factories[name] = true
+				added = true
 			}
 		}
 		return added
@@ -423,6 +450,12 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 						names[i] = name
 					}
 					added = record(names, n.Values) || added
+				case *ast.FuncDecl:
+					// A function or method that returns a writer is a factory, matched by name.
+					if n.Body != nil && !factories[n.Name.Name] && returnsWriter(n.Body) {
+						factories[n.Name.Name] = true
+						added = true
+					}
 				case *ast.KeyValueExpr:
 					// A keyed struct literal field such as writer{set: os.Setenv}.
 					added = record([]ast.Expr{n.Key}, []ast.Expr{n.Value}) || added
@@ -471,9 +504,20 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 			})
 		}
 		if !added {
-			return savedSetenv
+			return savedSetenv, factories
 		}
 	}
+}
+
+// calleeName names the function a call expression calls, bare or through a selector; "" otherwise.
+func calleeName(fn ast.Expr) string {
+	switch f := unparen(fn).(type) {
+	case *ast.Ident:
+		return f.Name
+	case *ast.SelectorExpr:
+		return f.Sel.Name
+	}
+	return ""
 }
 
 // structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
@@ -559,9 +603,9 @@ func functionParams(files ...*ast.File) map[string][][]string {
 
 // packageRewritesProcessPath reports whether any file rewrites PATH, with Setenv aliases package-wide.
 func packageRewritesProcessPath(files []*ast.File) bool {
-	aliases := savedSetenvAliases(files...)
+	aliases, factories := savedSetenvAliases(files...)
 	for _, file := range files {
-		if rewritesProcessPath(file, aliases) {
+		if rewritesProcessPath(file, aliases, factories) {
 			return true
 		}
 	}
@@ -569,7 +613,7 @@ func packageRewritesProcessPath(files []*ast.File) bool {
 }
 
 // rewritesProcessPath reports a process PATH write through an envWriter or alias; any non-literal key counts.
-func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
+func rewritesProcessPath(file *ast.File, savedSetenv, factories map[string]bool) bool {
 	found := false
 	ast.Inspect(file, func(c ast.Node) bool {
 		call, ok := c.(*ast.CallExpr)
@@ -583,6 +627,11 @@ func rewritesProcessPath(file *ast.File, savedSetenv map[string]bool) bool {
 			}
 		case *ast.Ident:
 			if !savedSetenv[fn.Name] && !envWriters[fn.Name] {
+				return true
+			}
+		case *ast.CallExpr:
+			// writer()("PATH", dir): the callee is a call of a writer factory.
+			if !factories[calleeName(fn.Fun)] {
 				return true
 			}
 		default:
@@ -878,6 +927,24 @@ func b(dir string) { w := &writer{"w", os.Setenv}; w.set("PATH", dir); exec.Comm
 `
 	if got := rawExecSites(t, "unkeyed_field_setenv.go", unkeyedFieldSetenv); got != 2 {
 		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv held in an unkeyed struct literal field, by value and by pointer)", got)
+	}
+	const factorySetenv = `package x
+import ("os"; "os/exec")
+func writer() func(string, string) error { return os.Setenv }
+func a(dir string) { writer()("PATH", dir); exec.Command("git") }
+func b(dir string) { set := writer(); set("PATH", dir); exec.Command("git") }
+func c(dir string) { mk := func() func(string, string) error { return os.Setenv }; mk()("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "factory_setenv.go", factorySetenv); got != 3 {
+		t.Fatalf("rawExecSites = %d, want 3 (git after a PATH rewrite through a writer a function or a saved func literal returns, called directly or saved)", got)
+	}
+	const factoryNotSetenv = `package x
+import "os/exec"
+func writer() func(string, string) error { return func(string, string) error { return nil } }
+func a(dir string) { writer()("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "factory_not_setenv.go", factoryNotSetenv); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a factory that returns no writer is not a PATH rewrite)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
