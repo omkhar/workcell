@@ -110,7 +110,7 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	if len(words) == 0 {
 		return "", false
 	}
-	switch path.Base(words[0]) {
+	switch commandName(words[0]) {
 	case "sh", "bash", "dash", "ksh", "zsh":
 	default:
 		return "", false
@@ -988,9 +988,22 @@ var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
 	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
+	"stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
 	"sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "-R", "-a", "-c", "--user", "--group",
 		"--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--command-timeout", "--other-user",
 		"--chroot", "--auth-type", "--login-class"},
+}
+
+// commandName returns the program a command word names: the last path
+// element after a / or a \, without a Windows .exe suffix, so /usr/bin/gh,
+// gh.exe and "C:\tools\GH.EXE" all name gh. Windows reads a .exe name
+// without regard to case, so that name is lowered.
+func commandName(word string) string {
+	name := word[strings.LastIndexAny(word, `/\`)+1:]
+	if strings.EqualFold(path.Ext(name), ".exe") {
+		name = strings.ToLower(name[:len(name)-len(".exe")])
+	}
+	return name
 }
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
@@ -1003,7 +1016,7 @@ var commandWrappers = map[string][]string{
 // runs $SHELL, which reads a script the reader cannot see.
 func wrappedCommand(words []string) []string {
 	for {
-		name := path.Base(words[0])
+		name := commandName(words[0])
 		valued, wraps := commandWrappers[name]
 		if !wraps {
 			return words

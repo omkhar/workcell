@@ -6,7 +6,6 @@ package metadatautil
 import (
 	"cmp"
 	"fmt"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -245,7 +244,7 @@ func ghFlagValues(args []string, long, short string) []string {
 func commandArgs(script, name string) [][]string {
 	var found [][]string
 	for _, words := range EveryShellCommand(script) {
-		if path.Base(words[0]) == name {
+		if commandName(words[0]) == name {
 			found = append(found, words[1:])
 		}
 	}

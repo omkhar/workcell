@@ -139,6 +139,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"setsid wraps gh", runStep("setsid -w gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"no-execute bash body is clean", runStep("bash -n -c 'gh api repos/o/r/issues'\nbash -nc 'gh api repos/o/r/issues'"), "", ""},
 		{"case pattern is not a command", runStep("case $x in\n  a|*.txt) :;;\n  *)\n    gh api repos/o/r/issues\n    ;;\nesac"), "", "gh-api-unbounded"},
+		{"stdbuf wraps gh", runStep("stdbuf -oL gh api repos/o/r/issues\nstdbuf -o L -e0 gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"Windows executable name is gh", runStep("gh.exe api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"Windows path to gh is gh", runStep("\"C:\\tools\\GH.EXE\" api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {
