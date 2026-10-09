@@ -320,9 +320,10 @@ type functionPart struct{ name, text string }
 // definition and the lines of each definition, for a reader that keeps
 // compound bodies and so must read a body only when the function is called. A
 // later definition replaces an earlier one for the calls after it. A line that
-// mixes a definition with a command outside it stays outside, and so does a
-// definition that never closes: both read too much rather than too little.
-// text holds no heredoc body and no line that ends inside a quote.
+// mixes a definition with a command outside it is split per command, unless it
+// continues onto the next line; then it stays outside, as does a definition that
+// never closes: both read too much rather than too little. text holds no
+// heredoc body and no line that ends inside a quote.
 func functionBodies(text string) []functionPart {
 	var current strings.Builder
 	parts := []functionPart{{}}
@@ -335,8 +336,13 @@ func functionBodies(text string) []functionPart {
 	}
 	name, depth, definedAt, opened := "", 0, 0, false
 	for line := range strings.Lines(text) {
-		words, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
-		mixed, closed := false, ""
+		words, _, _, _, continues := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		mixed, closed, defining := false, "", name != ""
+		type piece struct { // a command quoted again, and the definition it is in
+			owner, text string
+			closes      bool
+		}
+		var split []piece
 		for _, each := range splitCommands(words) {
 			if len(each.args) == 0 {
 				continue
@@ -345,12 +351,35 @@ func functionBodies(text string) []functionPart {
 				name, definedAt, opened = definedName(each.args), depth, false
 				mixed = mixed || name == ""
 			}
+			defining = defining || name != ""
+			var text strings.Builder
+			for _, arg := range each.args {
+				if arg.quoted {
+					arg.text = "'" + strings.ReplaceAll(arg.text, "'", `'\''`) + "'"
+				}
+				text.WriteString(arg.text + " ")
+			}
+			owner := name
 			depth += commandBrace(each)
-			if name != "" && definitionEnds(depth, definedAt, &opened) {
+			closes := name != "" && definitionEnds(depth, definedAt, &opened)
+			if closes {
 				closed, name = name, ""
 			}
+			split = append(split, piece{owner, text.String() + "\n", closes})
 		}
 		switch {
+		case mixed && defining && !continues:
+			for _, each := range split {
+				if each.owner == "" {
+					emit("", each.text)
+					continue
+				}
+				current.WriteString(each.text)
+				if each.closes {
+					emit(each.owner, current.String())
+					current.Reset()
+				}
+			}
 		case mixed:
 			emit("", current.String()+line)
 			current.Reset()

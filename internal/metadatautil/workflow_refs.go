@@ -430,6 +430,9 @@ func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram,
 
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
+// shellRedirect matches a redirection word; a bare operator takes the next word.
+var shellRedirect = regexp.MustCompile(`^([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(&>|[<>])[<>&|]*`)
+
 var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}
 
 // commandArgs returns the arguments of every command named name in script.
@@ -449,32 +452,38 @@ func commandArgs(script, name string) [][]string {
 // compound-command bodies because they are not proved to run, and this lint
 // must read them too. A function body is read only when a command or a trap
 // action calls the function, with the last definition before the call, so a
-// function nobody calls runs nothing.
+// function nobody calls runs nothing. Trap actions run at the end, when bash
+// resolves their calls.
 func shellCommands(script string) [][]string {
 	var found [][]string
+	var traps []string
 	bodies := map[string]string{}
 	for _, part := range functionBodies(flattenSubstitutions(withoutHeredocBodies(script))) {
 		if part.name != "" {
 			bodies[part.name] = part.text
 			continue
 		}
-		found = append(found, expandCalls(flatCommands(part.text), bodies, nil)...)
+		found = append(found, expandCalls(flatCommands(part.text), bodies, nil, &traps)...)
+	}
+	for i := 0; i < len(traps); i++ {
+		found = append(found, expandCalls(flatCommands(traps[i]), bodies, nil, &traps)...)
 	}
 	return found
 }
 
 // expandCalls puts each called function's body right after every command that
 // calls it, so a cd in the body moves the commands after the call. calling
-// holds the functions being expanded, so a recursive call is read once.
-func expandCalls(commands [][]string, bodies map[string]string, calling []string) [][]string {
+// holds the functions being expanded, so a recursive call is read once. Each
+// new trap action goes to traps.
+func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps *[]string) [][]string {
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
-		if words[0] == "trap" && len(words) > 1 {
-			found = append(found, expandCalls(flatCommands(words[1]), bodies, calling)...)
+		if words[0] == "trap" && len(words) > 1 && !slices.Contains(*traps, words[1]) {
+			*traps = append(*traps, words[1])
 		}
 		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
-			found = append(found, expandCalls(flatCommands(body), bodies, append(calling, words[0]))...)
+			found = append(found, expandCalls(flatCommands(body), bodies, append(calling, words[0]), traps)...)
 		}
 	}
 	return found
@@ -497,7 +506,14 @@ func flatCommands(text string) [][]string {
 	endCommand := func() {
 		endWord()
 		i := 0
-		for i < len(words) && (slices.Contains(shellKeywords, words[i]) || shellAssignment.MatchString(words[i])) {
+		for i < len(words) {
+			redirect := shellRedirect.FindString(words[i])
+			if redirect == "" && !slices.Contains(shellKeywords, words[i]) && !shellAssignment.MatchString(words[i]) {
+				break
+			}
+			if redirect != "" && redirect == words[i] {
+				i++
+			}
 			i++
 		}
 		if i < len(words) {
@@ -528,6 +544,8 @@ func flatCommands(text string) [][]string {
 			}
 		case c == ' ' || c == '\t':
 			endWord()
+		case (c == '&' || c == '|') && strings.HasSuffix(word.String(), ">"), c == '&' && strings.HasSuffix(word.String(), "<"):
+			word.WriteByte(c) // a redirection such as >&2 or >|f
 		case c == '\n' || c == ';' || c == '&' || c == '|' || c == '(' || c == ')':
 			endCommand()
 		default:
