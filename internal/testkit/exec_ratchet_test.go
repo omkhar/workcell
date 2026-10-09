@@ -420,7 +420,11 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 					case *ast.SelectorExpr:
 						callee = fn.Sel.Name
 					}
-					if names := params[callee]; len(names) > 0 {
+					// Every same-named declaration is a candidate, so each one's parameter at the position is marked.
+					for _, names := range params[callee] {
+						if len(names) == 0 {
+							continue
+						}
 						for i, arg := range n.Args {
 							if !isSetenv(arg) {
 								continue
@@ -442,9 +446,9 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	}
 }
 
-// functionParams lists each declared function's parameter names by name, and those of a func literal saved under a name.
-func functionParams(files ...*ast.File) map[string][]string {
-	params := map[string][]string{}
+// functionParams lists the parameter names of each declaration under its name, one list per function, method or saved func literal, so same-named declarations keep their own positions.
+func functionParams(files ...*ast.File) map[string][][]string {
+	params := map[string][][]string{}
 	names := func(fn *ast.FuncType) []string {
 		var out []string
 		for _, field := range fn.Params.List {
@@ -461,7 +465,7 @@ func functionParams(files ...*ast.File) map[string][]string {
 				continue
 			}
 			if id, ok := unparen(targets[i]).(*ast.Ident); ok {
-				params[id.Name] = append(params[id.Name], names(lit.Type)...)
+				params[id.Name] = append(params[id.Name], names(lit.Type))
 			}
 		}
 	}
@@ -469,7 +473,7 @@ func functionParams(files ...*ast.File) map[string][]string {
 		ast.Inspect(file, func(c ast.Node) bool {
 			switch n := c.(type) {
 			case *ast.FuncDecl:
-				params[n.Name.Name] = append(params[n.Name.Name], names(n.Type)...)
+				params[n.Name.Name] = append(params[n.Name.Name], names(n.Type))
 			case *ast.AssignStmt:
 				record(n.Lhs, n.Rhs)
 			case *ast.ValueSpec:
@@ -769,6 +773,16 @@ func b() { h{}.apply(os.Setenv, "/tmp/fixtures"); exec.Command("git") }
 `
 	if got := rawExecSites(t, "forwarded_literal.go", forwardedToLiteral); got != 2 {
 		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv passed to a saved func literal and to a method)", got)
+	}
+	const sameNamedCallees = `package x
+import ("os/exec"; "testing")
+type h struct{}
+func rewrite(ignore func(string, string), dir string) {}
+func (h) rewrite(set func(string, string), dir string) { set("PATH", dir) }
+func a(t *testing.T) { h{}.rewrite(t.Setenv, "/tmp/fixtures"); exec.Command("git") }
+`
+	if got := rawExecSites(t, "same_named.go", sameNamedCallees); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a method whose package-level namesake has other parameter names)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
