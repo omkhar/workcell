@@ -100,12 +100,9 @@ func isCommandPrefixWord(text string) bool {
 	return false
 }
 
-// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs as
-// a script, and whether it runs one. The program is the -c body, or, with -s or
-// with no script file operand, stdin: the here-string or heredoc text the
-// command reads, or $_ for a stream the reader cannot see, as in cat x | bash.
-// A program the reader cannot spell is returned as is, so a lint can fail
-// closed on it.
+// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs
+// as a script, and whether it runs one: the -c body, or stdin with -s or no
+// script operand, which is $_ for a stream the reader cannot see.
 func shellProgram(words []string, stdin string) (string, bool) {
 	if len(words) == 0 {
 		return "", false
@@ -479,12 +476,9 @@ func spelledProgram(program string) (string, bool) {
 	return program, !strings.ContainsAny(program, "$`")
 }
 
-// flattenSubstitutions moves the text of each $( ... ) and ` ... ` in a run body
-// onto its own lines, before the command that holds it, and leaves $_ in its
-// place. The commands inside are then read as top-level commands, and a
-// command word that held one keeps an expansion, so a reader cannot take it
-// for a command it can spell. It tracks quotes, so a ) or $( inside a quoted jq
-// program is left alone.
+// flattenSubstitutions moves each $( ... ) and ` ... ` onto its own lines
+// before the command that holds it and leaves $_ in its place, so its commands
+// are read at top level; a quoted ) or $( is left alone.
 func flattenSubstitutions(script string) string {
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
