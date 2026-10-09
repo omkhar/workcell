@@ -283,7 +283,10 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				continue
 			}
 			toolSubst := len(shellToolSubsts(command)) > 0
-			hasTool := shellToolCommand.MatchString(command) || toolSubst
+			// The command position is read with every expansion removed, so
+			// MODE=$(printf x) git fetch is git at command position, while the
+			// tools inside substitutions are read by shellToolSubsts.
+			hasTool := shellToolCommand.MatchString(shellOutsideSubsts(command)) || toolSubst
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
 				later := slices.Clone(commands[at+1 : len(commands)-1])
@@ -321,10 +324,18 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// written in, so git fetch || printf x 2>/dev/null hides no git
 			// status, and each operand's own status test counts, so the && after
 			// git fetch does not cover git gc 2>/dev/null.
+			// A redirect inside a substitution belongs to the command there,
+			// so $(git x 2>/dev/null) hides git's status while foo "$(git x)"
+			// 2>/dev/null hides foo's; each is read in its own text.
 			offset := 0
 			for _, operand := range shellListOperands(command) {
-				if shellToolCommand.MatchString(operand) {
-					hits[ruleDevNull] += count(!testedFrom(command[offset:]), shellDevNull, operand)
+				untested := !testedFrom(command[offset:])
+				if outside := shellOutsideSubsts(operand); shellToolCommand.MatchString(outside) {
+					hits[ruleDevNull] += count(untested, shellDevNull, outside)
+				}
+				for _, start := range shellToolSubsts(operand) {
+					body, _ := shellSubstCall(operand, start)
+					hits[ruleDevNull] += count(untested, shellDevNull, body)
 				}
 				offset += len(operand)
 			}
@@ -559,9 +570,10 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	return commands, raws
 }
 
-// shellListOperands splits a command at each && || | or |& outside a
+// shellListOperands splits a command at each && || | |& or lone & outside a
 // substitution, with the operator left on the operand it ends, so a
-// redirection stays with the operand that carries it.
+// redirection stays with the operand that carries it; the & of &> >& or <&
+// is a redirection, not an operator.
 func shellListOperands(command string) []string {
 	var operands []string
 	depth, start := 0, 0
@@ -581,7 +593,9 @@ func shellListOperands(command string) []string {
 			if index+1 < len(command) && (command[index+1] == '&' || command[index+1] == '|') {
 				width = 2 // && || or |&
 			}
-			if command[index] == '|' || width == 2 && command[index+1] == '&' {
+			redirect := width == 1 && command[index] == '&' &&
+				(index+1 < len(command) && command[index+1] == '>' || index > 0 && strings.ContainsRune("<>|", rune(command[index-1])))
+			if !redirect && (command[index] == '|' || command[index] == '&') {
 				operands = append(operands, command[start:index+width])
 				start = index + width
 			}
