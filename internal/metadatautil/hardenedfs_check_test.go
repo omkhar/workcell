@@ -46,6 +46,11 @@ func TestHardenedFSFindings(t *testing.T) {
 			want: 22,
 		},
 		{
+			name:   "a parameter that shadows os is not the package",
+			source: header + "func f(os interface{ Stat(string) }) { os.Stat(path) }\nfunc g() { os.Stat(path) }\n",
+			want:   1,
+		},
+		{
 			name:   "an aliased import is still the os package",
 			source: "package host\n\nimport stdos \"os\"\n\nfunc f() { stdos.Open(path) }\n",
 			want:   1,
@@ -317,6 +322,47 @@ func TestCheckHardenedFSRejectsASymlinkedPackageRoot(t *testing.T) {
 	}
 	if err := metadatautil.CheckHardenedFS(root); err == nil {
 		t.Fatal("expected a symlinked trust-boundary package root to fail")
+	}
+}
+
+// A symlinked ancestor of a package root must fail. A pathname open of
+// <repo>/internal/host follows <repo>/internal, so the scan would read a
+// package tree outside the repository and report it against that tree's own
+// baseline.
+func TestCheckHardenedFSRejectsASymlinkedPackageAncestor(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeHardenedFSPackageFixtures(t, outside, "internal/host")
+	writeHardenedFSFixture(t, filepath.Join(outside, "internal", "host", "state.go"),
+		"package host\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
+	// The row matches the outside tree, so only the refused ancestor can fail.
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"),
+		"internal/host/state.go\tos.ReadFile\t1\n")
+	if err := os.Symlink(filepath.Join(outside, "internal"), filepath.Join(root, "internal")); err != nil {
+		t.Fatalf("create the symlinked ancestor: %v", err)
+	}
+	err := metadatautil.CheckHardenedFS(root)
+	if err == nil || !strings.Contains(err.Error(), "open the scan root") {
+		t.Fatalf("expected the symlinked ancestor to be refused, found %v", err)
+	}
+}
+
+// A symlinked directory below a package root must fail. The walk cannot
+// descend it without following the link, and skipping it would hide every
+// source behind it, though Go still builds the package through the link.
+func TestCheckHardenedFSRejectsASymlinkedPackageDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeHardenedFSFixture(t, filepath.Join(root, "policy", "hardened-fs-baseline.tsv"), "")
+	writeHardenedFSPackageFixtures(t, root)
+	writeHardenedFSFixture(t, filepath.Join(root, "outside", "state.go"),
+		"package outside\n\nimport \"os\"\n\nfunc read() { os.ReadFile(path) }\n")
+	if err := os.Symlink(filepath.Join(root, "outside"), filepath.Join(root, "internal", "host", "hidden")); err != nil {
+		t.Fatalf("create the symlinked package directory: %v", err)
+	}
+	if err := metadatautil.CheckHardenedFS(root); err == nil {
+		t.Fatal("expected a symlinked directory below a trust-boundary package to fail")
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -44,57 +43,7 @@ func CheckHardenedFS(rootDir string) error {
 	counts := map[hardenedFSKey]int{}
 	details := map[hardenedFSKey][]string{}
 	for _, pkg := range hardenedFSPackages {
-		// A symlinked package root is not walked: filepath.WalkDir reports the
-		// link entry and returns success, so every source below it would
-		// escape the scan while the check still reported a clean result.
-		info, statErr := os.Lstat(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this proves the package root is a real directory before the walk opens it
-		if statErr != nil || !info.IsDir() {
-			return fmt.Errorf("trust-boundary package %s is not a directory; the hardened filesystem rule cannot read it", pkg)
-		}
-		// Walk and read through one directory handle. A pathname walk resolves
-		// the package name again for every entry, so a rename between the
-		// check and the read hands the scan a different tree than the one it
-		// verified. os.Root binds every open to this handle and refuses a
-		// symlink inside it.
-		root, err := os.OpenRoot(filepath.Join(rootDir, pkg)) // hardened-fs-exempt: this opens the handle that every later read is relative to
-		if err != nil {
-			return fmt.Errorf("open the trust-boundary package %s: %w", pkg, err)
-		}
-		// os.OpenRoot resolves its own argument, so the handle can name a
-		// directory other than the one Lstat proved. Compare the two before
-		// anything is read through it.
-		opened, err := root.Stat(".")
-		if err != nil || !os.SameFile(info, opened) {
-			_ = root.Close()
-			return fmt.Errorf("the trust-boundary package %s changed between the check and the open", pkg)
-		}
-		scanned := 0
-		err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			base := entry.Name()
-			if entry.IsDir() {
-				if base == "testdata" {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
-				return nil
-			}
-			// The walk reports a symlink as a symlink, and os.Root follows one
-			// whose target stays inside the root. Only a regular file is a
-			// source this check can bind to the entry it inspected.
-			if !entry.Type().IsRegular() {
-				return fmt.Errorf("%s/%s is not a regular file; the hardened filesystem rule reads only regular sources", pkg, name)
-			}
-			rel := pkg + "/" + name
-			content, readErr := hardenedFSReadSource(root, name, rel)
-			if readErr != nil {
-				return readErr
-			}
-			scanned++
+		err := scanHardenedGoSources(rootDir, pkg, func(rel string, content []byte) error {
 			fileFindings, scanErr := HardenedFSFindings(string(content))
 			if scanErr != nil {
 				return fmt.Errorf("%s: %w", rel, scanErr)
@@ -106,15 +55,8 @@ func CheckHardenedFS(rootDir string) error {
 			}
 			return nil
 		})
-		closeErr := root.Close()
 		if err != nil {
-			return fmt.Errorf("scan %s for raw os pathname references: %w", pkg, err)
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if scanned == 0 {
-			return fmt.Errorf("no Go source under the trust-boundary package %s; refusing a vacuous pass", pkg)
+			return err
 		}
 	}
 	baseline, err := loadHardenedFSBaseline(filepath.Join(rootDir, hardenedFSBaselinePath))
@@ -156,6 +98,43 @@ func CheckHardenedFS(rootDir string) error {
 	}
 	sort.Strings(failures)
 	return fmt.Errorf("hardened filesystem check failed:\n  %s", strings.Join(failures, "\n  "))
+}
+
+// scanHardenedGoSources hands visit each non-test Go source under pkg, named
+// relative to the repository. A testdata directory is skipped.
+func scanHardenedGoSources(rootDir, pkg string, visit func(rel string, content []byte) error) error {
+	// Reach the package root through descriptors opened one component at a
+	// time from "/" with O_NOFOLLOW. A pathname open follows a symlinked
+	// ancestor such as <repo>/internal, so the scan would read a tree outside
+	// the repository. A symlinked package root is refused the same way: a
+	// walk would report the link entry and pass while every source escaped.
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(filepath.Join(rootDir, filepath.FromSlash(pkg)))
+	if err != nil {
+		return fmt.Errorf("open the scan root %s: %w", pkg, err)
+	}
+	top, err := rootio.OpenDirectoryAtNoFollow(parent, filepath.Base(cleaned))
+	_ = parent.Close()
+	if err != nil {
+		return fmt.Errorf("open the scan root %s: %w", pkg, err)
+	}
+	// The walk lists and reads through descriptors opened from this one, so
+	// no name is resolved again by path.
+	scanned := 0
+	err = walkHardenedGoSources(top, pkg, func(rel string, content []byte) error {
+		scanned++
+		return visit(rel, content)
+	})
+	closeErr := top.Close()
+	if err != nil {
+		return fmt.Errorf("scan %s for raw pathname references: %w", pkg, err)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if scanned == 0 {
+		return fmt.Errorf("no Go source under the scan root %s; refusing a vacuous pass", pkg)
+	}
+	return nil
 }
 
 const (
@@ -246,7 +225,7 @@ type HardenedFSFinding struct {
 // open(path) resolves the path by name exactly as the direct call does.
 func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, "source.go", source, parser.ParseComments|parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fileSet, "source.go", source, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("parse the Go source: %w", err)
 	}
@@ -264,7 +243,7 @@ func HardenedFSFindings(source string) ([]HardenedFSFinding, error) {
 		if !ok {
 			return true
 		}
-		qualifier, ok := ast.Unparen(selector.X).(*ast.Ident)
+		qualifier, ok := hardenedImportQualifier(selector)
 		if !ok || qualifier.Name != name || !hardenedFSSymbols[selector.Sel.Name] {
 			return true
 		}
@@ -318,6 +297,20 @@ func applyHardenedFSExemptions(findings []HardenedFSFinding, exempt map[int][]in
 		}
 	}
 	return kept
+}
+
+// hardenedImportQualifier returns the identifier that qualifies selector when
+// it can name an imported package. The parser resolves each identifier to the
+// declaration in this file that it names, so a parameter or local value that
+// shadows an import name resolves to that declaration and is not the package.
+// An import name is never resolved: another file cannot redeclare it either,
+// because a package-level name that matches an import fails to compile.
+//
+// ponytail: this reads the parser's legacy object resolution, which go/ast
+// marks deprecated. Move to go/types if a Go release removes it.
+func hardenedImportQualifier(selector *ast.SelectorExpr) (*ast.Ident, bool) {
+	qualifier, ok := ast.Unparen(selector.X).(*ast.Ident)
+	return qualifier, ok && qualifier.Obj == nil
 }
 
 // hardenedFSOSImportName returns the name that qualifies a call of the os
@@ -376,23 +369,51 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int
 	return lines
 }
 
-// hardenedFSReadSource reads one source through the package's directory
-// handle. os.Root refuses a symlink inside the root, so the bytes belong to
-// the entry the walk reported.
-func hardenedFSReadSource(root *os.Root, name, label string) ([]byte, error) {
-	file, err := root.Open(name)
+// walkHardenedGoSources hands visit each non-test Go source below dir, in
+// name order, skipping testdata. Each child directory is opened relative to
+// dir without following a symlink, and each source is read relative to dir
+// with rootio's no-follow leaf read, so no name is resolved twice. A symlink
+// entry fails the walk whatever its name: skipping one would hide a symlinked
+// package directory, whose sources Go still builds through the link.
+func walkHardenedGoSources(dir *os.File, rel string, visit func(rel string, content []byte) error) error {
+	entries, err := dir.ReadDir(-1)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer file.Close() //nolint:errcheck // read-only handle
-	content, err := io.ReadAll(io.LimitReader(file, hardenedFSMaxSourceBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", label, err)
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		base := entry.Name()
+		name := rel + "/" + base
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; the hardened filesystem rule cannot scan behind it", name)
+		}
+		if entry.IsDir() {
+			if base == "testdata" {
+				continue
+			}
+			child, openErr := rootio.OpenDirectoryAtNoFollow(dir, base)
+			if openErr != nil {
+				return fmt.Errorf("open %s: %w", name, openErr)
+			}
+			walkErr := walkHardenedGoSources(child, name, visit)
+			_ = child.Close()
+			if walkErr != nil {
+				return walkErr
+			}
+			continue
+		}
+		if !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		content, readErr := rootio.ReadFileAtNoFollow(dir, base, name, hardenedFSMaxSourceBytes)
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", name, readErr)
+		}
+		if err := visit(name, content); err != nil {
+			return err
+		}
 	}
-	if int64(len(content)) > hardenedFSMaxSourceBytes {
-		return nil, fmt.Errorf("%s is larger than %d bytes", label, hardenedFSMaxSourceBytes)
-	}
-	return content, nil
+	return nil
 }
 
 // HardenedFSPackages returns the trust-boundary package list.

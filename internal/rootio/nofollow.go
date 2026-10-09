@@ -42,13 +42,9 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	for _, component := range components {
-		nextFD, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		_ = unix.Close(fd)
-		if openErr != nil {
-			return nil, "", openErr
-		}
-		fd = nextFD
+	fd, err = openDirectoryChain(fd, components)
+	if err != nil {
+		return nil, "", err
 	}
 	parentFile := os.NewFile(uintptr(fd), parent)
 	if parentFile == nil {
@@ -57,6 +53,159 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 	}
 	return parentFile, cleaned, nil
 }
+
+// OpenDirectoryAtNoFollow opens the directory at relative under parent. Each
+// component is opened relative to the previous descriptor with O_NOFOLLOW, so
+// a symlink anywhere on the path is refused even when its target stays under
+// parent. The caller closes the directory.
+func OpenDirectoryAtNoFollow(parent *os.File, relative string) (*os.File, error) {
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return nil, err
+	}
+	// F_DUPFD_CLOEXEC rather than dup, for the reason MkdirAllSyncedAt gives.
+	fd, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	fd, err = openDirectoryChain(fd, components)
+	if err != nil {
+		return nil, err
+	}
+	name := filepath.Join(parent.Name(), filepath.Join(components...))
+	file := os.NewFile(uintptr(fd), name)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("open directory: %s", name)
+	}
+	return file, nil
+}
+
+// openDirectoryChain opens each component below fd as a directory without
+// following a symlink. It always consumes fd: it returns the last descriptor,
+// or closes every descriptor it holds and returns the error.
+func openDirectoryChain(fd int, components []string) (int, error) {
+	for _, component := range components {
+		nextFD, err := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, err
+		}
+		fd = nextFD
+	}
+	return fd, nil
+}
+
+// RemoveAllAtNoFollow removes name under parent and every entry below it,
+// like os.RemoveAll. Each directory opens relative to its parent's descriptor
+// with O_NOFOLLOW, so a symlink is unlinked as a leaf and its target is kept.
+// A missing name is not an error.
+//
+// Each entry is renamed to a random staged name first, and the walk and the
+// unlink use that name, so a directory swapped in at the original name is
+// kept. Before each unlink, the entry at the staged name must match the
+// directory descriptor that was traversed, or the regular file descriptor
+// that was opened, by device, inode and mode; a mismatch is an error, and
+// both entries stay.
+//
+// Residual risk, accepted: the check and the unlink address the entry by name
+// under the parent descriptor, and POSIX has no unlink by inode, so a process
+// that can write that directory could swap the entry between the two calls.
+// That process is the same user or root, which already controls the tree; the
+// check exists to keep this call from removing an entry it did not traverse,
+// not to defend against a hostile same-uid process, which is outside the
+// threat model.
+func RemoveAllAtNoFollow(parent *os.File, name string) error {
+	if err := validateLeafName(name); err != nil {
+		return err
+	}
+	return removeAllAt(int(parent.Fd()), name)
+}
+
+func removeAllAt(parentFD int, name string) error {
+	suffix, err := randomSuffix()
+	if err != nil {
+		return err
+	}
+	staged := ".workcell-rm-" + suffix
+	// renameNoReplaceAt refuses a staged name that already exists.
+	if err := renameNoReplaceAt(parentFD, name, staged); errors.Is(err, unix.ENOENT) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+		// A file or a symlink: remove the entry itself, never its target.
+		return unlinkLeafAt(parentFD, staged)
+	}
+	if err != nil {
+		return err
+	}
+	dir := os.NewFile(uintptr(fd), staged)
+	names, err := dir.Readdirnames(-1)
+	for _, child := range names {
+		if err == nil {
+			err = removeAllAt(fd, child)
+		}
+	}
+	var traversed unix.Stat_t
+	if err == nil {
+		err = unix.Fstat(fd, &traversed)
+	}
+	if closeErr := dir.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	removeAllHook()
+	if err := requireStagedEntry(parentFD, staged, &traversed); err != nil {
+		return err
+	}
+	return unix.Unlinkat(parentFD, staged, unix.AT_REMOVEDIR)
+}
+
+// unlinkLeafAt removes one staged non-directory. A regular file is opened
+// without following a symlink and bound by its descriptor; other entries, and
+// a regular file this user cannot open, are bound by the Fstatat taken here.
+func unlinkLeafAt(parentFD int, staged string) error {
+	var held unix.Stat_t
+	if err := unix.Fstatat(parentFD, staged, &held, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if held.Mode&unix.S_IFMT == unix.S_IFREG {
+		fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
+		if err == nil {
+			err = unix.Fstat(fd, &held)
+			_ = unix.Close(fd)
+		} else if errors.Is(err, unix.EACCES) {
+			err = nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if err := requireStagedEntry(parentFD, staged, &held); err != nil {
+		return err
+	}
+	return unix.Unlinkat(parentFD, staged, 0)
+}
+
+// requireStagedEntry fails when the entry at staged is not the held inode.
+func requireStagedEntry(parentFD int, staged string, held *unix.Stat_t) error {
+	var current unix.Stat_t
+	if err := unix.Fstatat(parentFD, staged, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if current.Dev != held.Dev || current.Ino != held.Ino || current.Mode != held.Mode {
+		return fmt.Errorf("refusing to remove %s: the staged entry was swapped after it was traversed", staged)
+	}
+	return nil
+}
+
+// removeAllHook lets a test rename entries before a directory is removed.
+var removeAllHook = func() {}
 
 // ReadFileNoFollow reads one regular file through a descriptor-relative,
 // no-follow traversal. It accepts files up to limit bytes.
