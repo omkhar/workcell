@@ -1019,7 +1019,7 @@ func wrappedCommand(words []string) []string {
 		}
 		i, shell := 1, false
 		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || (name == "env" || name == "sudo") && shellAssignment.MatchString(words[i])); i++ {
-			if name == "command" && strings.ContainsAny(words[i], "vV") {
+			if name == "command" && strings.ContainsAny(words[i], "vV") || name == "sudo" && sudoRunsNothing(words[i]) {
 				return words
 			}
 			shell = shell || name == "sudo" && words[i][0] == '-' && (!strings.HasPrefix(words[i], "--") && strings.ContainsAny(words[i], "si") ||
@@ -1238,6 +1238,13 @@ func commandWords(text string) [][]string {
 	}
 	end()
 	return found
+}
+
+// sudoRunsNothing reports a sudo mode that edits, lists or validates and runs
+// no command, as sudo -e FILE or sudo -l do.
+func sudoRunsNothing(option string) bool {
+	return !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "elvVkK") ||
+		slices.Contains([]string{"--edit", "--list", "--validate", "--version", "--help", "--remove-timestamp", "--reset-timestamp"}, option)
 }
 
 // findExecBodies returns each command that find runs for a match: the words

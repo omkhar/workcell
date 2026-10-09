@@ -139,7 +139,13 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"no-execute bash body is clean", runStep("bash -n -c 'gh api repos/o/r/issues'\nbash -nc 'gh api repos/o/r/issues'"), "", ""},
 		{"case pattern is not a command", runStep("case $x in\n  a|*.txt) :;;\n  *)\n    gh api repos/o/r/issues\n    ;;\nesac"), "", "gh-api-unbounded"},
 		{"Windows executable name is gh", runStep("gh.exe api repos/o/r/issues"), "", "gh-api-unbounded"},
-		{"Windows path to gh is gh", runStep("\"C:\\tools\\GH.EXE\" api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"Windows path to gh is gh", runStep("\"C:\\\\tools\\\\GH.EXE\" api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"configured non-bash shell is unresolved", "      - name: s\n        shell: pwsh\n        run: Invoke-Expression 'gh api repos/o/r/issues'\n", "", "command-unresolved"},
+		{"configured bash shell is read", "      - name: s\n        shell: bash --noprofile --norc -euo pipefail {0}\n        run: gh api repos/o/r/issues\n", "", "gh-api-unbounded"},
+		{"sudo edit and query modes run nothing", runStep("sudo -e gh api repos/o/r/issues\nsudo -l gh api repos/o/r/issues\nsudo --list gh api repos/o/r/issues\nsudo -nv gh api repos/o/r/issues"), "", ""},
+		{"coproc runs its command", runStep("coproc gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"coproc name before a simple command is its first word", runStep("coproc worker gh api repos/o/r/issues"), "", ""},
 		{"upper-case names are read on Windows", runStep("GH api repos/o/r/issues\nENV Gh api repos/o/r/issues\nBASH -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"source of a file is unresolved", runStep("source ./lib.sh\n. ./lib.sh\nsource /dev/stdin <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "command-unresolved"},
 		{"unmodeled wrapper is unresolved", runStep("chrt 10 gh api repos/o/r/issues\ntaskset 1 gh api repos/o/r/issues\nsetsid gh api x\nstdbuf -oL gh api x\nxargs gh api\nflock /tmp/x.lock gh api x\nionice -c 3 gh api x"), "", "command-unresolved"},
@@ -148,7 +154,6 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"builtin before eval runs its words", runStep("builtin eval 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"find -exec runs gh", runStep("find . -exec gh api repos/o/r/issues \\;\nfind . -name x -execdir sh -c 'gh api repos/o/r/issues' \\;\nfind . -ok gh api repos/o/r/issues {} +"), "", "gh-api-unbounded"},
 		{"find without -exec runs nothing", runStep("find . -name 'gh api' -print"), "", ""},
-		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {
@@ -169,6 +174,27 @@ func TestCheckWorkflowRefs(t *testing.T) {
 
 // TestEveryShellCommandEndsOnCommandlessEnvSplit guards the env -S rewrite: a
 // split string that names no command must end the wrapper loop.
+func TestCheckWorkflowRefsReadsDefaultShells(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		"name: w\ndefaults:\n  run:\n    shell: pwsh\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: gh api repos/o/r/issues\n",
+		"name: w\njobs:\n  j:\n    runs-on: windows-latest\n    defaults:\n      run:\n        shell: cmd\n    steps:\n      - run: gh api repos/o/r/issues\n",
+	} {
+		root := t.TempDir()
+		for name, text := range map[string]string{".github/workflows/w.yml": body, "policy/workflow-refs-baseline.tsv": ""} {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "command-unresolved") {
+			t.Fatalf("CheckWorkflowRefs() error = %v, want command-unresolved for a default shell this lint does not read", err)
+		}
+	}
+}
+
 func TestEveryShellCommandEndsOnCommandlessEnvSplit(t *testing.T) {
 	for _, script := range []string{"env -S 'env'", "env -S ''", "env -S 'env -S env'"} {
 		done := make(chan [][]string, 1)

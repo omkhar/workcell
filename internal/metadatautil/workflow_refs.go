@@ -23,20 +23,32 @@ const (
 
 type workflowRefHit struct{ kind, file, job, step string }
 
-// unspelled reports whether bash may rewrite word before it runs it. An
-// expansion, a brace expansion, as {gh,} or {a..b}, or a pathname pattern,
-// as a?i or [ab]pi, does. The reader has removed quotes, so a quoted brace
-// or pattern also counts, which fails closed. A lone [ is the test command.
+// unspelled reports whether bash may rewrite word before it runs it: an
+// expansion, a brace expansion as {gh,}, or a pathname pattern as a?i; a lone
+// [ is the test command.
 func unspelled(word string) bool {
 	return strings.ContainsAny(word, "$`*?") || braceExpansion.MatchString(word) ||
 		strings.Contains(word, "[") && strings.Contains(word, "]")
 }
 
+// stepShell returns the shell a step's run body is written for: its own
+// shell key, then the job's defaults, then the workflow's.
+func stepShell(document workflowDocument, job workflowJob, step workflowStep) string {
+	if step.Shell != "" {
+		return step.Shell
+	}
+	var defaults struct{ Run struct{ Shell string } }
+	if job.Defaults.Kind != 0 {
+		_ = job.Defaults.Decode(&defaults)
+	}
+	if defaults.Run.Shell != "" {
+		return defaults.Run.Shell
+	}
+	return document.Def.Run["shell"]
+}
+
 // unmodeledWrappers run another program after options this lint does not
-// parse, or run a program in a language it does not read, as pwsh and cmd
-// do, so a command they run is not spelled; commandWrappers names the
-// wrappers it does parse. A source of a file the lint does not see is the
-// same.
+// parse, or a program in a language it does not read, as pwsh does.
 var unmodeledWrappers = map[string]bool{
 	"pwsh": true, "powershell": true, "cmd": true, "setsid": true, "stdbuf": true, "xargs": true, "flock": true, "ionice": true,
 	"chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true,
@@ -142,6 +154,10 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 			for index, step := range definition.Steps {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
+				}
+				if shell := commandName(strings.Fields(stepShell(documents[file], definition, step) + " bash")[0]); step.Run != "" && shell != "bash" && shell != "sh" {
+					add("command-unresolved") // a body in a language this lint does not read, as pwsh
+					continue
 				}
 				for _, words := range EveryShellCommand(step.Run) {
 					// A lint of what may run fails closed on a command it cannot spell,
