@@ -346,8 +346,7 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 	return shellFailOpenExits.MatchString(handler[:strings.IndexAny(handler+";", ";&|)}")])
 }
 
-// shellFailOpenNesting returns the change in compound-command nesting that
-// a command's first word makes, after any then, do, else, { or !.
+// shellFailOpenNesting returns the nesting change a command's first word makes.
 func shellFailOpenNesting(command string) int {
 	for _, each := range strings.Fields(command) {
 		if !slices.Contains([]string{"then", "do", "else", "{", "!"}, each) {
@@ -386,8 +385,7 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 	return false
 }
 
-// shellFailOpenFirstCall returns where the first tool call or process
-// substitution in a command starts, or the command's length when it has none.
+// shellFailOpenFirstCall returns where a command's first tool call starts, or its length.
 func shellFailOpenFirstCall(command string) int {
 	first := len(command)
 	for _, re := range []*regexp.Regexp{shellToolCommand, shellProcessSubst} {
@@ -645,8 +643,7 @@ func shellCodeOnly(line string) string {
 			top.parens = max(top.parens-1, 0)
 		}
 	}
-	// A word whose quoted or escaped fragments spell a tool, true, : or
-	// /dev/null, as g'it' or t'rue', is that word.
+	// A word whose quoted fragments spell a tool, true, : or /dev/null is that word.
 	for _, loc := range shellOutWord.FindAllStringIndex(string(out), -1) {
 		raw := line[loc[0]:loc[1]]
 		words, _, _, _, _, _ := shellWords(raw, nil)
