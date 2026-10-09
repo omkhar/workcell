@@ -132,13 +132,13 @@ var (
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
 	// shellOrTrue is a handler that always succeeds: true or the null command.
-	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:true\b|:(?:[\s;&|)]|$))`)
+	shellOrTrue = regexp.MustCompile(`\|\|\s*"?(?:true\b|:(?:["\s;&|)]|$))`)
 	// shellProcessSubst is an input redirection from a process substitution,
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null: by 2>, 2>> or &>, since append
 	// and overwrite are the same on that device, or by >/dev/null 2>&1.
-	shellDevNull = regexp.MustCompile(`(?:2|&)>>?\s*/dev/null|>>?\s*/dev/null\s+2>&1`)
+	shellDevNull = regexp.MustCompile(`(?:2|&)>>?\s*"?/dev/null|>>?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
@@ -283,10 +283,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				continue
 			}
 			toolSubst := len(shellToolSubsts(command)) > 0
-			// The command position is read with every expansion removed, so
-			// MODE=$(printf x) git fetch is git at command position, while the
-			// tools inside substitutions are read by shellToolSubsts.
-			hasTool := shellToolCommand.MatchString(shellOutsideSubsts(command)) || toolSubst
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
 				later := slices.Clone(commands[at+1 : len(commands)-1])
@@ -319,7 +315,16 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			if toolSubst && (!tested || shellSubstHidden(command)) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
-			hits[ruleOrTrue] += count(hasTool, shellOrTrue, command)
+			// A handler covers the && || or | list it ends, but not a command
+			// backgrounded by & before it, so git fetch & printf x || true
+			// hides no git status.
+			for _, segment := range shellBackgroundSegments(command) {
+				// The command position is read with every expansion removed, so
+				// MODE=$(printf x) git fetch is git at command position, while
+				// the tools inside substitutions are read by shellToolSubsts.
+				tool := shellToolCommand.MatchString(shellOutsideSubsts(segment)) || len(shellToolSubsts(segment)) > 0
+				hits[ruleOrTrue] += count(tool, shellOrTrue, segment)
+			}
 			// A redirect belongs to the operand of the && || or | list it is
 			// written in, so git fetch || printf x 2>/dev/null hides no git
 			// status, and each operand's own status test counts, so the && after
@@ -605,6 +610,20 @@ func shellListOperands(command string) []string {
 	return append(operands, command[start:])
 }
 
+// shellBackgroundSegments joins the operands of shellListOperands back into
+// the lists a lone & separates, so a handler is read with the list it ends.
+func shellBackgroundSegments(command string) []string {
+	var segments []string
+	segment := ""
+	for _, operand := range shellListOperands(command) {
+		segment += operand
+		if strings.HasSuffix(operand, "&") && !strings.HasSuffix(operand, "&&") && !strings.HasSuffix(operand, "|&") {
+			segments, segment = append(segments, segment), ""
+		}
+	}
+	return append(segments, segment)
+}
+
 // shellCodeOnly blanks quoted text, so a message that names git or `|| true`
 // is not a command. A $( inside double quotes opens code again, with quoting
 // of its own, until the ) that closes it. The caller has already cut each
@@ -615,6 +634,14 @@ func shellCodeOnly(line string) string {
 	type frame struct {
 		quote  byte
 		parens int
+		start  int // where the quoted span opened
+	}
+	// A quoted word that spells a handler or a redirection target, as 'true',
+	// ":" or "/dev/null", is still that operand, so its text is kept.
+	keep := func(start, end int) {
+		if inner := line[start+1 : end]; inner == "true" || inner == ":" || inner == "/dev/null" {
+			copy(out[start+1:end], inner)
+		}
 	}
 	stack := []frame{{}}
 	for i := 0; i < len(line); i++ {
@@ -623,6 +650,7 @@ func shellCodeOnly(line string) string {
 		case top.quote == '\'':
 			if c == '\'' {
 				top.quote = 0
+				keep(top.start, i)
 			}
 			out[i] = '"'
 		case top.quote == ansiCQuote:
@@ -644,6 +672,7 @@ func shellCodeOnly(line string) string {
 				out[i] = '"'
 			} else if c == '"' {
 				top.quote = 0
+				keep(top.start, i)
 			}
 		case c == '\\' && i+1 < len(line):
 			out[i+1] = '"' // an escaped byte is quoted text, as in \;
@@ -652,7 +681,7 @@ func shellCodeOnly(line string) string {
 			top.quote, out[i+1] = ansiCQuote, '"'
 			i++
 		case c == '\'' || c == '"':
-			top.quote, out[i] = c, '"'
+			top.quote, top.start, out[i] = c, i, '"'
 		case c == '(':
 			top.parens++
 		case c == ')' && top.parens == 0 && len(stack) > 1:
