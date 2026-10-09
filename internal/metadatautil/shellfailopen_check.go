@@ -134,6 +134,11 @@ var (
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
+	// envOperandShort and envOperandLong are env's options that take an
+	// operand, per env --help; the value of -S (--split-string) is more
+	// arguments. envProgram reads them.
+	envOperandShort = "uC"
+	envOperandLong  = []string{"--unset", "--chdir"}
 	// shellEnvSplit is env, any flags, and its -S or --split-string option
 	// with the one word that holds the string env splits.
 	shellEnvSplit = regexp.MustCompile(`(\benv(?:\s+-[^\sS-]+)*\s+)(?:-S\s*|--split-string(?:=|\s+))([^\s;&|()<>]+)`)
@@ -585,7 +590,7 @@ func envProgram(args []string) string {
 	for i := 0; i < len(args); i++ {
 		long, value, attached := strings.Cut(args[i], "=")
 		names := func(option string) bool { return len(long) > 3 && strings.HasPrefix(option, long) }
-		short := strings.IndexAny(args[i], "uCS")
+		short := strings.IndexAny(args[i], envOperandShort+"S")
 		switch {
 		case !strings.HasPrefix(args[i], "-"):
 			if !shellAssignment.MatchString(args[i]) {
@@ -596,7 +601,7 @@ func envProgram(args []string) string {
 		case strings.HasPrefix(args[i], "--") && !attached && names("--split-string") && i+1 < len(args):
 			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
 		case strings.HasPrefix(args[i], "--"):
-			if !attached && (names("--unset") || names("--chdir")) {
+			if !attached && slices.ContainsFunc(envOperandLong, names) {
 				i++
 			}
 		case short > 0 && short < len(args[i])-1 && args[i][short] == 'S':
