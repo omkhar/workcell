@@ -79,6 +79,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"an info string closes no fence", "```\n```text\n```\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
 		{"tilde-fenced path is skipped", "~~~bash\nSee `scripts/nope.sh` here.\n~~~\n", "", "", ""},
 		{"a CRLF fence closes", "```\r\nx\r\n```\r\nSee `scripts/nope.sh` here.\r\n", "", "", "missing-path"},
+		{"a multiline code span", "See `\nscripts/nope.sh\n` here.\n", "", "", "missing-path"},
+		{"a code span does not cross a blank line", "stray `\n\nscripts/nope.sh` here.\n", "", "", ""},
 		{"no main ref", "Nothing here.\n", "", "", "no origin/main or main ref"},
 		{"unreadable base baseline", "See `scripts/nope.sh` here.\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "cannot read policy/doc-claims-baseline.tsv"},
 		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "escaping-path"},
