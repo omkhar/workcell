@@ -4,7 +4,6 @@
 package metadatautil
 
 import (
-	"maps"
 	"path"
 	"regexp"
 	"slices"
@@ -337,134 +336,6 @@ func definedName(words []word) string {
 	return ""
 }
 
-// definitionEnds reports whether a definition read from nesting definedAt has
-// closed, now that the nesting is depth. A body may open on a later line, as in
-// never_called () followed by { on its own, so opened records that it has
-// opened before its end is sought.
-func definitionEnds(depth, definedAt int, opened *bool) bool {
-	if depth > definedAt {
-		*opened = true
-	}
-	return *opened && depth <= definedAt
-}
-
-// definitionHeaders splits each function definition header from the command
-// after its opening brace, as in f() { g() { gh api x, so that command, which
-// may define a nested function, is read on its own.
-func definitionHeaders(commands []command) []command {
-	var out []command
-	for _, each := range commands {
-		for definedName(each.args) != "" {
-			at := slices.IndexFunc(each.args, func(arg word) bool { return !arg.quoted && arg.text == "{" })
-			if strings.HasSuffix(each.args[0].text, "(){") {
-				at = 0
-			}
-			if at < 0 || at == len(each.args)-1 {
-				break
-			}
-			out = append(out, command{args: each.args[:at+1]})
-			each = command{args: each.args[at+1:]}
-		}
-		out = append(out, each)
-	}
-	return out
-}
-
-// functionPart is a run of lines outside every definition, with no name, or
-// one function definition.
-type functionPart struct{ name, text string }
-
-// functionBodies splits text, in order, into the lines outside every function
-// definition and the lines of each definition, for a reader that keeps
-// compound bodies and so must read a body only when the function is called. A
-// later definition replaces an earlier one for the calls after it. A line that
-// mixes a definition with a command outside it is split per command, unless it
-// continues onto the next line; then it stays outside, as does a definition that
-// never closes: both read too much rather than too little. text holds no
-// heredoc body and no line that ends inside a quote.
-func functionBodies(text string) []functionPart {
-	var current strings.Builder
-	parts := []functionPart{{}}
-	emit := func(name, text string) {
-		if last := &parts[len(parts)-1]; name == "" && last.name == "" {
-			last.text += text // keep a continued command in one part
-		} else {
-			parts = append(parts, functionPart{name, text})
-		}
-	}
-	name, depth, definedAt, opened := "", 0, 0, false
-	for line := range strings.Lines(text) {
-		words, _, _, _, continues := shellWords(strings.TrimSuffix(line, "\n"), nil)
-		mixed, closed, defining, header := false, "", name != "", false
-		type piece struct { // a command quoted again, and the definition it is in
-			owner, text string
-			closes      bool
-		}
-		var split []piece
-		for _, each := range definitionHeaders(splitCommands(words)) {
-			if len(each.args) == 0 {
-				continue
-			}
-			if name == "" {
-				name, definedAt, opened = definedName(each.args), depth, false
-				mixed = mixed || name == ""
-				if header = name != ""; header {
-					depth += commandBrace(each)
-					split = append(split, piece{owner: name}) // a body holds no header
-					continue
-				}
-			}
-			defining = defining || name != ""
-			var text strings.Builder
-			for _, arg := range each.args {
-				if arg.quoted {
-					arg.text = "'" + strings.ReplaceAll(arg.text, "'", `'\''`) + "'"
-				}
-				text.WriteString(arg.text + " ")
-			}
-			owner := name
-			depth += commandBrace(each)
-			closes := name != "" && definitionEnds(depth, definedAt, &opened)
-			if closes {
-				closed, name = name, ""
-			}
-			split = append(split, piece{owner, text.String() + "\n", closes})
-		}
-		if header && !continues {
-			line = ""
-			for _, each := range split {
-				line += each.text
-			}
-		}
-		switch {
-		case mixed && defining && !continues:
-			for _, each := range split {
-				if each.owner == "" {
-					emit("", each.text)
-					continue
-				}
-				current.WriteString(each.text)
-				if each.closes {
-					emit(each.owner, current.String())
-					current.Reset()
-				}
-			}
-		case mixed:
-			emit("", current.String()+line)
-			current.Reset()
-		case closed != "" && name == "":
-			emit(closed, current.String()+line)
-			current.Reset()
-		case name != "":
-			current.WriteString(line)
-		default:
-			emit("", line)
-		}
-	}
-	emit("", current.String())
-	return parts
-}
-
 // ansiCQuote names an open $'…' span in the one byte the reader carries between
 // physical lines. A shell quote is only ' or ", so $ is free to stand for the
 // third case: an apostrophe closes the span, and a backslash escapes the byte
@@ -709,7 +580,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 		}
 		depth += braceDepth(commands)
 		if defining {
-			if definitionEnds(depth, definedAt, &bodyOpened) {
+			// A body may open on a later line, as in never_called ()
+			// followed by { on its own, so wait for it before seeking its end.
+			if depth > definedAt {
+				bodyOpened = true
+			}
+			if bodyOpened && depth <= definedAt {
 				defining = false
 			}
 			continue
@@ -1071,109 +947,19 @@ func shadowsByAlias(args []string, name string) bool {
 // and case bodies, guarded commands, subshells and substitutions, which a lint
 // of what a script may run must read. It drops comments, heredoc bodies,
 // redirections, and the reserved words and assignments before a command. A
-// function body is read after each call, with the last definition before the
-// call. eval runs its words as a script, unless they hold an expansion; then
-// the eval stays a command, as does a command word with an expansion, since
-// the reader cannot spell what either runs. A trap action runs at the end, once, when bash resolves its calls. PR
-// 804 adds a ShellCommandWords reader with a similar intent; merge the two when
-// both land.
+// function body is read where it is defined. eval runs its words as a script,
+// unless they hold an expansion; then the eval stays a command, as does a
+// command word with an expansion, since the reader cannot spell what either
+// runs. PR 804 adds a ShellCommandWords reader with a similar intent; merge the
+// two when both land.
 func EveryShellCommand(script string) [][]string {
 	return everyShellCommand(script)
 }
 
 // everyShellCommand is EveryShellCommand for a script a child shell runs, such
-// as a sh -c body, which has its own definitions and traps.
+// as a sh -c body.
 func everyShellCommand(script string) [][]string {
-	traps := trapState{map[string]string{}, map[string]bool{}}
-	bodies := map[string]string{}
-	found := readScript(flattenSubstitutions(withoutHeredocBodies(script)), bodies, nil, traps)
-	// An action can set another trap, so read until every action is read.
-	for read := map[string]bool{}; ; {
-		for _, action := range traps.set {
-			traps.armed[action] = true
-		}
-		actions := slices.Sorted(maps.Keys(traps.armed))
-		at := slices.IndexFunc(actions, func(action string) bool { return !read[action] })
-		if at < 0 {
-			return found
-		}
-		read[actions[at]] = true
-		found = append(found, expandCalls(commandWords(actions[at]), bodies, nil, traps)...)
-	}
-}
-
-// readScript returns the commands text runs. A function definition in text
-// runs nothing: it binds the name for the calls after it, as bash does.
-func readScript(text string, bodies map[string]string, calling []string, traps trapState) [][]string {
-	var found [][]string
-	for _, part := range functionBodies(text) {
-		if part.name != "" {
-			bodies[part.name] = part.text
-			continue
-		}
-		found = append(found, expandCalls(commandWords(part.text), bodies, calling, traps)...)
-	}
-	return found
-}
-
-// trapState holds the action set for each signal, and every action that was
-// set while a command ran. That command can fail under bash -e, or exit, and
-// run the action, so a later trap does not undo it.
-type trapState struct {
-	set   map[string]string
-	armed map[string]bool
-}
-
-// expandCalls puts each called function's body right after every command that
-// calls it, so a cd in the body moves the commands after the call. calling
-// holds the functions being expanded, so a recursive call is read once. Each
-// trap command updates traps.
-func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps trapState) [][]string {
-	var found [][]string
-	for _, words := range commands {
-		found = append(found, words)
-		if words[0] == "trap" {
-			setTrap(words[1:], traps.set)
-		} else {
-			for _, action := range traps.set {
-				traps.armed[action] = true
-			}
-		}
-		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
-			found = append(found, readScript(body, bodies, append(calling, words[0]), traps)...)
-		}
-	}
-	return found
-}
-
-// setTrap applies the arguments of one trap command to the action set for each
-// signal. A later action for a signal replaces the earlier one, and - or an
-// empty action removes it, as does a signal named alone. trap -p and trap -l
-// print and set nothing.
-func setTrap(args []string, traps map[string]string) {
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	} else if len(args) > 0 && len(args[0]) > 1 && args[0][0] == '-' {
-		return
-	}
-	if len(args) == 0 {
-		return
-	}
-	action, signals := args[0], args[1:]
-	if len(args) == 1 {
-		action, signals = "-", args
-	}
-	for _, signal := range signals {
-		signal = strings.TrimPrefix(strings.ToUpper(signal), "SIG")
-		if signal == "0" {
-			signal = "EXIT"
-		}
-		if action == "-" || action == "" {
-			delete(traps, signal)
-		} else {
-			traps[signal] = action
-		}
-	}
+	return commandWords(flattenSubstitutions(withoutHeredocBodies(script)))
 }
 
 // commandWords returns the words of every command in text that
@@ -1206,8 +992,7 @@ func commandWords(text string) [][]string {
 			if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
 				found = append(found, commandWords(text)...) // eval runs its words as a script
 			} else if body, ok := shellCBody(words); ok && !strings.ContainsAny(body, "$`") {
-				// sh -c runs its body as a script in a child shell with its own
-				// definitions and traps, so an uncalled function in it runs nothing.
+				// sh -c runs its body as a script in a child shell.
 				found = append(found, everyShellCommand(body)...)
 			} else {
 				found = append(found, words)

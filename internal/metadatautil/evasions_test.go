@@ -205,8 +205,9 @@ func RequireRejectsAllEvasions(t *testing.T, artifact, anchor, want string, vali
 }
 
 // gatedEvasions names the rows that leave the anchored command a command behind
-// a branch, a guard, a group, an exit or an exec. The rewrite does not turn it
-// into text, so a reader that ignores reachability still finds it.
+// a branch, a guard, a group, an exit, an exec or an uncalled function
+// definition. The rewrite does not turn it into text, so a reader that ignores
+// reachability still finds it.
 var gatedEvasions = map[string]bool{
 	"unreachable branch": true, "conditional right-hand side": true, "conditional across a line break": true,
 	"exit before the command": true, "exec before the command": true, "quoted compound-command closer": true,
@@ -216,6 +217,8 @@ var gatedEvasions = map[string]bool{
 	"substitution inside a subshell opener": true, "quoted fragment in a subshell opener": true,
 	"parameter expansion in a subshell opener": true, "subshell behind a reserved prefix": true,
 	"subshell behind a named coproc": true, "paired closers in a subshell opener": true,
+	"uncalled function definition": true, "definition brace on the next line": true,
+	"quoted brace in a definition": true, "argument brace in a definition body": true,
 }
 
 // RequireRejectsTextEvasions runs the corpus for a validator that reads
