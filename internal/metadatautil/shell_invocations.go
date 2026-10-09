@@ -988,6 +988,8 @@ var commandWrappers = map[string][]string{
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
 	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
 	"stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+	"xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof", "--max-lines",
+		"--max-args", "--max-procs", "--max-chars", "--process-slot-var"},
 	"sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "-R", "-a", "-c", "--user", "--group",
 		"--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--command-timeout", "--other-user",
 		"--chroot", "--auth-type", "--login-class"},
@@ -1006,7 +1008,8 @@ func commandName(word string) string {
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
 // env -S splits its value into words that env then reads as its own arguments.
-// timeout reads a DURATION operand before the command. A wrapper named by
+// timeout reads a DURATION operand before the command. xargs runs its command
+// with the words it reads; --replace and -l take an optional value only with =. A wrapper named by
 // path, as /usr/bin/env, is the same wrapper. sudo -h with a value names a
 // host. sudo -s or -i runs the command through $SHELL -c with its
 // metacharacters escaped, so the words stay the command. With no command it
