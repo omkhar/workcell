@@ -502,7 +502,7 @@ func flattenSubstitutions(script string) string {
 		switch {
 		case single:
 			single = c != '\''
-			top.text.WriteByte(joinQuotedNewline(c))
+			top.text.WriteByte(markQuotedNewline(c))
 		case c == '\\' && i+1 < len(script):
 			top.text.WriteString(script[i : i+2])
 			i++
@@ -512,6 +512,22 @@ func flattenSubstitutions(script string) string {
 			}
 			c = '\n' // the comment ends the command
 			top.text.WriteByte(c)
+		case c == '$' && !top.quoted && strings.HasPrefix(script[i:], "$'"):
+			// bash decodes the escapes in $'…' and this reader does not, so a
+			// span with one becomes $_, which no reader spells.
+			end := i + 2
+			for end < len(script) && script[end] != '\'' {
+				if script[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			if strings.Contains(script[i:min(end, len(script))], `\`) {
+				top.text.WriteString("$_")
+				i = end
+			} else {
+				top.text.WriteByte(c)
+			}
 		case c == '\'' && !top.quoted:
 			single = true
 			top.text.WriteByte(c)
@@ -536,7 +552,7 @@ func flattenSubstitutions(script string) string {
 			frames = frames[:len(frames)-1]
 			out.WriteString("\n" + top.text.String() + "\n")
 		case top.quoted:
-			top.text.WriteByte(joinQuotedNewline(c))
+			top.text.WriteByte(markQuotedNewline(c))
 		default:
 			top.text.WriteByte(c)
 		}
@@ -554,15 +570,18 @@ func flattenSubstitutions(script string) string {
 	return out.String()
 }
 
-// joinQuotedNewline turns a newline inside a quoted word into a space, so a
-// multi-line jq program stays one word. ShellInvocations drops the rest of a
-// quoted word that runs past the end of its line.
-func joinQuotedNewline(c byte) byte {
+// markQuotedNewline turns a newline inside a quoted word into quotedNewline,
+// so a multi-line word stays on one line for the line reader. commandWords
+// turns it back, so a shell program keeps its lines.
+func markQuotedNewline(c byte) byte {
 	if c == '\n' {
-		return ' '
+		return quotedNewline
 	}
 	return c
 }
+
+// quotedNewline is a byte no workflow holds.
+const quotedNewline = '\x02'
 
 // Invocation is one invocation the script proves it runs: the arguments after
 // the command name, and the ordinal of the command word in the stream of
@@ -1104,6 +1123,7 @@ func commandWords(text string) [][]string {
 		}
 		joined = ""
 		for _, each := range words {
+			each.text = strings.ReplaceAll(each.text, string(quotedNewline), "\n")
 			switch {
 			case test || !each.quoted && each.text == "[[":
 				// [[ reads its words up to ]] as one expression: an operator,

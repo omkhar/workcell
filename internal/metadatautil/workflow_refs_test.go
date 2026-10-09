@@ -118,6 +118,12 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"quoted-delimiter heredoc with an expansion is read", runStep("bash <<'EOF'\necho \"$HOME\"\nEOF"), "", ""},
 		{"shell running a script file is clean", runStep("bash script.sh\nbash -- script.sh\nsh -e script.sh <<<x"), "", ""},
 		{"heredoc fed to another command is ignored", runStep("cat <<'EOF'\ngh api repos/o/r/issues\nEOF\njq -n <<EOF\ngh api $X\nEOF\ncat <<<'gh api x'"), "", ""},
+		{"multi-line single-quoted bash -c body", runStep("bash -c '# note\n  gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"multi-line double-quoted bash -c body", runStep("bash -c \"# note\n  gh api repos/o/r/issues\""), "", "gh-api-unbounded"},
+		{"multi-line here-string fed to bash", runStep("bash <<<'# note\n  gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"ANSI-C bash -c body with an escape is unresolved", runStep(`bash -c $'gh api repos/x\n# tail'`), "", "command-unresolved"},
+		{"ANSI-C here-string with an escape is unresolved", runStep(`bash <<< $'# note\ngh api repos/x'`), "", "command-unresolved"},
+		{"comment-only multi-line bash -c body is clean", runStep("bash -c '# one\n  # two'\nbash -c $'echo plain'"), "", ""},
 		{"called function in a bash -c body is a hit", runStep("bash -c 'f() { gh api repos/x; }; f'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {
