@@ -400,6 +400,10 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// evals: a later call runs that text in the current shell.
 	var definingName string
 	barrierFunctions, forwarders := map[string]bool{}, map[string]bool{}
+	// rewritten lists the functions whose body rewrites its positional
+	// parameters with set or shift, so what "$@" runs is not what the caller
+	// passed and the forwarder is a barrier instead.
+	rewritten := map[string]bool{}
 	// conditionalGroup is the brace depth outside a command group that a && or
 	// a || guards, or -1 when no such group is open, and groupDepth is the
 	// nesting the commands read so far have opened. Bash decides the whole
@@ -485,6 +489,8 @@ func ShellInvocations(script, commandName string) []Invocation {
 				}
 				names := commandWords(spelled(each.args))
 				switch {
+				case rewritesParameters(names):
+					rewritten[definingName] = true
 				case callsBarrier(names, barrierFunctions, forwarders):
 					barrierFunctions[definingName] = true
 				case evaluates(names) && forwards(names):
@@ -495,6 +501,10 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			if bodyOpened && depth <= definedAt {
 				defining = false
+				if forwarders[definingName] && rewritten[definingName] {
+					delete(forwarders, definingName)
+					barrierFunctions[definingName] = true
+				}
 			}
 			continue
 		}
@@ -834,6 +844,27 @@ func unwrapBuiltins(names []string) []string {
 // command run is whatever the caller passed. A named array such as
 // "${cmd[@]}" holds words the caller never passed, so it is no forwarder.
 var forwarderWord = regexp.MustCompile(`^\$(?:[@*1-9]|\{(?:[@*]|[0-9]+)\})$`)
+
+// rewritesParameters reports whether the command rewrites the positional
+// parameters: shift, or set with -- or with an operand that is no option.
+func rewritesParameters(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) == 0 {
+		return false
+	}
+	if names[0] == "shift" {
+		return true
+	}
+	if names[0] != "set" {
+		return false
+	}
+	for _, arg := range names[1:] {
+		if arg == "--" || !strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "+") {
+			return true
+		}
+	}
+	return false
+}
 
 // forwards reports whether the command word, once unwrapped, is a positional
 // parameter or an array expansion, as in run() { "$@"; }.
