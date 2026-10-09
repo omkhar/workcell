@@ -82,6 +82,14 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"tool behind command --", "command -- git fetch || true\n", "or-true"},
 		{"tool behind command -p --", "command -p -- git fetch || true\n", "or-true"},
 		{"|| true behind a quote nested in a substitution", "x=\"$(getent passwd \"${uid}\" | cut -d: -f1 || true)\"\n", "or-true"},
+		{"pipefail set after the pipeline", "out=$(git ls-files | sort) || exit 1\nset -o pipefail\n", "command-substitution"},
+		{"pipefail cleared before the pipeline", "set -o pipefail\nset +o pipefail\nout=$(git ls-files | sort) || exit 1\n", "command-substitution"},
+		{"substitution opened after a quoted fragment", "out='a'$(\n  git ls-files; true\n) || exit 1\n", "command-substitution"},
+		{"substitution opened after an empty quote", "out=a\"\"$(\ngit ls-files\ntrue) || exit 1\n", "command-substitution"},
+		{"quoted ) before a spelled tool name", "out=$(printf \"x)(git\"; git ls-files; true) || exit 1\n", "command-substitution"},
+		{"tool behind xargs -n", "printf x | xargs -n 1 git fetch || true\n", "or-true"},
+		{"tool behind env -u", "env -u NAME git fetch || true\n", "or-true"},
+		{"tool behind sudo -u", "sudo -u user git fetch || true\n", "or-true"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
 		{"status handler after a multi-line substitution", "x=\"$(\n  git ls-files\n)\" || exit 1\n", ""},
@@ -109,6 +117,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"brace closes a group in a substitution", "x=$({\n  \"$go\" env X\n}) || exit 1\n", ""},
 		{"command -v runs nothing", "bin=$(command -v docker 2>/dev/null || true)\n", ""},
 		{"|| inside a [[ ]] test", "x=\"$([[ \"$a\" == b || \"$c\" == d ]] && printf y)\"\n", ""},
+		{"quoted $( runs nothing", "x=$(echo '$(git' x) || exit 1\n", ""},
 		{"escaped ; is an argument", "if ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 	}
 	for _, testCase := range cases {

@@ -118,10 +118,12 @@ type ShellFailOpenFinding struct {
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
 	// shellCommandPosition ends where a command word starts: after the start,
-	// an operator or an opener, then any reserved word, assignment, or wrapper
-	// that runs the word after it (env, command, nice, xargs, sudo) with its
-	// options. `git` in a path or an argument, or after command -v, is not a call.
-	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|command(?:\\s+-p)?(?:\\s+--)?|nice(?:\\s+-n\\s*-?[0-9]+)?|(?:env|exec|xargs|sudo)(?:\\s+-\\S+)*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	// an operator or an opener, then any reserved word, assignment, or xargs or
+	// sudo with its options and their values. shellUnwrapped blanks the
+	// commandWrappers. `git` in a path or an argument is not a call.
+	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandStart    = regexp.MustCompile(shellCommandPosition)
+	shellField           = regexp.MustCompile(`\S+`)
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -139,9 +141,9 @@ var (
 	shellInnerMask    = regexp.MustCompile(`(?:[;\n&]|\|\|)\s*[^\s;&|)}]`)
 	shellInnerHandler = regexp.MustCompile(`&&|[<>]&|\|\|\s*(?:exit|return|die|false)\b`)
 	// shellInnerPipe is a later pipeline stage, whose status replaces the
-	// tool's unless the script sets pipefail.
+	// tool's unless set -o pipefail ran before it and no set +o pipefail since.
 	shellInnerPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[^\s;&|)}]`)
-	shellPipefail  = regexp.MustCompile(`\bset\s+-[A-Za-z]*o\s+pipefail\b`)
+	shellPipefail  = regexp.MustCompile(`\bset\s+([-+])[A-Za-z]*o\s+pipefail\b`)
 	shellOrTrue    = regexp.MustCompile(`\|\|\s*true\b`)
 	// shellProcessSubst is an input redirection from a process substitution,
 	// with any blanks or a continued line between the < and the <(.
@@ -255,7 +257,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		current.code = shellCodeOnly(current.raw)
 		statements = append(statements, current)
 	}
-	pipefail := slices.ContainsFunc(statements, func(each logical) bool { return shellPipefail.MatchString(each.code) })
+	pipefail := false
 	var findings []ShellFailOpenFinding
 	for index, statement := range statements {
 		if strings.TrimSpace(statement.code) == "" {
@@ -282,6 +284,9 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			marked := slices.ContainsFunc(statement.marks, func(mark int) bool { return mark >= start && mark <= end })
+			if set := shellPipefail.FindStringSubmatch(command); set != nil {
+				pipefail = set[1] == "-"
+			}
 			if start = end + 1; marked {
 				continue
 			}
@@ -463,6 +468,7 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 // or escaped fragment spells a tool, as in 'g'it, "gi""t" or g\it, which
 // shellCodeOnly blanks. shellWords joins the fragments of a word as bash
 // does; every other quoted word stays blank, so a message is still no command.
+// It also blanks each wrapper before a command word with shellUnwrapped.
 func shellFailOpenNamed(code, raw string) string {
 	words, _, _, _, _, _ := shellWords(raw, nil)
 	named, spelled := make([]string, len(words)), false
@@ -471,17 +477,41 @@ func shellFailOpenNamed(code, raw string) string {
 		if !each.quoted {
 			continue
 		}
-		// The name may follow the $( or ( that opens it in the same word.
-		if shellToolName.MatchString(each.text[strings.LastIndexAny(each.text, "(`")+1:]) {
-			spelled = true
+		// The name may follow the $( or ( that opens it in the same word; a
+		// quoted ( or ) is text and stays blank, so it cannot end a $( early.
+		if cut := strings.LastIndexAny(each.syntax, "(`") + 1; shellToolName.MatchString(each.text[cut:]) {
+			named[index], spelled = each.syntax[:cut]+each.text[cut:], true
 		} else {
 			named[index] = `""`
 		}
 	}
 	if !spelled {
-		return code
+		return shellUnwrapped(code)
 	}
-	return strings.Join(named, " ")
+	return shellUnwrapped(strings.Join(named, " "))
+}
+
+// shellUnwrapped blanks each wrapper in command position and the options
+// wrappedCommand steps over, as the env -u NAME of env -u NAME git, so the
+// command it runs stands in command position. No offset moves.
+func shellUnwrapped(command string) string {
+	out := []byte(command)
+	for _, loc := range shellCommandStart.FindAllStringIndex(command, -1) {
+		rest := command[loc[1]:]
+		rest = rest[:strings.IndexAny(rest+";", ";&|)\n")]
+		fields := shellField.FindAllStringIndex(rest, -1)
+		words := make([]string, len(fields))
+		for index, field := range fields {
+			words[index] = rest[field[0]:field[1]]
+		}
+		if len(words) == 0 {
+			continue
+		}
+		if run := len(words) - len(wrappedCommand(words)); run > 0 {
+			copy(out[loc[1]:], strings.Repeat(" ", fields[run][0]))
+		}
+	}
+	return string(out)
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git or `|| true`
