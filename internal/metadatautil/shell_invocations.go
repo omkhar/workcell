@@ -100,6 +100,8 @@ func shellCBody(words []string) (string, bool) {
 	}
 	// Options come first; c anywhere in a short cluster, as in -cl or -ec,
 	// selects the first operand as the script, and -- may end the options.
+	// Each o or O in a cluster, and --rcfile or --init-file, takes the next
+	// word as its value, as in -O extglob or -euo pipefail.
 	script := false
 	for i := 1; i < len(words); i++ {
 		switch {
@@ -108,9 +110,12 @@ func shellCBody(words []string) (string, bool) {
 				return words[i+1], true
 			}
 			return "", false
+		case words[i] == "--rcfile" || words[i] == "--init-file":
+			i++
 		case strings.HasPrefix(words[i], "--"):
 		case strings.HasPrefix(words[i], "-") || strings.HasPrefix(words[i], "+"):
 			script = script || strings.Contains(words[i][1:], "c")
+			i += strings.Count(words[i][1:], "o") + strings.Count(words[i][1:], "O")
 		default:
 			return words[i], script
 		}

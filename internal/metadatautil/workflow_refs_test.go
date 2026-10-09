@@ -106,6 +106,9 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"bounded gh api in a bash -c body", runStep("bash -c 'gh api --paginate repos/o/r/issues'"), "", ""},
 		{"gh api in a bash -c -- body", runStep("bash -c -- 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"gh api in a bash -cl body", runStep("bash -cl 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"gh api in a bash -O extglob -c body", runStep("bash -O extglob -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"gh api in a bash -o posix -c body", runStep("bash -o posix -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"bash -o posix -c body without gh is clean", runStep("bash -o posix -c 'echo gh'"), "", ""},
 		{"called function in a bash -c body is a hit", runStep("bash -c 'f() { gh api repos/x; }; f'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {
