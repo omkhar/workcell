@@ -27,7 +27,7 @@ import (
 // class. shellcheck does not flag it.
 //
 // A hit is accepted when its own command or the command right after it
-// captures the status (see shellFailOpenCapture) or when the command states its
+// captures the status (see shellFailOpenHandled) or when the command states its
 // case with a marker:
 //
 //	# fail-closed: <reason>
@@ -133,11 +133,13 @@ var (
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
-	// shellFailOpenCapture is a status capture: the status is read ($?,
-	// PIPESTATUS) or a failure branch runs (|| exit, || return, || die,
-	// || fail*, || { ... }). An exit or return 0 reports success instead.
-	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|` + shellFailOpenHandler)
-	shellFailOpenHandler = `\|\|\s*(?:(?:exit|return)(?:\s+[1-9][0-9]*)?\s*(?:[;&|)}]|$)|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)`
+	// shellFailOpenOr is the || that runs a handler.
+	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
+	// shellFailOpenExits is a command that ends the script or the function
+	// with a failure: exit or return with no operand or a nonzero literal,
+	// die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an
+	// assignment such as failed=1 or an echo fail reports nothing.
+	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+[1-9][0-9]*)?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
@@ -261,7 +263,14 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			hasTool := shellToolCommand.MatchString(command) || toolSubst
 			// A status read or a handler covers only a call written before it.
 			rest := command[shellFailOpenFirstCall(command):]
-			captured := shellFailOpenCapture.MatchString(rest)
+			captured := shellFailOpenStatusRead.MatchString(rest) || shellFailOpenHandled(rest, func() []string {
+				later := slices.Clone(commands[at+1 : len(commands)-1])
+				for _, each := range statements[index+1:] {
+					codes, _ := shellFailOpenCommands(each.code, each.raw)
+					later = append(later, codes...)
+				}
+				return later
+			})
 			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
 				shellFailOpenAnd.MatchString(shellOutsideSubsts(rest))
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command)
@@ -276,6 +285,57 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		}
 	}
 	return findings, nil
+}
+
+// shellFailOpenHandled reports whether a || after the call runs a failure
+// branch: a shellFailOpenExits command, or a { } group that ends in one at its
+// own depth. later returns the commands after this one, which a group spans.
+func shellFailOpenHandled(rest string, later func() []string) bool {
+	for _, loc := range shellFailOpenOr.FindAllStringIndex(rest, -1) {
+		handler := rest[loc[1]:]
+		if group, grouped := strings.CutPrefix(handler, "{"); grouped {
+			if shellFailOpenBranchExits(append([]string{group}, later()...), "}") {
+				return true
+			}
+		} else if shellFailOpenExits.MatchString(handler[:strings.IndexAny(handler+";", ";&|)}")]) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellFailOpenNesting returns the change in compound-command nesting that
+// a command's first word makes, after any then, do, else, { or !.
+func shellFailOpenNesting(command string) int {
+	for _, each := range strings.Fields(command) {
+		if !slices.Contains([]string{"then", "do", "else", "{", "!"}, each) {
+			return controlWords[each]
+		}
+	}
+	return 0
+}
+
+// shellFailOpenBranchExits reports whether the branch that starts at the
+// first command ends the script, with a shellFailOpenExits command in the
+// branch itself rather than inside an if, loop or case nested in it. The
+// shared controlWords count the nesting; one of closers at the branch's own
+// depth, such as the fi of a then branch or the } of a group, ends it.
+func shellFailOpenBranchExits(codes []string, closers ...string) bool {
+	depth := 0
+	for _, each := range codes {
+		fields := strings.Fields(each)
+		if len(fields) > 0 && fields[0] == "then" {
+			fields = fields[1:]
+		}
+		if depth == 0 && len(fields) > 0 && slices.Contains(closers, fields[0]) {
+			return false
+		}
+		if depth == 0 && shellFailOpenExits.MatchString(strings.Join(fields, " ")) {
+			return true
+		}
+		depth += shellFailOpenNesting(each)
+	}
+	return false
 }
 
 // shellFailOpenFirstCall returns where the first tool call or process
