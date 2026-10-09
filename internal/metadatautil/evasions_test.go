@@ -39,6 +39,7 @@ var anyRejection = map[string]bool{
 	"sourcing helper called":      true,
 	"sourcing forwarder called":   true,
 	"expanded source in a helper": true,
+	"expanded source forwarded":   true,
 	"step condition if: false":    true,
 	"step condition && false":     true,
 }
@@ -258,6 +259,10 @@ var Evasions = []Evasion{
 	{"expanded source in a helper", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "shadow() {\n" + i + "  s${x-}ource ./shadow.sh\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"expanded source forwarded", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run s${x-}ource ./shadow.sh\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

@@ -838,7 +838,9 @@ func forwards(names []string) bool {
 
 // callsBarrier reports whether the command word names a defined function whose
 // body sources or evals, so the call runs that text in the current shell, or a
-// forwarder such as run() { "$@"; } that is handed eval, source or dot.
+// forwarder such as run() { "$@"; } whose forwarded words are themselves a
+// barrier: eval, source or dot, or a word the reader cannot spell, such as
+// s${x-}ource.
 func callsBarrier(names []string, barriers, forwarders map[string]bool) bool {
 	names = unwrapBuiltins(names[assignmentPrefix(names):])
 	if len(names) == 0 {
@@ -847,7 +849,7 @@ func callsBarrier(names []string, barriers, forwarders map[string]bool) bool {
 	if barriers[names[0]] {
 		return true
 	}
-	return forwarders[names[0]] && slices.ContainsFunc(names[1:], func(arg string) bool { return arg == "eval" || arg == "source" || arg == "." })
+	return forwarders[names[0]] && evaluates(names[1:])
 }
 
 // assignmentPrefix returns how many leading words are assignments bash applies
