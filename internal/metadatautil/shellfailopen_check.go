@@ -477,7 +477,9 @@ func shellSubstHidden(command string) bool {
 		prefix := command[:start]
 		words := strings.Fields(prefix[strings.LastIndexAny(prefix, ";&|(`")+1:])
 		for len(words) > 0 && slices.Contains([]string{"if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"}, words[0]) {
-			words = words[1:]
+			if words = words[1:]; len(words) > 0 && words[0] == "-p" {
+				words = words[1:] // time -p
+			}
 		}
 		// The simple command runs on past the substitution to the next
 		// operator or closer.
@@ -612,8 +614,12 @@ func shellCodeOnly(line string) string {
 		start  int // where the quoted span opened
 	}
 	// A quoted 'true', ":" or "/dev/null" is still that operand, so its text is kept.
-	keep := func(start, end int) {
-		if inner := line[start+1 : end]; inner == "true" || inner == ":" || inner == "/dev/null" {
+	keep := func(start, end int, ansiC bool) {
+		inner := line[start+1 : end]
+		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(inner, `"`, `\"`) + `"`); ansiC && err == nil {
+			inner = decoded // bash decodes $'\164rue' to true
+		}
+		if inner == "true" || inner == ":" || inner == "/dev/null" {
 			copy(out[start+1:end], inner)
 		}
 	}
@@ -624,7 +630,7 @@ func shellCodeOnly(line string) string {
 		case top.quote == '\'':
 			if c == '\'' {
 				top.quote = 0
-				keep(top.start, i)
+				keep(top.start, i, false)
 			}
 			out[i] = '"'
 		case top.quote == ansiCQuote:
@@ -635,7 +641,7 @@ func shellCodeOnly(line string) string {
 				out[i] = '"'
 			} else if c == '\'' {
 				top.quote = 0
-				keep(top.start, i)
+				keep(top.start, i, true)
 			}
 		case top.quote == '"' && c == '$' && i+1 < len(line) && line[i+1] == '(':
 			stack = append(stack, frame{})
@@ -647,7 +653,7 @@ func shellCodeOnly(line string) string {
 				out[i] = '"'
 			} else if c == '"' {
 				top.quote = 0
-				keep(top.start, i)
+				keep(top.start, i, false)
 			}
 		case c == '\\' && i+1 < len(line):
 			out[i+1] = '"' // an escaped byte is quoted text, as in \;
