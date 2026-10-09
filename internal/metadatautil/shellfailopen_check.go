@@ -329,10 +329,9 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	return findings, nil
 }
 
-// shellFailOpenHandled reports whether the first || after the call, outside
-// any substitution, runs a failure branch: a shellFailOpenExits command, or a
-// { } group that ends in one at its own depth. A later || runs only when that
-// branch fails. later returns the commands after this one, which a group spans.
+// shellFailOpenHandled reports whether the first || after the call runs a
+// failure branch: a shellFailOpenExits command, or a { } group that ends in
+// one at its own depth. later returns the commands after this one.
 func shellFailOpenHandled(rest string, later func() []string) bool {
 	outside := shellOutsideSubsts(rest)
 	loc := shellFailOpenOr.FindStringIndex(outside)
@@ -408,8 +407,7 @@ func shellOutsideSubsts(command string) string {
 	return outside
 }
 
-// shellToolSubsts returns where each $( starts whose body runs a tool or a
-// command this reader cannot name, in any command of the body.
+// shellToolSubsts returns where each $( starts whose body runs a tool or an unnamed command.
 func shellToolSubsts(command string) []int {
 	var starts []int
 	for _, loc := range shellSubstOpen.FindAllStringIndex(command, -1) {
@@ -420,9 +418,8 @@ func shellToolSubsts(command string) []int {
 	return starts
 }
 
-// shellSubstCall returns the text between the $( at start and its ), with
-// each [[ ]] test emptied, and where the first tool or unnamed command in it
-// ends, or -1 when it has none.
+// shellSubstCall returns the body of the $( at start, [[ ]] tests emptied,
+// and where its first tool or unnamed command ends, or -1.
 func shellSubstCall(command string, start int) (body string, call int) {
 	body = shellTestExpr.ReplaceAllString(strings.TrimSuffix(command[start+2:shellSubstEnd(command, start)], ")"), "[[ ]]")
 	call = -1
@@ -443,9 +440,7 @@ func shellFailOpenReadsStatus(command string) bool {
 }
 
 // shellFailOpenReadsOwnStatus reports whether the command that starts with a
-// call reads $? or PIPESTATUS with nothing run between the call and the read.
-// The first && or || after the call runs no command, so x=$(git a) || rc=$?
-// counts, but in x=$(git a) y=$(true) rc=$? the read sees the status of true.
+// call reads $? or PIPESTATUS with nothing run between, as x=$(git a) || rc=$? does.
 func shellFailOpenReadsOwnStatus(rest string) bool {
 	if strings.HasPrefix(rest, "$(") {
 		rest = rest[shellSubstEnd(rest, 0):]
@@ -595,11 +590,9 @@ func shellBackgroundSegments(command string) []string {
 	return append(segments, segment)
 }
 
-// shellCodeOnly blanks quoted text, so a message that names git or `|| true`
-// is not a command. A $( inside double quotes opens code again, with quoting
-// of its own, until the ) that closes it. The caller has already cut each
-// line's comment with shellWords. The result keeps the line's length, so an
-// offset in it is the same offset in the line.
+// shellCodeOnly blanks quoted text, so a message that names git is not a
+// command; a $( inside double quotes opens code again. The result keeps the
+// line's length, so an offset in it is the same offset in the line.
 func shellCodeOnly(line string) string {
 	out := []byte(line)
 	type frame struct {
