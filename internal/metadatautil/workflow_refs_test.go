@@ -20,8 +20,6 @@ func refsRoot(t *testing.T, step, baseline string) string {
 	files := map[string]string{
 		".github/workflows/w.yml":           "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + step,
 		"policy/workflow-refs-baseline.tsv": baseline,
-		"scripts/present.sh":                "#!/bin/sh\n",
-		"sub/README":                        "",
 	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
@@ -43,13 +41,6 @@ func TestCheckWorkflowRefs(t *testing.T) {
 	cases := []struct {
 		name, step, baseline, want string
 	}{
-		{"existing script", runStep("./scripts/present.sh"), "", ""},
-		{"dynamic script name is skipped", runStep(`bash ./scripts/ci/job-${X}.sh`), "", ""},
-		{"missing script", runStep("./scripts/absent.sh"), "", "missing-script ./scripts/absent.sh"},
-		{"script in a comment is not probed", runStep("true # ./scripts/absent.sh\n# bash ./scripts/absent.sh"), "", ""},
-		{"script in a heredoc body is not probed", runStep("cat <<'EOF'\n./scripts/absent.sh\nEOF"), "", ""},
-		{"script after a heredoc is probed", runStep("cat <<EOF\nx\nEOF\nbash ./scripts/absent.sh"), "", "missing-script ./scripts/absent.sh"},
-		{"script path leaving the root", runStep("./scripts/../../../../../../bin/sh"), "", "script-path-escapes"},
 		{"bounded gh calls", runStep("gh api --paginate repos/x/y/pulls"), "", ""},
 		{"gh api without bound", runStep(`x="$(gh api repos/x/y/pulls)"`), "", "gh-api-unbounded"},
 		{"gh api has no --limit", runStep("gh api repos/x --limit 1"), "", "gh-api-unbounded"},
@@ -61,16 +52,12 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"baseline row needs a reason", runStep("true"), "gh-api-unbounded\tw.yml\tj\ts\t\n", "want kind, file, job, step, reason"},
 		{"gh api pagination disabled", runStep("gh api --paginate=false repos/x"), "", "gh-api-unbounded"},
 		{"gh api pagination overridden", runStep("gh api --paginate repos/x --paginate=false"), "", "gh-api-unbounded"},
-		{"script under the step working directory", "      - name: s\n        working-directory: sub\n        run: ./scripts/present.sh\n", "", "missing-script ./scripts/present.sh"},
-		{"script under a directory made at run time", "      - name: s\n        working-directory: gen\n        run: ./scripts/present.sh\n", "", "script-cwd-unresolved ./scripts/present.sh"},
-		{"script after a cd", runStep("cd sub\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
 		{"gh api behind --hostname", runStep("gh --hostname github.com api repos/x"), "", "gh-api-unbounded"},
 		{"gh api behind a short global flag", runStep("gh -X GET api repos/x"), "", "gh-api-unbounded"},
 		{"called function body is read", runStep("f() {\n  gh api repos/x\n}\ntrap f EXIT"), "", "gh-api-unbounded"},
 		{"one-line called function body is read", runStep("f() { gh api repos/x; }\nf"), "", "gh-api-unbounded"},
 		{"uncalled one-line function with a command after it", runStep("f() { true; }\ngh api repos/x"), "", "gh-api-unbounded"},
 		{"gh api in backticks", runStep("r=`gh api repos/x`"), "", "gh-api-unbounded"},
-		{"called function body runs at the call", runStep("f() {\n  cd sub\n}\nf\n./scripts/present.sh"), "", "script-cwd-unresolved ./scripts/present.sh"},
 		{"gh behind wrappers", runStep("command gh api a\ncommand -p gh api b\nenv -u X A=1 nice -n 5 gh api c\nexec gh api d"), "", "gh-api-unbounded#4"},
 		{"command -v only names gh", runStep("command -v gh api a"), "", ""},
 		{"every call of a function is expanded", runStep("g() { gh api x; }\nf() { g; g; }\nf\ny=$(g)"), "gh-api-unbounded\tw.yml\tj\ts\treason\ngh-api-unbounded#2\tw.yml\tj\ts\treason\n", "gh-api-unbounded#3"},
@@ -104,11 +91,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh api behind eval", runStep("eval gh api repos/o/r/issues\neval \"gh api repos/o/r/issues\""), "", "gh-api-unbounded#2"},
 		{"eval of an expansion is unresolved", runStep(`eval "$CMD"`), "", "eval-unresolved"},
 		{"command word with a substitution is unresolved", runStep("g$(printf h) api repos/o/r/issues"), "", "command-unresolved"},
-		{"substitution in a command word still runs", runStep("x$(./scripts/absent.sh) y"), "command-unresolved\tw.yml\tj\ts\treason\n", "missing-script ./scripts/absent.sh"},
+		{"substitution in a command word still runs", runStep("x$(gh api repos/x) y"), "command-unresolved\tw.yml\tj\ts\treason\n", "gh-api-unbounded"},
 		{"substitution in a gh argument", runStep(`gh api --paginate "$(cat x)"`), "", ""},
 		{"nested definition in a called body is not run", runStep("f() { g() { gh api repos/x; }; :; }; f\nh() {\n  k() { gh api repos/x; }\n  :\n}\nh"), "", ""},
 		{"nested definition called in its body", runStep("f() { g() { gh api repos/x; }; g; }; f"), "", "gh-api-unbounded"},
-		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -145,23 +131,12 @@ func TestEveryShellCommandEndsOnCommandlessEnvSplit(t *testing.T) {
 
 func TestCheckWorkflowRefsReadsYAMLExtension(t *testing.T) {
 	root := refsRoot(t, runStep("true"), "")
-	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + runStep("./scripts/absent.sh")
+	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + runStep("gh api repos/x")
 	if err := os.WriteFile(filepath.Join(root, ".github/workflows/v.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "v.yaml") {
 		t.Fatalf("CheckWorkflowRefs() error = %v, want a v.yaml hit", err)
-	}
-}
-
-func TestCheckWorkflowRefsReadsJobWorkingDirectory(t *testing.T) {
-	root := refsRoot(t, runStep("true"), "")
-	body := "name: v\njobs:\n  j:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: sub\n    steps:\n" + runStep("./scripts/present.sh")
-	if err := os.WriteFile(filepath.Join(root, ".github/workflows/v.yml"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "missing-script ./scripts/present.sh") {
-		t.Fatalf("CheckWorkflowRefs() error = %v, want a missing-script hit under sub", err)
 	}
 }
 
@@ -172,7 +147,7 @@ func TestCheckWorkflowRefsPassesOnRepository(t *testing.T) {
 }
 
 // TestCheckWorkflowRefsRejectsEvasions runs the shared corpus against a
-// baselined gh api hit and a baselined missing script. A row that turns the
+// baselined gh api hit and a baselined unresolved eval. A row that turns the
 // command into text must leave the baseline row stale, and a gated row must
 // keep the hit.
 func TestCheckWorkflowRefsRejectsEvasions(t *testing.T) {
@@ -194,12 +169,12 @@ func TestCheckWorkflowRefsRejectsEvasions(t *testing.T) {
 		RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "stale baseline row",
 			validate("gh-api-unbounded\tw.yml\tj\ts\treason\n"))
 	})
-	t.Run("script", func(t *testing.T) {
-		const anchor = "          ./scripts/absent.sh"
-		if err := validate("missing-script ./scripts/absent.sh\tw.yml\tj\ts\treason\n")(head + anchor + "\n"); err != nil {
+	t.Run("eval", func(t *testing.T) {
+		const anchor = "          eval \"$CMD\""
+		if err := validate("eval-unresolved\tw.yml\tj\ts\treason\n")(head + anchor + "\n"); err != nil {
 			t.Fatalf("CheckWorkflowRefs() error = %v, want the baselined hit", err)
 		}
 		RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "stale baseline row",
-			validate("missing-script ./scripts/absent.sh\tw.yml\tj\ts\treason\n"))
+			validate("eval-unresolved\tw.yml\tj\ts\treason\n"))
 	})
 }

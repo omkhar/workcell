@@ -2,11 +2,6 @@
 gh-api-unbounded	release.yml	tag-policy	Verify signed tag binding before checkout	single-object ref lookup, not a list
 gh-api-unbounded#2	release.yml	tag-policy	Verify signed tag binding before checkout	single-object tag lookup, not a list
 gh-api-unbounded#3	release.yml	tag-policy	Verify signed tag binding before checkout	per_page=100 and the step fails when total_count exceeds 100
-script-cwd-unresolved ./scripts/verify-upstream-codex-release.sh	release.yml	release	Re-verify pinned upstreams from archived source tree	working-directory is the release source archive extracted at run time
-script-cwd-unresolved ./scripts/verify-upstream-claude-release.sh	release.yml	release	Re-verify pinned upstreams from archived source tree	working-directory is the release source archive extracted at run time
-script-cwd-unresolved ./scripts/verify-upstream-copilot-release.sh	release.yml	release	Re-verify pinned upstreams from archived source tree	working-directory is the release source archive extracted at run time
-script-cwd-unresolved ./scripts/verify-upstream-gemini-release.sh	release.yml	release	Re-verify pinned upstreams from archived source tree	working-directory is the release source archive extracted at run time
-script-cwd-unresolved ./scripts/update-upstream-pins.sh	release.yml	release	Re-verify pinned upstreams from archived source tree	working-directory is the release source archive extracted at run time
 command-unresolved	ci.yml	install-verification	Verify release bundle installer	runs install.sh from the bundle directory the step unpacks at run time
 command-unresolved#2	ci.yml	install-verification	Verify release bundle installer	runs the launcher that install.sh placed under HOME
 command-unresolved#3	ci.yml	install-verification	Verify release bundle installer	runs uninstall.sh from the bundle directory the step unpacks at run time

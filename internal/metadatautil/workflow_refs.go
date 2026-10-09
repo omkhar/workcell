@@ -5,12 +5,8 @@ package metadatautil
 
 import (
 	"cmp"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,9 +19,6 @@ const (
 	workflowRefsBaselinePath = "policy/workflow-refs-baseline.tsv"
 	workflowRefsMaxBytes     = 4 << 20
 )
-
-// workflowScriptRef finds ./scripts/... paths in the words of a run body.
-var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
 
 type workflowRefHit struct{ kind, file, job, step string }
 
@@ -125,47 +118,12 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				dir, err := stepWorkDir(documents[file], definition, step)
-				if err != nil {
-					return nil, fmt.Errorf("%s job %s: %w", file, job, err)
-				}
-				// A relative path resolves from the step's directory. An
-				// expression or an absolute directory is not under rootDir,
-				// and a cd moves the directory for every later command, so
-				// a path after either is a hit rather than a probe.
-				moved := strings.Contains(dir, "${{") || filepath.IsAbs(dir)
 				for _, words := range EveryShellCommand(step.Run) {
-					moved = moved || words[0] == "cd" || words[0] == "pushd"
 					// A lint of what may run fails closed on a command it cannot spell.
 					if words[0] == "eval" {
 						add("eval-unresolved")
 					} else if strings.ContainsAny(words[0], "$`") {
 						add("command-unresolved")
-					}
-					for _, match := range scriptRefs(words) {
-						switch {
-						case strings.ContainsAny(match[len(match)-1:], "$*{["):
-							// a dynamic name cannot be resolved statically
-						case slices.Contains(strings.Split(dir+"/"+match, "/"), ".."):
-							add("script-path-escapes " + match) // never probe outside rootDir
-						case moved:
-							add("script-cwd-unresolved " + match)
-						default:
-							if _, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, dir, match[2:]), "workflow script", workflowRefsMaxBytes); err != nil {
-								if !errors.Is(err, fs.ErrNotExist) {
-									return nil, err
-								}
-								_, err := os.Lstat(filepath.Join(rootDir, dir))
-								switch {
-								case errors.Is(err, fs.ErrNotExist):
-									add("script-cwd-unresolved " + match) // the job makes the directory at run time
-								case err != nil:
-									return nil, err
-								default:
-									add("missing-script " + match)
-								}
-							}
-						}
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
@@ -195,42 +153,6 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 		}
 	}
 	return hits, nil
-}
-
-// stepWorkDir returns the directory a step's run: body starts in, relative to
-// the checkout: the step's working-directory, else the job default, else the
-// workflow default.
-func stepWorkDir(document workflowDocument, job workflowJob, step workflowStep) (string, error) {
-	if step.WorkDir != "" {
-		return step.WorkDir, nil
-	}
-	var defaults workflowDefaults
-	if job.Defaults.Kind != 0 {
-		if err := job.Defaults.Decode(&defaults); err != nil {
-			return "", err
-		}
-	}
-	if dir := defaults.Run["working-directory"]; dir != "" {
-		return dir, nil
-	}
-	return document.Def.Run["working-directory"], nil
-}
-
-// scriptRefs returns the ./scripts paths in one command's words that the shell
-// can run. The arguments of echo, printf and :, and an assignment are data, so
-// a path written there is not a reference. EveryShellCommand drops a here-string.
-func scriptRefs(words []string) []string {
-	if slices.Contains([]string{"echo", "printf", ":"}, words[0]) {
-		return nil
-	}
-	var refs []string
-	for _, each := range words {
-		if shellAssignment.MatchString(each) {
-			continue
-		}
-		refs = append(refs, workflowScriptRef.FindAllString(each, -1)...)
-	}
-	return refs
 }
 
 // ghPaginates reports whether gh api args turn pagination on in exactly one

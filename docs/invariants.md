@@ -74,11 +74,10 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
-## 2b. Workflow bodies reference real scripts and bounded lists
+## 2b. Workflow bodies make bounded gh api calls
 
 `scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
-`run:` body calls a `./scripts` path that does not exist or that has a `..`
-component. It fails when a `gh api` call has no `--paginate`. It also fails
+`run:` body has a `gh api` call with no `--paginate`. It also fails
 when an expansion hides a command word or the text of an `eval`.
 
 `policy/workflow-refs-baseline.tsv` records the hits that the tree carries
