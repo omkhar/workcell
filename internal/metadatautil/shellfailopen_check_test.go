@@ -67,6 +67,12 @@ func TestShellFailOpenFindings(t *testing.T) {
 		rule   string // empty means no finding
 	}{
 		{"process substitution", "while read -r f; do echo \"$f\"; done < <(find . -type f)\n", "process-substitution"},
+		{"command-wrapped tool with || true", "command -p git fetch origin || true\n", "or-true"},
+		{"null command handler", "git fetch || :\n", "or-true"},
+		{"null command handler before a semicolon", "git fetch || :; echo done\n", "or-true"},
+		{"append redirect to /dev/null", "git fetch 2>>/dev/null\n", "dev-null"},
+		{"combined redirect to /dev/null", "git fetch &>/dev/null\n", "dev-null"},
+		{"stdout to /dev/null then stderr to it", "git fetch >/dev/null 2>&1\n", "dev-null"},
 		{"marked process substitution still counts", "while read -r f; do echo \"$f\"; done < <(find . -type f) # fail-closed: inventory\n", "process-substitution"},
 		{"command substitution", "local out\nout=\"$(git ls-files)\"\n", "command-substitution"},
 		{"command substitution in a compound body", "f() {\n  if true; then\n    x=$(gh api /y)\n  fi\n}\n", "command-substitution"},

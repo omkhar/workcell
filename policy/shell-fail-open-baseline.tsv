@@ -13,6 +13,7 @@ runtime/container/home-control-plane.sh	process-substitution	6	process substitut
 runtime/container/runtime-user.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 runtime/container/runtime-user.sh	or-true	2	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
 runtime/container/runtime-user.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
+scripts/build-and-test.sh	dev-null	1	stderr or a handler hides the tool status; predates the rule, repair by status capture
 scripts/build-and-test.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
 scripts/check-doc-links.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/check-doc-links.sh	process-substitution	2	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
@@ -37,6 +38,7 @@ scripts/ci/job-validate.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent
 scripts/ci/run-validate-in-validator.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/ci/upstream-refresh-candidate.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/ci/upstream-refresh-publish.sh	command-substitution	5	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/upstream-refresh-publish.sh	dev-null	1	stderr or a handler hides the tool status; predates the rule, repair by status capture
 scripts/ci/upstream-refresh-publish.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
 scripts/colima-egress-allowlist.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/container-smoke.sh	process-substitution	6	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
@@ -62,6 +64,7 @@ scripts/pre-merge.sh	command-substitution	8	substitution of a find/git/gh/docker
 scripts/pre-merge.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
 scripts/publish-github-release.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/publish-provider-bump-pr.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/publish-provider-bump-pr.sh	dev-null	2	stderr or a handler hides the tool status; predates the rule, repair by status capture
 scripts/publish-provider-bump-pr.sh	or-true	2	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
 scripts/publish-upstream-refresh-pr.sh	command-substitution	10	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/publish-upstream-refresh-pr.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule

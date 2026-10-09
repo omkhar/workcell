@@ -120,7 +120,7 @@ var (
 	// an operator or an opener, then any reserved word, assignment, or xargs or
 	// sudo with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|command(?:\\s+-p)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -131,11 +131,14 @@ var (
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
-	shellOrTrue    = regexp.MustCompile(`\|\|\s*true\b`)
+	// shellOrTrue is a handler that always succeeds: true or the null command.
+	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:true\b|:(?:[\s;&|)]|$))`)
 	// shellProcessSubst is an input redirection from a process substitution,
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
-	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
+	// shellDevNull sends stderr to /dev/null: by 2>, 2>> or &>, since append
+	// and overwrite are the same on that device, or by >/dev/null 2>&1.
+	shellDevNull = regexp.MustCompile(`(?:2|&)>>?\s*/dev/null|>>?\s*/dev/null\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function

@@ -78,8 +78,8 @@ reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
 These idioms can turn a failure into an empty answer. A gate then passes on
 nothing. The idioms are a `< <(` process substitution and a `$(...)` around
-`find`, `git`, `gh`, `docker` or `getent`. They also include `|| true` and
-`2>/dev/null` on those tools.
+`find`, `git`, `gh`, `docker` or `getent`. They also include `|| true` or
+`|| :`, and stderr sent to `/dev/null`, on those tools.
 
 `scripts/check-shell-portability.sh` rejects each of them in `scripts/` and
 `runtime/container/`. The command, or the command after it, must capture the
