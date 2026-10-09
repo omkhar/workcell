@@ -110,6 +110,7 @@ func subcommands() []subcommand {
 		{"check-pinned-inputs", "REPO_ROOT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 2, 2, cmdCheckPinnedInputs},
 		{"check-validator-anchoring", "REPO_ROOT", 1, 1, cmdCheckValidatorAnchoring},
 		{"check-doc-language", "REPO_ROOT", 1, 1, cmdCheckDocLanguage},
+		{"doc-claims", "REPO_ROOT", 1, 1, cmdDocClaims},
 		{"check-generated-artifacts", "REPO_ROOT", 1, 1, cmdCheckGeneratedArtifacts},
 		{"check-shell-portability", "REPO_ROOT", 1, 1, cmdCheckShellPortability},
 		{"check-hardened-fs", "REPO_ROOT", 1, 1, cmdCheckHardenedFS},
@@ -550,6 +551,10 @@ func cmdCheckValidatorAnchoring(args []string) error {
 
 func cmdCheckDocLanguage(args []string) error {
 	return metadatautil.CheckDocLanguage(args[0])
+}
+
+func cmdDocClaims(args []string) error {
+	return metadatautil.DocClaimHits(args[0], os.Stdin, os.Stdout)
 }
 
 func cmdCheckGeneratedArtifacts(args []string) error {

@@ -144,6 +144,65 @@ func SameFileAtNoFollow(firstParent *os.File, firstName string, secondParent *os
 	return first.Dev == second.Dev && first.Ino == second.Ino, nil
 }
 
+// LstatAtNoFollow returns the status of relative under parent without
+// following a symlink in any component. A symlink before the leaf fails with
+// ELOOP, and a symlink leaf reports itself.
+func LstatAtNoFollow(parent *os.File, relative string) (unix.Stat_t, error) {
+	var info unix.Stat_t
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return info, err
+	}
+	current, err := openDirsNoFollow(parent, components[:len(components)-1])
+	if err != nil {
+		return info, err
+	}
+	defer func() { _ = unix.Close(current) }()
+	return info, unix.Fstatat(current, components[len(components)-1], &info, unix.AT_SYMLINK_NOFOLLOW)
+}
+
+// OpenDirAtNoFollow opens the directory at relative under parent without
+// following a symlink in any component. The caller closes it.
+func OpenDirAtNoFollow(parent *os.File, relative string) (*os.File, error) {
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return nil, err
+	}
+	current, err := openDirsNoFollow(parent, components)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(current), filepath.Join(parent.Name(), relative)), nil
+}
+
+// openDirsNoFollow opens each directory of components from the descriptor of
+// the one before it, so a component swapped mid-walk fails with ELOOP.
+func openDirsNoFollow(parent *os.File, components []string) (int, error) {
+	current, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
+	}
+	for _, component := range components {
+		// Linux reports ENOTDIR, not ELOOP, for a symlink opened with
+		// O_DIRECTORY|O_NOFOLLOW, so stat it first to name the cause.
+		var info unix.Stat_t
+		err := unix.Fstatat(current, component, &info, unix.AT_SYMLINK_NOFOLLOW)
+		if err == nil && info.Mode&unix.S_IFMT == unix.S_IFLNK {
+			err = fmt.Errorf("%s: %w", component, unix.ELOOP)
+		}
+		next := -1
+		if err == nil {
+			next, err = unix.Openat(current, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		}
+		_ = unix.Close(current)
+		if err != nil {
+			return -1, err
+		}
+		current = next
+	}
+	return current, nil
+}
+
 // MarshalCompactJSON returns compact newline-terminated JSON when it fits limit.
 func MarshalCompactJSON(value any, label string, limit int64) ([]byte, error) {
 	if limit < 0 {

@@ -1,10 +1,10 @@
 #!/usr/bin/env -S BASH_ENV= ENV= bash
 # Offline Markdown integrity check over tracked docs: fails on broken intra-repo
 # relative links and on orphaned docs/ pages that nothing navigably links to. No
-# network calls and no dependencies beyond git, awk, sed, and grep so it can run
-# host-side in the docs CI lane. Kept bash-3.2 compatible (no mapfile, no
-# associative arrays) because the host baseline is macOS /bin/bash 3.2; see
-# scripts/lib/shellproto.sh.
+# network calls and no dependencies beyond git, awk, sed, grep and Go (for the
+# claim probe) so it can run host-side in the docs CI lane. Kept bash-3.2
+# compatible (no mapfile, no associative arrays) because the host baseline is
+# macOS /bin/bash 3.2; see scripts/lib/shellproto.sh.
 #
 # Scope (intentional limits, documented so they read as choices, not gaps):
 # - Only space-free inline links of the form [text](target) are checked;
@@ -20,6 +20,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "${ROOT_DIR}"
+# shellcheck source=scripts/lib/go-run-env.sh
+source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
 bt='`'
 failures=0
@@ -94,7 +96,7 @@ for f in "${md_files[@]}"; do
   done < <(
     # Strip fenced code blocks, then inline code spans, so example markdown
     # (fenced or `inline`) is not treated as a navigable link.
-    awk '/^[[:space:]]*```/{fence=!fence; next} !fence' "${f}" |
+    awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
       sed -E "s/${bt}[^${bt}]*${bt}//g" |
       grep -oE '\]\([^) ]+\)' |
       sed -E 's/^\]\(//; s/\)$//' || true
@@ -121,8 +123,107 @@ while IFS= read -r doc; do
   fi
 done <<<"${docs_listing}"
 
+# --- Doc claim enforcement check ----------------------------------------------
+# A code span naming scripts/..., internal/... or .github/workflows/... (a
+# leading ./ is dropped) must exist. Hits that exist today sit in
+# policy/doc-claims-baseline.tsv (PATH, RULE, SUBJECT, REASON), whose comment
+# lines name every rule. A new hit fails. A baseline row with no hit fails too,
+# and every row must exist at the merge base with origin/main (or main), so the
+# set only shrinks. A rule the merge-base baseline does not name is new, so its
+# rows may enter once. A path with a .. or symlink component fails.
+# Override the baseline path with DOC_CLAIMS_BASELINE and the workcell-citools
+# binary with DOC_CLAIMS_CITOOLS (tests only).
+claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.tsv}"
+claim_hits="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+claim_base="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+claim_cited="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_cited}"' EXIT
+
+# workcell-citools doc-claims probes each cited path through no-follow
+# descriptors, since bash has no openat.
+for f in "${md_files[@]}"; do
+  awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
+    awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk"
+done >"${claim_cited}"
+if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
+  "${DOC_CLAIMS_CITOOLS}" doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
+else
+  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
+fi
+
+# A rule is declared when a comment line of the baseline text names it.
+declares_rule() {
+  printf '%s\n' "$1" | grep '^#' | grep -qE "(^|[^a-z-])$2([^a-z-]|$)"
+}
+claims_text="$(cat "${claims_baseline}")"
+hit_rules="$(cut -f2 "${claim_hits}" | sort -u)"
+while IFS= read -r rule; do
+  [[ -n "${rule}" ]] || continue
+  declares_rule "${claims_text}" "${rule}" ||
+    note "doc-claims rule ${rule} is not named in the comment lines of ${claims_baseline}"
+done <<<"${hit_rules}"
+
+grep -v '^#' "${claims_baseline}" | cut -f1-3 >"${claim_base}" || [[ $? -eq 1 ]]
+sort -o "${claim_hits}" "${claim_hits}"
+sort -o "${claim_base}" "${claim_base}"
+
+# Ratchet: every row must exist in the baseline at the merge base, so a fixed
+# hit cannot hand its row to a new one. Every lookup error fails closed, and so
+# does a checkout with no main ref. The one skip is a merge base without the
+# baseline file (the change that adds it).
+claims_base_ref=""
+for ref in refs/remotes/origin/main refs/heads/main; do
+  if git rev-parse --verify --quiet "${ref}^{commit}" >/dev/null; then
+    claims_base_ref="${ref}"
+    break
+  fi
+done
+claims_file=policy/doc-claims-baseline.tsv
+if [[ -z "${claims_base_ref}" ]]; then
+  echo "check-doc-links: no origin/main or main ref; fetch main to run the baseline merge-base ratchet" >&2
+  exit 2
+else
+  claims_merge_base="$(git merge-base HEAD "${claims_base_ref}")" || {
+    echo "check-doc-links: no merge base between HEAD and ${claims_base_ref}" >&2
+    exit 2
+  }
+  claims_listed="$(git ls-tree --name-only "${claims_merge_base}" -- "${claims_file}")" || {
+    echo "check-doc-links: cannot read the tree at merge base ${claims_merge_base}" >&2
+    exit 2
+  }
+  if [[ -z "${claims_listed}" ]]; then
+    echo "check-doc-links: ${claims_file} is not at the merge base (this change adds it); baseline merge-base ratchet skipped" >&2
+  else
+    base_text="$(git show "${claims_merge_base}:${claims_file}")" || {
+      echo "check-doc-links: cannot read ${claims_file} at merge base ${claims_merge_base}" >&2
+      exit 2
+    }
+    base_rows="$(printf '%s\n' "${base_text}" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
+    claim_unbased="$(comm -23 "${claim_base}" <(printf '%s\n' "${base_rows}"))"
+    while IFS= read -r row; do
+      [[ -n "${row}" ]] || continue
+      rule="${row#*$'\t'}"
+      rule="${rule%%$'\t'*}"
+      # A rule that the merge-base baseline does not name is new in this
+      # change, so its rows have no base to match.
+      declares_rule "${base_text}" "${rule}" || continue
+      note "doc-claims baseline row is not at the merge base with ${claims_base_ref}; fix the hit instead: ${row//$'\t'/ | }"
+    done <<<"${claim_unbased}"
+  fi
+fi
+claim_new="$(comm -23 "${claim_hits}" "${claim_base}")"
+claim_stale="$(comm -13 "${claim_hits}" "${claim_base}")"
+while IFS= read -r row; do
+  [[ -n "${row}" ]] || continue
+  note "unbaselined doc claim hit: ${row//$'\t'/ | }"
+done <<<"${claim_new}"
+while IFS= read -r row; do
+  [[ -n "${row}" ]] || continue
+  note "stale doc-claims baseline row (fixed; delete it): ${row//$'\t'/ | }"
+done <<<"${claim_stale}"
+
 if [[ "${failures}" -gt 0 ]]; then
   echo "check-doc-links: FAILED with ${failures} issue(s)" >&2
   exit 1
 fi
-echo "check-doc-links: OK (${#md_files[@]} markdown files; relative links and docs/ orphans clean)"
+echo "check-doc-links: OK (${#md_files[@]} markdown files; relative links, docs/ orphans, and doc claims clean)"

@@ -129,6 +129,20 @@ retrieval overrides.
 A future Antigravity adapter must mask its settings, plugins, MCP files, hooks,
 and instructions before it can claim support.
 
+## 3a. Documentation claims resolve to gates
+
+`scripts/check-doc-links.sh` reads every Markdown file. A code span that names
+a path under `scripts/`, `internal/` or `.github/workflows/` must exist. The
+check drops a leading `./` first. A path with a `..` or symlink component
+fails, and the check does not look it up. Go probes each path through no-follow
+descriptors.
+
+The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
+today, one row per hit: path, rule, subject and reason. A new hit fails.
+A row with no hit fails. `scripts/check-doc-links.sh` also fails on a row
+that the file at the merge base does not hold. The one exception is a rule
+that the baseline at the merge base does not name.
+
 ## 4. Network posture is explicit
 
 `strict`, `development`, `build`, and `breakglass` are separate modes. Workcell
