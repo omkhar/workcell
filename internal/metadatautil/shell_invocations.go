@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -971,3 +972,137 @@ func shadowsByAlias(args []string, name string) bool {
 	}
 	return false
 }
+
+// EveryShellCommand returns the words of every command in script that bash may
+// run, from the command word wrappedCommand finds. It is the
+// reachability-insensitive counterpart of ShellInvocations: it keeps if, loop
+// and case bodies, guarded commands, subshells and substitutions, which a lint
+// of what a script may run must read. It drops comments, heredoc bodies,
+// redirections, and the reserved words and assignments before a command. A
+// function body is read after each call, with the last definition before the
+// call. Trap actions run at the end, when bash resolves their calls. PR 804
+// adds a ShellCommandWords reader with a similar intent; merge the two when
+// both land.
+func EveryShellCommand(script string) [][]string {
+	var found [][]string
+	var traps []string
+	bodies := map[string]string{}
+	for _, part := range functionBodies(flattenSubstitutions(withoutHeredocBodies(script))) {
+		if part.name != "" {
+			bodies[part.name] = part.text
+			continue
+		}
+		found = append(found, expandCalls(commandWords(part.text), bodies, nil, &traps)...)
+	}
+	for i := 0; i < len(traps); i++ {
+		found = append(found, expandCalls(commandWords(traps[i]), bodies, nil, &traps)...)
+	}
+	return found
+}
+
+// expandCalls puts each called function's body right after every command that
+// calls it, so a cd in the body moves the commands after the call. calling
+// holds the functions being expanded, so a recursive call is read once. Each
+// new trap action goes to traps.
+func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps *[]string) [][]string {
+	var found [][]string
+	for _, words := range commands {
+		found = append(found, words)
+		if action := words[1:]; words[0] == "trap" && len(action) > 0 {
+			if action[0] == "--" {
+				action = action[1:]
+			} else if len(action[0]) > 1 && action[0][0] == '-' {
+				action = nil // trap -p and trap -l print and set nothing
+			}
+			if len(action) > 0 && !slices.Contains(*traps, action[0]) {
+				*traps = append(*traps, action[0])
+			}
+		}
+		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
+			found = append(found, expandCalls(commandWords(body), bodies, append(calling, words[0]), traps)...)
+		}
+	}
+	return found
+}
+
+// commandWords returns the words of every command in text that
+// flattenSubstitutions has already rewritten, as shellWords reads each logical
+// line. An unquoted parenthesis ends a command, as a subshell or a case pattern
+// does. A redirection is not a word of the command, and a bare operator such
+// as > or <<< takes the next word as its target, so that word goes too.
+func commandWords(text string) [][]string {
+	var found [][]string
+	var command []string
+	dropTarget := false
+	add := func(text string) {
+		if dropTarget {
+			dropTarget = false
+			return
+		}
+		command = append(command, text)
+	}
+	end := func() {
+		i := 0
+		for i < len(command) && (slices.Contains(shellKeywords, command[i]) || shellAssignment.MatchString(command[i])) {
+			i++
+		}
+		if i < len(command) {
+			found = append(found, wrappedCommand(command[i:]))
+		}
+		command, dropTarget = nil, false
+	}
+	joined := ""
+	for line := range strings.Lines(text) {
+		words, _, _, _, continues := shellWords(joined+strings.TrimSuffix(line, "\n"), nil)
+		if continues {
+			joined += strings.TrimSuffix(line, "\n")
+			joined = joined[:len(joined)-1]
+			continue
+		}
+		joined = ""
+		for _, each := range words {
+			switch {
+			case each.quoted:
+				add(each.text)
+			case isOperator(each.text):
+				end()
+			default:
+				for i, piece := range strings.Split(strings.ReplaceAll(each.text, ")", "("), "(") {
+					if i > 0 {
+						end()
+					}
+					// An unquoted < or > starts a redirection anywhere in a
+					// word. Only an fd number or {name} before it belongs to it.
+					at := strings.IndexAny(piece, "<>")
+					if at < 0 {
+						if piece != "" {
+							add(piece)
+						}
+						continue
+					}
+					if at > 0 && piece[at-1] == '&' {
+						at-- // &>file
+					}
+					if prefix := piece[:at]; prefix != "" && !shellFD.MatchString(prefix) {
+						add(prefix)
+					}
+					dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
+				}
+			}
+		}
+		end()
+	}
+	return found
+}
+
+var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// shellRedirect matches a redirection word; a bare operator takes the next word.
+var shellRedirect = regexp.MustCompile(`^` + shellFDPattern + `?(&>|[<>])[<>&|]*`)
+
+// shellFD matches an fd number or {name} that a redirection operator follows.
+var shellFD = regexp.MustCompile(`^` + shellFDPattern + `$`)
+
+const shellFDPattern = `([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})`
+
+var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}

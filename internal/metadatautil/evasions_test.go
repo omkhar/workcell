@@ -4,6 +4,7 @@
 package metadatautil_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -200,9 +201,43 @@ var Evasions = []Evasion{
 // row honest: a rewrite that only broke the syntax would otherwise pass.
 func RequireRejectsAllEvasions(t *testing.T, artifact, anchor, want string, validate func(string) error) {
 	t.Helper()
+	requireEvasions(t, artifact, anchor, want, nil, validate)
+}
+
+// gatedEvasions names the rows that leave the anchored command a command behind
+// a branch, a guard, a group, an exit or an exec. The rewrite does not turn it
+// into text, so a reader that ignores reachability still finds it.
+var gatedEvasions = map[string]bool{
+	"unreachable branch": true, "conditional right-hand side": true, "conditional across a line break": true,
+	"exit before the command": true, "exec before the command": true, "quoted compound-command closer": true,
+	"negated guarded group": true, "conditional command group": true, "argument brace in a guarded group": true,
+	"conditional subshell group": true, "negated guarded subshell": true, "array assignment in a guarded subshell": true,
+	"attached subshell opener": true, "attached subshell opener closed on its own line": true,
+	"substitution inside a subshell opener": true, "quoted fragment in a subshell opener": true,
+	"parameter expansion in a subshell opener": true, "subshell behind a reserved prefix": true,
+	"subshell behind a named coproc": true, "paired closers in a subshell opener": true,
+}
+
+// RequireRejectsTextEvasions runs the corpus for a validator that reads
+// EveryShellCommand. validate must accept each gated row, where the command
+// stays, and reject every other row, where the command became text.
+func RequireRejectsTextEvasions(t *testing.T, artifact, anchor, want string, validate func(string) error) {
+	t.Helper()
+	requireEvasions(t, artifact, anchor, want, gatedEvasions, validate)
+}
+
+// requireEvasions applies every row of the corpus to artifact. validate must
+// accept a row in accepted and reject any other row, naming want in its error.
+func requireEvasions(t *testing.T, artifact, anchor, want string, accepted map[string]bool, validate func(string) error) {
+	t.Helper()
 
 	if !strings.Contains(artifact, anchor) {
 		t.Fatalf("anchor %q is absent from the artifact", anchor)
+	}
+	for name := range accepted {
+		if !slices.ContainsFunc(Evasions, func(evasion Evasion) bool { return evasion.Name == name }) {
+			t.Fatalf("accepted row %q is not in the corpus", name)
+		}
 	}
 	for _, evasion := range Evasions {
 		t.Run(evasion.Name, func(t *testing.T) {
@@ -211,7 +246,11 @@ func RequireRejectsAllEvasions(t *testing.T, artifact, anchor, want string, vali
 				t.Fatalf("evasion %q left the artifact unchanged", evasion.Name)
 			}
 			err := validate(mutated)
-			if err == nil || !strings.Contains(err.Error(), want) {
+			if accepted[evasion.Name] {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil for a gated row", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("validate() error = %v, want %q", err, want)
 			}
 		})

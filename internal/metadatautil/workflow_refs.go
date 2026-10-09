@@ -144,7 +144,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				// and a cd moves the directory for every later command, so
 				// a path after either is a hit rather than a probe.
 				moved := strings.Contains(dir, "${{") || filepath.IsAbs(dir)
-				for _, words := range shellCommands(step.Run) {
+				for _, words := range EveryShellCommand(step.Run) {
 					moved = moved || words[0] == "cd" || words[0] == "pushd"
 					for _, match := range scriptRefs(words) {
 						switch {
@@ -230,7 +230,7 @@ func stepWorkDir(document workflowDocument, job workflowJob, step workflowStep) 
 
 // scriptRefs returns the ./scripts paths in one command's words that the shell
 // can run. The arguments of echo, printf and :, and an assignment are data, so
-// a path written there is not a reference. flatCommands drops a here-string.
+// a path written there is not a reference. EveryShellCommand drops a here-string.
 func scriptRefs(words []string) []string {
 	if slices.Contains([]string{"echo", "printf", ":"}, words[0]) {
 		return nil
@@ -318,158 +318,13 @@ func positiveInt(text string) bool {
 	return err == nil && n > 0
 }
 
-var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-
-// shellRedirect matches a redirection word; a bare operator takes the next word.
-var shellRedirect = regexp.MustCompile(`^` + shellFDPattern + `?(&>|[<>])[<>&|]*`)
-
-// shellFD matches an fd number or {name} that a redirection operator follows.
-var shellFD = regexp.MustCompile(`^` + shellFDPattern + `$`)
-
-const shellFDPattern = `([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})`
-
-var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "!", "time", "{"}
-
 // commandArgs returns the arguments of every command named name in script.
 func commandArgs(script, name string) [][]string {
 	var found [][]string
-	for _, words := range shellCommands(script) {
+	for _, words := range EveryShellCommand(script) {
 		if words[0] == name {
 			found = append(found, words[1:])
 		}
 	}
-	return found
-}
-
-// shellCommands returns the words of every command in script, including those
-// in if, for, and while bodies and in $( ) substitutions, without comments and
-// heredoc bodies. It does not use ShellInvocations: that parser drops
-// compound-command bodies because they are not proved to run, and this lint
-// must read them too. A function body is read only when a command or a trap
-// action calls the function, with the last definition before the call, so a
-// function nobody calls runs nothing. Trap actions run at the end, when bash
-// resolves their calls.
-func shellCommands(script string) [][]string {
-	var found [][]string
-	var traps []string
-	bodies := map[string]string{}
-	for _, part := range functionBodies(flattenSubstitutions(withoutHeredocBodies(script))) {
-		if part.name != "" {
-			bodies[part.name] = part.text
-			continue
-		}
-		found = append(found, expandCalls(flatCommands(part.text), bodies, nil, &traps)...)
-	}
-	for i := 0; i < len(traps); i++ {
-		found = append(found, expandCalls(flatCommands(traps[i]), bodies, nil, &traps)...)
-	}
-	return found
-}
-
-// expandCalls puts each called function's body right after every command that
-// calls it, so a cd in the body moves the commands after the call. calling
-// holds the functions being expanded, so a recursive call is read once. Each
-// new trap action goes to traps.
-func expandCalls(commands [][]string, bodies map[string]string, calling []string, traps *[]string) [][]string {
-	var found [][]string
-	for _, words := range commands {
-		found = append(found, words)
-		if action := words[1:]; words[0] == "trap" && len(action) > 0 {
-			if action[0] == "--" {
-				action = action[1:]
-			} else if len(action[0]) > 1 && action[0][0] == '-' {
-				action = nil // trap -p and trap -l print and set nothing
-			}
-			if len(action) > 0 && !slices.Contains(*traps, action[0]) {
-				*traps = append(*traps, action[0])
-			}
-		}
-		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
-			found = append(found, expandCalls(flatCommands(body), bodies, append(calling, words[0]), traps)...)
-		}
-	}
-	return found
-}
-
-// flatCommands returns the words of every command in text that
-// flattenSubstitutions has already rewritten.
-func flatCommands(text string) [][]string {
-	var found [][]string
-	var words []string
-	var word strings.Builder
-	// A redirection is not a word of the command. A bare operator such as
-	// > or <<< takes the next word as its target, so that word goes too.
-	inWord, redirect, dropTarget := false, false, false
-	endWord := func() {
-		if inWord {
-			switch {
-			case redirect:
-				dropTarget = shellRedirect.FindString(word.String()) == word.String()
-			case dropTarget:
-				dropTarget = false
-			default:
-				words = append(words, word.String())
-			}
-			word.Reset()
-			inWord, redirect = false, false
-		}
-	}
-	endCommand := func() {
-		endWord()
-		dropTarget = false
-		i := 0
-		for i < len(words) && (slices.Contains(shellKeywords, words[i]) || shellAssignment.MatchString(words[i])) {
-			i++
-		}
-		if i < len(words) {
-			found = append(found, wrappedCommand(words[i:]))
-		}
-		words = nil
-	}
-	var quote byte
-	for i := 0; i < len(text); i++ {
-		c := text[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else if c == '\\' && quote == '"' && i+1 < len(text) {
-				i++
-				word.WriteByte(text[i])
-			} else {
-				word.WriteByte(c)
-			}
-		case c == '\'' || c == '"':
-			quote, inWord = c, true
-		case c == '\\' && i+1 < len(text):
-			i++
-			if text[i] != '\n' {
-				word.WriteByte(text[i])
-				inWord = true
-			}
-		case c == ' ' || c == '\t':
-			endWord()
-		case (c == '&' || c == '|') && strings.HasSuffix(word.String(), ">"), c == '&' && strings.HasSuffix(word.String(), "<"):
-			word.WriteByte(c) // a redirection such as >&2 or >|f
-		case c == '<' || c == '>' || c == '&' && strings.HasPrefix(text[i:], "&>"):
-			// An unquoted < or > starts a redirection anywhere in a word. Only
-			// an fd number or {name} before it belongs to the redirection.
-			if !(redirect && shellRedirect.FindString(word.String()) == word.String()) && !shellFD.MatchString(word.String()) {
-				endWord()
-			}
-			word.WriteByte(c)
-			if c == '&' {
-				i++
-				word.WriteByte('>')
-			}
-			inWord, redirect = true, true
-		case c == '\n' || c == ';' || c == '&' || c == '|' || c == '(' || c == ')':
-			endCommand()
-		default:
-			word.WriteByte(c)
-			inWord = true
-		}
-	}
-	endCommand()
 	return found
 }

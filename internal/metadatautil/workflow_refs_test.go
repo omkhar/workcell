@@ -154,30 +154,41 @@ func TestCheckWorkflowRefsReadsJobWorkingDirectory(t *testing.T) {
 	}
 }
 
-// TestCheckWorkflowRefsSkipsUncalledFunctions runs the shared corpus rows that
-// hide a command in a function definition. The body never runs, so the lint
-// must not read the command in it.
-func TestCheckWorkflowRefsSkipsUncalledFunctions(t *testing.T) {
-	const anchor = "gh api repos/x"
-	rows := 0
-	for _, evasion := range Evasions {
-		if !strings.Contains(evasion.Name, "definition") {
-			continue
-		}
-		rows++
-		t.Run(evasion.Name, func(t *testing.T) {
-			if err := metadatautil.CheckWorkflowRefs(refsRoot(t, runStep(evasion.Rewrite(anchor, anchor)), "")); err != nil {
-				t.Fatalf("CheckWorkflowRefs() error = %v, want nil", err)
-			}
-		})
-	}
-	if rows < 4 {
-		t.Fatalf("found %d definition rows in the shared corpus, want at least 4", rows)
-	}
-}
-
 func TestCheckWorkflowRefsPassesOnRepository(t *testing.T) {
 	if err := metadatautil.CheckWorkflowRefs("../.."); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestCheckWorkflowRefsRejectsEvasions runs the shared corpus against a
+// baselined gh api hit and a baselined missing script. A row that turns the
+// command into text must leave the baseline row stale, and a gated row must
+// keep the hit.
+func TestCheckWorkflowRefsRejectsEvasions(t *testing.T) {
+	validate := func(baseline string) func(string) error {
+		return func(workflow string) error {
+			root := refsRoot(t, "", baseline)
+			if err := os.WriteFile(filepath.Join(root, ".github/workflows/w.yml"), []byte(workflow), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return metadatautil.CheckWorkflowRefs(root)
+		}
+	}
+	const head = "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - name: s\n        run: |\n          true\n"
+	t.Run("gh api", func(t *testing.T) {
+		const anchor = "          gh api repos/o/r/issues"
+		if err := validate("gh-api-unbounded\tw.yml\tj\ts\treason\n")(head + anchor + "\n"); err != nil {
+			t.Fatalf("CheckWorkflowRefs() error = %v, want the baselined hit", err)
+		}
+		RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "stale baseline row",
+			validate("gh-api-unbounded\tw.yml\tj\ts\treason\n"))
+	})
+	t.Run("script", func(t *testing.T) {
+		const anchor = "          ./scripts/absent.sh"
+		if err := validate("missing-script ./scripts/absent.sh\tw.yml\tj\ts\treason\n")(head + anchor + "\n"); err != nil {
+			t.Fatalf("CheckWorkflowRefs() error = %v, want the baselined hit", err)
+		}
+		RequireRejectsTextEvasions(t, head+anchor+"\n", anchor, "stale baseline row",
+			validate("missing-script ./scripts/absent.sh\tw.yml\tj\ts\treason\n"))
+	})
 }
