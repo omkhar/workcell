@@ -384,6 +384,23 @@ func TestFastPrePushRejectsBaseTreeSymlink(t *testing.T) {
 	}
 }
 
+func TestFastPrePushRunsNoPushedAttributeFilter(t *testing.T) {
+	// A pushed .gitattributes can select a smudge filter from the host Git
+	// config; the checkout empties every configured driver, so it never runs.
+	f := newPrePushChecksFixture(t, "")
+	marker := filepath.Join(f.tmpDir, "smudge-ran")
+	f.run("config", "filter.evil.smudge", "touch \""+marker+"\" && cat")
+	f.commitFile(".gitattributes", "*.md filter=evil\n", fixtureSubject)
+	f.commitFile("note.md", "A note.\n", fixtureSubject)
+	output, err := f.hook()
+	if err != nil {
+		t.Fatalf("fast pre-push failed: %v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatalf("the pushed tree's smudge filter ran on the host:\n%s", output)
+	}
+}
+
 func TestFastPrePushRunsOnlyTrustedCheckers(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	marker := filepath.Join(f.tmpDir, "pushed-code-ran")

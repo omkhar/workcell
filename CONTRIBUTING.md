@@ -45,6 +45,9 @@ pre-merge gate check generated artifacts.
 
 These checks run in a temporary detached checkout of each pushed commit.
 Git hooks are disabled for that checkout, so no hook from the pushed commit runs.
+Every filter driver in your Git config is emptied for that checkout. Thus a
+pushed `.gitattributes` cannot run a smudge command on your host.
+
 Working-tree edits and untracked files do not change the result. The doc link
 check runs when a Markdown file or any other file is deleted or renamed. A symlink
 anywhere in the pushed tree fails the push before any check runs. The hook reads
