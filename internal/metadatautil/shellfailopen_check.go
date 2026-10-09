@@ -362,7 +362,7 @@ func shellFailOpenNesting(command string) int {
 // or a last command that is a shellFailOpenExits command. One of closers at
 // that depth, such as fi or }, ends the branch.
 func shellFailOpenBranchExits(codes []string, closers ...string) bool {
-	depth, failing := 0, false
+	depth, failing, ran := 0, false, false
 	for _, each := range codes {
 		fields := strings.Fields(each)
 		if len(fields) > 0 && fields[0] == "then" {
@@ -372,12 +372,16 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 			if slices.Contains(closers, fields[0]) {
 				return failing
 			}
+			if len(fields) == 1 && (fields[0] == "exit" || fields[0] == "return") {
+				return !ran || failing // a bare exit keeps the last command's status
+			}
 			failing = shellFailOpenExits.MatchString(strings.Join(fields, " "))
 			if failing && (fields[0] == "exit" || fields[0] == "return") {
 				return true
 			}
 		}
 		depth += shellFailOpenNesting(each)
+		ran = ran || len(fields) > 0
 	}
 	return false
 }
