@@ -85,6 +85,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"note: # here", "one"}},
 		},
 		{
+			name:   "an ANSI-C quoted argument is not a barrier",
+			script: "printf $'a\\n'\noras cp $'x' one\noras cp two\n",
+			want:   [][]string{{"x", "one"}, {"two"}},
+		},
+		{
 			name:   "a hash inside a word is an argument, not a comment",
 			script: "oras cp a#b one\n",
 			want:   [][]string{{"a#b", "one"}},

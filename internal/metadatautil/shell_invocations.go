@@ -44,9 +44,13 @@ func (h heredoc) endsAt(line string) bool {
 // an ordinary command, and a quoted } closes no group. A reader that returns
 // plain strings cannot tell the two apart, so every caller that asks whether a
 // word is syntax reads text as syntax.
+//
+// decoded records a $'…' span in the word. Bash decodes its escapes before it
+// runs the word, so $'\x73ource' runs source while its text here does not.
 type word struct {
-	text   string
-	quoted bool
+	text    string
+	quoted  bool
+	decoded bool
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -55,6 +59,18 @@ func texts(words []word) []string {
 	plain := make([]string, len(words))
 	for index, each := range words {
 		plain[index] = each.text
+	}
+	return plain
+}
+
+// spelled returns the words' text with the $ of a $'…' span put back, so the
+// barrier test reads a word bash decodes as one it expands.
+func spelled(words []word) []string {
+	plain := texts(words)
+	for index, each := range words {
+		if each.decoded {
+			plain[index] = "$" + plain[index]
+		}
 	}
 	return plain
 }
@@ -447,7 +463,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			position++
 			outside := groupDepth
 			groupDepth += commandBrace(each)
-			if evaluates(commandWords(texts(args))) {
+			if evaluates(commandWords(spelled(args))) {
 				// eval and source run text this reader never sees as code, and
 				// that text can define a function or an alias with the command's
 				// name, as eval 'or''as() { :; }' does. No later call is proved to
@@ -528,7 +544,7 @@ func shellWords(line string, stack []byte) (
 ) {
 	var text strings.Builder
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
-	ansiC, unresolved := false, false
+	ansiC, unresolved, decoded := false, false, false
 	arithmetic := 0
 	// A line that carries a quoted command substitution donates no words. Where
 	// the substitution ends is beyond a line reader, and reading syntax over
@@ -546,10 +562,10 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted})
+			words = append(words, word{text.String(), quoted, decoded})
 		}
 		text.Reset()
-		inWord, quoted, unresolved = false, false, false
+		inWord, quoted, unresolved, decoded = false, false, false, false
 	}
 	for index := 0; index < len(line); index++ {
 		character := line[index]
@@ -626,6 +642,7 @@ func shellWords(line string, stack []byte) (
 			index++
 			quote = line[index]
 			ansiC = quote == '\''
+			decoded = decoded || ansiC
 			unresolved = unresolved || !ansiC
 			inWord, quoted = true, true
 		case character == ' ' || character == '\t':

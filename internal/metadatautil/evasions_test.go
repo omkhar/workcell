@@ -30,6 +30,7 @@ var anyRejection = map[string]bool{
 	"sourced definition":          true,
 	"parameter-spliced source":    true,
 	"substituted source":          true,
+	"ansi-c quoted source":        true,
 	"brace-expanded source":       true,
 	"eval in an if condition":     true,
 	"source in a while condition": true,
@@ -233,6 +234,7 @@ var Evasions = []Evasion{
 	})},
 	{"parameter-spliced source", sourcedBy("s${x-}ource ./shadow.sh")},
 	{"substituted source", sourcedBy("$(printf source) ./shadow.sh")},
+	{"ansi-c quoted source", sourcedBy("$'\\x73ource' ./shadow.sh")},
 	{"brace-expanded source", sourcedBy("{source,./shadow.sh}")},
 	{"eval in an if condition", replaceAnchor(func(a string) string {
 		return indentOf(a) + "if eval '" + strings.Fields(a)[0] + "(){ :; }'; then :; fi\n" + a
