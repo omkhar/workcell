@@ -377,6 +377,7 @@ var envWriters = map[string]bool{"Setenv": true, "Putenv": true}
 func savedSetenvAliases(files ...*ast.File) map[string]bool {
 	savedSetenv := map[string]bool{}
 	params := functionParams(files...)
+	fields := structFields(files)
 	isSetenv := func(value ast.Expr) bool {
 		switch v := unparen(value).(type) {
 		case *ast.SelectorExpr:
@@ -425,6 +426,21 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 				case *ast.KeyValueExpr:
 					// A keyed struct literal field such as writer{set: os.Setenv}.
 					added = record([]ast.Expr{n.Key}, []ast.Expr{n.Value}) || added
+				case *ast.CompositeLit:
+					// An unkeyed struct literal such as writer{os.Setenv} fills the
+					// fields of every same-named struct type in order; a literal
+					// whose type is elided, as inside a slice literal, is not resolved.
+					for _, names := range fields[literalType(n.Type)] {
+						for i, elt := range n.Elts {
+							if _, keyed := elt.(*ast.KeyValueExpr); keyed || i >= len(names) || names[i] == "" || !isSetenv(elt) {
+								continue
+							}
+							if !savedSetenv[names[i]] {
+								savedSetenv[names[i]] = true
+								added = true
+							}
+						}
+					}
 				case *ast.CallExpr:
 					// A writer passed as an argument is held by the callee's parameter, matched by callee name across the package, which only lists more.
 					var callee string
@@ -458,6 +474,44 @@ func savedSetenvAliases(files ...*ast.File) map[string]bool {
 			return savedSetenv
 		}
 	}
+}
+
+// structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
+func structFields(files []*ast.File) map[string][][]string {
+	fields := map[string][][]string{}
+	for _, file := range files {
+		ast.Inspect(file, func(c ast.Node) bool {
+			if spec, ok := c.(*ast.TypeSpec); ok {
+				if st, ok := spec.Type.(*ast.StructType); ok {
+					var names []string
+					for _, field := range st.Fields.List {
+						if len(field.Names) == 0 {
+							names = append(names, "")
+						}
+						for _, name := range field.Names {
+							names = append(names, name.Name)
+						}
+					}
+					fields[spec.Name.Name] = append(fields[spec.Name.Name], names)
+				}
+			}
+			return true
+		})
+	}
+	return fields
+}
+
+// literalType names the struct type a composite literal builds, through a pointer or a package qualifier; "" when the type is elided.
+func literalType(expr ast.Expr) string {
+	switch t := unparen(expr).(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.StarExpr:
+		return literalType(t.X)
+	}
+	return ""
 }
 
 // functionParams lists the parameter names of each declaration under its name, one list per function, method or saved func literal, so same-named declarations keep their own positions.
@@ -811,9 +865,19 @@ func b(dir string) { var w writer; w.set = os.Setenv; w.set("PATH", dir); exec.C
 import "os/exec"
 type writer struct{ set func(string, string) error }
 func a(dir string) { w := writer{set: func(string, string) error { return nil }}; w.set("PATH", dir); exec.Command("git") }
+func b(dir string) { w := writer{func(string, string) error { return nil }}; w.set("PATH", dir); exec.Command("git") }
 `
 	if got := rawExecSites(t, "field_not_setenv.go", fieldNotSetenv); got != 0 {
 		t.Fatalf("rawExecSites = %d, want 0 (a field that holds no writer is not a PATH rewrite)", got)
+	}
+	const unkeyedFieldSetenv = `package x
+import ("os"; "os/exec")
+type writer struct{ name string; set func(string, string) error }
+func a(dir string) { w := writer{"w", os.Setenv}; w.set("PATH", dir); exec.Command("git") }
+func b(dir string) { w := &writer{"w", os.Setenv}; w.set("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "unkeyed_field_setenv.go", unkeyedFieldSetenv); got != 2 {
+		t.Fatalf("rawExecSites = %d, want 2 (git after a PATH rewrite through a Setenv held in an unkeyed struct literal field, by value and by pointer)", got)
 	}
 	const childEnvOnly = `package x
 import ("os"; "os/exec")
