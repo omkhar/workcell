@@ -493,12 +493,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 					continue
 				}
 				names := commandWords(spelled(each.args))
-				switch rebinding := unwrapBuiltins(names); {
+				switch rebinding := unwrapBuiltins(names[assignmentPrefix(names):]); {
 				case len(rebinding) > 1 && rebinding[0] == "alias" && slices.ContainsFunc(rebinding[1:], func(word string) bool { return strings.Contains(word, "=") }),
 					len(rebinding) > 1 && rebinding[0] == "hash" && slices.Contains(rebinding[1:], "-p"):
-					// A called body that rebinds a name, also behind command or
-					// builtin, may shadow every later use of the command, so the
-					// reader stops at the call.
+					// A called body that rebinds a name, also behind an assignment,
+					// command or builtin, may shadow every later use of the
+					// command, so the reader stops at the call.
 					barrierFunctions[definingName] = true
 				case rewritesParameters(names):
 					rewritten[definingName] = true
@@ -575,12 +575,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 				// The step ends here; nothing written after it runs.
 				return invocations
 			}
-			// command alias and builtin hash rebind in the current shell too.
-			rebinding := unwrapBuiltins(names)
-			if rebinding[0] == "alias" && shadowsByAlias(rebinding, prefix[0]) {
+			// X=1 command alias and builtin hash rebind in the current shell too.
+			rebinding := unwrapBuiltins(names[assignmentPrefix(names):])
+			if len(rebinding) > 0 && rebinding[0] == "alias" && shadowsByAlias(rebinding, prefix[0]) {
 				return nil // Every later use expands to the alias.
 			}
-			if rebinding[0] == "hash" && slices.Contains(rebinding[1:], "-p") &&
+			if len(rebinding) > 0 && rebinding[0] == "hash" && slices.Contains(rebinding[1:], "-p") &&
 				slices.Contains(rebinding[1:], prefix[0]) {
 				// hash -p pathname name makes pathname the full filename for
 				// name, so every later line runs that path, not the program.
