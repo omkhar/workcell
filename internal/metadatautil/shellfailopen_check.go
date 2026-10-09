@@ -154,9 +154,10 @@ var (
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
-	// shellFailOpenAnd is a && after the call, which makes the call its tested
-	// left operand. A call on the right of && is tested by nothing.
-	shellFailOpenAnd  = regexp.MustCompile(`&&\s*\S`)
+	// shellFailOpenAnd is a && that is the first && or || after the call,
+	// which makes the call its tested left operand. After a ||, the && tests
+	// the handler; a call on the right of && is tested by nothing.
+	shellFailOpenAnd  = regexp.MustCompile(`^&&\s*\S`)
 	shellFailClosedRe = regexp.MustCompile(`#\s*` + shellFailClosedTag + `\s*\S`)
 	// shellAssignment is a word that assigns a name, the only word that may
 	// stand beside a substitution whose status the command keeps.
@@ -274,8 +275,10 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				}
 				return later
 			})
+			outside := shellOutsideSubsts(rest)
+			list := shellFailOpenList.FindStringIndex(outside)
 			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
-				shellFailOpenAnd.MatchString(shellOutsideSubsts(rest))
+				list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command)
 			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && !tested
 			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
