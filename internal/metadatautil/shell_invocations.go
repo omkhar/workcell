@@ -412,6 +412,20 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// exiting names the helpers whose body ends the shell on every call, as
 	// stop() { exit 0; } does; an unconditional call to one ends the step.
 	exiting := map[string]bool{}
+	// exitCalls records the helpers each body calls unconditionally, so a
+	// helper that calls one defined later still ends the step once both exist.
+	exitCalls := map[string][]string{}
+	var terminates func(name string, seen map[string]bool) bool
+	terminates = func(name string, seen map[string]bool) bool {
+		if exiting[name] {
+			return true
+		}
+		if seen[name] {
+			return false
+		}
+		seen[name] = true
+		return slices.ContainsFunc(exitCalls[name], func(callee string) bool { return terminates(callee, seen) })
+	}
 	// conditionalGroup is the brace depth outside a command group that a && or
 	// a || guards, or -1 when no such group is open, and groupDepth is the
 	// nesting the commands read so far have opened. Bash decides the whole
@@ -519,6 +533,9 @@ func ShellInvocations(script, commandName string) []Invocation {
 				default:
 					if callee, args, ok := helperCallWords(names); ok {
 						helperCalls[definingName] = append(helperCalls[definingName], helperCall{callee, args})
+						if !each.conditional {
+							exitCalls[definingName] = append(exitCalls[definingName], callee)
+						}
 					}
 				}
 			}
@@ -585,8 +602,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 				continue
 			}
 			names = texts(args)
-			if names[0] == "exit" || names[0] == "return" || replacesShell(names) || exiting[names[0]] {
-				// The step ends here; nothing written after it runs.
+			called := names[assignmentPrefix(names):]
+			if names[0] == "exit" || names[0] == "return" || replacesShell(names) ||
+				len(called) > 0 && terminates(called[0], map[string]bool{}) {
+				// The step ends here; nothing written after it runs, also after
+				// X=1 stop or a helper that calls a later-defined stop.
 				return invocations
 			}
 			if len(names) >= len(prefix) && slices.Equal(names[:len(prefix)], prefix) {

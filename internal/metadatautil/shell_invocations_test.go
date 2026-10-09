@@ -195,6 +195,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   nil,
 		},
 		{
+			name:   "an assignment-prefixed call to an exiting helper ends the scan",
+			script: "stop() {\n  exit 0\n}\nX=1 stop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a helper that calls a later-defined exiting helper ends the scan",
+			script: "outer() {\n  stop\n}\nstop() {\n  exit 0\n}\nouter\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a helper that exits only on failure ends nothing",
 			script: "die() {\n  exit 1\n}\nfalse || die\noras cp --recursive --from-oci-layout one\n",
 			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},

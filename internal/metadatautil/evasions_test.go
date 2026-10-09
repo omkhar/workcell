@@ -63,6 +63,8 @@ var anyRejection = map[string]bool{
 	"spaced one-line helper that sources":    true,
 	"recursion that repeats its words":       true,
 	"exiting helper before the anchor":       true,
+	"assigned exiting helper call":           true,
+	"later-defined exiting helper":           true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -375,6 +377,14 @@ var Evasions = []Evasion{
 	{"exiting helper before the anchor", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "stop\n" + a
+	})},
+	{"assigned exiting helper call", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "X=1 stop\n" + a
+	})},
+	{"later-defined exiting helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "outer() {\n" + i + "  stop\n" + i + "}\n" + i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "outer\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
