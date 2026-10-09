@@ -400,6 +400,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// evals: a later call runs that text in the current shell.
 	var definingName string
 	barrierFunctions, forwarders := map[string]bool{}, map[string]bool{}
+	// helperCalls records, per defined function, the helpers its body calls
+	// and the words it hands them, so a barrier reached through a helper that
+	// is defined after its caller is still found when the caller is called.
+	helperCalls := map[string][]helperCall{}
+	graph := helperGraph{barrierFunctions, forwarders, helperCalls}
 	// rewritten lists the functions whose body rewrites its positional
 	// parameters with set or shift, so what "$@" runs is not what the caller
 	// passed and the forwarder is a barrier instead.
@@ -491,12 +496,16 @@ func ShellInvocations(script, commandName string) []Invocation {
 				switch {
 				case rewritesParameters(names):
 					rewritten[definingName] = true
-				case callsBarrier(names, barrierFunctions, forwarders):
+				case graph.callsBarrier(names):
 					barrierFunctions[definingName] = true
 				case evaluates(names) && forwards(names):
 					forwarders[definingName] = true
 				case evaluates(names):
 					barrierFunctions[definingName] = true
+				default:
+					if callee, args, ok := helperCallWords(names); ok {
+						helperCalls[definingName] = append(helperCalls[definingName], helperCall{callee, args})
+					}
 				}
 			}
 			if bodyOpened && depth <= definedAt {
@@ -517,7 +526,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			position++
 			outside := groupDepth
 			groupDepth += commandBrace(each)
-			if names := commandWords(spelled(args)); evaluates(names) || callsBarrier(names, barrierFunctions, forwarders) {
+			if names := commandWords(spelled(args)); evaluates(names) || graph.callsBarrier(names) {
 				// eval and source run text this reader never sees as code, and
 				// that text can define a function or an alias with the command's
 				// name, as eval 'or''as() { :; }' does. No later call is proved to
@@ -840,10 +849,12 @@ func unwrapBuiltins(names []string) []string {
 	return names
 }
 
-// forwarderWord matches a command word that is a positional parameter, so the
-// command run is whatever the caller passed. A named array such as
-// "${cmd[@]}" holds words the caller never passed, so it is no forwarder.
-var forwarderWord = regexp.MustCompile(`^\$(?:[@*1-9]|\{(?:[@*]|[0-9]+)\})$`)
+// forwarderWord matches a command word that is the caller's first positional
+// parameter or all of them, so the command run is the caller's first word. A
+// named array such as "${cmd[@]}" holds words the caller never passed, and a
+// later parameter such as "$2" runs a word this reader does not align, so
+// neither is a forwarder: such a body is a barrier.
+var forwarderWord = regexp.MustCompile(`^\$(?:[@*1]|\{(?:[@*]|1)\})$`)
 
 // rewritesParameters reports whether the command rewrites the positional
 // parameters: shift, or set with -- or with an operand that is no option.
@@ -878,15 +889,60 @@ func forwards(names []string) bool {
 // forwarder such as run() { "$@"; } whose forwarded words are themselves a
 // barrier: eval, source or dot, or a word the reader cannot spell, such as
 // s${x-}ource.
-func callsBarrier(names []string, barriers, forwarders map[string]bool) bool {
+func (g helperGraph) callsBarrier(names []string) bool {
+	callee, args, ok := helperCallWords(names)
+	return ok && g.reaches(callee, args, map[string]bool{})
+}
+
+// helperCall is one call a function body makes: the helper's name and the
+// words handed to it.
+type helperCall struct {
+	callee string
+	args   []string
+}
+
+// helperGraph holds what the reader knows about defined functions: the
+// barriers, the forwarders, and the helper calls each body makes.
+type helperGraph struct {
+	barriers, forwarders map[string]bool
+	calls                map[string][]helperCall
+}
+
+// helperCallWords splits a command into its command word and arguments after
+// the assignments and builtin wrappers.
+func helperCallWords(names []string) (string, []string, bool) {
 	names = unwrapBuiltins(names[assignmentPrefix(names):])
 	if len(names) == 0 {
+		return "", nil, false
+	}
+	return names[0], names[1:], true
+}
+
+// reaches reports whether calling callee with args runs a barrier: callee is a
+// barrier, or a forwarder handed a word the reader cannot spell or eval,
+// source or dot, or a helper whose body calls such a helper. A body that hands
+// its own parameters on, as inner "$@", passes the caller's words along.
+func (g helperGraph) reaches(callee string, args []string, visited map[string]bool) bool {
+	if visited[callee] {
 		return false
 	}
-	if barriers[names[0]] {
+	visited[callee] = true
+	if g.barriers[callee] {
 		return true
 	}
-	return forwarders[names[0]] && evaluates(names[1:])
+	if g.forwarders[callee] && evaluates(args) {
+		return true
+	}
+	for _, call := range g.calls[callee] {
+		handed := call.args
+		if slices.ContainsFunc(handed, forwarderWord.MatchString) {
+			handed = args
+		}
+		if g.reaches(call.callee, handed, visited) {
+			return true
+		}
+	}
+	return false
 }
 
 // assignmentPrefix returns how many leading words are assignments bash applies

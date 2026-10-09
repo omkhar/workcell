@@ -43,6 +43,8 @@ var anyRejection = map[string]bool{
 	"named array source in a helper":         true,
 	"source behind two helpers":              true,
 	"forwarder that rewrites its parameters": true,
+	"source behind a later-defined helper":   true,
+	"second positional parameter forwarder":  true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -278,6 +280,14 @@ var Evasions = []Evasion{
 	{"forwarder that rewrites its parameters", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  set -- source ./shadow.sh\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run\n" + a
+	})},
+	{"source behind a later-defined helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner \"$@\"\n" + i + "}\n" + i + "inner() {\n" + i + "  source \"$1\"\n" + i + "}\n" + i + "outer ./shadow.sh\n" + a
+	})},
+	{"second positional parameter forwarder", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$2\" \"$1\"\n" + i + "}\n" + i + "run ./shadow.sh source\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
