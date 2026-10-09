@@ -934,8 +934,8 @@ const helperPathBound = 32
 // command, as shadow() { source x; } puts the header, the brace and the
 // first body command in one command, so the body command is classified.
 func bodyWords(names []string) []string {
-	if len(names) > 1 && names[0] == "function" {
-		names = names[2:]
+	if len(names) > 1 && (names[0] == "function" || names[1] == "()" || names[1] == "(){") {
+		names = names[2:] // function NAME, or NAME () with the parentheses spaced
 	}
 	for len(names) > 0 && (names[0] == "{" || strings.HasSuffix(names[0], "()") || strings.HasSuffix(names[0], "(){")) {
 		names = names[1:]

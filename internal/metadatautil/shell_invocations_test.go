@@ -195,6 +195,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
 		},
 		{
+			name:   "a one-line helper with a spaced header that sources is a barrier",
+			script: "shadow () { source ./shadow.sh; }\nshadow\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a one-line helper that sources is a barrier",
 			script: "shadow() { source <(printf 'oras() { :; }\\n'); }\nshadow\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,
