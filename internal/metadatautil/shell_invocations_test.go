@@ -150,6 +150,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   nil,
 		},
 		{
+			name:   "an alias behind command proves no invocation of it",
+			script: "shopt -s expand_aliases\ncommand alias oras=':'\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a hash -p behind builtin proves no invocation of it",
+			script: "builtin hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a step that redefines the command proves no invocation of it",
 			script: "oras() { :; }\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

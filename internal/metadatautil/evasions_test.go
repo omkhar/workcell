@@ -49,6 +49,8 @@ var anyRejection = map[string]bool{
 	"recursion that changes its words":       true,
 	"literal word ahead of forwarded words":  true,
 	"alias in a called helper":               true,
+	"wrapped alias in a called helper":       true,
+	"wrapped hash in a called helper":        true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -308,6 +310,14 @@ var Evasions = []Evasion{
 	{"alias in a called helper", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "shadow() {\n" + i + "  shopt -s expand_aliases\n" + i + "  alias " + strings.Fields(a)[0] + "=':'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"wrapped alias in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  shopt -s expand_aliases\n" + i + "  command alias " + strings.Fields(a)[0] + "=':'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"wrapped hash in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  builtin hash -p /bin/true '" + strings.Fields(a)[0] + "'\n" + i + "}\n" + i + "shadow\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
