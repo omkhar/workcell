@@ -145,6 +145,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"Windows executable names are unresolved", runStep("gh.exe api repos/o/r/issues\n\"C:\\\\tools\\\\GH.EXE\" api repos/o/r/issues\nbash.exe -c 'gh api repos/o/r/issues'"), "", "command-unresolved"},
 		{"configured non-bash shell is unresolved", "      - name: s\n        shell: pwsh\n        run: Invoke-Expression 'gh api repos/o/r/issues'\n", "", "command-unresolved"},
 		{"Windows runner with no shell is unresolved", "name: w\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: Invoke-Expression 'gh api repos/o/r/issues'\n", "", "command-unresolved"},
+		{"self-hosted runner with no shell is unresolved", "name: w\njobs:\n  j:\n    runs-on: [self-hosted, x64]\n    steps:\n      - run: Invoke-Expression 'gh api repos/o/r/issues'\n", "", "command-unresolved"},
 		{"expression runner with no shell is unresolved", "name: w\njobs:\n  j:\n    runs-on: ${{ matrix.os }}\n    steps:\n      - run: gh api --paginate repos/o/r/issues\n", "", "command-unresolved"},
 		{"expression runner with a bash default is read", "name: w\ndefaults:\n  run:\n    shell: bash\njobs:\n  j:\n    runs-on: ${{ matrix.os }}\n    steps:\n      - run: gh api --paginate repos/o/r/issues\n", "", ""},
 		{"expansion in a paginated gh api call is unresolved", runStep("gh api --paginate ${{ github.event.issue.title }}\ngh api --paginate \"repos/${REPO}/issues\""), "", "command-unresolved"},

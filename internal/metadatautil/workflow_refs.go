@@ -31,11 +31,10 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
-// runsOnPwsh reports whether a job with no shell set may run on Windows, whose
-// default shell is pwsh: its runs-on names windows or is an expression.
-func runsOnPwsh(job workflowJob) bool {
-	text, _ := yaml.Marshal(&job.RunsOn)
-	return strings.Contains(strings.ToLower(string(text)), "windows") || strings.Contains(string(text), "${{")
+// runsOnBash reports whether a job with no shell set surely runs bash: only on
+// a GitHub-hosted ubuntu- or macos- runner; any other may be Windows, with pwsh.
+func runsOnBash(job workflowJob) bool {
+	return job.RunsOn.Kind == yaml.ScalarNode && (strings.HasPrefix(job.RunsOn.Value, "ubuntu-") || strings.HasPrefix(job.RunsOn.Value, "macos-"))
 }
 
 // stepShell returns the shell a step's run body is written for: its own
@@ -163,7 +162,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
 				if shell := commandName(strings.Fields(stepShell(documents[file], definition, step) + " bash")[0]); step.Run != "" &&
-					(shell != "bash" && shell != "sh" || stepShell(documents[file], definition, step) == "" && runsOnPwsh(definition)) {
+					(shell != "bash" && shell != "sh" || stepShell(documents[file], definition, step) == "" && !runsOnBash(definition)) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}
