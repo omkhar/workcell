@@ -780,19 +780,7 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	savedSetenv, factories = map[string]bool{}, map[string]bool{}
 	params := functionParams(files...)
 	fields := structFields(files)
-	var isSetenv func(value ast.Expr) bool
-	isSetenv = func(value ast.Expr) bool {
-		switch v := unparen(value).(type) {
-		case *ast.SelectorExpr:
-			return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
-		case *ast.Ident:
-			return savedSetenv[v.Name] || envWriters[v.Name]
-		case *ast.CallExpr:
-			// A call of a function that returns a writer, such as writer()("PATH", dir).
-			return factories[calleeName(v.Fun)]
-		}
-		return false
-	}
+	isSetenv := func(value ast.Expr) bool { return isPathWriter(value, savedSetenv, factories) }
 	// returnsWriter reports whether a function returns a writer in any return statement, or holds one in a named result that a bare return carries.
 	returnsWriter := func(fn *ast.FuncType, body *ast.BlockStmt) bool {
 		found := false
@@ -910,6 +898,20 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	}
 }
 
+// isPathWriter reports whether value is an envWriter, a saved writer, a factory call, or a single-argument call of a writer such as setter(os.Setenv).
+func isPathWriter(value ast.Expr, savedSetenv, factories map[string]bool) bool {
+	switch v := unparen(value).(type) {
+	case *ast.SelectorExpr:
+		return envWriters[v.Sel.Name] || savedSetenv[v.Sel.Name]
+	case *ast.Ident:
+		return savedSetenv[v.Name] || envWriters[v.Name]
+	case *ast.CallExpr:
+		// A call of a function that returns a writer, such as writer()("PATH", dir), or a conversion, matched without types, so any single-argument call of a writer only fails closed.
+		return factories[calleeName(v.Fun)] || len(v.Args) == 1 && isPathWriter(v.Args[0], savedSetenv, factories)
+	}
+	return false
+}
+
 // calleeName names the function a call expression calls, bare or through a
 // selector, under any parentheses and generic instantiations such as
 // (rewrite[int]) or pair[K, V]; "" otherwise.
@@ -1003,12 +1005,7 @@ func rewritesProcessPath(file *ast.File, savedSetenv, factories map[string]bool)
 		if !ok || len(call.Args) == 0 {
 			return true
 		}
-		if fn, ok := unparen(call.Fun).(*ast.CallExpr); ok {
-			// writer()("PATH", dir): the callee is a call of a writer factory.
-			if !factories[calleeName(fn.Fun)] {
-				return true
-			}
-		} else if name := calleeName(call.Fun); !envWriters[name] && !savedSetenv[name] {
+		if !isPathWriter(call.Fun, savedSetenv, factories) {
 			return true
 		}
 		lit, ok := call.Args[0].(*ast.BasicLit)
@@ -1357,6 +1354,30 @@ func a(dir string) { writer()("PATH", dir); exec.Command("git") }
 `
 	if got := rawExecSites(t, "named_result_not_setenv.go", namedResultNotSetenv); got != 0 {
 		t.Fatalf("rawExecSites = %d, want 0 (a named result that holds no writer is not a PATH rewrite)", got)
+	}
+	const convertedSetenv = `package x
+import ("os"; "os/exec")
+type setter func(string, string) error
+func a(dir string) { setter(os.Setenv)("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "converted_setenv.go", convertedSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a writer converted to a named func type)", got)
+	}
+	const convertedSavedSetenv = `package x
+import ("os"; "os/exec")
+type setter func(string, string) error
+func a(dir string) { s := setter(os.Setenv); s("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "converted_saved_setenv.go", convertedSavedSetenv); got != 1 {
+		t.Fatalf("rawExecSites = %d, want 1 (git after a PATH rewrite through a saved conversion of a writer)", got)
+	}
+	const convertedNotSetenv = `package x
+import "os/exec"
+type setter func(string, string) error
+func a(dir string) { setter(func(string, string) error { return nil })("PATH", dir); exec.Command("git") }
+`
+	if got := rawExecSites(t, "converted_not_setenv.go", convertedNotSetenv); got != 0 {
+		t.Fatalf("rawExecSites = %d, want 0 (a conversion of a closure that holds no writer is not a PATH rewrite)", got)
 	}
 	// An alias of another file's alias propagates to a fixed point, and a constructor passed to a function, method or func value counts per call through the parameter; a stable closure counts nothing.
 	counts := packageRawExecSites(t, map[string]string{
