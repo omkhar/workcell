@@ -61,6 +61,8 @@ var anyRejection = map[string]bool{
 	"one-line helper that sources":           true,
 	"one-line helper that evals":             true,
 	"spaced one-line helper that sources":    true,
+	"recursion that repeats its words":       true,
+	"exiting helper before the anchor":       true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -365,6 +367,14 @@ var Evasions = []Evasion{
 	{"spaced one-line helper that sources", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "shadow () { source ./shadow.sh; }\n" + i + "shadow\n" + a
+	})},
+	{"recursion that repeats its words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "loop() {\n" + i + "  loop \"$@\"\n" + i + "}\n" + i + "loop\n" + a
+	})},
+	{"exiting helper before the anchor", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "stop\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},

@@ -185,6 +185,21 @@ func TestShellInvocations(t *testing.T) {
 			want:   nil,
 		},
 		{
+			name:   "a recursion that repeats its words ends the scan",
+			script: "loop() {\n  loop \"$@\"\n}\nloop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a helper that exits ends the scan",
+			script: "stop() {\n  exit 0\n}\nstop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
+			name:   "a helper that exits only on failure ends nothing",
+			script: "die() {\n  exit 1\n}\nfalse || die\noras cp --recursive --from-oci-layout one\n",
+			want:   [][]string{{"--recursive", "--from-oci-layout", "one"}},
+		},
+		{
 			name:   "a recursion that grows its words ends the scan",
 			script: "loop() {\n  loop \"$@\" x\n}\nloop\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

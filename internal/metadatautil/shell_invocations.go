@@ -409,6 +409,9 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// parameters with set or shift, so what "$@" runs is not what the caller
 	// passed and the forwarder is a barrier instead.
 	rewritten := map[string]bool{}
+	// exiting names the helpers whose body ends the shell on every call, as
+	// stop() { exit 0; } does; an unconditional call to one ends the step.
+	exiting := map[string]bool{}
 	// conditionalGroup is the brace depth outside a command group that a && or
 	// a || guards, or -1 when no such group is open, and groupDepth is the
 	// nesting the commands read so far have opened. Bash decides the whole
@@ -508,6 +511,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 					forwarders[definingName] = true
 				case evaluates(names):
 					barrierFunctions[definingName] = true
+				case !each.conditional && len(names) > 0 && (names[0] == "exit" || replacesShell(names) || exiting[names[0]]):
+					// A body that exits, or replaces the shell, whenever it runs
+					// ends the step at every call; die() { exit 1; } called as
+					// cmd || die runs only on failure and ends nothing proved.
+					exiting[definingName] = true
 				default:
 					if callee, args, ok := helperCallWords(names); ok {
 						helperCalls[definingName] = append(helperCalls[definingName], helperCall{callee, args})
@@ -577,7 +585,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 				continue
 			}
 			names = texts(args)
-			if names[0] == "exit" || names[0] == "return" || replacesShell(names) {
+			if names[0] == "exit" || names[0] == "return" || replacesShell(names) || exiting[names[0]] {
 				// The step ends here; nothing written after it runs.
 				return invocations
 			}
@@ -955,7 +963,9 @@ func (g helperGraph) reaches(callee string, args []string, visited map[string]bo
 	// words is followed, and only a call that repeats itself exactly is cut.
 	key := callee + "\x00" + strings.Join(args, "\x00")
 	if visited[key] {
-		return false // a cycle on this path; a sibling call may still reach a barrier
+		// A call that repeats itself exactly, as loop() { loop "$@"; } does,
+		// never returns in bash, so nothing after it is proved to run.
+		return true
 	}
 	if len(visited) >= helperPathBound {
 		// A path this deep is a recursion that grows its words, as loop "$@" x
