@@ -136,12 +136,15 @@ var (
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
 	// envOperandShort and envOperandLong are env's options that take an
 	// operand, per env --help; the value of -S (--split-string) is more
-	// arguments. envProgram reads them.
+	// arguments. envProgram and shellEnvSplit both read them.
 	envOperandShort = "uC"
 	envOperandLong  = []string{"--unset", "--chdir"}
-	// shellEnvSplit is env, any flags, and its -S or --split-string option
-	// with the one word that holds the string env splits.
-	shellEnvSplit = regexp.MustCompile(`(\benv(?:\s+-[^\sS-]+)*\s+)(?:-S\s*|--split-string(?:=|\s+))([^\s;&|()<>]+)`)
+	shellEnvWord    = `[^\s;&|()<>]+`
+	// shellEnvSplit is env, its options with any operand, and its -S or
+	// --split-string option with the one word that holds the string env splits.
+	shellEnvSplit = regexp.MustCompile(`(\benv(?:\s+(?:-[^\sS-]*[` + envOperandShort + `]\s+` + shellEnvWord +
+		`|(?:` + strings.Join(envOperandLong, "|") + `)\s+` + shellEnvWord + `|-[^\sS-]+|--[a-z-]+(?:=` + shellEnvWord + `)?))*\s+)` +
+		`(?:-S\s*|--split-string(?:=|\s+))(` + shellEnvWord + `)`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
