@@ -1506,6 +1506,9 @@ func TestValidateUpstreamRefreshWorkflowRequiresGatedPrerequisites(t *testing.T)
 		"checkout after the publisher":       func(s string) string { return moveStepToEnd(s, "      - uses: actions/checkout@") },
 		"download after the publisher":       func(s string) string { return moveStepToEnd(s, "      - uses: actions/download-artifact@") },
 		"App token mint after the publisher": func(s string) string { return moveStepToEnd(s, "      - id: app-token\n") },
+		"credential check after its gated prerequisites": func(s string) string {
+			return moveStepBefore(s, "      - id: secrets\n", "      - shell: bash --noprofile --norc -euo pipefail {0}\n"+gate+"        env:\n          GH_TOKEN:")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			mutated := mutate(gated)
@@ -1525,6 +1528,17 @@ func moveStepToEnd(workflow, header string) string {
 	start := strings.LastIndex(workflow, header)
 	end := start + len(header) + strings.Index(workflow[start+len(header):], "\n      - ")
 	return workflow[:start] + workflow[end+1:] + workflow[start:end+1]
+}
+
+// moveStepBefore moves the last step that starts with header to just before
+// the step that starts with target, which must follow it.
+func moveStepBefore(workflow, header, target string) string {
+	start := strings.LastIndex(workflow, header)
+	end := start + len(header) + strings.Index(workflow[start+len(header):], "\n      - ") + 1
+	step := workflow[start:end]
+	rest := workflow[:start] + workflow[end:]
+	at := strings.LastIndex(rest, target)
+	return rest[:at] + step + rest[at:]
 }
 
 // TestValidateUpstreamRefreshWorkflowRejectsEvasions runs the shared evasion

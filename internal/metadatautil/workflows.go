@@ -1072,6 +1072,10 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 				// The publisher would run before the candidate or the App token exists.
 				return fmt.Errorf("%s publish job must run the checkout, download, and App token steps before the publish script", path)
 			}
+			if presenceChecks == 0 {
+				// GitHub evaluates the gate before the presence output exists and skips the step.
+				return fmt.Errorf("%s publish job must check the App credentials before the checkout, download, and App token steps", path)
+			}
 			prerequisiteConditions = append(prerequisiteConditions, condition(step))
 		}
 		if publisher {
