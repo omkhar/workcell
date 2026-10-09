@@ -104,6 +104,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"message names the idiom", "echo 'git fetch || true'\n", ""},
 		{"quoted span across lines", "msg='\ngit fetch || true\n'\n", ""},
 		{"heredoc body", "cat <<'EOF'\ngit fetch || true\nEOF\n", ""},
+		{"escaped apostrophe in an ANSI-C span", ": $'x\\'; git fetch || true'\n", ""},
+		{"noclobber redirection target", ": >| git fetch origin || true\n", ""},
 		{"not a tool call", "grep -q x file || true\n", ""},
 		{"path is not a tool", "ls .git/hooks 2>/dev/null\n", ""},
 		{"tool name as an argument", "printf '%s\\n' git || true\n", ""},

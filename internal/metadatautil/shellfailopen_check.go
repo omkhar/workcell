@@ -116,8 +116,8 @@ var (
 	// shellCommandPosition ends where a command word starts: after the start,
 	// an operator or an opener, then any reserved word, assignment, or xargs or
 	// sudo with its options and their values. `git` in a path or an argument
-	// is not a call.
-	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	// is not a call, and nor is the target of a >| or >& redirection.
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -531,6 +531,15 @@ func shellCodeOnly(line string) string {
 				top.quote = 0
 			}
 			out[i] = '"'
+		case top.quote == ansiCQuote:
+			// A backslash escapes the next byte of a $'...' span, even a '.
+			out[i] = '"'
+			if c == '\\' && i+1 < len(line) {
+				i++
+				out[i] = '"'
+			} else if c == '\'' {
+				top.quote = 0
+			}
 		case top.quote == '"' && c == '$' && i+1 < len(line) && line[i+1] == '(':
 			stack = append(stack, frame{})
 			i++
@@ -544,6 +553,9 @@ func shellCodeOnly(line string) string {
 			}
 		case c == '\\' && i+1 < len(line):
 			out[i+1] = '"' // an escaped byte is quoted text, as in \;
+			i++
+		case c == '$' && i+1 < len(line) && line[i+1] == '\'':
+			top.quote, out[i+1] = ansiCQuote, '"'
 			i++
 		case c == '\'' || c == '"':
 			top.quote, out[i] = c, '"'
