@@ -151,6 +151,9 @@ var (
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
+	// shellFailOpenRunsFirst is a substitution, a process substitution or an
+	// operator, which runs a command of its own before a later word.
+	shellFailOpenRunsFirst = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|[|&]")
 	// shellFailOpenTested is a command that is the test of an if/while. It
 	// covers a substitution, never a `done < <(` loop header, where the loop's
 	// own while says nothing about the inner command.
@@ -280,7 +283,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			rest := command[shellFailOpenFirstCall(command):]
 			captured := shellFailOpenCapture.MatchString(rest)
 			looped := shellFailOpenSentinel.MatchString(raws[at+1]) || shellFailOpenWaited(raws[at+1])
-			tested := captured || shellFailOpenStatusRead.MatchString(after) || shellFailOpenTested.MatchString(command) ||
+			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
 				shellFailOpenAnd.MatchString(shellOutsideSubsts(rest))
 			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command) && !looped
 			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && !tested
@@ -342,6 +345,14 @@ func shellSubstCall(command string, start int) (body string, call int) {
 		}
 	}
 	return body, call
+}
+
+// shellFailOpenReadsStatus reports whether a command reads $? or PIPESTATUS
+// before anything in it runs, so the read sees the status the command before
+// it left. In discard=$(true) rc=$? the read sees the status of true.
+func shellFailOpenReadsStatus(command string) bool {
+	read := shellFailOpenStatusRead.FindStringIndex(command)
+	return read != nil && !shellFailOpenRunsFirst.MatchString(command[:read[0]])
 }
 
 // shellFailOpenWaited reports whether a command is wait "$!", the one wait
