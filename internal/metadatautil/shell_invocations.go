@@ -1117,7 +1117,7 @@ func commandWords(text string) [][]string {
 		command, dropTarget, readStdin, stdin = nil, false, false, "$_"
 	}
 	// emit records the command the words run: the program a shell or eval
-	// runs, the words themselves, and each command a find -exec runs.
+	// runs, or the words themselves.
 	var emit func(words []string, stdin string)
 	emit = func(words []string, stdin string) {
 		words = wrappedCommand(words)
@@ -1130,11 +1130,6 @@ func commandWords(text string) [][]string {
 			found = append(found, everyShellCommand(script)...)
 		} else {
 			found = append(found, words)
-		}
-		if commandName(words[0]) == "find" {
-			for _, body := range findExecBodies(words[1:]) {
-				emit(body, "$_")
-			}
 		}
 	}
 	end := func() {
@@ -1237,31 +1232,10 @@ func commandWords(text string) [][]string {
 	return found
 }
 
-// sudoRunsNothing reports a sudo mode that edits, lists or validates and runs
-// no command, as sudo -e FILE or sudo -l do.
+// sudoRunsNothing reports a sudo mode that runs no command, as sudo -e or -l.
 func sudoRunsNothing(option string) bool {
 	return !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "elvVkK") ||
 		slices.Contains([]string{"--edit", "--list", "--validate", "--version", "--help", "--remove-timestamp", "--reset-timestamp"}, option)
-}
-
-// findExecBodies returns each command that find runs for a match: the words
-// after -exec, -execdir, -ok or -okdir up to the ; or + that ends them.
-func findExecBodies(args []string) [][]string {
-	var bodies [][]string
-	for i := 0; i < len(args); i++ {
-		if !slices.Contains([]string{"-exec", "-execdir", "-ok", "-okdir"}, args[i]) {
-			continue
-		}
-		end := i + 1
-		for end < len(args) && args[end] != ";" && args[end] != "+" {
-			end++
-		}
-		if end > i+1 {
-			bodies = append(bodies, args[i+1:end])
-		}
-		i = end
-	}
-	return bodies
 }
 
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)

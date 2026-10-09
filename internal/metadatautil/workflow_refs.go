@@ -165,7 +165,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					if words[0] == "eval" {
 						add("eval-unresolved")
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
-						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] {
+						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] ||
+						commandName(words[0]) == "find" && slices.ContainsFunc(words, func(w string) bool { return strings.HasPrefix(w, "-exec") || strings.HasPrefix(w, "-ok") }) {
 						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok := shellProgram(words, "$_"); ok {
 						// EveryShellCommand reads each shell program it can spell in

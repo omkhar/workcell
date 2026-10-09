@@ -17,8 +17,12 @@ import (
 func refsRoot(t *testing.T, step, baseline string) string {
 	t.Helper()
 	root := t.TempDir()
+	document := "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + step
+	if strings.HasPrefix(step, "name:") {
+		document = step // a whole workflow, as a default shell needs
+	}
 	files := map[string]string{
-		".github/workflows/w.yml":           "name: w\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n" + step,
+		".github/workflows/w.yml":           document,
 		"policy/workflow-refs-baseline.tsv": baseline,
 	}
 	for name, body := range files {
@@ -141,6 +145,8 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"Windows executable names are unresolved", runStep("gh.exe api repos/o/r/issues\n\"C:\\\\tools\\\\GH.EXE\" api repos/o/r/issues\nbash.exe -c 'gh api repos/o/r/issues'"), "", "command-unresolved"},
 		{"configured non-bash shell is unresolved", "      - name: s\n        shell: pwsh\n        run: Invoke-Expression 'gh api repos/o/r/issues'\n", "", "command-unresolved"},
 		{"configured bash shell is read", "      - name: s\n        shell: bash --noprofile --norc -euo pipefail {0}\n        run: gh api repos/o/r/issues\n", "", "gh-api-unbounded"},
+		{"workflow default shell this lint does not read", "name: w\ndefaults:\n  run:\n    shell: pwsh\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: gh api repos/o/r/issues\n", "", "command-unresolved"},
+		{"job default shell this lint does not read", "name: w\njobs:\n  j:\n    runs-on: windows-latest\n    defaults:\n      run:\n        shell: cmd\n    steps:\n      - run: gh api repos/o/r/issues\n", "", "command-unresolved"},
 		{"sudo edit and query modes run nothing", runStep("sudo -e gh api repos/o/r/issues\nsudo -l gh api repos/o/r/issues\nsudo --list gh api repos/o/r/issues\nsudo -nv gh api repos/o/r/issues"), "", ""},
 		{"coproc runs its command", runStep("coproc gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"coproc name before a simple command is its first word", runStep("coproc worker gh api repos/o/r/issues"), "", ""},
@@ -150,7 +156,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"Windows child shell is unresolved", runStep("pwsh -Command \"gh api repos/o/r/issues\"\nPowerShell.exe -c 'gh api x'\ncmd /c \"gh api x\""), "", "command-unresolved"},
 		{"builtin before command wraps gh", runStep("builtin command gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"builtin before eval runs its words", runStep("builtin eval 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
-		{"find -exec runs gh", runStep("find . -exec gh api repos/o/r/issues \\;\nfind . -name x -execdir sh -c 'gh api repos/o/r/issues' \\;\nfind . -ok gh api repos/o/r/issues {} +"), "", "gh-api-unbounded"},
+		{"find -exec is unresolved", runStep("find . -exec gh api repos/o/r/issues \\;\nfind . -name x -execdir sh -c 'gh api repos/o/r/issues' \\;\nfind . -ok gh api repos/o/r/issues {} +"), "", "command-unresolved"},
 		{"find without -exec runs nothing", runStep("find . -name 'gh api' -print"), "", ""},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}
@@ -172,27 +178,6 @@ func TestCheckWorkflowRefs(t *testing.T) {
 
 // TestEveryShellCommandEndsOnCommandlessEnvSplit guards the env -S rewrite: a
 // split string that names no command must end the wrapper loop.
-func TestCheckWorkflowRefsReadsDefaultShells(t *testing.T) {
-	t.Parallel()
-	for _, body := range []string{
-		"name: w\ndefaults:\n  run:\n    shell: pwsh\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: gh api repos/o/r/issues\n",
-		"name: w\njobs:\n  j:\n    runs-on: windows-latest\n    defaults:\n      run:\n        shell: cmd\n    steps:\n      - run: gh api repos/o/r/issues\n",
-	} {
-		root := t.TempDir()
-		for name, text := range map[string]string{".github/workflows/w.yml": body, "policy/workflow-refs-baseline.tsv": ""} {
-			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := metadatautil.CheckWorkflowRefs(root); err == nil || !strings.Contains(err.Error(), "command-unresolved") {
-			t.Fatalf("CheckWorkflowRefs() error = %v, want command-unresolved for a default shell this lint does not read", err)
-		}
-	}
-}
-
 func TestEveryShellCommandEndsOnCommandlessEnvSplit(t *testing.T) {
 	for _, script := range []string{"env -S 'env'", "env -S ''", "env -S 'env -S env'"} {
 		done := make(chan [][]string, 1)
