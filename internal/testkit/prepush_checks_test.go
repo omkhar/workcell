@@ -360,6 +360,30 @@ func TestFastPrePushRejectsChangedSymlink(t *testing.T) {
 	}
 }
 
+func TestFastPrePushRejectsBaseTreeSymlink(t *testing.T) {
+	// A symlink that origin/main already holds is not a changed path, but the
+	// doc gates read every tracked Markdown file, so it is refused all the same.
+	f := newPrePushChecksFixture(t, "")
+	host := filepath.Join(f.tmpDir, "host-secret.txt")
+	if err := os.WriteFile(host, []byte("We recieve [secret](host-derived-token).\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(host, filepath.Join(f.root, "link.md")); err != nil {
+		t.Fatal(err)
+	}
+	f.run("add", "link.md")
+	f.run("commit", "--quiet", "-m", fixtureSubject)
+	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
+	f.commitFile("other.md", "Other text.\n", fixtureSubject)
+	output, err := f.hook()
+	if err == nil {
+		t.Fatalf("fast pre-push accepted a symlink from the base tree:\n%s", output)
+	}
+	if strings.Contains(output, "recieve") || strings.Contains(output, "host-derived-token") || !strings.Contains(output, "link.md is a symlink") {
+		t.Errorf("a gate read the host file or the refusal is missing:\n%s", output)
+	}
+}
+
 func TestFastPrePushRunsOnlyTrustedCheckers(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	marker := filepath.Join(f.tmpDir, "pushed-code-ran")

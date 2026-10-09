@@ -14,7 +14,7 @@
 #
 # Language boundary: the doc gates read every tracked Markdown file, and
 # codespell follows links, so a committed symlink could make them print a host
-# file. The hook refuses a changed path whose mode is 120000 in the pushed
+# file. The hook refuses any path whose mode is 120000 anywhere in the pushed
 # tree. It does not test the disk: git builds the checkout from that tree in a
 # private mktemp -d directory, so the tree is the source of truth. The native
 # checkers (awk and grep in check-doc-links.sh, workcell-citools, codespell)
@@ -89,11 +89,11 @@ gate_commit() {
   # Without rename detection a renamed or deleted .md lists its old path.
   git diff -z --no-renames --name-only "${merge_base}" HEAD >"${changed_list}"
 
-  # Symlink-ness comes from the pushed tree, not the disk; see the header.
+  # Symlink-ness comes from the pushed tree, not the disk; see the header. The
+  # gates read every tracked Markdown file, so the whole tree is scanned, not
+  # only the changed paths: a link that main already holds is followed too.
   local links="" link
-  if [[ -s "${changed_list}" ]]; then
-    links="$(xargs -0 git --literal-pathspecs ls-tree -r -z "${oid}" -- <"${changed_list}" | tr '\0' '\n' | awk -F'\t' '/^120000 / { print $2 }')"
-  fi
+  links="$(git ls-tree -r -z "${oid}" | tr '\0' '\n' | awk -F'\t' '/^120000 / { print $2 }')"
 
   local changed_files=() markdown_changed=0 target_removed=0 symlinked=0
   if [[ -n "${links}" ]]; then

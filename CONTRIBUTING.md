@@ -46,14 +46,12 @@ pre-merge gate check generated artifacts.
 These checks run in a temporary detached checkout of each pushed commit.
 Git hooks are disabled for that checkout, so no hook from the pushed commit runs.
 Working-tree edits and untracked files do not change the result. The doc link
-check runs when a Markdown file or any other file is deleted or renamed. A changed
-symlink fails the push before any check runs. The hook reads the file mode from
-the pushed commit, not from the disk.
+check runs when a Markdown file or any other file is deleted or renamed. A symlink
+anywhere in the pushed tree fails the push before any check runs. The hook reads
+the file mode from the pushed commit, not from the disk.
 
 The checks come from your checked-out tree, not from the pushed commit. A pushed
-commit is untrusted code, and the hook holds your credentials. The generated
-artifacts check runs the generators of the tree it checks. Thus it runs only when
-the pushed commit is your checked-out commit.
+commit is untrusted code, and the hook holds your credentials.
 
 These three hooks are shell, not Go. This is the documented exception to the
 Go-first language boundary in `AGENTS.md`. A hook runs on a fresh clone, before
