@@ -135,9 +135,9 @@ var (
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
 	// shellFailOpenCapture is a status capture: the status is read ($?,
 	// PIPESTATUS) or a failure branch runs (|| exit, || return, || die,
-	// || fail*, || { ... }).
+	// || fail*, || { ... }). An exit or return 0 reports success instead.
 	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|` + shellFailOpenHandler)
-	shellFailOpenHandler = `\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)`
+	shellFailOpenHandler = `\|\|\s*(?:(?:exit|return)(?:\s+[1-9][0-9]*)?\s*(?:[;&|)}]|$)|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)`
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.

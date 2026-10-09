@@ -67,8 +67,12 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"|| true behind a quote nested in a substitution", "x=\"$(getent passwd \"${uid}\" | cut -d: -f1 || true)\"\n", "or-true"},
 		{"tool behind xargs -n", "printf x | xargs -n 1 git fetch || true\n", "or-true"},
 		{"tool behind sudo -u", "sudo -u user git fetch || true\n", "or-true"},
+		{"successful exit handler", "x=$(git ls-files) || exit 0\n", "command-substitution"},
+		{"successful return handler", "x=$(git ls-files) || return 0\n", "command-substitution"},
+		{"assignment that starts with exit", "x=$(git ls-files) || exit_code=1\n", "command-substitution"},
 
 		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
+		{"bare return handler", "x=$(git ls-files) || return\n", ""},
 		{"status handler after a multi-line substitution", "x=\"$(\n  git ls-files\n)\" || exit 1\n", ""},
 		{"status read", "x=$(git ls-files)\nrc=$?\n", ""},
 		{"status test", "x=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\n", ""},
