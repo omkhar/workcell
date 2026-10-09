@@ -147,6 +147,10 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"flock wraps gh", runStep("flock /tmp/x.lock gh api repos/o/r/issues\nflock -n -w 5 /tmp/x.lock gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"flock -c runs a shell program", runStep("flock --wait 5 /tmp/x.lock -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"flock on a descriptor runs nothing", runStep("flock 9"), "", ""},
+		{"ionice wraps gh", runStep("ionice -c 3 gh api repos/o/r/issues\nionice --class 2 -n 7 gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"source of stdin runs its program", runStep("source /dev/stdin <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded"},
+		{"source of a file is unresolved", runStep("source ./lib.sh\n. ./lib.sh"), "", "command-unresolved"},
+		{"unmodeled wrapper is unresolved", runStep("chrt 10 gh api repos/o/r/issues\ntaskset 1 gh api repos/o/r/issues"), "", "command-unresolved"},
 		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}

@@ -111,6 +111,13 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	}
 	switch commandName(words[0]) {
 	case "sh", "bash", "dash", "ksh", "zsh":
+	case "source", ".":
+		// source /dev/stdin runs the here-document fed to it in the current
+		// shell; any other operand is a file this reader does not see.
+		if len(words) > 1 && slices.Contains([]string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}, words[1]) {
+			return stdin, true
+		}
+		return "", false
 	default:
 		return "", false
 	}
@@ -988,6 +995,7 @@ var commandWrappers = map[string][]string{
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
 	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
 	"flock":  {"-w", "-E", "--wait", "--timeout", "--conflict-exit-code"},
+	"ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
 	"stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
 	"xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof", "--max-lines",
 		"--max-args", "--max-procs", "--max-chars", "--process-slot-var"},

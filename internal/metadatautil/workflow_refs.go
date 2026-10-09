@@ -32,6 +32,17 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]")
 }
 
+// unmodeledWrappers run another program after options this lint does not
+// parse, so a command they run is not spelled; commandWrappers names the
+// wrappers it does parse. A source of a file the lint does not see is the
+// same, while source /dev/stdin is read as the here-document it runs.
+var unmodeledWrappers = map[string]bool{
+	"chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true,
+	"unshare": true, "nsenter": true, "strace": true, "ltrace": true, "script": true, "watch": true,
+	"unbuffer": true, "caffeinate": true, "systemd-run": true, "busybox": true, "prlimit": true,
+	"setpriv": true, "fakeroot": true, "firejail": true, "bwrap": true, "proot": true, "cpulimit": true,
+}
+
 var braceExpansion = regexp.MustCompile(`\{[^}]*(,|\.\.)[^}]*\}`)
 
 func (h workflowRefHit) key() string {
@@ -135,8 +146,9 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					// and on an alias definition, which can rename any later command.
 					if words[0] == "eval" {
 						add("eval-unresolved")
-					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) {
-						add("command-unresolved")
+					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
+						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] {
+						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok := shellProgram(words, "$_"); ok {
 						// EveryShellCommand reads each shell program it can spell in
 						// place of the shell, so a shell left here runs one it cannot.
