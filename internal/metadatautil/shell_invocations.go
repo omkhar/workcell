@@ -924,6 +924,10 @@ func helperCallWords(names []string) (string, []string, bool) {
 	return names[0], names[1:], true
 }
 
+// helperPathBound is the longest chain of helper calls the reader follows;
+// a real script's chain is a few calls deep, and a deeper one is a recursion.
+const helperPathBound = 32
+
 // reaches reports whether calling callee with args runs a barrier: callee is a
 // barrier, or a forwarder handed a word the reader cannot spell or eval,
 // source or dot, or a helper whose body calls such a helper. A body that hands
@@ -937,6 +941,11 @@ func (g helperGraph) reaches(callee string, args []string, visited map[string]bo
 	key := callee + "\x00" + strings.Join(args, "\x00")
 	if visited[key] {
 		return false // a cycle on this path; a sibling call may still reach a barrier
+	}
+	if len(visited) >= helperPathBound {
+		// A path this deep is a recursion that grows its words, as loop "$@" x
+		// does, which never repeats a key; the reader stops at it as a barrier.
+		return true
 	}
 	visited[key] = true
 	defer delete(visited, key)

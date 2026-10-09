@@ -185,6 +185,11 @@ func TestShellInvocations(t *testing.T) {
 			want:   nil,
 		},
 		{
+			name:   "a recursion that grows its words ends the scan",
+			script: "loop() {\n  loop \"$@\" x\n}\nloop\noras cp --recursive --from-oci-layout one\n",
+			want:   nil,
+		},
+		{
 			name:   "a hash -p behind builtin proves no invocation of it",
 			script: "builtin hash -p /bin/true oras\noras cp --recursive --from-oci-layout one\n",
 			want:   nil,

@@ -57,6 +57,7 @@ var anyRejection = map[string]bool{
 	"hash in a while condition":              true,
 	"debug trap before the anchor":           true,
 	"debug trap in a called helper":          true,
+	"recursion that grows its words":         true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -345,6 +346,10 @@ var Evasions = []Evasion{
 	{"debug trap in a called helper", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "shadow() {\n" + i + "  command trap 'exit 0' debug\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"recursion that grows its words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "loop() {\n" + i + "  loop \"$@\" x\n" + i + "}\n" + i + "loop\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
