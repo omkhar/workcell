@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,15 @@ const (
 )
 
 type workflowRefHit struct{ kind, file, job, step string }
+
+// unspelled reports whether bash may rewrite word before it runs it. An
+// expansion or a brace expansion, as {gh,} or {a..b}, does. The reader has
+// removed quotes, so a quoted brace also counts, which fails closed.
+func unspelled(word string) bool {
+	return strings.ContainsAny(word, "$`") || braceExpansion.MatchString(word)
+}
+
+var braceExpansion = regexp.MustCompile(`\{[^}]*(,|\.\.)[^}]*\}`)
 
 func (h workflowRefHit) key() string {
 	return strings.Join([]string{h.kind, h.file, h.job, h.step}, "\t")
@@ -124,7 +134,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					// and on an alias definition, which can rename any later command.
 					if words[0] == "eval" {
 						add("eval-unresolved")
-					} else if strings.ContainsAny(words[0], "$`") || (words[0] == "alias" && len(words) > 1) {
+					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) {
 						add("command-unresolved")
 					} else if _, ok := shellProgram(words, "$_"); ok {
 						// EveryShellCommand reads each shell program it can spell in
@@ -140,7 +150,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					}
 					args = ghSubcommand(args)
 					switch {
-					case len(args) > 0 && strings.ContainsAny(args[0], "$`"):
+					case len(args) > 0 && unspelled(args[0]):
 						add("command-unresolved") // the subcommand cannot be spelled
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit

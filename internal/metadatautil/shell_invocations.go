@@ -983,50 +983,63 @@ var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
 	"timeout": {"-k", "-s", "--kill-after", "--signal"},
+	"sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "-R", "-a", "-c", "--user", "--group",
+		"--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--command-timeout", "--other-user",
+		"--chroot", "--auth-type", "--login-class"},
 }
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
 // env -S splits its value into words that env then reads as its own arguments.
-// timeout reads a DURATION operand before the command.
+// timeout reads a DURATION operand before the command. A wrapper named by
+// path, as /usr/bin/env, is the same wrapper. sudo -h with a value names a
+// host. sudo -s or -i runs the command through $SHELL -c with its
+// metacharacters escaped, so the words stay the command. With no command it
+// runs $SHELL, which reads a script the reader cannot see.
 func wrappedCommand(words []string) []string {
 	for {
-		valued, wraps := commandWrappers[words[0]]
+		name := path.Base(words[0])
+		valued, wraps := commandWrappers[name]
 		if !wraps {
 			return words
 		}
-		i := 1
-		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || words[0] == "env" && shellAssignment.MatchString(words[i])); i++ {
-			if words[0] == "command" && strings.ContainsAny(words[i], "vV") {
+		i, shell := 1, false
+		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || (name == "env" || name == "sudo") && shellAssignment.MatchString(words[i])); i++ {
+			if name == "command" && strings.ContainsAny(words[i], "vV") {
 				return words
 			}
+			shell = shell || name == "sudo" && words[i][0] == '-' && (!strings.HasPrefix(words[i], "--") && strings.ContainsAny(words[i], "si") ||
+				len(words[i]) > 3 && (strings.HasPrefix("--shell", words[i]) || strings.HasPrefix("--login", words[i])))
 			if words[i] == "--" {
 				i++
 				break
 			}
-			name, split, attached := strings.Cut(words[i], "=")
+			option, split, attached := strings.Cut(words[i], "=")
 			for at := 1; len(words[i]) > 2 && words[i][0] == '-' && words[i][1] != '-' && at < len(words[i]); at++ {
 				if short := "-" + words[i][at:at+1]; slices.Contains(valued, short) {
-					name, split, attached = short, words[i][at+1:], at+1 < len(words[i]) // -k5, -iS or -S'gh api'
+					option, split, attached = short, words[i][at+1:], at+1 < len(words[i]) // -k5, -iS or -S'gh api'
 					break
 				}
 			}
-			if slices.ContainsFunc(valued, func(option string) bool {
-				return option == name || len(name) > 2 && strings.HasPrefix(option, "--") && strings.HasPrefix(option, name)
+			if slices.ContainsFunc(valued, func(each string) bool {
+				return each == option || len(option) > 2 && strings.HasPrefix(each, "--") && strings.HasPrefix(each, option)
 			}) {
 				if !attached {
 					i++
 					split = strings.Join(words[i:min(i+1, len(words))], "")
 				}
-				if words[0] == "env" && (name == "-S" || strings.HasPrefix("--split-string", name)) {
+				if name == "env" && (option == "-S" || strings.HasPrefix("--split-string", option)) {
 					parsed, _, _, _, _ := shellWords(split, nil)
 					words = append(append([]string{"env"}, texts(parsed)...), words[min(i+1, len(words)):]...)
 					i = 0
 				}
 			}
 		}
-		if words[0] == "timeout" {
+		if name == "timeout" {
 			i++
+		}
+		if i >= len(words) && shell {
+			return []string{"$SHELL"}
 		}
 		if i >= len(words) {
 			return words

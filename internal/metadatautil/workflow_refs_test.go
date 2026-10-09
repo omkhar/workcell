@@ -125,6 +125,14 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"ANSI-C here-string with an escape is unresolved", runStep(`bash <<< $'# note\ngh api repos/x'`), "", "command-unresolved"},
 		{"comment-only multi-line bash -c body is clean", runStep("bash -c '# one\n  # two'\nbash -c $'echo plain'"), "", ""},
 		{"called function in a bash -c body is a hit", runStep("bash -c 'f() { gh api repos/x; }; f'"), "", "gh-api-unbounded"},
+		{"env by path wraps gh", runStep("/usr/bin/env gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"brace-expanded command word is unresolved", runStep("{gh,} api repos/o/r/issues"), "", "command-unresolved"},
+		{"brace-expanded gh subcommand is unresolved", runStep("gh {api,} repos/o/r/issues"), "", "command-unresolved"},
+		{"sudo wraps gh", runStep("sudo -n gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"sudo with a lone dash wraps gh", runStep("sudo - gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"sudo with a user wraps gh", runStep("sudo -u runner -- gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"sudo shell with no command is unresolved", runStep("sudo -s"), "", "command-unresolved"},
+		{"sudo help and edit run no gh", runStep("sudo -h\nsudo -e file"), "", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
