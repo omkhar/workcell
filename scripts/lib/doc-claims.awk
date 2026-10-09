@@ -18,8 +18,12 @@ function span_path(s, p) {
 }
 # scan prints the cited path of each code span in s. A run of n backticks opens
 # a span that only a later run of exactly n backticks closes, as in Markdown; an
-# unmatched run is text.
+# unmatched run is text. A backslash escapes the backtick after it, so that
+# backtick is text; an escaped backslash is consumed first so the backtick
+# after it still counts. Both become spaces of the same length.
 function scan(s, n, rest, off, at, c) {
+  gsub(/\\\\/, "  ", s)
+  gsub(/\\`/, "  ", s)
   while (match(s, /`+/)) {
     n = RLENGTH
     rest = substr(s, RSTART + RLENGTH)

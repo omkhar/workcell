@@ -86,6 +86,8 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"escaping path", "See `scripts/../../outside.txt` here.\n", "", "", "escaping-path"},
 		{"traversal before the prefix", "See `./docs/../scripts/nope.sh` here.\n", "", "", "escaping-path"},
 		{"traversal outside the checked areas", "See `./docs/../README.md` here.\n", "", "", ""},
+		{"escaped backticks are text", "Use \\`scripts/nope.sh\\` literally.\n", "", "", ""},
+		{"an escaped backslash keeps the span", "See \\\\`scripts/nope.sh` here.\n", "", "", "missing-path"},
 		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "missing-path"},
 		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "broken link"},
 		{"fenced path is skipped", "```bash\nSee `scripts/nope.sh` here.\n```\n", "", "", ""},
