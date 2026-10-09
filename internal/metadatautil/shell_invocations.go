@@ -914,6 +914,7 @@ var commandWrappers = map[string][]string{
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
+// env -S splits its value into words that env then reads as its own arguments.
 func wrappedCommand(words []string) []string {
 	for {
 		valued, wraps := commandWrappers[words[0]]
@@ -929,10 +930,22 @@ func wrappedCommand(words []string) []string {
 				i++
 				break
 			}
+			name, split, attached := strings.Cut(words[i], "=")
+			if at := strings.IndexByte(words[i], 'S'); words[0] == "env" && words[i][0] == '-' && at > 0 && strings.Trim(words[i][1:at], "0iv") == "" {
+				name, split, attached = "-S", words[i][at+1:], at+1 < len(words[i]) // -S, -iS or -S'gh api'
+			}
 			if slices.ContainsFunc(valued, func(option string) bool {
-				return option == words[i] || len(words[i]) > 2 && strings.HasPrefix(option, "--") && strings.HasPrefix(option, words[i])
+				return option == name || len(name) > 2 && strings.HasPrefix(option, "--") && strings.HasPrefix(option, name)
 			}) {
-				i++
+				if !attached {
+					i++
+					split = strings.Join(words[i:min(i+1, len(words))], "")
+				}
+				if words[0] == "env" && (name == "-S" || strings.HasPrefix("--split-string", name)) {
+					parsed, _, _, _, _ := shellWords(split, nil)
+					words = append(append([]string{"env"}, texts(parsed)...), words[min(i+1, len(words)):]...)
+					i = 0
+				}
 			}
 		}
 		if i >= len(words) {

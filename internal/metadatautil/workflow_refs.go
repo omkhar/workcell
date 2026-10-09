@@ -247,10 +247,10 @@ func scriptRefs(words []string) []string {
 
 // ghPaginates reports whether gh api args turn pagination on in exactly one
 // spelling. A --paginate=false, or a second spelling that can override the
-// first, leaves the call unbounded.
+// first, leaves the call unbounded. Another option's value is not a spelling.
 func ghPaginates(args []string) bool {
-	spellings := slices.DeleteFunc(slices.Clone(args), func(arg string) bool { return arg != "--paginate" && !strings.HasPrefix(arg, "--paginate=") })
-	return len(spellings) == 1 && (spellings[0] == "--paginate" || spellings[0] == "--paginate=true")
+	spellings := ghFlagValues(args, "--paginate", "")
+	return len(spellings) == 1 && (spellings[0] == "" || spellings[0] == "true")
 }
 
 // ghSubcommand drops the flags before the gh subcommand. gh finds its
@@ -267,10 +267,18 @@ func ghSubcommand(args []string) []string {
 	return args
 }
 
-// ghBoolFlags are the gh list and gh api flags that take no value.
-var ghBoolFlags = map[string]bool{
-	"-d": true, "--draft": true, "-w": true, "--web": true, "--help": true, "-h": true,
-	"--paginate": true, "--slurp": true, "-i": true, "--include": true, "--silent": true, "--verbose": true,
+// ghFlagTakesValue says whether each known gh list and gh api flag takes a
+// value, per gh 2.102 help. A short flag that takes a value in one checked
+// command and none in another, such as -a, stays unknown.
+var ghFlagTakesValue = map[string]bool{
+	"-d": false, "--draft": false, "-w": false, "--web": false, "--help": false, "-h": false,
+	"--paginate": false, "--slurp": false, "-i": false, "--include": false, "--silent": false, "--verbose": false,
+	"--allow-escape-sequences": false, "--answered": false, "--all": false, "--exclude-drafts": false,
+	"--exclude-pre-releases": false, "--archived": false, "--no-archived": false, "--fork": false, "--source": false,
+	"--include-content": false, "--public": false, "--secret": false, "--closed": false, "--parents": false,
+	"-f": true, "--raw-field": true, "-F": true, "--field": true, "-H": true, "--header": true, "-X": true,
+	"--method": true, "-p": true, "--preview": true, "-q": true, "--jq": true, "-t": true, "--template": true,
+	"--cache": true, "--input": true, "--hostname": true,
 }
 
 // ghFlagValues returns the value of each spelling of a gh flag in args. gh
@@ -289,7 +297,7 @@ func ghFlagValues(args []string, long, short string) []string {
 				name, value, attached = name[:2], strings.TrimPrefix(args[i][2:], "="), true
 			}
 			mine := name == long || name == short
-			if !attached && !ghBoolFlags[name] && (unknownTakesValue || mine) {
+			if takes, known := ghFlagTakesValue[name]; !attached && (takes || !known && (unknownTakesValue || mine)) {
 				i++
 				value = strings.Join(args[min(i, len(args)):min(i+1, len(args))], "")
 			}
@@ -366,8 +374,15 @@ func expandCalls(commands [][]string, bodies map[string]string, calling []string
 	var found [][]string
 	for _, words := range commands {
 		found = append(found, words)
-		if words[0] == "trap" && len(words) > 1 && !slices.Contains(*traps, words[1]) {
-			*traps = append(*traps, words[1])
+		if action := words[1:]; words[0] == "trap" && len(action) > 0 {
+			if action[0] == "--" {
+				action = action[1:]
+			} else if len(action[0]) > 1 && action[0][0] == '-' {
+				action = nil // trap -p and trap -l print and set nothing
+			}
+			if len(action) > 0 && !slices.Contains(*traps, action[0]) {
+				*traps = append(*traps, action[0])
+			}
 		}
 		if body, defined := bodies[words[0]]; defined && !slices.Contains(calling, words[0]) {
 			found = append(found, expandCalls(flatCommands(body), bodies, append(calling, words[0]), traps)...)

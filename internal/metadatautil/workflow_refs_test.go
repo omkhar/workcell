@@ -109,6 +109,11 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh with an attached redirection", runStep("gh>/dev/null api repos/x"), "", "gh-api-unbounded"},
 		{"gh behind redirections after the command word", runStep("gh 2>&1 api a\ngh &>/dev/null api b\ngh > out api c\ngh >&2 api d"), "", "gh-api-unbounded#4"},
 		{"quoted > inside a word does not split", runStep(`gh "api>x" repos/x`), "", ""},
+		{"gh behind env split strings", runStep("env -S 'gh api a'\nenv --split-string='gh api b'\nenv -i --split-s 'A=1 gh' api c\nenv -S'gh api d'\nenv XS=1 gh api e"), "", "gh-api-unbounded#5"},
+		{"gh api pagination as another option's value", runStep("gh api --preview --paginate repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"gh api pagination after valued options", runStep("gh api --paginate repos/o/r/issues\ngh api -X GET --paginate repos/o/r/issues\ngh api -H 'A: b' --paginate repos/x"), "", ""},
+		{"trap action after --", runStep("trap -- f EXIT\nf() { gh api repos/x; }"), "", "gh-api-unbounded"},
+		{"gh list with a value-less flag before its limit", runStep("gh discussion list --answered --limit 5\ngh repo list --archived -L 5\ngh release list --exclude-drafts --limit 5"), "", ""},
 		{"script in shell data is not probed", runStep("echo './scripts/absent.sh'\nprintf '%s' ./scripts/absent.sh\ncat <<< ./scripts/absent.sh\nexport X=./scripts/absent.sh"), "", ""},
 	}
 	for _, testCase := range cases {
