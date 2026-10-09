@@ -192,8 +192,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
-						} else if slices.ContainsFunc(args, func(word string) bool { return strings.Contains(word, "$") }) {
-							add("command-unresolved") // an expansion, as ${{ github.event.issue.title }}, can add --paginate=false
+						} else if slices.ContainsFunc(args, unspelled) {
+							add("command-unresolved") // an expansion, as ${{ … }} or {--paginate=false,}, can disable pagination
 						}
 					}
 				}
