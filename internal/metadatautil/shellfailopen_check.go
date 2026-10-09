@@ -114,10 +114,10 @@ type ShellFailOpenFinding struct {
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
 	// shellCommandPosition ends where a command word starts: after the start,
-	// an operator or an opener, then any reserved word, assignment, or xargs,
-	// sudo or env with its options and their values; env's NAME=value words
-	// are assignments. `git` in a path or an argument is not a call.
-	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	// an operator or an opener, then any reserved word, assignment, or xargs or
+	// sudo with its options and their values. `git` in a path or an argument
+	// is not a call.
+	shellCommandPosition = "(?:^|[;&|(`\n])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -125,7 +125,6 @@ var (
 	// expansion, a quoted word or a command that runs text. It may run a tool,
 	// so a substitution that holds one counts as a tool substitution.
 	shellUnnamedCommand = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)
-	shellToolName       = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
@@ -134,17 +133,6 @@ var (
 	// with any blanks or a continued line between the < and the <(.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	shellDevNull      = regexp.MustCompile(`2>\s*/dev/null`)
-	// envOperandShort and envOperandLong are env's options that take an
-	// operand, per env --help; the value of -S (--split-string) is more
-	// arguments. envProgram and shellEnvSplit both read them.
-	envOperandShort = "uC"
-	envOperandLong  = []string{"--unset", "--chdir"}
-	shellEnvWord    = `[^\s;&|()<>]+`
-	// shellEnvSplit is env, its options with any operand, and its -S or
-	// --split-string option with the one word that holds the string env splits.
-	shellEnvSplit = regexp.MustCompile(`(\benv(?:\s+(?:-[^\sS-]*[` + envOperandShort + `]\s+` + shellEnvWord +
-		`|(?:` + strings.Join(envOperandLong, "|") + `)\s+` + shellEnvWord + `|-[^\sS-]+|--[a-z-]+(?:=` + shellEnvWord + `)?))*\s+)` +
-		`(?:-S\s*|--split-string(?:=|\s+))(` + shellEnvWord + `)`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
@@ -447,9 +435,7 @@ func shellSubstEnd(command string, start int) int {
 // no parenthesis encloses, so a test, a handler or a status read covers only
 // the command it is written on. The list always holds one command. raw is
 // the statement before shellCodeOnly, which keeps its length, so each command
-// is cut at the same place in both, read through shellFailOpenNamed, and
-// returned raw as well. Each command first has its env -S strings split, as
-// shellEnvUnsplit does.
+// is cut at the same place in both and returned raw as well.
 func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
@@ -469,48 +455,7 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 		}
 	}
 	commands, raws = append(commands, code[start:]), append(raws, raw[start:])
-	for index := range commands {
-		commands[index] = shellFailOpenNamed(shellEnvUnsplit(commands[index], raws[index]), raws[index])
-	}
 	return commands, raws
-}
-
-// shellEnvUnsplit replaces each env -S STRING or --split-string=STRING in a
-// command's code with the words env splits STRING into, read from raw by the
-// shared shellFields as envProgram reads them. The program STRING names then
-// stands in command position, as in env git fetch.
-func shellEnvUnsplit(code, raw string) string {
-	for _, loc := range slices.Backward(shellEnvSplit.FindAllStringSubmatchIndex(code, -1)) {
-		words := shellFields(strings.Join(shellFields(raw[loc[4]:loc[5]]), " "))
-		code = code[:loc[3]] + strings.Join(words, " ") + code[loc[5]:]
-	}
-	return code
-}
-
-// shellFailOpenNamed returns the command as bash names its words when a quoted
-// or escaped fragment spells a tool, as in 'g'it, "gi""t" or g\it, which
-// shellCodeOnly blanks. shellWords joins the fragments of a word as bash
-// does; every other quoted word stays blank, so a message is still no command.
-func shellFailOpenNamed(code, raw string) string {
-	words, _, _, _, _, _ := shellWords(raw, nil)
-	named, spelled := make([]string, len(words)), false
-	for index, each := range words {
-		named[index] = each.text
-		if !each.quoted {
-			continue
-		}
-		// The name may follow the $( or ( that opens it in the same word; a
-		// quoted ( or ) is text and stays blank, so it cannot end a $( early.
-		if cut := strings.LastIndexAny(each.syntax, "(`") + 1; shellToolName.MatchString(each.text[cut:]) {
-			named[index], spelled = each.syntax[:cut]+each.text[cut:], true
-		} else {
-			named[index] = `""`
-		}
-	}
-	if !spelled {
-		return code
-	}
-	return strings.Join(named, " ")
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git or `|| true`
@@ -565,57 +510,7 @@ func isShellSource(rel string, content []byte) bool {
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
-	words := shellFields(strings.TrimPrefix(first, "#!"))
-	if !strings.HasPrefix(first, "#!") || len(words) == 0 {
-		return false
-	}
-	// The interpreter is the first word, or the first word env runs after its
-	// options and assignments; the options after it name no other program.
-	interpreter := words[0]
-	if filepath.Base(interpreter) == "env" {
-		interpreter = envProgram(words[1:])
-	}
-	return slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh"}, filepath.Base(interpreter))
-}
-
-// shellFields returns a line's words with their quotes removed, read by the
-// shared shellWords, so "bash" and 'bash' name bash.
-func shellFields(line string) []string {
-	words, _, _, _, _, _ := shellWords(line, nil)
-	return texts(words)
-}
-
-// envProgram returns the program that env runs, given env's arguments. Per
-// env --help, -u NAME and -C DIR (and --unset, --chdir) take an operand, and
-// the value of -S (--split-string), attached or not, is more arguments, split
-// into words as env -S splits it.
-func envProgram(args []string) string {
-	for i := 0; i < len(args); i++ {
-		long, value, attached := strings.Cut(args[i], "=")
-		names := func(option string) bool { return len(long) > 3 && strings.HasPrefix(option, long) }
-		short := strings.IndexAny(args[i], envOperandShort+"S")
-		switch {
-		case !strings.HasPrefix(args[i], "-"):
-			if !shellAssignment.MatchString(args[i]) {
-				return args[i]
-			}
-		case strings.HasPrefix(args[i], "--") && attached && names("--split-string"):
-			args, i = append(shellFields(value), args[i+1:]...), -1
-		case strings.HasPrefix(args[i], "--") && !attached && names("--split-string") && i+1 < len(args):
-			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
-		case strings.HasPrefix(args[i], "--"):
-			if !attached && slices.ContainsFunc(envOperandLong, names) {
-				i++
-			}
-		case short > 0 && short < len(args[i])-1 && args[i][short] == 'S':
-			args, i = append(shellFields(args[i][short+1:]), args[i+1:]...), -1
-		case short > 0 && short == len(args[i])-1 && args[i][short] == 'S' && i+1 < len(args):
-			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
-		case short > 0 && short == len(args[i])-1:
-			i++
-		}
-	}
-	return ""
+	return strings.HasPrefix(first, "#!") && (strings.Contains(first, "bash") || strings.HasSuffix(strings.TrimSpace(first), "sh"))
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {
