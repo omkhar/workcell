@@ -26,6 +26,11 @@ func TestShellInvocations(t *testing.T) {
 			script: "oras cpx one\n",
 		},
 		{
+			name:   "a [[ ]] test with && stays one command, so its operand is no command word",
+			script: "[[ \"${x}\" == a && \"${x}\" == b ]] || exit 1\noras cp two\n",
+			want:   [][]string{{"two"}},
+		},
+		{
 			name:   "continuations join into one invocation",
 			script: "oras cp \\\n  one \\\n  two\n",
 			want:   [][]string{{"one", "two"}},

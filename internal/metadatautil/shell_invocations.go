@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -282,7 +283,24 @@ type command struct {
 // separator such as : ";" oras cp … starts a command bash never runs.
 func splitCommands(words []word) []command {
 	commands := make([]command, 1)
+	// Inside a [[ … ]] test, && and || are test operators, not command
+	// separators, so the test stays one command and its operands never
+	// become command words.
+	inTest := 0
 	for _, each := range words {
+		if !each.quoted {
+			switch each.text {
+			case "[[":
+				inTest++
+			case "]]":
+				inTest = max(inTest-1, 0)
+			}
+		}
+		if inTest > 0 && !each.quoted && (each.text == "&&" || each.text == "||") {
+			last := &commands[len(commands)-1]
+			last.args = append(last.args, each)
+			continue
+		}
 		if !each.quoted && isOperator(each.text) {
 			commands = append(commands, command{conditional: each.text == "&&" || each.text == "||"})
 			continue
@@ -454,18 +472,19 @@ func ShellInvocations(script, commandName string) []Invocation {
 			if depth > definedAt {
 				bodyOpened = true
 			}
-			// A body that sources or evals makes every call a barrier; a body
-			// that runs an expanded word, such as "$@", forwards its caller's
-			// words, so a call that passes eval, source or dot is one too.
+			// A body that sources or evals, or runs an expanded command word
+			// the reader cannot spell, makes every call a barrier; a body whose
+			// command word is a positional parameter, such as "$@", forwards its
+			// caller's words, so a call that passes eval, source or dot is one.
 			for _, each := range commands {
 				if len(each.args) == 0 {
 					continue
 				}
 				if names := commandWords(spelled(each.args)); evaluates(names) {
-					if sourcesLiterally(names) {
-						barrierFunctions[definingName] = true
-					} else {
+					if forwards(names) {
 						forwarders[definingName] = true
+					} else {
+						barrierFunctions[definingName] = true
 					}
 				}
 			}
@@ -806,11 +825,15 @@ func unwrapBuiltins(names []string) []string {
 	return names
 }
 
-// sourcesLiterally reports whether the command word, once unwrapped, is eval,
-// source or dot.
-func sourcesLiterally(names []string) bool {
+// forwarderWord matches a command word that is a positional parameter or an
+// array expansion, so the command run is whatever the caller passed.
+var forwarderWord = regexp.MustCompile(`^\$(?:[@*1-9]|\{(?:[@*]|[0-9]+|[A-Za-z_][A-Za-z0-9_]*\[[@*]\])\})$`)
+
+// forwards reports whether the command word, once unwrapped, is a positional
+// parameter or an array expansion, as in run() { "$@"; }.
+func forwards(names []string) bool {
 	names = unwrapBuiltins(names[assignmentPrefix(names):])
-	return len(names) > 0 && (names[0] == "eval" || names[0] == "source" || names[0] == ".")
+	return len(names) > 0 && forwarderWord.MatchString(names[0])
 }
 
 // callsBarrier reports whether the command word names a defined function whose

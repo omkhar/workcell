@@ -38,6 +38,7 @@ var anyRejection = map[string]bool{
 	"time-wrapped source":         true,
 	"sourcing helper called":      true,
 	"sourcing forwarder called":   true,
+	"expanded source in a helper": true,
 	"step condition if: false":    true,
 	"step condition && false":     true,
 }
@@ -253,6 +254,10 @@ var Evasions = []Evasion{
 	{"sourcing forwarder called", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run source ./shadow.sh\n" + a
+	})},
+	{"expanded source in a helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "shadow() {\n" + i + "  s${x-}ource ./shadow.sh\n" + i + "}\n" + i + "shadow\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
