@@ -31,6 +31,13 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
+// runsOnPwsh reports whether a job with no shell set may run on Windows, whose
+// default shell is pwsh: its runs-on names windows or is an expression.
+func runsOnPwsh(job workflowJob) bool {
+	text, _ := yaml.Marshal(&job.RunsOn)
+	return strings.Contains(strings.ToLower(string(text)), "windows") || strings.Contains(string(text), "${{")
+}
+
 // stepShell returns the shell a step's run body is written for: its own
 // shell key, then the job's defaults, then the workflow's.
 func stepShell(document workflowDocument, job workflowJob, step workflowStep) string {
@@ -155,7 +162,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				if shell := commandName(strings.Fields(stepShell(documents[file], definition, step) + " bash")[0]); step.Run != "" && shell != "bash" && shell != "sh" {
+				if shell := commandName(strings.Fields(stepShell(documents[file], definition, step) + " bash")[0]); step.Run != "" &&
+					(shell != "bash" && shell != "sh" || stepShell(documents[file], definition, step) == "" && runsOnPwsh(definition)) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}
@@ -187,6 +195,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
+						} else if slices.ContainsFunc(args, func(word string) bool { return strings.Contains(word, "$") }) {
+							add("command-unresolved") // an expansion, as ${{ github.event.issue.title }}, can add --paginate=false
 						}
 					}
 				}
