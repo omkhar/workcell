@@ -111,13 +111,6 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	}
 	switch commandName(words[0]) {
 	case "sh", "bash", "dash", "ksh", "zsh":
-	case "source", ".":
-		// source /dev/stdin runs the here-document fed to it in the current
-		// shell; any other operand is a file this reader does not see.
-		if len(words) > 1 && slices.Contains([]string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}, words[1]) {
-			return stdin, true
-		}
-		return "", false
 	default:
 		return "", false
 	}
@@ -993,12 +986,7 @@ func replacesShell(args []string) bool {
 var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
-	"timeout": {"-k", "-s", "--kill-after", "--signal"}, "setsid": nil,
-	"flock":  {"-w", "-E", "--wait", "--timeout", "--conflict-exit-code"},
-	"ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"},
-	"stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-	"xargs": {"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof", "--max-lines",
-		"--max-args", "--max-procs", "--max-chars", "--process-slot-var"},
+	"timeout": {"-k", "-s", "--kill-after", "--signal"},
 	"sudo": {"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-T", "-U", "-R", "-a", "-c", "--user", "--group",
 		"--close-from", "--chdir", "--host", "--prompt", "--role", "--type", "--command-timeout", "--other-user",
 		"--chroot", "--auth-type", "--login-class"},
@@ -1014,16 +1002,10 @@ func commandName(word string) string {
 	return strings.TrimSuffix(name, ".exe")
 }
 
-// bashBuiltins names the builtins that run another command, which builtin
-// can run; builtin gh runs nothing, and builtin printf names no command.
-var bashBuiltins = map[string]bool{".": true, "builtin": true, "command": true, "eval": true, "exec": true, "source": true}
-
 // wrappedCommand returns words from the command that a chain of wrappers, such
 // as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
 // env -S splits its value into words that env then reads as its own arguments.
-// timeout reads a DURATION operand before the command, and flock a lock file,
-// then flock -c runs a shell program. xargs runs its command
-// with the words it reads; --replace and -l take an optional value only with =. A wrapper named by
+// timeout reads a DURATION operand before the command. A wrapper named by
 // path, as /usr/bin/env, is the same wrapper. sudo -h with a value names a
 // host. sudo -s or -i runs the command through $SHELL -c with its
 // metacharacters escaped, so the words stay the command. With no command it
@@ -1034,9 +1016,6 @@ func wrappedCommand(words []string) []string {
 		valued, wraps := commandWrappers[name]
 		if !wraps {
 			return words
-		}
-		if name == "builtin" && (len(words) < 2 || !bashBuiltins[words[1]]) {
-			return words // builtin runs a builtin only; a program after it does not run
 		}
 		i, shell := 1, false
 		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || (name == "env" || name == "sudo") && shellAssignment.MatchString(words[i])); i++ {
@@ -1070,11 +1049,8 @@ func wrappedCommand(words []string) []string {
 				}
 			}
 		}
-		if name == "timeout" || name == "flock" {
-			i++ // the DURATION, or the lock file, before the command
-		}
-		if name == "flock" && i+1 < len(words) && (words[i] == "-c" || words[i] == "--command") {
-			return append([]string{"sh", "-c"}, words[i+1:]...) // flock FILE -c runs a shell program
+		if name == "timeout" {
+			i++
 		}
 		if i >= len(words) && shell {
 			return []string{"$SHELL"}
