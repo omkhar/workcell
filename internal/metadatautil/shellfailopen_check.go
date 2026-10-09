@@ -257,7 +257,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		current.code = shellCodeOnly(current.raw)
 		statements = append(statements, current)
 	}
-	pipefail := false
+	pipefail, nesting := false, 0
 	var findings []ShellFailOpenFinding
 	for index, statement := range statements {
 		if strings.TrimSpace(statement.code) == "" {
@@ -284,9 +284,12 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			marked := slices.ContainsFunc(statement.marks, func(mark int) bool { return mark >= start && mark <= end })
-			if set := shellPipefail.FindStringSubmatch(command); set != nil {
+			// Only a set certain to run turns pipefail on; any set +o turns it off.
+			change, runsSet := shellCommandScope(raws[at])
+			if set := shellPipefail.FindStringSubmatch(command); set != nil && (set[1] == "+" || nesting == 0 && runsSet) {
 				pipefail = set[1] == "-"
 			}
+			nesting = max(nesting+change, 0)
 			if start = end + 1; marked {
 				continue
 			}
@@ -312,6 +315,25 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		}
 	}
 	return findings, nil
+}
+
+// shellCommandScope returns the change in compound-command nesting the
+// command makes, read with the shared controlWords and commandBrace, and
+// whether a set starts it and runs whenever it does: not in a pipeline or
+// after & in it, so not in a subshell.
+func shellCommandScope(raw string) (change int, runsSet bool) {
+	words, _, _, _, _, _ := shellWords(raw, nil)
+	commands := splitCommands(words)
+	for _, each := range commands {
+		change += commandBrace(each)
+		if len(each.args) > 0 && !each.args[0].quoted {
+			change += controlWords[each.args[0].text]
+		}
+	}
+	first := commands[0].args
+	runsSet = len(first) > 0 && !first[0].quoted && first[0].text == "set" &&
+		(len(commands) == 1 || commands[1].conditional)
+	return change, runsSet
 }
 
 // shellFailOpenFirstCall returns where the first tool call or process
