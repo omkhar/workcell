@@ -70,6 +70,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"command-wrapped tool with || true", "command -p git fetch origin || true\n", "or-true"},
 		{"command -- wraps the tool", "command -- git fetch origin || true\ncommand -p -- git fetch || true\n", "or-true"},
 		{"redirect on another operand hides no tool status", "git fetch || printf '%s\\n' retrying 2>/dev/null\n", ""},
+		{"later operand keeps its own status test", "git fetch && git gc 2>/dev/null\nprintf done\n", "dev-null"},
+		{"redirect on a piped stage is not the tool's", "git fetch |& cat 2>/dev/null\n", ""},
 		{"redirect on the tool operand of a list", "printf '%s\\n' fetching || git fetch 2>/dev/null\n", "dev-null"},
 		{"null command handler", "git fetch || :\n", "or-true"},
 		{"null command handler before a semicolon", "git fetch || :; echo done\n", "or-true"},

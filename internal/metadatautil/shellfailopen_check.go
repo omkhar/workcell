@@ -285,19 +285,26 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			toolSubst := len(shellToolSubsts(command)) > 0
 			hasTool := shellToolCommand.MatchString(command) || toolSubst
 			// A status read or a handler covers only a call written before it.
-			rest := command[shellFailOpenFirstCall(command):]
-			captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, func() []string {
+			later := func() []string {
 				later := slices.Clone(commands[at+1 : len(commands)-1])
 				for _, each := range statements[index+1:] {
 					codes, _ := shellFailOpenCommands(each.code, each.raw)
 					later = append(later, codes...)
 				}
 				return later
-			})
-			outside := shellOutsideSubsts(rest)
-			list := shellFailOpenList.FindStringIndex(outside)
-			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
-				list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
+			}
+			// testedFrom reports whether the status of the call that starts the
+			// text, a suffix of the command, is read: by the command itself, a
+			// handler, the next command, or the && that follows it.
+			testedFrom := func(text string) bool {
+				rest := text[shellFailOpenFirstCall(text):]
+				captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later)
+				outside := shellOutsideSubsts(rest)
+				list := shellFailOpenList.FindStringIndex(outside)
+				return captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) ||
+					list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
+			}
+			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one
 			// command cannot stand in for two baselined hits.
 			count := func(hit bool, pattern *regexp.Regexp, text string) int {
@@ -311,11 +318,15 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			}
 			hits[ruleOrTrue] += count(hasTool, shellOrTrue, command)
 			// A redirect belongs to the operand of the && || or | list it is
-			// written in, so git fetch || printf x 2>/dev/null hides no git status.
+			// written in, so git fetch || printf x 2>/dev/null hides no git
+			// status, and each operand's own status test counts, so the && after
+			// git fetch does not cover git gc 2>/dev/null.
+			offset := 0
 			for _, operand := range shellListOperands(command) {
 				if shellToolCommand.MatchString(operand) {
-					hits[ruleDevNull] += count(!tested, shellDevNull, operand)
+					hits[ruleDevNull] += count(!testedFrom(command[offset:]), shellDevNull, operand)
 				}
+				offset += len(operand)
 			}
 		}
 		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
@@ -563,13 +574,18 @@ func shellListOperands(command string) []string {
 		case ')':
 			depth = max(depth-1, 0)
 		case '&', '|':
-			if depth == 0 && index+1 < len(command) && (command[index+1] == '&' || command[index+1] == '|') {
-				index++
+			if depth != 0 {
+				continue
 			}
-			if depth == 0 && (command[index] == '|' || index > 0 && command[index-1] == '&') {
-				operands = append(operands, command[start:index+1])
-				start = index + 1
+			width := 1
+			if index+1 < len(command) && (command[index+1] == '&' || command[index+1] == '|') {
+				width = 2 // && || or |&
 			}
+			if command[index] == '|' || width == 2 && command[index+1] == '&' {
+				operands = append(operands, command[start:index+width])
+				start = index + width
+			}
+			index += width - 1
 		}
 	}
 	return append(operands, command[start:])
