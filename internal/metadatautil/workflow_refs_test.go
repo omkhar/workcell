@@ -155,6 +155,8 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"builtin before a program runs nothing", runStep("builtin gh api repos/o/r/issues"), "", ""},
 		{"builtin before command wraps gh", runStep("builtin command gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"builtin before eval runs its words", runStep("builtin eval 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"find -exec runs gh", runStep("find . -exec gh api repos/o/r/issues \\;\nfind . -name x -execdir sh -c 'gh api repos/o/r/issues' \\;\nfind . -ok gh api repos/o/r/issues {} +"), "", "gh-api-unbounded"},
+		{"find without -exec runs nothing", runStep("find . -name 'gh api' -print"), "", ""},
 		{"Windows bash runs its body", runStep("bash.exe -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"no-execute switched back on runs the body", runStep("bash -n +n -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 	}

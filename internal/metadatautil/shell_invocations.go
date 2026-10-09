@@ -1143,6 +1143,27 @@ func commandWords(text string) [][]string {
 	discard := func() {
 		command, dropTarget, readStdin, stdin = nil, false, false, "$_"
 	}
+	// emit records the command the words run: the program a shell or eval
+	// runs, the words themselves, and each command a find -exec runs.
+	var emit func(words []string, stdin string)
+	emit = func(words []string, stdin string) {
+		words = wrappedCommand(words)
+		program, shell := shellProgram(words, stdin)
+		script, spelled := spelledProgram(program)
+		if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
+			found = append(found, commandWords(text)...) // eval runs its words as a script
+		} else if shell && spelled {
+			// A shell runs its program as a script in a child shell.
+			found = append(found, everyShellCommand(script)...)
+		} else {
+			found = append(found, words)
+		}
+		if commandName(words[0]) == "find" {
+			for _, body := range findExecBodies(words[1:]) {
+				emit(body, "$_")
+			}
+		}
+	}
 	end := func() {
 		i := 0
 		for i < len(command) && (slices.Contains(shellKeywords, command[i]) ||
@@ -1153,17 +1174,7 @@ func commandWords(text string) [][]string {
 			i++
 		}
 		if i < len(command) {
-			words := wrappedCommand(command[i:])
-			program, shell := shellProgram(words, stdin)
-			script, spelled := spelledProgram(program)
-			if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
-				found = append(found, commandWords(text)...) // eval runs its words as a script
-			} else if shell && spelled {
-				// A shell runs its program as a script in a child shell.
-				found = append(found, everyShellCommand(script)...)
-			} else {
-				found = append(found, words)
-			}
+			emit(command[i:], stdin)
 		}
 		discard()
 	}
@@ -1251,6 +1262,26 @@ func commandWords(text string) [][]string {
 	}
 	end()
 	return found
+}
+
+// findExecBodies returns each command that find runs for a match: the words
+// after -exec, -execdir, -ok or -okdir up to the ; or + that ends them.
+func findExecBodies(args []string) [][]string {
+	var bodies [][]string
+	for i := 0; i < len(args); i++ {
+		if !slices.Contains([]string{"-exec", "-execdir", "-ok", "-okdir"}, args[i]) {
+			continue
+		}
+		end := i + 1
+		for end < len(args) && args[end] != ";" && args[end] != "+" {
+			end++
+		}
+		if end > i+1 {
+			bodies = append(bodies, args[i+1:end])
+		}
+		i = end
+	}
+	return bodies
 }
 
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
