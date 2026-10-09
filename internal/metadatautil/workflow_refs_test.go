@@ -106,6 +106,11 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh by path", runStep("/usr/bin/gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"alias definition is unresolved", runStep("shopt -s expand_aliases; alias g=gh; g api repos/o/r/issues"), "", "command-unresolved"},
 		{"alias as an argument is not a definition", runStep("echo alias g=gh"), "", ""},
+		{"gh api in a bash -c body", runStep("bash -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
+		{"gh api in a clustered sh -lc body", runStep(`sh -lc "gh api repos/o/r/issues"`), "", "gh-api-unbounded"},
+		{"bash -c body with an expansion is unresolved", runStep(`bash -c "$CMD"`), "", "command-unresolved"},
+		{"bash -c body without gh is clean", runStep("bash -c 'echo gh api'"), "", ""},
+		{"bounded gh api in a bash -c body", runStep("bash -c 'gh api --paginate repos/o/r/issues'"), "", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

@@ -5,6 +5,7 @@ package metadatautil
 
 import (
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -85,6 +86,30 @@ func braceDepth(commands []command) int {
 // time and coproc -- and accepts `time -p` and `time --` as well as a bare
 // time. coproc may also carry a name before the command it runs, which is an
 // ordinary word and is stepped over with it.
+// shellCBody returns the script a sh, bash, dash, ksh or zsh command runs
+// through -c, bare or clustered as in -lc or -euc, and whether there is one.
+// The body is the word after the option; a body the reader cannot spell is
+// returned as is, so a lint can fail closed on it.
+func shellCBody(words []string) (string, bool) {
+	if len(words) == 0 {
+		return "", false
+	}
+	switch path.Base(words[0]) {
+	case "sh", "bash", "dash", "ksh", "zsh":
+	default:
+		return "", false
+	}
+	for i := 1; i+1 < len(words); i++ {
+		if words[i] == "--" {
+			return "", false
+		}
+		if strings.HasPrefix(words[i], "-") && !strings.HasPrefix(words[i], "--") && strings.HasSuffix(words[i], "c") {
+			return words[i+1], true
+		}
+	}
+	return "", false
+}
+
 func isCommandPrefixWord(text string) bool {
 	switch text {
 	case "!", "time", "coproc", "-p", "--":
@@ -1165,6 +1190,8 @@ func commandWords(text string) [][]string {
 			words := wrappedCommand(command[i:])
 			if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
 				found = append(found, commandWords(text)...) // eval runs its words as a script
+			} else if body, ok := shellCBody(words); ok && !strings.ContainsAny(body, "$`") {
+				found = append(found, commandWords(body)...) // sh -c runs its body as a script
 			} else {
 				found = append(found, words)
 			}

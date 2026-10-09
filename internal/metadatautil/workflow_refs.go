@@ -126,6 +126,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						add("eval-unresolved")
 					} else if strings.ContainsAny(words[0], "$`") || (words[0] == "alias" && len(words) > 1) {
 						add("command-unresolved")
+					} else if body, ok := shellCBody(words); ok && strings.ContainsAny(body, "$`") {
+						add("command-unresolved") // the sh -c body cannot be spelled
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
