@@ -32,6 +32,9 @@ import (
 //
 //	# fail-closed: <reason>
 //
+// The marker does not cover a process substitution: bash never propagates
+// its status, so only a captured status or a completion sentinel proves it.
+//
 // The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits
 // each file carries today; a count above its row fails, and so does a count
 // below it, so the row drops with the repair.
@@ -268,7 +271,12 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			marked := slices.ContainsFunc(statement.marks, func(mark int) bool { return mark >= start && mark <= end })
-			if start = end + 1; marked {
+			start = end + 1
+			// A marker states a reason for a lost status, but a process
+			// substitution loses its producer's status wherever it stands,
+			// so it needs proof, a sentinel or a captured status, not a reason.
+			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1))
+			if marked {
 				continue
 			}
 			toolSubst := len(shellToolSubsts(command)) > 0
@@ -295,7 +303,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				}
 				return len(pattern.FindAllStringIndex(command, -1))
 			}
-			hits[ruleProcessSubstitution] += count(true, shellProcessSubst)
 			if toolSubst && (!tested || shellSubstHidden(command)) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
