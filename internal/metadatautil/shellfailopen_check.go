@@ -328,22 +328,27 @@ func shellFailOpenNesting(command string) int {
 }
 
 // shellFailOpenBranchExits reports whether the branch that starts at the
-// first command ends the script, with a shellFailOpenExits command in the
-// branch itself rather than inside an if, loop or case nested in it. The
+// first command leaves a failure, read in the branch itself rather than inside
+// an if, loop or case nested in it: a failing exit or return ends it, and
+// otherwise its last command must be a shellFailOpenExits command, since a
+// later command such as the true of { false; true; } sets the status. The
 // shared controlWords count the nesting; one of closers at the branch's own
 // depth, such as the fi of a then branch or the } of a group, ends it.
 func shellFailOpenBranchExits(codes []string, closers ...string) bool {
-	depth := 0
+	depth, failing := 0, false
 	for _, each := range codes {
 		fields := strings.Fields(each)
 		if len(fields) > 0 && fields[0] == "then" {
 			fields = fields[1:]
 		}
-		if depth == 0 && len(fields) > 0 && slices.Contains(closers, fields[0]) {
-			return false
-		}
-		if depth == 0 && shellFailOpenExits.MatchString(strings.Join(fields, " ")) {
-			return true
+		if depth == 0 && len(fields) > 0 {
+			if slices.Contains(closers, fields[0]) {
+				return failing
+			}
+			failing = shellFailOpenExits.MatchString(strings.Join(fields, " "))
+			if failing && (fields[0] == "exit" || fields[0] == "return") {
+				return true
+			}
 		}
 		depth += shellFailOpenNesting(each)
 	}
