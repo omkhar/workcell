@@ -38,6 +38,18 @@ func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 	if len(findings) != 2 {
 		t.Fatalf("findings = %v, want two or-true findings on one list", findings)
 	}
+	for script, want := range map[string]int{
+		"out=$(printf '%s' \"$(git ls-files)\")\n":     1, // the nested substitution owns the call
+		"x=$(y=$(git rev-parse HEAD); git ls-files)\n": 2, // each substitution runs its own tool
+	} {
+		findings, err = metadatautil.ShellFailOpenFindings(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != want {
+			t.Fatalf("findings for %q = %v, want %d command-substitution findings", script, findings, want)
+		}
+	}
 	findings, err = metadatautil.ShellFailOpenFindings("git fetch || true\n")
 	if err != nil {
 		t.Fatal(err)
