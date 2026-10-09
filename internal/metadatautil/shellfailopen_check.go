@@ -38,10 +38,6 @@ import (
 //
 // The scan reads lines with shellWords, the reader ShellInvocations uses, so
 // quotes, comments, heredocs and an open `$(` mean the same thing to both.
-// ShellInvocations drops the body of a compound command and the inside of `$(`
-// and `<(`, where this class hides, so it reads only the `wait "$!"` that
-// captures a process substitution: that wait is a command the script must
-// run, which the shared evasion corpus can hide.
 func CheckShellFailOpen(rootDir string) error {
 	files, err := shellFailOpenFiles(rootDir)
 	if err != nil {
@@ -142,17 +138,6 @@ var (
 	// || fail*, || { ... }).
 	shellFailOpenCapture = regexp.MustCompile(`\$\?|PIPESTATUS|` + shellFailOpenHandler)
 	shellFailOpenHandler = `\|\|\s*(?:exit|return|die\b|fail|\{|false\b|\w*(?:fail|die|error)\w*)`
-	// shellFailOpenSentinelOr and shellFailOpenSentinelIf are the two tests
-	// of a completion sentinel that the house loops use, as in
-	// scripts/verify-release-outputs.sh and scripts/validate-repo.sh: the
-	// loop sets NAME_completed=1 when the producer's last record arrives, and
-	// the next command fails unless it is 1.
-	shellFailOpenSentinelOr = regexp.MustCompile(`^\s*\[\[\s*"?\$\{?(\w+_completed)\}?"?\s+(?:-eq|==)\s+"?1"?\s*\]\]\s*` + shellFailOpenHandler)
-	shellFailOpenSentinelIf = regexp.MustCompile(`^\s*if\s+\[\[\s*"?\$\{?(\w+_completed)\}?"?\s+(?:-ne|!=)\s+"?1"?\s*\]\]\s*;?\s*then\b`)
-	// shellFailOpenExits is a command in a then branch that ends the script
-	// or the function; shellFailOpenFi ends the branch.
-	shellFailOpenExits = regexp.MustCompile(`(?:^|[;\n])\s*(?:exit|return|die|fail\w*)(?:[\s;]|$)`)
-	shellFailOpenFi    = regexp.MustCompile(`(?:^|[;\n])\s*fi\b`)
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
@@ -253,8 +238,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		statements = append(statements, current)
 	}
 	var findings []ShellFailOpenFinding
-	var seen []string // the raw text of each command read so far
-	var opens []int   // where in seen each open compound command starts
 	for index, statement := range statements {
 		if strings.TrimSpace(statement.code) == "" {
 			continue
@@ -278,15 +261,6 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		hits := map[string]bool{}
 		start := 0
 		for at, command := range commands[:len(commands)-1] {
-			// A done closes the loop whose command starts at loop in seen.
-			loop := len(seen)
-			if change := shellFailOpenNesting(command); change > 0 {
-				opens = append(opens, loop)
-			} else if change < 0 && len(opens) > 0 {
-				loop, opens = opens[len(opens)-1], opens[:len(opens)-1]
-			}
-			body := strings.Join(seen[loop:], "\n")
-			seen = append(seen, raws[at])
 			after, end := commands[at+1], start+len(raws[at])
 			marked := slices.ContainsFunc(statement.marks, func(mark int) bool { return mark >= start && mark <= end })
 			if start = end + 1; marked {
@@ -294,22 +268,12 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			}
 			toolSubst := len(shellToolSubsts(command)) > 0
 			hasTool := shellToolCommand.MatchString(command) || toolSubst
-			// A loop reports its inner status only through a completion
-			// sentinel its body sets or a wait "$!" after it. A status read or
-			// a handler covers only a call written before it.
+			// A status read or a handler covers only a call written before it.
 			rest := command[shellFailOpenFirstCall(command):]
 			captured := shellFailOpenCapture.MatchString(rest)
-			looped := shellFailOpenWaited(raws[at+1])
-			if !looped && shellProcessSubst.MatchString(command) {
-				following := slices.Clone(raws[at+1 : len(raws)-1])
-				for _, later := range statements[index+1:] {
-					following = append(following, later.raw)
-				}
-				looped = shellFailOpenCompleted(body, strings.Join(following, "\n"))
-			}
 			tested := captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(command) ||
 				shellFailOpenAnd.MatchString(shellOutsideSubsts(rest))
-			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command) && !looped
+			hits[ruleProcessSubstitution] = hits[ruleProcessSubstitution] || shellProcessSubst.MatchString(command)
 			hits[ruleCommandSubstitution] = hits[ruleCommandSubstitution] || toolSubst && !tested
 			hits[ruleOrTrue] = hits[ruleOrTrue] || hasTool && shellOrTrue.MatchString(command)
 			hits[ruleDevNull] = hits[ruleDevNull] || hasTool && shellDevNull.MatchString(command) && !tested
@@ -371,48 +335,12 @@ func shellSubstCall(command string, start int) (body string, call int) {
 	return body, call
 }
 
-// shellFailOpenNesting returns the change in compound-command nesting that
-// a command's first word makes, after any then, do, else, { or !.
-func shellFailOpenNesting(command string) int {
-	for _, each := range strings.Fields(command) {
-		if !slices.Contains([]string{"then", "do", "else", "{", "!"}, each) {
-			return controlWords[each]
-		}
-	}
-	return 0
-}
-
-// shellFailOpenCompleted reports whether the script text that follows a
-// done < <( loop starts with a test of a completion sentinel that the loop
-// body sets to 1, with a failure branch. The producer inside <( runs in a
-// subshell, so a sentinel it sets never reaches the test. A name alone, as
-// in printf '%s\n' walk_completed, proves nothing.
-func shellFailOpenCompleted(body, following string) bool {
-	name := shellFailOpenSentinelOr.FindStringSubmatch(following)
-	if test := shellFailOpenSentinelIf.FindStringSubmatchIndex(following); test != nil {
-		branch := following[test[1]:]
-		if fi := shellFailOpenFi.FindStringIndex(branch); fi != nil && shellFailOpenExits.MatchString(branch[:fi[0]]) {
-			name = []string{"", following[test[2]:test[3]]}
-		}
-	}
-	return name != nil && regexp.MustCompile(`(?:^|[\s;])`+name[1]+`=1\b`).MatchString(body)
-}
-
 // shellFailOpenReadsStatus reports whether a command reads $? or PIPESTATUS
 // before anything in it runs, so the read sees the status the command before
 // it left. In discard=$(true) rc=$? the read sees the status of true.
 func shellFailOpenReadsStatus(command string) bool {
 	read := shellFailOpenStatusRead.FindStringIndex(command)
 	return read != nil && !shellFailOpenRunsFirst.MatchString(command[:read[0]])
-}
-
-// shellFailOpenWaited reports whether a command is wait "$!", the one wait
-// that returns a process substitution's status. ShellInvocations proves the
-// wait runs and is the command's first.
-func shellFailOpenWaited(raw string) bool {
-	return slices.ContainsFunc(ShellInvocations(raw, "wait"), func(each Invocation) bool {
-		return each.Position == 1 && slices.Equal(each.Args, []string{"$!"})
-	})
 }
 
 // shellSubstEnd returns the index just past the ) that closes the $( at

@@ -4,7 +4,6 @@
 package metadatautil_test
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,14 +58,6 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"status read after a later substitution", "out=$(find . -type f)\ndiscard=$(true) rc=$?\n", "command-substitution"},
 		{"status read after a later pipeline stage", "out=$(find . -type f)\nprintf x | rc=$?\n", "command-substitution"},
 		{"wait for another job", "out=$(git ls-files)\nwait \"$pid\"\n", "command-substitution"},
-		{"process substitution then a loop status read", "while read -r f; do :; done < <(find . -type f)\nrc=$?\n", "process-substitution"},
-		{"process substitution then a loop handler", "while read -r f; do :; done < <(find . -type f)\n[[ $? -eq 0 ]] || exit 1\n", "process-substitution"},
-		{"process substitution then wait for another job", "while read -r f; do :; done < <(find . -type f)\nwait \"$pid\"\n", "process-substitution"},
-		{"process substitution then a printed sentinel name", "while read -r f; do :; done < <(find . -type f)\nprintf '%s\\n' walk_completed\n", "process-substitution"},
-		{"sentinel the loop never sets", "walk_completed=1\nwhile read -r f; do :; done < <(find . -type f)\n[[ \"${walk_completed}\" -eq 1 ]] || exit 1\n", "process-substitution"},
-		{"sentinel tested the wrong way", "while read -r f; do walk_completed=1; done < <(find . -type f)\n[[ \"${walk_completed}\" -ne 1 ]] || exit 1\n", "process-substitution"},
-		{"sentinel test without a handler", "while read -r f; do walk_completed=1; done < <(find . -type f)\nif [[ \"${walk_completed}\" -ne 1 ]]; then\n  :\nfi\n", "process-substitution"},
-		{"sentinel name beside a substitution", "out=$(git ls-files) walk_completed=1\n", "command-substitution"},
 		{"tool behind xargs", "xargs git rm 2>/dev/null\n", "dev-null"},
 		{"tool behind sudo", "sudo git fetch || true\n", "or-true"},
 		{"eval in a substitution", "out=$(eval \"$cmd\")\n", "command-substitution"},
@@ -83,10 +74,6 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"status test", "x=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\n", ""},
 		{"handler on the continued line", "x=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
 		{"if tests the call", "if x=$(gh api /y); then :; fi\n", ""},
-		{"wait after the loop", "while read -r f; do :; done < <(find . -type f)\nwait $!\n", ""},
-		{"sentinel", "while read -r f; do walk_completed=1; done < <(find . -type f)\n[[ \"${walk_completed}\" -eq 1 ]] || exit 1\n", ""},
-		{"sentinel tested by an if", "done_completed=0\nwhile read -r -d '' f; do\n  if [[ -z \"$f\" ]]; then\n    done_completed=1\n    continue\n  fi\ndone < <(find . -print0 && printf '\\0')\n\nif [[ \"${done_completed}\" -ne 1 ]]; then\n  echo failed >&2\n  exit 1\nfi\n", ""},
-		{"sentinel tested by a one-line if", "while read -r f; do walk_completed=1; done < <(find . -type f); if [[ \"${walk_completed}\" -ne 1 ]]; then exit 1; fi\n", ""},
 		{"inline marker", "git fetch || true # fail-closed: a stale ref is harmless here\n", ""},
 		{"marker on the line before", "# fail-closed: best effort cleanup\ngit gc 2>/dev/null\n", ""},
 		{"marker needs a reason", "git gc || true # fail-closed:\n", "or-true"},
@@ -119,28 +106,6 @@ func TestShellFailOpenFindings(t *testing.T) {
 			}
 		})
 	}
-}
-
-// The wait a process substitution needs is a command the script must run, so
-// every row of the shared corpus hides it and must leave the hit reported.
-func TestShellFailOpenFindingsRejectsEvasions(t *testing.T) {
-	t.Parallel()
-	anchor := `wait "$!"`
-	script := "while read -r f; do :; done < <(find . -type f)\n" + anchor + "\n"
-	validate := func(script string) error {
-		findings, err := metadatautil.ShellFailOpenFindings(script)
-		if err != nil {
-			return fmt.Errorf("process-substitution unproven: %w", err)
-		}
-		if len(findings) > 0 {
-			return fmt.Errorf("%s at line %d", findings[0].Rule, findings[0].Line)
-		}
-		return nil
-	}
-	if err := validate(script); err != nil {
-		t.Fatal(err)
-	}
-	RequireRejectsAllEvasions(t, script, anchor, "process-substitution", validate)
 }
 
 // A heredoc body this reader cannot end could hide any command, so the scan

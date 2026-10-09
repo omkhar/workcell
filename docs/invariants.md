@@ -83,14 +83,13 @@ nothing. The idioms are a `< <(` process substitution and a `$(...)` around
 
 `scripts/check-shell-portability.sh` rejects each of them in `scripts/` and
 `runtime/container/`. The command, or the command after it, must capture the
-status or record completion.
+status.
 A heredoc that the check cannot end fails the check.
 A command can state its reason with a `# fail-closed: <reason>` comment
 at its line end or alone on the line before. It covers only that command.
 
 A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
-those tools. Only `wait "$!"`, or a test of a `NAME_completed` flag that
-the loop sets, captures a process substitution.
+those tools. Only a marker covers a process substitution.
 
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
 today. A count that does not match its baseline fails the check. Repair a hit,
