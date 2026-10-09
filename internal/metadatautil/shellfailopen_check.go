@@ -33,7 +33,7 @@ import (
 //	# fail-closed: <reason>
 //
 // The marker does not cover a process substitution: bash never propagates
-// its status, so only a captured status or a completion sentinel proves it.
+// its status, so every one is a hit until the script repairs it.
 //
 // The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits
 // each file carries today; a count above its row fails, and so does a count
@@ -120,7 +120,7 @@ var (
 	// an operator or an opener, then any reserved word, assignment, or xargs or
 	// sudo with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|command(?:\\s+-p)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -300,17 +300,23 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				list != nil && shellFailOpenAnd.MatchString(outside[list[0]:])
 			// Each occurrence counts, so a || true && … || true list on one
 			// command cannot stand in for two baselined hits.
-			count := func(hit bool, pattern *regexp.Regexp) int {
+			count := func(hit bool, pattern *regexp.Regexp, text string) int {
 				if !hit {
 					return 0
 				}
-				return len(pattern.FindAllStringIndex(command, -1))
+				return len(pattern.FindAllStringIndex(text, -1))
 			}
 			if toolSubst && (!tested || shellSubstHidden(command)) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
-			hits[ruleOrTrue] += count(hasTool, shellOrTrue)
-			hits[ruleDevNull] += count(hasTool && !tested, shellDevNull)
+			hits[ruleOrTrue] += count(hasTool, shellOrTrue, command)
+			// A redirect belongs to the operand of the && || or | list it is
+			// written in, so git fetch || printf x 2>/dev/null hides no git status.
+			for _, operand := range shellListOperands(command) {
+				if shellToolCommand.MatchString(operand) {
+					hits[ruleDevNull] += count(!tested, shellDevNull, operand)
+				}
+			}
 		}
 		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
 			for range hits[rule] {
@@ -540,6 +546,33 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	}
 	commands, raws = append(commands, code[start:]), append(raws, raw[start:])
 	return commands, raws
+}
+
+// shellListOperands splits a command at each && || | or |& outside a
+// substitution, with the operator left on the operand it ends, so a
+// redirection stays with the operand that carries it.
+func shellListOperands(command string) []string {
+	var operands []string
+	depth, start := 0, 0
+	for index := 0; index < len(command); index++ {
+		switch command[index] {
+		case '\\':
+			index++
+		case '(':
+			depth++
+		case ')':
+			depth = max(depth-1, 0)
+		case '&', '|':
+			if depth == 0 && index+1 < len(command) && (command[index+1] == '&' || command[index+1] == '|') {
+				index++
+			}
+			if depth == 0 && (command[index] == '|' || index > 0 && command[index-1] == '&') {
+				operands = append(operands, command[start:index+1])
+				start = index + 1
+			}
+		}
+	}
+	return append(operands, command[start:])
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git or `|| true`

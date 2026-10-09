@@ -89,8 +89,8 @@ at its line end or alone on the line before. It covers only that command.
 
 A `$(...)` that runs a variable, a quoted path or `eval` counts as one of
 those tools. A marker does not cover a process substitution. Bash never
-propagates its status, so its row stays until a captured status or a
-completion sentinel proves the walk.
+propagates its status, so every `< <(` is a hit. To repair it, read a file
+the walk wrote after its status was checked.
 
 `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries
 today. A count that does not match its baseline fails the check. Repair a hit,
