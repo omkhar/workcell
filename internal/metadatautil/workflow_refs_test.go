@@ -109,6 +109,15 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"gh api in a bash -O extglob -c body", runStep("bash -O extglob -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"gh api in a bash -o posix -c body", runStep("bash -o posix -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
 		{"bash -o posix -c body without gh is clean", runStep("bash -o posix -c 'echo gh'"), "", ""},
+		{"gh api in a quoted-delimiter heredoc fed to bash", runStep("bash <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded"},
+		{"gh api in a heredoc fed to sh", runStep("sh <<-EOF\n\tgh api repos/o/r/issues\nEOF\nbash -s x <<EOF\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded#2"},
+		{"gh api in a here-string fed to bash", runStep("bash <<< 'gh api repos/o/r/issues'\nbash <<<'gh api repos/o/r/issues'"), "", "gh-api-unbounded#2"},
+		{"heredoc with an expansion fed to bash is unresolved", runStep("bash <<EOF\ngh $SUB repos/o/r/issues\nEOF"), "", "command-unresolved"},
+		{"shell reading a pipe is unresolved", runStep("cat script | bash"), "", "command-unresolved"},
+		{"bare shell is unresolved", runStep("bash"), "", "command-unresolved"},
+		{"quoted-delimiter heredoc with an expansion is read", runStep("bash <<'EOF'\necho \"$HOME\"\nEOF"), "", ""},
+		{"shell running a script file is clean", runStep("bash script.sh\nbash -- script.sh\nsh -e script.sh <<<x"), "", ""},
+		{"heredoc fed to another command is ignored", runStep("cat <<'EOF'\ngh api repos/o/r/issues\nEOF\njq -n <<EOF\ngh api $X\nEOF\ncat <<<'gh api x'"), "", ""},
 		{"called function in a bash -c body is a hit", runStep("bash -c 'f() { gh api repos/x; }; f'"), "", "gh-api-unbounded"},
 	}
 	for _, testCase := range cases {

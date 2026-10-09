@@ -126,8 +126,10 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						add("eval-unresolved")
 					} else if strings.ContainsAny(words[0], "$`") || (words[0] == "alias" && len(words) > 1) {
 						add("command-unresolved")
-					} else if body, ok := shellCBody(words); ok && strings.ContainsAny(body, "$`") {
-						add("command-unresolved") // the sh -c body cannot be spelled
+					} else if _, ok := shellProgram(words, "$_"); ok {
+						// EveryShellCommand reads each shell program it can spell in
+						// place of the shell, so a shell left here runs one it cannot.
+						add("command-unresolved")
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
