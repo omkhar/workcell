@@ -78,6 +78,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"ANSI-C escaped handler still hides a failure", "git fetch || $'\\164rue'\ngit gc || $'\\072'\n", "or-true"},
 		{"ANSI-C escaped /dev/null still hides stderr", "git fetch 2>$'\\057dev/null'\n", "dev-null"},
 		{"time -p keeps the substitution status", "time -p out=$(git ls-files) || exit 1\n", ""},
+		{"quoted or escaped tool name is the tool", "g'it' fetch || true\n\"git\" fetch || true\ng\\it gc 2>/dev/null\n", "or-true"},
 		{"compound quoted handler still hides a failure", "git fetch || t'rue'\ngit gc || 'tr'\"ue\"\n", "or-true"},
 		{"compound quoted /dev/null still hides stderr", "git fetch 2>/d'ev/null'\n", "dev-null"},
 		{"&& after a pipe reads the last stage", "git fetch 2>/dev/null | cat && echo done\n", "dev-null"},

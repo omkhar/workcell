@@ -107,6 +107,7 @@ type ShellFailOpenFinding struct {
 
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
+	shellToolName      = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
 	// shellCommandPosition ends where a command word starts: after the start,
 	// an operator or an opener, then any reserved word, assignment, or xargs or
 	// sudo with its options and their values. `git` in a path or an argument
@@ -644,19 +645,20 @@ func shellCodeOnly(line string) string {
 			top.parens = max(top.parens-1, 0)
 		}
 	}
-	// A word whose quoted fragments spell true, : or /dev/null is that operand.
+	// A word whose quoted or escaped fragments spell a tool, true, : or
+	// /dev/null, as g'it' or t'rue', is that word.
 	for _, loc := range shellOutWord.FindAllStringIndex(string(out), -1) {
 		raw := line[loc[0]:loc[1]]
 		words, _, _, _, _, _ := shellWords(raw, nil)
-		if !strings.ContainsAny(raw, `'"`) || len(words) != 1 {
+		if !strings.ContainsAny(raw, `'"\`) || len(words) != 1 {
 			continue
 		}
 		value := words[0].text
 		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(value, `"`, `\"`) + `"`); strings.Contains(raw, "$'") && err == nil {
 			value = decoded
 		}
-		if value == "true" || value == ":" || value == "/dev/null" {
-			copy(out[loc[0]:loc[1]], value)
+		if value == "true" || value == ":" || value == "/dev/null" || shellToolName.MatchString(value) {
+			copy(out[loc[0]:loc[1]], value+strings.Repeat(" ", loc[1]-loc[0]))
 		}
 	}
 	return string(out)
