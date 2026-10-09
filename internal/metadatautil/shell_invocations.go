@@ -493,12 +493,10 @@ func ShellInvocations(script, commandName string) []Invocation {
 					continue
 				}
 				names := commandWords(spelled(each.args))
-				switch rebinding := unwrapBuiltins(names[assignmentPrefix(names):]); {
-				case len(rebinding) > 1 && rebinding[0] == "alias" && slices.ContainsFunc(rebinding[1:], func(word string) bool { return strings.Contains(word, "=") }),
-					len(rebinding) > 1 && rebinding[0] == "hash" && slices.Contains(rebinding[1:], "-p"):
-					// A called body that rebinds a name, also behind an assignment,
-					// command or builtin, may shadow every later use of the
-					// command, so the reader stops at the call.
+				switch {
+				case rebindsCommand(names):
+					// A called body that rebinds a name may shadow every later
+					// use of the command, so the reader stops at the call.
 					barrierFunctions[definingName] = true
 				case rewritesParameters(names):
 					rewritten[definingName] = true
@@ -532,13 +530,19 @@ func ShellInvocations(script, commandName string) []Invocation {
 			position++
 			outside := groupDepth
 			groupDepth += commandBrace(each)
-			if names := commandWords(spelled(args)); evaluates(names) || graph.callsBarrier(names) {
+			names := commandWords(spelled(args))
+			if evaluates(names) || graph.callsBarrier(names) {
 				// eval and source run text this reader never sees as code, and
 				// that text can define a function or an alias with the command's
 				// name, as eval 'or''as() { :; }' does. No later call is proved to
 				// run the program; the calls before it already ran. A condition or
 				// a guarded branch may run, so the barrier holds there too.
 				return invocations
+			}
+			if rebindsCommand(names) {
+				// An alias or a hash -p rebinds a name for every later use, in a
+				// condition or a guarded branch as well, so no use is proved.
+				return nil
 			}
 			if conditionalGroup >= 0 {
 				// Nothing inside the guarded group is proved to run, however
@@ -570,21 +574,10 @@ func ShellInvocations(script, commandName string) []Invocation {
 			if nested || control > 0 || each.conditional {
 				continue
 			}
-			names := texts(args)
+			names = texts(args)
 			if names[0] == "exit" || names[0] == "return" || replacesShell(names) {
 				// The step ends here; nothing written after it runs.
 				return invocations
-			}
-			// X=1 command alias and builtin hash rebind in the current shell too.
-			rebinding := unwrapBuiltins(names[assignmentPrefix(names):])
-			if len(rebinding) > 0 && rebinding[0] == "alias" && shadowsByAlias(rebinding, prefix[0]) {
-				return nil // Every later use expands to the alias.
-			}
-			if len(rebinding) > 0 && rebinding[0] == "hash" && slices.Contains(rebinding[1:], "-p") &&
-				slices.Contains(rebinding[1:], prefix[0]) {
-				// hash -p pathname name makes pathname the full filename for
-				// name, so every later line runs that path, not the program.
-				return nil
 			}
 			if len(names) >= len(prefix) && slices.Equal(names[:len(prefix)], prefix) {
 				invocations = append(invocations, Invocation{names[len(prefix):], position})
@@ -993,13 +986,21 @@ func replacesShell(args []string) bool {
 	})
 }
 
-// shadowsByAlias reports whether an alias command rebinds name, as in
-// alias oras=':' after shopt -s expand_aliases.
-func shadowsByAlias(args []string, name string) bool {
-	for _, word := range args[1:] {
-		if bound, _, found := strings.Cut(word, "="); found && bound == name {
-			return true
-		}
+// rebindsCommand reports whether the command defines an alias or binds a
+// name with hash -p, behind any assignments, command or builtin. With
+// expand_aliases every later use of that name runs the binding, not the
+// program, and the reader does not resolve which name, so it proves no
+// later invocation.
+func rebindsCommand(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) < 2 {
+		return false
+	}
+	switch names[0] {
+	case "alias":
+		return slices.ContainsFunc(names[1:], func(word string) bool { return strings.Contains(word, "=") })
+	case "hash":
+		return slices.Contains(names[1:], "-p")
 	}
 	return false
 }

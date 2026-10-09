@@ -53,6 +53,8 @@ var anyRejection = map[string]bool{
 	"wrapped hash in a called helper":        true,
 	"assigned alias in a called helper":      true,
 	"assigned hash in a called helper":       true,
+	"alias in an if condition":               true,
+	"hash in a while condition":              true,
 	"step condition if: false":               true,
 	"step condition && false":                true,
 }
@@ -328,6 +330,12 @@ var Evasions = []Evasion{
 	{"assigned hash in a called helper", replaceAnchor(func(a string) string {
 		i := indentOf(a)
 		return i + "shadow() {\n" + i + "  X=1 builtin hash -p /bin/true '" + strings.Fields(a)[0] + "'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"alias in an if condition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "shopt -s expand_aliases\n" + indentOf(a) + "if command alias " + strings.Fields(a)[0] + "=':'; then :; fi\n" + a
+	})},
+	{"hash in a while condition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "while X=1 hash -p /bin/true '" + strings.Fields(a)[0] + "'; do break; done\n" + a
 	})},
 	{"step condition if: false", stepCondition("false")},
 	{"step condition && false", stepCondition("${{ success() && false }}")},
