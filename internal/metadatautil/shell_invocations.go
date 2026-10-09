@@ -392,10 +392,8 @@ func quoteCloseIndex(line string, quote byte) int {
 	return -1
 }
 
-// heredocsAsHereStrings moves every heredoc body in script into the line that
-// opens it, for a reader that must keep the commands ShellInvocations drops as
-// unproved. Each operator and delimiter becomes the here-string heredocWord
-// spells, so the command that reads the body, such as bash, still carries it.
+// heredocsAsHereStrings moves every heredoc body into the line that opens it,
+// as the here-string heredocWord spells, so the command that reads it keeps it.
 func heredocsAsHereStrings(script string) string {
 	var out, body strings.Builder
 	var opened, pending []heredoc
@@ -1000,13 +998,9 @@ func commandName(word string) string {
 }
 
 // wrappedCommand returns words from the command that a chain of wrappers, such
-// as env A=1 nice -n 5 command -p gh, runs. command -v only names a command.
-// env -S splits its value into words that env then reads as its own arguments.
-// timeout reads a DURATION operand before the command. A wrapper named by
-// path, as /usr/bin/env, is the same wrapper. sudo -h with a value names a
-// host. sudo -s or -i runs the command through $SHELL -c with its
-// metacharacters escaped, so the words stay the command. With no command it
-// runs $SHELL, which reads a script the reader cannot see.
+// as env A=1 nice -n 5 command -p gh, runs: command -v only names a command,
+// env -S splits its value, timeout reads a DURATION first, and sudo -s or -i
+// keeps the words, which sudo escapes, or runs $SHELL with no command.
 func wrappedCommand(words []string) []string {
 	for {
 		name := commandName(words[0])
@@ -1071,18 +1065,12 @@ func shadowsByAlias(args []string, name string) bool {
 }
 
 // EveryShellCommand returns the words of every command in script that bash may
-// run, from the command word wrappedCommand finds. It is the
-// reachability-insensitive counterpart of ShellInvocations: it keeps if, loop
-// and case bodies, guarded commands, subshells and substitutions, which a lint
-// of what a script may run must read. It drops comments, redirections, the
-// heredoc bodies of commands other than a shell, and the reserved words and
-// assignments before a command. A shell's -c body, heredoc or here-string runs
-// as a script in place of the shell, unless the reader cannot spell it. A
-// function body is read where it is defined. eval runs its words as a script,
-// unless they hold an expansion; then the eval stays a command, as does a
-// command word with an expansion, since the reader cannot spell what either
-// runs. PR 804 adds a ShellCommandWords reader with a similar intent; merge the
-// two when both land.
+// run, from the command word wrappedCommand finds: the reachability-insensitive
+// counterpart of ShellInvocations, so branches, guarded commands, subshells
+// and substitutions are kept. A shell's program and an eval's words are read
+// as a script when the reader can spell them; otherwise the command stays,
+// for a lint to fail closed on. PR 804's ShellCommandWords has a similar
+// intent; merge the two when both land.
 func EveryShellCommand(script string) [][]string {
 	return everyShellCommand(script)
 }
@@ -1093,12 +1081,10 @@ func everyShellCommand(script string) [][]string {
 	return commandWords(flattenSubstitutions(heredocsAsHereStrings(script)))
 }
 
-// commandWords returns the words of every command in text that
-// flattenSubstitutions has already rewritten, as shellWords reads each logical
-// line. An unquoted parenthesis ends a command, as a subshell or a case pattern
-// does. A redirection is not a word of the command, and a bare operator such
-// as > takes the next word as its target, so that word goes too. A here-string
-// is the command's stdin, which a shell can run as its program.
+// commandWords returns the words of every command in text, which
+// flattenSubstitutions has rewritten, as shellWords reads each logical line.
+// A redirection and its target are not words; a here-string is stdin, which a
+// shell can run as its program.
 func commandWords(text string) [][]string {
 	var found [][]string
 	var command []string
