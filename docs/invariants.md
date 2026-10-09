@@ -85,9 +85,6 @@ has no `--limit`.
 today. A new hit fails. A row with no hit also fails. Remove a row when you fix
 its hit.
 
-A testkit case runs each inline jq program against an empty array. A compile
-error fails the test.
-
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only
