@@ -78,9 +78,8 @@ func (h workflowRefHit) key() string {
 	return strings.Join([]string{h.kind, h.file, h.job, h.step}, "\t")
 }
 
-// CheckWorkflowRefs ratchets workflow run: bodies. A hit that
-// is not in the baseline fails, and a baseline row with no hit fails, so the
-// baseline can only shrink.
+// CheckWorkflowRefs ratchets workflow run: bodies: a hit not in the baseline
+// fails, and so does a baseline row with no hit, so the baseline only shrinks.
 func CheckWorkflowRefs(rootDir string) error {
 	hits, err := workflowRefHits(rootDir)
 	if err != nil {

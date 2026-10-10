@@ -459,16 +459,14 @@ func heredocsAsHereStrings(script string) string {
 	return out.String()
 }
 
-// heredocWord is the here-string that stands for a literal heredoc body. Hex
-// keeps the body one word through the line readers, and a \x01 byte, which no
-// workflow holds, marks it for spelledProgram.
+// heredocWord is the here-string for a literal heredoc body: hex keeps it one
+// word, and a \x01 byte, which no workflow holds, marks it for spelledProgram.
 func heredocWord(body string) string {
 	return "<<<\x01" + hex.EncodeToString([]byte(body))
 }
 
-// spelledProgram returns the script in a program shellProgram returns, and
-// whether the reader can spell it. A heredoc body heredocWord spelled is
-// literal; any other program with an expansion is not.
+// spelledProgram returns a shellProgram script and whether the reader can
+// spell it: a heredocWord body is literal, any other expansion is not.
 func spelledProgram(program string) (string, bool) {
 	if encoded, ok := strings.CutPrefix(program, "\x01"); ok {
 		body, err := hex.DecodeString(encoded)
@@ -477,9 +475,8 @@ func spelledProgram(program string) (string, bool) {
 	return program, !strings.ContainsAny(program, "$`")
 }
 
-// flattenSubstitutions moves each $( ... ) and ` ... ` onto its own lines
-// before the command that holds it and leaves $_ in its place, so its commands
-// are read at top level; a quoted ) or $( is left alone.
+// flattenSubstitutions moves each $( ... ) and ` ... ` onto lines before its
+// command and leaves $_ in its place; a quoted ) or $( is left alone.
 func flattenSubstitutions(script string) string {
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
@@ -568,9 +565,8 @@ func flattenSubstitutions(script string) string {
 	return out.String()
 }
 
-// markQuotedNewline turns a newline inside a quoted word into quotedNewline,
-// so a multi-line word stays on one line for the line reader. commandWords
-// turns it back, so a shell program keeps its lines.
+// markQuotedNewline turns a quoted newline into quotedNewline, so a word stays
+// on one line; commandWords turns it back, so a shell program keeps its lines.
 func markQuotedNewline(c byte) byte {
 	if c == '\n' {
 		return quotedNewline
@@ -973,10 +969,8 @@ func replacesShell(args []string) bool {
 	})
 }
 
-// commandWrappers maps each command that runs the command after it to its own
-// options that take a value. A long option matches any unique abbreviation of
-// three or more bytes, as getopt allows, and a short option may end a cluster
-// such as -vk with its value attached or in the next word.
+// commandWrappers maps each command that runs the command after it to its
+// valued options; a long option matches a unique abbreviation, as getopt allows.
 var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
@@ -1060,12 +1054,8 @@ func shadowsByAlias(args []string, name string) bool {
 }
 
 // EveryShellCommand returns the words of every command in script that bash may
-// run, from the command word wrappedCommand finds: the reachability-insensitive
-// counterpart of ShellInvocations, so branches, guarded commands, subshells
-// and substitutions are kept. A shell's program and an eval's words are read
-// as a script when the reader can spell them; otherwise the command stays,
-// for a lint to fail closed on. PR 804's ShellCommandWords has a similar
-// intent; merge the two when both land.
+// run, the reachability-insensitive counterpart of ShellInvocations. A program
+// it cannot spell stays a command, for a lint to fail closed on.
 func EveryShellCommand(script string) [][]string {
 	return everyShellCommand(script)
 }
@@ -1077,9 +1067,7 @@ func everyShellCommand(script string) [][]string {
 }
 
 // commandWords returns the words of every command in text, which
-// flattenSubstitutions has rewritten, as shellWords reads each logical line.
-// A redirection and its target are not words; a here-string is stdin, which a
-// shell can run as its program.
+// flattenSubstitutions has rewritten; a here-string is its command's stdin.
 func commandWords(text string) [][]string {
 	var found [][]string
 	var command []string
