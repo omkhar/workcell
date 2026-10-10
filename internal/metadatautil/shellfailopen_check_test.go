@@ -115,6 +115,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a descriptor that ends in 2 is not stderr; a longer path that starts with /dev/null is no null redirect", "git fetch 12>/dev/null; echo done\ngit foo2>/dev/null; echo done\ngit fetch 2>\"/dev/null.backup\"\ngit gc 2>/dev/nullx\n", ""},
 		{"an exit operand out of range fails with status 2", "git fetch || exit 9223372036854775808\n", ""},
 		{"another spelling of the null device path hides stderr", "git -C /missing fetch 2>/dev//null; echo done\ngit gc 2>/dev/./null\ngit pull 2>/dev/../dev/null\n", "dev-null"},
+		{"a spaced 2>& 1 after a stdout null redirect hides stderr", "git -C /missing fetch >/dev/null 2>& 1; echo done\n", "dev-null"},
 		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
 		{"a tool called by its path hides stderr", "/usr/bin/git fetch 2>/dev/null\n", "dev-null"},
 		{"an exit status that wraps to zero swallows the failure", "git fetch || exit 256\n", "or-true"},
@@ -206,8 +207,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"not a tool call", "grep -q x file || true\n", ""},
 		{"path is not a tool", "ls .git/hooks 2>/dev/null\n", ""},
 		{"tool name as an argument", "printf '%s\\n' git || true\n", ""},
-		{"tool name after echo", "echo gh 2>/dev/null\n", ""},
-		{"quoted $( runs nothing; escaped ; is an argument", "x=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
+		{"tool name after echo; quoted $( runs nothing; escaped ; is an argument", "echo gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
