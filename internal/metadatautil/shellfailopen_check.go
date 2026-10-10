@@ -133,7 +133,7 @@ var (
 	// with a failure: exit or return with no operand or a nonzero literal,
 	// die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an
 	// assignment such as failed=1 or an echo fail reports nothing.
-	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+[1-9][0-9]*)?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
+	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
@@ -148,13 +148,7 @@ var (
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
-	// shellFailOpenPipe is a pipe, whose last stage sets a later &&'s status.
-	shellFailOpenPipe = regexp.MustCompile(`(?:^|[^|])\|(?:[^|]|$)`)
 	shellOutWord      = regexp.MustCompile(`[^\s;&|<>()]+`)
-	// shellFailOpenAnd is a && that is the first && or || after the call,
-	// which makes the call its tested left operand. After a ||, the && tests
-	// the handler; a call on the right of && is tested by nothing.
-	shellFailOpenAnd = regexp.MustCompile(`^&&\s*\S`)
 	// shellAssignment is a word that assigns a name, the only word that may
 	// stand beside a substitution whose status the command keeps.
 	shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
@@ -270,10 +264,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
 				captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later)
-				outside := shellOutsideSubsts(rest)
-				list := shellFailOpenList.FindStringIndex(outside)
-				return captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) ||
-					list != nil && shellFailOpenAnd.MatchString(outside[list[0]:]) && !shellFailOpenPipe.MatchString(outside[:list[0]])
+				return captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text)
 			}
 			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one
@@ -560,7 +551,7 @@ func shellListOperands(command string) []string {
 // shellSwallowingHandlers counts each || after a pipeline that runs a tool
 // whose handler neither fails, as shellFailOpenHandled reads it, nor reads the status.
 func shellSwallowingHandlers(segment string, later func() []string, inSubst bool) int {
-	count, end, offset, pipeline := 0, 0, 0, ""
+	count, end, offset, pipeline, failing := 0, 0, 0, "", false
 	for _, operand := range shellListOperands(segment) {
 		offset += len(operand)
 		ends := func(suffix string) bool { return strings.HasSuffix(operand, suffix) }
@@ -569,10 +560,15 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 		}
 		left := shellTestExpr.ReplaceAllString(pipeline, "[[ ]]")
 		pipeline = ""
-		tool := shellToolCommand.MatchString(shellOutsideSubsts(left)) || len(shellToolSubsts(left)) > 0 ||
+		// A tool's failure, or one a failing handler such as false passes on,
+		// reaches this ||, as in git fetch || false || true.
+		tool := failing || shellToolCommand.MatchString(shellOutsideSubsts(left)) || len(shellToolSubsts(left)) > 0 ||
 			inSubst && shellUnnamedCommand.MatchString(shellOutsideSubsts(left)) // a substitution counts a named call
-		if tool && strings.HasSuffix(operand, "||") && !shellFailOpenHandled(shellOutsideSubsts(segment[offset-2:]), later) &&
-			!shellFailOpenReadsOwnStatus(shellOutsideSubsts(segment[offset-2:])) {
+		failing = false
+		if !tool || !ends("||") || shellFailOpenReadsOwnStatus(shellOutsideSubsts(segment[offset-2:])) {
+			continue
+		}
+		if failing = shellFailOpenHandled(shellOutsideSubsts(segment[offset-2:]), later); !failing {
 			count++ // the || ends an operand that runs a tool
 		}
 	}
