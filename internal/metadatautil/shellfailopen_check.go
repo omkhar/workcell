@@ -98,12 +98,12 @@ type ShellFailOpenFinding struct {
 }
 
 var (
-	shellExecDevNull           = regexp.MustCompile(`(?:^|[;&|(]\s*)exec(?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)*\s+(?:2|&)>[>|]?\s*"?/dev/null"?(?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)*\s*(?:[;&|)]|$)`) // exec with no command sends stderr to /dev/null for every later command
-	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`)                                   // other languages; a #![ line is a Rust attribute
+	shellExecDevNull           = regexp.MustCompile(`(?:^|[;&|(]\s*)exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                                            // exec with no command sends stderr to /dev/null for every later command
+	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
 	shellFailOpenTools         = `(?:find|git|gh|docker|getent)`
 	shellToolName              = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
 	shellCommandPosition       = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|[0-9]*(?:[<>]|&>)[>&|]?\\s*[^\\s;&|()<>]+|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*" // shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
-	shellToolCommand           = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs|nice|nohup|stdbuf|setsid|ionice|timeout|chrt|taskset|time)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)                                                                                                                                                                                                                                                                                                                         // The tool word ends at a blank, an operator, a closer or a redirection, since bash reads git||true as git then ||. After env, sudo or xargs any later word may be the tool, so their options need no table.
+	shellToolCommand           = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs|nice|nohup|stdbuf|setsid|ionice|timeout|chrt|taskset|time|flock|doas|chroot|unshare|nsenter|runuser|setpriv|caffeinate)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)                                                                                                                                                                                                                                                            // The tool word ends at a blank, an operator, a closer or a redirection, since bash reads git||true as git then ||. After env, sudo or xargs any later word may be the tool, so their options need no table.
 	shellUnnamedCommand        = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        // shellUnnamedCommand is a command word this reader cannot name: an expansion, a quoted word or a command that runs text. It may run a tool, so a substitution that holds one counts as a tool substitution.
 	shellTestExpr              = regexp.MustCompile(`\[\[[^]]*\]\]`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   // shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellSubstOpen             = regexp.MustCompile(`\$\((?:[^(]|$)`)
@@ -117,11 +117,10 @@ var (
 	shellFailOpenTested        = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
 	shellFailOpenList          = regexp.MustCompile(`&&|\|\|`)                                               // shellFailOpenList is a && or || operator, which joins two commands.
 	shellOutWord               = regexp.MustCompile(`[^\s;&|<>()]+`)
-	// shellAssignment is a word that assigns a name, the only word that may stand beside a substitution whose status the command keeps.
-	shellAssignment   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
-	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`) // shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
-	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
-	shellLaterSubst   = regexp.MustCompile("\\$\\((?:[^(]|$)|`") // shellLaterSubst is a command substitution, not an arithmetic $((.
+	shellAssignment            = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`) // shellAssignment is a word that assigns a name, the only word that may stand beside a substitution whose status the command keeps.
+	shellRedirection           = regexp.MustCompile(`^[0-9]*[<>]`)                               // shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
+	shellRedirectOnly          = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
+	shellLaterSubst            = regexp.MustCompile("\\$\\((?:[^(]|$)|`") // shellLaterSubst is a command substitution, not an arithmetic $((.
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips heredoc bodies, joins a statement that runs past its line, and ignores quoted text that opens no command substitution.
@@ -200,8 +199,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			start = end + 1
-			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1)) // A process substitution is always a hit; see the contract above.
-			hits[ruleDevNull] += len(shellExecDevNull.FindAllStringIndex(command, -1))
+			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1))                                                                                  // A process substitution is always a hit; see the contract above.
+			hits[ruleDevNull] += len(slices.DeleteFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return !shellDevNull.MatchString(e[1] + " ") })) // exec with only redirections keeps them for every later command
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
