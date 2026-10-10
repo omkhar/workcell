@@ -31,7 +31,17 @@ func unspelled(word string) bool {
 
 // shellStartupEnv names BASH_ENV or ENV, or sets a variable whose name is an expansion.
 var shellStartupEnv = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV(?:[^A-Za-z0-9_{]|$)|` +
-	`(?:^|[;&|(]|\b(?:export|declare|typeset|readonly|local)(?:\s+-\w+)*)\s*\w*\$\{?\w+\}?\w*\+?=|GITHUB_ENV.*\$\{?\w+\}?\w*=|\$\{?\w+\}?\w*=.*GITHUB_ENV`)
+	`(?:^|[;&|(]|\b(?:export|declare|typeset|readonly|local)(?:\s+-\w+)*)\s*\w*\$\{?\w+\}?\w*\+?=`)
+
+var githubEnvWrite = regexp.MustCompile(`^\s*(?:echo|printf)\s+["']?([A-Za-z_][A-Za-z0-9_]*)=[^\n]*>>\s*"?\$\{?GITHUB_ENV\}?"?\s*$`)
+
+// unreadEnvWrite reports a line that names GITHUB_ENV other than as a githubEnvWrite, an echo or printf of a literal NAME=value, of a name that is not a startup file, since a later step's bash may source a BASH_ENV whose name this lint cannot spell.
+func unreadEnvWrite(run string) bool {
+	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(run, "\\\n", ""), "\n"), func(line string) bool {
+		write := githubEnvWrite.FindStringSubmatch(line)
+		return strings.Contains(line, "GITHUB_ENV") && (write == nil || write[1] == "BASH_ENV" || write[1] == "ENV")
+	})
+}
 
 func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" || env["ENV"] != "" }
 
@@ -167,8 +177,7 @@ func stepLabel(index int, step workflowStep) string {
 	return fmt.Sprintf("#%d", index+1)
 }
 
-// readShell reports whether a step shell runs the body as a bash or sh script this lint reads: the bash or sh
-// keyword, or a template that runs one with only the options shellTemplateOption knows and the script {0} last.
+// readShell reports whether a step shell runs the body as a bash or sh script this lint reads: the bash or sh keyword, or a template that runs one with only the options shellTemplateOption knows and the script {0} last.
 func readShell(shell string) bool {
 	words := strings.Fields(shell)
 	if len(words) == 0 || commandName(words[0]) != "bash" && commandName(words[0]) != "sh" {
@@ -197,12 +206,11 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					continue
 				}
 				if slices.ContainsFunc([]map[string]string{documents[file].Env, definition.Env, step.Env}, setsStartupFile) ||
-					shellStartupEnv.MatchString(strings.NewReplacer("\\\n", "", `"`, "", `'`, "", `\`, "").Replace(step.Run)) {
+					unreadEnvWrite(step.Run) || shellStartupEnv.MatchString(strings.NewReplacer("\\\n", "", `"`, "", `'`, "", `\`, "").Replace(step.Run)) {
 					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
 				for _, words := range EveryShellCommand(step.Run) {
-					// A lint of what may run fails closed on a command it cannot spell,
-					// and on an alias definition, which can rename any later command.
+					// A lint of what may run fails closed on a command it cannot spell, and on an alias definition, which can rename any later command.
 					if words[0] == "eval" {
 						add("eval-unresolved")
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
@@ -210,8 +218,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						commandName(words[0]) == "find" && slices.ContainsFunc(words, func(w string) bool { return strings.HasPrefix(w, "-exec") || strings.HasPrefix(w, "-ok") }) {
 						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok := shellProgram(words, "$_"); ok {
-						// EveryShellCommand reads each shell program it can spell in
-						// place of the shell, so a shell left here runs one it cannot.
+						// EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
 						add("command-unresolved")
 					}
 				}
@@ -236,8 +243,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 			}
 		}
 	}
-	// A second identical hit in one step gets an ordinal, so a new call in a
-	// step that already has a baseline row still fails.
+	// A second identical hit in one step gets an ordinal, so a new call in a step that already has a baseline row still fails.
 	counts := map[string]int{}
 	for i, hit := range hits {
 		counts[hit.key()]++

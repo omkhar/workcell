@@ -224,8 +224,7 @@ func RequireRejectsTextEvasions(t *testing.T, artifact, anchor, want string, val
 	requireEvasions(t, artifact, anchor, want, gatedEvasions, validate)
 }
 
-// requireEvasions applies every row of the corpus to artifact. validate must
-// accept a row in accepted and reject any other row, naming want in its error.
+// requireEvasions applies every row of the corpus to artifact. validate must accept a row in accepted and reject any other row, naming want in its error.
 func requireEvasions(t *testing.T, artifact, anchor, want string, accepted map[string]bool, validate func(string) error) {
 	t.Helper()
 

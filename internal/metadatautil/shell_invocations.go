@@ -962,8 +962,7 @@ func replacesShell(args []string) bool {
 	})
 }
 
-// commandWrappers maps each command that runs the command after it to its
-// valued options; a long option matches a unique abbreviation, as getopt allows.
+// commandWrappers maps each command that runs the command after it to its valued options; a long option matches a unique abbreviation, as getopt allows.
 var commandWrappers = map[string][]string{
 	"builtin": nil, "command": nil, "exec": {"-a"}, "nohup": nil, "nice": {"-n", "--adjustment"},
 	"env":     {"-u", "-C", "-P", "-S", "--unset", "--chdir", "--split-string"},
@@ -973,8 +972,7 @@ var commandWrappers = map[string][]string{
 		"--chroot", "--auth-type", "--login-class"},
 }
 
-// commandName returns the program a command word names, lowered since a
-// Windows runner finds GH as gh; on Linux that over-reports and fails closed.
+// commandName returns the program a command word names, lowered since a Windows runner finds GH as gh; on Linux that over-reports and fails closed.
 func commandName(word string) string {
 	return strings.ToLower(path.Base(word))
 }
@@ -1048,8 +1046,7 @@ func EveryShellCommand(script string) [][]string {
 	return everyShellCommand(script)
 }
 
-// everyShellCommand is EveryShellCommand for a script a child shell runs, such
-// as a sh -c body.
+// everyShellCommand is EveryShellCommand for a script a child shell runs, such as a sh -c body.
 func everyShellCommand(script string) [][]string {
 	return commandWords(flattenSubstitutions(heredocsAsHereStrings(script)))
 }

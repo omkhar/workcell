@@ -43,9 +43,7 @@ func CheckValidatorAnchoring(rootDir string) error {
 	return nil
 }
 
-// anchoredReaders pairs each shared shell reader with the corpus driver that
-// proves a validator on it. EveryShellCommand reads commands behind a gate, so
-// its driver expects the gated rows to keep the command.
+// anchoredReaders pairs each shared shell reader with the corpus driver that proves a validator on it. EveryShellCommand reads commands behind a gate, so its driver expects the gated rows to keep the command.
 var anchoredReaders = []struct{ reader, driver string }{
 	{"ShellInvocations", "RequireRejectsAllEvasions"},
 	{"EveryShellCommand", "RequireRejectsTextEvasions"},
