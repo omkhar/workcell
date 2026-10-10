@@ -139,8 +139,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		// Bash still runs a $( inside a double-quoted span that runs past its line, so the line is read inside the span rather than skipped.
-		reopen := ""
+		reopen := "" // Bash still runs a $( inside a double-quoted span that runs past its line, so the line is read inside the span rather than skipped.
 		if openQuote != 0 {
 			reopen = quoteOpener(openQuote)
 		} else if len(heredocs) > 0 {
@@ -156,13 +155,11 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
 		code := shellBackticksAsSubsts(strings.TrimSuffix(text, comment))
-		// A line that ends on && || or | carries its command onto the next one, so a handler written there belongs to the same command.
-		fields := strings.Fields(shellCodeOnly(code))
+		fields := strings.Fields(shellCodeOnly(code)) // A line that ends on && || or | carries its command onto the next one, so a handler written there belongs to the same command.
 		operator := len(fields) > 0 && continuesLine(fields[len(fields)-1])
 		switch {
 		case continues:
-			// Bash joins a continued line with nothing between the halves.
-			code = strings.TrimSuffix(code, "\\")
+			code = strings.TrimSuffix(code, "\\") // Bash joins a continued line with nothing between the halves.
 		case operator:
 			code += " "
 		default:
@@ -635,7 +632,10 @@ func isShellSource(rel string, content []byte) bool {
 	first, _, _ := strings.Cut(string(content), "\n")
 	words := strings.Fields(strings.TrimPrefix(first, "#!")) // the interpreter, after env and its options and assignments
 	for len(words) > 1 && (filepath.Base(words[0]) == "env" || strings.HasPrefix(words[0], "-") || strings.Contains(words[0], "=")) {
-		words = words[1:]
+		option := words[0]
+		if words = words[1:]; len(words) > 1 && (option == "--unset" || option == "--chdir" || len(option) > 1 && option[1] != '-' && strings.ContainsRune("uCP", rune(option[len(option)-1]))) {
+			words = words[1:] // the operand of env -u NAME, -C DIR or -P PATH
+		}
 	}
 	return strings.HasPrefix(first, "#!") && len(words) > 0 && slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh"}, filepath.Base(words[0]))
 }
