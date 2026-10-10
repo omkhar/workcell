@@ -127,7 +127,7 @@ var (
 	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
-	shellDevNull = regexp.MustCompile(`(?:2|&)>[>|]?\s*"?/dev/null|>&\s*"?/dev/null|>[>|]?\s*"?/dev/null"?\s+2>&1`)
+	shellDevNull = regexp.MustCompile(`(?:(?:2|&)>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
