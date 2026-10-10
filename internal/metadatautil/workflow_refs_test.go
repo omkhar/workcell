@@ -88,6 +88,7 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"a gh alias or extension adds subcommands the lint cannot read", runStep("gh alias set fetch 'api repos/o/r/issues'\ngh fetch\ngh extension install o/gh-x"), "", "command-unresolved"},
 		{"a GITHUB_ENV write whose name is built at run time is unresolved", runStep("p=BASH_; s=E; s+=NV; printf '%s%s=init\\n' \"$p\" \"$s\" >> \"$GITHUB_ENV\"\nf=$GITHUB_ENV; echo \"X=1\" >> \"$f\""), "", "command-unresolved"},
 		{"a write to an indirect or computed target is unresolved", runStep("a=BASH_; b=E; b+=NV; target=GITHUB_; target+=E; target+=NV; printf '%s%s=init\\n' \"$a\" \"$b\" >> \"${!target}\""), "", "command-unresolved"},
+		{"a nameref is unresolved", runStep("t=GITHUB_; t+=E; t+=NV; declare -n target=$t; printf 'X=1\\n' >> \"$target\""), "", "command-unresolved"},
 		{"a commented GITHUB_ENV write and an indirect read are clean", runStep("# echo 'X=1' >> \"$GITHUB_ENV\"\nv=A; echo \"${!v}\" > out.txt"), "", ""},
 		{"gh's built-in short names are read", runStep("gh at verify x\ngh cs list\ngh rs list"), "", ""},
 		{"a gh subcommand that is not built in may be a config alias", runStep("GH_CONFIG_DIR=cfg gh fetch"), "", "command-unresolved"},

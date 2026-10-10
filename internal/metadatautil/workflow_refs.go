@@ -35,9 +35,9 @@ var shellStartupEnv = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV(?
 
 var githubEnvWrite = regexp.MustCompile(`^\s*(?:echo|printf)\s+["']?([A-Za-z_][A-Za-z0-9_]*)=[^\n]*>>\s*"?\$\{?GITHUB_ENV\}?"?\s*$`)
 
-var dynamicTarget = regexp.MustCompile("(?:^|[^<>&0-9])>>?\\s*\"?(?:\\$\\{!|\\$\\(|`)")
+var dynamicTarget = regexp.MustCompile("(?:^|[^<>&0-9])>>?\\s*\"?(?:\\$\\{!|\\$\\(|`)|\\b(?:declare|typeset|local)(?:\\s+-\\w+)*\\s+-\\w*n")
 
-// unreadEnvWrite reports a comment-free line with a dynamicTarget, a redirection to a file named at run time, which may be GITHUB_ENV, or that names GITHUB_ENV other than as a githubEnvWrite, an echo or printf of a literal NAME=value, of a name that is not a startup file, since a later step's bash may source a BASH_ENV whose name this lint cannot spell.
+// unreadEnvWrite reports a comment-free line with a dynamicTarget, a redirection to a file named at run time, which may be GITHUB_ENV, or a nameref, bash's other indirection, or that names GITHUB_ENV other than as a githubEnvWrite, an echo or printf of a literal NAME=value, of a name that is not a startup file, since a later step's bash may source a BASH_ENV whose name this lint cannot spell.
 func unreadEnvWrite(run string) bool {
 	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(run, "\\\n", ""), "\n"), func(line string) bool {
 		write := githubEnvWrite.FindStringSubmatch(line)
@@ -191,8 +191,7 @@ func readShell(shell string) bool {
 
 var shellTemplateOption = regexp.MustCompile(`^(?:--noprofile|--norc|-[euxo]+|pipefail)$`)
 
-// ghCommands are gh 2.102's built-in commands and their built-in short names, which no alias or extension can shadow; alias and extension are left out.
-var ghCommands = strings.Fields("agent agents agent-tasks at cs rs skills agent-task api attestation auth browse cache codespace completion config copilot discussion gist gpg-key help issue label licenses org pr preview project release repo ruleset run search secret skill ssh-key status variable version workflow")
+var ghCommands = strings.Fields("agent agents agent-tasks at cs rs skills agent-task api attestation auth browse cache codespace completion config copilot discussion gist gpg-key help issue label licenses org pr preview project release repo ruleset run search secret skill ssh-key status variable version workflow") // gh 2.102's built-in commands and their built-in short names, which no alias or extension can shadow; alias and extension are left out.
 
 func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	documents, files, err := loadWorkflowDocuments(rootDir)
