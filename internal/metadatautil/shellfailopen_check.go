@@ -98,6 +98,7 @@ type ShellFailOpenFinding struct {
 }
 
 var (
+	shellFailOpenPipe          = regexp.MustCompile(`(?:^|[^|])\|(?:[^|]|$)`)                                                                                                         // a | or |& pipeline stage, not a || list
 	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                               // the null device in any spelling of its path, such as /dev//null
 	shellExecDevNull           = regexp.MustCompile(`(?:^|[;&|(]\s*)exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                                            // exec with no command sends stderr to /dev/null for every later command
 	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
@@ -216,7 +217,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
 				captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later)
-				return captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text)
+				piped := shellFailOpenPipe.MatchString(shellOutsideSubsts(rest)) // a later stage sets $?, not the tool
+				return captured || !piped && shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text)
 			}
 			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
