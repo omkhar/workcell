@@ -104,7 +104,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"external time keeps the status of the tool it runs", "/usr/bin/time -f '' git fetch || true\n", "or-true"},
 		{"a backtick substitution is a command substitution", "out=`git ls-files`; echo done\n", "command-substitution"},
 		{"a backtick in single quotes is text", "echo '`git ls-files`'; echo done\n", ""},
-		{"a descriptor that ends in 2 is not stderr", "git fetch 12>/dev/null; echo done\n", ""},
+		{"a descriptor that ends in 2 is not stderr", "git fetch 12>/dev/null; echo done\ngit foo2>/dev/null; echo done\n", ""},
 		{"an exit operand out of range fails with status 2", "git fetch || exit 9223372036854775808\n", ""},
 		{"a longer path that starts with /dev/null is no null redirect", "git fetch 2>\"/dev/null.backup\"\ngit gc 2>/dev/nullx\n", ""},
 		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
@@ -329,7 +329,7 @@ func TestCheckShellFailOpenRatchet(t *testing.T) {
 
 func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
 	t.Parallel()
-	for file, shell := range map[string]bool{"x\n#!/bin/sh -e": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "x\n#!/usr/bin/env python3": false, "x\n#![no_main]": false, "u.bash\n# a sourced module": true, "z\n#!/bin/zsh": true, "e\n#!/usr/bin/env -S -u FOO sh": true, "q\n#!/usr/bin/env -S -u FOO 'sh'": true, "b\n#!/bin/busybox sh": true} {
+	for file, shell := range map[string]bool{"x\n#!/bin/sh -e": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "x\n#!/usr/bin/env python3": false, "x\n#![no_main]": false, "u.bash\n# a sourced module": true, "z\n#!/bin/zsh": true, "e\n#!/usr/bin/env -S -u FOO sh": true, "q\n#!/usr/bin/env -S -u FOO 'sh'": true, "b\n#!/bin/busybox sh": true, "f\n#!/usr/bin/fish": false} {
 		root := fixtureRepo(t, "#!/bin/bash\n", "")
 		name, first, _ := strings.Cut(file, "\n")
 		if err := os.WriteFile(filepath.Join(root, "scripts", name), []byte(first+"\ngit fetch || true\n"), 0o755); err != nil {
