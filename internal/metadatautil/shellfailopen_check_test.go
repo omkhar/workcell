@@ -99,7 +99,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a failing brace group hands the failure on to a later handler", "git fetch || { false; } || true\n", "or-true"},
 		{"an exit in a nested branch does not end the handler", "git fetch || { if false; then exit 1; fi; false; } || true\n", "or-true"},
 		{"an exit 0 before a failing command makes the handler succeed", "git fetch || { exit 0; false; }\ngit gc || ( exit 0; false )\n", "or-true"},
-		{"command exit is still exit", "git pull || { command exit 0; false; }\n", "or-true"},
+		{"command exit is still exit", "git pull || { command exit 0; false; }\ngit gc || { command -p exit 0; false; }\n", "or-true"},
+		{"command exit 1 ends the list; a path with dev inside a name is no null device", "git fetch || { command exit 1; } || true\ngit fetch 2>/tmp/review-device/null\n", ""},
 		{"a top-level return hands the failure on to a later handler", "git -C /missing fetch || return 1 || true\n", "or-true"},
 		{"a failing subshell hands the failure on to a later handler", "git fetch || ( exit 1 ) || true\n", "or-true"},
 		{"nice keeps the status of the tool it runs", "nice git fetch || true\ntimeout 5 git pull || true\n", "or-true"},
@@ -206,8 +207,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"path is not a tool", "ls .git/hooks 2>/dev/null\n", ""},
 		{"tool name as an argument", "printf '%s\\n' git || true\n", ""},
 		{"tool name after echo", "echo gh 2>/dev/null\n", ""},
-		{"quoted $( runs nothing", "x=$(echo '$(git' x) || exit 1\n", ""},
-		{"escaped ; is an argument", "if ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
+		{"quoted $( runs nothing; escaped ; is an argument", "x=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
