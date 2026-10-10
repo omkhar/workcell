@@ -123,8 +123,7 @@ var (
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
-	// shellOrTrue is a handler that always succeeds: true or :, alone, in a
-	// { } group or behind command or builtin, ending at a shell-word end.
+	// shellOrTrue is a handler that always succeeds: a true or : word, maybe in { } or behind command.
 	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command|builtin)\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
 	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
