@@ -109,18 +109,16 @@ var (
 	shellDevNull            = regexp.MustCompile(`(?:(?:^|[^0-9])2>[>|]?|&>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)               // shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellFailOpenOr         = regexp.MustCompile(`\|\|\s*`)                                                                                                        // shellFailOpenOr is the || that runs a handler.
 	shellFailOpenExits      = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+--)?(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`) // shellFailOpenExits is a command that ends the script or the function with a failure: exit or return with no operand or a literal bash reads modulo 256 as nonzero (see shellFailOpenExit), die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an assignment such as failed=1 or an echo fail reports nothing.
-	shellFailOpenTerminal   = regexp.MustCompile(`(?:^|[;\s])(?:exit|return|(?:\w+_)?(?:die|fail\w*|error\w*))(?:[\s;]|$)`)                                        // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit, return or die-style command, which ends the script or function, so the list after it never runs.
+	shellFailOpenTerminal   = regexp.MustCompile(`^\s*(?:exit|return|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`)                                                  // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit, return or die-style command, which ends the script or function, so the list after it never runs.
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
 	shellFailOpenRunsFirst  = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&") // shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
 	shellFailOpenTested     = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
-	// shellFailOpenList is a && or || operator, which joins two commands.
-	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
-	shellOutWord      = regexp.MustCompile(`[^\s;&|<>()]+`)
+	shellFailOpenList       = regexp.MustCompile(`&&|\|\|`)                                               // shellFailOpenList is a && or || operator, which joins two commands.
+	shellOutWord            = regexp.MustCompile(`[^\s;&|<>()]+`)
 	// shellAssignment is a word that assigns a name, the only word that may
 	// stand beside a substitution whose status the command keeps.
-	shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
-	// shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
-	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`)
+	shellAssignment   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
+	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`) // shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
 	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
 	// shellLaterSubst is a command substitution, not an arithmetic $((.
 	shellLaterSubst = regexp.MustCompile("\\$\\((?:[^(]|$)|`")
@@ -293,7 +291,8 @@ func shellFailOpenEnds(handler string) bool {
 		group = handler[:strings.IndexAny(handler+";", ";&|)}")]
 	}
 	group, _, _ = strings.Cut(group, "}")
-	return !strings.HasPrefix(handler, "(") && shellFailOpenTerminal.MatchString(group)
+	commands := slices.DeleteFunc(strings.Split(group, ";"), func(c string) bool { return strings.TrimSpace(c) == "" })
+	return !strings.HasPrefix(handler, "(") && len(commands) > 0 && shellFailOpenTerminal.MatchString(commands[len(commands)-1]) // the last command only; an exit in a nested branch may not run
 }
 
 // shellFailOpenNesting returns the nesting change a command's first word makes.

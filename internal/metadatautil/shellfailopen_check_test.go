@@ -97,6 +97,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a word after a command substitution is no command", "echo $(pwd) git 2>/dev/null\n", ""},
 		{"a process substitution as an argument hides the tool", "cat <(git -C /missing ls-files)\ntee >(git hash-object --stdin) </dev/null\n", "process-substitution"},
 		{"a failing brace group hands the failure on to a later handler", "git fetch || { false; } || true\n", "or-true"},
+		{"an exit in a nested branch does not end the handler", "git fetch || { if false; then exit 1; fi; false; } || true\n", "or-true"},
 		{"a failing subshell hands the failure on to a later handler", "git fetch || ( exit 1 ) || true\n", "or-true"},
 		{"exit -- STATUS and a failing subshell keep the failure", "git fetch || exit -- 1\ngit gc || ( exit 1 )\ngit pull || ( false )\n", ""},
 		{"nice keeps the status of the tool it runs", "nice git fetch || true\ntimeout 5 git pull || true\n", "or-true"},
