@@ -329,7 +329,7 @@ func TestCheckShellFailOpenRatchet(t *testing.T) {
 
 func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
 	t.Parallel()
-	for file, shell := range map[string]bool{"x\n#!/bin/sh -e": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "x\n#!/usr/bin/env python3": false, "x\n#![no_main]": false, "u.bash\n# a sourced module": true, "z\n#!/bin/zsh": true, "e\n#!/usr/bin/env -S -u FOO sh": true, "q\n#!/usr/bin/env -S -u FOO 'sh'": true} {
+	for file, shell := range map[string]bool{"x\n#!/bin/sh -e": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "x\n#!/usr/bin/env python3": false, "x\n#![no_main]": false, "u.bash\n# a sourced module": true, "z\n#!/bin/zsh": true, "e\n#!/usr/bin/env -S -u FOO sh": true, "q\n#!/usr/bin/env -S -u FOO 'sh'": true, "b\n#!/bin/busybox sh": true} {
 		root := fixtureRepo(t, "#!/bin/bash\n", "")
 		name, first, _ := strings.Cut(file, "\n")
 		if err := os.WriteFile(filepath.Join(root, "scripts", name), []byte(first+"\ngit fetch || true\n"), 0o755); err != nil {
