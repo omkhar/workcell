@@ -16,23 +16,15 @@ import (
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
-// CheckShellFailOpen rejects a shell idiom that hides the exit status of a
-// find, git, gh, docker or getent call.
+// CheckShellFailOpen rejects a shell idiom that hides the exit status of a find, git, gh, docker or getent call.
 //
-// A `< <(`, a `$(...)` under `local` or in a list, `|| true` and `2>/dev/null`
-// each turn "the tool failed" into "there was nothing to find", so a gate
-// passes on an empty answer. shellcheck does not flag them.
+// A `<(` or `>(`, a `$(...)` under `local` or in a list, `|| true` and `2>/dev/null` each turn "the tool failed" into "there was nothing to find", so a gate passes on an empty answer. shellcheck does not flag them.
 //
-// A hit is accepted when its own command or the command right after it
-// captures the status (see shellFailOpenHandled). A process substitution is
-// always a hit: bash never propagates its status.
+// A hit is accepted when its own command or the command right after it captures the status (see shellFailOpenHandled). A process substitution is always a hit: bash never propagates its status.
 //
-// The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits
-// each file carries today; a count above its row fails, and so does a count
-// below it, so the row drops with the repair.
+// The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits each file carries today; a count above its row fails, and so does a count below it, so the row drops with the repair.
 //
-// The scan reads lines with shellWords, the reader ShellInvocations uses, so
-// quotes, comments, heredocs and an open `$(` mean the same thing to both.
+// The scan reads lines with shellWords, the reader ShellInvocations uses, so quotes, comments, heredocs and an open `$(` mean the same thing to both.
 func CheckShellFailOpen(rootDir string) error {
 	files, err := shellFailOpenFiles(rootDir)
 	if err != nil {
@@ -117,14 +109,14 @@ var (
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
-	// shellProcessSubst is an input redirection from a process substitution.
-	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
+	// shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
+	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>$])[<>]\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellDevNull = regexp.MustCompile(`(?:(?:^|[^0-9])2>[>|]?|&>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function with a failure: exit or return with no operand or a literal bash reads modulo 256 as nonzero (see shellFailOpenExit), die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an assignment such as failed=1 or an echo fail reports nothing.
-	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
+	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+--)?(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
 	// shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenPassesOn is a handler that hands the failure on to the next ||: false, or a { } group ending in false. exit, return and die end the list.
 	shellFailOpenPassesOn   = regexp.MustCompile(`^\|\|\s*(?:\{[^}]*;\s*)?false\s*(?:;?\s*\})?\s*(?:$|[;&|)])`)
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
@@ -299,6 +291,9 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 	handler := outside[loc[1]:]
 	if group, grouped := strings.CutPrefix(handler, "{"); grouped {
 		return shellFailOpenBranchExits(append(strings.Split(group, ";"), later()...), "}")
+	}
+	if group, grouped := strings.CutPrefix(handler, "("); grouped { // a subshell's status is its last command's
+		return shellFailOpenBranchExits(append(strings.Split(strings.Replace(group, ")", "; )", 1), ";"), later()...), ")")
 	}
 	return shellFailOpenExit(handler[:strings.IndexAny(handler+";", ";&|)}")])
 }
