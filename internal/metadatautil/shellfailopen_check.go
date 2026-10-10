@@ -111,7 +111,7 @@ var (
 	shellDevNull               = regexp.MustCompile(`(?:(?:^|[\s;&|()])2>[>|]?|&>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)            // shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellFailOpenOr            = regexp.MustCompile(`\|\|\s*`)                                                                                                        // shellFailOpenOr is the || that runs a handler.
 	shellFailOpenExits         = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+--)?(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`) // shellFailOpenExits is a command that ends the script or the function with a failure: exit or return with no operand or a literal bash reads modulo 256 as nonzero (see shellFailOpenExit), die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an assignment such as failed=1 or an echo fail reports nothing.
-	shellFailOpenTerminal      = regexp.MustCompile(`^\s*(?:exit|return|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`)                                                  // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit, return or die-style command, which ends the script or function, so the list after it never runs.
+	shellFailOpenTerminal      = regexp.MustCompile(`^\s*(?:exit|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`)                                                         // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit or die-style command, which ends the script, so the list after it never runs; a return fails outside a function, so it does not end the list.
 	shellFailOpenStatusRead    = regexp.MustCompile(`\$\?|PIPESTATUS`)
 	shellFailOpenRunsFirst     = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&") // shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
 	shellFailOpenTested        = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
@@ -281,10 +281,7 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 // shellFailOpenEnds reports whether a handler ends the script at its own level with an exit, return or die-style command; a ( ) subshell's exit ends only the subshell.
 func shellFailOpenEnds(handler string) bool {
 	group, grouped := strings.CutPrefix(handler, "{")
-	if !grouped {
-		group = handler[:strings.IndexAny(handler+";", ";&|)}")]
-	}
-	group, _, _ = strings.Cut(group, "}")
+	group, _, _ = strings.Cut(map[bool]string{true: group, false: handler[:strings.IndexAny(handler+";", ";&|)}")]}[grouped], "}") // a { } group, or the bare command
 	commands := slices.DeleteFunc(strings.Split(group, ";"), func(c string) bool { return strings.TrimSpace(c) == "" })
 	return !strings.HasPrefix(handler, "(") && len(commands) > 0 && shellFailOpenTerminal.MatchString(commands[len(commands)-1]) // the last command only; an exit in a nested branch may not run
 }
