@@ -99,6 +99,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a failing subshell hands the failure on to a later handler", "git fetch || ( exit 1 ) || true\n", "or-true"},
 		{"exit -- STATUS and a failing subshell keep the failure", "git fetch || exit -- 1\ngit gc || ( exit 1 )\ngit pull || ( false )\n", ""},
 		{"nice keeps the status of the tool it runs", "nice git fetch || true\ntimeout 5 git pull || true\n", "or-true"},
+		{"external time keeps the status of the tool it runs", "/usr/bin/time -f '' git fetch || true\n", "or-true"},
 		{"a backtick substitution is a command substitution", "out=`git ls-files`; echo done\n", "command-substitution"},
 		{"a backtick in single quotes is text", "echo '`git ls-files`'; echo done\n", ""},
 		{"a descriptor that ends in 2 is not stderr", "git fetch 12>/dev/null; echo done\n", ""},
