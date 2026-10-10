@@ -115,7 +115,8 @@ var (
 	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
-	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
+	// After env, sudo or xargs any later word may be the tool, so their options need no table.
+	shellToolCommand = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs)(?:\s+[^\s;&|()<>]+)*?\s+)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
 	// shellUnnamedCommand is a command word this reader cannot name: an
 	// expansion, a quoted word or a command that runs text. It may run a tool,
 	// so a substitution that holds one counts as a tool substitution.
@@ -557,8 +558,7 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 		}
 		left := shellTestExpr.ReplaceAllString(pipeline, "[[ ]]")
 		pipeline = ""
-		// A tool's failure, or one a failing handler such as false passes on,
-		// reaches this ||, as in git fetch || false || true.
+		// A tool's failure, or one a failing handler such as false passes on, reaches this ||, as in git fetch || false || true.
 		tool := failing || shellToolCommand.MatchString(shellOutsideSubsts(left)) || len(shellToolSubsts(left)) > 0 ||
 			inSubst && shellUnnamedCommand.MatchString(shellOutsideSubsts(left)) // a substitution counts a named call
 		failing = false
@@ -581,9 +581,7 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 	return count
 }
 
-// shellCodeOnly blanks quoted text, so a message that names git is not a
-// command; a $( inside double quotes opens code again. The result keeps the
-// line's length, so an offset in it is the same offset in the line.
+// shellCodeOnly blanks quoted text, so a message that names git is not a command; a $( inside double quotes opens code again. The result keeps the line's length, so an offset in it is the same offset in the line.
 func shellCodeOnly(line string) string {
 	out := []byte(line)
 	type frame struct {
@@ -678,8 +676,7 @@ func shellFailOpenFiles(rootDir string) ([]string, error) {
 	return files, nil
 }
 
-// loadShellFailOpenBaseline reads PATH<TAB>RULE<TAB>COUNT<TAB>REASON rows. The
-// reason is required, so a row cannot be added without saying why it stays.
+// loadShellFailOpenBaseline reads PATH<TAB>RULE<TAB>COUNT<TAB>REASON rows. The reason is required, so a row cannot be added without saying why it stays.
 func loadShellFailOpenBaseline(path string) (map[shellFailOpenKey]int, error) {
 	content, err := rootio.ReadFileNoFollow(path, shellFailOpenBaselinePath, shellFailOpenMaxBytes)
 	if err != nil {
