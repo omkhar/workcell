@@ -568,8 +568,9 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 	count, end, offset, pipeline := 0, 0, 0, ""
 	for _, operand := range shellListOperands(segment) {
 		offset += len(operand)
-		if pipeline += operand; strings.HasSuffix(operand, "|") && !strings.HasSuffix(operand, "||") || strings.HasSuffix(operand, "|&") {
-			continue // under pipefail a later handler covers every stage
+		ends := func(suffix string) bool { return strings.HasSuffix(operand, suffix) }
+		if pipeline += operand; ends("&&") || ends("|&") || ends("|") && !ends("||") {
+			continue // a handler covers the && list and, under pipefail, every pipeline stage before it
 		}
 		left := shellTestExpr.ReplaceAllString(pipeline, "[[ ]]")
 		pipeline = ""

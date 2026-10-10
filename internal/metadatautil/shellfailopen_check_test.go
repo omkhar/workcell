@@ -38,7 +38,10 @@ func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 	if len(findings) != 2 {
 		t.Fatalf("findings = %v, want two or-true findings on one list", findings)
 	}
-	for script, want := range map[string]int{} {
+	for script, want := range map[string]int{
+		"git fetch || true && printf retrying || true\n": 1, // the second handler belongs to printf
+		"git fetch && printf x || true\n":                1, // the handler covers the whole && list
+	} {
 		findings, err = metadatautil.ShellFailOpenFindings(script)
 		if err != nil {
 			t.Fatal(err)
