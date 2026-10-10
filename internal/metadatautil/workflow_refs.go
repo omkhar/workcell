@@ -31,7 +31,10 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
-var shellStartupEnv = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV=`)
+// shellStartupEnv, read with quotes removed, names BASH_ENV or ENV, or sets a
+// variable whose name is an expansion, in an assignment or a GITHUB_ENV line.
+var shellStartupEnv = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV(?:[^A-Za-z0-9_{]|$)|` +
+	`(?:^|[;&|(]|\b(?:export|declare|typeset|readonly|local)(?:\s+-\w+)*)\s*\w*\$\{?\w+\}?\w*\+?=|GITHUB_ENV.*\$\{?\w+\}?\w*=|\$\{?\w+\}?\w*=.*GITHUB_ENV`)
 
 func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" || env["ENV"] != "" }
 
@@ -168,7 +171,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}
-				if slices.ContainsFunc([]map[string]string{documents[file].Env, definition.Env, step.Env}, setsStartupFile) || shellStartupEnv.MatchString(step.Run) {
+				if slices.ContainsFunc([]map[string]string{documents[file].Env, definition.Env, step.Env}, setsStartupFile) ||
+					shellStartupEnv.MatchString(strings.NewReplacer(`"`, "", `'`, "", `\`, "").Replace(step.Run)) {
 					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
 				for _, words := range EveryShellCommand(step.Run) {
