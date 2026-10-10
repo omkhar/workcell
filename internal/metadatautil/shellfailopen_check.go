@@ -108,18 +108,11 @@ type ShellFailOpenFinding struct {
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
 	shellToolName      = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
-	// shellCommandPosition ends where a command word starts: after the start,
-	// an operator or an opener, then any reserved word, assignment, or xargs,
-	// sudo or env with its options and their values. `git` in a path or an argument
-	// is not a call, and nor is the target of a >| or >& redirection.
+	// shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
 	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
-	// The tool word ends at a blank, an operator, a closer or a redirection,
-	// since bash reads git||true as git then ||.
-	// After env, sudo or xargs any later word may be the tool, so their options need no table.
+	// The tool word ends at a blank, an operator, a closer or a redirection, since bash reads git||true as git then ||. After env, sudo or xargs any later word may be the tool, so their options need no table.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
-	// shellUnnamedCommand is a command word this reader cannot name: an
-	// expansion, a quoted word or a command that runs text. It may run a tool,
-	// so a substitution that holds one counts as a tool substitution.
+	// shellUnnamedCommand is a command word this reader cannot name: an expansion, a quoted word or a command that runs text. It may run a tool, so a substitution that holds one counts as a tool substitution.
 	shellUnnamedCommand = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
@@ -130,17 +123,9 @@ var (
 	shellDevNull = regexp.MustCompile(`(?:(?:^|[^0-9])2>[>|]?|&>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
-	// shellFailOpenExits is a command that ends the script or the function
-	// with a failure: exit or return with no operand or a literal bash reads
-	// modulo 256 as nonzero (see shellFailOpenExit),
-	// die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an
-	// assignment such as failed=1 or an echo fail reports nothing.
+	// shellFailOpenExits is a command that ends the script or the function with a failure: exit or return with no operand or a literal bash reads modulo 256 as nonzero (see shellFailOpenExit), die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an assignment such as failed=1 or an echo fail reports nothing.
 	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
-	// shellFailOpenStatusRead reads the status the command before it left, so
-	// it captures a hit only in the command right after the hit. A wait
-	// returns the status of the job it names, never of a substitution.
-	// shellFailOpenPassesOn is a handler that hands the failure on to the next
-	// ||: false, or a { } group ending in false. exit, return and die end the list.
+	// shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenPassesOn is a handler that hands the failure on to the next ||: false, or a { } group ending in false. exit, return and die end the list.
 	shellFailOpenPassesOn   = regexp.MustCompile(`^\|\|\s*(?:\{[^}]*;\s*)?false\s*(?:;?\s*\})?\s*(?:$|[;&|)])`)
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
 	// shellFailOpenRunsFirst is a substitution, a process substitution or an
@@ -644,7 +629,11 @@ func isShellSource(rel string, content []byte) bool {
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
-	return strings.HasPrefix(first, "#!") && (strings.Contains(first, "bash") || strings.HasSuffix(strings.TrimSpace(first), "sh"))
+	words := strings.Fields(strings.TrimPrefix(first, "#!")) // the interpreter, after env and its options and assignments
+	for len(words) > 1 && (filepath.Base(words[0]) == "env" || strings.HasPrefix(words[0], "-") || strings.Contains(words[0], "=")) {
+		words = words[1:]
+	}
+	return strings.HasPrefix(first, "#!") && len(words) > 0 && slices.Contains([]string{"sh", "bash", "dash", "ksh"}, filepath.Base(words[0]))
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {

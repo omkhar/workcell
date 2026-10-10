@@ -20,8 +20,7 @@ func TestCheckShellFailOpenAcceptsThisRepository(t *testing.T) {
 	}
 }
 
-// TestShellFailOpenFindingsCountEachCommand pins that a second hit of the same
-// rule on one line is a second finding, so the file's baseline count rises.
+// TestShellFailOpenFindingsCountEachCommand pins that a second hit of the same rule on one line is a second finding, so the file's baseline count rises.
 func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 	t.Parallel()
 	findings, err := metadatautil.ShellFailOpenFindings("git fetch || true; git gc || true\n")
@@ -214,11 +213,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 	}
 }
 
-// The shared evasion corpus, run against the fail-open check. The check
-// reports what may run, so a row that only gates the call, as if false, a
-// function body or a guarded group do, keeps the hit, and a row that turns
-// the call into a comment, a heredoc body or quoted text drops it. Each row
-// states its expectation, so a new row fails here until it does.
+// The shared evasion corpus, run against the fail-open check. The check reports what may run, so a row that only gates the call, as if false, a function body or a guarded group do, keeps the hit, and a row that turns the call into a comment, a heredoc body or quoted text drops it. Each row states its expectation, so a new row fails here until it does.
 func TestShellFailOpenFindingsUnderTheEvasionCorpus(t *testing.T) {
 	t.Parallel()
 	const anchor = "git fetch origin || true"
@@ -290,8 +285,7 @@ func fixtureRepo(t *testing.T, script, baseline string) string {
 	return root
 }
 
-// Negative control and ratchet: a planted hit fails, the same hit passes with
-// a baseline row, and a row that is too high or stale fails.
+// Negative control and ratchet: a planted hit fails, the same hit passes with a baseline row, and a row that is too high or stale fails.
 func TestCheckShellFailOpenRatchet(t *testing.T) {
 	t.Parallel()
 	planted := "#!/bin/bash\ngit fetch origin || true\n"
@@ -321,5 +315,21 @@ func TestCheckShellFailOpenRatchet(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, testCase.want)
 			}
 		})
+	}
+}
+
+func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
+	t.Parallel()
+	for first, shell := range map[string]bool{"#!/bin/sh -e": true, "#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "#!/usr/bin/env python3": false, "#![no_main]": false} {
+		root := fixtureRepo(t, "#!/bin/bash\n", "")
+		if err := os.WriteFile(filepath.Join(root, "scripts", "x"), []byte(first+"\ngit fetch || true\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("git", "-C", root, "add", ".").CombinedOutput(); err != nil {
+			t.Fatalf("git add: %v\n%s", err, out)
+		}
+		if err := metadatautil.CheckShellFailOpen(root); (err != nil) != shell {
+			t.Errorf("CheckShellFailOpen with %q = %v, want a hit: %v", first, err, shell)
+		}
 	}
 }
