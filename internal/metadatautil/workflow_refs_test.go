@@ -83,6 +83,8 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"look-alike startup names are clean", runStep("echo \"$GITHUB_ENV\"\nprintf '%s' '$ENV{X}'\necho \"${kind}=${url}\" >> \"$GITHUB_OUTPUT\""), "", ""},
 		{"a gh api pair split by any blank or escape is unresolved", runStep("my-runner $'gh\\tapi repos/o/r/issues'\nmy-runner 'gh\n  api x'"), "", "command-unresolved"},
 		{"an inline interpreter program is unresolved", runStep("python3 -c 'import os; os.system(\"g\" + \"h api x\")'\nperl -e 'system q{gh api x}'"), "", "command-unresolved"},
+		{"an interpreter given any option or no script is unresolved", runStep("php -r 'system(\"g\" . \"h api x\");'\nnode --eval 'x'\npython3 -c'x'\nruby"), "", "command-unresolved"},
+		{"bash - reads its program from stdin without a panic", runStep("bash - <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded"},
 		{"an interpreter running a script file is clean", runStep("python3 tools/x.py\nperl tools/x.pl"), "", ""},
 		{"zsh and a gh call in another command's words are unresolved", runStep("ZDOTDIR=z zsh -c true\nnice-wrapper gh api x\necho 'gh api x' | sh"), "", "command-unresolved"},
 		{"startup-file shell options are unresolved", runStep("bash --rcfile init -c true\nbash -ic true\nbash -l -c true\nbash --login -c true"), "", "command-unresolved"},

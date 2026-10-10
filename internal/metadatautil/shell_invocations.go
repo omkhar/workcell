@@ -124,7 +124,7 @@ func shellProgram(words []string, stdin string) (string, bool) {
 			i++
 			break
 		}
-		if option == "--rcfile" || option == "--init-file" || option == "--login" || option[0] == '-' && option[1:2] != "-" && strings.ContainsAny(option[1:], "il") {
+		if option == "--rcfile" || option == "--init-file" || option == "--login" || strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "il") {
 			return "$_", true // a startup file, rc or profile, runs before the program
 		}
 		if !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
@@ -1207,6 +1207,5 @@ var shellFD = regexp.MustCompile(`^` + shellFDPattern + `$`)
 
 const shellFDPattern = `([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})`
 
-// shellKeywords are the reserved words before a command that isCommandPrefixWord
-// does not cover.
+// shellKeywords are the reserved words before a command that isCommandPrefixWord does not cover.
 var shellKeywords = []string{"if", "then", "do", "else", "elif", "while", "until", "{"}

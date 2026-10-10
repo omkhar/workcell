@@ -69,12 +69,11 @@ func ghInArguments(words []string) bool {
 	for i := 0; i+1 < len(tokens); i++ {
 		pair = pair || commandName(tokens[i]) == "gh" && tokens[i+1] == "api"
 	}
-	return name != "gh" && !data && pair || interpreters[name] && slices.ContainsFunc(words[1:], inlineProgram.MatchString)
+	return name != "gh" && !data && pair || interpreters[name] && (len(words) < 2 || strings.HasPrefix(words[1], "-"))
 }
 
-// interpreters run an inline program, after -c, -e or - for stdin, in a language this lint does not read, so it may run gh unseen.
+// interpreters given an option or no script file may run an inline program, which this lint does not read, so it may run gh unseen; only a script file operand first is read as clean.
 var interpreters = map[string]bool{"python": true, "python3": true, "perl": true, "ruby": true, "node": true, "php": true}
-var inlineProgram = regexp.MustCompile(`^(?:-[A-Za-z0-9]*[ce]|-)$`)
 
 // unmodeledWrappers run a program after options, or in a language, this lint does not read.
 var unmodeledWrappers = map[string]bool{
