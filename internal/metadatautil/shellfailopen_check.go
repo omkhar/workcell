@@ -630,7 +630,7 @@ func isShellSource(rel string, content []byte) bool {
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
-	words := strings.Fields(strings.TrimPrefix(first, "#!")) // the interpreter, after env and its options and assignments
+	words := strings.Fields(strings.NewReplacer("'", "", `"`, "").Replace(strings.TrimPrefix(first, "#!"))) // the interpreter, after env and its options and assignments
 	for len(words) > 1 && (filepath.Base(words[0]) == "env" || strings.HasPrefix(words[0], "-") || strings.Contains(words[0], "=")) {
 		option := words[0]
 		if words = words[1:]; len(words) > 1 && (option == "--unset" || option == "--chdir" || len(option) > 1 && option[1] != '-' && strings.ContainsRune("uCP", rune(option[len(option)-1]))) {
