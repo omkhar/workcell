@@ -38,6 +38,8 @@ func TestCheckValidatorAnchoring(t *testing.T) {
 		{"a longer identifier is not the call", anchor + "\tcachedShellInvocations(script, command)\n", corpus, ""},
 		{"two calls on one line", strings.TrimSuffix(anchor, "\n") + strings.TrimPrefix(anchor, "\t"), corpus + corpus, ""},
 		{"a comment between the callee and its arguments is a call", "\t_ = ShellInvocations /* why */ (script, \"tool run\")\n", corpus, ""},
+		{"every-command reader needs its own driver", anchor + "\tEveryShellCommand(script)\n", corpus, "1 call(s) of EveryShellCommand but 0 run(s)"},
+		{"every-command reader with its driver", anchor + "\tEveryShellCommand(script)\n", corpus + "\tRequireRejectsTextEvasions(t, artifact, anchor, want, validate)\n", ""},
 		{"a Unicode identifier prefix is not the call", anchor, corpus + "\t偽RequireRejectsAllEvasions(t, artifact, anchor, want, validate)\n", ""},
 	}
 	for _, testCase := range cases {

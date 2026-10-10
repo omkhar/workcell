@@ -14,31 +14,35 @@ import (
 	"unicode/utf8"
 )
 
-// CheckValidatorAnchoring requires each validator that anchors on the shared
-// shell-invocation parser to run the shared evasion corpus. A validator that
-// reads a command out of file content is bypassed by a comment, a heredoc body
-// or a longer option unless a negative fixture proves otherwise, so the two
-// counts must stay equal.
+// CheckValidatorAnchoring requires each validator that anchors on a shared shell reader to run the shared evasion corpus. A validator that reads a command out of file content is bypassed by a comment, a heredoc body or a longer option unless a negative fixture proves otherwise, so the two counts of each reader and its corpus driver must stay equal.
 //
 // The check counts call sites with a text scan rather than reading the syntax
 // tree, the same choice the other checks in this package record: the call sites
 // are few, and a scan avoids go/ast for one caller.
 func CheckValidatorAnchoring(rootDir string) error {
-	anchors, err := countCallSites(rootDir, "ShellInvocations", false)
-	if err != nil {
-		return err
-	}
-	corpus, err := countCallSites(rootDir, "RequireRejectsAllEvasions", true)
-	if err != nil {
-		return err
-	}
-	if anchors == 0 {
-		return errors.New("no validator anchors on the shared shell-invocation parser; the anchoring check has lost its subject")
-	}
-	if anchors != corpus {
-		return fmt.Errorf("validator anchoring parity: %d call(s) of ShellInvocations but %d run(s) of the shared evasion corpus; every anchored validator needs one RequireRejectsAllEvasions run", anchors, corpus)
+	for _, pair := range anchoredReaders {
+		anchors, err := countCallSites(rootDir, pair.reader, false)
+		if err != nil {
+			return err
+		}
+		corpus, err := countCallSites(rootDir, pair.driver, true)
+		if err != nil {
+			return err
+		}
+		if anchors == 0 && pair.reader == "ShellInvocations" {
+			return errors.New("no validator anchors on the shared shell-invocation parser; the anchoring check has lost its subject")
+		}
+		if anchors != corpus {
+			return fmt.Errorf("validator anchoring parity: %d call(s) of %s but %d run(s) of the shared evasion corpus; every anchored validator needs one %s run", anchors, pair.reader, corpus, pair.driver)
+		}
 	}
 	return nil
+}
+
+// anchoredReaders pairs each shared shell reader with the corpus driver that proves a validator on it. EveryShellCommand reads commands behind a gate, so its driver expects the gated rows to keep the command.
+var anchoredReaders = []struct{ reader, driver string }{
+	{"ShellInvocations", "RequireRejectsAllEvasions"},
+	{"EveryShellCommand", "RequireRejectsTextEvasions"},
 }
 
 // countCallSites returns the number of calls of needle under internal/. It
