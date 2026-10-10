@@ -4,6 +4,9 @@
 # declare -A, sha256sum, stat -c and date -d fail there. A script that runs
 # only inside the Linux image declares "# portability-exempt: linux-only
 # (reason)" in its header, and a reviewed line carries the same tag at its end.
+# The same entry point rejects a fail-open idiom (a process substitution, or a
+# find/git/gh/docker/getent call with its status hidden) in scripts/ and
+# runtime/container/, ratcheted by policy/shell-fail-open-baseline.tsv.
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 # shellcheck disable=SC2312 # repo-wide bootstrap; the path is the running script's own directory
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
@@ -42,3 +45,4 @@ resolve_go_bin() {
 resolve_go_bin
 
 (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-shell-portability "${ROOT_DIR}")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-shell-fail-open "${ROOT_DIR}")

@@ -74,6 +74,16 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
+## 2b. Shell scripts must not hide a failed tool
+
+These idioms can turn a failure into an empty answer. A gate then passes on nothing. The idioms are a `<(` or `>(` process substitution and a `$(...)` around `find`, `git`, `gh`, `docker` or `getent`. They also include `|| true` or `|| :`, and stderr sent to `/dev/null`, on those tools.
+
+`scripts/check-shell-portability.sh` rejects each of them in `scripts/` and `runtime/container/`. The command, or the command after it, must capture the status.
+
+A `$(...)` that runs a variable, a quoted path or `eval` counts as one of those tools. Bash never propagates the status of a process substitution, so every `<(` or `>(` is a hit until a file the walk wrote replaces it.
+
+`policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only

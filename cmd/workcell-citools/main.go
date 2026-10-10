@@ -112,6 +112,7 @@ func subcommands() []subcommand {
 		{"check-doc-language", "REPO_ROOT", 1, 1, cmdCheckDocLanguage},
 		{"check-generated-artifacts", "REPO_ROOT", 1, 1, cmdCheckGeneratedArtifacts},
 		{"check-shell-portability", "REPO_ROOT", 1, 1, cmdCheckShellPortability},
+		{"check-shell-fail-open", "REPO_ROOT", 1, 1, cmdCheckShellFailOpen},
 		{"check-hardened-fs", "REPO_ROOT", 1, 1, cmdCheckHardenedFS},
 		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
@@ -558,6 +559,10 @@ func cmdCheckGeneratedArtifacts(args []string) error {
 
 func cmdCheckShellPortability(args []string) error {
 	return metadatautil.CheckShellPortability(args[0])
+}
+
+func cmdCheckShellFailOpen(args []string) error {
+	return metadatautil.CheckShellFailOpen(args[0])
 }
 
 func cmdCheckHardenedFS(args []string) error {
