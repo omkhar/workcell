@@ -107,12 +107,12 @@ type ShellFailOpenFinding struct {
 
 var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
-	shellToolName      = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
+	shellToolName      = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
 	// shellCommandPosition ends where a command word starts: after the start,
 	// an operator or an opener, then any reserved word, assignment, or xargs,
 	// sudo or env with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|coproc|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	// After env, sudo or xargs any later word may be the tool, so their options need no table.
@@ -181,8 +181,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		// Bash still runs a $( inside a double-quoted span that runs past its
-		// line, so the line is read inside the span rather than skipped.
+		// Bash still runs a $( inside a double-quoted span that runs past its line, so the line is read inside the span rather than skipped.
 		reopen := ""
 		if openQuote != 0 {
 			reopen = quoteOpener(openQuote)
@@ -199,8 +198,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
 		code := strings.TrimSuffix(text, comment)
-		// A line that ends on && || or | carries its command onto the next one,
-		// so a handler written there belongs to the same command.
+		// A line that ends on && || or | carries its command onto the next one, so a handler written there belongs to the same command.
 		fields := strings.Fields(shellCodeOnly(code))
 		operator := len(fields) > 0 && continuesLine(fields[len(fields)-1])
 		switch {
