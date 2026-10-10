@@ -8,3 +8,6 @@ command-unresolved#3	ci.yml	install-verification	Verify release bundle installer
 command-unresolved	release.yml	install-verification	Verify release bundle installer	runs install.sh from the bundle directory the step unpacks at run time
 command-unresolved#2	release.yml	install-verification	Verify release bundle installer	runs the launcher that install.sh placed under HOME
 command-unresolved#3	release.yml	install-verification	Verify release bundle installer	runs uninstall.sh from the bundle directory the step unpacks at run time
+command-unresolved	ci.yml	install-verification	Verify Homebrew formula install	inline interpreter program the lint does not read
+command-unresolved	fuzz.yml	rust-fuzz	Enable crates.io for the non-shipping fuzz build	inline interpreter program the lint does not read
+command-unresolved	release.yml	install-verification	Verify Homebrew formula install	inline interpreter program the lint does not read

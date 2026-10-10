@@ -100,9 +100,7 @@ func isCommandPrefixWord(text string) bool {
 	return false
 }
 
-// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs
-// as a script, and whether it runs one: the -c body, or stdin with -s or no
-// script operand, which is $_ for a stream the reader cannot see.
+// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs as a script, and whether it runs one: the -c body, or stdin with -s or no script operand, which is $_ for a stream the reader cannot see.
 func shellProgram(words []string, stdin string) (string, bool) {
 	if len(words) == 0 {
 		return "", false
@@ -390,8 +388,7 @@ func quoteCloseIndex(line string, quote byte) int {
 	return -1
 }
 
-// heredocsAsHereStrings moves every heredoc body into the line that opens it,
-// as the here-string heredocWord spells, so the command that reads it keeps it.
+// heredocsAsHereStrings moves every heredoc body into the line that opens it, as the here-string heredocWord spells, so the command that reads it keeps it.
 func heredocsAsHereStrings(script string) string {
 	var out, body strings.Builder
 	var opened, pending []heredoc
@@ -459,14 +456,12 @@ func heredocsAsHereStrings(script string) string {
 	return out.String()
 }
 
-// heredocWord is the here-string for a literal heredoc body: hex keeps it one
-// word, and a \x01 byte, which no workflow holds, marks it for spelledProgram.
+// heredocWord is the here-string for a literal heredoc body: hex keeps it one word, and a \x01 byte, which no workflow holds, marks it for spelledProgram.
 func heredocWord(body string) string {
 	return "<<<\x01" + hex.EncodeToString([]byte(body))
 }
 
-// spelledProgram returns a shellProgram script and whether the reader can
-// spell it: a heredocWord body is literal, any other expansion is not.
+// spelledProgram returns a shellProgram script and whether the reader can spell it: a heredocWord body is literal, any other expansion is not.
 func spelledProgram(program string) (string, bool) {
 	if encoded, ok := strings.CutPrefix(program, "\x01"); ok {
 		body, err := hex.DecodeString(encoded)
@@ -475,8 +470,7 @@ func spelledProgram(program string) (string, bool) {
 	return program, !strings.ContainsAny(program, "$`")
 }
 
-// flattenSubstitutions moves each $( ... ) and ` ... ` onto lines before its
-// command and leaves $_ in its place; a quoted ) or $( is left alone.
+// flattenSubstitutions moves each $( ... ) and ` ... ` onto lines before its command and leaves $_ in its place; a quoted ) or $( is left alone.
 func flattenSubstitutions(script string) string {
 	var out strings.Builder
 	// One frame per open substitution: its text since the last command
@@ -565,8 +559,7 @@ func flattenSubstitutions(script string) string {
 	return out.String()
 }
 
-// markQuotedNewline turns a quoted newline into quotedNewline, so a word stays
-// on one line; commandWords turns it back, so a shell program keeps its lines.
+// markQuotedNewline turns a quoted newline into quotedNewline, so a word stays on one line; commandWords turns it back, so a shell program keeps its lines.
 func markQuotedNewline(c byte) byte {
 	if c == '\n' {
 		return quotedNewline

@@ -23,8 +23,7 @@ const (
 
 type workflowRefHit struct{ kind, file, job, step string }
 
-// unspelled reports whether bash may rewrite word: an expansion, a brace or a
-// pathname pattern, or a Windows name with a \ or .exe; a lone [ is test.
+// unspelled reports whether bash may rewrite word: an expansion, a brace or a pathname pattern, or a Windows name with a \ or .exe; a lone [ is test.
 func unspelled(word string) bool {
 	return strings.ContainsAny(word, "$`*?\\") || braceExpansion.MatchString(word) ||
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
@@ -54,15 +53,28 @@ func stepShell(document workflowDocument, job workflowJob, step workflowStep) st
 	return document.Def.Run["shell"]
 }
 
-// ghInArguments reports a gh api call in another command's words, as any
-// wrapper or quoted program would hand it on unseen; echo, printf, command -v,
-// find without -exec and a shell, whose program is read, only hold the text.
+// ghInArguments reports a gh api call in another command's words, as any wrapper or quoted program would hand it on unseen; echo, printf, command -v, find without -exec and a shell, whose program is read, only hold the text.
 func ghInArguments(words []string) bool {
 	name, text := commandName(words[0]), " "+strings.Join(words[1:], " ")+" "
 	data := name == "echo" || name == "printf" || name == "command" && strings.Contains(text, " -v") ||
 		name == "find" && !strings.Contains(text, " -exec") && !strings.Contains(text, " -ok") || slices.Contains([]string{"sh", "bash", "dash", "ksh"}, name)
-	return name != "gh" && !data && strings.Contains(text, " gh api ")
+	var tokens []string // escapes decoded, split on any blank, as a program would read them
+	for _, word := range words[1:] {
+		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(word, `"`, `\"`) + `"`); err == nil {
+			word = decoded
+		}
+		tokens = append(tokens, strings.Fields(word)...)
+	}
+	pair := false
+	for i := 0; i+1 < len(tokens); i++ {
+		pair = pair || commandName(tokens[i]) == "gh" && tokens[i+1] == "api"
+	}
+	return name != "gh" && !data && pair || interpreters[name] && slices.ContainsFunc(words[1:], inlineProgram.MatchString)
 }
+
+// interpreters run an inline program, after -c, -e or - for stdin, in a language this lint does not read, so it may run gh unseen.
+var interpreters = map[string]bool{"python": true, "python3": true, "perl": true, "ruby": true, "node": true, "php": true}
+var inlineProgram = regexp.MustCompile(`^(?:-[A-Za-z0-9]*[ce]|-)$`)
 
 // unmodeledWrappers run a program after options, or in a language, this lint does not read.
 var unmodeledWrappers = map[string]bool{
@@ -78,8 +90,7 @@ func (h workflowRefHit) key() string {
 	return strings.Join([]string{h.kind, h.file, h.job, h.step}, "\t")
 }
 
-// CheckWorkflowRefs ratchets workflow run: bodies: a hit not in the baseline
-// fails, and so does a baseline row with no hit, so the baseline only shrinks.
+// CheckWorkflowRefs ratchets workflow run: bodies: a hit not in the baseline fails, and so does a baseline row with no hit, so the baseline only shrinks.
 func CheckWorkflowRefs(rootDir string) error {
 	hits, err := workflowRefHits(rootDir)
 	if err != nil {
@@ -227,17 +238,13 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	return hits, nil
 }
 
-// ghPaginates reports whether gh api args turn pagination on in exactly one
-// spelling. A --paginate=false, or a second spelling that can override the
-// first, leaves the call unbounded. Another option's value is not a spelling.
+// ghPaginates reports whether gh api args turn pagination on in exactly one spelling. A --paginate=false, or a second spelling that can override the first, leaves the call unbounded. Another option's value is not a spelling.
 func ghPaginates(args []string) bool {
 	spellings := ghFlagValues(args, "--paginate", "")
 	return len(spellings) == 1 && (spellings[0] == "" || spellings[0] == "true")
 }
 
-// ghSubcommand drops the flags before the gh subcommand. gh finds its
-// subcommand the way cobra strips flags: a --flag or a two-byte -f with no value
-// attached takes the next word as its value, so gh --hostname h api runs api.
+// ghSubcommand drops the flags before the gh subcommand. gh finds its subcommand the way cobra strips flags: a --flag or a two-byte -f with no value attached takes the next word as its value, so gh --hostname h api runs api.
 func ghSubcommand(args []string) []string {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		skip := 1
@@ -249,9 +256,7 @@ func ghSubcommand(args []string) []string {
 	return args
 }
 
-// ghFlagTakesValue says whether each known gh api flag takes a
-// value, per gh 2.102 help. A short flag that takes a value in one checked
-// command and none in another, such as -a, stays unknown.
+// ghFlagTakesValue says whether each known gh api flag takes a value, per gh 2.102 help. A short flag that takes a value in one checked command and none in another, such as -a, stays unknown.
 var ghFlagTakesValue = map[string]bool{
 	"--help": false, "-h": false,
 	"--paginate": false, "--slurp": false, "-i": false, "--include": false, "--silent": false, "--verbose": false,
@@ -260,10 +265,7 @@ var ghFlagTakesValue = map[string]bool{
 	"--cache": true, "--input": true, "--hostname": true,
 }
 
-// ghFlagValues returns the value of each spelling of a gh flag in args. gh
-// drops an empty base and a later spelling overrides an earlier one, so callers
-// want exactly one value. An option this list does not know may or may not take
-// a value, so args are read both ways, and a disagreement returns no value.
+// ghFlagValues returns the value of each spelling of a gh flag in args. gh drops an empty base and a later spelling overrides an earlier one, so callers want exactly one value. An option this list does not know may or may not take a value, so args are read both ways, and a disagreement returns no value.
 func ghFlagValues(args []string, long, short string) []string {
 	read := func(unknownTakesValue bool) []string {
 		var values []string
@@ -292,8 +294,7 @@ func ghFlagValues(args []string, long, short string) []string {
 	return nil
 }
 
-// commandArgs returns the arguments of every command named name in script,
-// bare or by path, as /usr/bin/gh runs gh.
+// commandArgs returns the arguments of every command named name in script, bare or by path, as /usr/bin/gh runs gh.
 func commandArgs(script, name string) [][]string {
 	var found [][]string
 	for _, words := range EveryShellCommand(script) {
