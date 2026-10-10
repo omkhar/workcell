@@ -95,6 +95,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a name before a simple coproc command is the command", "coproc worker git fetch 2>/dev/null\n", ""},
 		{"a case arm runs the tool", "case x in x) git -C /missing fetch 2>/dev/null;; esac; echo done\ncase $y in\n  a|b) git gc 2>/dev/null ;;\nesac\n", "dev-null"},
 		{"a word after a command substitution is no command", "echo $(pwd) git 2>/dev/null\n", ""},
+		{"a process substitution as a redirection target hides the tool", "git -C /missing fetch 2><(cat >/dev/null); echo done\n", "process-substitution"},
 		{"a process substitution as an argument hides the tool", "cat <(git -C /missing ls-files)\ntee >(git hash-object --stdin) </dev/null\n", "process-substitution"},
 		{"a failing brace group hands the failure on to a later handler", "git fetch || { false; } || true\n", "or-true"},
 		{"an exit in a nested branch does not end the handler", "git fetch || { if false; then exit 1; fi; false; } || true\n", "or-true"},
@@ -185,14 +186,13 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"status read after local", "local out=$(git ls-files)\nrc=$?\n", "command-substitution"},
 		{"handler after a substitution argument", "echo \"$(git ls-files)\" || exit 1\n", "command-substitution"},
 
-		{"status handler; handler after a separate local; bare return handler; fail handler; die handler; group handler that exits", "x=$(git ls-files) || exit 1\nlocal out; out=$(git ls-files) || exit 1\nx=$(git ls-files) || return\nout=$(git ls-files) || fail \"no list\"\nout=$(git ls-files) || die\nout=$(git ls-files) || { echo no list; exit 1; }\n", ""},
+		{"status handler; handler after a separate local; bare return handler; fail handler; die handler; group handler that exits; escaped apostrophe in an ANSI-C span; noclobber redirection target; not a tool call; path is not a tool; tool name as an argument", "x=$(git ls-files) || exit 1\nlocal out; out=$(git ls-files) || exit 1\nx=$(git ls-files) || return\nout=$(git ls-files) || fail \"no list\"\nout=$(git ls-files) || die\nout=$(git ls-files) || { echo no list; exit 1; }\n: $'x\\'; git fetch || true'\n: >| git fetch origin || true\ngrep -q x file || true\nls .git/hooks 2>/dev/null\nprintf '%s\\n' git || true\n", ""},
 		{"bare exit after a command in a group handler", "out=$(git ls-files) || { printf ignored; exit; }\nf() {\n  out=$(git ls-files) || { printf x; return; }\n}\n", "command-substitution"},
 		{"bare exit as the only command of a group handler; group handler that ends in false; status handler after a multi-line substitution; status read", "out=$(git ls-files) || { exit; }\nout=$(git ls-files) || { false; exit; }\nout=$(git ls-files) || { false; }\nx=\"$(\n  git ls-files\n)\" || exit 1\nx=$(git ls-files)\nrc=$?\n", ""},
 		{"quoted ) inside a substitution", "out=$(printf ')'; git -C /missing ls-files); echo done\n", "command-substitution"},
 		{"status read in the same command; status read behind ||; status read behind || after 1>&2; status test; handler on the continued line", "out=$(git ls-files) rc=$?\nout=$(git ls-files) || rc=$?\ngit rev-parse HEAD 2>/dev/null 1>&2 || rc=$?\nx=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\nx=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
 		{"&& alone does not prove the failure propagates", "out=$(git ls-files) && echo done\n", "command-substitution"},
 		{"if tests the call; tool name after echo; quoted $( runs nothing; escaped ; is an argument; comment names the idiom; message names the idiom; quoted span across lines; heredoc body", "if x=$(gh api /y); then :; fi\necho gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n# git fetch || true\necho 'git fetch || true'\nmsg='\ngit fetch || true\n'\ncat <<'EOF'\ngit fetch || true\nEOF\n", ""},
-		{"escaped apostrophe in an ANSI-C span; noclobber redirection target; not a tool call; path is not a tool; tool name as an argument", ": $'x\\'; git fetch || true'\n: >| git fetch origin || true\ngrep -q x file || true\nls .git/hooks 2>/dev/null\nprintf '%s\\n' git || true\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
