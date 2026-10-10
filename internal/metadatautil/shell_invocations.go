@@ -108,7 +108,9 @@ func shellProgram(words []string, stdin string) (string, bool) {
 		return "", false
 	}
 	switch commandName(words[0]) {
-	case "sh", "bash", "dash", "ksh", "zsh":
+	case "zsh":
+		return "$_", true // zsh reads .zshenv, under any ZDOTDIR, before -c
+	case "sh", "bash", "dash", "ksh":
 	default:
 		return "", false
 	}

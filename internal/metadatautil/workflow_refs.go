@@ -54,6 +54,16 @@ func stepShell(document workflowDocument, job workflowJob, step workflowStep) st
 	return document.Def.Run["shell"]
 }
 
+// ghInArguments reports a gh api call in another command's words, as any
+// wrapper or quoted program would hand it on unseen; echo, printf, command -v,
+// find without -exec and a shell, whose program is read, only hold the text.
+func ghInArguments(words []string) bool {
+	name, text := commandName(words[0]), " "+strings.Join(words[1:], " ")+" "
+	data := name == "echo" || name == "printf" || name == "command" && strings.Contains(text, " -v") ||
+		name == "find" && !strings.Contains(text, " -exec") && !strings.Contains(text, " -ok") || slices.Contains([]string{"sh", "bash", "dash", "ksh"}, name)
+	return name != "gh" && !data && strings.Contains(text, " gh api ")
+}
+
 // unmodeledWrappers run a program after options, or in a language, this lint does not read.
 var unmodeledWrappers = map[string]bool{
 	"pwsh": true, "powershell": true, "cmd": true, "setarch": true, "setsid": true, "stdbuf": true, "xargs": true, "flock": true,
@@ -176,7 +186,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					if words[0] == "eval" {
 						add("eval-unresolved")
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
-						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] ||
+						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] || ghInArguments(words) ||
 						commandName(words[0]) == "find" && slices.ContainsFunc(words, func(w string) bool { return strings.HasPrefix(w, "-exec") || strings.HasPrefix(w, "-ok") }) {
 						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok := shellProgram(words, "$_"); ok {
