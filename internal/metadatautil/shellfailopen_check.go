@@ -123,8 +123,6 @@ var (
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
-	// shellOrTrue is a handler that always succeeds: a true or : word, maybe in { } or behind command.
-	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command(?:\s+-[pvV]+)?|builtin)(?:\s+--)?\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
 	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
@@ -289,16 +287,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			if toolSubst && (!tested || shellSubstHidden(command)) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
-			// A handler covers the && || or | list it ends, but not a command
-			// backgrounded by & before it, so git fetch & printf x || true
-			// hides no git status.
-			for _, segment := range shellBackgroundSegments(command) {
-				// The command position is read with every expansion removed, so
-				// MODE=$(printf x) git fetch is git at command position, while
-				// the tools inside substitutions are read by shellToolSubsts.
-				tool := shellToolCommand.MatchString(shellOutsideSubsts(segment)) || len(shellToolSubsts(segment)) > 0
-				hits[ruleOrTrue] += count(tool, shellOrTrue, segment)
-			}
+			hits[ruleOrTrue] += shellSwallowingHandlers(command, later, false)
 			// A redirect belongs to the operand of the && || or | list it is
 			// written in, so git fetch || printf x 2>/dev/null hides no git
 			// status, and each operand's own status test counts, so the && after
@@ -574,17 +563,35 @@ func shellListOperands(command string) []string {
 	return append(operands, command[start:])
 }
 
-// shellBackgroundSegments joins shellListOperands back into the lists a lone & separates.
-func shellBackgroundSegments(command string) []string {
-	var segments []string
-	segment := ""
-	for _, operand := range shellListOperands(command) {
-		segment += operand
-		if strings.HasSuffix(operand, "&") && !strings.HasSuffix(operand, "&&") && !strings.HasSuffix(operand, "|&") {
-			segments, segment = append(segments, segment), ""
+// shellSwallowingHandlers counts each || after a pipeline that runs a tool,
+// read with expansions removed, whose handler neither fails, as a
+// shellFailOpenHandled branch does, nor reads the status: true, : or a
+// message lets the step go on. A lone & ends a pipeline, so a handler after
+// it covers no backgrounded tool.
+func shellSwallowingHandlers(segment string, later func() []string, inSubst bool) int {
+	count, end, offset, pipeline := 0, 0, 0, ""
+	for _, operand := range shellListOperands(segment) {
+		offset += len(operand)
+		if pipeline += operand; strings.HasSuffix(operand, "|") && !strings.HasSuffix(operand, "||") || strings.HasSuffix(operand, "|&") {
+			continue // under pipefail a later handler covers every stage
+		}
+		left := shellTestExpr.ReplaceAllString(pipeline, "[[ ]]")
+		pipeline = ""
+		tool := shellToolCommand.MatchString(shellOutsideSubsts(left)) || len(shellToolSubsts(left)) > 0 ||
+			inSubst && shellUnnamedCommand.MatchString(shellOutsideSubsts(left)) // a substitution counts a named call
+		if tool && strings.HasSuffix(operand, "||") && !shellFailOpenHandled(shellOutsideSubsts(segment[offset-2:]), later) &&
+			!shellFailOpenReadsOwnStatus(shellOutsideSubsts(segment[offset-2:])) {
+			count++ // the || ends an operand that runs a tool
 		}
 	}
-	return append(segments, segment)
+	for _, start := range shellToolSubsts(segment) {
+		if start >= end { // a substitution's handlers are read in its own body
+			end = shellSubstEnd(segment, start)
+			body, _ := shellSubstCall(segment, start)
+			count += shellSwallowingHandlers(body, func() []string { return nil }, true)
+		}
+	}
+	return count
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git is not a

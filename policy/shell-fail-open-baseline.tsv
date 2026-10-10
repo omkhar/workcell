@@ -26,7 +26,7 @@ scripts/ci/cost-report.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent 
 scripts/ci/cost-report.sh	or-true	1	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
 scripts/ci/flaky-report.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/ci/flaky-report.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
-scripts/ci/flaky-report.sh	or-true	1	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
+scripts/ci/flaky-report.sh	or-true	2	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
 scripts/ci/job-docs.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/ci/job-fuzz.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/ci/job-mutation.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
@@ -34,7 +34,9 @@ scripts/ci/job-pr-shape.sh	process-substitution	1	process substitution drops the
 scripts/ci/job-release-asset-acl.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/ci/job-validate.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/ci/job-validate.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
+scripts/ci/job-validate.sh	or-true	2	a || handler that is not a failure branch, true, a default value or a message, keeps the step going after the tool fails; predates the rule, repair by status capture
 scripts/ci/run-validate-in-validator.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
+scripts/ci/run-validate-in-validator.sh	or-true	1	a || handler that is not a failure branch, true, a default value or a message, keeps the step going after the tool fails; predates the rule, repair by status capture
 scripts/ci/upstream-refresh-candidate.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/ci/upstream-refresh-publish.sh	command-substitution	5	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/ci/upstream-refresh-publish.sh	dev-null	1	stderr or a handler hides the tool status; predates the rule, repair by status capture
@@ -44,6 +46,7 @@ scripts/container-smoke.sh	process-substitution	6	process substitution drops the
 scripts/dev-quick-check.sh	process-substitution	2	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/generate-build-input-manifest.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/generate-build-input-manifest.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
+scripts/generate-build-input-manifest.sh	or-true	2	a || handler that is not a failure branch, true, a default value or a message, keeps the step going after the tool fails; predates the rule, repair by status capture
 scripts/generate-builder-environment-manifest.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/generate-builder-environment-manifest.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call without a status test; predates the rule
 scripts/generate-builder-environment-manifest.sh	or-true	1	|| true on a find/git/gh/docker/getent call; predates the rule, repair by handling the failure
@@ -61,6 +64,7 @@ scripts/lib/trusted-entrypoint.sh	process-substitution	1	process substitution dr
 scripts/lint-dockerfiles.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/pre-merge.sh	command-substitution	8	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/pre-merge.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
+scripts/pre-merge.sh	or-true	1	a || handler that is not a failure branch, true, a default value or a message, keeps the step going after the tool fails; predates the rule, repair by status capture
 scripts/publish-github-release.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/publish-provider-bump-pr.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/publish-provider-bump-pr.sh	dev-null	2	stderr or a handler hides the tool status; predates the rule, repair by status capture
@@ -82,7 +86,7 @@ scripts/verify-control-plane-manifest.sh	process-substitution	1	process substitu
 scripts/verify-control-plane-parity.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-github-hosted-controls.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/verify-github-hosted-controls.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent call, or on a variable-named call in a substitution; predates the rule, repair by status capture
-scripts/verify-github-hosted-controls.sh	or-true	1	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
+scripts/verify-github-hosted-controls.sh	or-true	2	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
 scripts/verify-github-hosted-controls.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-github-macos-release-test-runners.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-invariants-live.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
@@ -93,9 +97,10 @@ scripts/verify-invariants.sh	process-substitution	8	process substitution drops t
 scripts/verify-release-outputs.sh	process-substitution	1	process substitution checked by a walk_completed sentinel that this check does not read yet; the row drops when the sentinel reader lands
 scripts/verify-reproducible-build.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/verify-reproducible-build.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
+scripts/verify-reproducible-build.sh	or-true	1	a || handler that is not a failure branch, true, a default value or a message, keeps the step going after the tool fails; predates the rule, repair by status capture
 scripts/with-validation-snapshot.sh	command-substitution	1	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
 scripts/with-validation-snapshot.sh	process-substitution	9	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/workcell	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/workcell	dev-null	9	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
-scripts/workcell	or-true	4	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
+scripts/workcell	or-true	5	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
 scripts/workcell	process-substitution	22	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
