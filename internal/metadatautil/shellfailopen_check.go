@@ -127,7 +127,7 @@ var (
 	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
-	shellDevNull = regexp.MustCompile(`(?:(?:2|&)>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)
+	shellDevNull = regexp.MustCompile(`(?:(?:^|[^0-9])2>[>|]?|&>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
@@ -157,8 +157,7 @@ var (
 	// shellAssignment is a word that assigns a name, the only word that may
 	// stand beside a substitution whose status the command keeps.
 	shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
-	// shellRedirection is a redirection word, which leaves the status alone;
-	// shellRedirectOnly is one whose target is the next word.
+	// shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
 	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`)
 	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
 	// shellLaterSubst is a command substitution, not an arithmetic $((.
@@ -306,7 +305,7 @@ func shellFailOpenExit(command string) bool {
 		return match != nil
 	}
 	status, err := strconv.ParseInt(match[1], 10, 64)
-	return err == nil && status%256 != 0
+	return err != nil || status%256 != 0 // bash exits 2 on an operand out of range
 }
 
 // shellFailOpenHandled reports whether the first || runs a failure branch: a shellFailOpenExits command, or a { } group ending in one; later spans a group.
