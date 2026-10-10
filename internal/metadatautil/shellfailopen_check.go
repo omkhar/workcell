@@ -305,6 +305,9 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 		for len(fields) > 1 && slices.Contains([]string{"then", "command", "builtin", "-p", "--"}, fields[0]) { // command exit is still exit
 			fields = fields[1:]
 		}
+		if depth > 0 && len(fields) > 0 && (fields[0] == "exit" || fields[0] == "return") && !shellFailOpenExit(strings.Join(fields, " ")) {
+			return false // a nested exit 0 may run, so the handler may succeed
+		}
 		if depth == 0 && len(fields) > 0 {
 			if slices.Contains(closers, fields[0]) {
 				return failing
