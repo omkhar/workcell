@@ -167,7 +167,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					continue
 				}
 				if slices.ContainsFunc([]map[string]string{documents[file].Env, definition.Env, step.Env}, setsStartupFile) ||
-					shellStartupEnv.MatchString(strings.NewReplacer(`"`, "", `'`, "", `\`, "").Replace(step.Run)) {
+					shellStartupEnv.MatchString(strings.NewReplacer("\\\n", "", `"`, "", `'`, "", `\`, "").Replace(step.Run)) {
 					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
 				for _, words := range EveryShellCommand(step.Run) {

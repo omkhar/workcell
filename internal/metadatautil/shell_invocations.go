@@ -124,9 +124,8 @@ func shellProgram(words []string, stdin string) (string, bool) {
 			i++
 			break
 		}
-		if option == "--rcfile" || option == "--init-file" {
-			i++
-			continue
+		if option == "--rcfile" || option == "--init-file" || option == "--login" || option[0] == '-' && option[1:2] != "-" && strings.ContainsAny(option[1:], "il") {
+			return "$_", true // a startup file, rc or profile, runs before the program
 		}
 		if !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
 			break // the first operand
