@@ -1004,7 +1004,7 @@ func wrappedCommand(words []string) []string {
 		}
 		i, shell := 1, false
 		for ; i < len(words) && (strings.HasPrefix(words[i], "-") || (name == "env" || name == "sudo") && shellAssignment.MatchString(words[i])); i++ {
-			if name == "command" && strings.ContainsAny(words[i], "vV") || name == "sudo" && sudoRunsNothing(words[i]) {
+			if name == "command" && strings.ContainsAny(words[i], "vV") {
 				return words
 			}
 			shell = shell || name == "sudo" && words[i][0] == '-' && (!strings.HasPrefix(words[i], "--") && strings.ContainsAny(words[i], "si") ||
@@ -1213,12 +1213,6 @@ func commandWords(text string) [][]string {
 	}
 	end()
 	return found
-}
-
-// sudoRunsNothing reports a sudo mode that runs no command, as sudo -e or -l.
-func sudoRunsNothing(option string) bool {
-	return !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "elvVkK") ||
-		slices.Contains([]string{"--edit", "--list", "--validate", "--version", "--help", "--remove-timestamp", "--reset-timestamp"}, option)
 }
 
 var shellAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)

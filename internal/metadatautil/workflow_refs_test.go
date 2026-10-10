@@ -157,7 +157,6 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"configured bash shell is read", "      - name: s\n        shell: bash --noprofile --norc -euo pipefail {0}\n        run: gh api repos/o/r/issues\n", "", "gh-api-unbounded"},
 		{"workflow default shell this lint does not read", "name: w\ndefaults:\n  run:\n    shell: pwsh\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: gh api repos/o/r/issues\n", "", "command-unresolved"},
 		{"job default shell this lint does not read", "name: w\njobs:\n  j:\n    runs-on: windows-latest\n    defaults:\n      run:\n        shell: cmd\n    steps:\n      - run: gh api repos/o/r/issues\n", "", "command-unresolved"},
-		{"sudo edit and query modes run nothing", runStep("sudo -e gh api repos/o/r/issues\nsudo -l gh api repos/o/r/issues\nsudo --list gh api repos/o/r/issues\nsudo -nv gh api repos/o/r/issues"), "", ""},
 		{"coproc runs its command", runStep("coproc gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"coproc name before a simple command is its first word", runStep("coproc worker gh api repos/o/r/issues"), "", ""},
 		{"upper-case names are read on Windows", runStep("GH api repos/o/r/issues\nENV Gh api repos/o/r/issues\nBASH -c 'gh api repos/o/r/issues'"), "", "gh-api-unbounded"},
