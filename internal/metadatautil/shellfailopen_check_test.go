@@ -94,6 +94,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"coproc runs the tool", "coproc git -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
 		{"a named coproc runs its compound command", "coproc worker { git fetch 2>/dev/null; }\n", "dev-null"},
 		{"a name before a simple coproc command is the command", "coproc worker git fetch 2>/dev/null\n", ""},
+		{"a case arm runs the tool", "case x in x) git -C /missing fetch 2>/dev/null;; esac; echo done\ncase $y in\n  a|b) git gc 2>/dev/null ;;\nesac\n", "dev-null"},
+		{"a word after a command substitution is no command", "echo $(pwd) git 2>/dev/null\n", ""},
 		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
 		{"a tool called by its path hides stderr", "/usr/bin/git fetch 2>/dev/null\n", "dev-null"},
 		{"an exit status that wraps to zero swallows the failure", "git fetch || exit 256\n", "or-true"},
