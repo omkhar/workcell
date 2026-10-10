@@ -312,8 +312,8 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 				return !ran || failing // a bare exit keeps the last command's status
 			}
 			failing = shellFailOpenExit(strings.Join(fields, " "))
-			if failing && (fields[0] == "exit" || fields[0] == "return") {
-				return true
+			if fields[0] == "exit" || fields[0] == "return" {
+				return failing // the branch ends here, so a later command never runs
 			}
 		}
 		depth += shellFailOpenNesting(each)
