@@ -181,13 +181,7 @@ func parenBalance(args []word) int {
 	return balance
 }
 
-// substitutionDepth returns how many unquoted $( spans are still open after a
-// line's words, given the count open before it. A quoted "$( is the stack
-// shellWords returns; an unquoted one leaves no trace there, so a reader that
-// stops at the line end splits x=$( from the command on the next line. Only a
-// $( starts the count, so a bare subshell ( does not join lines, and the
-// count is the balance of the whole line, so $((a + 1)) split into words
-// closes on the line it opens.
+// substitutionDepth returns how many unquoted $( spans are still open after a line's words, given the count open before it. A quoted "$( is the stack shellWords returns; an unquoted one leaves no trace there, so a reader that stops at the line end splits x=$( from the command on the next line. Only a $( starts the count, so a bare subshell ( does not join lines, and the count is the balance of the whole line, so $((a + 1)) split into words closes on the line it opens.
 func substitutionDepth(open int, words []word) int {
 	if open == 0 && !slices.ContainsFunc(words, func(each word) bool {
 		_, unclosed := withoutExpansions(each.text)
@@ -324,8 +318,7 @@ func definedName(words []word) string {
 // after it, which a plain single-quoted span does not.
 const ansiCQuote = '$'
 
-// quoteOpener returns the text that opens a span of the kind quote names, so a
-// reader can resume a span that runs past its line by reading the opener first.
+// quoteOpener returns the text that opens a span of the kind quote names, so a reader can resume a span that runs past its line by reading the opener first.
 func quoteOpener(quote byte) string {
 	if quote == ansiCQuote {
 		return "$'"

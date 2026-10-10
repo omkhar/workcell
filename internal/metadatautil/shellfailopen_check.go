@@ -111,7 +111,7 @@ var (
 	// shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
 	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection, since bash reads git||true as git then ||. After env, sudo or xargs any later word may be the tool, so their options need no table.
-	shellToolCommand = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
+	shellToolCommand = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs|nice|nohup|stdbuf|setsid|ionice|timeout|chrt|taskset)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
 	// shellUnnamedCommand is a command word this reader cannot name: an expansion, a quoted word or a command that runs text. It may run a tool, so a substitution that holds one counts as a tool substitution.
 	shellUnnamedCommand = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
@@ -128,13 +128,9 @@ var (
 	// shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenPassesOn is a handler that hands the failure on to the next ||: false, or a { } group ending in false. exit, return and die end the list.
 	shellFailOpenPassesOn   = regexp.MustCompile(`^\|\|\s*(?:\{[^}]*;\s*)?false\s*(?:;?\s*\})?\s*(?:$|[;&|)])`)
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
-	// shellFailOpenRunsFirst is a substitution, a process substitution or an
-	// operator, which runs a command of its own before a later word. The & of
-	// a >& or <& redirection runs nothing.
+	// shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
 	shellFailOpenRunsFirst = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&")
-	// shellFailOpenTested is a command that is the test of an if/while. It
-	// covers a substitution, never a `done < <(` loop header, where the loop's
-	// own while says nothing about the inner command.
+	// shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
 	shellFailOpenTested = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)
 	// shellFailOpenList is a && or || operator, which joins two commands.
 	shellFailOpenList = regexp.MustCompile(`&&|\|\|`)
@@ -181,7 +177,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		words, opened, quote, rest, continues, comment := shellWords(reopen+text, stack)
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
-		code := strings.TrimSuffix(text, comment)
+		code := shellBackticksAsSubsts(strings.TrimSuffix(text, comment))
 		// A line that ends on && || or | carries its command onto the next one, so a handler written there belongs to the same command.
 		fields := strings.Fields(shellCodeOnly(code))
 		operator := len(fields) > 0 && continuesLine(fields[len(fields)-1])
@@ -552,6 +548,22 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 		}
 	}
 	return count
+}
+
+// shellBackticksAsSubsts spells each `...` command substitution outside single quotes as $(...), so one reader covers both.
+func shellBackticksAsSubsts(code string) string {
+	var out strings.Builder
+	single, escaped, open := false, false, false
+	for _, r := range code {
+		if r == '`' && !single && !escaped {
+			open = !open
+			out.WriteString(map[bool]string{true: "$(", false: ")"}[open])
+			continue
+		}
+		single, escaped = single != (r == '\'' && !escaped), r == '\\' && !escaped && !single
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git is not a command; a $( inside double quotes opens code again. The result keeps the line's length, so an offset in it is the same offset in the line.
