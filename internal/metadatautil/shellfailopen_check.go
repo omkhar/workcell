@@ -109,10 +109,10 @@ var (
 	shellFailOpenTools = `(?:find|git|gh|docker|getent)`
 	shellToolName      = regexp.MustCompile(`^` + shellFailOpenTools + `$`)
 	// shellCommandPosition ends where a command word starts: after the start,
-	// an operator or an opener, then any reserved word, assignment, or xargs or
-	// sudo with its options and their values. `git` in a path or an argument
+	// an operator or an opener, then any reserved word, assignment, or xargs,
+	// sudo or env with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[uCS]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
@@ -137,6 +137,9 @@ var (
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
+	// shellFailOpenPassesOn is a handler that hands the failure on to the next
+	// ||: false, or a { } group ending in false. exit, return and die end the list.
+	shellFailOpenPassesOn   = regexp.MustCompile(`^\|\|\s*(?:\{[^}]*;\s*)?false\s*(?:;?\s*\})?\s*(?:$|[;&|)])`)
 	shellFailOpenStatusRead = regexp.MustCompile(`\$\?|PIPESTATUS`)
 	// shellFailOpenRunsFirst is a substitution, a process substitution or an
 	// operator, which runs a command of its own before a later word. The & of
@@ -160,9 +163,7 @@ var (
 	shellLaterSubst = regexp.MustCompile("\\$\\((?:[^(]|$)|`")
 )
 
-// ShellFailOpenFindings reports the fail-open hits in one script. It skips
-// heredoc bodies, joins a statement that runs past its line, and ignores
-// quoted text that opens no command substitution.
+// ShellFailOpenFindings reports the fail-open hits in one script. It skips heredoc bodies, joins a statement that runs past its line, and ignores quoted text that opens no command substitution.
 func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	type logical struct {
 		number    int
@@ -308,8 +309,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	return findings, nil
 }
 
-// shellFailOpenHandled reports whether the first || runs a failure branch: a
-// shellFailOpenExits command, or a { } group ending in one; later spans a group.
+// shellFailOpenHandled reports whether the first || runs a failure branch: a shellFailOpenExits command, or a { } group ending in one; later spans a group.
 func shellFailOpenHandled(rest string, later func() []string) bool {
 	outside := shellOutsideSubsts(rest)
 	loc := shellFailOpenOr.FindStringIndex(outside)
@@ -333,8 +333,7 @@ func shellFailOpenNesting(command string) int {
 	return 0
 }
 
-// shellFailOpenBranchExits reports whether the branch leaves a failure at its
-// own depth: a failing exit or a last shellFailOpenExits command before closers.
+// shellFailOpenBranchExits reports whether the branch leaves a failure at its own depth: a failing exit or a last shellFailOpenExits command before closers.
 func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 	depth, failing, ran := 0, false, false
 	for _, each := range codes {
@@ -374,8 +373,7 @@ func shellFailOpenFirstCall(command string) int {
 	return first
 }
 
-// shellOutsideSubsts returns the command with each $(...) body removed, so
-// an operator inside a substitution is not read as one of the command's.
+// shellOutsideSubsts returns the command with each $(...) body removed, so an operator inside a substitution is not read as one of the command's.
 func shellOutsideSubsts(command string) string {
 	outside, _ := withoutExpansions(command)
 	return outside
@@ -392,8 +390,7 @@ func shellToolSubsts(command string) []int {
 	return starts
 }
 
-// shellSubstCall returns the body of the $( at start, [[ ]] tests emptied,
-// and where its first tool or unnamed command ends, or -1.
+// shellSubstCall returns the body of the $( at start, [[ ]] tests emptied, and where its first tool or unnamed command ends, or -1.
 func shellSubstCall(command string, start int) (body string, call int) {
 	body = shellTestExpr.ReplaceAllString(strings.TrimSuffix(command[start+2:shellSubstEnd(command, start)], ")"), "[[ ]]")
 	call = -1
@@ -568,9 +565,11 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 		if !tool || !ends("||") || shellFailOpenReadsOwnStatus(shellOutsideSubsts(segment[offset-2:])) {
 			continue
 		}
-		if failing = shellFailOpenHandled(shellOutsideSubsts(segment[offset-2:]), later); !failing {
+		rest := shellOutsideSubsts(segment[offset-2:])
+		if !shellFailOpenHandled(rest, later) {
 			count++ // the || ends an operand that runs a tool
 		}
+		failing = shellFailOpenPassesOn.MatchString(rest)
 	}
 	for _, start := range shellToolSubsts(segment) {
 		if start >= end { // a substitution's handlers are read in its own body
