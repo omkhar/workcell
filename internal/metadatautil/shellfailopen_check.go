@@ -306,7 +306,8 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 			fields = fields[1:]
 		}
 		for at, word := range fields { // an exit 0, or an exit behind && or ||, may run and succeed
-			if (word == "exit" || word == "return") && (depth > 0 || at > 0) && (at+1 == len(fields) || !shellFailOpenExit(word+" "+fields[at+1])) {
+			operand := slices.DeleteFunc(slices.Clone(fields[at+1:min(at+3, len(fields))]), func(w string) bool { return w == "--" })
+			if (word == "exit" || word == "return") && (depth > 0 || at > 0) && (len(operand) == 0 || !shellFailOpenExit(word+" "+operand[0])) {
 				return false
 			}
 		}

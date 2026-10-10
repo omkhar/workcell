@@ -101,6 +101,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"an exit 0 before a failing command makes the handler succeed", "git fetch || { exit 0; false; }\ngit gc || ( exit 0; false )\n", "or-true"},
 		{"a nested exit 0 may make the handler succeed", "git fetch || { if true; then exit 0; fi; false; }\n", "or-true"},
 		{"an exit behind && may make the handler succeed", "git fetch || { true && exit 0; false; }\n", "or-true"},
+		{"exit -- 0 behind && may make the handler succeed", "git fetch || { true && exit -- 0; false; }\n", "or-true"},
 		{"command exit is still exit", "git pull || { command exit 0; false; }\ngit gc || { command -p exit 0; false; }\n", "or-true"},
 		{"command exit 1 ends the list; a path with dev inside a name is no null device", "git fetch || { command exit 1; } || true\ngit fetch 2>/tmp/review-device/null\ngit fetch 2>/tmp/workcell-review-dev/dev/null\n", ""},
 		{"a top-level return hands the failure on to a later handler", "git -C /missing fetch || return 1 || true\n", "or-true"},
@@ -198,10 +199,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"status read behind ||", "out=$(git ls-files) || rc=$?\n", ""},
 		{"status read behind || after 1>&2", "git rev-parse HEAD 2>/dev/null 1>&2 || rc=$?\n", ""},
 		{"&& alone does not prove the failure propagates", "out=$(git ls-files) && echo done\n", "command-substitution"},
-		{"status test", "x=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\n", ""},
-		{"handler on the continued line", "x=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
-		{"if tests the call; tool name after echo; quoted $( runs nothing; escaped ; is an argument", "if x=$(gh api /y); then :; fi\necho gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
-		{"comment names the idiom; message names the idiom; quoted span across lines; heredoc body", "# git fetch || true\necho 'git fetch || true'\nmsg='\ngit fetch || true\n'\ncat <<'EOF'\ngit fetch || true\nEOF\n", ""},
+		{"status test; handler on the continued line", "x=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\nx=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
+		{"if tests the call; tool name after echo; quoted $( runs nothing; escaped ; is an argument; comment names the idiom; message names the idiom; quoted span across lines; heredoc body", "if x=$(gh api /y); then :; fi\necho gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n# git fetch || true\necho 'git fetch || true'\nmsg='\ngit fetch || true\n'\ncat <<'EOF'\ngit fetch || true\nEOF\n", ""},
 		{"escaped apostrophe in an ANSI-C span; noclobber redirection target; not a tool call; path is not a tool; tool name as an argument", ": $'x\\'; git fetch || true'\n: >| git fetch origin || true\ngrep -q x file || true\nls .git/hooks 2>/dev/null\nprintf '%s\\n' git || true\n", ""},
 	}
 	for _, testCase := range cases {
