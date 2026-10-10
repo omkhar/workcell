@@ -147,7 +147,7 @@ func shellProgram(words []string, stdin string) (string, bool) {
 		return words[i], true
 	case body:
 		return "", false // bash -c with no body runs nothing
-	case fromStdin || i >= len(words):
+	case fromStdin || i >= len(words) || slices.Contains([]string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}, words[i]):
 		return stdin, true
 	}
 	return "", false // the operand names a script file

@@ -31,6 +31,10 @@ func unspelled(word string) bool {
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
+var shellStartupEnv = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV=`)
+
+func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" || env["ENV"] != "" }
+
 // githubHostedPosix matches the provisioned GitHub-hosted Linux and macOS
 // labels, the only runners a shell-less step surely runs bash on.
 var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|24\.04|22\.04)|ubuntu-(?:24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
@@ -163,6 +167,9 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						(definition.RunsOn.Kind != yaml.ScalarNode || !githubHostedPosix.MatchString(definition.RunsOn.Value))) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
+				}
+				if slices.ContainsFunc([]map[string]string{documents[file].Env, definition.Env, step.Env}, setsStartupFile) || shellStartupEnv.MatchString(step.Run) {
+					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
 				for _, words := range EveryShellCommand(step.Run) {
 					// A lint of what may run fails closed on a command it cannot spell,
