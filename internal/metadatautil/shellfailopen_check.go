@@ -112,7 +112,7 @@ var (
 	// an operator or an opener, then any reserved word, assignment, or xargs,
 	// sudo or env with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[uCS]\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	shellToolCommand = regexp.MustCompile(shellCommandPosition + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)

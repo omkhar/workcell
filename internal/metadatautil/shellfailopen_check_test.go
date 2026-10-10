@@ -85,6 +85,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a failure passed on by false still reaches the next handler", "git fetch || false || true\n", "or-true"},
 		{"an exit or die handler ends the list before a later true", "git fetch || exit 1 || true\ngit gc || die x || true\ngit pull || { echo x; exit 1; } || true\n", ""},
 		{"a tool behind env is the tool", "env git -C /missing fetch || true\n/usr/bin/env -u X A=1 git fetch || true\n", "or-true"},
+		{"env long options take their values", "env --chdir / git -C /missing fetch || true\n", "or-true"},
 		{"an exit status that wraps to zero swallows the failure", "git fetch || exit 256\n", "or-true"},
 		{"&& after a pipe reads the last stage", "git fetch 2>/dev/null | cat && echo done\n", "dev-null"},
 		{"brace group redirect is its calls'", "{ git fetch; } 2>/dev/null; echo done\n", "dev-null"},
