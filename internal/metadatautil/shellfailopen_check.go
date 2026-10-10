@@ -317,9 +317,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	return findings, nil
 }
 
-// shellFailOpenHandled reports whether the first || after the call runs a
-// failure branch: a shellFailOpenExits command, or a { } group that ends in
-// one at its own depth. later returns the commands after this one.
+// shellFailOpenHandled reports whether the first || runs a failure branch: a
+// shellFailOpenExits command, or a { } group ending in one; later spans a group.
 func shellFailOpenHandled(rest string, later func() []string) bool {
 	outside := shellOutsideSubsts(rest)
 	loc := shellFailOpenOr.FindStringIndex(outside)
@@ -563,11 +562,8 @@ func shellListOperands(command string) []string {
 	return append(operands, command[start:])
 }
 
-// shellSwallowingHandlers counts each || after a pipeline that runs a tool,
-// read with expansions removed, whose handler neither fails, as a
-// shellFailOpenHandled branch does, nor reads the status: true, : or a
-// message lets the step go on. A lone & ends a pipeline, so a handler after
-// it covers no backgrounded tool.
+// shellSwallowingHandlers counts each || after a pipeline that runs a tool
+// whose handler neither fails, as shellFailOpenHandled reads it, nor reads the status.
 func shellSwallowingHandlers(segment string, later func() []string, inSubst bool) int {
 	count, end, offset, pipeline := 0, 0, 0, ""
 	for _, operand := range shellListOperands(segment) {
