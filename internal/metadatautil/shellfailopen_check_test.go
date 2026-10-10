@@ -185,16 +185,10 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"status read after local", "local out=$(git ls-files)\nrc=$?\n", "command-substitution"},
 		{"handler after a substitution argument", "echo \"$(git ls-files)\" || exit 1\n", "command-substitution"},
 
-		{"status handler", "x=$(git ls-files) || exit 1\n", ""},
-		{"handler after a separate local", "local out; out=$(git ls-files) || exit 1\n", ""},
-		{"bare return handler", "x=$(git ls-files) || return\n", ""},
-		{"fail handler", "out=$(git ls-files) || fail \"no list\"\n", ""},
-		{"die handler", "out=$(git ls-files) || die\n", ""},
-		{"group handler that exits", "out=$(git ls-files) || { echo no list; exit 1; }\n", ""},
+		{"status handler; handler after a separate local; bare return handler; fail handler; die handler; group handler that exits", "x=$(git ls-files) || exit 1\nlocal out; out=$(git ls-files) || exit 1\nx=$(git ls-files) || return\nout=$(git ls-files) || fail \"no list\"\nout=$(git ls-files) || die\nout=$(git ls-files) || { echo no list; exit 1; }\n", ""},
 		{"bare exit after a command in a group handler", "out=$(git ls-files) || { printf ignored; exit; }\nf() {\n  out=$(git ls-files) || { printf x; return; }\n}\n", "command-substitution"},
-		{"bare exit as the only command of a group handler", "out=$(git ls-files) || { exit; }\nout=$(git ls-files) || { false; exit; }\n", ""},
+		{"bare exit as the only command of a group handler; group handler that ends in false; status handler after a multi-line substitution; status read", "out=$(git ls-files) || { exit; }\nout=$(git ls-files) || { false; exit; }\nout=$(git ls-files) || { false; }\nx=\"$(\n  git ls-files\n)\" || exit 1\nx=$(git ls-files)\nrc=$?\n", ""},
 		{"quoted ) inside a substitution", "out=$(printf ')'; git -C /missing ls-files); echo done\n", "command-substitution"},
-		{"group handler that ends in false; status handler after a multi-line substitution; status read", "out=$(git ls-files) || { false; }\nx=\"$(\n  git ls-files\n)\" || exit 1\nx=$(git ls-files)\nrc=$?\n", ""},
 		{"status read in the same command; status read behind ||; status read behind || after 1>&2; status test; handler on the continued line", "out=$(git ls-files) rc=$?\nout=$(git ls-files) || rc=$?\ngit rev-parse HEAD 2>/dev/null 1>&2 || rc=$?\nx=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\nx=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
 		{"&& alone does not prove the failure propagates", "out=$(git ls-files) && echo done\n", "command-substitution"},
 		{"if tests the call; tool name after echo; quoted $( runs nothing; escaped ; is an argument; comment names the idiom; message names the idiom; quoted span across lines; heredoc body", "if x=$(gh api /y); then :; fi\necho gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n# git fetch || true\necho 'git fetch || true'\nmsg='\ngit fetch || true\n'\ncat <<'EOF'\ngit fetch || true\nEOF\n", ""},
@@ -327,7 +321,7 @@ func TestCheckShellFailOpenRatchet(t *testing.T) {
 
 func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
 	t.Parallel()
-	for file, shell := range map[string]bool{"x\n#!/bin/sh -e\ngit fetch || true": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash\ngit fetch || true": true, "x\n#!/usr/bin/env python3\ngit fetch || true": false, "x\n#![no_main]\ngit fetch || true": false, "u.bash\n# a sourced module\ngit fetch || true": true, "z\n#!/bin/zsh\ngit fetch || true": true, "e\n#!/usr/bin/env -S -u FOO sh\ngit fetch || true": true, "q\n#!/usr/bin/env -S -u FOO 'sh'\ngit fetch || true": true, "b\n#!/bin/busybox sh\ngit fetch || true": true, "f\n#!/usr/bin/fish\ngit fetch || true": false, "p.zsh\ngit fetch 2>/dev/null; rc=${PIPESTATUS[0]}; echo done": true, "p.bash\ngit fetch 2>/dev/null; rc=${PIPESTATUS[0]}; echo done": false} {
+	for file, shell := range map[string]bool{"x\n#!/bin/sh -e\ngit fetch || true": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash\ngit fetch || true": true, "x\n#!/usr/bin/env python3\ngit fetch || true": false, "x\n#![no_main]\ngit fetch || true": false, "u.bash\n# a sourced module\ngit fetch || true": true, "z\n#!/bin/zsh\ngit fetch || true": true, "e\n#!/usr/bin/env -S -u FOO sh\ngit fetch || true": true, "q\n#!/usr/bin/env -S -u FOO 'sh'\ngit fetch || true": true, "b\n#!/bin/busybox sh\ngit fetch || true": true, "f\n#!/usr/bin/fish\ngit fetch || true": false, "p.zsh\ngit fetch 2>/dev/null; rc=${PIPESTATUS[0]}; echo done": true, "p.bash\ngit fetch 2>/dev/null; rc=${PIPESTATUS[0]}; echo done": false, "v\n#!/usr/bin/env -S -u zsh bash\ngit fetch 2>/dev/null; rc=${PIPESTATUS[0]}; echo done": false, "w.bash\ngit fetch 2>/dev/null; rc=$PIPESTATUS; echo done": false} {
 		root := fixtureRepo(t, "#!/bin/bash\n", "")
 		name, first, _ := strings.Cut(file, "\n")
 		if err := os.WriteFile(filepath.Join(root, "scripts", name), []byte(first+"\n"), 0o755); err != nil {

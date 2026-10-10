@@ -40,7 +40,7 @@ func CheckShellFailOpen(rootDir string) error {
 		if !isShellSource(rel, content) {
 			continue
 		}
-		other := map[bool]string{true: "PIPESTATUS", false: "pipestatus"}[filepath.Ext(rel) == ".zsh" || strings.Contains(strings.SplitN(string(content), "\n", 2)[0], "zsh")] // the other dialect's name is an ordinary unset parameter
+		other := map[bool]string{true: "PIPESTATUS", false: "pipestatus"}[filepath.Ext(rel) == ".zsh" || shebangInterpreter(content) == "zsh"] // the other dialect's name is an ordinary unset parameter
 		findings, scanErr := ShellFailOpenFindings(strings.ReplaceAll(string(content), other, "unset_"+other))
 		if scanErr != nil {
 			return fmt.Errorf("%s: %w", rel, scanErr)
@@ -115,7 +115,7 @@ var (
 	shellFailOpenOr            = regexp.MustCompile(`\|\|\s*`)                                                                                                                                                                          // shellFailOpenOr is the || that runs a handler.
 	shellFailOpenExits         = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+--)?(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)                                                                   // shellFailOpenExits is a command that ends the script or the function with a failure: exit or return with no operand or a literal bash reads modulo 256 as nonzero (see shellFailOpenExit), die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an assignment such as failed=1 or an echo fail reports nothing.
 	shellFailOpenTerminal      = regexp.MustCompile(`^\s*(?:(?:command|builtin)(?:\s+(?:-p|--))*\s+)?(?:exit|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`)                                                                               // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit or die-style command, which ends the script, so the list after it never runs; a return fails outside a function, so it does not end the list.
-	shellFailOpenStatusRead    = regexp.MustCompile(`\$\{?\?|\$\{PIPESTATUS\b|\$\{?pipestatus\b`)
+	shellFailOpenStatusRead    = regexp.MustCompile(`\$\{?\?|\$\{?PIPESTATUS\b|\$\{?pipestatus\b`)
 	shellFailOpenRunsFirst     = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&") // shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
 	shellFailOpenTested        = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
 	shellFailOpenList          = regexp.MustCompile(`&&|\|\|`)                                               // shellFailOpenList is a && or || operator, which joins two commands.
@@ -628,18 +628,24 @@ func shellCodeOnly(line string) string {
 }
 
 func isShellSource(rel string, content []byte) bool {
-	if slices.Contains([]string{".sh", ".bash", ".ksh", ".zsh"}, filepath.Ext(rel)) { // a sourced module needs no shebang
-		return true
-	}
+	interpreter := shebangInterpreter(content) // fail closed: any interpreter not known to be another language is a shell
+	return slices.Contains([]string{".sh", ".bash", ".ksh", ".zsh"}, filepath.Ext(rel)) || interpreter != "" && !shellFailOpenOtherLanguage.MatchString(interpreter)
+}
+
+// shebangInterpreter returns the base name of the program a #! line runs, after env and its options, assignments and operands, or "" when there is none.
+func shebangInterpreter(content []byte) string {
 	first, _, _ := strings.Cut(string(content), "\n")
-	words := strings.Fields(strings.NewReplacer("'", "", `"`, "").Replace(strings.TrimPrefix(first, "#!"))) // the interpreter, after env and its options and assignments
+	words := strings.Fields(strings.NewReplacer("'", "", `"`, "").Replace(strings.TrimPrefix(first, "#!")))
 	for len(words) > 1 && (filepath.Base(words[0]) == "env" || strings.HasPrefix(words[0], "-") || strings.Contains(words[0], "=")) {
 		option := words[0]
 		if words = words[1:]; len(words) > 1 && (option == "--unset" || option == "--chdir" || len(option) > 1 && option[1] != '-' && strings.ContainsRune("uCP", rune(option[len(option)-1]))) {
 			words = words[1:] // the operand of env -u NAME, -C DIR or -P PATH
 		}
 	}
-	return strings.HasPrefix(first, "#!") && !strings.HasPrefix(first, "#![") && len(words) > 0 && !shellFailOpenOtherLanguage.MatchString(filepath.Base(words[0])) // fail closed: any interpreter not known to be another language is a shell
+	if !strings.HasPrefix(first, "#!") || strings.HasPrefix(first, "#![") || len(words) == 0 {
+		return ""
+	}
+	return filepath.Base(words[0])
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {
