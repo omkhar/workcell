@@ -23,27 +23,23 @@ const (
 
 type workflowRefHit struct{ kind, file, job, step string }
 
-// unspelled reports whether bash may rewrite word before it runs it: an
-// expansion, a brace expansion as {gh,}, or a pathname pattern as a?i; a lone
-// [ is the test command. A Windows name, with a \ or .exe, is not read here.
+// unspelled reports whether bash may rewrite word: an expansion, a brace or a
+// pathname pattern, or a Windows name with a \ or .exe; a lone [ is test.
 func unspelled(word string) bool {
 	return strings.ContainsAny(word, "$`*?\\") || braceExpansion.MatchString(word) ||
 		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
 }
 
-// shellStartupEnv, read with quotes removed, names BASH_ENV or ENV, or sets a
-// variable whose name is an expansion, in an assignment or a GITHUB_ENV line.
+// shellStartupEnv names BASH_ENV or ENV, or sets a variable whose name is an expansion.
 var shellStartupEnv = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV(?:[^A-Za-z0-9_{]|$)|` +
 	`(?:^|[;&|(]|\b(?:export|declare|typeset|readonly|local)(?:\s+-\w+)*)\s*\w*\$\{?\w+\}?\w*\+?=|GITHUB_ENV.*\$\{?\w+\}?\w*=|\$\{?\w+\}?\w*=.*GITHUB_ENV`)
 
 func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" || env["ENV"] != "" }
 
-// githubHostedPosix matches the provisioned GitHub-hosted Linux and macOS
-// labels, the only runners a shell-less step surely runs bash on.
+// githubHostedPosix matches the GitHub-hosted labels a shell-less step surely runs bash on.
 var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|24\.04|22\.04)|ubuntu-(?:24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
 
-// stepShell returns the shell a step's run body is written for: its own
-// shell key, then the job's defaults, then the workflow's.
+// stepShell returns a step's shell key, else its job's default, else its workflow's.
 func stepShell(document workflowDocument, job workflowJob, step workflowStep) string {
 	if step.Shell != "" {
 		return step.Shell
@@ -58,8 +54,7 @@ func stepShell(document workflowDocument, job workflowJob, step workflowStep) st
 	return document.Def.Run["shell"]
 }
 
-// unmodeledWrappers run another program after options this lint does not
-// parse, or a program in a language it does not read, as pwsh does.
+// unmodeledWrappers run a program after options, or in a language, this lint does not read.
 var unmodeledWrappers = map[string]bool{
 	"pwsh": true, "powershell": true, "cmd": true, "setarch": true, "setsid": true, "stdbuf": true, "xargs": true, "flock": true,
 	"ionice": true, "chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true, "unshare": true,
