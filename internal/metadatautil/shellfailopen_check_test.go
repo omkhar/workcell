@@ -329,9 +329,10 @@ func TestCheckShellFailOpenRatchet(t *testing.T) {
 
 func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
 	t.Parallel()
-	for first, shell := range map[string]bool{"#!/bin/sh -e": true, "#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "#!/usr/bin/env python3": false, "#![no_main]": false} {
+	for file, shell := range map[string]bool{"x\n#!/bin/sh -e": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash": true, "x\n#!/usr/bin/env python3": false, "x\n#![no_main]": false, "u.bash\n# a sourced module": true} {
 		root := fixtureRepo(t, "#!/bin/bash\n", "")
-		if err := os.WriteFile(filepath.Join(root, "scripts", "x"), []byte(first+"\ngit fetch || true\n"), 0o755); err != nil {
+		name, first, _ := strings.Cut(file, "\n")
+		if err := os.WriteFile(filepath.Join(root, "scripts", name), []byte(first+"\ngit fetch || true\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if out, err := exec.Command("git", "-C", root, "add", ".").CombinedOutput(); err != nil {

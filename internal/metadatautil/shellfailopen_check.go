@@ -120,8 +120,7 @@ var (
 	shellAssignment   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
 	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`) // shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
 	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
-	// shellLaterSubst is a command substitution, not an arithmetic $((.
-	shellLaterSubst = regexp.MustCompile("\\$\\((?:[^(]|$)|`")
+	shellLaterSubst   = regexp.MustCompile("\\$\\((?:[^(]|$)|`") // shellLaterSubst is a command substitution, not an arithmetic $((.
 )
 
 // ShellFailOpenFindings reports the fail-open hits in one script. It skips heredoc bodies, joins a statement that runs past its line, and ignores quoted text that opens no command substitution.
@@ -630,7 +629,7 @@ func shellCodeOnly(line string) string {
 }
 
 func isShellSource(rel string, content []byte) bool {
-	if strings.HasSuffix(rel, ".sh") {
+	if slices.Contains([]string{".sh", ".bash", ".ksh"}, filepath.Ext(rel)) { // a sourced module needs no shebang
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
