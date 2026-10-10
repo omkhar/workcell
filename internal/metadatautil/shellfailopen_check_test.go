@@ -106,6 +106,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a top-level return hands the failure on to a later handler", "git -C /missing fetch || return 1 || true\n", "or-true"},
 		{"a failing subshell hands the failure on to a later handler", "git fetch || ( exit 1 ) || true\n", "or-true"},
 		{"nice keeps the status of the tool it runs", "nice git fetch || true\ntimeout 5 git pull || true\n", "or-true"},
+		{"zsh noglob and nocorrect keep the status of the tool", "noglob git -C /missing fetch || true\nnocorrect git gc || true\n", "or-true"},
 		{"flock keeps the status of the tool it runs", "flock /tmp/workcell.lock git -C /missing fetch || true\n", "or-true"},
 		{"external time keeps the status of the tool it runs", "/usr/bin/time -f '' git fetch || true\n", "or-true"},
 		{"a backtick substitution is a command substitution", "out=`git ls-files`; echo done\n", "command-substitution"},
@@ -199,10 +200,9 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"&& alone does not prove the failure propagates", "out=$(git ls-files) && echo done\n", "command-substitution"},
 		{"status test", "x=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\n", ""},
 		{"handler on the continued line", "x=\"$(git ls-files)\" ||\n  die \"no list\"\n", ""},
-		{"if tests the call", "if x=$(gh api /y); then :; fi\n", ""},
+		{"if tests the call; tool name after echo; quoted $( runs nothing; escaped ; is an argument", "if x=$(gh api /y); then :; fi\necho gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 		{"comment names the idiom; message names the idiom; quoted span across lines; heredoc body", "# git fetch || true\necho 'git fetch || true'\nmsg='\ngit fetch || true\n'\ncat <<'EOF'\ngit fetch || true\nEOF\n", ""},
 		{"escaped apostrophe in an ANSI-C span; noclobber redirection target; not a tool call; path is not a tool; tool name as an argument", ": $'x\\'; git fetch || true'\n: >| git fetch origin || true\ngrep -q x file || true\nls .git/hooks 2>/dev/null\nprintf '%s\\n' git || true\n", ""},
-		{"tool name after echo; quoted $( runs nothing; escaped ; is an argument", "echo gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n", ""},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
