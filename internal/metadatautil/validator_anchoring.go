@@ -14,11 +14,7 @@ import (
 	"unicode/utf8"
 )
 
-// CheckValidatorAnchoring requires each validator that anchors on a shared
-// shell reader to run the shared evasion corpus. A validator that reads a
-// command out of file content is bypassed by a comment, a heredoc body or a
-// longer option unless a negative fixture proves otherwise, so the two counts
-// of each reader and its corpus driver must stay equal.
+// CheckValidatorAnchoring requires each validator that anchors on a shared shell reader to run the shared evasion corpus. A validator that reads a command out of file content is bypassed by a comment, a heredoc body or a longer option unless a negative fixture proves otherwise, so the two counts of each reader and its corpus driver must stay equal.
 //
 // The check counts call sites with a text scan rather than reading the syntax
 // tree, the same choice the other checks in this package record: the call sites

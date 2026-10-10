@@ -25,9 +25,7 @@ import (
 // bash still reads as data. The body therefore runs to the end of the script,
 // which loses invocations rather than inventing them.
 //
-// quoted records a delimiter with any quoting, which keeps bash from expanding
-// the body, and start and end are the bytes of the operator and delimiter in
-// the line, so a reader can put the body back where the command reads it.
+// quoted records a delimiter with any quoting, which keeps bash from expanding the body, and start and end are the bytes of the operator and delimiter in the line, so a reader can put the body back where the command reads it.
 type heredoc struct {
 	delimiter  string
 	stripTabs  bool

@@ -49,7 +49,7 @@ func unreadEnvWrite(run string) bool {
 func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" || env["ENV"] != "" }
 
 // githubHostedPosix matches the GitHub-hosted labels a shell-less step surely runs bash on.
-var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|24\.04|22\.04)|ubuntu-(?:24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
+var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|26\.04|24\.04|22\.04)|ubuntu-(?:26|24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
 
 // stepShell returns a step's shell key, else its job's default, else its workflow's.
 func stepShell(document workflowDocument, job workflowJob, step workflowStep) string {
@@ -191,6 +191,9 @@ func readShell(shell string) bool {
 
 var shellTemplateOption = regexp.MustCompile(`^(?:--noprofile|--norc|-[euxo]+|pipefail)$`)
 
+// ghCommands are gh 2.102's built-in commands and their built-in short names, which no alias or extension can shadow; alias and extension are left out.
+var ghCommands = strings.Fields("agent agents agent-tasks at cs rs skills agent-task api attestation auth browse cache codespace completion config copilot discussion gist gpg-key help issue label licenses org pr preview project release repo ruleset run search secret skill ssh-key status variable version workflow")
+
 func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	documents, files, err := loadWorkflowDocuments(rootDir)
 	if err != nil {
@@ -233,8 +236,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					}
 					args = ghSubcommand(args)
 					switch {
-					case len(args) > 0 && (unspelled(args[0]) || args[0] == "alias" || args[0] == "extension"):
-						add("command-unresolved") // the subcommand cannot be spelled, or it adds subcommands this lint cannot read
+					case len(args) > 0 && (unspelled(args[0]) || !slices.Contains(ghCommands, args[0])):
+						add("command-unresolved") // the subcommand cannot be spelled, or it may be an alias or extension this lint cannot read
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
