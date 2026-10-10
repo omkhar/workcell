@@ -1059,8 +1059,7 @@ func everyShellCommand(script string) [][]string {
 	return commandWords(flattenSubstitutions(heredocsAsHereStrings(script)))
 }
 
-// commandWords returns the words of every command in text, which
-// flattenSubstitutions has rewritten; a here-string is its command's stdin.
+// commandWords returns the words of every command in text, which flattenSubstitutions has rewritten; a here-string is its command's stdin.
 func commandWords(text string) [][]string {
 	var found [][]string
 	var command []string

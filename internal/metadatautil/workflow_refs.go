@@ -212,8 +212,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					}
 					args = ghSubcommand(args)
 					switch {
-					case len(args) > 0 && unspelled(args[0]):
-						add("command-unresolved") // the subcommand cannot be spelled
+					case len(args) > 0 && (unspelled(args[0]) || args[0] == "alias" || args[0] == "extension"):
+						add("command-unresolved") // the subcommand cannot be spelled, or it adds subcommands this lint cannot read
 					case len(args) > 0 && args[0] == "api":
 						if !ghPaginates(args) { // gh api has no --limit
 							add("gh-api-unbounded")
