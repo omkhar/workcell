@@ -629,7 +629,7 @@ func shellCodeOnly(line string) string {
 }
 
 func isShellSource(rel string, content []byte) bool {
-	if slices.Contains([]string{".sh", ".bash", ".ksh"}, filepath.Ext(rel)) { // a sourced module needs no shebang
+	if slices.Contains([]string{".sh", ".bash", ".ksh", ".zsh"}, filepath.Ext(rel)) { // a sourced module needs no shebang
 		return true
 	}
 	first, _, _ := strings.Cut(string(content), "\n")
@@ -637,7 +637,7 @@ func isShellSource(rel string, content []byte) bool {
 	for len(words) > 1 && (filepath.Base(words[0]) == "env" || strings.HasPrefix(words[0], "-") || strings.Contains(words[0], "=")) {
 		words = words[1:]
 	}
-	return strings.HasPrefix(first, "#!") && len(words) > 0 && slices.Contains([]string{"sh", "bash", "dash", "ksh"}, filepath.Base(words[0]))
+	return strings.HasPrefix(first, "#!") && len(words) > 0 && slices.Contains([]string{"sh", "bash", "dash", "ksh", "zsh"}, filepath.Base(words[0]))
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {
