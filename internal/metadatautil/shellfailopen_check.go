@@ -112,7 +112,7 @@ var (
 	// an operator or an opener, then any reserved word, assignment, or xargs,
 	// sudo or env with its options and their values. `git` in a path or an argument
 	// is not a call, and nor is the target of a >| or >& redirection.
-	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|coproc|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
+	shellCommandPosition = "(?:^|[;(`\n]|(?:^|[^<>])[&|])\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*"
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	// After env, sudo or xargs any later word may be the tool, so their options need no table.
@@ -276,13 +276,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
 			hits[ruleOrTrue] += shellSwallowingHandlers(command, later, false)
-			// A redirect belongs to the operand of the && || or | list it is
-			// written in, so git fetch || printf x 2>/dev/null hides no git
-			// status, and each operand's own status test counts, so the && after
-			// git fetch does not cover git gc 2>/dev/null.
-			// A redirect inside a substitution belongs to the command there,
-			// so $(git x 2>/dev/null) hides git's status while foo "$(git x)"
-			// 2>/dev/null hides foo's; each is read in its own text.
+			// A redirect belongs to the operand of the && || or | list it is written in, so git fetch || printf x 2>/dev/null hides no git status, and each operand's own status test counts, so the && after git fetch does not cover git gc 2>/dev/null. A redirect inside a substitution belongs to the command there, so $(git x 2>/dev/null) hides git's status while foo "$(git x)" 2>/dev/null hides foo's; each is read in its own text.
 			offset := 0
 			for _, operand := range shellListOperands(command) {
 				untested := !testedFrom(command[offset:])

@@ -92,6 +92,8 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"an exit status bash reads modulo 256 as nonzero fails", "git fetch || exit 257\ngit gc || return -1\ngit pull || exit 010\n", ""},
 		{"a tool called by its path is the tool", "/usr/bin/git fetch || true\n", "or-true"},
 		{"coproc runs the tool", "coproc git -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
+		{"a named coproc runs its compound command", "coproc worker { git fetch 2>/dev/null; }\n", "dev-null"},
+		{"a name before a simple coproc command is the command", "coproc worker git fetch 2>/dev/null\n", ""},
 		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
 		{"a tool called by its path hides stderr", "/usr/bin/git fetch 2>/dev/null\n", "dev-null"},
 		{"an exit status that wraps to zero swallows the failure", "git fetch || exit 256\n", "or-true"},
