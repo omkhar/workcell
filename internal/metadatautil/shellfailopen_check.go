@@ -123,14 +123,13 @@ var (
 	// shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
-	// shellOrTrue is a handler that always succeeds: true or the null command.
-	shellOrTrue = regexp.MustCompile(`\|\|\s*"?(?:true\b|:(?:["\s;&|)]|$))`)
-	// shellProcessSubst is an input redirection from a process substitution,
-	// with any blanks or a continued line between the < and the <(.
+	// shellOrTrue is a handler that always succeeds: true or :, alone, in a
+	// { } group or behind command or builtin, ending at a shell-word end.
+	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command|builtin)\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
+	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
-	// shellDevNull sends stderr to /dev/null: by 2>, 2>> or &>, since append
-	// and overwrite are the same on that device, or by >/dev/null 2>&1.
-	shellDevNull = regexp.MustCompile(`(?:2|&)>>?\s*"?/dev/null|>>?\s*"?/dev/null"?\s+2>&1`)
+	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
+	shellDevNull = regexp.MustCompile(`(?:2|&)>[>|]?\s*"?/dev/null|>[>|]?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
@@ -564,8 +563,8 @@ func shellListOperands(command string) []string {
 			if index+1 < len(command) && (command[index+1] == '&' || command[index+1] == '|') {
 				width = 2 // && || or |&
 			}
-			redirect := width == 1 && command[index] == '&' &&
-				(index+1 < len(command) && command[index+1] == '>' || index > 0 && strings.ContainsRune("<>|", rune(command[index-1])))
+			redirect := width == 1 && (command[index] == '&' && index+1 < len(command) && command[index+1] == '>' ||
+				index > 0 && strings.ContainsRune("<>|", rune(command[index-1])) && (command[index] == '&' || command[index-1] == '>'))
 			if !redirect && (command[index] == '|' || command[index] == '&') {
 				operands = append(operands, command[start:index+width])
 				start = index + width
