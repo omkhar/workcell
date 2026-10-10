@@ -530,10 +530,11 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 			continue
 		}
 		rest := shellOutsideSubsts(segment[offset-2:])
-		if !shellFailOpenHandled(rest, later) {
+		handled := shellFailOpenHandled(rest, later)
+		if !handled {
 			count++ // the || ends an operand that runs a tool
 		}
-		failing = shellFailOpenPassesOn.MatchString(rest)
+		failing = shellFailOpenPassesOn.MatchString(rest) || handled && strings.HasPrefix(strings.TrimSpace(rest[2:]), "(") // a ( ) exit ends only the subshell
 	}
 	for _, start := range shellToolSubsts(segment) {
 		if start >= end { // a substitution's handlers are read in its own body
