@@ -979,10 +979,7 @@ func commandName(word string) string {
 	return strings.ToLower(path.Base(word))
 }
 
-// wrappedCommand returns words from the command that a chain of wrappers, such
-// as env A=1 nice -n 5 command -p gh, runs: command -v only names a command,
-// env -S splits its value, timeout reads a DURATION first, and sudo -s or -i
-// keeps the words, which sudo escapes, or runs $SHELL with no command.
+// wrappedCommand returns words from the command that a chain of wrappers, such as env A=1 nice -n 5 command -p gh, runs: command -v only names a command, env -S splits its value, timeout reads a DURATION first, and sudo -s or -i keeps the words, which sudo escapes, or runs $SHELL with no command.
 func wrappedCommand(words []string) []string {
 	for {
 		name := commandName(words[0])
@@ -1046,9 +1043,7 @@ func shadowsByAlias(args []string, name string) bool {
 	return false
 }
 
-// EveryShellCommand returns the words of every command in script that bash may
-// run, the reachability-insensitive counterpart of ShellInvocations. A program
-// it cannot spell stays a command, for a lint to fail closed on.
+// EveryShellCommand returns the words of every command in script that bash may run, the reachability-insensitive counterpart of ShellInvocations. A program it cannot spell stays a command, for a lint to fail closed on.
 func EveryShellCommand(script string) [][]string {
 	return everyShellCommand(script)
 }

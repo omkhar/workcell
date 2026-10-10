@@ -163,6 +163,8 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"expression runner with a bash default is read", "name: w\ndefaults:\n  run:\n    shell: bash\njobs:\n  j:\n    runs-on: ${{ matrix.os }}\n    steps:\n      - run: gh api --paginate repos/o/r/issues\n", "", ""},
 		{"brace or pathname expansion in a paginated gh api call is unresolved", runStep("gh api --paginate repos/o/r/issues {--paginate=false,}\ngh api --paginate repos/o/r/issues --pag*"), "", "command-unresolved"},
 		{"expansion in a paginated gh api call is unresolved", runStep("gh api --paginate ${{ github.event.issue.title }}\ngh api --paginate \"repos/${REPO}/issues\""), "", "command-unresolved"},
+		{"a custom shell template with a program is unresolved", "      - name: s\n        shell: bash -c 'gh api repos/o/r/issues' {0}\n        run: \"true\"\n", "", "command-unresolved"},
+		{"a custom shell template with a startup file is unresolved", "      - name: s\n        shell: bash --rcfile x {0}\n        run: \"true\"\n", "", "command-unresolved"},
 		{"configured bash shell is read", "      - name: s\n        shell: bash --noprofile --norc -euo pipefail {0}\n        run: gh api repos/o/r/issues\n", "", "gh-api-unbounded"},
 		{"workflow default shell this lint does not read", "name: w\ndefaults:\n  run:\n    shell: pwsh\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: gh api repos/o/r/issues\n", "", "command-unresolved"},
 		{"job default shell this lint does not read", "name: w\njobs:\n  j:\n    runs-on: windows-latest\n    defaults:\n      run:\n        shell: cmd\n    steps:\n      - run: gh api repos/o/r/issues\n", "", "command-unresolved"},
@@ -228,10 +230,7 @@ func TestCheckWorkflowRefsPassesOnRepository(t *testing.T) {
 	}
 }
 
-// TestCheckWorkflowRefsRejectsEvasions runs the shared corpus against a
-// baselined gh api hit and a baselined unresolved eval. A row that turns the
-// command into text must leave the baseline row stale, and a gated row must
-// keep the hit.
+// TestCheckWorkflowRefsRejectsEvasions runs the shared corpus against a baselined gh api hit and a baselined unresolved eval. A row that turns the command into text must leave the baseline row stale, and a gated row must keep the hit.
 func TestCheckWorkflowRefsRejectsEvasions(t *testing.T) {
 	validate := func(baseline string) func(string) error {
 		return func(workflow string) error {

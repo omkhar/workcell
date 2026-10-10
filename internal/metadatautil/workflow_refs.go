@@ -167,6 +167,18 @@ func stepLabel(index int, step workflowStep) string {
 	return fmt.Sprintf("#%d", index+1)
 }
 
+// readShell reports whether a step shell runs the body as a bash or sh script this lint reads: the bash or sh
+// keyword, or a template that runs one with only the options shellTemplateOption knows and the script {0} last.
+func readShell(shell string) bool {
+	words := strings.Fields(shell)
+	if len(words) == 0 || commandName(words[0]) != "bash" && commandName(words[0]) != "sh" {
+		return false
+	}
+	return len(words) == 1 || words[len(words)-1] == "{0}" && !slices.ContainsFunc(words[1:len(words)-1], func(w string) bool { return !shellTemplateOption.MatchString(w) })
+}
+
+var shellTemplateOption = regexp.MustCompile(`^(?:--noprofile|--norc|-[euxo]+|pipefail)$`)
+
 func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	documents, files, err := loadWorkflowDocuments(rootDir)
 	if err != nil {
@@ -179,9 +191,8 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				if shell := commandName(strings.Fields(stepShell(documents[file], definition, step) + " bash")[0]); step.Run != "" &&
-					(shell != "bash" && shell != "sh" || stepShell(documents[file], definition, step) == "" &&
-						(definition.RunsOn.Kind != yaml.ScalarNode || !githubHostedPosix.MatchString(definition.RunsOn.Value))) {
+				if shell := stepShell(documents[file], definition, step); step.Run != "" && !readShell(shell) && (shell != "" ||
+					definition.RunsOn.Kind != yaml.ScalarNode || !githubHostedPosix.MatchString(definition.RunsOn.Value)) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}

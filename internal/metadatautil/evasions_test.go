@@ -204,10 +204,7 @@ func RequireRejectsAllEvasions(t *testing.T, artifact, anchor, want string, vali
 	requireEvasions(t, artifact, anchor, want, nil, validate)
 }
 
-// gatedEvasions names the rows that leave the anchored command a command behind
-// a branch, a guard, a group, an exit, an exec or an uncalled function
-// definition. The rewrite does not turn it into text, so a reader that ignores
-// reachability still finds it.
+// gatedEvasions names the rows that leave the anchored command a command behind a branch, a guard, a group, an exit, an exec or an uncalled function definition. The rewrite does not turn it into text, so a reader that ignores reachability still finds it.
 var gatedEvasions = map[string]bool{
 	"unreachable branch": true, "conditional right-hand side": true, "conditional across a line break": true,
 	"exit before the command": true, "exec before the command": true, "quoted compound-command closer": true,
@@ -221,9 +218,7 @@ var gatedEvasions = map[string]bool{
 	"quoted brace in a definition": true, "argument brace in a definition body": true,
 }
 
-// RequireRejectsTextEvasions runs the corpus for a validator that reads
-// EveryShellCommand. validate must accept each gated row, where the command
-// stays, and reject every other row, where the command became text.
+// RequireRejectsTextEvasions runs the corpus for a validator that reads EveryShellCommand. validate must accept each gated row, where the command stays, and reject every other row, where the command became text.
 func RequireRejectsTextEvasions(t *testing.T, artifact, anchor, want string, validate func(string) error) {
 	t.Helper()
 	requireEvasions(t, artifact, anchor, want, gatedEvasions, validate)
