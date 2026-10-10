@@ -101,10 +101,10 @@ var (
 	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
 	shellFailOpenTools         = `(?:find|git|gh|docker|getent)`
 	shellToolName              = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
-	shellCommandPosition       = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*" // shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
-	shellToolCommand           = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs|nice|nohup|stdbuf|setsid|ionice|timeout|chrt|taskset|time)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)                                                                                                                                                                                                                                                                               // The tool word ends at a blank, an operator, a closer or a redirection, since bash reads git||true as git then ||. After env, sudo or xargs any later word may be the tool, so their options need no table.
-	shellUnnamedCommand        = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)                                                                                                                                                                                                                                                                                                                                                                                                                              // shellUnnamedCommand is a command word this reader cannot name: an expansion, a quoted word or a command that runs text. It may run a tool, so a substitution that holds one counts as a tool substitution.
-	shellTestExpr              = regexp.MustCompile(`\[\[[^]]*\]\]`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         // shellTestExpr is a [[ ]] test, whose || and && join no commands.
+	shellCommandPosition       = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|[0-9]*(?:[<>]|&>)[>&|]?\\s*[^\\s;&|()<>]+|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*" // shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
+	shellToolCommand           = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs|nice|nohup|stdbuf|setsid|ionice|timeout|chrt|taskset|time)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)                                                                                                                                                                                                                                                                                                                         // The tool word ends at a blank, an operator, a closer or a redirection, since bash reads git||true as git then ||. After env, sudo or xargs any later word may be the tool, so their options need no table.
+	shellUnnamedCommand        = regexp.MustCompile(shellCommandPosition + `(?:\$[^(]|"|(?:eval|source|\.)\s)`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        // shellUnnamedCommand is a command word this reader cannot name: an expansion, a quoted word or a command that runs text. It may run a tool, so a substitution that holds one counts as a tool substitution.
+	shellTestExpr              = regexp.MustCompile(`\[\[[^]]*\]\]`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   // shellTestExpr is a [[ ]] test, whose || and && join no commands.
 	shellSubstOpen             = regexp.MustCompile(`\$\((?:[^(]|$)`)
 	shellProcessSubst          = regexp.MustCompile(`(?:^|[^<>$])[<>]\(`)                                                                                             // shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
 	shellDevNull               = regexp.MustCompile(`(?:(?:^|[\s;&|()])2>[>|]?|&>[>|]?|>&)\s*"?/dev/null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?/dev/null"?\s+2>&1`)            // shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
@@ -136,7 +136,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	var heredocs []heredoc
 	var stack []byte
 	var openQuote byte
-	depth, number := 0, 0
+	depth, number, backtick := 0, 0, false
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
@@ -155,7 +155,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		words, opened, quote, rest, continues, comment := shellWords(reopen+text, stack)
 		heredocs, openQuote, stack = append(heredocs, opened...), quote, rest
 		depth = substitutionDepth(depth, words)
-		code := shellBackticksAsSubsts(strings.TrimSuffix(text, comment))
+		code, open := shellBackticksAsSubsts(strings.TrimSuffix(text, comment), backtick)
+		backtick = open
 		fields := strings.Fields(shellCodeOnly(code)) // A line that ends on && || or | carries its command onto the next one, so a handler written there belongs to the same command.
 		operator := len(fields) > 0 && continuesLine(fields[len(fields)-1])
 		switch {
@@ -167,7 +168,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			code += "\n"
 		}
 		lines = append(lines, code)
-		if continues || operator || len(stack) > 0 || depth > 0 || openQuote != 0 {
+		if continues || operator || len(stack) > 0 || depth > 0 || openQuote != 0 || backtick {
 			continue
 		}
 		current.raw = strings.TrimSuffix(strings.Join(lines, ""), "\n")
@@ -185,8 +186,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		if strings.TrimSpace(statement.code) == "" {
 			continue
 		}
-		// The last entry is the first command of the next statement, which reads the status this statement leaves.
-		commands, raws := shellFailOpenCommands(statement.code, statement.raw)
+		commands, raws := shellFailOpenCommands(statement.code, statement.raw) // The last entry is the first command of the next statement, which reads the status this statement leaves.
 		commands, raws = append(commands, ""), append(raws, "")
 		for next := index + 1; next < len(statements); next++ {
 			if strings.TrimSpace(statements[next].code) != "" {
@@ -195,14 +195,12 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				break
 			}
 		}
-		// Each command in the statement counts on its own, so a second hit of the same rule on one line raises the file's count.
-		hits := map[string]int{}
+		hits := map[string]int{} // Each command in the statement counts on its own, so a second hit of the same rule on one line raises the file's count.
 		start := 0
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			start = end + 1
-			// A process substitution is always a hit; see the contract above.
-			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1))
+			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1)) // A process substitution is always a hit; see the contract above.
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
@@ -540,9 +538,9 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 }
 
 // shellBackticksAsSubsts spells each `...` command substitution outside single quotes as $(...), so one reader covers both.
-func shellBackticksAsSubsts(code string) string {
+func shellBackticksAsSubsts(code string, open bool) (string, bool) { // open carries a backtick span across lines
 	var out strings.Builder
-	single, escaped, open := false, false, false
+	single, escaped := false, false
 	for _, r := range code {
 		if r == '`' && !single && !escaped {
 			open = !open
@@ -552,7 +550,7 @@ func shellBackticksAsSubsts(code string) string {
 		single, escaped = single != (r == '\'' && !escaped), r == '\\' && !escaped && !single
 		out.WriteRune(r)
 	}
-	return out.String()
+	return out.String(), open
 }
 
 // shellCodeOnly blanks quoted text, so a message that names git is not a command; a $( inside double quotes opens code again. The result keeps the line's length, so an offset in it is the same offset in the line.
