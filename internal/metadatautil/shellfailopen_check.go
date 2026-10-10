@@ -124,7 +124,7 @@ var (
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
 	// shellOrTrue is a handler that always succeeds: a true or : word, maybe in { } or behind command.
-	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command(?:\s+-p)?(?:\s+--)?|builtin)\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
+	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command(?:\s+-p)?|builtin)(?:\s+--)?\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
 	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
@@ -457,8 +457,8 @@ func shellSubstHidden(command string) bool {
 		prefix := command[:start]
 		words := strings.Fields(prefix[strings.LastIndexAny(prefix, ";&|(`")+1:])
 		for len(words) > 0 && slices.Contains([]string{"if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"}, words[0]) {
-			if words = words[1:]; len(words) > 0 && words[0] == "-p" {
-				words = words[1:] // time -p
+			for words = words[1:]; len(words) > 0 && (words[0] == "-p" || words[0] == "--"); {
+				words = words[1:] // time -p --
 			}
 		}
 		// The simple command runs on past the substitution to the next
