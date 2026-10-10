@@ -35,11 +35,14 @@ var shellStartupEnv = regexp.MustCompile(`(?m)(?:^|[^A-Za-z0-9_])(?:BASH_)?ENV(?
 
 var githubEnvWrite = regexp.MustCompile(`^\s*(?:echo|printf)\s+["']?([A-Za-z_][A-Za-z0-9_]*)=[^\n]*>>\s*"?\$\{?GITHUB_ENV\}?"?\s*$`)
 
-// unreadEnvWrite reports a line that names GITHUB_ENV other than as a githubEnvWrite, an echo or printf of a literal NAME=value, of a name that is not a startup file, since a later step's bash may source a BASH_ENV whose name this lint cannot spell.
+var dynamicTarget = regexp.MustCompile("(?:^|[^<>&0-9])>>?\\s*\"?(?:\\$\\{!|\\$\\(|`)")
+
+// unreadEnvWrite reports a comment-free line with a dynamicTarget, a redirection to a file named at run time, which may be GITHUB_ENV, or that names GITHUB_ENV other than as a githubEnvWrite, an echo or printf of a literal NAME=value, of a name that is not a startup file, since a later step's bash may source a BASH_ENV whose name this lint cannot spell.
 func unreadEnvWrite(run string) bool {
 	return slices.ContainsFunc(strings.Split(strings.ReplaceAll(run, "\\\n", ""), "\n"), func(line string) bool {
 		write := githubEnvWrite.FindStringSubmatch(line)
-		return strings.Contains(line, "GITHUB_ENV") && (write == nil || write[1] == "BASH_ENV" || write[1] == "ENV")
+		return !strings.HasPrefix(strings.TrimSpace(line), "#") && (dynamicTarget.MatchString(line) ||
+			strings.Contains(line, "GITHUB_ENV") && (write == nil || write[1] == "BASH_ENV" || write[1] == "ENV"))
 	})
 }
 

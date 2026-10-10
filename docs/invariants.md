@@ -76,14 +76,9 @@ reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
 ## 2b. Workflow bodies make bounded gh api calls
 
-`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
-`run:` body has a `gh api` call with no `--paginate`. It also fails
-when an expansion hides a command word, a `gh` subcommand or the text of an
-`eval`. It also fails on an `alias` definition, which can rename any later command. It reads the program a shell runs from `-c`, a heredoc or a here-string. It fails when it cannot spell that program, as in `cat x | bash`.
+`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a `run:` body has a `gh api` call with no `--paginate`. It also fails when an expansion hides a command word, a `gh` subcommand or the text of an `eval`. It also fails on an `alias` definition, which can rename any later command. It reads the program a shell runs from `-c`, a heredoc or a here-string. It fails when it cannot spell that program, as in `cat x | bash`.
 
-`policy/workflow-refs-baseline.tsv` records the hits that the tree carries
-today. A new hit fails. A row with no hit also fails. Remove a row when you fix
-its hit.
+`policy/workflow-refs-baseline.tsv` records the hits that the tree carries today. A new hit fails. A row with no hit also fails. Remove a row when you fix its hit.
 
 ## 3. Repo policy must not silently widen trust
 

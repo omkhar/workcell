@@ -87,6 +87,8 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"bash - reads its program from stdin without a panic", runStep("bash - <<'EOF'\ngh api repos/o/r/issues\nEOF"), "", "gh-api-unbounded"},
 		{"a gh alias or extension adds subcommands the lint cannot read", runStep("gh alias set fetch 'api repos/o/r/issues'\ngh fetch\ngh extension install o/gh-x"), "", "command-unresolved"},
 		{"a GITHUB_ENV write whose name is built at run time is unresolved", runStep("p=BASH_; s=E; s+=NV; printf '%s%s=init\\n' \"$p\" \"$s\" >> \"$GITHUB_ENV\"\nf=$GITHUB_ENV; echo \"X=1\" >> \"$f\""), "", "command-unresolved"},
+		{"a write to an indirect or computed target is unresolved", runStep("a=BASH_; b=E; b+=NV; target=GITHUB_; target+=E; target+=NV; printf '%s%s=init\\n' \"$a\" \"$b\" >> \"${!target}\""), "", "command-unresolved"},
+		{"a commented GITHUB_ENV write and an indirect read are clean", runStep("# echo 'X=1' >> \"$GITHUB_ENV\"\nv=A; echo \"${!v}\" > out.txt"), "", ""},
 		{"an interpreter running a script file is clean", runStep("python3 tools/x.py\nperl tools/x.pl"), "", ""},
 		{"zsh and a gh call in another command's words are unresolved", runStep("ZDOTDIR=z zsh -c true\nnice-wrapper gh api x\necho 'gh api x' | sh"), "", "command-unresolved"},
 		{"startup-file shell options are unresolved", runStep("bash --rcfile init -c true\nbash -ic true\nbash -l -c true\nbash --login -c true"), "", "command-unresolved"},
