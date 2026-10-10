@@ -116,7 +116,7 @@ var (
 	// The tool word ends at a blank, an operator, a closer or a redirection,
 	// since bash reads git||true as git then ||.
 	// After env, sudo or xargs any later word may be the tool, so their options need no table.
-	shellToolCommand = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs)(?:\s+[^\s;&|()<>]+)*?\s+)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
+	shellToolCommand = regexp.MustCompile(shellCommandPosition + `(?:(?:\S*/)?(?:env|sudo|xargs)(?:\s+[^\s;&|()<>]+)*?\s+)?(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `(?:[\s;&|)<>]|$)`)
 	// shellUnnamedCommand is a command word this reader cannot name: an
 	// expansion, a quoted word or a command that runs text. It may run a tool,
 	// so a substitution that holds one counts as a tool substitution.
@@ -131,10 +131,11 @@ var (
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
-	// with a failure: exit or return with no operand or a nonzero literal,
+	// with a failure: exit or return with no operand or a literal bash reads
+	// modulo 256 as nonzero (see shellFailOpenExit),
 	// die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an
 	// assignment such as failed=1 or an echo fail reports nothing.
-	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+(?:[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
+	shellFailOpenExits = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)
 	// shellFailOpenStatusRead reads the status the command before it left, so
 	// it captures a hit only in the command right after the hit. A wait
 	// returns the status of the job it names, never of a substitution.
@@ -231,8 +232,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		if strings.TrimSpace(statement.code) == "" {
 			continue
 		}
-		// The last entry is the first command of the next statement, which
-		// reads the status this statement leaves.
+		// The last entry is the first command of the next statement, which reads the status this statement leaves.
 		commands, raws := shellFailOpenCommands(statement.code, statement.raw)
 		commands, raws = append(commands, ""), append(raws, "")
 		for next := index + 1; next < len(statements); next++ {
@@ -242,8 +242,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				break
 			}
 		}
-		// Each command in the statement counts on its own, so a second hit of
-		// the same rule on one line raises the file's count.
+		// Each command in the statement counts on its own, so a second hit of the same rule on one line raises the file's count.
 		hits := map[string]int{}
 		start := 0
 		for at, command := range commands[:len(commands)-1] {
@@ -261,16 +260,14 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				}
 				return later
 			}
-			// testedFrom reports whether the status of the call that starts
-			// text, a suffix of the command, is read by anything after it.
+			// testedFrom reports whether the status of the call that starts text, a suffix of the command, is read by anything after it.
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
 				captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later)
 				return captured || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text)
 			}
 			tested := testedFrom(command)
-			// Each occurrence counts, so a || true && … || true list on one
-			// command cannot stand in for two baselined hits.
+			// Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
 			count := func(hit bool, pattern *regexp.Regexp, text string) int {
 				if !hit {
 					return 0
@@ -310,6 +307,16 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	return findings, nil
 }
 
+// shellFailOpenExit reports whether command is a shellFailOpenExits command whose exit or return status, modulo 256 as bash takes it, is not zero.
+func shellFailOpenExit(command string) bool {
+	match := shellFailOpenExits.FindStringSubmatch(command)
+	if match == nil || match[1] == "" {
+		return match != nil
+	}
+	status, err := strconv.ParseInt(match[1], 10, 64)
+	return err == nil && status%256 != 0
+}
+
 // shellFailOpenHandled reports whether the first || runs a failure branch: a shellFailOpenExits command, or a { } group ending in one; later spans a group.
 func shellFailOpenHandled(rest string, later func() []string) bool {
 	outside := shellOutsideSubsts(rest)
@@ -321,7 +328,7 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 	if group, grouped := strings.CutPrefix(handler, "{"); grouped {
 		return shellFailOpenBranchExits(append(strings.Split(group, ";"), later()...), "}")
 	}
-	return shellFailOpenExits.MatchString(handler[:strings.IndexAny(handler+";", ";&|)}")])
+	return shellFailOpenExit(handler[:strings.IndexAny(handler+";", ";&|)}")])
 }
 
 // shellFailOpenNesting returns the nesting change a command's first word makes.
@@ -349,7 +356,7 @@ func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 			if len(fields) == 1 && (fields[0] == "exit" || fields[0] == "return") {
 				return !ran || failing // a bare exit keeps the last command's status
 			}
-			failing = shellFailOpenExits.MatchString(strings.Join(fields, " "))
+			failing = shellFailOpenExit(strings.Join(fields, " "))
 			if failing && (fields[0] == "exit" || fields[0] == "return") {
 				return true
 			}
@@ -403,16 +410,13 @@ func shellSubstCall(command string, start int) (body string, call int) {
 	return body, call
 }
 
-// shellFailOpenReadsStatus reports whether a command reads $? or PIPESTATUS
-// before anything in it runs, so the read sees the status the command before
-// it left. In discard=$(true) rc=$? the read sees the status of true.
+// shellFailOpenReadsStatus reports whether a command reads $? or PIPESTATUS before anything in it runs, so the read sees the status the command before it left. In discard=$(true) rc=$? the read sees the status of true.
 func shellFailOpenReadsStatus(command string) bool {
 	read := shellFailOpenStatusRead.FindStringIndex(command)
 	return read != nil && !shellFailOpenRunsFirst.MatchString(command[:read[0]])
 }
 
-// shellFailOpenReadsOwnStatus reports whether the command that starts with a
-// call reads $? or PIPESTATUS with nothing run between, as x=$(git a) || rc=$? does.
+// shellFailOpenReadsOwnStatus reports whether the command that starts with a call reads $? or PIPESTATUS with nothing run between, as x=$(git a) || rc=$? does.
 func shellFailOpenReadsOwnStatus(rest string) bool {
 	if strings.HasPrefix(rest, "$(") {
 		rest = rest[shellSubstEnd(rest, 0):]
@@ -423,8 +427,7 @@ func shellFailOpenReadsOwnStatus(rest string) bool {
 	return shellFailOpenReadsStatus(rest)
 }
 
-// shellSubstHidden reports whether a tool substitution's status is replaced: by
-// a command it is an argument of, as local x=$(git ...), or a later substitution.
+// shellSubstHidden reports whether a tool substitution's status is replaced: by a command it is an argument of, as local x=$(git ...), or a later substitution.
 func shellSubstHidden(command string) bool {
 	for _, start := range shellToolSubsts(command) {
 		prefix := command[:start]
@@ -434,8 +437,7 @@ func shellSubstHidden(command string) bool {
 				words = words[1:] // time -p --
 			}
 		}
-		// The simple command runs on past the substitution to the next
-		// operator or closer.
+		// The simple command runs on past the substitution to the next operator or closer.
 		tail := command[shellSubstEnd(command, start):]
 		tail = tail[:strings.IndexAny(tail+";", ";&|)")]
 		if shellLaterSubst.MatchString(tail) {
@@ -463,8 +465,7 @@ func shellSubstHidden(command string) bool {
 	return false
 }
 
-// shellSubstEnd returns the index just past the ) that closes the $( at
-// start, or the command's length when the command does not close it.
+// shellSubstEnd returns the index just past the ) that closes the $( at start, or the command's length when the command does not close it.
 func shellSubstEnd(command string, start int) int {
 	depth := 0
 	for index := start + 1; index < len(command); index++ {
@@ -480,8 +481,7 @@ func shellSubstEnd(command string, start int) int {
 	return len(command)
 }
 
-// shellFailOpenCommands splits code, and raw at the same places, at each ; and
-// line end outside a parenthesis or brace group, so each check reads one command.
+// shellFailOpenCommands splits code, and raw at the same places, at each ; and line end outside a parenthesis or brace group, so each check reads one command.
 func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
@@ -512,9 +512,7 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	return commands, raws
 }
 
-// shellListOperands splits a command at each && || | |& or lone & outside a
-// substitution, with the operator left on the operand it ends; the & of &>
-// >& or <& is a redirection, not an operator.
+// shellListOperands splits a command at each && || | |& or lone & outside a substitution, with the operator left on the operand it ends; the & of &> >& or <& is a redirection, not an operator.
 func shellListOperands(command string) []string {
 	var operands []string
 	depth, start := 0, 0
@@ -546,8 +544,7 @@ func shellListOperands(command string) []string {
 	return append(operands, command[start:])
 }
 
-// shellSwallowingHandlers counts each || after a pipeline that runs a tool
-// whose handler neither fails, as shellFailOpenHandled reads it, nor reads the status.
+// shellSwallowingHandlers counts each || after a pipeline that runs a tool whose handler neither fails, as shellFailOpenHandled reads it, nor reads the status.
 func shellSwallowingHandlers(segment string, later func() []string, inSubst bool) int {
 	count, end, offset, pipeline, failing := 0, 0, 0, "", false
 	for _, operand := range shellListOperands(segment) {
