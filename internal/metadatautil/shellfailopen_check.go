@@ -124,11 +124,11 @@ var (
 	shellTestExpr  = regexp.MustCompile(`\[\[[^]]*\]\]`)
 	shellSubstOpen = regexp.MustCompile(`\$\((?:[^(]|$)`)
 	// shellOrTrue is a handler that always succeeds: a true or : word, maybe in { } or behind command.
-	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command(?:\s+-p)?|builtin)(?:\s+--)?\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
+	shellOrTrue = regexp.MustCompile(`\|\|\s*(?:\{\s*|(?:command(?:\s+-[pvV]+)?|builtin)(?:\s+--)?\s+)?"?(?:true|:)(?:["\s;&|)}]|$)`)
 	// shellProcessSubst is an input redirection from a process substitution.
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
-	shellDevNull = regexp.MustCompile(`(?:2|&)>[>|]?\s*"?/dev/null|>[>|]?\s*"?/dev/null"?\s+2>&1`)
+	shellDevNull = regexp.MustCompile(`(?:2|&)>[>|]?\s*"?/dev/null|>&\s*"?/dev/null|>[>|]?\s*"?/dev/null"?\s+2>&1`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
 	// shellFailOpenExits is a command that ends the script or the function
