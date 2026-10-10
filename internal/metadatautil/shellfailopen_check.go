@@ -342,10 +342,8 @@ func shellFailOpenNesting(command string) int {
 	return 0
 }
 
-// shellFailOpenBranchExits reports whether the branch that starts at the
-// first command leaves a failure at its own depth: a failing exit or return,
-// or a last command that is a shellFailOpenExits command. One of closers at
-// that depth, such as fi or }, ends the branch.
+// shellFailOpenBranchExits reports whether the branch leaves a failure at its
+// own depth: a failing exit or a last shellFailOpenExits command before closers.
 func shellFailOpenBranchExits(codes []string, closers ...string) bool {
 	depth, failing, ran := 0, false, false
 	for _, each := range codes {
@@ -436,10 +434,8 @@ func shellFailOpenReadsOwnStatus(rest string) bool {
 	return shellFailOpenReadsStatus(rest)
 }
 
-// shellSubstHidden reports whether a tool substitution is an argument of a
-// command, as in local x=$(git ...), or is followed by a later substitution,
-// as in x=$(git ...) y=$(true): either status replaces the tool's. Only a
-// command made of assignments and redirections keeps it.
+// shellSubstHidden reports whether a tool substitution's status is replaced: by
+// a command it is an argument of, as local x=$(git ...), or a later substitution.
 func shellSubstHidden(command string) bool {
 	for _, start := range shellToolSubsts(command) {
 		prefix := command[:start]
@@ -495,9 +491,8 @@ func shellSubstEnd(command string, start int) int {
 	return len(command)
 }
 
-// shellFailOpenCommands splits a statement's code, and raw at the same places,
-// at each ; and line end that no parenthesis or brace group encloses, so a
-// test, a handler or a status read covers only the command it is written on.
+// shellFailOpenCommands splits code, and raw at the same places, at each ; and
+// line end outside a parenthesis or brace group, so each check reads one command.
 func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 	depth, start := 0, 0
 	for index := 0; index < len(code); index++ {
