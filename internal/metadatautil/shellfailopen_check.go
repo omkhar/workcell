@@ -98,7 +98,8 @@ type ShellFailOpenFinding struct {
 }
 
 var (
-	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
+	shellExecDevNull           = regexp.MustCompile(`(?:^|[;&|(]\s*)exec(?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)*\s+(?:2|&)>[>|]?\s*"?/dev/null"?(?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)*\s*(?:[;&|)]|$)`) // exec with no command sends stderr to /dev/null for every later command
+	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`)                                   // other languages; a #![ line is a Rust attribute
 	shellFailOpenTools         = `(?:find|git|gh|docker|getent)`
 	shellToolName              = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
 	shellCommandPosition       = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|[0-9]*(?:[<>]|&>)[>&|]?\\s*[^\\s;&|()<>]+|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*" // shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
@@ -116,8 +117,7 @@ var (
 	shellFailOpenTested        = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
 	shellFailOpenList          = regexp.MustCompile(`&&|\|\|`)                                               // shellFailOpenList is a && or || operator, which joins two commands.
 	shellOutWord               = regexp.MustCompile(`[^\s;&|<>()]+`)
-	// shellAssignment is a word that assigns a name, the only word that may
-	// stand beside a substitution whose status the command keeps.
+	// shellAssignment is a word that assigns a name, the only word that may stand beside a substitution whose status the command keeps.
 	shellAssignment   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=`)
 	shellRedirection  = regexp.MustCompile(`^[0-9]*[<>]`) // shellRedirection is a redirection word, which leaves the status alone; shellRedirectOnly is one whose target is the next word.
 	shellRedirectOnly = regexp.MustCompile(`^[0-9]*[<>]+&?$`)
@@ -201,6 +201,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			after, end := commands[at+1], start+len(raws[at])
 			start = end + 1
 			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1)) // A process substitution is always a hit; see the contract above.
+			hits[ruleDevNull] += len(shellExecDevNull.FindAllStringIndex(command, -1))
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
@@ -395,8 +396,7 @@ func shellSubstHidden(command string) bool {
 				words = words[1:] // time -p --
 			}
 		}
-		// The simple command runs on past the substitution to the next operator or closer.
-		tail := command[shellSubstEnd(command, start):]
+		tail := command[shellSubstEnd(command, start):] // The simple command runs on past the substitution to the next operator or closer.
 		tail = tail[:strings.IndexAny(tail+";", ";&|)")]
 		if shellLaterSubst.MatchString(tail) {
 			return true
@@ -451,8 +451,7 @@ func shellFailOpenCommands(code, raw string) (commands, raws []string) {
 		case ')':
 			depth = max(depth-1, 0)
 		case '{', '}':
-			// A brace group is one command, so its redirect stays with its calls.
-			before := index == 0 || strings.ContainsRune(" \t;\n", rune(code[index-1]))
+			before := index == 0 || strings.ContainsRune(" \t;\n", rune(code[index-1])) // A brace group is one command, so its redirect stays with its calls.
 			if code[index] == '{' && before && index+1 < len(code) && strings.ContainsRune(" \t\n", rune(code[index+1])) {
 				depth++
 			} else if code[index] == '}' && before {
@@ -570,8 +569,7 @@ func shellCodeOnly(line string) string {
 			}
 			out[i] = '"'
 		case top.quote == ansiCQuote:
-			// A backslash escapes the next byte of a $'...' span, even a '.
-			out[i] = '"'
+			out[i] = '"' // A backslash escapes the next byte of a $'...' span, even a '.
 			if c == '\\' && i+1 < len(line) {
 				i++
 				out[i] = '"'
