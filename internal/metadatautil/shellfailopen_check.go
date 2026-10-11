@@ -17,13 +17,9 @@ import (
 )
 
 // CheckShellFailOpen rejects a shell idiom that hides the exit status of a find, git, gh, docker or getent call.
-//
 // A `<(` or `>(`, a `$(...)` under `local` or in a list, `|| true` and `2>/dev/null` each turn "the tool failed" into "there was nothing to find", so a gate passes on an empty answer. shellcheck does not flag them.
-//
 // A hit is accepted when its own command or the command right after it captures the status (see shellFailOpenHandled). A process substitution is always a hit: bash never propagates its status.
-//
 // The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits each file carries today; a count above its row fails, and so does a count below it, so the row drops with the repair.
-//
 // The scan reads lines with shellWords, the reader ShellInvocations uses, so quotes, comments, heredocs and an open `$(` mean the same thing to both.
 func CheckShellFailOpen(rootDir string) error {
 	files, err := shellFailOpenFiles(rootDir)
@@ -98,6 +94,8 @@ type ShellFailOpenFinding struct {
 }
 
 var (
+	shellQuotedStatus          = regexp.MustCompile(`^(?:\w+=)?\$(?:\?|\{\?\})$`)                                                                                                     // a quoted "$?" or rc="$?", restored so the status read is seen
+	shellDupStdout             = regexp.MustCompile(`2>&\s*1(?:[^0-9]|$)`)                                                                                                            // stderr onto stdout
 	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$") + `"?(?:[\s;&|)<>]|$)`)           // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
 	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\(|\{\s*false\s*;\s*\})`)                                                                                      // a false or ( ) handler keeps the failure but does not leave the list
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
@@ -140,7 +138,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	var heredocs []heredoc
 	var stack []byte
 	var openQuote byte
-	depth, number, backtick := 0, 0, false
+	depth, number, backtick, stdoutNull := 0, 0, false, false // stdoutNull: an exec sent stdout to the null device, so a later 2>&1 hides stderr
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
@@ -206,6 +204,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			start = end + 1
 			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(shellArithmetic.ReplaceAllString(command, ""), -1))                                             // A process substitution is always a hit; see the contract above.
 			hits[ruleDevNull] += len(slices.DeleteFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return !shellExecNull.MatchString(e[1] + " ") })) // exec with only redirections keeps them for every later command
+			stdoutNull = stdoutNull || slices.ContainsFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return shellExecNull.MatchString(e[1] + " ") })
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
@@ -240,7 +239,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			for _, operand := range shellListOperands(command) {
 				untested := !testedFrom(command[offset:])
 				if outside := shellOutsideSubsts(operand); shellToolCommand.MatchString(outside) {
-					hits[ruleDevNull] += count(untested, shellDevNull, outside)
+					hits[ruleDevNull] += count(untested, shellDevNull, outside) + count(untested && stdoutNull, shellDupStdout, outside)
 				}
 				for _, start := range shellToolSubsts(operand) {
 					body, _ := shellSubstCall(operand, start)
@@ -628,7 +627,7 @@ func shellCodeOnly(line string) string {
 		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(value, `"`, `\"`) + `"`); strings.Contains(raw, "$'") && err == nil {
 			value = decoded
 		}
-		if value == "true" || value == ":" || shellNullDevice.MatchString(value) || shellToolName.MatchString(value) {
+		if value == "true" || value == ":" || shellNullDevice.MatchString(value) || shellToolName.MatchString(value) || shellQuotedStatus.MatchString(value) {
 			copy(out[loc[0]:loc[1]], value+strings.Repeat(" ", loc[1]-loc[0]))
 		}
 	}
