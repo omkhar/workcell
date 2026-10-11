@@ -280,7 +280,8 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 			return shellFailOpenBranchExits(append(strings.Split(strings.Replace(group, closer, "; "+closer, 1), ";"), later()...), closer)
 		}
 	}
-	return shellFailOpenExit(handler[:strings.IndexAny(handler+";", ";&|)}")])
+	end := strings.IndexAny(handler+";", ";&|)}")
+	return shellFailOpenExit(handler[:end]) && !(strings.HasPrefix(handler[end:], "|") && !strings.HasPrefix(handler[end:], "||")) // a pipeline's status is its last stage
 }
 
 // shellFailOpenEnds reports whether a handler ends the script at its own level with an exit, return or die-style command; a ( ) subshell's exit ends only the subshell.
