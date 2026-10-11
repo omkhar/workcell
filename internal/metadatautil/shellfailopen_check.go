@@ -100,7 +100,6 @@ type ShellFailOpenFinding struct {
 var (
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
-	shellFailOpenPipe          = regexp.MustCompile(`(?:^|[^|])\|(?:[^|]|$)`)                                                                                                         // a | or |& pipeline stage, not a || list
 	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                               // the null device in any spelling of its path, such as /dev//null
 	shellExecDevNull           = regexp.MustCompile(`(?:^|[;&|(]\s*)exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                                            // exec with no command sends stderr to /dev/null for every later command
 	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
@@ -218,7 +217,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// testedFrom reports whether the status of the call that starts text, a suffix of the command, is read by anything after it.
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
-				piped := shellFailOpenPipe.MatchString(shellOutsideSubsts(rest)) // without pipefail a later stage sets the status, not the tool
+				piped := shellFailOpenDetached(shellOutsideSubsts(rest))         // without pipefail a later stage sets the status, not the tool
 				launched := strings.HasPrefix(strings.TrimSpace(text), "coproc") // $? is the launch status, not the tool's
 				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
 			}
@@ -277,12 +276,18 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 	handler := outside[loc[1]:]
 	for opener, closer := range map[string]string{"{": "}", "(": ")"} { // a group's or a subshell's status is its last command's
 		if group, grouped := strings.CutPrefix(handler, opener); grouped {
-			return shellFailOpenBranchExits(append(strings.Split(strings.Replace(group, closer, "; "+closer, 1), ";"), later()...), closer)
+			_, tail, _ := strings.Cut(group, closer)
+			return !shellFailOpenDetached(tail) && shellFailOpenBranchExits(append(strings.Split(strings.Replace(group, closer, "; "+closer, 1), ";"), later()...), closer)
 		}
 	}
 	end := strings.IndexAny(handler+";", ";&|)}")
-	piped, backgrounded := strings.HasPrefix(handler[end:], "|") && !strings.HasPrefix(handler[end:], "||"), strings.HasPrefix(handler[end:], "&") && !strings.HasPrefix(handler[end:], "&&")
-	return shellFailOpenExit(handler[:end]) && !piped && !backgrounded // a pipeline's status is its last stage; a & list returns at once
+	return shellFailOpenExit(handler[:end]) && !shellFailOpenDetached(handler[end:])
+}
+
+// shellFailOpenDetached reports whether the rest of a handler's list puts it in a pipeline, whose last stage sets the status, or in the background, which returns at once; && || and & redirections do neither.
+func shellFailOpenDetached(tail string) bool {
+	tail = strings.NewReplacer("&&", "", "||", "", "&>", "", ">&", "", "<&", "", "|&", "|").Replace(tail)
+	return strings.ContainsAny(tail[:strings.IndexAny(tail+";", ";\n")], "&|")
 }
 
 // shellFailOpenEnds reports whether a handler ends the script at its own level with an exit, return or die-style command; a ( ) subshell's exit ends only the subshell.
