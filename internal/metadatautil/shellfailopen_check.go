@@ -98,6 +98,7 @@ type ShellFailOpenFinding struct {
 }
 
 var (
+	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$"))                                  // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
 	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\()`)                                                                                                          // a false or ( ) handler keeps the failure but does not leave the list
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
@@ -203,8 +204,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 		for at, command := range commands[:len(commands)-1] {
 			after, end := commands[at+1], start+len(raws[at])
 			start = end + 1
-			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(shellArithmetic.ReplaceAllString(command, ""), -1))                                            // A process substitution is always a hit; see the contract above.
-			hits[ruleDevNull] += len(slices.DeleteFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return !shellDevNull.MatchString(e[1] + " ") })) // exec with only redirections keeps them for every later command
+			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(shellArithmetic.ReplaceAllString(command, ""), -1))                                             // A process substitution is always a hit; see the contract above.
+			hits[ruleDevNull] += len(slices.DeleteFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return !shellExecNull.MatchString(e[1] + " ") })) // exec with only redirections keeps them for every later command
 			toolSubst := len(shellToolSubsts(command)) > 0
 			// A status read or a handler covers only a call written before it.
 			later := func() []string {
