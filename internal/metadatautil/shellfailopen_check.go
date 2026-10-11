@@ -219,8 +219,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// testedFrom reports whether the status of the call that starts text, a suffix of the command, is read by anything after it.
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
-				piped := shellFailOpenDetached(shellOutsideSubsts(rest))         // without pipefail a later stage sets the status, not the tool
-				launched := strings.HasPrefix(strings.TrimSpace(text), "coproc") // $? is the launch status, not the tool's
+				piped := shellFailOpenDetached(shellOutsideSubsts(rest))                                                            // without pipefail a later stage sets the status, not the tool
+				launched := strings.HasPrefix(strings.TrimSpace(text), "coproc") || strings.HasPrefix(strings.TrimSpace(text), "!") // $? is the launch status, or ! inverts it
 				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) && !shellFailOpenPassesOn.MatchString(strings.Join(append([]string{rest}, later()[:min(1, len(later()))]...), ";")) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
 			}
 			tested := testedFrom(command)
