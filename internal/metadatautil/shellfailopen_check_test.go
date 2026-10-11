@@ -123,6 +123,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a bare PIPESTATUS word reads no status", "git -C /missing fetch 2>/dev/null; echo PIPESTATUS; echo done\n", "dev-null"},
 		{"$? after a pipeline reads the last stage, not the tool", "git -C /missing fetch 2>/dev/null | cat; rc=$?; echo done\n", "dev-null"},
 		{"a handler after a pipeline reads the last stage, not the tool", "git -C /missing fetch 2>/dev/null | cat || exit 1; echo done\n", "dev-null"},
+		{"an if test of a pipeline reads the last stage, not the tool", "if git -C /missing fetch 2>/dev/null | cat; then :; fi; echo done\n", "dev-null"},
 		{"a spaced 2>& 1 after a stdout null redirect hides stderr", "git -C /missing fetch >/dev/null 2>& 1; echo done\n", "dev-null"},
 		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
 		{"a tool called by its path hides stderr", "/usr/bin/git fetch 2>/dev/null\n", "dev-null"},
