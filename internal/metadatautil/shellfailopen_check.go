@@ -101,7 +101,8 @@ var (
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
 	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                               // the null device in any spelling of its path, such as /dev//null
-	shellExecDevNull           = regexp.MustCompile(`(?:^\s*|[;&|(]\s*)exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                                         // exec with no command sends stderr to /dev/null for every later command
+	shellBuiltinCall           = `(?:(?:command|builtin)(?:\s+(?:-p|--))*\s+)?`                                                                                                       // command or builtin runs the builtin after it
+	shellExecDevNull           = regexp.MustCompile(`(?:^\s*|[;&|(]\s*)` + shellBuiltinCall + `exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                 // exec with no command sends stderr to /dev/null for every later command
 	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
 	shellFailOpenTools         = `(?:find|git|gh|docker|getent)`
 	shellToolName              = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
@@ -114,7 +115,7 @@ var (
 	shellDevNull               = regexp.MustCompile(`(?:(?:^|[\s;&|()])2>[>|]?|&>[>|]?|>&)\s*"?(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null"?\s+2>&\s*1|(?:^|[\s;&|()])2>&\s*(?:[03-9]|[1-9][0-9]+|-|"|\$)`) // shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellFailOpenOr            = regexp.MustCompile(`\|\|\s*`)                                                                                                                                                                                                                             // shellFailOpenOr is the || that runs a handler.
 	shellFailOpenExits         = regexp.MustCompile(`^\s*(?:(?:exit|return)(?:\s+--)?(?:\s+([-+]?[0-9]+))?\s*$|(?:\w+_)?(?:die|fail\w*|error\w*)(?:\s|$)|false\s*$)`)                                                                                                                      // shellFailOpenExits is a command that ends the script or the function with a failure: exit or return with no operand or a literal bash reads modulo 256 as nonzero (see shellFailOpenExit), die, fail*, error* (with any NAME_ prefix) or false. An exit 0, an assignment such as failed=1 or an echo fail reports nothing.
-	shellFailOpenTerminal      = regexp.MustCompile(`^\s*(?:(?:command|builtin)(?:\s+(?:-p|--))*\s+)?(?:exit|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`)                                                                                                                                  // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit or die-style command, which ends the script, so the list after it never runs; a return fails outside a function, so it does not end the list.
+	shellFailOpenTerminal      = regexp.MustCompile(`^\s*` + shellBuiltinCall + `(?:exit|(?:\w+_)?(?:die|fail\w*|error\w*))(?:\s|$)`)                                                                                                                                                      // shellFailOpenStatusRead reads the status the command before it left, so it captures a hit only in the command right after the hit. A wait returns the status of the job it names, never of a substitution. shellFailOpenTerminal is an exit or die-style command, which ends the script, so the list after it never runs; a return fails outside a function, so it does not end the list.
 	shellFailOpenStatusRead    = regexp.MustCompile(`\$(?:\?|\{\?\})(?:[^\w]|$)`)
 	shellFailOpenRunsFirst     = regexp.MustCompile(shellSubstOpen.String() + "|`|[<>]\\(|\\||(?:^|[^<>])&") // shellFailOpenRunsFirst is a substitution, a process substitution or an operator, which runs a command of its own before a later word. The & of a >& or <& redirection runs nothing.
 	shellFailOpenTested        = regexp.MustCompile(`^\s*(?:if|elif|while|until)\b`)                         // shellFailOpenTested is a command that is the test of an if/while. It covers a substitution, never a `done < <(` loop header, where the loop's own while says nothing about the inner command.
@@ -616,8 +617,7 @@ func shellCodeOnly(line string) string {
 			top.parens = max(top.parens-1, 0)
 		}
 	}
-	// A word whose quoted fragments spell a tool, true, : or /dev/null is that word.
-	for _, loc := range shellOutWord.FindAllStringIndex(string(out), -1) {
+	for _, loc := range shellOutWord.FindAllStringIndex(string(out), -1) { // a word whose quoted fragments spell a tool, true, :, exec or /dev/null is that word
 		raw := line[loc[0]:loc[1]]
 		words, _, _, _, _, _ := shellWords(raw, nil)
 		if !strings.ContainsAny(raw, `'"\`) || len(words) != 1 {
@@ -627,7 +627,7 @@ func shellCodeOnly(line string) string {
 		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(value, `"`, `\"`) + `"`); strings.Contains(raw, "$'") && err == nil {
 			value = decoded
 		}
-		if value == "true" || value == ":" || shellNullDevice.MatchString(value) || shellToolName.MatchString(value) || shellQuotedStatus.MatchString(value) {
+		if value == "true" || value == ":" || value == "exec" || shellNullDevice.MatchString(value) || shellToolName.MatchString(value) || shellQuotedStatus.MatchString(value) {
 			copy(out[loc[0]:loc[1]], value+strings.Repeat(" ", loc[1]-loc[0]))
 		}
 	}
