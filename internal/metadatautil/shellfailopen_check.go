@@ -98,7 +98,7 @@ type ShellFailOpenFinding struct {
 }
 
 var (
-	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$"))                                  // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
+	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$") + `"?(?:[\s;&|)<>]|$)`)           // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
 	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\()`)                                                                                                          // a false or ( ) handler keeps the failure but does not leave the list
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
