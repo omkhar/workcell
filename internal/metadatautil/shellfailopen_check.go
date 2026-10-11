@@ -99,7 +99,7 @@ type ShellFailOpenFinding struct {
 
 var (
 	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$") + `"?(?:[\s;&|)<>]|$)`)           // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
-	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\()`)                                                                                                          // a false or ( ) handler keeps the failure but does not leave the list
+	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\(|\{\s*false\s*;\s*\})`)                                                                                      // a false or ( ) handler keeps the failure but does not leave the list
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
 	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                               // the null device in any spelling of its path, such as /dev//null
@@ -221,7 +221,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				rest := text[shellFailOpenFirstCall(text):]
 				piped := shellFailOpenDetached(shellOutsideSubsts(rest))         // without pipefail a later stage sets the status, not the tool
 				launched := strings.HasPrefix(strings.TrimSpace(text), "coproc") // $? is the launch status, not the tool's
-				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) && !shellFailOpenPassesOn.MatchString(rest) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
+				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) && !shellFailOpenPassesOn.MatchString(strings.Join(append([]string{rest}, later()[:min(1, len(later()))]...), ";")) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
 			}
 			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
@@ -396,10 +396,8 @@ func shellFailOpenReadsOwnStatus(rest string) bool {
 	if strings.HasPrefix(rest, "$(") {
 		rest = rest[shellSubstEnd(rest, 0):]
 	}
-	if loc := shellFailOpenList.FindStringIndex(rest); loc != nil {
-		rest = rest[:loc[0]] + " " + rest[loc[1]:]
-	}
-	return shellFailOpenReadsStatus(rest)
+	loc := append(shellFailOpenList.FindStringIndex(rest), len(rest), len(rest))                                // the end of rest when no list operator follows
+	return !strings.HasPrefix(rest[loc[0]:], "&&") && shellFailOpenReadsStatus(rest[:loc[0]]+" "+rest[loc[1]:]) // after && the command runs only on success
 }
 
 // shellSubstHidden reports whether a tool substitution's status is replaced: by a command it is an argument of, as local x=$(git ...), or a later substitution.
