@@ -116,7 +116,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"a false handler that does not leave the list still hides the tool", "git -C /missing fetch 2>/dev/null || false; echo done\n", "dev-null"},
 		{"a later command in the if test sets its status", "if git -C /missing fetch 2>/dev/null; :; then :; fi; echo done\n", "dev-null"},
 		{"$? after coproc is the launch status", "coproc git fetch 2>/dev/null; rc=$?; echo done\n", "dev-null"},
-		{"stderr duplicated onto a saved null descriptor", "git -C /missing fetch 3>/dev/null 2>&3; echo done\ngit gc 0</dev/null 2>&0; echo done\ngit -C /missing fetch 10>/dev/null 2>&10; echo done\ngit gc 2>&-; echo done\n", "dev-null"},
+		{"stderr duplicated onto a saved null descriptor", "git -C /missing fetch 3>/dev/null 2>&3; echo done\ngit gc 0</dev/null 2>&0; echo done\ngit -C /missing fetch 10>/dev/null 2>&10; echo done\ngit gc 2>&-; echo done\nexec {fd}>/dev/null; git -C /missing fetch 2>&\"$fd\"; echo done\n", "dev-null"},
 		{"an if test of a pipeline reads the last stage, not the tool", "if git -C /missing fetch 2>/dev/null | cat; then :; fi; echo done\n", "dev-null"},
 		{"a spaced 2>& 1 after a stdout null redirect hides stderr", "git -C /missing fetch >/dev/null 2>& 1; echo done\n", "dev-null"},
 		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
