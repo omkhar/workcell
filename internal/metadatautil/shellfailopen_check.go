@@ -101,7 +101,7 @@ var (
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
 	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                               // the null device in any spelling of its path, such as /dev//null
-	shellExecDevNull           = regexp.MustCompile(`(?:^|[;&|(]\s*)exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                                            // exec with no command sends stderr to /dev/null for every later command
+	shellExecDevNull           = regexp.MustCompile(`(?:^\s*|[;&|(]\s*)exec((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`)                                         // exec with no command sends stderr to /dev/null for every later command
 	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`) // other languages; a #![ line is a Rust attribute
 	shellFailOpenTools         = `(?:find|git|gh|docker|getent)`
 	shellToolName              = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
