@@ -98,6 +98,7 @@ type ShellFailOpenFinding struct {
 }
 
 var (
+	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\()`)                                                                                                          // a false or ( ) handler keeps the failure but does not leave the list
 	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                              // the tool is the last command of an if or while test
 	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                               // an arithmetic (( )), whose <( is a comparison
 	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                               // the null device in any spelling of its path, such as /dev//null
@@ -219,7 +220,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				rest := text[shellFailOpenFirstCall(text):]
 				piped := shellFailOpenDetached(shellOutsideSubsts(rest))         // without pipefail a later stage sets the status, not the tool
 				launched := strings.HasPrefix(strings.TrimSpace(text), "coproc") // $? is the launch status, not the tool's
-				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
+				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) && !shellFailOpenPassesOn.MatchString(rest) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
 			}
 			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
