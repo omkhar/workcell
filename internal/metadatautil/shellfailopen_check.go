@@ -216,9 +216,8 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// testedFrom reports whether the status of the call that starts text, a suffix of the command, is read by anything after it.
 			testedFrom := func(text string) bool {
 				rest := text[shellFailOpenFirstCall(text):]
-				captured := shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later)
-				piped := shellFailOpenPipe.MatchString(shellOutsideSubsts(rest)) // a later stage sets $?, not the tool
-				return captured || !piped && shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text)
+				piped := shellFailOpenPipe.MatchString(shellOutsideSubsts(rest)) // without pipefail a later stage sets the status, not the tool
+				return !piped && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) || shellFailOpenReadsStatus(after)) || shellFailOpenTested.MatchString(text)
 			}
 			tested := testedFrom(command)
 			// Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
