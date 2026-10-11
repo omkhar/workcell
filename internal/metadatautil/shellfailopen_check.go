@@ -284,9 +284,9 @@ func shellFailOpenHandled(rest string, later func() []string) bool {
 	return shellFailOpenExit(handler[:end]) && !shellFailOpenDetached(handler[end:])
 }
 
-// shellFailOpenDetached reports whether the rest of a handler's list puts it in a pipeline, whose last stage sets the status, or in the background, which returns at once; && || and & redirections do neither.
+// shellFailOpenDetached reports whether the rest of a handler's list puts it in a pipeline, whose last stage sets the status, or in the background, which returns at once; && || >& and <& do neither; &> may background in a POSIX sh, so it fails closed.
 func shellFailOpenDetached(tail string) bool {
-	tail = strings.NewReplacer("&&", "", "||", "", "&>", "", ">&", "", "<&", "", "|&", "|").Replace(tail)
+	tail = strings.NewReplacer("&&", "", "||", "", ">&", "", "<&", "", "|&", "|").Replace(tail)
 	return strings.ContainsAny(tail[:strings.IndexAny(tail+";", ";\n")], "&|")
 }
 
