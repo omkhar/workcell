@@ -4,6 +4,7 @@
 package metadatautil
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -20,10 +21,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// workflowDocument and the job and step types under it are closed: decodeWorkflow
+// rejects a key they do not name. A validator that pins the fields it thought of
+// misses the next one, such as a job-level if: false, so every key GitHub reads
+// must be one the validators can see.
 type workflowDocument struct {
-	Env  map[string]string      `yaml:"env"`
-	Jobs map[string]workflowJob `yaml:"jobs"`
-	Def  workflowDefaults       `yaml:"defaults"`
+	Name        string                 `yaml:"name"`
+	On          yaml.Node              `yaml:"on"`
+	Permissions yaml.Node              `yaml:"permissions"`
+	Concurrency yaml.Node              `yaml:"concurrency"`
+	Env         map[string]string      `yaml:"env"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
+	Def         workflowDefaults       `yaml:"defaults"`
 }
 type workflowDefaults struct{ Run map[string]string }
 
@@ -39,6 +48,8 @@ type workflowNodeDocument struct {
 
 type workflowJob struct {
 	Name        string            `yaml:"name"`
+	If          yaml.Node         `yaml:"if"`
+	Timeout     yaml.Node         `yaml:"timeout-minutes"`
 	Env         map[string]string `yaml:"env"`
 	Container   yaml.Node         `yaml:"container"`
 	Services    yaml.Node         `yaml:"services"`
@@ -47,6 +58,7 @@ type workflowJob struct {
 	Needs       yaml.Node         `yaml:"needs"`
 	Environment struct {
 		Name string `yaml:"name"`
+		URL  string `yaml:"url"`
 	} `yaml:"environment"`
 	Outputs     map[string]string          `yaml:"outputs"`
 	Permissions map[string]string          `yaml:"permissions"`
@@ -67,6 +79,26 @@ type workflowStep struct {
 	With            map[string]string `yaml:"with"`
 }
 
+// decodeWorkflow decodes a workflow into the closed workflowDocument, so an
+// unmodelled key is an error rather than a field no validator reads.
+func decodeWorkflow(content []byte) (workflowDocument, error) {
+	var document workflowDocument
+	decoder := yaml.NewDecoder(bytes.NewReader(content))
+	decoder.KnownFields(true)
+	err := decoder.Decode(&document)
+	return document, err
+}
+
+// stepRuns returns the script a step is proved to run. GitHub skips a step
+// whose if: is false, so a conditional step proves nothing about the commands
+// in it.
+func stepRuns(step workflowStep) string {
+	if step.If.Kind != 0 {
+		return ""
+	}
+	return step.Run
+}
+
 // This digest covers the complete parsed sign-release job plus the workflow-level
 // ORAS pins, the registry it publishes to, and the shell its run steps inherit. It
 // rejects unknown fields, reordered steps, changed commands, changed action inputs,
@@ -74,8 +106,8 @@ type workflowStep struct {
 const releaseSignerContractSHA256 = "fc05fcaf01de80a2e78889cd04a1e7b861a890f4a1f5ec978420de391c199c81"
 
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
-	var document workflowDocument
-	if err := yaml.Unmarshal(content, &document); err != nil {
+	document, err := decodeWorkflow(content)
+	if err != nil {
 		return nil, err
 	}
 
@@ -114,8 +146,8 @@ const (
 // credential in a minimal final job and requires its fresh check to complete
 // immediately before the default-token publisher runs.
 func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
-	var document workflowDocument
-	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+	document, err := decodeWorkflow([]byte(workflowText))
+	if err != nil {
 		return fmt.Errorf("parse release publication gate: %w", err)
 	}
 	if overridesHostedControlsPolicyPath(document) {
@@ -144,8 +176,11 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 	// Read the invocation the shell really runs. A statement-start scan still
 	// accepts the script inside a heredoc body, an unrun branch or a function
 	// body, because each of those keeps the line that starts with it.
+	if verifyJob.If.Kind+releaseJob.If.Kind != 0 {
+		return errors.New("release and output verification jobs must run unconditionally")
+	}
 	verificationFound := slices.ContainsFunc(verifyJob.Steps, func(step workflowStep) bool {
-		return len(ShellInvocations(step.Run, verifyReleaseOutputsScript)) > 0
+		return len(ShellInvocations(stepRuns(step), verifyReleaseOutputsScript)) > 0
 	})
 	if !verificationFound {
 		return errors.New("release output verification job must run verify-release-outputs.sh")
@@ -158,6 +193,9 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		publishJob.Needs.Content[0].Value != "tag-policy" || publishJob.Needs.Content[1].Value != "sign-release" ||
 		publishJob.Needs.Content[2].Value != "verify-release-outputs" {
 		return errors.New("final GitHub release publication job must depend directly on tag-policy, the signing job, and output verification")
+	}
+	if publishJob.If.Kind != 0 {
+		return errors.New("final GitHub release publication job must run unconditionally")
 	}
 	if publishJob.Environment.Name != "hosted-controls-audit" {
 		return errors.New("final GitHub release publication job must run in hosted-controls-audit")
@@ -180,9 +218,9 @@ func ValidateReleaseWorkflowPublicationGate(workflowText string) error {
 		// names it: a heredoc body, an unrun branch or a longer option leaves
 		// the text in place while the credential stays live. The argument
 		// checks compare whole words, so a longer name is a different command.
-		audit := ShellInvocations(step.Run, auditHostedControlsScript)
-		unset := ShellInvocations(step.Run, "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
-		publish := ShellInvocations(step.Run, publishGitHubReleaseScript)
+		audit := ShellInvocations(stepRuns(step), auditHostedControlsScript)
+		unset := ShellInvocations(stepRuns(step), "unset WORKCELL_HOSTED_CONTROLS_TOKEN")
+		publish := ShellInvocations(stepRuns(step), publishGitHubReleaseScript)
 		if len(audit) == 0 || len(unset) == 0 || len(publish) != 1 ||
 			// The audit takes the repository and nothing else. It rejects a
 			// second argument before it audits anything, and a || true after
@@ -266,14 +304,8 @@ func assignsInRun(script, name string) bool {
 			}
 			continue
 		}
-		for _, word := range words {
-			if assignsWord(word, name) {
-				return true
-			}
-			// A plain assignment prefix precedes the command word, which has no "=".
-			if !strings.Contains(word, "=") {
-				break
-			}
+		if slices.ContainsFunc(words[:assignmentPrefix(words)], func(word string) bool { return assignsWord(word, name) }) {
+			return true
 		}
 	}
 	return false
@@ -286,8 +318,8 @@ func assignsWord(word, name string) bool {
 }
 
 func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
-	var document workflowDocument
-	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+	document, err := decodeWorkflow([]byte(workflowText))
+	if err != nil {
 		return fmt.Errorf("parse release authority split: %w", err)
 	}
 	if err := validateUnprivilegedReleaseJobs(document); err != nil {
@@ -305,10 +337,13 @@ func ValidateReleaseWorkflowAuthoritySplit(workflowText string) error {
 // validateReleaseAssembly reads the parsed release job so that a comment or an
 // unrelated job naming the commands cannot satisfy the assembly requirements.
 func validateReleaseAssembly(document workflowDocument) error {
+	if document.Jobs["release"].If.Kind != 0 {
+		return errors.New("release job must run unconditionally to copy both platform images and assemble the multi-arch index")
+	}
 	steps := document.Jobs["release"].Steps
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
 		var targets []string
-		for _, invocation := range ShellInvocations(step.Run, "oras cp --recursive --from-oci-layout") {
+		for _, invocation := range ShellInvocations(stepRuns(step), "oras cp --recursive --from-oci-layout") {
 			if at := slices.Index(invocation.Args, "--to-oci-layout"); at >= 0 && at+1 < len(invocation.Args) {
 				targets = append(targets, invocation.Args[at+1])
 			}
@@ -319,7 +354,7 @@ func validateReleaseAssembly(document workflowDocument) error {
 		return errors.New("release job must copy both platform images into the release OCI layout it indexes")
 	}
 	if !slices.ContainsFunc(steps, func(step workflowStep) bool {
-		return len(ShellInvocations(step.Run, "oras manifest index create --oci-layout")) > 0
+		return len(ShellInvocations(stepRuns(step), "oras manifest index create --oci-layout")) > 0
 	}) {
 		return errors.New("release job must assemble the multi-arch index in an OCI layout")
 	}
@@ -608,8 +643,8 @@ func ValidateReleaseWorkflowGitHubAttestationFlow(releaseWorkflow string) error 
 		strings.Contains(releaseWorkflow, "ENABLE_GITHUB_ATTESTATIONS_SUPPORTED") {
 		return errors.New(".github/workflows/release.yml must not use mutable repository variables to skip GitHub attestations")
 	}
-	var document workflowDocument
-	if err := yaml.Unmarshal([]byte(releaseWorkflow), &document); err != nil {
+	document, err := decodeWorkflow([]byte(releaseWorkflow))
+	if err != nil {
 		return fmt.Errorf("parse release attestation flow: %w", err)
 	}
 	if err := validateReleaseAttestationGuard(document); err != nil {
@@ -871,6 +906,10 @@ const upstreamRefreshPresenceRun = `if [[ -z "${APP_CLIENT_ID}" || -z "${APP_PRI
 fi
 echo "present=true" >> "${GITHUB_OUTPUT}"`
 
+// upstreamRefreshPresenceGate is the exact condition that gates the publisher
+// and each prerequisite on the presence check.
+const upstreamRefreshPresenceGate = "steps.secrets.outputs.present == 'true'"
+
 func commandRuns(run, command string) []Invocation { return ShellInvocations(run, command) }
 
 // validateUpstreamRefreshJobs splits the privilege by job. Only publish holds
@@ -878,17 +917,22 @@ func commandRuns(run, command string) []Invocation { return ShellInvocations(run
 // pull requests, because the App token does every write.
 func validateUpstreamRefreshJobs(workflowText string) error {
 	const path = ".github/workflows/upstream-refresh.yml"
-	var document workflowDocument
-	if err := yaml.Unmarshal([]byte(workflowText), &document); err != nil {
+	document, err := decodeWorkflow([]byte(workflowText))
+	if err != nil {
 		return fmt.Errorf("%s: parse workflow YAML: %w", path, err)
 	}
 	if len(document.Jobs) != 3 {
 		return fmt.Errorf("%s must define exactly the refresh, scope-guard, and publish jobs", path)
 	}
+	// validateManualPrivilegedWorkflowRef pins the refresh job condition.
+	const onCandidate = "github.ref == 'refs/heads/main' && needs.refresh.outputs.candidate == 'true'"
 	for _, name := range []string{"refresh", "scope-guard", "publish"} {
 		job, ok := document.Jobs[name]
 		if !ok {
 			return fmt.Errorf("%s must define the %s job", path, name)
+		}
+		if name != "refresh" && (job.If.Kind != yaml.ScalarNode || strings.TrimSpace(job.If.Value) != onCandidate) {
+			return fmt.Errorf("%s %s job must run only when %s", path, name, onCandidate)
 		}
 		for _, step := range job.Steps {
 			if name != "publish" && strings.HasPrefix(step.Uses, "actions/create-github-app-token@") {
@@ -999,7 +1043,14 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	appTokenSteps := 0
 	publishRuns := 0
 	stray, beforePublisher := "", true
+	// The publisher's condition reads the presence output, so the presence check
+	// runs unconditionally and every prerequisite step precedes the publisher
+	// and shares its condition.
+	condition := func(step workflowStep) string { return strings.TrimSpace(step.If.Value) }
+	publisherCondition, prerequisiteConditions, presenceChecks := "", []string{}, 0
 	for _, step := range publish.Steps {
+		// Every publisher counts whatever its condition, because GitHub may run
+		// it. The count and the gate check below then reject a second one.
 		publisher := len(commandRuns(step.Run, "./scripts/ci/upstream-refresh-publish.sh")) > 0
 		usesToken := false
 		presence := step.ID == "secrets" && step.Uses == "" && step.Shell == upstreamRefreshPublishShell && maps.Equal(step.Env, map[string]string{"APP_CLIENT_ID": upstreamRefreshAppTokenInputs["client-id"], "APP_PRIVATE_KEY": upstreamRefreshAppTokenInputs["private-key"]}) &&
@@ -1010,6 +1061,26 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 			}
 		}
 		mint := strings.HasPrefix(step.Uses, "actions/create-github-app-token@")
+		if presence && beforePublisher {
+			if step.If.Kind != 0 {
+				return fmt.Errorf("%s publish job must check the App credentials unconditionally", path)
+			}
+			presenceChecks++
+		}
+		if mint || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false) {
+			if !beforePublisher {
+				// The publisher would run before the candidate or the App token exists.
+				return fmt.Errorf("%s publish job must run the checkout, download, and App token steps before the publish script", path)
+			}
+			if presenceChecks == 0 {
+				// GitHub evaluates the gate before the presence output exists and skips the step.
+				return fmt.Errorf("%s publish job must check the App credentials before the checkout, download, and App token steps", path)
+			}
+			prerequisiteConditions = append(prerequisiteConditions, condition(step))
+		}
+		if publisher {
+			publisherCondition = condition(step)
+		}
 		// Only reviewed steps may precede the publisher, or they could replace its script.
 		if beforePublisher && !(publisher || mint || presence || upstreamRefreshReviewedUses(step, true) || upstreamRefreshReviewedUses(step, false)) {
 			stray = "must not run other steps before the publish script"
@@ -1045,6 +1116,16 @@ func validateUpstreamRefreshJobs(workflowText string) error {
 	}
 	if appTokenSteps != 1 || publishRuns != 1 {
 		return fmt.Errorf("%s publish job must mint one App token and run the publish script once", path)
+	}
+	// Without the gate the token action runs on empty credentials and the
+	// skip notice never applies.
+	if publisherCondition != upstreamRefreshPresenceGate || presenceChecks != 1 {
+		return fmt.Errorf("%s publish job must check the App credentials once before the publish script and run it only when %s", path, upstreamRefreshPresenceGate)
+	}
+	for _, prerequisite := range prerequisiteConditions {
+		if prerequisite != publisherCondition {
+			return fmt.Errorf("%s publish job must run the checkout, download, and App token steps under the publish script condition", path)
+		}
 	}
 	if stray != "" {
 		return fmt.Errorf("%s publish job %s", path, stray)
