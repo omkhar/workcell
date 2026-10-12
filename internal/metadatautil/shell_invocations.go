@@ -169,6 +169,46 @@ func commandBrace(each command) int {
 // subshell: a bare (, one attached to the command after it, or one the shell is
 // still reading at the end of a word (x=( , foo=$(). (( is arithmetic, which
 // ends at )) rather than at a bare ), so it opens nothing here.
+// withoutCasePatternAlternatives drops the alternatives of a case pattern
+// such as ” | . | /*): the line splits at each | like a pipeline, but the
+// words before the one that ends the pattern with ) are words to match, not
+// commands, and . among them is no source. A line whose command word ends in
+// ) is read as such a pattern; that only drops commands, so it loses
+// invocations rather than inventing them.
+func withoutCasePatternAlternatives(commands []command) []command {
+	for at := len(commands) - 1; at > 0; at-- {
+		if args := commands[at].args; len(args) > 0 && !args[0].quoted && strings.HasSuffix(args[0].text, ")") &&
+			!strings.HasPrefix(args[0].text, "(") && !strings.Contains(args[0].text, "$(") {
+			return commands[at:]
+		}
+	}
+	return commands
+}
+
+// gluedSubshellClosers counts the ) that end a logical line and close a ( the
+// same line opened, as in (cd x && go run ./y) or (cd x && "$@"): commandBrace
+// counts the bare opener but not a closer inside a word, and quote removal
+// hides where the quotes were. A ) that ends the line is outside quotes, since
+// a quoted string ends with its quote, and unescaped ones count. A case pattern
+// such as linux) opens nothing on its line, and a closer on a later line or
+// before a comment stays unread, which loses invocations rather than inventing
+// them.
+func gluedSubshellClosers(commands []command, logical string) int {
+	open := 0
+	for _, each := range commands {
+		if len(each.args) > 0 && carriesParen(each.args[0]) && commandBrace(each) > 0 {
+			open++
+		}
+	}
+	trimmed := strings.TrimRight(logical, " \t\n")
+	closers := 0
+	for closers < open && strings.HasSuffix(trimmed, ")") && !strings.HasSuffix(trimmed, "\\)") {
+		trimmed = trimmed[:len(trimmed)-1]
+		closers++
+	}
+	return closers
+}
+
 func carriesParen(first word) bool {
 	if strings.HasPrefix(first.text, "((") {
 		return false
@@ -394,6 +434,15 @@ func ShellInvocations(script, commandName string) []Invocation {
 	var quotes []byte
 	var position int
 	var depth, definedAt, control int
+	// bodyConditional is the depth outside a group that a && or || opened in
+	// a function body; the commands inside it run only on that branch.
+	bodyConditional := -1
+	// bodyControl counts the if, case and loop blocks open in a function body;
+	// a command inside one runs only on that branch.
+	bodyControl := 0
+	// bodyReturns records a return earlier in the body, after which a later
+	// exit no longer runs at every call.
+	bodyReturns := false
 	var defining, bodyOpened bool
 	// definingName is the function whose body is being skipped, and
 	// barrierFunctions lists the defined functions whose body sources or
@@ -405,6 +454,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 	// is defined after its caller is still found when the caller is called.
 	helperCalls := map[string][]helperCall{}
 	graph := helperGraph{barrierFunctions, forwarders, helperCalls}
+	// prelude holds while only commands that cannot move ROOT_DIR have run
+	// (see preludeSafe), and fixedRoot when the script assigns ROOT_DIR once,
+	// the canonical way, in any spelling the text shows (=, := or +=).
+	// Together they let a source of a reviewed library pass.
+	prelude, fixedRoot := true, len(rootDirAssignment.FindAllString(script, -1)) == 1 && strings.Contains(script, canonicalRootDir+"\n")
 	// rewritten lists the functions whose body rewrites its positional
 	// parameters with set or shift, so what "$@" runs is not what the caller
 	// passed and the forwarder is a barrier instead.
@@ -475,13 +529,14 @@ func ShellInvocations(script, commandName string) []Invocation {
 			current.WriteString(" ")
 			continue
 		}
+		logical := current.String()
 		current.Reset()
 		openQuote, quotes = quote, rest
 		heredocs = append(heredocs, opened...)
 		// A function definition is not a call. Bash reads the body and runs
 		// nothing, so a required command written inside a function that
 		// nobody calls does not satisfy a rule about what the step runs.
-		commands := splitCommands(words)
+		commands := withoutCasePatternAlternatives(splitCommands(words))
 		if !defining {
 			if name := definedName(words); name != "" {
 				if name == prefix[0] {
@@ -489,10 +544,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 					return nil
 				}
 				defining, definedAt, bodyOpened, definingName = true, depth, false, name
+				bodyConditional, bodyControl, bodyReturns = -1, 0, false
+				prelude = false // a function defined before the source could move ROOT_DIR when called
 			}
 		}
 		if !defining {
-			depth += braceDepth(commands)
+			depth += braceDepth(commands) - gluedSubshellClosers(commands, logical)
 		} else {
 			// A body that sources or evals, or runs an expanded command word
 			// the reader cannot spell, makes every call a barrier; a body whose
@@ -505,8 +562,21 @@ func ShellInvocations(script, commandName string) []Invocation {
 			// followed by { on its own, so wait for it before seeking its end;
 			// a one-line definition opens and closes within its commands.
 			for _, each := range commands {
+				outside := depth
 				if depth += commandBrace(each); depth > definedAt {
 					bodyOpened = true
+				}
+				if bodyConditional >= 0 && depth <= bodyConditional {
+					bodyConditional = -1
+				}
+				if each.conditional && depth > outside && bodyConditional < 0 {
+					bodyConditional = outside
+				}
+				conditional := each.conditional || bodyConditional >= 0 || bodyControl > 0
+				if len(each.args) > 0 && !each.args[0].quoted {
+					if change, found := controlWords[each.args[0].text]; found {
+						bodyControl = max(bodyControl+change, 0) // after this command is judged, so if exit 1; then still exits
+					}
 				}
 				if len(each.args) == 0 {
 					continue
@@ -525,7 +595,9 @@ func ShellInvocations(script, commandName string) []Invocation {
 					forwarders[definingName] = true
 				case evaluates(names):
 					barrierFunctions[definingName] = true
-				case !each.conditional && len(names) > 0 && (names[0] == "exit" || replacesShell(names) || exiting[names[0]]):
+				case len(names) > 0 && names[0] == "return":
+					bodyReturns = true
+				case !conditional && !bodyReturns && len(names) > 0 && (names[0] == "exit" || replacesShell(names) || exiting[names[0]]):
 					// A body that exits, or replaces the shell, whenever it runs
 					// ends the step at every call; die() { exit 1; } called as
 					// cmd || die runs only on failure and ends nothing proved.
@@ -533,12 +605,13 @@ func ShellInvocations(script, commandName string) []Invocation {
 				default:
 					if callee, args, ok := helperCallWords(names); ok {
 						helperCalls[definingName] = append(helperCalls[definingName], helperCall{callee, args})
-						if !each.conditional {
+						if !conditional {
 							exitCalls[definingName] = append(exitCalls[definingName], callee)
 						}
 					}
 				}
 			}
+			depth -= gluedSubshellClosers(commands, logical)
 			if bodyOpened && depth <= definedAt {
 				defining = false
 				if forwarders[definingName] && rewritten[definingName] {
@@ -558,7 +631,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			outside := groupDepth
 			groupDepth += commandBrace(each)
 			names := commandWords(spelled(args))
-			if evaluates(names) || graph.callsBarrier(names) {
+			if evaluates(names) && !(prelude && fixedRoot && reviewedLibrarySource(names)) || graph.callsBarrier(names) {
 				// eval and source run text this reader never sees as code, and
 				// that text can define a function or an alias with the command's
 				// name, as eval 'or''as() { :; }' does. No later call is proved to
@@ -566,6 +639,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 				// a guarded branch may run, so the barrier holds there too.
 				return invocations
 			}
+			prelude = prelude && preludeSafe(names)
 			if rebindsCommand(names) {
 				// An alias or a hash -p rebinds a name for every later use, in a
 				// condition or a guarded branch as well, so no use is proved.
@@ -817,6 +891,55 @@ func shellWords(line string, stack []byte) (
 	return words, heredocs, quote, stack, continues
 }
 
+// reviewedShellLibraries pins each repository library a script may source
+// without a barrier, by the SHA-256 of its reviewed text. An edit to a library
+// fails TestReviewedShellLibrariesMatchTheirFiles until the pin is reviewed.
+var reviewedShellLibraries = map[string]string{
+	"trusted-docker-client.sh": "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674",
+}
+
+// canonicalRootDir is the one ROOT_DIR assignment that pins a script's root.
+const canonicalRootDir = `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"`
+
+var rootDirAssignment = regexp.MustCompile(`ROOT_DIR(?::?=|\+=)`)
+
+// preludeSafe reports whether a command before a reviewed source leaves
+// ROOT_DIR as the script set it: an assignment, set, trap (eval-like DEBUG
+// traps are barriers already), exec, a test, a closing word, or a declaration
+// that names each variable literally and makes no nameref, as declare -n
+// x=ROOT_DIR would let x=/tmp move the root.
+func preludeSafe(names []string) bool {
+	rest := names[assignmentPrefix(names):]
+	if len(rest) == 0 {
+		return true
+	}
+	switch rest[0] {
+	case "set", "trap", "exec", "[[", "[", "test", "fi", "done", "esac", "{", "}":
+		return true
+	case "export", "readonly", "declare", "typeset", "local":
+		return !slices.ContainsFunc(rest[1:], func(arg string) bool {
+			name, _, _ := strings.Cut(arg, "=")
+			return strings.ContainsAny(name, "$`") || strings.HasPrefix(name, "-") && strings.Contains(name, "n")
+		})
+	}
+	return false
+}
+
+var reviewedLibraryPath = regexp.MustCompile(`^\$\{?ROOT_DIR\}?/scripts/lib/([A-Za-z0-9_.-]+\.sh)$`)
+
+// reviewedLibrarySource reports whether the words source exactly one pinned
+// library by its fixed path under ROOT_DIR. Its text is reviewed, so it is
+// not a barrier when only plain assignments ran before it and ROOT_DIR is the
+// canonical root, which nothing earlier could have moved.
+func reviewedLibrarySource(names []string) bool {
+	names = unwrapBuiltins(names[assignmentPrefix(names):])
+	if len(names) != 2 || (names[0] != "source" && names[0] != ".") {
+		return false
+	}
+	match := reviewedLibraryPath.FindStringSubmatch(names[1])
+	return match != nil && reviewedShellLibraries[match[1]] != ""
+}
+
 // evaluates reports whether the words run eval, source or ., each of which
 // runs code this reader never sees in the current shell: bare, behind command
 // or builtin, which run it in this shell, or as the script of sh -c or bash -c.
@@ -842,7 +965,7 @@ func evaluates(names []string) bool {
 		// and trap 'exit 0' DEBUG ends the script before the next one.
 		return true
 	}
-	if !optionLed && (strings.ContainsAny(names[0], "$`") ||
+	if !optionLed && !runsAPath(names[0]) && (strings.ContainsAny(names[0], "$`") ||
 		(names[0] != "{" && strings.Contains(names[0], "{"))) {
 		// Bash expands this word before it runs it, so s${x-}ource, $(printf
 		// source) and {source,f} can each run source. The reader cannot spell
@@ -858,6 +981,23 @@ func evaluates(names []string) bool {
 	}
 	return evaluates(strings.Fields(names[at+1]))
 }
+
+// runsAPath reports whether an expanded command word still holds a literal /
+// once its ${...} and $NAME expansions are removed, as ${ROOT_DIR}/scripts/x.sh
+// does. Bash runs a command name with a slash as a file and never looks it up
+// as a builtin or a function, so such a word cannot become eval or source. A
+// command substitution or a backtick can still produce any word, so a word
+// with one stays a barrier, and so does a brace expansion, whose first word
+// may be source.
+func runsAPath(word string) bool {
+	if strings.ContainsAny(word, "`") || strings.Contains(word, "$(") {
+		return false
+	}
+	plain := plainExpansion.ReplaceAllString(word, "")
+	return strings.Contains(plain, "/") && !strings.Contains(plain, "{") // {source,./x} expands to source first
+}
+
+var plainExpansion = regexp.MustCompile(`\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])`)
 
 // commandWords drops the reserved words and the case pattern that stand in
 // front of the command a word list runs, so the command in if eval … or in
@@ -880,9 +1020,26 @@ func commandWords(names []string) []string {
 // line keeps its first word.
 func unwrapBuiltins(names []string) []string {
 	for len(names) > 1 && (names[0] == "command" || names[0] == "builtin" || names[0] == "time" || strings.HasPrefix(names[0], "-")) {
+		if names[0] == "command" && commandLooksUp(names[1:]) {
+			return names // command -v or -V prints how a name resolves and runs nothing
+		}
 		names = names[1:]
 	}
 	return names
+}
+
+// commandLooksUp reports whether the options of a command builtin include -v
+// or -V, which look a name up instead of running it.
+func commandLooksUp(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" || !strings.HasPrefix(arg, "-") {
+			return false
+		}
+		if strings.ContainsAny(arg[1:], "vV") {
+			return true
+		}
+	}
+	return false
 }
 
 // forwarderWord matches a command word that is the caller's first positional
