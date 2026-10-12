@@ -247,7 +247,7 @@ func refuseBranchScopedConfig(ctx *BashContext, workspace, branch string) error 
 	if err != nil || current == branch {
 		return err
 	}
-	names, err := runCleanGit(ctx, workspace, []string{"config", "--name-only", "--list"})
+	names, err := runHostGit(ctx, workspace, "config", "--name-only", "--list") // the full configuration, which remoteOriginPushURL and publication read
 	if err != nil {
 		return err
 	}

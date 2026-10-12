@@ -232,7 +232,7 @@ esac
 	}
 	// The stub sits in an untrusted temp dir, so the test passes the resolved
 	// tools directly; TestShapeMarginMainRefusesWorkspaceGh covers resolution.
-	ctx := &BashContext{HostGitBin: gitBin, HostGhBin: filepath.Join(binDir, "gh"), TrustedHostPath: os.Getenv("PATH"), RealHome: os.Getenv("HOME")}
+	ctx := &BashContext{HostGitBin: gitBin, HostGhBin: filepath.Join(binDir, "gh"), TrustedHostPath: os.Getenv("PATH"), RealHome: t.TempDir()} // an empty HOME keeps the operator's Git config out
 
 	var out bytes.Buffer
 	if err := writeShapeMargin(ctx, repo, "main", "feature/x", &out); err != nil {
@@ -268,9 +268,12 @@ esac
 		t.Fatalf("an empty or invalid branch should not call gh; stat err = %v", err)
 	}
 
-	// An includeIf onbranch rule may give the publication branch another push
-	// URL, which this checkout cannot read, so the lookup fails closed.
-	git("config", "includeIf.onbranch:feature/x.path", "branch.config")
+	// An includeIf onbranch rule, here in the operator's global config, may
+	// give the publication branch another push URL, which this checkout cannot
+	// read, so the lookup fails closed.
+	if err := os.WriteFile(filepath.Join(ctx.RealHome, ".gitconfig"), []byte("[includeIf \"onbranch:feature/x\"]\n\tpath = branch.config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	err = writeShapeMargin(ctx, repo, "main", "feature/x", &out)
 	if err == nil || !strings.Contains(err.Error(), "includeIf onbranch") || out.Len() != 0 {
 		t.Fatalf("writeShapeMargin() with an onbranch include = %q, %v; want an includeIf onbranch error", out.String(), err)
