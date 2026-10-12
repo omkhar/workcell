@@ -6,12 +6,14 @@ BASE_BRANCH="${WORKCELL_PR_BASE_REF:-main}"
 BASE_REF=""
 readonly CERTIFIED_ADAPTER_LABEL="approved-large-certified-adapter"
 LABELS=()
+MARGIN="1.0"
 
 usage() {
   cat <<'EOF'
-Usage: job-pr-shape.sh [--base BRANCH] [--label LABEL]
+Usage: job-pr-shape.sh [--base BRANCH] [--label LABEL] [--margin F]
 
 Run the shared PR shape gate against the selected base branch.
+F scales the shape limits (default 1.0); see check-pr-shape.sh --help.
 EOF
 }
 
@@ -54,6 +56,14 @@ while [[ $# -gt 0 ]]; do
       }
       shift 2
       ;;
+    --margin)
+      MARGIN="${2:-}"
+      [[ -n "${MARGIN}" ]] || {
+        echo "--margin requires a value" >&2
+        exit 2
+      }
+      shift 2
+      ;;
     -h | --help)
       usage
       exit 0
@@ -87,6 +97,7 @@ shape_args=(
   --max-lines 1200
   --max-areas 8
   --max-binaries 0
+  --margin "${MARGIN}"
 )
 if has_label "${CERTIFIED_ADAPTER_LABEL}"; then
   shape_args+=(--allow-certified-adapter-shape)

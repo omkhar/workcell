@@ -141,7 +141,12 @@ else
   exit 0
 fi
 
-"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty
+branch_suffix="$(date -u +%Y%m%d%H%M%S)"
+if [[ -n "${now_override}" ]]; then
+  branch_suffix="$(printf '%s' "${now_override}" | tr -cd '0-9')"
+fi
+branch_name="codex/provider-bumps-${branch_suffix}"
+"${worktree_root}/scripts/pre-merge.sh" --profile pr-parity --allow-dirty --publish-branch "${branch_name}"
 
 codex_version="$(
   cd "${worktree_root}"
@@ -158,11 +163,6 @@ copilot_version="$(
 gemini_version="$(jq -r '.dependencies["@google/gemini-cli"]' "${worktree_root}/runtime/container/providers/package.json")"
 
 title="Bump stable provider pins"
-branch_suffix="$(date -u +%Y%m%d%H%M%S)"
-if [[ -n "${now_override}" ]]; then
-  branch_suffix="$(printf '%s' "${now_override}" | tr -cd '0-9')"
-fi
-branch_name="codex/provider-bumps-${branch_suffix}"
 
 printf '%s\n' "${title}" >"${title_file}"
 cat >"${body_file}" <<EOF

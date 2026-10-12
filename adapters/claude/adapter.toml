@@ -37,3 +37,40 @@ container_path = "/opt/workcell/host-inputs/credentials/claude-mcp.json"
 
 [egress]
 endpoints = ["api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443"]
+
+# Classifies tests/fixtures/flags/claude.txt; the reject_unsafe_claude_args parity test lands next.
+[flags]
+subcommands = [
+  "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import",
+  "logs", "mcp", "plugin", "project", "respawn", "rm", "setup-token", "stop",
+  "ultrareview",
+]
+allow = [
+  "--agent", "--all", "--autocompact", "--ax-screen-reader", "--background",
+  "--bare", "--betas", "--bg", "--brief", "-c", "--chrome", "--client-data-url",
+  "--config", "--continue", "--cwd", "-d", "--debug", "--debug-file",
+  "--desktop", "--disable-slash-commands", "--disallowed-tools",
+  "--disallowedTools", "--dry-run", "--effort",
+  "--exclude-dynamic-system-prompt-sections", "--fallback-model", "--file",
+  "--fork-session", "--forward-subagent-text", "--from-pr", "-h", "--help",
+  "--ide", "--include-hook-events", "--include-partial-messages",
+  "--input-format", "--json", "--json-schema", "--max-budget-usd", "--model",
+  "-n", "--name", "--no-chrome", "--no-post", "--no-session-persistence",
+  "--output-format", "-p", "--permission-prompts", "--post", "--print",
+  "--prompt-suggestions", "-r", "--remote-control",
+  "--remote-control-session-name-prefix", "--replay-user-messages",
+  "--restricted", "--resume", "--safe-mode", "--session-id",
+  "--strict-mcp-config", "--system-prompt-snapshot", "--teleport", "--timeout",
+  "--tmux", "--tools", "-v", "--verbose", "--version", "-w", "--worktree",
+  "--yes",
+]
+deny = [
+  "--add-dir", "--agents", "--allow-dangerously-skip-permissions",
+  "--allowed-tools", "--allowedTools", "--append-subagent-system-prompt",
+  "--append-subagent-system-prompt-file", "--append-system-prompt",
+  "--append-system-prompt-file", "--dangerously-skip-permissions",
+  "--mcp-config", "--permission-mode", "--permission-prompt-tool",
+  "--plugin-dir", "--plugin-url",
+  "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
+  "--cloud", "--environment", "--remote",
+]

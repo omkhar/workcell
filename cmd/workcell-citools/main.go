@@ -36,6 +36,7 @@ import (
 	"github.com/omkhar/workcell/internal/mutation"
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/pathutil"
+	"github.com/omkhar/workcell/internal/publishpr"
 	"github.com/omkhar/workcell/internal/scenarios"
 	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
@@ -101,6 +102,7 @@ func subcommands() []subcommand {
 		{"provider-bump-plan", "POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON CODEX_SUBCOMMAND_FIXTURE [NOW_RFC3339]", 4, 5, cmdProviderBumpPlan},
 		{"apply-provider-bump-plan", "PLAN_PATH POLICY_PATH DOCKERFILE PROVIDERS_PACKAGE_JSON", 4, 4, cmdApplyProviderBumpPlan},
 		{"prepare-codex-subcommand-fixture", "VERSION FIXTURE_PATH OUTPUT_PATH", 3, 3, cmdPrepareCodexSubcommandFixture},
+		{"flag-inventory", "plan|check ROOT | compare|write ROOT ID HELP_FILE...", 2, -1, cmdFlagInventory},
 		{"resolve-debian-bootstrap", "SNAPSHOT", 1, 1, cmdResolveDebianBootstrap},
 		{"inspect-debian-bootstrap", "MANIFEST_PATH", 1, 1, cmdInspectDebianBootstrap},
 		{"apply-debian-bootstrap", "PLAN_PATH REPO_ROOT", 2, 2, cmdApplyDebianBootstrap},
@@ -133,6 +135,7 @@ func subcommands() []subcommand {
 		{"run-mutation-tests", "", 0, 0, cmdRunMutationTests},
 		{"mutation-score", "POLICY_PATH", 1, 1, cmdMutationScore},
 		{"tree-compare", "LEFT_ROOT RIGHT_ROOT", 2, 2, cmdTreeCompare},
+		{"publish-pr-shape-margin", "REPO_ROOT BASE_BRANCH PUBLISH_BRANCH", 3, 3, cmdPublishPRShapeMargin},
 		{"upstream-get", "PROFILE [VERSION TARGET]", 1, 3, cmdUpstreamGet},
 		{"git-config-blocklist-parity", "ROOT_DIR", 1, 1, cmdGitConfigBlocklistParity},
 		{"workcell-hardening-invariants", "ROOT_DIR", 1, 1, hardeningCheck(workcellhardening.Check)},
@@ -185,6 +188,10 @@ func subcommands() []subcommand {
 	}
 }
 
+func cmdPublishPRShapeMargin(args []string) error {
+	return publishpr.ShapeMarginMain(args[0], args[1], args[2], os.Stdout)
+}
+
 func cmdCreateReleaseImageHandoff(args []string) error {
 	return metadatautil.CreateReleaseImageHandoff(args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9])
 }
@@ -233,6 +240,12 @@ func main() {
 			dieUsage(fmt.Errorf("usage: %s %s %s", os.Args[0], sub.name, sub.usage))
 		}
 		if err := sub.handler(args); err != nil {
+			// A handler's typed exit code (such as a usage error's 2) reaches
+			// the caller instead of die()'s fixed 1.
+			if ec, ok := cliexit.IsExitCodeError(err); ok {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(ec.Code)
+			}
 			die(err)
 		}
 		return
@@ -540,6 +553,25 @@ func cmdApplyProviderBumpPlan(args []string) error {
 
 func cmdPrepareCodexSubcommandFixture(args []string) error {
 	return metadatautil.PrepareCodexSubcommandFixture(args[0], args[1], args[2])
+}
+
+func cmdFlagInventory(args []string) error {
+	action, root := args[0], args[1]
+	switch {
+	case action == "plan" && len(args) == 2:
+		plan, err := metadatautil.FlagInventoryPlan(root)
+		if err == nil {
+			_, err = os.Stdout.WriteString(plan)
+		}
+		return err
+	case action == "check" && len(args) == 2:
+		return metadatautil.CheckFlagInventory(root)
+	case action == "compare" && len(args) >= 4:
+		return metadatautil.CompareFlagFixture(root, args[2], args[3:])
+	case action == "write" && len(args) >= 4:
+		return metadatautil.WriteFlagFixture(root, args[2], args[3:])
+	}
+	return &cliexit.ExitCodeError{Code: 2, Message: "usage: workcell-citools flag-inventory plan|check ROOT | compare|write ROOT ID HELP_FILE..."}
 }
 
 func cmdGenerateBuildInputManifest(args []string) error {

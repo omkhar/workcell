@@ -456,6 +456,20 @@ func (c *certifier) validateFork(ctx context.Context, parent, sibling sessions.S
 	if err := requireDistinct(all...); err != nil {
 		return err
 	}
+	// Every child holds the same parent marker, so that marker cannot tell a
+	// child container from a peer. Each child writes a marker of its own and
+	// proves it in its recorded worktree and absent from every peer.
+	for _, child := range children {
+		marker := ".workcell-c3-fork-" + child.record.SessionID
+		for _, peer := range all {
+			if peer.SessionID == child.record.SessionID {
+				continue
+			}
+			if err := c.proveMarker(ctx, child.record, peer, marker, "fork-child-only"); err != nil {
+				return err
+			}
+		}
+	}
 	groups := sessions.GroupParallelSessions(all)
 	if len(groups) != 1 || groups[0].OriginKey != c.launchRoot || len(groups[0].Members) != len(all) {
 		return errors.New("certify-c3: fork children did not group with sessions A and B under one origin")
@@ -769,13 +783,17 @@ func removeOwnedPath(root, path string) error {
 	if err := requirePlainDirectoryChain(root, filepath.Dir(path)); err != nil {
 		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
 	}
-	if err := os.RemoveAll(path); err != nil {
-		return err
+	// Open every ancestor from / without following a link, then remove relative
+	// to that descriptor. A swap after the chain check cannot move the delete.
+	parent, leaf, err := rootio.OpenParentDirectoryNoFollow(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("certify-c3: owned profile residue remains: %s", path)
+	if err != nil {
+		return fmt.Errorf("certify-c3: unsafe owned profile path: %w", err)
 	}
-	return nil
+	defer func() { _ = parent.Close() }()
+	return rootio.RemoveAllAtNoFollow(parent, filepath.Base(leaf))
 }
 func colimaProfilePaths(root, profile string) []string {
 	return []string{
