@@ -209,6 +209,9 @@ func writeShapeMargin(ctx *BashContext, workspace, base, branch string, stdout i
 	if _, err := runCleanGit(ctx, workspace, []string{"check-ref-format", "--branch", branch}); err != nil {
 		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("Invalid publish branch name: %s", branch)}
 	}
+	if err := refuseBranchScopedConfig(ctx, workspace, branch); err != nil {
+		return err
+	}
 	repositorySelector, err := originRepositorySelector(ctx, workspace)
 	if err != nil {
 		return err
@@ -234,6 +237,24 @@ func writeShapeMargin(ctx *BashContext, workspace, base, branch string, stdout i
 	}
 	_, err = fmt.Fprintln(stdout, margin)
 	return err
+}
+
+// refuseBranchScopedConfig stops the lookup when the publication branch is
+// not checked out and an includeIf onbranch rule may give it another origin
+// push URL: publish-pr reads that URL after it checks the branch out.
+func refuseBranchScopedConfig(ctx *BashContext, workspace, branch string) error {
+	current, err := runCleanGit(ctx, workspace, []string{"branch", "--show-current"})
+	if err != nil || current == branch {
+		return err
+	}
+	names, err := runCleanGit(ctx, workspace, []string{"config", "--name-only", "--list"})
+	if err != nil {
+		return err
+	}
+	if strings.Contains("\n"+strings.ToLower(names), "\nincludeif.onbranch:") {
+		return &cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("publish-pr shape margin cannot resolve the origin push URL of %s while %s is checked out, because an includeIf onbranch rule may change it; check out %s or pass --shape-margin", branch, current, branch)}
+	}
+	return nil
 }
 
 // resolveHostGit resolves git as publish-pr does: HOST_GIT_BIN when set, else

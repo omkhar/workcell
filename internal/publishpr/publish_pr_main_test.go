@@ -268,6 +268,17 @@ esac
 		t.Fatalf("an empty or invalid branch should not call gh; stat err = %v", err)
 	}
 
+	// An includeIf onbranch rule may give the publication branch another push
+	// URL, which this checkout cannot read, so the lookup fails closed.
+	git("config", "includeIf.onbranch:feature/x.path", "branch.config")
+	err = writeShapeMargin(ctx, repo, "main", "feature/x", &out)
+	if err == nil || !strings.Contains(err.Error(), "includeIf onbranch") || out.Len() != 0 {
+		t.Fatalf("writeShapeMargin() with an onbranch include = %q, %v; want an includeIf onbranch error", out.String(), err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("an onbranch include should not call gh; stat err = %v", err)
+	}
+
 	// Without a trusted gh the lookup cannot run, so it fails closed instead
 	// of reporting the first-publication margin.
 	ctx.HostGhBin = ""
