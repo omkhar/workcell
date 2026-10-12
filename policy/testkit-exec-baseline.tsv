@@ -1,0 +1,22 @@
+# Testkit raw exec ratchet baseline (internal/testkit/exec_ratchet_test.go).
+#
+# FILE<TAB>COUNT<TAB>REASON. COUNT is the number of exec.Command/CommandContext
+# calls with a path-valued or relative-literal program outside execRetryETXTBSY or
+# execRetryETXTBSYOrNestedBusy in that file. The test fails when a file
+# exceeds its count or when a count is stale-high, so the total only goes
+# down. Lower a count when you wrap a site.
+internal/testkit/check_rust_vendor_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/ci_plan_git_test.go	2	resolved system tool binary (git, bash, ssh-keygen), not a written fixture
+internal/testkit/container_smoke_harness_test.go	1	resolved system tool binary (git, bash, ssh-keygen), not a written fixture
+internal/testkit/git_hooks_test.go	2	resolved system tool binary (git, bash, ssh-keygen), not a written fixture
+internal/testkit/hosted_controls_token_isolation_test.go	2	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/install_release_e2e_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/local_docker_parity_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/provider_policy_projects_test.go	1	resolved system tool binary (git, bash, ssh-keygen), not a written fixture
+internal/testkit/release_verify_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/upstream_refresh_publish_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/upstream_refresh_scope_guard_test.go	3	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/upstream_refresh_split_test.go	4	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/validation_entrypoints_test.go	8	execs a repo or fixture script directly; migrate to execRetryETXTBSY
+internal/testkit/validation_snapshot_test.go	2	resolved system tool binary (git, bash, ssh-keygen), not a written fixture
+internal/testkit/workcell_version_test.go	1	execs a repo or fixture script directly; migrate to execRetryETXTBSY
