@@ -40,8 +40,8 @@ func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
 	for script, want := range map[string]int{
 		"git fetch || true && printf retrying || true\n": 1, // the second handler belongs to printf
 		"git fetch && printf x || true\n":                1, // the handler covers the whole && list
-		"( exec 1>/dev/null; ); git -C /missing fetch 2>&1\n(\nexec 1>/dev/null\ngit fetch 2>&1\n)\ngit gc 2>&1\n{ exec 1>/dev/null; }; git gc 2>&1\n": 5, // a subshell keeps its exec redirect to itself; a { } group does not
-		"builtin exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\n":                                                                            0, // builtin exec keeps no redirect, so stderr stays visible
+		"( exec 1>/dev/null; ); git -C /missing fetch 2>&1\n(\nexec 1>/dev/null\ngit fetch 2>&1\n)\ngit gc 2>&1\nexec 1>/dev/null | cat; git gc 2>&1\n{ exec 1>/dev/null; }; git gc 2>&1\n": 6, // a subshell or a left pipeline stage keeps its exec redirect to itself; a { } group does not
+		"builtin exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\n": 0, // builtin exec keeps no redirect, so stderr stays visible
 		"exec 3>&1; exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\ngit gc 2>&1; echo done\ncommand -- exec 1>/dev/null; git gc 2>&1\n\\exec 2>/dev/null\nexec -- 1>/dev/null; git -C /missing fetch 2>&1; echo done\nFOO=bar exec -a x 2>/dev/null\nexec -afoo 2>/dev/null\nexec -cla x 2>/dev/null\n": 11, // exec >/dev/null, after an adjacent exec, makes each later 2>&1 a dev-null use; command -- exec and \exec are exec too, and exec options or assignments keep the redirect
 	} {
 		findings, err = metadatautil.ShellFailOpenFindings(script)

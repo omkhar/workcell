@@ -240,7 +240,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				offset += len(operand)
 			}
 			stdoutNull = stdoutNull || slices.ContainsFunc(shellExecDevNull.FindAllStringSubmatchIndex(command, -1), func(m []int) bool { // an exec inside a ( ) or $( ) that the command opens keeps its redirect there
-				return strings.Count(command[:m[2]], "(") == strings.Count(command[:m[2]], ")") && shellExecNull.MatchString(command[m[2]:m[3]]+" ")
+				return strings.Count(command[:m[2]], "(") == strings.Count(command[:m[2]], ")") && shellExecNull.MatchString(command[m[2]:m[3]]+" ") && !(strings.ContainsAny(command[m[1]-1:m[1]], "|&") && !strings.HasPrefix(command[m[1]:], command[m[1]-1:m[1]])) // a | or & after the exec runs it in a subshell, as a left pipeline stage or a background job
 			})
 			net := strings.Count(command, "(") - strings.Count(command, ")")
 			kept = append(kept, slices.Repeat([]bool{stdoutNull}, max(net, 0))...) // each subshell left open saves the state its ) restores
