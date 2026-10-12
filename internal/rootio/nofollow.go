@@ -168,6 +168,91 @@ func WriteFileAtomicAtNoFollow(parent *os.File, name string, data []byte, mode o
 	return StageAndPublishAt(parent, name, data, mode, tempPrefix)
 }
 
+// RemoveAllAtNoFollow removes name and everything below it through descriptors
+// relative to parent, never following a symlink. A missing name is not an
+// error. A link inside the tree is removed as a link, not followed.
+func RemoveAllAtNoFollow(parent *os.File, name string) error {
+	if err := validateLeafName(name); err != nil {
+		return err
+	}
+	return removeAllAt(int(parent.Fd()), name, false)
+}
+
+// removeAllAt removes one name. An observed name came from a directory read, so
+// its disappearance means a rename outside the tree and fails the removal.
+//
+// Residual risk, accepted: a subdirectory is opened by name under its parent
+// descriptor and then emptied through that descriptor, and POSIX cannot pin a
+// directory against a rename, so a process that can write the tree could move
+// an opened subdirectory elsewhere before its contents are removed; the move
+// is detected only when the emptied name is checked before its unlink. The
+// trees this removes are owned by the certifier uid in a directory no other
+// uid can write, so that process is the same uid or root, both of which
+// already control the certifier; a hostile same-uid process is outside the
+// threat model, as recorded for scripts/lib/owned-root.sh.
+func removeAllAt(dirFD int, name string, observed bool) error {
+	unlinkErr := unix.Unlinkat(dirFD, name, 0)
+	if unlinkErr == nil {
+		return nil
+	}
+	if errors.Is(unlinkErr, unix.ENOENT) {
+		if observed {
+			return fmt.Errorf("entry vanished during removal: %s", name)
+		}
+		return nil
+	}
+	// A directory refuses a plain unlink (EISDIR or EPERM, by platform), so
+	// open it without following a link and empty it first.
+	fd, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		if observed {
+			return fmt.Errorf("entry vanished during removal: %s", name)
+		}
+		return nil
+	}
+	if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+		// An unreadable directory cannot be emptied, but an empty one is still
+		// removable through its parent; a non-empty one fails closed here.
+		if rmErr := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); rmErr == nil {
+			return nil
+		}
+		return err
+	}
+	if err != nil {
+		return unlinkErr
+	}
+	dir := os.NewFile(uintptr(fd), name)
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := removeAllAt(fd, entry, true); err != nil {
+			return err
+		}
+	}
+	// Unlink takes a name, so prove that the name still means the directory
+	// that was emptied. POSIX has no unlink by descriptor, so a swap after this
+	// check is the one window that stays.
+	var opened, named unix.Stat_t
+	if err := unix.Fstat(fd, &opened); err != nil {
+		return err
+	}
+	if err := unix.Fstatat(dirFD, name, &named, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("directory moved during removal: %s", name)
+		}
+		return err
+	}
+	if opened.Dev != named.Dev || opened.Ino != named.Ino {
+		return fmt.Errorf("directory replaced during removal: %s", name)
+	}
+	// The directory was opened, so a missing name now means it was renamed.
+	// Fail instead of reporting that the tree is gone.
+	return unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR)
+}
+
 func validateLeafName(name string) error {
 	if name == "" || name == "." || name == ".." || name == string(filepath.Separator) || name != filepath.Base(name) {
 		return fmt.Errorf("path must name one file within the opened parent: %s", name)

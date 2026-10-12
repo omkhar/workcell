@@ -1,0 +1,44 @@
+# Option inventory for the PINNED runtime gemini CLI. The stamp must equal the pin.
+# gemini-version: 0.62.0
+# Regenerate: scripts/check-flag-inventory.sh --write. Classify: adapters/gemini/adapter.toml [flags].
+--accept-raw-output-risk
+--acp
+--admin-policy
+--allowed-mcp-server-names
+--allowed-tools
+--debug
+--delete-session
+--experimental-acp
+--extensions
+--help
+--include-directories
+--list-extensions
+--list-sessions
+--model
+--output-format
+--policy
+--prompt
+--prompt-interactive
+--raw-output
+--resume
+--sandbox
+--screen-reader
+--session-file
+--session-id
+--skip-trust
+--version
+--worktree
+--yolo
+-d
+-e
+-h
+-i
+-l
+-m
+-o
+-p
+-r
+-s
+-v
+-w
+-y
