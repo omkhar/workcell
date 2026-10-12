@@ -46,6 +46,8 @@ jobs:
         run: |
           rustup show >/dev/null
           cargo build --release --locked --offline --lib
+          # The guard accepts only this preload path in a child environment.
+          sudo install -m 0644 target/release/libworkcell_exec_guard.so /usr/local/lib/libworkcell_exec_guard.so
 
       # Two full measurement passes (WORKCELL_BENCH_RUNS=2) so the cross-run
       # stability of the hooked-median numbers is visible in the log and the

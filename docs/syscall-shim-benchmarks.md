@@ -47,11 +47,13 @@ The reported delta is the added classification time.
 
 ### Runner caveats
 
-The harness removes `LD_PRELOAD` before it starts each measured child. The guard
-stays loaded in the harness, so its hooks still run.
+The measured children keep `LD_PRELOAD`. The guard refuses a child exec that
+does not carry exactly the approved preload, `/usr/local/lib/libworkcell_exec_guard.so`.
+So each guarded sample also includes the child cost to load the shared library,
+as each guarded child in the runtime pays it.
 
-This method excludes the child cost to load the shared library. Each guarded
-child process also pays that cost.
+The results below predate this change. They exclude that load cost, so new
+captures report a larger delta.
 
 The scheduled workflow uses 5,000 measured samples, 500 warm-up samples, and two
 complete runs for each mode.
@@ -104,6 +106,8 @@ Run this benchmark only on Linux:
 ```sh
 (cd runtime/container/rust && \
   cargo build --release --locked --offline --lib)
+sudo install -m 0644 runtime/container/rust/target/release/libworkcell_exec_guard.so \
+  /usr/local/lib/libworkcell_exec_guard.so
 ./scripts/bench/run-exec-guard-bench.sh
 ```
 

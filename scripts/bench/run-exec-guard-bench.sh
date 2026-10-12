@@ -29,7 +29,9 @@ MODES="execve execv execvp posix_spawn"
 ITERATIONS="${WORKCELL_BENCH_ITERATIONS:-3000}"
 WARMUP="${WORKCELL_BENCH_WARMUP:-300}"
 RUNS="${WORKCELL_BENCH_RUNS:-2}"
-SO_PATH="${WORKCELL_EXEC_GUARD_SO:-${ROOT_DIR}/runtime/container/rust/target/release/libworkcell_exec_guard.so}"
+# The guard accepts only this preload path in a child environment.
+APPROVED_SO_PATH=/usr/local/lib/libworkcell_exec_guard.so
+SO_PATH="${WORKCELL_EXEC_GUARD_SO:-${APPROVED_SO_PATH}}"
 OUTPUT_PATH="${WORKCELL_BENCH_OUTPUT:-}"
 CC_BIN="${CC:-cc}"
 
@@ -53,9 +55,10 @@ if [ "${OS}" != "Linux" ]; then
     "is Linux-only, running the unhooked baseline only" >&2
 fi
 
-if [ "${HOOKED}" -eq 1 ] && [ ! -f "${SO_PATH}" ]; then
-  echo "run-exec-guard-bench: exec-guard cdylib not found: ${SO_PATH}" >&2
-  echo "  build it first: (cd runtime/container/rust && cargo build --release)" >&2
+if [ "${HOOKED}" -eq 1 ] && { [ "${SO_PATH}" != "${APPROVED_SO_PATH}" ] || [ ! -f "${SO_PATH}" ]; }; then
+  echo "run-exec-guard-bench: the guard needs its cdylib at ${APPROVED_SO_PATH} (got ${SO_PATH})" >&2
+  echo "  build and install it: (cd runtime/container/rust && cargo build --release --locked --offline --lib) &&" >&2
+  echo "  sudo install -m 0644 runtime/container/rust/target/release/libworkcell_exec_guard.so ${APPROVED_SO_PATH}" >&2
   exit 1
 fi
 
