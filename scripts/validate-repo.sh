@@ -201,6 +201,7 @@ shell_files=(
   "${ROOT_DIR}/scripts/ci/run-fuzz-in-validator.sh"
   "${ROOT_DIR}/scripts/ci/run-mutation-in-validator.sh"
   "${ROOT_DIR}/scripts/ci/run-validate-in-validator.sh"
+  "${ROOT_DIR}/scripts/ci/stage-trusted-go.sh"
   "${ROOT_DIR}/scripts/colima-egress-allowlist.sh"
   "${ROOT_DIR}/scripts/container-smoke.sh"
   "${ROOT_DIR}/scripts/dev-quick-check.sh"
