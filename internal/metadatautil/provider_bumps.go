@@ -1136,6 +1136,11 @@ func fetchJSON(client *http.Client, targetURL string, target any) error {
 }
 
 func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.Header, error) {
+	return fetchDecoded(client, targetURL, providerBumpMaxJSONBytes, func(body io.Reader) error { return json.NewDecoder(body).Decode(target) })
+}
+
+// fetchDecoded owns the provider-bump HTTP request: the timeout, the GitHub API auth, the status check, and a cap of limit bytes on the body that decode reads.
+func fetchDecoded(client *http.Client, targetURL string, limit int64, decode func(io.Reader) error) (http.Header, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), providerBumpHTTPTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
@@ -1162,7 +1167,7 @@ func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxJSONBytes)).Decode(target); err != nil {
+	if err := decode(io.LimitReader(resp.Body, limit)); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", targetURL, err)
 	}
 	return resp.Header.Clone(), nil
