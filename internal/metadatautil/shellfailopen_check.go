@@ -16,11 +16,7 @@ import (
 	"github.com/omkhar/workcell/internal/rootio"
 )
 
-// CheckShellFailOpen rejects a shell idiom that hides the exit status of a find, git, gh, docker or getent call.
-// A `<(` or `>(`, a `$(...)` under `local` or in a list, `|| true` and `2>/dev/null` each turn "the tool failed" into "there was nothing to find", so a gate passes on an empty answer. shellcheck does not flag them.
-// A hit is accepted when its own command or the command right after it captures the status (see shellFailOpenHandled). A process substitution is always a hit: bash never propagates its status.
-// The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits each file carries today; a count above its row fails, and so does a count below it, so the row drops with the repair.
-// The scan reads lines with shellWords, the reader ShellInvocations uses, so quotes, comments, heredocs and an open `$(` mean the same thing to both.
+// CheckShellFailOpen rejects a shell idiom that hides the exit status of a find, git, gh, docker or getent call. A `<(` or `>(`, a `$(...)` under `local` or in a list, `|| true` and `2>/dev/null` each turn "the tool failed" into "there was nothing to find", so a gate passes on an empty answer. shellcheck does not flag them. A hit is accepted when its own command or the command right after it captures the status (see shellFailOpenHandled). A process substitution is always a hit: bash never propagates its status. The check is a ratchet. policy/shell-fail-open-baseline.tsv records the hits each file carries today; a count above its row fails, and so does a count below it, so the row drops with the repair. The scan reads lines with shellWords, the reader ShellInvocations uses, so quotes, comments, heredocs and an open `$(` mean the same thing to both.
 func CheckShellFailOpen(rootDir string) error {
 	files, err := shellFailOpenFiles(rootDir)
 	if err != nil {
@@ -94,15 +90,15 @@ type ShellFailOpenFinding struct {
 }
 
 var (
-	shellQuotedStatus          = regexp.MustCompile(`^(?:\w+=)?\$(?:\?|\{\?\})$`)                                                                                                                                                                                         // a quoted "$?" or rc="$?", restored so the status read is seen
-	shellDupStdout             = regexp.MustCompile(`2>&\s*1(?:[^0-9]|$)`)                                                                                                                                                                                                // stderr onto stdout
-	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$") + `"?(?:[\s;&|)<>]|$)`)                                                                                               // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
-	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\(|\{\s*false\s*;\s*\})`)                                                                                                                                                                          // a false or ( ) handler keeps the failure but does not leave the list
-	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                                                                                                                  // the tool is the last command of an if or while test
-	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                                                                                                                   // an arithmetic (( )), whose <( is a comparison
-	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                                                                                                                   // the null device in any spelling of its path, such as /dev//null
-	shellExecDevNull           = regexp.MustCompile(`(?:^\s*|[;&|(]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|()]*\s+)*(?:command(?:\s+(?:-p|--))*\s+)?exec(?:\s+(?:-[cl]*a(?:\s+)?[^\s;&|()<>]+|-[cl]+|--))*((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`) // exec with no command sends stderr to /dev/null for every later command
-	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`)                                                                                     // other languages; a #![ line is a Rust attribute
+	shellQuotedStatus          = regexp.MustCompile(`^(?:\w+=)?\$(?:\?|\{\?\})$`)                                                                                                                                                                                          // a quoted "$?" or rc="$?", restored so the status read is seen
+	shellDupStdout             = regexp.MustCompile(`2>&\s*1(?:[^0-9]|$)`)                                                                                                                                                                                                 // stderr onto stdout
+	shellExecNull              = regexp.MustCompile(shellDevNull.String() + `|(?:^|\s)1?>[>|]?\s*"?` + strings.Trim(shellNullDevice.String(), "^$") + `"?(?:[\s;&|)<>]|$)`)                                                                                                // an exec null redirect of stderr or of stdout, which makes a later 2>&1 null too
+	shellFailOpenPassesOn      = regexp.MustCompile(`\|\|\s*(?:false\b|\(|\{\s*false\s*;\s*\})`)                                                                                                                                                                           // a false or ( ) handler keeps the failure but does not leave the list
+	shellFailOpenThenDo        = regexp.MustCompile(`^\s*(?:then|do)\b`)                                                                                                                                                                                                   // the tool is the last command of an if or while test
+	shellArithmetic            = regexp.MustCompile(`\$?\(\((?:[^()]|\([^()]*\))*\)\)`)                                                                                                                                                                                    // an arithmetic (( )), whose <( is a comparison
+	shellNullDevice            = regexp.MustCompile(`^(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null$`)                                                                                                                                                                    // the null device in any spelling of its path, such as /dev//null
+	shellExecDevNull           = regexp.MustCompile(`(?:^\s*|[;&|({]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|()]*\s+)*(?:command(?:\s+(?:-p|--))*\s+)?exec(?:\s+(?:-[cl]*a(?:\s+)?[^\s;&|()<>]+|-[cl]+|--))*((?:\s+[0-9]*(?:[<>]|&>)[>&|]?\s*"?[^\s;&|()]+)+)\s*(?:[;&|)]|$)`) // exec with no command sends stderr to /dev/null for every later command
+	shellFailOpenOtherLanguage = regexp.MustCompile(`^(?:python[0-9.]*|perl[0-9.]*|ruby|node|deno|bun|php|lua|tclsh|expect|g?awk|mawk|sed|osascript|Rscript|swift|pwsh|fish|t?csh)$`)                                                                                      // other languages; a #![ line is a Rust attribute
 	shellFailOpenTools         = `(?:find|git|gh|docker|getent)`
 	shellToolName              = regexp.MustCompile(`^(?:[^\s;&|()<>]*/)?` + shellFailOpenTools + `$`)
 	shellCommandPosition       = "(?:^|[;(`\n]|(?:^|[^<>])[&|]|(?:^|[;\n]|\\bin)\\s*\\(?[^\\s;&|()]+(?:\\s*\\|\\s*[^\\s;&|()]+)*\\))\\s*(?:(?:[!{]|[0-9]*(?:[<>]|&>)[>&|]?\\s*[^\\s;&|()<>]+|if|then|do|else|elif|while|until|coproc(?:\\s+[A-Za-z_][A-Za-z0-9_]*\\s+(?:\\{|if|while|until))?|time(?:\\s+-p)?(?:\\s+--)?|builtin|command(?:\\s+-p)?(?:\\s+--)?|xargs(?:\\s+(?:-[adEILnPs]\\s+\\S+|-\\S+))*|sudo(?:\\s+(?:-[CDghprTtUu]\\s+\\S+|-\\S+))*|(?:\\S*/)?env(?:\\s+(?:-[CPSu]\\s+\\S+|--(?:chdir|split-string|unset)\\s+\\S+|-\\S+))*|[A-Za-z_][A-Za-z0-9_]*=[^\\s(]*)\\s+)*" // shellCommandPosition ends where a command word starts: after the start, an operator or an opener, then any reserved word, assignment, or xargs, sudo or env with its options and their values. `git` in a path or an argument is not a call, and nor is the target of a >| or >& redirection.
@@ -138,7 +134,7 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 	var heredocs []heredoc
 	var stack []byte
 	var openQuote byte
-	depth, number, backtick, stdoutNull := 0, 0, false, false // stdoutNull: an exec sent stdout to the null device, so a later 2>&1 hides stderr
+	depth, number, backtick, stdoutNull, kept := 0, 0, false, false, []bool(nil) // stdoutNull: an exec sent stdout to the null device, so a later 2>&1 hides stderr; kept: its value outside each open ( )
 	for line := range strings.Lines(script) {
 		number++
 		text := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
@@ -204,10 +200,9 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			start = end + 1
 			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(shellArithmetic.ReplaceAllString(command, ""), -1))                                             // A process substitution is always a hit; see the contract above.
 			hits[ruleDevNull] += len(slices.DeleteFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return !shellExecNull.MatchString(e[1] + " ") })) // exec with only redirections keeps them for every later command
-			stdoutNull = stdoutNull || slices.ContainsFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return shellExecNull.MatchString(e[1] + " ") })
+			inner := stdoutNull || slices.ContainsFunc(shellExecDevNull.FindAllStringSubmatch(command, -1), func(e []string) bool { return shellExecNull.MatchString(e[1] + " ") })
 			toolSubst := len(shellToolSubsts(command)) > 0
-			// A status read or a handler covers only a call written before it.
-			later := func() []string {
+			later := func() []string { // A status read or a handler covers only a call written before it.
 				later := slices.Clone(commands[at+1 : len(commands)-1])
 				for _, each := range statements[index+1:] {
 					codes, _ := shellFailOpenCommands(each.code, each.raw)
@@ -215,16 +210,14 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				}
 				return later
 			}
-			// testedFrom reports whether the status of the call that starts text, a suffix of the command, is read by anything after it.
-			testedFrom := func(text string) bool {
+			testedFrom := func(text string) bool { // testedFrom reports whether the status of the call that starts text, a suffix of the command, is read by anything after it.
 				rest := text[shellFailOpenFirstCall(text):]
 				piped := shellFailOpenDetached(shellOutsideSubsts(rest))                                                            // without pipefail a later stage sets the status, not the tool
 				launched := strings.HasPrefix(strings.TrimSpace(text), "coproc") || strings.HasPrefix(strings.TrimSpace(text), "!") // $? is the launch status, or ! inverts it
 				return !piped && !launched && (shellFailOpenReadsOwnStatus(rest) || shellFailOpenHandled(rest, later) && !shellFailOpenPassesOn.MatchString(strings.Join(append([]string{rest}, later()[:min(1, len(later()))]...), ";")) || shellFailOpenReadsStatus(after) || shellFailOpenTested.MatchString(text) && shellFailOpenThenDo.MatchString(after))
 			}
 			tested := testedFrom(command)
-			// Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
-			count := func(hit bool, pattern *regexp.Regexp, text string) int {
+			count := func(hit bool, pattern *regexp.Regexp, text string) int { // Each occurrence counts, so a || true && … || true list on one command cannot stand in for two baselined hits.
 				if !hit {
 					return 0
 				}
@@ -234,18 +227,25 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				hits[ruleCommandSubstitution] += len(shellToolSubsts(command))
 			}
 			hits[ruleOrTrue] += shellSwallowingHandlers(command, later, false)
-			// A redirect belongs to the operand of the && || or | list it is written in, so git fetch || printf x 2>/dev/null hides no git status, and each operand's own status test counts, so the && after git fetch does not cover git gc 2>/dev/null. A redirect inside a substitution belongs to the command there, so $(git x 2>/dev/null) hides git's status while foo "$(git x)" 2>/dev/null hides foo's; each is read in its own text.
-			offset := 0
+			offset := 0 // A redirect belongs to the operand of the && || or | list it is written in, so git fetch || printf x 2>/dev/null hides no git status, and each operand's own status test counts, so the && after git fetch does not cover git gc 2>/dev/null. A redirect inside a substitution belongs to the command there, so $(git x 2>/dev/null) hides git's status while foo "$(git x)" 2>/dev/null hides foo's; each is read in its own text.
 			for _, operand := range shellListOperands(command) {
 				untested := !testedFrom(command[offset:])
 				if outside := shellOutsideSubsts(operand); shellToolCommand.MatchString(outside) {
-					hits[ruleDevNull] += count(untested, shellDevNull, outside) + count(untested && stdoutNull, shellDupStdout, outside)
+					hits[ruleDevNull] += count(untested, shellDevNull, outside) + count(untested && inner, shellDupStdout, outside)
 				}
 				for _, start := range shellToolSubsts(operand) {
 					body, _ := shellSubstCall(operand, start)
 					hits[ruleDevNull] += count(untested, shellDevNull, body)
 				}
 				offset += len(operand)
+			}
+			stdoutNull = stdoutNull || slices.ContainsFunc(shellExecDevNull.FindAllStringSubmatchIndex(command, -1), func(m []int) bool { // an exec inside a ( ) or $( ) that the command opens keeps its redirect there
+				return strings.Count(command[:m[2]], "(") == strings.Count(command[:m[2]], ")") && shellExecNull.MatchString(command[m[2]:m[3]]+" ")
+			})
+			net := strings.Count(command, "(") - strings.Count(command, ")")
+			kept = append(kept, slices.Repeat([]bool{stdoutNull}, max(net, 0))...) // each subshell left open saves the state its ) restores
+			if closed := min(-min(net, 0), len(kept)); closed > 0 {
+				stdoutNull, kept = kept[len(kept)-closed], kept[:len(kept)-closed]
 			}
 		}
 		for _, rule := range []string{ruleProcessSubstitution, ruleCommandSubstitution, ruleOrTrue, ruleDevNull} {
@@ -525,8 +525,7 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 		}
 		left := shellTestExpr.ReplaceAllString(pipeline, "[[ ]]")
 		pipeline = ""
-		// A tool's failure, or one a failing handler such as false passes on, reaches this ||, as in git fetch || false || true.
-		tool := failing || shellToolCommand.MatchString(shellOutsideSubsts(left)) || len(shellToolSubsts(left)) > 0 ||
+		tool := failing || shellToolCommand.MatchString(shellOutsideSubsts(left)) || len(shellToolSubsts(left)) > 0 || // A tool's failure, or one a failing handler such as false passes on, reaches this ||, as in git fetch || false || true.
 			inSubst && shellUnnamedCommand.MatchString(shellOutsideSubsts(left)) // a substitution counts a named call
 		failing = false
 		if !tool || !ends("||") || shellFailOpenReadsOwnStatus(shellOutsideSubsts(segment[offset-2:])) {
