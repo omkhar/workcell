@@ -48,7 +48,11 @@ const (
 	// for hostile/misbehaving upstreams and tracks the projected growth
 	// curve for the next ~5 years of npm metadata.
 	providerBumpMaxJSONBytes = 16 << 20 // 16 MiB
-	copilotReleaseMaxPages   = 10
+	// providerBumpMaxNPMStreamBytes caps the bytes read from an npm packument.
+	// The packument is streamed, so memory stays small at any size; the full
+	// @openai/codex document passed 16 MiB in October 2026 and still grows.
+	providerBumpMaxNPMStreamBytes = 256 << 20 // 256 MiB
+	copilotReleaseMaxPages        = 10
 )
 
 var (
@@ -892,7 +896,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 
 func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
 	var metadata npmRegistryMetadata
-	if err := fetchJSON(client, registryURL, &metadata); err != nil {
+	if _, err := fetchDecoded(client, registryURL, providerBumpMaxNPMStreamBytes, func(body io.Reader) error { return decodeNPMRegistryMetadata(body, &metadata) }); err != nil {
 		return nil, nil, err
 	}
 	latestRaw := metadata.DistTags["latest"]
@@ -1128,6 +1132,52 @@ func compareStableVersions(left, right stableVersion) int {
 		return left.Minor - right.Minor
 	}
 	return left.Patch - right.Patch
+}
+
+// decodeNPMRegistryMetadata reads only dist-tags and time from an npm packument and skips every other value token by token, so the versions object is never held in memory.
+func decodeNPMRegistryMetadata(body io.Reader, metadata *npmRegistryMetadata) error {
+	dec := json.NewDecoder(body)
+	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
+		return fmt.Errorf("npm packument is not a JSON object: %v", err)
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch key {
+		case "dist-tags":
+			err = dec.Decode(&metadata.DistTags)
+		case "time":
+			err = dec.Decode(&metadata.Time)
+		default:
+			err = skipJSONValue(dec)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_, err := dec.Token()
+	return err
+}
+
+// skipJSONValue consumes one JSON value, however deep, one token at a time.
+func skipJSONValue(dec *json.Decoder) error {
+	for depth := 0; ; {
+		token, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch token {
+		case json.Delim('{'), json.Delim('['):
+			depth++
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
 }
 
 func fetchJSON(client *http.Client, targetURL string, target any) error {
