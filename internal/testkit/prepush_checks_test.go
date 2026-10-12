@@ -4,7 +4,6 @@
 package testkit
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,15 +69,14 @@ func pushLine(oid string) string {
 
 func (f *prePushChecksFixture) hookWithInput(stdin string, extraEnv ...string) (string, error) {
 	f.t.Helper()
-	cmd := exec.Command(filepath.Join(f.root, "scripts", "githooks", "pre-push"))
-	cmd.Dir = f.root
-	cmd.Env = append(append(f.env(), "WORKCELL_SKIP_PREPUSH_CHECKS=0"), extraEnv...)
-	cmd.Stdin = strings.NewReader(stdin)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err := cmd.Run()
-	return output.String(), err
+	output, err := execRetryETXTBSY(func() *exec.Cmd {
+		cmd := exec.Command(filepath.Join(f.root, "scripts", "githooks", "pre-push"))
+		cmd.Dir = f.root
+		cmd.Env = append(append(f.env(), "WORKCELL_SKIP_PREPUSH_CHECKS=0"), extraEnv...)
+		cmd.Stdin = strings.NewReader(stdin)
+		return cmd
+	})
+	return string(output), err
 }
 
 func (f *prePushChecksFixture) ran() string {
@@ -480,12 +478,8 @@ func TestRunCodespellPrintsOffendingLines(t *testing.T) {
 	}
 	script := filepath.Join(repoRoot(t), "scripts", "ci", "run-codespell.sh")
 	run := func() (string, error) {
-		cmd := exec.Command(script, root)
-		var output bytes.Buffer
-		cmd.Stdout = &output
-		cmd.Stderr = &output
-		err := cmd.Run()
-		return output.String(), err
+		output, err := execRetryETXTBSY(func() *exec.Cmd { return exec.Command(script, root) })
+		return string(output), err
 	}
 	if err := os.WriteFile(filepath.Join(root, "doc.md"), []byte("clean text\n"), 0o644); err != nil {
 		t.Fatal(err)
