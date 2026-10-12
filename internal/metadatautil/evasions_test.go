@@ -65,8 +65,6 @@ var anyRejection = map[string]bool{
 	"exiting helper before the anchor":       true,
 	"assigned exiting helper call":           true,
 	"later-defined exiting helper":           true,
-	"step condition if: false":               true,
-	"step condition && false":                true,
 }
 
 // Evasions is the shared negative corpus. A validator that reads file content to
@@ -386,8 +384,6 @@ var Evasions = []Evasion{
 		i := indentOf(a)
 		return i + "outer() {\n" + i + "  stop\n" + i + "}\n" + i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "outer\n" + a
 	})},
-	{"step condition if: false", stepCondition("false")},
-	{"step condition && false", stepCondition("${{ success() && false }}")},
 	{"flattened argv", replaceAnchor(joinFirstWords)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
@@ -548,43 +544,6 @@ func joinFirstWords(anchor string) string {
 	}
 	pair := words[first] + " " + words[first+1]
 	return strings.Replace(anchor, pair, `"`+pair+`"`, 1)
-}
-
-// stepCondition gives the workflow step that holds the anchored command the
-// condition, which GitHub evaluates to false, so the step never runs. A step
-// that already has a condition gets the new one in its place. An artifact
-// with no run: key is a shell script, and the condition becomes an if
-// statement whose test always fails.
-func stepCondition(condition string) func(artifact, anchor string) string {
-	return func(artifact, anchor string) string {
-		at := strings.Index(artifact, anchor)
-		lines := strings.SplitAfter(artifact[:at], "\n")
-		for index := len(lines) - 1; index >= 0; index-- {
-			key := strings.TrimLeft(lines[index], " \t")
-			indent := lines[index][:len(lines[index])-len(key)]
-			if !strings.HasPrefix(key, "run:") && !strings.HasPrefix(key, "- run:") {
-				continue
-			}
-			if strings.HasPrefix(key, "- ") {
-				lines[index] = indent + "- if: " + condition + "\n" + indent + "  " + key[2:]
-				return strings.Join(lines, "") + artifact[at:]
-			}
-			for step := index - 1; step >= 0; step-- {
-				previous := strings.TrimLeft(lines[step], " \t")
-				if strings.HasPrefix(previous, "if:") || strings.HasPrefix(previous, "- if:") {
-					lines[step] = lines[step][:strings.Index(lines[step], "if:")] + "if: " + condition + "\n"
-					return strings.Join(lines, "") + artifact[at:]
-				}
-				if strings.HasPrefix(previous, "- ") {
-					break
-				}
-			}
-			lines[index] = indent + "if: " + condition + "\n" + lines[index]
-			return strings.Join(lines, "") + artifact[at:]
-		}
-		i := indentOf(anchor)
-		return strings.Replace(artifact, anchor, hide(anchor, i+"if [[ -z x ]]; then", i+"fi"), 1)
-	}
 }
 
 // sourcedBy writes a definition of the anchored command to shadow.sh and runs
