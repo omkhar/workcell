@@ -29,7 +29,7 @@ func newPrePushChecksFixture(t *testing.T, failing string) *prePushChecksFixture
 	f := &prePushChecksFixture{gitHooksFixture: newGitHooksFixture(t)}
 	f.calls = filepath.Join(f.tmpDir, "calls")
 	for _, name := range []string{"check-generated-artifacts", "check-doc-links", "check-doc-language", "check-pr-shape"} {
-		body := "#!/bin/bash\necho " + name + " >>\"" + f.calls + "\"\n"
+		body := "#!/bin/bash\necho " + name + " >>" + ShellQuote(f.calls) + "\n"
 		if name == failing {
 			body += "exit 1\n"
 		}
@@ -110,7 +110,7 @@ func TestFastPrePushRunsNoHookFromPushedCommit(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	marker := filepath.Join(f.tmpDir, "pushed-hook-ran")
 	// The fixture sets core.hooksPath=.githooks, as bootstrap does.
-	writeExecFile(t, filepath.Join(f.root, ".githooks", "post-checkout"), []byte("#!/bin/bash\ntouch \""+marker+"\"\n"), 0o755)
+	writeExecFile(t, filepath.Join(f.root, ".githooks", "post-checkout"), []byte("#!/bin/bash\ntouch "+ShellQuote(marker)+"\n"), 0o755)
 	f.run("add", ".githooks/post-checkout")
 	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
 	output, err := f.hook()
@@ -422,7 +422,7 @@ func TestFastPrePushMaterializesSparseExcludedFiles(t *testing.T) {
 func TestFastPrePushRunsOnlyTrustedCheckers(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	marker := filepath.Join(f.tmpDir, "pushed-code-ran")
-	evil := []byte("#!/bin/bash\ntouch \"" + marker + "\"\n")
+	evil := []byte("#!/bin/bash\ntouch " + ShellQuote(marker) + "\n")
 	for _, name := range []string{"check-generated-artifacts.sh", "check-doc-links.sh", "check-doc-language.sh", "check-pr-shape.sh", filepath.Join("ci", "run-codespell.sh")} {
 		writeExecFile(t, filepath.Join(f.root, "scripts", name), evil, 0o755)
 	}
