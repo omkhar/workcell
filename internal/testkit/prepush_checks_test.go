@@ -389,7 +389,7 @@ func TestFastPrePushRunsNoPushedAttributeFilter(t *testing.T) {
 	// config; the checkout empties every configured driver, so it never runs.
 	f := newPrePushChecksFixture(t, "")
 	marker := filepath.Join(f.tmpDir, "smudge-ran")
-	f.run("config", "filter.evil.smudge", "touch \""+marker+"\" && cat")
+	f.run("config", "filter.evil.smudge", "touch "+ShellQuote(marker)+" && cat")
 	f.commitFile(".gitattributes", "*.md filter=evil\n", fixtureSubject)
 	f.commitFile("note.md", "A note.\n", fixtureSubject)
 	output, err := f.hook()
