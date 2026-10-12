@@ -96,117 +96,6 @@ func openDirectoryChain(fd int, components []string) (int, error) {
 	return fd, nil
 }
 
-// RemoveAllAtNoFollow removes name under parent and every entry below it,
-// like os.RemoveAll. Each directory opens relative to its parent's descriptor
-// with O_NOFOLLOW, so a symlink is unlinked as a leaf and its target is kept.
-// A missing name is not an error.
-//
-// Each entry is renamed to a random staged name first, and the walk and the
-// unlink use that name, so a directory swapped in at the original name is
-// kept. Before each unlink, the entry at the staged name must match the
-// directory descriptor that was traversed, or the regular file descriptor
-// that was opened, by device, inode and mode; a mismatch is an error, and
-// both entries stay.
-//
-// Residual risk, accepted: the check and the unlink address the entry by name
-// under the parent descriptor, and POSIX has no unlink by inode, so a process
-// that can write that directory could swap the entry between the two calls.
-// That process is the same user or root, which already controls the tree; the
-// check exists to keep this call from removing an entry it did not traverse,
-// not to defend against a hostile same-uid process, which is outside the
-// threat model.
-func RemoveAllAtNoFollow(parent *os.File, name string) error {
-	if err := validateLeafName(name); err != nil {
-		return err
-	}
-	return removeAllAt(int(parent.Fd()), name)
-}
-
-func removeAllAt(parentFD int, name string) error {
-	suffix, err := randomSuffix()
-	if err != nil {
-		return err
-	}
-	staged := ".workcell-rm-" + suffix
-	// renameNoReplaceAt refuses a staged name that already exists.
-	if err := renameNoReplaceAt(parentFD, name, staged); errors.Is(err, unix.ENOENT) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
-		// A file or a symlink: remove the entry itself, never its target.
-		return unlinkLeafAt(parentFD, staged)
-	}
-	if err != nil {
-		return err
-	}
-	dir := os.NewFile(uintptr(fd), staged)
-	names, err := dir.Readdirnames(-1)
-	for _, child := range names {
-		if err == nil {
-			err = removeAllAt(fd, child)
-		}
-	}
-	var traversed unix.Stat_t
-	if err == nil {
-		err = unix.Fstat(fd, &traversed)
-	}
-	if closeErr := dir.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	removeAllHook()
-	if err := requireStagedEntry(parentFD, staged, &traversed); err != nil {
-		return err
-	}
-	return unix.Unlinkat(parentFD, staged, unix.AT_REMOVEDIR)
-}
-
-// unlinkLeafAt removes one staged non-directory. A regular file is opened
-// without following a symlink and bound by its descriptor; other entries, and
-// a regular file this user cannot open, are bound by the Fstatat taken here.
-func unlinkLeafAt(parentFD int, staged string) error {
-	var held unix.Stat_t
-	if err := unix.Fstatat(parentFD, staged, &held, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return err
-	}
-	if held.Mode&unix.S_IFMT == unix.S_IFREG {
-		fd, err := unix.Openat(parentFD, staged, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
-		if err == nil {
-			err = unix.Fstat(fd, &held)
-			_ = unix.Close(fd)
-		} else if errors.Is(err, unix.EACCES) {
-			err = nil
-		}
-		if err != nil {
-			return err
-		}
-	}
-	if err := requireStagedEntry(parentFD, staged, &held); err != nil {
-		return err
-	}
-	return unix.Unlinkat(parentFD, staged, 0)
-}
-
-// requireStagedEntry fails when the entry at staged is not the held inode.
-func requireStagedEntry(parentFD int, staged string, held *unix.Stat_t) error {
-	var current unix.Stat_t
-	if err := unix.Fstatat(parentFD, staged, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return err
-	}
-	if current.Dev != held.Dev || current.Ino != held.Ino || current.Mode != held.Mode {
-		return fmt.Errorf("refusing to remove %s: the staged entry was swapped after it was traversed", staged)
-	}
-	return nil
-}
-
-// removeAllHook lets a test rename entries before a directory is removed.
-var removeAllHook = func() {}
-
 // ReadFileNoFollow reads one regular file through a descriptor-relative,
 // no-follow traversal. It accepts files up to limit bytes.
 func ReadFileNoFollow(path, label string, limit int64) ([]byte, error) {
@@ -315,6 +204,91 @@ func MarshalCompactJSON(value any, label string, limit int64) ([]byte, error) {
 // contents synced, published with renameat, and the parent directory synced.
 func WriteFileAtomicAtNoFollow(parent *os.File, name string, data []byte, mode os.FileMode, tempPrefix string) error {
 	return StageAndPublishAt(parent, name, data, mode, tempPrefix)
+}
+
+// RemoveAllAtNoFollow removes name and everything below it through descriptors
+// relative to parent, never following a symlink. A missing name is not an
+// error. A link inside the tree is removed as a link, not followed.
+func RemoveAllAtNoFollow(parent *os.File, name string) error {
+	if err := validateLeafName(name); err != nil {
+		return err
+	}
+	return removeAllAt(int(parent.Fd()), name, false)
+}
+
+// removeAllAt removes one name. An observed name came from a directory read, so
+// its disappearance means a rename outside the tree and fails the removal.
+//
+// Residual risk, accepted: a subdirectory is opened by name under its parent
+// descriptor and then emptied through that descriptor, and POSIX cannot pin a
+// directory against a rename, so a process that can write the tree could move
+// an opened subdirectory elsewhere before its contents are removed; the move
+// is detected only when the emptied name is checked before its unlink. The
+// trees this removes are owned by the certifier uid in a directory no other
+// uid can write, so that process is the same uid or root, both of which
+// already control the certifier; a hostile same-uid process is outside the
+// threat model, as recorded for scripts/lib/owned-root.sh.
+func removeAllAt(dirFD int, name string, observed bool) error {
+	unlinkErr := unix.Unlinkat(dirFD, name, 0)
+	if unlinkErr == nil {
+		return nil
+	}
+	if errors.Is(unlinkErr, unix.ENOENT) {
+		if observed {
+			return fmt.Errorf("entry vanished during removal: %s", name)
+		}
+		return nil
+	}
+	// A directory refuses a plain unlink (EISDIR or EPERM, by platform), so
+	// open it without following a link and empty it first.
+	fd, err := unix.Openat(dirFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		if observed {
+			return fmt.Errorf("entry vanished during removal: %s", name)
+		}
+		return nil
+	}
+	if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+		// An unreadable directory cannot be emptied, but an empty one is still
+		// removable through its parent; a non-empty one fails closed here.
+		if rmErr := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); rmErr == nil {
+			return nil
+		}
+		return err
+	}
+	if err != nil {
+		return unlinkErr
+	}
+	dir := os.NewFile(uintptr(fd), name)
+	defer func() { _ = dir.Close() }()
+	entries, err := dir.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := removeAllAt(fd, entry, true); err != nil {
+			return err
+		}
+	}
+	// Unlink takes a name, so prove that the name still means the directory
+	// that was emptied. POSIX has no unlink by descriptor, so a swap after this
+	// check is the one window that stays.
+	var opened, named unix.Stat_t
+	if err := unix.Fstat(fd, &opened); err != nil {
+		return err
+	}
+	if err := unix.Fstatat(dirFD, name, &named, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("directory moved during removal: %s", name)
+		}
+		return err
+	}
+	if opened.Dev != named.Dev || opened.Ino != named.Ino {
+		return fmt.Errorf("directory replaced during removal: %s", name)
+	}
+	// The directory was opened, so a missing name now means it was renamed.
+	// Fail instead of reporting that the tree is gone.
+	return unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR)
 }
 
 func validateLeafName(name string) error {

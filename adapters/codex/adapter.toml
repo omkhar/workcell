@@ -30,3 +30,28 @@ container_path = "/opt/workcell/host-inputs/credentials/codex-auth.json"
 
 [egress]
 endpoints = ["api.openai.com:443", "auth.openai.com:443", "chatgpt.com:443"]
+
+# Classifies tests/fixtures/flags/codex.txt; the reject_unsafe_codex_args parity test lands next.
+[flags]
+subcommands = [
+  "exec", "review", "login", "logout", "completion", "doctor", "apply",
+  "resume", "fork", "archive", "unarchive", "delete", "features", "execpolicy",
+]
+allow = [
+  "--all", "--ascii", "--base", "-c", "--color", "--commit",
+  "--config", "--device-auth", "--ephemeral", "--force", "-h", "--help", "-i",
+  "--ignore-user-config", "--image",
+  "--include-non-interactive", "--json", "--last", "--local-provider", "-m",
+  "--model", "--no-alt-screen", "--no-color", "--no-daemon", "-o", "--oss",
+  "--output-last-message", "--output-schema", "--skip-git-repo-check",
+  "--strict-config", "--summary", "--thread-source", "--title", "--uncommitted",
+  "-V", "--version", "--with-access-token", "--with-api-key", "--worktree",
+]
+deny = [
+  "-a", "--add-dir", "--approve-for-me", "--ask-for-approval", "-C", "--cd",
+  "--dangerously-bypass-approvals-and-sandbox",
+  "--dangerously-bypass-hook-trust", "--disable", "--enable", "--full-auto",
+  "--ignore-rules",
+  "--not-so-yolo", "-p", "--profile", "--remote", "--remote-auth-token-env",
+  "-s", "--sandbox", "--search", "--yolo",
+]
