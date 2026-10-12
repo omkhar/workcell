@@ -41,6 +41,12 @@ func LoadAllowlist(path string) (*Allowlist, error) {
 }
 
 // ParseAllowlist parses allowlist text; label names its source in errors.
+// canonicalHost lower-cases a host name and drops a trailing dot, so every
+// lookup keyed by host agrees on one spelling.
+func canonicalHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(host), ".")
+}
+
 func ParseAllowlist(text, label string) (*Allowlist, error) {
 	a := &Allowlist{sni: map[string]bool{}, forward: map[uint16]string{}}
 	for _, line := range strings.Split(text, "\n") {
@@ -57,7 +63,7 @@ func ParseAllowlist(text, label string) (*Allowlist, error) {
 			if _, err := netip.ParseAddr(host); err == nil {
 				return nil, fmt.Errorf("%s has an IP literal endpoint: %q", label, entry)
 			}
-			host = strings.TrimSuffix(strings.ToLower(host), ".")
+			host = canonicalHost(host)
 			port64, err := strconv.ParseUint(portText, 10, 16)
 			if err != nil {
 				return nil, fmt.Errorf("%s has an invalid endpoint port: %q", label, entry)

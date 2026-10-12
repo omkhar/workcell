@@ -866,6 +866,13 @@ SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
   -f "${ROOT_DIR}/runtime/container/Dockerfile" \
   "${ROOT_DIR}" >/dev/null
 
+# Fail on a CLI flag that no adapter manifest classifies.
+resolve_go_bin
+WORKCELL_GO_BIN="${GO_BIN}" \
+  WORKCELL_IMAGE_TAG="${IMAGE_TAG}" \
+  WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" \
+  "${ROOT_DIR}/scripts/check-flag-inventory.sh"
+
 mkdir -p "${ROOT_DIR}/tmp"
 align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp" 0644 0755
 INJECTION_FIXTURE_ROOT="$(run_as_mapped_host_user mktemp -d "${ROOT_DIR}/tmp/workcell-injection-fixtures.XXXXXX")"

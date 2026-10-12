@@ -65,7 +65,7 @@ scripts/lib/trusted-docker-client.sh	or-true	1	|| true on a find/git/gh/docker/g
 scripts/lib/trusted-docker-client.sh	process-substitution	4	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/lib/trusted-entrypoint.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/lint-dockerfiles.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
-scripts/pre-merge.sh	command-substitution	8	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
+scripts/pre-merge.sh	command-substitution	11	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
 scripts/pre-merge.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a command a variable names, without a status test; predates the rule
 scripts/pre-merge.sh	or-true	1	a || handler that is not a failure branch, true, a default value or a message, keeps the step going after the tool fails; predates the rule, repair by status capture
 scripts/publish-github-release.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel

@@ -74,7 +74,13 @@ with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
-## 2b. Shell scripts must not hide a failed tool
+`policy/testkit-exec-baseline.tsv` lists the test sites that run a script by
+path without `execRetryETXTBSY`. A raw exec runs into ETXTBSY under load.
+`internal/testkit/exec_ratchet_test.go` counts these sites. The count may only
+go down. A stale-high count also fails, and so does a row above its value at
+the merge base with `origin/main`.
+
+## 2c. Shell scripts must not hide a failed tool
 
 These idioms can turn a failure into an empty answer. A gate then passes on nothing. The idioms are a `<(` or `>(` process substitution and a `$(...)` around `find`, `git`, `gh`, `docker` or `getent`. They also include `|| true` or `|| :`, and stderr sent to `/dev/null`, on those tools.
 
