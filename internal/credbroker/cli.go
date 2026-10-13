@@ -120,6 +120,21 @@ func openLog(path string) (*os.File, error) {
 		_ = file.Close()
 		return nil, fmt.Errorf("request log %q must be owned by the broker uid with mode 0600", cleaned)
 	}
+	// An extended ACL can grant another uid write access the mode bits hide.
+	if err := rootio.RejectExtendedACL(fd); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("request log %q: %w", cleaned, err)
+	}
+	// O_CREAT may have made the file, and record syncs only the file, so the
+	// file and its directory entry are made durable before any request is served.
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("sync request log: %w", err)
+	}
+	if err := parent.Sync(); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("sync request log directory: %w", err)
+	}
 	return file, nil
 }
 

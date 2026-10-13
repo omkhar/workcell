@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/cliexit"
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 func fakeSecurity(t *testing.T, body string) string {
@@ -232,4 +235,30 @@ func TestOpenLogRequiresAnOwnerOnlySingleLinkedRegularFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = file.Close()
+}
+
+func TestOpenLogRefusesAnExtendedACL(t *testing.T) {
+	// Mode 0600 and the broker uid do not show an ACL that grants another uid
+	// write access, so the open descriptor is checked for one.
+	addACL := []string{"/bin/chmod", "+a", "everyone allow write"}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("setfacl"); err != nil {
+			t.Skip("setfacl is not installed")
+		}
+		addACL = []string{"setfacl", "-n", "-m", "u:" + strconv.Itoa(os.Getuid()+1) + ":rw-"}
+	}
+	path := filepath.Join(t.TempDir(), "log")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(addACL[0], append(addACL[1:], path)...).CombinedOutput(); err != nil {
+		t.Fatalf("add ACL: %v: %s", err, out)
+	}
+	file, err := openLog(path)
+	if err == nil {
+		_ = file.Close()
+	}
+	if !errors.Is(err, rootio.ErrExtendedACL) {
+		t.Fatalf("openLog with an extended ACL = %v, want ErrExtendedACL", err)
+	}
 }
