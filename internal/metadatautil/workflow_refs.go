@@ -23,10 +23,11 @@ const (
 
 type workflowRefHit struct{ kind, file, job, step string }
 
-// unspelled reports whether bash may rewrite word: an expansion, a brace or a pathname pattern, or a Windows name with a \ or .exe; a lone [ is test.
+// unspelled reports whether bash may rewrite word: an expansion, a brace or a
+// pathname pattern; a lone [ is test.
 func unspelled(word string) bool {
-	return strings.ContainsAny(word, "$`*?\\") || braceExpansion.MatchString(word) ||
-		strings.Contains(word, "[") && strings.Contains(word, "]") || strings.HasSuffix(strings.ToLower(word), ".exe")
+	return strings.ContainsAny(word, "$`*?") || braceExpansion.MatchString(word) ||
+		strings.Contains(word, "[") && strings.Contains(word, "]")
 }
 
 // shellStartupEnv names BASH_ENV or ENV, or sets a variable whose name is an expansion.
@@ -74,11 +75,14 @@ func stepShell(document workflowDocument, job workflowJob, step workflowStep) st
 	return document.Def.Run["shell"]
 }
 
-// ghInArguments reports a gh api call in another command's words, as any wrapper or quoted program would hand it on unseen; echo, printf, command -v, find without -exec and a shell, whose program is read, only hold the text.
+// ghInArguments reports a gh api call in another command's words, as any
+// wrapper or quoted program would hand it on unseen; echo, printf, command -v,
+// and find, trap, builtin, a sudo left standing, which runs nothing, and a
+// shell, whose programs are read, only hold the text.
 func ghInArguments(words []string) bool {
 	name, text := commandName(words[0]), " "+strings.Join(words[1:], " ")+" "
 	data := name == "echo" || name == "printf" || name == "command" && strings.Contains(text, " -v") ||
-		name == "find" && !strings.Contains(text, " -exec") && !strings.Contains(text, " -ok") || slices.Contains([]string{"sh", "bash", "dash", "ksh"}, name)
+		slices.Contains([]string{"find", "trap", "builtin", "sudo", "sh", "bash", "dash", "ksh"}, name) // their programs are read as commands
 	var tokens []string // escapes decoded, split on any blank, as a program would read them
 	for _, word := range words[1:] {
 		if decoded, err := strconv.Unquote(`"` + strings.ReplaceAll(word, `"`, `\"`) + `"`); err == nil {
@@ -96,12 +100,14 @@ func ghInArguments(words []string) bool {
 // interpreters given an option or no script file may run an inline program, which this lint does not read, so it may run gh unseen; only a script file operand first is read as clean.
 var interpreters = map[string]bool{"python": true, "python3": true, "perl": true, "ruby": true, "node": true, "php": true}
 
-// unmodeledWrappers run a program after options, or in a language, this lint does not read.
+// unmodeledWrappers run a program after options, or in a language, this lint
+// does not read; source /dev/stdin is read as the here-document it runs.
 var unmodeledWrappers = map[string]bool{
-	"pwsh": true, "powershell": true, "cmd": true, "setarch": true, "setsid": true, "stdbuf": true, "xargs": true, "flock": true,
-	"ionice": true, "chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true, "unshare": true,
-	"nsenter": true, "strace": true, "ltrace": true, "script": true, "watch": true, "unbuffer": true, "caffeinate": true,
-	"systemd-run": true, "busybox": true, "prlimit": true, "setpriv": true, "fakeroot": true, "firejail": true, "bwrap": true, "proot": true, "cpulimit": true,
+	"pwsh": true, "powershell": true, "cmd": true, "setarch": true,
+	"chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true,
+	"unshare": true, "nsenter": true, "strace": true, "ltrace": true, "script": true, "watch": true,
+	"unbuffer": true, "caffeinate": true, "systemd-run": true, "busybox": true, "prlimit": true,
+	"setpriv": true, "fakeroot": true, "firejail": true, "bwrap": true, "proot": true, "cpulimit": true,
 }
 
 var braceExpansion = regexp.MustCompile(`\{[^}]*(,|\.\.)[^}]*\}`)
@@ -225,8 +231,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					if words[0] == "eval" { // A lint of what may run fails closed on a command it cannot spell, and on an alias definition, which can rename any later command.
 						add("eval-unresolved")
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
-						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] || ghInArguments(words) ||
-						commandName(words[0]) == "find" && slices.ContainsFunc(words, func(w string) bool { return strings.HasPrefix(w, "-exec") || strings.HasPrefix(w, "-ok") }) {
+						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] || ghInArguments(words) {
 						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok := shellProgram(words, "$_"); ok {
 						add("command-unresolved") // EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
