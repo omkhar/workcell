@@ -150,8 +150,10 @@ var (
 	// tool's unless set -o pipefail ran before it and no set +o pipefail since.
 	shellInnerPipe = regexp.MustCompile(`(?:^|[^|])\|\s*[^\s;&|)}]`)
 	shellPipefail  = regexp.MustCompile(`\bset\s+([-+])[A-Za-z]*o\s+pipefail\b`)
-	// shellProcessSubst is an input redirection from a process substitution.
-	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
+	// shellProcessSubst is a process substitution, <( or >(, as a redirection or an argument.
+	shellProcessSubst = regexp.MustCompile(`(?:^|[^$])[<>]\(`)
+	// shellLoopSubst is the done < <( loop form, the only one a wait "$!" or a completion sentinel covers.
+	shellLoopSubst = regexp.MustCompile(`\bdone\s*<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellDevNull = regexp.MustCompile(`(?:(?:^|[\s;&|()])0*2>[>|]?|&>[>|]?|>&)\s*"?(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null"?\s+0*2>&\s*0*1|(?:^|[\s;&|()])0*2>&\s*` + shellOtherFD) // shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellEnvWord = `[^\s;&|()<>]+`
@@ -318,8 +320,9 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 			// A process substitution loses its producer's status wherever it
 			// stands, so it needs proof: a loop reports its inner status only
 			// through a completion sentinel its body sets or a wait "$!" after it.
-			looped := shellFailOpenWaited(raws[at+1]) && !slices.ContainsFunc(append(body, raws[at]), shellFailOpenBackgrounds)
-			if !looped && shellProcessSubst.MatchString(command) {
+			loopForm := shellLoopSubst.MatchString(command)
+			looped := loopForm && shellFailOpenWaited(raws[at+1]) && !slices.ContainsFunc(append(body, raws[at]), shellFailOpenBackgrounds)
+			if !looped && loopForm {
 				codes, following := commands[at+1:len(commands)-1], raws[at+1:len(raws)-1]
 				for _, later := range statements[index+1:] {
 					laterCodes, laterRaws := shellFailOpenCommands(later.code, later.raw)
@@ -327,8 +330,11 @@ func ShellFailOpenFindings(script string) ([]ShellFailOpenFinding, error) {
 				}
 				looped = shellFailOpenCompleted(body, raws[at], codes, following)
 			}
-			if !looped {
-				hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(command, -1))
+			// Any other <( or >( stays a hit even when the loop form is covered.
+			hits[ruleProcessSubstitution] += len(shellProcessSubst.FindAllStringIndex(shellArithmetic.ReplaceAllString(command, ""), -1))
+			if looped {
+				hits[ruleProcessSubstitution] -= len(shellLoopSubst.FindAllStringIndex(command, -1))
+			} else {
 				hits[ruleDevNull] += len(slices.DeleteFunc(shellExecDevNull.FindAllStringSubmatch(raws[at], -1), func(e []string) bool { return !shellExecNull.MatchString(e[1] + " ") })) // raw: this branch blanks wrapper words such as exec in command
 			}
 			inner := stdoutNull || slices.ContainsFunc(shellExecDevNull.FindAllStringSubmatch(raws[at], -1), func(e []string) bool { return shellExecNull.MatchString(e[1] + " ") })
