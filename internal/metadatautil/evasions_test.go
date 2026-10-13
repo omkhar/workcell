@@ -19,6 +19,55 @@ type Evasion struct {
 	Rewrite func(artifact, anchor string) string
 }
 
+// anyRejection names the rows that disable or move more than the anchor: the
+// rest of the script, the whole step, or a key the closed workflow decoder
+// rejects. The validator may then fail at an earlier requirement, so any error
+// counts, except a YAML syntax error, which would mean the row broke the file.
+var anyRejection = map[string]bool{
+	"unrelated placement":                    true,
+	"eval-assembled definition":              true,
+	"wrapped eval definition":                true,
+	"assigned eval definition":               true,
+	"sourced definition":                     true,
+	"parameter-spliced source":               true,
+	"substituted source":                     true,
+	"ansi-c quoted source":                   true,
+	"brace-expanded source":                  true,
+	"eval in an if condition":                true,
+	"source in a while condition":            true,
+	"time-wrapped eval":                      true,
+	"time-wrapped source":                    true,
+	"sourcing helper called":                 true,
+	"sourcing forwarder called":              true,
+	"expanded source in a helper":            true,
+	"expanded source forwarded":              true,
+	"named array source in a helper":         true,
+	"source behind two helpers":              true,
+	"forwarder that rewrites its parameters": true,
+	"source behind a later-defined helper":   true,
+	"second positional parameter forwarder":  true,
+	"forwarder called twice":                 true,
+	"recursion that changes its words":       true,
+	"literal word ahead of forwarded words":  true,
+	"alias in a called helper":               true,
+	"wrapped alias in a called helper":       true,
+	"wrapped hash in a called helper":        true,
+	"assigned alias in a called helper":      true,
+	"assigned hash in a called helper":       true,
+	"alias in an if condition":               true,
+	"hash in a while condition":              true,
+	"debug trap before the anchor":           true,
+	"debug trap in a called helper":          true,
+	"recursion that grows its words":         true,
+	"one-line helper that sources":           true,
+	"one-line helper that evals":             true,
+	"spaced one-line helper that sources":    true,
+	"recursion that repeats its words":       true,
+	"exiting helper before the anchor":       true,
+	"assigned exiting helper call":           true,
+	"later-defined exiting helper":           true,
+}
+
 // Evasions is the shared negative corpus. A validator that reads file content to
 // decide that a command runs must reject every row. It lives in the test package
 // to keep testing out of the shipped tool's dependency graph; move it to a
@@ -190,6 +239,153 @@ var Evasions = []Evasion{
 		return hide(a, i+"false && (echo ${x%))}", i+")")
 	})},
 	{"prefix extension", replaceAnchor(extendFirstOption)},
+	{"duplicate function definition, last wins", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"run_anchor() {", i+"}") + "\n" + i + "run_anchor() { :; }\n" + i + "run_anchor"
+	})},
+	{"function keyword and a tab", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return hide(a, i+"function\tnever_called {", i+"}")
+	})},
+	{"variable-spliced command word", replaceAnchor(spliceCommandWords)},
+	{"eval-assembled definition", replaceAnchor(func(a string) string {
+		name := strings.Fields(a)[0]
+		return indentOf(a) + "eval '" + name[:1] + "''" + name[1:] + "() { :; }'\n" + a
+	})},
+	{"wrapped eval definition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "command eval '" + strings.Fields(a)[0] + "() { :; }'\n" + a
+	})},
+	{"assigned eval definition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "X=1 command eval '" + strings.Fields(a)[0] + "() { :; }'\n" + a
+	})},
+	{"sourced definition", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + ". ./shadow.sh\n" + a
+	})},
+	{"parameter-spliced source", sourcedBy("s${x-}ource ./shadow.sh")},
+	{"substituted source", sourcedBy("$(printf source) ./shadow.sh")},
+	{"ansi-c quoted source", sourcedBy("$'\\x73ource' ./shadow.sh")},
+	{"brace-expanded source", sourcedBy("{source,./shadow.sh}")},
+	{"eval in an if condition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "if eval '" + strings.Fields(a)[0] + "(){ :; }'; then :; fi\n" + a
+	})},
+	{"source in a while condition", sourcedBy("while source ./shadow.sh; do :; done")},
+	{"time-wrapped eval", sourcedBy("time eval 'f(){ :; }'")},
+	{"time-wrapped source", sourcedBy("time -p source ./shadow.sh")},
+	{"sourcing helper called", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "shadow() {\n" + i + "  source ./shadow.sh\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"sourcing forwarder called", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run source ./shadow.sh\n" + a
+	})},
+	{"expanded source in a helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "shadow() {\n" + i + "  s${x-}ource ./shadow.sh\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"expanded source forwarded", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run s${x-}ource ./shadow.sh\n" + a
+	})},
+	{"named array source in a helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "cmd=(source ./shadow.sh)\n" + i + "run() {\n" + i + "  \"${cmd[@]}\"\n" + i + "}\n" + i + "run\n" + a
+	})},
+	{"source behind two helpers", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "inner() {\n" + i + "  source \"$1\"\n" + i + "}\n" + i + "outer() {\n" + i + "  inner \"$1\"\n" + i + "}\n" + i + "outer ./shadow.sh\n" + a
+	})},
+	{"forwarder that rewrites its parameters", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  set -- source ./shadow.sh\n" + i + "  \"$@\"\n" + i + "}\n" + i + "run\n" + a
+	})},
+	{"source behind a later-defined helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner \"$@\"\n" + i + "}\n" + i + "inner() {\n" + i + "  source \"$1\"\n" + i + "}\n" + i + "outer ./shadow.sh\n" + a
+	})},
+	{"second positional parameter forwarder", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "run() {\n" + i + "  \"$2\" \"$1\"\n" + i + "}\n" + i + "run ./shadow.sh source\n" + a
+	})},
+	{"forwarder called twice", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner :\n" + i + "  inner source ./shadow.sh\n" + i + "}\n" + i + "inner() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "outer\n" + a
+	})},
+	{"recursion that changes its words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner \"$@\"\n" + i + "}\n" + i + "inner() {\n" + i + "  if [ \"$1\" = go ]; then\n" + i + "    outer source ./shadow.sh\n" + i + "  fi\n" + i + "  \"$@\"\n" + i + "}\n" + i + "outer go\n" + a
+	})},
+	{"literal word ahead of forwarded words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "outer() {\n" + i + "  inner source \"$@\"\n" + i + "}\n" + i + "inner() {\n" + i + "  \"$@\"\n" + i + "}\n" + i + "outer ./shadow.sh\n" + a
+	})},
+	{"alias in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  shopt -s expand_aliases\n" + i + "  alias " + strings.Fields(a)[0] + "=':'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"wrapped alias in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  shopt -s expand_aliases\n" + i + "  command alias " + strings.Fields(a)[0] + "=':'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"wrapped hash in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  builtin hash -p /bin/true '" + strings.Fields(a)[0] + "'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"assigned alias in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  shopt -s expand_aliases\n" + i + "  X=1 command alias " + strings.Fields(a)[0] + "=':'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"assigned hash in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  X=1 builtin hash -p /bin/true '" + strings.Fields(a)[0] + "'\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"alias in an if condition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "shopt -s expand_aliases\n" + indentOf(a) + "if command alias " + strings.Fields(a)[0] + "=':'; then :; fi\n" + a
+	})},
+	{"hash in a while condition", replaceAnchor(func(a string) string {
+		return indentOf(a) + "while X=1 hash -p /bin/true '" + strings.Fields(a)[0] + "'; do break; done\n" + a
+	})},
+	{"debug trap before the anchor", replaceAnchor(func(a string) string {
+		return indentOf(a) + "trap 'exit 0' DEBUG\n" + a
+	})},
+	{"debug trap in a called helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() {\n" + i + "  command trap 'exit 0' debug\n" + i + "}\n" + i + "shadow\n" + a
+	})},
+	{"recursion that grows its words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "loop() {\n" + i + "  loop \"$@\" x\n" + i + "}\n" + i + "loop\n" + a
+	})},
+	{"one-line helper that sources", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "shadow() { source <(printf '" + strings.Fields(a)[0] + "() { :; }\\n'); }\n" + i + "shadow\n" + a
+	})},
+	{"one-line helper that evals", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "function shadow { eval \"" + strings.Fields(a)[0] + "() { :; }\"; }\n" + i + "shadow\n" + a
+	})},
+	{"spaced one-line helper that sources", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + "shadow () { source ./shadow.sh; }\n" + i + "shadow\n" + a
+	})},
+	{"recursion that repeats its words", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "loop() {\n" + i + "  loop \"$@\"\n" + i + "}\n" + i + "loop\n" + a
+	})},
+	{"exiting helper before the anchor", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "stop\n" + a
+	})},
+	{"assigned exiting helper call", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "X=1 stop\n" + a
+	})},
+	{"later-defined exiting helper", replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "outer() {\n" + i + "  stop\n" + i + "}\n" + i + "stop() {\n" + i + "  exit 0\n" + i + "}\n" + i + "outer\n" + a
+	})},
+	{"flattened argv", replaceAnchor(joinFirstWords)},
 	{"unrelated placement", func(artifact, anchor string) string {
 		moved := strings.Replace(artifact, anchor, indentOf(anchor)+"true", 1)
 		return strings.TrimRight(moved, "\n") + "\nx-decoy: |\n" + anchor + "\n"
@@ -216,6 +412,14 @@ var gatedEvasions = map[string]bool{
 	"subshell behind a named coproc": true, "paired closers in a subshell opener": true,
 	"uncalled function definition": true, "definition brace on the next line": true,
 	"quoted brace in a definition": true, "argument brace in a definition body": true,
+	// These rows put a barrier, an exit or a rebinding before the command. A
+	// reader that ignores reachability still reads the command after it.
+	"assigned eval definition": true, "assigned exiting helper call": true, "assigned hash in a called helper": true,
+	"debug trap before the anchor": true, "debug trap in a called helper": true, "duplicate function definition, last wins": true,
+	"eval in an if condition": true, "eval-assembled definition": true, "exiting helper before the anchor": true,
+	"function keyword and a tab": true, "hash in a while condition": true, "later-defined exiting helper": true,
+	"one-line helper that evals": true, "recursion that grows its words": true, "recursion that repeats its words": true,
+	"time-wrapped eval": true, "wrapped eval definition": true, "wrapped hash in a called helper": true,
 }
 
 // RequireRejectsTextEvasions runs the corpus for a validator that reads EveryShellCommand. validate must accept each gated row, where the command stays, and reject every other row, where the command became text.
@@ -247,6 +451,8 @@ func requireEvasions(t *testing.T, artifact, anchor, want string, accepted map[s
 				if err != nil {
 					t.Fatalf("validate() error = %v, want nil for a gated row", err)
 				}
+			} else if err != nil && anyRejection[evasion.Name] && !strings.Contains(err.Error(), "yaml: line") {
+				return
 			} else if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("validate() error = %v, want %q", err, want)
 			}
@@ -347,4 +553,48 @@ func prefixCommands(anchor, text string) string {
 		continues = strings.HasSuffix(strings.TrimSpace(line), "\\")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// spliceCommandWords puts an expansion inside the command word of every command
+// line. The variable is unset, so ${splice-x} expands to x and bash runs a
+// program that does not exist, while a reader that drops expansions before it
+// compares the word sees the anchored command.
+func spliceCommandWords(anchor string) string {
+	lines := strings.Split(anchor, "\n")
+	continues := false
+	for index, line := range lines {
+		word := strings.TrimLeft(line, " \t")
+		if !continues && len(word) > 1 {
+			lines[index] = indentOf(line) + word[:1] + "${splice-x}" + word[1:]
+		}
+		continues = strings.HasSuffix(strings.TrimSpace(line), "\\")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// joinFirstWords quotes the command word of the anchored command and the word
+// after it into one argument, past any VAR=value prefix. bash then runs a
+// program whose name holds a space, while a reader that compares
+// strings.Join(argv, " ") sees the anchored text unchanged.
+func joinFirstWords(anchor string) string {
+	words := strings.Fields(anchor)
+	first := 0
+	for first < len(words)-1 && strings.Contains(words[first], "=") {
+		first++
+	}
+	if first == len(words)-1 {
+		return strings.Replace(anchor, words[first], `"`+words[first]+` "`, 1)
+	}
+	pair := words[first] + " " + words[first+1]
+	return strings.Replace(anchor, pair, `"`+pair+`"`, 1)
+}
+
+// sourcedBy writes a definition of the anchored command to shadow.sh and runs
+// the line before the anchor, which sources that file in a spelling bash
+// resolves only when it runs the line.
+func sourcedBy(line string) func(artifact, anchor string) string {
+	return replaceAnchor(func(a string) string {
+		i := indentOf(a)
+		return i + "echo '" + strings.Fields(a)[0] + "() { :; }' > shadow.sh\n" + i + line + "\n" + a
+	})
 }

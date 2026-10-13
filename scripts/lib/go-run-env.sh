@@ -170,6 +170,43 @@ resolve_go_bin() {
   exit 1
 }
 
+# resolve_exact_toolchain_go_bin ROOT prints a go that runs the exact toolchain
+# ROOT/go.mod pins. Each candidate must pass accept_go_bin, the storage rule
+# WORKCELL_GO_BIN must pass, so the resolver never hands on a go that the
+# caller then refuses. A GitHub-hosted runner's tool cache sits under a
+# world-writable /opt and never passes; scripts/ci/stage-trusted-go.sh stages
+# the toolchain at a root-owned /usr/local/go there.
+resolve_exact_toolchain_go_bin() {
+  local repo_root="$1"
+  local expected_toolchain=""
+  local actual_toolchain=""
+  local candidate=""
+  local accepted=""
+  local goroot=""
+  local switched=""
+  expected_toolchain="$(/usr/bin/awk '$1 == "toolchain" { print $2; exit }' "${repo_root}/go.mod")"
+  [[ "${expected_toolchain}" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  for candidate in /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go; do
+    accepted="$(accept_go_bin "${candidate}" "${repo_root}" 1)" || continue
+    # Probe the toolchain the build will actually run under, not the version
+    # this candidate happens to be, through the checksum-verified toolchain
+    # switch every other lane uses. Callers then build with GOTOOLCHAIN=local,
+    # so hand on the switched toolchain's own go, under the same storage rule.
+    if ! goroot="$(GOTOOLCHAIN="${expected_toolchain}" "${accepted}" env GOROOT 2>/dev/null)"; then
+      continue
+    fi
+    switched="$(accept_go_bin "${goroot}/bin/go" "${repo_root}" 1)" || continue
+    if ! actual_toolchain="$(GOTOOLCHAIN=local "${switched}" env GOVERSION 2>/dev/null)"; then
+      continue
+    fi
+    if [[ "${actual_toolchain}" == "${expected_toolchain}" ]]; then
+      printf '%s\n' "${switched}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 run_go_in_repo() {
   local repo_root="$1"
   shift
