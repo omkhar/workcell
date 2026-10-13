@@ -842,7 +842,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 					barrierFunctions[definingName] = true
 				case len(names) > 0 && names[0] == "return":
 					bodyReturns = true
-				case !conditional && !bodyReturns && len(names) > 0 && (names[0] == "exit" || replacesShell(names) || exiting[names[0]]):
+				case !conditional && !bodyReturns && len(names) > 0 && (endsShell(names) || exiting[names[0]]):
 					// A body that exits, or replaces the shell, whenever it runs
 					// ends the step at every call; die() { exit 1; } called as
 					// cmd || die runs only on failure and ends nothing proved.
@@ -931,7 +931,7 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			names = texts(args)
 			called := names[assignmentPrefix(names):]
-			if names[0] == "exit" || names[0] == "return" || replacesShell(names) ||
+			if endsShell(names) || names[0] == "return" ||
 				len(called) > 0 && terminates(called[0], map[string]bool{}) {
 				// The step ends here; nothing written after it runs, also after
 				// X=1 stop or a helper that calls a later-defined stop.
@@ -1251,9 +1251,11 @@ func evaluates(names []string) bool {
 	if names[0] == "eval" || names[0] == "source" || names[0] == "." {
 		return true
 	}
-	if names[0] == "trap" && slices.ContainsFunc(names[1:], func(word string) bool { return strings.EqualFold(word, "DEBUG") }) {
+	if names[0] == "trap" && slices.ContainsFunc(names[1:], func(word string) bool { return strings.EqualFold(word, "DEBUG") || strings.EqualFold(word, "RETURN") }) {
 		// A DEBUG trap runs its action as text before every later command,
-		// and trap 'exit 0' DEBUG ends the script before the next one.
+		// and trap 'exit 0' DEBUG ends the script before the next one. A
+		// RETURN trap runs its action as a function or a source returns, so
+		// it can redefine a command the caller runs next.
 		return true
 	}
 	if !optionLed && !runsAPath(names[0]) && (strings.ContainsAny(names[0], "$`") ||
@@ -1483,6 +1485,14 @@ func assignmentPrefix(words []string) int {
 // which replaces the shell so that nothing written after it runs. An exec
 // carrying only redirections, as in exec 2>&1, changes the shell's own
 // descriptors and the script continues, so it must not stop the scan.
+// endsShell reports whether the command ends the shell: exit, or an exec that
+// replaces it, also behind command, builtin or time, which run it in the
+// current shell.
+func endsShell(names []string) bool {
+	names = unwrapBuiltins(names)
+	return len(names) > 0 && (names[0] == "exit" || replacesShell(names))
+}
+
 func replacesShell(args []string) bool {
 	if args[0] != "exec" {
 		return false

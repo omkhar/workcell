@@ -69,8 +69,11 @@ func readLibrary(text string) (forwarders []string, hidden string) {
 		}
 		for _, each := range commands {
 			names := commandWords(spelled(each.args))
-			// A one-line body, as f() { source x; }, reads as f() { source x;
-			// strip the header and any opener so the body's command is classified.
+			// A one-line body, as f() { source x; } or function f { source x; },
+			// keeps its header; strip it and any opener to classify the command.
+			if len(names) > 1 && names[0] == "function" {
+				names = names[2:]
+			}
 			for len(names) > 0 && (strings.HasSuffix(names[0], "()") || slices.Contains([]string{"{", "(", "!", "if", "then", "do", "else", "elif", "while", "until", "time"}, names[0])) {
 				names = names[1:]
 			}
@@ -100,7 +103,7 @@ func libraryLineHidesText(line string) bool {
 // bodies, whose command the gate must read inside the braces.
 func TestLibraryGateReadsWrappedBuiltins(t *testing.T) {
 	for _, line := range []string{"command source ./shadow.sh", "builtin eval 'f() { :; }'", "alias buildx_cmd=true", "  . ./x.sh",
-		"f() { source ./shadow.sh; }", "f() { eval x; }", "f() { alias a=b; }"} {
+		"f() { source ./shadow.sh; }", "f() { eval x; }", "f() { alias a=b; }", "function f { source ./shadow.sh; }"} {
 		if !libraryLineHidesText(line) {
 			t.Errorf("%q is not read as hiding text", line)
 		}
@@ -113,24 +116,27 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 		script string
 		want   int
 	}{
-		"a pinned library in the prelude":  {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
-		"the dot spelling":                 {head + `. "$ROOT_DIR/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
-		"an unpinned library":              {head + `source "${ROOT_DIR}/scripts/lib/other.sh"` + "\nbuildx_cmd build\n", 0},
-		"a pinned library after a command": {head + "true\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"a second ROOT_DIR assignment":     {head + "ROOT_DIR=/tmp/elsewhere\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"an appended ROOT_DIR":             {head + "ROOT_DIR+=/x\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"no canonical ROOT_DIR":            {"#!/bin/bash\nROOT_DIR=/tmp\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"a source with arguments":          {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" extra` + "\nbuildx_cmd build\n", 0},
-		"a pinned library at another root": {head + `source "${HOME}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"eval still stops the reader":      {head + "eval true\nbuildx_cmd build\n", 0},
-		"an indexed ROOT_DIR first":        {"#!/bin/bash\nROOT_DIR[0]=/tmp/evil\n" + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"the canonical root after":         {"#!/bin/bash\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\n" + canonicalRootDir + "\nbuildx_cmd build\n", 0},
-		"the canonical root in a comment":  {"#!/bin/bash\n# " + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"a substituted ROOT_DIR after":     {head + `ROOT_DIR="$(echo /tmp/evil)"` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"a read of ROOT_DIR first":         {head + "read -r ROOT_DIR\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"a RETURN trap first":              {head + `trap 'buildx_cmd() { :; }' RETURN` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
-		"an ERR trap first":                {head + `trap 'echo failed >&2' ERR` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
-		"a library forwarder that evals":   {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nrun_workcell_docker_client_command eval x\nbuildx_cmd build\n", 0},
+		"a pinned library in the prelude":      {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"the dot spelling":                     {head + `. "$ROOT_DIR/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"an unpinned library":                  {head + `source "${ROOT_DIR}/scripts/lib/other.sh"` + "\nbuildx_cmd build\n", 0},
+		"a pinned library after a command":     {head + "true\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a second ROOT_DIR assignment":         {head + "ROOT_DIR=/tmp/elsewhere\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an appended ROOT_DIR":                 {head + "ROOT_DIR+=/x\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"no canonical ROOT_DIR":                {"#!/bin/bash\nROOT_DIR=/tmp\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a source with arguments":              {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" extra` + "\nbuildx_cmd build\n", 0},
+		"a pinned library at another root":     {head + `source "${HOME}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"eval still stops the reader":          {head + "eval true\nbuildx_cmd build\n", 0},
+		"an indexed ROOT_DIR first":            {"#!/bin/bash\nROOT_DIR[0]=/tmp/evil\n" + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"the canonical root after":             {"#!/bin/bash\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\n" + canonicalRootDir + "\nbuildx_cmd build\n", 0},
+		"the canonical root in a comment":      {"#!/bin/bash\n# " + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a substituted ROOT_DIR after":         {head + `ROOT_DIR="$(echo /tmp/evil)"` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a read of ROOT_DIR first":             {head + "read -r ROOT_DIR\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a RETURN trap first":                  {head + `trap 'buildx_cmd() { :; }' RETURN` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an ERR trap first":                    {head + `trap 'echo failed >&2' ERR` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
+		"a helper that exits through command":  {"stop() { command exit 0; }\nstop\nbuildx_cmd build\n", 0},
+		"a helper that installs a RETURN trap": {"shadow() { trap 'buildx_cmd() { :; }' RETURN; }\nshadow\nbuildx_cmd build\n", 0},
+		"a top-level builtin exit":             {"builtin exit 0\nbuildx_cmd build\n", 0},
+		"a library forwarder that evals":       {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nrun_workcell_docker_client_command eval x\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
 			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
