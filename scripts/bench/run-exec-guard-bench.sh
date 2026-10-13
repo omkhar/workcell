@@ -86,7 +86,9 @@ run_bench() {
   if [ "$2" -eq 1 ]; then
     PATH="${BENCH_PATH}" LD_PRELOAD="${SO_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
   else
-    PATH="${BENCH_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
+    # An inherited LD_PRELOAD, as in a Workcell session, would load the guard
+    # into the baseline too.
+    /usr/bin/env -u LD_PRELOAD PATH="${BENCH_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
   fi
 }
 
