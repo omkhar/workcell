@@ -1,0 +1,9 @@
+# Doc claim ratchet baseline (scripts/check-doc-links.sh).
+#
+# One row per hit: PATH<TAB>RULE<TAB>SUBJECT<TAB>REASON. A hit that is not
+# listed fails the check. A row with no hit fails too, and the file may not
+# gain rows over the merge base, so it only shrinks. A rule that is new in a
+# change may add its rows once. Delete a row when you fix its hit.
+# Rules: missing-path (named path does not exist), escaping-path (a .. or
+# symlink component).
+docs/security/security-findings-2026-04-24-validation.md	missing-path	internal/metadatautil/validate.go	historical finding names a file since renamed
