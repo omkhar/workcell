@@ -60,7 +60,9 @@ changed_list="$(mktemp "${TMPDIR:-/tmp}/workcell-prepush.XXXXXX")"
 cleanup() {
   rm -f "${changed_list}"
   if [[ -n "${checkout}" ]]; then
-    git -C "${ROOT_DIR}" worktree remove --force "${checkout}" || rm -rf "${checkout}"
+    if ! git -C "${ROOT_DIR}" worktree remove --force "${checkout}"; then
+      rm -rf "${checkout}"
+    fi
   fi
 }
 trap cleanup EXIT
@@ -86,7 +88,8 @@ gate_commit() {
   # sparse checkout on the host would hide pushed files from the gates, so the
   # detached tree is always complete.
   local drivers driver no_filters=()
-  drivers="$(git -C "${ROOT_DIR}" config --get-regexp '^filter\.' || true)"
+  # git config exits 1 when no key matches; any other failure stops the push.
+  drivers="$(git -C "${ROOT_DIR}" config --get-regexp '^filter\.')" || [[ $? -eq 1 ]] || exit 1
   while IFS= read -r driver; do
     [[ -n "${driver}" ]] || continue
     driver="${driver%% *}"
@@ -94,13 +97,17 @@ gate_commit() {
     driver="${driver%.*}"
     no_filters+=(-c "filter.${driver}.smudge=" -c "filter.${driver}.process=" -c "filter.${driver}.required=false")
   done <<<"${drivers}"
-  if ! git -C "${ROOT_DIR}" worktree add --quiet --no-checkout --detach "${checkout}" "${oid}" ||
-    ! git -C "${checkout}" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.sparseCheckout=false ${no_filters[@]+"${no_filters[@]}"} checkout --quiet --detach "${oid}"; then
-    echo "pre-push: cannot check out ${oid} for the gates; set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass." >&2
+  local unreadable="pre-push: cannot check out ${oid} for the gates; set WORKCELL_SKIP_PREPUSH_CHECKS=1 to bypass."
+  if ! git -C "${ROOT_DIR}" worktree add --quiet --no-checkout --detach "${checkout}" "${oid}"; then
+    echo "${unreadable}" >&2
+    exit 1
+  fi
+  if ! git -C "${checkout}" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.sparseCheckout=false ${no_filters[@]+"${no_filters[@]}"} checkout --quiet --detach "${oid}"; then
+    echo "${unreadable}" >&2
     exit 1
   fi
   cd "${checkout}"
-  merge_base="$(git merge-base "${BASE_REF}" HEAD)"
+  merge_base="$(git merge-base "${BASE_REF}" HEAD)" || exit 1
   # Without rename detection a renamed or deleted .md lists its old path.
   git diff -z --no-renames --name-only "${merge_base}" HEAD >"${changed_list}"
 
@@ -108,7 +115,7 @@ gate_commit() {
   # gates read every tracked Markdown file, so the whole tree is scanned, not
   # only the changed paths: a link that main already holds is followed too.
   local links="" link
-  links="$(git ls-tree -r -z "${oid}" | tr '\0' '\n' | awk -F'\t' '/^120000 / { print $2 }')"
+  links="$(git ls-tree -r -z "${oid}" | tr '\0' '\n' | awk -F'\t' '/^120000 / { print $2 }')" || exit 1
 
   local changed_files=() markdown_changed=0 target_removed=0 symlinked=0
   if [[ -n "${links}" ]]; then
