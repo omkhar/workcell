@@ -88,9 +88,13 @@ the merge base with `origin/main`.
 
 ## 2c. Shell scripts must not hide a failed tool
 
-Some idioms turn a failed tool into an empty answer, so a gate passes on nothing. They are a `<(` or `>(` process substitution, and a `$(...)`, `|| true`, `|| :` or stderr sent to `/dev/null` on `find`, `git`, `gh`, `docker` or `getent`. A `$(...)` that runs a variable, a quoted path or `eval` counts as one of those tools. Bash never propagates the status of a process substitution, so every `<(` or `>(` is a hit until a file the walk wrote replaces it.
+Some idioms turn a failed tool into an empty answer, so a gate passes on nothing. They are a `<(` or `>(` process substitution, and a `$(...)`, `|| true`, `|| :` or stderr sent to `/dev/null` on `find`, `git`, `gh`, `docker` or `getent`. A `$(...)` that runs a variable, a quoted path or `eval` counts as one of those tools.
 
-`scripts/check-shell-portability.sh` rejects each idiom in `scripts/` and `runtime/container/` unless the command, or the command after it, captures the status. `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
+`scripts/check-shell-portability.sh` rejects each idiom in `scripts/` and `runtime/container/` unless the command, or the command after it, captures the status. A `$(...)` that is an argument of a command such as `local` or `[[` cannot be captured that way. A heredoc that the check cannot end fails the check. A command can state its reason with a `# fail-closed: <reason>` comment at its line end or alone on the line before. The comment covers only that command.
+
+Bash never propagates the status of a process substitution, and a `# fail-closed:` comment does not cover one. Only `wait "$!"` after a `done < <(` loop or a `NAME_completed` sentinel captures it. No job in the loop may run in the background before that `wait`. For a sentinel, the producer ends with `&& printf '\0'`. The loop sets the flag to 1 only on that empty record. The next command fails unless the flag is 1.
+
+`policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
 
 ## 3. Repo policy must not silently widen trust
 

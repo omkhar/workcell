@@ -51,12 +51,17 @@ func (h heredoc) endsAt(line string) bool {
 // plain strings cannot tell the two apart, so every caller that asks whether a
 // word is syntax reads text as syntax.
 //
+// syntax is text with each quoted byte replaced by _, so a reader that counts
+// parentheses sees only the ones bash reads as syntax, even in a word that is
+// only partly quoted, as in 'a'$( or printf x')'.
+//
 // decoded records a $'…' span in the word. Bash decodes its escapes before it
 // runs the word, so $'\x73ource' runs source while its text here does not.
 type word struct {
 	text    string
 	quoted  bool
 	decoded bool
+	syntax  string
 }
 
 // texts returns the words' text, for the tests that read a word as a name. A
@@ -288,10 +293,7 @@ func carriesParen(first word) bool {
 func parenBalance(args []word) int {
 	balance := 0
 	for _, each := range args {
-		if each.quoted {
-			continue
-		}
-		text, unclosed := withoutExpansions(each.text)
+		text, unclosed := withoutExpansions(each.syntax)
 		// An expansion the word does not close is a substitution the shell is
 		// still reading, as in the foo=$( of a multi-line assignment. Its ) is
 		// a bare word on a later line, so the opener has to count.
@@ -303,8 +305,8 @@ func parenBalance(args []word) int {
 // substitutionDepth returns how many unquoted $( spans are still open after a line's words, given the count open before it. A quoted "$( is the stack shellWords returns; an unquoted one leaves no trace there, so a reader that stops at the line end splits x=$( from the command on the next line. Only a $( starts the count, so a bare subshell ( does not join lines, and the count is the balance of the whole line, so $((a + 1)) split into words closes on the line it opens.
 func substitutionDepth(open int, words []word) int {
 	if open == 0 && !slices.ContainsFunc(words, func(each word) bool {
-		_, unclosed := withoutExpansions(each.text)
-		return !each.quoted && unclosed > 0
+		_, unclosed := withoutExpansions(each.syntax)
+		return unclosed > 0
 	}) {
 		return 0
 	}
@@ -984,7 +986,15 @@ func ShellInvocations(script, commandName string) []Invocation {
 func shellWords(line string, stack []byte) (
 	words []word, heredocs []heredoc, open byte, rest []byte, continues bool, comment string,
 ) {
-	var text strings.Builder
+	var text, syntax strings.Builder
+	// emit writes one byte of the word, and _ for it in syntax when it is quoted.
+	emit := func(character byte, literal bool) {
+		text.WriteByte(character)
+		if literal {
+			character = '_'
+		}
+		syntax.WriteByte(character)
+	}
 	inWord, quoted, quote, pending, stripTabs := false, false, byte(0), false, false
 	ansiC, unresolved, decoded := false, false, false
 	arithmetic := 0
@@ -1005,9 +1015,10 @@ func shellWords(line string, stack []byte) (
 			heredocs = append(heredocs, heredoc{text.String(), stripTabs, unresolved, quoted, operatorAt, index})
 			pending, stripTabs = false, false
 		} else {
-			words = append(words, word{text.String(), quoted, decoded})
+			words = append(words, word{text.String(), quoted, decoded, syntax.String()})
 		}
 		text.Reset()
+		syntax.Reset()
 		inWord, quoted, unresolved, decoded = false, false, false, false
 	}
 	for ; index < len(line); index++ {
@@ -1025,11 +1036,11 @@ func shellWords(line string, stack []byte) (
 				// span therefore keeps the rest of the line as text, where
 				// closing on it would expose a separator bash never reads.
 				unresolved = true
-				text.WriteByte(character)
+				emit(character, true)
 				index++
-				text.WriteByte(line[index])
+				emit(line[index], true)
 			default:
-				text.WriteByte(character)
+				emit(character, true)
 			}
 		case quote == '"':
 			switch {
@@ -1042,7 +1053,7 @@ func shellWords(line string, stack []byte) (
 				// other one it is a literal byte of the word, so a name such
 				// as "or\as" is not the command it resembles.
 				index++
-				text.WriteByte(line[index])
+				emit(line[index], true)
 			case character == '"':
 				quote = 0
 			case character == '`' || (character == '$' && index+1 < len(line) && line[index+1] == '('):
@@ -1055,9 +1066,9 @@ func shellWords(line string, stack []byte) (
 				substituted = true
 				stack = append(stack, quote)
 				quote = 0
-				text.WriteByte(character)
+				emit(character, false)
 			default:
-				text.WriteByte(character)
+				emit(character, true)
 			}
 		case character == '\\' && index+1 == len(line):
 			// The line ends on a backslash no quote made literal, so bash
@@ -1070,7 +1081,7 @@ func shellWords(line string, stack []byte) (
 			// no longer syntax itself, so \; is an argument rather than a
 			// separator, which is why the escape records provenance.
 			index++
-			text.WriteByte(line[index])
+			emit(line[index], true)
 			inWord, quoted = true, true
 		case character == '\'' || character == '"':
 			quote = character
@@ -1099,11 +1110,13 @@ func shellWords(line string, stack []byte) (
 			// The << inside $((1 << 2)) is a shift, not a heredoc operator.
 			arithmetic++
 			text.WriteString(line[index : index+3])
+			syntax.WriteString(line[index : index+3])
 			index += 2
 			inWord = true
 		case arithmetic > 0 && character == ')' && index+1 < len(line) && line[index+1] == ')':
 			arithmetic--
 			text.WriteString("))")
+			syntax.WriteString("))")
 			index++
 			inWord = true
 		case arithmetic == 0 && character == '<' && index+1 < len(line) && line[index+1] == '<':
@@ -1149,10 +1162,10 @@ func shellWords(line string, stack []byte) (
 			// suspended comes back with it.
 			quote = stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
-			text.WriteByte(character)
+			emit(character, false)
 			inWord = true
 		default:
-			text.WriteByte(character)
+			emit(character, false)
 			inWord = true
 		}
 	}
