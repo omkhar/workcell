@@ -69,6 +69,11 @@ func readLibrary(text string) (forwarders []string, hidden string) {
 		}
 		for _, each := range commands {
 			names := commandWords(spelled(each.args))
+			// A one-line body, as f() { source x; }, reads as f() { source x;
+			// strip the header and any opener so the body's command is classified.
+			for len(names) > 0 && (strings.HasSuffix(names[0], "()") || slices.Contains([]string{"{", "(", "!", "if", "then", "do", "else", "elif", "while", "until", "time"}, names[0])) {
+				names = names[1:]
+			}
 			switch {
 			case function != "" && evaluates(names) && forwards(names):
 				forwarders = append(forwarders, function)
@@ -91,8 +96,11 @@ func libraryLineHidesText(line string) bool {
 	return hidden != ""
 }
 
+// TestLibraryGateReadsWrappedBuiltins covers wrapped builtins and one-line
+// bodies, whose command the gate must read inside the braces.
 func TestLibraryGateReadsWrappedBuiltins(t *testing.T) {
-	for _, line := range []string{"command source ./shadow.sh", "builtin eval 'f() { :; }'", "alias buildx_cmd=true", "  . ./x.sh"} {
+	for _, line := range []string{"command source ./shadow.sh", "builtin eval 'f() { :; }'", "alias buildx_cmd=true", "  . ./x.sh",
+		"f() { source ./shadow.sh; }", "f() { eval x; }", "f() { alias a=b; }"} {
 		if !libraryLineHidesText(line) {
 			t.Errorf("%q is not read as hiding text", line)
 		}
@@ -120,6 +128,8 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 		"the canonical root in a comment":  {"#!/bin/bash\n# " + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
 		"a substituted ROOT_DIR after":     {head + `ROOT_DIR="$(echo /tmp/evil)"` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
 		"a read of ROOT_DIR first":         {head + "read -r ROOT_DIR\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a RETURN trap first":              {head + `trap 'buildx_cmd() { :; }' RETURN` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"an ERR trap first":                {head + `trap 'echo failed >&2' ERR` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 1},
 		"a library forwarder that evals":   {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nrun_workcell_docker_client_command eval x\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
@@ -128,98 +138,43 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 	}
 }
 
-// TestGluedSubshellCloserEndsTheFunctionBody covers a body whose one-line
-// subshell ends in a ) glued to its last word: the reader must close the body,
-// or every later command reads as part of it and no invocation is proved.
-func TestGluedSubshellCloserEndsTheFunctionBody(t *testing.T) {
-	for name, test := range map[string]struct {
-		script string
-		want   int
-	}{
-		"a glued closer":                 {"f() {\n  (cd \"${ROOT_DIR}\" && \"${GO_BIN}\" run ./x \"$@\")\n}\nbuildx_cmd build\n", 1},
-		"a closer glued to a plain word": {"f() {\n  (cd x && go run ./y)\n}\nbuildx_cmd build\n", 1},
-		"a top-level glued closer":       {"(cd x && go run ./y)\nbuildx_cmd build\n", 1},
-		"a case pattern is no closer":    {"case x in\nlinux)\n  buildx_cmd build\n  ;;\nesac\n", 0},
-		"a closer on a later line":       {"f() {\n  (cd x\n  go run ./y)\n}\nbuildx_cmd build\n", 0},
-		"a continued closer":             {"f() {\n  (cd x &&\n  go run ./y)\n}\nbuildx_cmd build\n", 1},
-	} {
-		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
-			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
-		}
-	}
-}
-
-// TestCommandLookupIsNotABarrier covers command -v and -V, which print how a
-// name resolves and run nothing, so a helper that probes "$1" with them is no
-// barrier; command "$2" runs a word the reader cannot spell and still is one.
-func TestCommandLookupIsNotABarrier(t *testing.T) {
-	for name, test := range map[string]struct {
-		script string
-		want   int
-	}{
-		"command -v":            {"f() {\n  command -v \"$1\" >/dev/null 2>&1 || exit 1\n}\nf docker\nbuildx_cmd build\n", 1},
-		"command -pV":           {"f() {\n  command -pV \"$1\"\n}\nf docker\nbuildx_cmd build\n", 1},
-		"command runs its word": {"f() {\n  command \"$2\"\n}\nf x eval\nbuildx_cmd build\n", 0},
-	} {
-		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
-			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
-		}
-	}
-}
-
-// TestConditionalExitInABodyEndsNothing covers a helper that exits only inside
-// a || { … } group: a call to it ends the step only on failure, so later
-// commands stay proved; an unconditional exit still ends every call.
-func TestConditionalExitInABodyEndsNothing(t *testing.T) {
-	for name, test := range map[string]struct {
-		script string
-		want   int
-	}{
-		"exit inside a || group": {"f() {\n  command -v \"$1\" >/dev/null || {\n    echo missing >&2\n    exit 1\n  }\n}\nf docker\nbuildx_cmd build\n", 1},
-		"exit after the group":   {"f() {\n  true || {\n    echo x\n  }\n  exit 1\n}\nf\nbuildx_cmd build\n", 0},
-		"an unconditional exit":  {"f() {\n  exit 1\n}\nf\nbuildx_cmd build\n", 0},
-		"exit inside an if":      {"f() {\n  if ! true; then\n    exit 1\n  fi\n}\nf\nbuildx_cmd build\n", 1},
-		"exit as the if test":    {"f() {\n  if exit 1; then\n    :\n  fi\n}\nf\nbuildx_cmd build\n", 0},
-	} {
-		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
-			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
-		}
-	}
-}
-
-// TestCasePatternAlternativesAreNotCommands covers a multi-word case pattern:
-// its alternatives split like a pipeline, and . among them is no source.
-func TestCasePatternAlternativesAreNotCommands(t *testing.T) {
+// TestReaderReadsBodiesAndPatterns covers what the reader must not take for a
+// barrier, and what it must: a ) glued to a subshell's last word closes it;
+// command -v and -V run nothing, but command "$2" does; an exit inside a || {
+// … } group or an if ends nothing proved; case pattern alternatives, . among
+// them, are no commands; and an expanded command word with a literal slash
+// runs a file, never eval or source.
+func TestReaderReadsBodiesAndPatterns(t *testing.T) {
 	const die = "die() {\n  echo \"$1\" >&2\n  exit 1\n}\n"
 	for name, test := range map[string]struct {
 		script string
 		want   int
 	}{
+		"a glued closer":                    {"f() {\n  (cd \"${ROOT_DIR}\" && \"${GO_BIN}\" run ./x \"$@\")\n}\nbuildx_cmd build\n", 1},
+		"a closer glued to a plain word":    {"f() {\n  (cd x && go run ./y)\n}\nbuildx_cmd build\n", 1},
+		"a top-level glued closer":          {"(cd x && go run ./y)\nbuildx_cmd build\n", 1},
+		"a case pattern is no closer":       {"case x in\nlinux)\n  buildx_cmd build\n  ;;\nesac\n", 0},
+		"a closer on a later line":          {"f() {\n  (cd x\n  go run ./y)\n}\nbuildx_cmd build\n", 0},
+		"a continued closer":                {"f() {\n  (cd x &&\n  go run ./y)\n}\nbuildx_cmd build\n", 1},
+		"command -v":                        {"f() {\n  command -v \"$1\" >/dev/null 2>&1 || exit 1\n}\nf docker\nbuildx_cmd build\n", 1},
+		"command -pV":                       {"f() {\n  command -pV \"$1\"\n}\nf docker\nbuildx_cmd build\n", 1},
+		"command runs its word":             {"f() {\n  command \"$2\"\n}\nf x eval\nbuildx_cmd build\n", 0},
+		"exit inside a || group":            {"f() {\n  command -v \"$1\" >/dev/null || {\n    echo missing >&2\n    exit 1\n  }\n}\nf docker\nbuildx_cmd build\n", 1},
+		"exit after the group":              {"f() {\n  true || {\n    echo x\n  }\n  exit 1\n}\nf\nbuildx_cmd build\n", 0},
+		"an unconditional exit":             {"f() {\n  exit 1\n}\nf\nbuildx_cmd build\n", 0},
+		"exit inside an if":                 {"f() {\n  if ! true; then\n    exit 1\n  fi\n}\nf\nbuildx_cmd build\n", 1},
+		"exit as the if test":               {"f() {\n  if exit 1; then\n    :\n  fi\n}\nf\nbuildx_cmd build\n", 0},
 		"a source before a pattern":         {"source ./shadow.sh; case x in '' | . | /*) : ;; esac\nbuildx_cmd build\n", 0},
 		"a pattern with a dot":              {die + "g() {\n  case \"$1\" in\n    '' | . | /*)\n      die bad\n      return 1\n      ;;\n  esac\n}\ng x\nbuildx_cmd build\n", 1},
 		"a top-level pattern with a dot":    {"case \"$1\" in\n  . | ..)\n    echo dot\n    ;;\nesac\nbuildx_cmd build\n", 1},
 		"a real source still stops":         {"source x\nbuildx_cmd build\n", 0},
 		"a quoted pattern with a parameter": {"case \"$1\" in\n  \"${HOME}\")\n    echo home\n    ;;\nesac\nbuildx_cmd build\n", 1},
 		"return then exit":                  {"f() {\n  if [[ -x x ]]; then\n    return 0\n  fi\n  exit 1\n}\nf\nbuildx_cmd build\n", 1},
-	} {
-		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
-			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
-		}
-	}
-}
-
-// TestPathCommandWordIsNotABarrier covers an expanded command word that keeps a
-// literal slash: bash runs it as a file, never as eval or source.
-func TestPathCommandWordIsNotABarrier(t *testing.T) {
-	for name, test := range map[string]struct {
-		script string
-		want   int
-	}{
-		"a root-relative script":     {"\"${ROOT_DIR}/scripts/x.sh\" arg\nbuildx_cmd build\n", 1},
-		"the searched path itself":   {"X=1 \"${ROOT_DIR}/scripts/check.sh\"\nbuildx_cmd build\n", 1},
-		"an expansion with no slash": {"\"${cmd}\" arg\nbuildx_cmd build\n", 0},
-		"a slash inside the braces":  {"\"${dir/x/y}\" arg\nbuildx_cmd build\n", 0},
-		"a brace expansion":          {"{source,./x} arg\nbuildx_cmd build\n", 0},
+		"a root-relative script":            {"\"${ROOT_DIR}/scripts/x.sh\" arg\nbuildx_cmd build\n", 1},
+		"the searched path itself":          {"X=1 \"${ROOT_DIR}/scripts/check.sh\"\nbuildx_cmd build\n", 1},
+		"an expansion with no slash":        {"\"${cmd}\" arg\nbuildx_cmd build\n", 0},
+		"a slash inside the braces":         {"\"${dir/x/y}\" arg\nbuildx_cmd build\n", 0},
+		"a brace expansion":                 {"{source,./x} arg\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
 			t.Errorf("%s: %d invocations, want %d", name, got, test.want)

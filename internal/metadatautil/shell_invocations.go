@@ -1169,8 +1169,9 @@ var reviewedShellLibraries = map[string]reviewedLibrary{
 const canonicalRootDir = `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"`
 
 // preludeSafe reports whether a command before a reviewed source leaves
-// ROOT_DIR as the script set it: an assignment, set, trap (eval-like DEBUG
-// traps are barriers already), exec, a test, a closing word, or a declaration
+// ROOT_DIR as the script set it: an assignment, set, a trap on ERR, EXIT or a
+// signal only (a RETURN trap runs when the source returns, and could redefine
+// the anchored command), exec, a test, a closing word, or a declaration
 // that names each variable literally and makes no nameref, as declare -n
 // x=ROOT_DIR would let x=/tmp move the root.
 func preludeSafe(names []string) bool {
@@ -1179,8 +1180,12 @@ func preludeSafe(names []string) bool {
 		return true
 	}
 	switch rest[0] {
-	case "set", "trap", "exec", "[[", "[", "test", "fi", "done", "esac", "{", "}":
+	case "set", "exec", "[[", "[", "test", "fi", "done", "esac", "{", "}":
 		return true
+	case "trap":
+		return len(rest) > 2 && !strings.HasPrefix(rest[1], "-") && !slices.ContainsFunc(rest[2:], func(signal string) bool {
+			return !preludeTrapSignals[strings.TrimPrefix(strings.ToUpper(signal), "SIG")]
+		})
 	case "export", "readonly", "declare", "typeset", "local":
 		return !slices.ContainsFunc(rest[1:], func(arg string) bool {
 			name, _, _ := strings.Cut(arg, "=")
@@ -1202,6 +1207,10 @@ func namesRoot(logical string, commands []command) bool {
 	}
 	return strings.Contains(logical, "ROOT_DIR")
 }
+
+// preludeTrapSignals are the trap conditions that cannot fire while the
+// reviewed source runs: an error, the shell's exit, or a signal.
+var preludeTrapSignals = map[string]bool{"ERR": true, "EXIT": true, "0": true, "INT": true, "TERM": true, "HUP": true, "QUIT": true, "PIPE": true}
 
 var reviewedLibraryPath = regexp.MustCompile(`^\$\{?ROOT_DIR\}?/scripts/lib/([A-Za-z0-9_.-]+\.sh)$`)
 
