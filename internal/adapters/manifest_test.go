@@ -686,6 +686,8 @@ container_path = "/opt/demo.json"
 		"flag denied twice":       valid + "\n[flags]\ndeny = [\"-y\", \"-y\"]\n",
 		"duplicate subcommand":    valid + "\n[flags]\nsubcommands = [\"exec\", \"exec\"]\n",
 		"subcommand with space":   valid + "\n[flags]\nsubcommands = [\"exec now\"]\n",
+		"other command overlap":   valid + "\n[flags]\nsubcommands = [\"exec\"]\nother_commands = [\"exec\"]\n",
+		"duplicate other command": valid + "\n[flags]\nother_commands = [\"help\", \"help\"]\n",
 		"planned with flags":      "schema = 1\nid = \"demo\"\ntier = \"planned\"\n\n[flags]\ndeny = [\"-y\"]\n",
 		"unknown install key":     strings.Replace(valid, `method = "binary"`, "method = \"binary\"\nsha = \"x\"", 1),
 		"bare credentials table":  valid + "\n[credentials]\ncontainer_path = \"/x\"\n",
@@ -714,11 +716,11 @@ container_path = "/opt/demo.json"
 		"endpoint port zero":      valid + "\n[egress]\nendpoints = [\"api.example:0\"]\n",
 		"endpoint empty label":    valid + "\n[egress]\nendpoints = [\"api..example:443\"]\n",
 	}
-	m, err := parseManifest("valid.toml", []byte(valid+"\n[egress]\nendpoints = [\"api.demo-1.example:443\"]\n\n[flags]\nsubcommands = [\"exec\"]\nallow = [\"-m\", \"--model\"]\ndeny = [\"--yolo\"]\n"))
+	m, err := parseManifest("valid.toml", []byte(valid+"\n[egress]\nendpoints = [\"api.demo-1.example:443\"]\n\n[flags]\nsubcommands = [\"exec\"]\nother_commands = [\"help\"]\nallow = [\"-m\", \"--model\"]\ndeny = [\"--yolo\"]\n"))
 	if err != nil {
 		t.Fatalf("valid fixture rejected: %v", err)
 	}
-	if want := (Flags{Subcommands: []string{"exec"}, Allow: []string{"-m", "--model"}, Deny: []string{"--yolo"}}); !reflect.DeepEqual(m.Flags, want) {
+	if want := (Flags{Subcommands: []string{"exec"}, OtherCommands: []string{"help"}, Allow: []string{"-m", "--model"}, Deny: []string{"--yolo"}}); !reflect.DeepEqual(m.Flags, want) {
 		t.Fatalf("flags = %+v, want %+v", m.Flags, want)
 	}
 	for name, content := range cases {

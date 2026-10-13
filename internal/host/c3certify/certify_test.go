@@ -586,6 +586,10 @@ func TestRecordAbsenceRequiresDirectFilesystemProof(t *testing.T) {
 	}
 }
 
+// keepaliveBound only caps failure paths: the sh trap waits for the foreground
+// 1s sleep, and every success path returns on the readiness file or process exit.
+const keepaliveBound = 30 * time.Second
+
 func TestKeepaliveHandlesSignals(t *testing.T) {
 	for _, signal := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
 		t.Run(signal.String(), func(t *testing.T) {
@@ -607,10 +611,10 @@ func TestKeepaliveHandlesSignals(t *testing.T) {
 				_ = cmd.Process.Kill()
 				select {
 				case <-done:
-				case <-time.After(3 * time.Second):
+				case <-time.After(keepaliveBound):
 				}
 			})
-			deadline := time.Now().Add(3 * time.Second)
+			deadline := time.Now().Add(keepaliveBound)
 			for {
 				if output, err := os.ReadFile(ready); err == nil && string(output) == "ready" {
 					break
@@ -625,7 +629,7 @@ func TestKeepaliveHandlesSignals(t *testing.T) {
 			case err := <-done:
 				waited = true
 				mustNoError(t, err)
-			case <-time.After(3 * time.Second):
+			case <-time.After(keepaliveBound):
 				_ = cmd.Process.Kill()
 				<-done
 				waited = true

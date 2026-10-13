@@ -4,7 +4,7 @@
     "bench.yml/exec-guard-bench": {
       "authority": "github-only",
       "local_mode": "none",
-      "github_only_reason": "optional exec-guard microbenchmark lane; it builds the cdylib and times the LD_PRELOAD shim's classification overhead on Linux, which the macOS host baseline cannot mirror, so the reviewed numbers come from this scheduled/on-demand GitHub lane"
+      "github_only_reason": "optional exec-guard microbenchmark lane; it builds the cdylib and times the LD_PRELOAD shim's guarded-launch overhead (classification plus child library loading) on Linux, which the macOS host baseline cannot mirror, so the reviewed numbers come from this scheduled/on-demand GitHub lane"
     },
     "ci-insights.yml/cost-report": {
       "authority": "github-only",

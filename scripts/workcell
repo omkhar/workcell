@@ -158,6 +158,8 @@ SESSION_FILE_TRACE_CONTAINER_FILE="/var/tmp/workcell-file-trace.log"
 FINAL_SESSION_ASSURANCE=""
 SESSION_ID=""
 SESSION_RECORD_PATH=""
+EGRESS_PROXY=0
+EGRESS_PROXY_STARTED=0
 SUPPORT_MATRIX_HOST_OS=""
 SUPPORT_MATRIX_HOST_ARCH=""
 SUPPORT_MATRIX_HOST_DISTRO=""
@@ -277,6 +279,7 @@ Options:
   --allow-control-plane-vcs     Allow readonly Git VCS visibility for masked workspace control-plane paths
   --allow-repo-mcp              Honor repo-defined MCP server configs (.mcp.json, .github/mcp.json); denied by default
   --allow-arbitrary-command     Launch the runtime image with an explicit command after -- on the managed entrypoint
+  --egress-proxy                Route strict Colima egress only through a per-session SNI proxy sidecar
   --colima-profile NAME         Override derived Colima profile name
   --vm-cpu COUNT                Colima VM CPU count (default: profile value)
   --vm-memory GIB               Colima VM memory in GiB (default: profile value)
@@ -1142,6 +1145,9 @@ cleanup() {
 
   if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ -n "${CONTAINER_NAME:-}" ]] && [[ -n "${HOST_DOCKER_BIN:-}" ]]; then
     run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${DETACHED_SESSION_ACTIVE}" -eq 0 ]] && [[ "${EGRESS_PROXY_STARTED}" -eq 1 ]]; then
+    stop_egress_proxy "${COLIMA_PROFILE}"
   fi
 
   cleanup_runtime_builder || true
@@ -2530,6 +2536,9 @@ write_session_monitor_env_file() {
     CONTAINER_MUTABILITY
     CONTAINER_NAME
     DEBUG_LOG_PATH
+    EGRESS_PROXY_CONTAINER
+    EGRESS_PROXY_NETWORK
+    EGRESS_PROXY_STARTED
     EXECUTION_PATH
     FILE_TRACE_LOG_PATH
     INJECTION_CREDENTIAL_KEYS
@@ -3490,15 +3499,38 @@ sign_session_audit_head_explicit() {
   return 0
 }
 
+# The identity of the runtime image's build inputs: the runtime section of the
+# build-input manifest, generated with its ref and epoch pinned, so only the
+# image inputs move the digest.
+runtime_build_inputs_digest() {
+  local manifest="" digest=""
+  manifest="$(mktemp "${TMPDIR:-/tmp}/workcell-build-inputs.XXXXXX")" || return 1
+  if WORKCELL_BUILD_INPUT_REF=inputs SOURCE_DATE_EPOCH=0 \
+    "${ROOT_DIR}/scripts/generate-build-input-manifest.sh" "${manifest}" >/dev/null 2>&1; then
+    digest="$(go_hostutil helper build-inputs-digest "${manifest}")"
+  fi
+  rm -f "${manifest}"
+  [[ -n "${digest}" ]] || return 1
+  printf '%s\n' "${digest}"
+}
+
+# The marker records the digest the image was built from: the current inputs
+# after a build, or the digest stored with a cached image when it is restored.
 write_profile_image_marker() {
   local profile="$1"
   local image_id="$2"
+  local build_inputs_sha256="$3"
   local marker_path
 
+  [[ "${build_inputs_sha256}" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Workcell has no runtime image build-input digest for profile ${profile}." >&2
+    return 1
+  }
   marker_path="$(profile_image_marker_path "${profile}")"
   mkdir -p "$(dirname "${marker_path}")"
   umask 077
-  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\n' "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" >"${marker_path}"
+  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
+    "workcell:local" "${image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${marker_path}"
   chmod 0600 "${marker_path}" 2>/dev/null || true
 }
 
@@ -3582,8 +3614,12 @@ cache_profile_runtime_image() {
   local current_profile_image=""
   local tmp_cache=""
   local tmp_metadata=""
+  local build_inputs_sha256=""
 
   [[ -n "${expected_image_id}" ]] || return 1
+  # A cached image keeps the digest it was built from, so a restore never takes the current one.
+  build_inputs_sha256="$(profile_image_marker_value "${profile}" build_inputs_sha256 || true)"
+  [[ "${build_inputs_sha256}" =~ ^[0-9a-f]{64}$ ]] || return 1
   current_profile_image="$(current_profile_image_id "${profile}")"
   [[ -n "${current_profile_image}" ]] && [[ "${current_profile_image}" == "${expected_image_id}" ]] || return 1
   if profile_runtime_image_cache_matches "${profile}" "${expected_image_id}" "${SOURCE_DATE_EPOCH}"; then
@@ -3603,8 +3639,8 @@ cache_profile_runtime_image() {
   fi
 
   umask 077
-  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\n' \
-    "${IMAGE_TAG}" "${expected_image_id}" "${SOURCE_DATE_EPOCH}" >"${tmp_metadata}"
+  printf 'image_tag=%s\nimage_id=%s\nsource_date_epoch=%s\nbuild_inputs_sha256=%s\n' \
+    "${IMAGE_TAG}" "${expected_image_id}" "${SOURCE_DATE_EPOCH}" "${build_inputs_sha256}" >"${tmp_metadata}"
   chmod 0600 "${tmp_cache}" "${tmp_metadata}" 2>/dev/null || true
   mv "${tmp_cache}" "${cache_path}"
   mv "${tmp_metadata}" "${metadata_path}"
@@ -3617,11 +3653,15 @@ restore_profile_runtime_image_cache() {
   local expected_source_date_epoch="$3"
   local cache_path=""
   local restored_image_id=""
+  local build_inputs_sha256=""
 
   [[ -n "${expected_image_id}" ]] || return 1
   if ! profile_runtime_image_cache_matches "${profile}" "${expected_image_id}" "${expected_source_date_epoch}"; then
     return 1
   fi
+  # A cache entry without its build-input digest cannot label the restored image.
+  build_inputs_sha256="$(profile_runtime_image_cache_value "${profile}" build_inputs_sha256 || true)"
+  [[ "${build_inputs_sha256}" =~ ^[0-9a-f]{64}$ ]] || return 1
   cache_path="$(profile_runtime_image_cache_path "${profile}")"
   if ! run_profile_docker_command "${profile}" image load -i "${cache_path}" >/dev/null 2>&1; then
     return 1
@@ -3629,7 +3669,7 @@ restore_profile_runtime_image_cache() {
   restored_image_id="$(current_profile_image_id "${profile}")"
   [[ -n "${restored_image_id}" ]] && [[ "${restored_image_id}" == "${expected_image_id}" ]] || return 1
   echo "Restored the prepared runtime image from cache for profile ${profile}." >&2
-  write_profile_image_marker "${profile}" "${restored_image_id}"
+  write_profile_image_marker "${profile}" "${restored_image_id}" "${build_inputs_sha256}"
 }
 
 maybe_cache_profile_runtime_image() {
@@ -4235,6 +4275,7 @@ session_stop_main() {
         "final_assurance=${SESSION_META_CURRENT_ASSURANCE:-managed-mutable}"
       session_write_stop_requested_terminal_record "${record_path}" "${stop_exit_status}" || exit 1
       sign_session_audit_head_explicit "${SESSION_META_PROFILE}" "${session_id}" "${record_path}"
+      stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
       load_session_runtime_metadata "${session_id}"
       printf 'session_id=%s\n' "${session_id}"
       printf 'stop_requested=1\n'
@@ -4331,6 +4372,9 @@ session_stop_main() {
         load_session_runtime_metadata "${session_id}"
         ;;
     esac
+    # The monitor's own cleanup is gone with it: save the deny log and remove
+    # the sidecar and network here, or a stopped session would leave them.
+    stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
   fi
   # Seal-missing recheck (TOCTOU coverage): once the record is terminal, guarantee
   # it is sealed even if the monitor was observed live at the checks above but
@@ -5014,6 +5058,10 @@ session_monitor_main() {
   capture_session_file_trace "${CONTAINER_NAME}"
   finalize_session_audit "${COLIMA_PROFILE}" "${EXECUTION_PATH}" "${wait_status}"
   run_profile_docker_command "${COLIMA_PROFILE}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  stop_egress_proxy "${COLIMA_PROFILE}"
+  # The monitor's EXIT cleanup also stops the proxy while this flag is set, so a
+  # failed finalize cannot leave the sidecar. The stop above already ran.
+  EGRESS_PROXY_STARTED=0
   if [[ -n "${SESSION_AUDIT_DIR}" ]] && [[ -d "${SESSION_AUDIT_DIR}" ]]; then
     chmod -R u+w "${SESSION_AUDIT_DIR}" 2>/dev/null || true
     rm -rf "${SESSION_AUDIT_DIR}"
@@ -8953,6 +9001,10 @@ while [[ $# -gt 0 ]]; do
       ALLOW_ARBITRARY_COMMAND=1
       shift
       ;;
+    --egress-proxy)
+      EGRESS_PROXY=1
+      shift
+      ;;
     --ack-breakglass)
       ACK_BREAKGLASS=1
       shift
@@ -9019,6 +9071,10 @@ validate_cache_profile_name "${CACHE_PROFILE}"
 validate_codex_rules_mutability_name "${CODEX_RULES_MUTABILITY}"
 validate_log_level_name "${LOG_LEVEL}"
 validate_session_workspace_mode "${SESSION_WORKSPACE_MODE}"
+if [[ "${EGRESS_PROXY}" -eq 1 ]] && { [[ "${TARGET_BACKEND}" != "colima" ]] || [[ "${MODE}" != "strict" ]]; }; then
+  echo "--egress-proxy supports only --target colima with --mode strict." >&2
+  exit 2
+fi
 if ! target_backend_is_remote_vm_preview "${TARGET_BACKEND}" && [[ -n "${TARGET_ID_OVERRIDE}" ]]; then
   echo "--target-id only supports --target aws-ec2-ssm or --target gcp-vm." >&2
   exit 2
@@ -9460,6 +9516,7 @@ fi
 prepare_workspace_control_plane_shadow "${WORKSPACE_SHADOW_SOURCE}" "${MODE}" "${WORKSPACE}"
 prepare_cache_mounts "${AGENT}" "${CACHE_PROFILE}" "${WORKSPACE}"
 prepare_copilot_token_handoff_mount "$@"
+[[ "${EGRESS_PROXY}" -eq 0 ]] || [[ -n "${SESSION_ID}" ]] || SESSION_ID="$(generate_session_id)"
 build_runtime_host_aliases "${ALLOW_ENDPOINTS}"
 if [[ "${DRY_RUN}" -eq 0 ]]; then
   prepare_session_audit_state "${COLIMA_PROFILE}"
@@ -9776,6 +9833,19 @@ else
   fi
 fi
 
+# The egress proxy sidecar runs the proxy binary from the prepared image, so an
+# image built from other inputs may lack the sidecar's current interface. The
+# marker records the build-input digest; any mismatch refreshes the image.
+if [[ "${EGRESS_PROXY}" -eq 1 ]] && [[ "${NEEDS_REBUILD}" -eq 0 ]] &&
+  [[ "$(profile_image_marker_value "${COLIMA_PROFILE}" build_inputs_sha256 || true)" != "$(runtime_build_inputs_digest)" ]]; then
+  NEEDS_REBUILD=1
+  if [[ "${PREPARE}" -eq 0 ]]; then
+    announce_strict_auto_prepare \
+      "--egress-proxy needs a runtime image prepared from this checkout for profile ${COLIMA_PROFILE}." \
+      "The prepared image was built from other inputs, so its egress proxy sidecar may not match."
+  fi
+fi
+
 if [[ "${MODE}" == "strict" ]] && [[ "${NEEDS_REBUILD}" -eq 1 ]] && [[ "${PREPARE}" -eq 0 ]]; then
   announce_strict_auto_prepare \
     "Strict mode needs a prepared runtime image for profile ${COLIMA_PROFILE}." \
@@ -9812,7 +9882,12 @@ if [[ "${NEEDS_REBUILD}" -eq 1 ]]; then
     echo "Workcell failed to record the prepared runtime image ID for ${IMAGE_TAG}." >&2
     exit 2
   fi
-  write_profile_image_marker "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
+  if ! BUILD_INPUTS_SHA256="$(runtime_build_inputs_digest)"; then
+    restore_runtime_egress
+    echo "Workcell could not compute the runtime image build-input digest for ${IMAGE_TAG}." >&2
+    exit 2
+  fi
+  write_profile_image_marker "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}" "${BUILD_INPUTS_SHA256}"
   maybe_cache_profile_runtime_image "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
 elif [[ -n "${CURRENT_IMAGE_ID}" ]] && [[ -n "${EXPECTED_IMAGE_ID}" ]] && [[ "${CURRENT_IMAGE_ID}" == "${EXPECTED_IMAGE_ID}" ]]; then
   maybe_cache_profile_runtime_image "${COLIMA_PROFILE}" "${CURRENT_IMAGE_ID}"
@@ -9847,6 +9922,10 @@ fi
 
 DOCKER_STATUS=0
 run_workcell_docker_client_command "${HOST_DOCKER_BIN}" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+if [[ "${EGRESS_PROXY}" -eq 1 ]]; then
+  EGRESS_PROXY_STARTED=1
+  start_egress_proxy "${CURRENT_IMAGE_ID}" || exit 1
+fi
 if [[ "${SESSION_DETACHED}" -eq 1 ]]; then
   detached_status="running"
   detached_live_status="running"
