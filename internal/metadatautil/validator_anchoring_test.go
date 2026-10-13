@@ -162,6 +162,8 @@ func TestTextMatchingFunctions(t *testing.T) {
 		"aliased regexp":             {"import re \"regexp\"\nfunc f() { _ = re.MustCompile(x) }", []string{"f"}},
 		"dot import":                 {"import . \"strings\"\nfunc f() { _ = Contains(a, x) }", []string{"f"}},
 		"read then compiled re":      {"func f() { s := readText(p); _ = re.FindStringSubmatch(s) }", []string{"f"}},
+		"compiled split":             {"func f() { s := readText(p); _ = regexp.MustCompile(x).Split(s, -1) }", []string{"f", "f"}},
+		"compiled find all submatch": {"func f() { s := readText(p); _ = re.FindAllStringSubmatchIndex(s, -1) }", []string{"f"}},
 		"exec then contains":         {"func f() { o, _ := exec.Command(x).Output(); _ = bytes.Contains(o, y) }", []string{"f"}},
 		"match in a closure":         {"func f() { s := readText(p); g := func() bool { return strings.Contains(s, x) }; _ = g }", []string{"f"}},
 		"generic receiver":           {"func (c *box[T]) f() { s := readText(p); _ = strings.Contains(s, x) }", []string{"box.f"}},

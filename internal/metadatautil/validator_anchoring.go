@@ -356,8 +356,24 @@ func matchesText(pkg, name string) bool {
 	case "filepath", "path", "slices", "maps":
 		return false
 	}
-	return strings.HasPrefix(name, "Match") || strings.HasPrefix(name, "Find") || strings.HasPrefix(name, "ReplaceAllString")
+	return regexpTextMethods[name]
 }
+
+// regexpTextMethods lists every *regexp.Regexp method that matches, extracts,
+// replaces or splits text. The checker has no types, so it names them all.
+var regexpTextMethods = func() map[string]bool {
+	names := map[string]bool{"Split": true}
+	for _, name := range strings.Fields(`Match MatchString MatchReader
+		Find FindIndex FindString FindStringIndex FindReaderIndex FindSubmatch FindSubmatchIndex
+		FindStringSubmatch FindStringSubmatchIndex FindReaderSubmatchIndex
+		FindAll FindAllIndex FindAllString FindAllStringIndex FindAllSubmatch FindAllSubmatchIndex
+		FindAllStringSubmatch FindAllStringSubmatchIndex
+		ReplaceAll ReplaceAllFunc ReplaceAllLiteral ReplaceAllLiteralFunc ReplaceAllLiteralString
+		ReplaceAllString ReplaceAllStringFunc`) {
+		names[name] = true
+	}
+	return names
+}()
 
 // receiverPrefix returns "Type." for a method and "" for a function.
 func receiverPrefix(function *ast.FuncDecl) string {
