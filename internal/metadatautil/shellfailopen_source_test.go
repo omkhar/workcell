@@ -21,6 +21,7 @@ func TestIsShellSourceReadsTheInterpreter(t *testing.T) {
 		"#!/usr/bin/env -S 'bash -eu'":                                     true,
 		"#!/usr/bin/env -S 'python3 -u'":                                   false,
 		"#!/usr/bin/env python3":                                           false,
+		"#!/usr/bin/env -P /bin python3":                                   false,
 		"#!/usr/bin/fish":                                                  false,
 		"no shebang":                                                       false,
 	} {

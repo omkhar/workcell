@@ -154,16 +154,13 @@ var (
 	shellProcessSubst = regexp.MustCompile(`(?:^|[^<>])<\s+<\(`)
 	// shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
 	shellDevNull = regexp.MustCompile(`(?:(?:^|[\s;&|()])0*2>[>|]?|&>[>|]?|>&)\s*"?(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null"?(?:[\s;&|)<>]|$)|>[>|]?\s*"?(?:/+\.{1,2})*/+dev(?:/+\.|/+\.\./+dev)*/+null"?\s+0*2>&\s*0*1|(?:^|[\s;&|()])0*2>&\s*` + shellOtherFD) // shellDevNull sends stderr to /dev/null by 2>, 2>>, 2>|, &> or >/dev/null 2>&1.
-	// envOperandShort and envOperandLong are env's options that take an
-	// operand, per env --help; the value of -S (--split-string) is more
-	// arguments. envProgram and shellEnvSplit both read them.
-	envOperandShort = "uC"
-	envOperandLong  = []string{"--unset", "--chdir"}
-	shellEnvWord    = `[^\s;&|()<>]+`
-	// shellEnvSplit is env, its options with any operand, and its -S or
-	// --split-string option with the one word that holds the string env splits.
-	shellEnvSplit = regexp.MustCompile(`(\benv(?:\s+(?:-[^\sS-]*[` + envOperandShort + `]\s+` + shellEnvWord +
-		`|(?:` + strings.Join(envOperandLong, "|") + `)\s+` + shellEnvWord + `|-[^\sS-]+|--[a-z-]+(?:=` + shellEnvWord + `)?))*\s+)` +
+	shellEnvWord = `[^\s;&|()<>]+`
+	// shellEnvSplit is env, its options with any operand, which the shared
+	// commandWrappers names, and its -S or --split-string option with the one
+	// word that holds the string env splits.
+	envShort, envLong = envOperands()
+	shellEnvSplit     = regexp.MustCompile(`(\benv(?:\s+(?:-[^\sS-]*[` + envShort + `]\s+` + shellEnvWord +
+		`|(?:` + strings.Join(envLong, "|") + `)\s+` + shellEnvWord + `|-[^\sS-]+|--[a-z-]+(?:=` + shellEnvWord + `)?))*\s+)` +
 		`(?:-S\s*|--split-string(?:=|\s+))(` + shellEnvWord + `)`)
 	// shellFailOpenOr is the || that runs a handler.
 	shellFailOpenOr = regexp.MustCompile(`\|\|\s*`)
@@ -799,7 +796,7 @@ func shellSwallowingHandlers(segment string, later func() []string, inSubst bool
 
 // shellEnvUnsplit replaces each env -S STRING or --split-string=STRING in a
 // command's code and raw text with the words env splits STRING into, read from
-// raw by the shared shellFields as envProgram reads them. The program STRING
+// raw by the shared shellFields as wrappedCommand reads them. The program STRING
 // names then stands in command position, as in env git fetch, and
 // shellFailOpenNamed reads the same words from the raw text it returns.
 func shellEnvUnsplit(code, raw string) (string, string) {
@@ -808,6 +805,22 @@ func shellEnvUnsplit(code, raw string) (string, string) {
 		code, raw = code[:loc[3]]+words+code[loc[5]:], raw[:loc[3]]+words+raw[loc[5]:]
 	}
 	return code, raw
+}
+
+// envOperands returns env's options that take an operand, from the shared
+// commandWrappers, as short letters and long names, without -S and
+// --split-string, whose value is more arguments.
+func envOperands() (short string, long []string) {
+	for _, option := range commandWrappers["env"] {
+		switch {
+		case option == "-S" || option == "--split-string":
+		case strings.HasPrefix(option, "--"):
+			long = append(long, option)
+		default:
+			short += option[1:]
+		}
+	}
+	return short, long
 }
 
 // shellFailOpenNamed returns the command as bash names its words when a quoted
@@ -956,13 +969,9 @@ func shebangInterpreter(content []byte) string {
 	if !strings.HasPrefix(first, "#!") || strings.HasPrefix(first, "#![") || len(words) == 0 {
 		return ""
 	}
-	// The interpreter is the first word, or the first word env runs after its
-	// options and assignments; the options after it name no other program.
-	interpreter := words[0]
-	if filepath.Base(interpreter) == "env" {
-		interpreter = envProgram(words[1:])
-	}
-	return filepath.Base(interpreter)
+	// The interpreter is the first word, or the first word env and the other
+	// shared commandWrappers run; the options after it name no other program.
+	return filepath.Base(wrappedCommand(words)[0])
 }
 
 // shellFields returns a line's words with their quotes removed, read by the
@@ -970,39 +979,6 @@ func shebangInterpreter(content []byte) string {
 func shellFields(line string) []string {
 	words, _, _, _, _, _ := shellWords(line, nil)
 	return texts(words)
-}
-
-// envProgram returns the program that env runs, given env's arguments. Per
-// env --help, -u NAME and -C DIR (and --unset, --chdir) take an operand, and
-// the value of -S (--split-string), attached or not, is more arguments, split
-// into words as env -S splits it.
-func envProgram(args []string) string {
-	for i := 0; i < len(args); i++ {
-		long, value, attached := strings.Cut(args[i], "=")
-		names := func(option string) bool { return len(long) > 3 && strings.HasPrefix(option, long) }
-		short := strings.IndexAny(args[i], envOperandShort+"S")
-		switch {
-		case !strings.HasPrefix(args[i], "-"):
-			if !shellAssignment.MatchString(args[i]) {
-				return args[i]
-			}
-		case strings.HasPrefix(args[i], "--") && attached && names("--split-string"):
-			args, i = append(shellFields(value), args[i+1:]...), -1
-		case strings.HasPrefix(args[i], "--") && !attached && names("--split-string") && i+1 < len(args):
-			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
-		case strings.HasPrefix(args[i], "--"):
-			if !attached && slices.ContainsFunc(envOperandLong, names) {
-				i++
-			}
-		case short > 0 && short < len(args[i])-1 && args[i][short] == 'S':
-			args, i = append(shellFields(args[i][short+1:]), args[i+1:]...), -1
-		case short > 0 && short == len(args[i])-1 && args[i][short] == 'S' && i+1 < len(args):
-			args, i = append(shellFields(args[i+1]), args[i+2:]...), -1
-		case short > 0 && short == len(args[i])-1:
-			i++
-		}
-	}
-	return ""
 }
 
 func shellFailOpenFiles(rootDir string) ([]string, error) {

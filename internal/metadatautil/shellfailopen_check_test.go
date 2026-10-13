@@ -238,6 +238,7 @@ func TestShellFailOpenFindings(t *testing.T) {
 		{"tool in an env -S string after a long option", "env --ignore-environment -S 'git fetch origin' || true\n", "or-true"},
 		{"tool in an env -S string after valued long options", "env --unset=X --chdir /tmp -S 'git ls-files' 2>/dev/null\n", "dev-null"},
 		{"tool in an env -S string after a valued short option", "env -u X -S 'git fetch origin' || true\n", "or-true"},
+		{"tool in an env -S string after env -P DIR", "env -P /bin -S 'git fetch origin' || true\n", "or-true"},
 		{"single-quoted tool name", "'git' fetch origin || true\n", "or-true"},
 		{"escaped tool name", "\\git fetch origin || true\n", "or-true"},
 		{"double-quoted tool name", "\"git\" rev-parse HEAD 2>/dev/null\n", "dev-null"},
