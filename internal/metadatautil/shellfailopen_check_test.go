@@ -1,0 +1,319 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Omkhar Arasaratnam
+
+package metadatautil_test
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/omkhar/workcell/internal/metadatautil"
+)
+
+func TestCheckShellFailOpenAcceptsThisRepository(t *testing.T) {
+	if err := metadatautil.CheckShellFailOpen(filepath.Join("..", "..")); err != nil {
+		t.Fatalf("CheckShellFailOpen() error = %v", err)
+	}
+}
+
+// TestShellFailOpenFindingsCountEachCommand pins that a second hit of the same rule on one line is a second finding, so the file's baseline count rises.
+func TestShellFailOpenFindingsCountEachCommand(t *testing.T) {
+	t.Parallel()
+	findings, err := metadatautil.ShellFailOpenFindings("git fetch || true; git gc || true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 || findings[0].Rule != "or-true" || findings[1].Rule != "or-true" {
+		t.Fatalf("findings = %v, want two or-true findings on one line", findings)
+	}
+	findings, err = metadatautil.ShellFailOpenFindings("git fetch || true && git gc || true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("findings = %v, want two or-true findings on one list", findings)
+	}
+	for script, want := range map[string]int{
+		"git fetch || true && printf retrying || true\n": 1, // the second handler belongs to printf
+		"git fetch && printf x || true\n":                1, // the handler covers the whole && list
+		"( exec 1>/dev/null; ); git -C /missing fetch 2>&1\n(\nexec 1>/dev/null\ngit fetch 2>&1\n)\ngit gc 2>&1\nexec 1>/dev/null | cat; git gc 2>&1\n{ exec 1>/dev/null; }; git gc 2>&1\n":                                                                                                                                                                                                                                                      6,  // a subshell or a left pipeline stage keeps its exec redirect to itself; a { } group does not
+		"builtin exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\nexec 3>/dev/null; exec 1>&3; git -C /missing fetch 2>&1\nexec 03>/dev/null; exec 01>&03; git -C /missing fetch 02>&01\ngit gc 02>/dev/null\n":                                                                                                                                                                                                                          5,  // builtin exec keeps no redirect; exec 1>&3 may reach a saved null
+		"exec 3>&1; exec 1>/dev/null; git -C /missing fetch 2>&1; echo done\ngit gc 2>&1; echo done\ncommand -- exec 1>/dev/null; git gc 2>&1\n\\exec 2>/dev/null\nexec -- 1>/dev/null; git -C /missing fetch 2>&1; echo done\nFOO=bar exec -a x 2>/dev/null\nexec -afoo 2>/dev/null\nexec -cla x 2>/dev/null\n! exec 2>/dev/null\nif exec 2>/dev/null; then :; fi\ntime -p exec 2>/dev/null\n2>/dev/null exec\n1>/dev/null exec; git gc 2>&1\n": 17, // exec >/dev/null, after an adjacent exec, makes each later 2>&1 a dev-null use; command -- exec and \exec are exec too, and exec options or assignments keep the redirect
+	} {
+		findings, err = metadatautil.ShellFailOpenFindings(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != want {
+			t.Fatalf("findings for %q = %v, want %d findings", script, findings, want)
+		}
+	}
+	findings, err = metadatautil.ShellFailOpenFindings("git fetch || true\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %v, want one or-true finding", findings)
+	}
+}
+
+func TestShellFailOpenFindings(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		script string
+		rule   string // empty means no finding
+	}{
+		{"process substitution", "while read -r f; do echo \"$f\"; done < <(find . -type f)\n", "process-substitution"},
+		{"command-wrapped tool with || true", "command -p git fetch origin || true\n", "or-true"},
+		{"command -- wraps the tool", "command -- git fetch origin || true\ncommand -p -- git fetch || true\n", "or-true"},
+		{"redirect on another operand hides no tool status; redirect on a piped stage is not the tool's; time -p keeps the substitution status; an & redirection on a handler is no background; status handler; handler after a separate local; bare return handler; fail handler; die handler; group handler that exits; escaped apostrophe in an ANSI-C span; noclobber redirection target; not a tool call; path is not a tool; tool name as an argument; an exit or die handler ends the list before a later true; exit -- STATUS and a failing subshell keep the failure; an exit status bash reads modulo 256 as nonzero fails; a name before a simple coproc command is the command; a word after a command substitution is no command; command exit 1 ends the list; a path with dev inside a name is no null device; exec that runs a command is that command; a backtick in single quotes is text; a descriptor that ends in 2 is not stderr; a longer path that starts with /dev/null is no null redirect; an exit operand out of range fails with status 2; an arithmetic comparison is no process substitution; handler on a later background segment is not the tool's; bare exit as the only command of a group handler; group handler that ends in false; status handler after a multi-line substitution; status read; background operator ends the operand; status read in the same command; status read behind ||; status read behind || after 1>&2; status test; handler on the continued line; if tests the call; tool name after echo; quoted $( runs nothing; escaped ; is an argument; comment names the idiom; message names the idiom; quoted span across lines; heredoc body; exec stdout to a longer path is no null; a quoted $? still reads the status", "git fetch || { printf '%s\\n' retrying 2>/dev/null; exit 1; }\ngit fetch |& cat 2>/dev/null\ntime -p -- out=$(git ls-files) || exit 1\nx=$(git ls-files) || exit 1\nlocal out; out=$(git ls-files) || exit 1\nx=$(git ls-files) || return\nout=$(git ls-files) || fail \"no list\"\nout=$(git ls-files) || die\nout=$(git ls-files) || { echo no list; exit 1; }\n: $'x\\'; git fetch || true'\n: >| git fetch origin || true\ngrep -q x file || true\nls .git/hooks 2>/dev/null\nprintf '%s\\n' git || true\ngit fetch || exit 1 || true\ngit gc || die x || true\ngit pull || { echo x; exit 1; } || true\ngit fetch || exit -- 1\ngit gc || ( exit 1 )\ngit pull || ( false )\ngit fetch || exit 257\ngit gc || return -1\ngit pull || exit 010\ncoproc worker git fetch 2>/dev/null\necho $(pwd) git 2>/dev/null\ngit fetch || { command exit 1; } || true\ngit fetch 2>/tmp/review-device/null\ngit fetch 2>/tmp/workcell-review-dev/dev/null\nexec 2>/dev/null printf x\necho '`git ls-files`'; echo done\ngit fetch 12>/dev/null; echo done\ngit foo2>/dev/null; echo done\ngit fetch 2>\"/dev/null.backup\"\ngit gc 2>/dev/nullx\ngit fetch || exit 9223372036854775808\nx=1; y=2; ((x<(y))); echo done\ngit fetch & printf retrying || true\nout=$(git ls-files) || { exit; }\nout=$(git ls-files) || { false; exit; }\nx=\"$(\n  git ls-files\n)\" || exit 1\nx=$(git ls-files)\nrc=$?\ngit fetch & printf retrying 2>/dev/null\nout=$(git ls-files) rc=$?\nout=$(git ls-files) || rc=$?\ngit rev-parse HEAD 2>/dev/null 1>&2 || rc=$?\nx=$(git ls-files)\n[[ $? -eq 0 ]] || exit 1\nx=\"$(git ls-files)\" ||\n  die \"no list\"\nif x=$(gh api /y); then :; fi\necho gh 2>/dev/null\nx=$(echo '$(git' x) || exit 1\nif ! x=\"$(find . -exec test -e {} \\; -print)\"; then exit 1; fi\n# git fetch || true\necho 'git fetch || true'\nmsg='\ngit fetch || true\n'\ncat <<'EOF'\ngit fetch || true\nEOF\nexec 1>/dev/null.backup; git fetch 2>&1; echo done\ngit -C /missing fetch 2>/dev/null; rc=\"$?\"; [ \"$rc\" -eq 0 ] || exit 1\n", ""},
+		{"later operand keeps its own status test", "git fetch && git gc 2>/dev/null\nprintf done\n", "dev-null"},
+		{"assignment with a substitution before a tool", "MODE=$(printf x) git fetch origin || true\n", "or-true"},
+		{"redirect inside a substitution is the tool's", "X=\"${X:-$(git log -1 2>/dev/null || printf 0)}\"\n", "dev-null"},
+		{"redirect outside a substitution is not the tool's", "foo \"$(git log -1)\" 2>/dev/null\n", "command-substitution"},
+		{"every handler that does not fail swallows the failure", "git fetch || 'true'\ngit gc || \":\"\ngit fetch || $'true'\ngit gc || $':'\ngit fetch || $'\\164rue'\ngit gc || $'\\072'\ngit fetch || { true; }\ngit gc || command -p -- true\ngit pull || builtin -- true\ngit push || command -v true\ngit fetch || true-wrapper\ngit gc || echo warn\ngit fetch || t'rue'\ngit gc || 'tr'\"ue\"\ngit fetch || :\ngit fetch || :; echo done\ngit fetch origin || true\n", "or-true"},
+		{"ANSI-C quoted /dev/null still hides stderr", "git fetch 2>$'/dev/null'\n", "dev-null"},
+		{"ANSI-C escaped /dev/null still hides stderr", "git fetch 2>$'\\057dev/null'\n", "dev-null"},
+		{"quoted or escaped tool name is the tool", "g'it' fetch || true\n\"git\" fetch || true\ng\\it gc 2>/dev/null\n", "or-true"},
+		{"compound quoted /dev/null still hides stderr", "git fetch 2>/d'ev/null'\ngit fetch 2>\"/dev\"/null; echo done\ngit gc 2>|/dev/null; printf done\ngit pull >&/dev/null\n", "dev-null"},
+		{"a later command masks a failure an && list leaves", "git fetch 2>/dev/null && printf done; printf next\n", "dev-null"},
+		{"a failure passed on by false still reaches the next handler", "git fetch || false || true\n", "or-true"},
+		{"a tool behind env is the tool", "env git -C /missing fetch || true\n/usr/bin/env -u X A=1 git fetch || true\n", "or-true"},
+		{"any wrapper option may take a value", "env -iC / git -C /missing fetch || true\n", "or-true"},
+		{"sudo long option with a value", "sudo --user root git -C /missing fetch || true\n", "or-true"},
+		{"xargs long option with a value", "xargs --max-args 1 git -C /missing fetch || true\n", "or-true"},
+		{"env long options take their values", "env --chdir / git -C /missing fetch || true\n", "or-true"},
+		{"a tool called by its path is the tool", "/usr/bin/git fetch || true\n", "or-true"},
+		{"coproc runs the tool", "coproc git -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
+		{"a named coproc runs its compound command", "coproc worker { git fetch 2>/dev/null; }\n", "dev-null"},
+		{"a case arm runs the tool", "case x in x) git -C /missing fetch 2>/dev/null;; esac; echo done\ncase $y in\n  a|b) git gc 2>/dev/null ;;\nesac\n", "dev-null"},
+		{"a process substitution as a redirection target hides the tool", "git -C /missing fetch 2><(cat >/dev/null); echo done\n", "process-substitution"},
+		{"a process substitution as an argument hides the tool", "cat <(git -C /missing ls-files)\ntee >(git hash-object --stdin) </dev/null\n", "process-substitution"},
+		{"a failing brace group hands the failure on to a later handler", "git fetch || { false; } || true\n", "or-true"},
+		{"an exit in a nested branch does not end the handler", "git fetch || { if false; then exit 1; fi; false; } || true\n", "or-true"},
+		{"an exit 0 before a failing command makes the handler succeed; command exit is still exit", "git fetch || { exit 0; false; }\ngit gc || ( exit 0; false )\ngit pull || { command exit 0; false; }\ngit gc || { command -p exit 0; false; }\n", "or-true"},
+		{"a nested exit 0 may make the handler succeed", "git fetch || { if true; then exit 0; fi; false; }\n", "or-true"},
+		{"an exit behind && may make the handler succeed", "git fetch || { true && exit 0; false; }\n", "or-true"},
+		{"exit -- 0 behind && may make the handler succeed", "git fetch || { true && exit -- 0; false; }\n", "or-true"},
+		{"a top-level return hands the failure on to a later handler", "git -C /missing fetch || return 1 || true\n", "or-true"},
+		{"a backgrounded handler returns at once", "git -C /missing fetch || false & echo done\n", "or-true"},
+		{"&> after a handler may background it in a POSIX sh", "git fetch || false &>/tmp/log; echo done\n", "or-true"},
+		{"a backgrounded group handler returns at once", "git -C /missing fetch || { false; } & echo done\n", "or-true"},
+		{"a handler that is a pipeline takes its last stage's status", "git fetch || false | true; echo done\n", "or-true"},
+		{"a failing subshell hands the failure on to a later handler", "git fetch || ( exit 1 ) || true\n", "or-true"},
+		{"nice keeps the status of the tool it runs; external time keeps the status of the tool it runs", "nice git fetch || true\ntimeout 5 git pull || true\n/usr/bin/time -f '' git fetch || true\n", "or-true"},
+		{"zsh noglob and nocorrect, and flock, keep the status of the tool", "noglob git -C /missing fetch || true\nnocorrect git gc || true\nflock /tmp/workcell.lock git -C /missing fetch || true\n", "or-true"},
+		{"a backtick substitution is a command substitution", "out=`git ls-files`; echo done\n", "command-substitution"},
+		{"a backtick substitution may span lines", "out=`\ngit -C /missing rev-parse HEAD\n`\necho done\n", "command-substitution"},
+		{"exec 2>/dev/null hides every later failure", "exec 2>/dev/null; git -C /missing fetch; echo done\nexec 3>x &>/dev/null\nexec >&/dev/null; git fetch; echo done\nexec >/dev/null 2>&1; git gc; echo done\n", "dev-null"},
+		{"a redirection may come before the command", "2>/dev/null git -C /missing fetch || true\n", "or-true"},
+		{"another spelling of the null device path, or a spaced 2>& 1, hides stderr", "git -C /missing fetch 2>/dev//null; echo done\ngit gc 2>/dev/./null\ngit pull 2>/dev/../dev/null\ngit -C /missing fetch >/dev/null 2>& 1; echo done\n", "dev-null"},
+		{"a bare PIPESTATUS word reads no status", "git -C /missing fetch 2>/dev/null; echo PIPESTATUS; echo done\n", "dev-null"},
+		{"$? after a pipeline reads the last stage, not the tool", "git -C /missing fetch 2>/dev/null | cat; rc=$?; echo done\n", "dev-null"},
+		{"a handler after a pipeline reads the last stage, not the tool", "git -C /missing fetch 2>/dev/null | cat || exit 1; echo done\n", "dev-null"},
+		{"a { false; } handler or an && status read leaves the failure hidden", "git -C /missing fetch 2>/dev/null || { false; }; echo done\nout=$(git ls-files) || { false; }\ngit -C /missing fetch 2>/dev/null && rc=$?; echo done\n", "dev-null"},
+		{"a false handler that does not leave the list still hides the tool", "git -C /missing fetch 2>/dev/null || false; echo done\n", "dev-null"},
+		{"a later command in the if test sets its status", "if git -C /missing fetch 2>/dev/null; :; then :; fi; echo done\n", "dev-null"},
+		{"$? after coproc is the launch status", "coproc git fetch 2>/dev/null; rc=$?; echo done\n", "dev-null"},
+		{"! inverts the status a handler reads", "! git -C /missing fetch 2>/dev/null || exit 1; echo done\n", "dev-null"},
+		{"stderr duplicated onto a saved null descriptor", "git -C /missing fetch 3>/dev/null 2>&3; echo done\ngit gc 0</dev/null 2>&0; echo done\ngit -C /missing fetch 10>/dev/null 2>&10; echo done\ngit gc 2>&-; echo done\nexec {fd}>/dev/null; git -C /missing fetch 2>&\"$fd\"; echo done\nexec 1>/dev/null; git -C /missing fetch 2>&1; echo done\n", "dev-null"},
+		{"an if test of a pipeline reads the last stage, not the tool", "if git -C /missing fetch 2>/dev/null | cat; then :; fi; echo done\n", "dev-null"},
+		{"a quoted tool path is the tool", "\"/usr/bin/git\" -C /missing fetch 2>/dev/null; echo done\n", "dev-null"},
+		{"a tool called by its path hides stderr", "/usr/bin/git fetch 2>/dev/null\n", "dev-null"},
+		{"an exit status that wraps to zero swallows the failure", "git fetch || exit 256\n", "or-true"},
+		{"&& after a pipe reads the last stage", "git fetch 2>/dev/null | cat && echo done\n", "dev-null"},
+		{"brace group redirect is its calls'", "{ git fetch; } 2>/dev/null; echo done\n", "dev-null"},
+		{"time -p wraps the tool", "time -p -- git fetch || true\n", "or-true"},
+		{"quoted /dev/null still hides stderr", "git fetch 2>\"/dev/null\"\n", "dev-null"},
+		{"redirect to /dev/null with a duplicated descriptor is the tool's", "git fetch >/dev/null 2>&1 & wait\n", "dev-null"},
+		{"redirect on the tool operand of a list", "printf '%s\\n' fetching || git fetch 2>/dev/null\n", "dev-null"},
+		{"append redirect to /dev/null", "git fetch 2>>/dev/null\n", "dev-null"},
+		{"combined redirect to /dev/null", "git fetch &>/dev/null\n", "dev-null"},
+		{"stdout to /dev/null then stderr to it", "git fetch >/dev/null 2>&1\n", "dev-null"},
+		{"command substitution", "local out\nout=\"$(git ls-files)\"\n", "command-substitution"},
+		{"command substitution in a compound body", "f() {\n  if true; then\n    x=$(gh api /y)\n  fi\n}\n", "command-substitution"},
+		{"dev null", "git rev-parse HEAD 2>/dev/null\n", "dev-null"},
+		{"continued line", "docker \\\n  ps 2>/dev/null\n", "dev-null"},
+		{"env prefix before the tool", "x=$(LC_ALL=C getent hosts a)\n", "command-substitution"},
+		{"quoted substitution across lines", "x=\"$(\n  git ls-files\n)\"\n", "command-substitution"},
+		{"substitution across lines", "x=$(\n  git ls-files # list\n)\n", "command-substitution"},
+		{"arithmetic joins no line", "# fail-closed: counter only\nn=$((n + 1))\ngit gc || true\n", "or-true"},
+		{"substitution inside a multi-line double quote", "f() {\n  local out=\"\n$(git ls-files)\n\"\n}\n", "command-substitution"},
+		{"process substitution after extra blanks", "while read -r f; do :; done <  <(find . -type f)\n", "process-substitution"},
+		{"process substitution after a tab", "while read -r f; do :; done <\t<(find . -type f)\n", "process-substitution"},
+		{"if body is not the test", "if true; then local out=$(git ls-files); fi\n", "command-substitution"},
+		{"handler of a later command", "x=$(git ls-files); cd /y || exit 1\n", "command-substitution"},
+		{"unrelated wait later", "files=$(git ls-files)\na=1\nb=2\nwait \"$pid\"\n", "command-substitution"},
+		{"status read before the call", "prior=$? out=$(git ls-files)\n", "command-substitution"},
+		{"status read on the continued line before", "prior=$? \\\n  out=$(git ls-files)\n", "command-substitution"},
+		{"tool attached to ||", "git||true\n", "or-true"},
+		{"tool attached to &&", "git&&gh||true\n", "or-true"},
+		{"tool attached to a subshell closer", "(git)2>/dev/null\n", "dev-null"},
+		{"tool attached to a redirection", "docker>/dev/null 2>/dev/null\n", "dev-null"},
+		{"quoted tool name in a substitution", "x=$('git' ls-files)\n", "command-substitution"},
+		{"substitution right of &&", "true && out=$(git ls-files)\n", "command-substitution"},
+		{"tool after && in a substitution", "out=$(cd x && git ls-files)\n", "command-substitution"},
+		{"tool after ; in a substitution", "out=$(printf ready; git ls-files)\n", "command-substitution"},
+		{"status read after a later substitution", "out=$(find . -type f)\ndiscard=$(true) rc=$?\n", "command-substitution"},
+		{"status read after a later pipeline stage", "out=$(find . -type f)\nprintf x | rc=$?\n", "command-substitution"},
+		{"wait for another job", "out=$(git ls-files)\nwait \"$pid\"\n", "command-substitution"},
+		{"tool behind xargs", "xargs git rm 2>/dev/null\n", "dev-null"},
+		{"tool behind sudo", "sudo git fetch || true\n", "or-true"},
+		{"eval in a substitution", "out=$(eval \"$cmd\")\n", "command-substitution"},
+		{"variable command word in a substitution", "out=$(\"${tool}\" ls)\n", "command-substitution"},
+		{"source in a substitution", "out=$(source ./x.sh)\n", "command-substitution"},
+		{"|| true behind a quote nested in a substitution", "x=\"$(getent passwd \"${uid}\" | cut -d: -f1 || true)\"\n", "or-true"},
+		{"tool behind xargs -n", "printf x | xargs -n 1 git fetch || true\n", "or-true"},
+		{"tool behind sudo -u", "sudo -u user git fetch || true\n", "or-true"},
+		{"successful exit handler", "x=$(git ls-files) || exit 0\n", "command-substitution"},
+		{"successful return handler", "x=$(git ls-files) || return 0\n", "command-substitution"},
+		{"assignment that starts with exit", "x=$(git ls-files) || exit_code=1\n", "command-substitution"},
+		{"assignment that names a failure", "out=$(git ls-files) || failure_count=1\n", "command-substitution"},
+		{"echo that names a failure", "out=$(git ls-files) || echo fail\n", "command-substitution"},
+		{"exit behind an echo handler", "out=$(git ls-files) || echo no list || exit 1\n", "command-substitution"},
+		{"group handler without a terminator", "out=$(git ls-files) || { echo no list; }\n", "command-substitution"},
+		{"group handler that ends in success", "out=$(git ls-files) || { false; true; }\n", "command-substitution"},
+		{"status read after a later substitution in the same command", "out=$(git ls-files) discard=$(true) rc=$?\n", "command-substitution"},
+		{"&& after a non-failing || handler", "out=$(git ls-files) || echo ignored && echo done\n", "command-substitution"},
+		{"handler after local", "local out=$(git ls-files) || exit 1\n", "command-substitution"},
+		{"status read after local", "local out=$(git ls-files)\nrc=$?\n", "command-substitution"},
+		{"handler after a substitution argument", "echo \"$(git ls-files)\" || exit 1\n", "command-substitution"},
+
+		{"bare exit after a command in a group handler", "out=$(git ls-files) || { printf ignored; exit; }\nf() {\n  out=$(git ls-files) || { printf x; return; }\n}\n", "command-substitution"},
+		{"quoted ) inside a substitution", "out=$(printf ')'; git -C /missing ls-files); echo done\n", "command-substitution"},
+		{"&& alone does not prove the failure propagates", "out=$(git ls-files) && echo done\n", "command-substitution"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			findings, err := metadatautil.ShellFailOpenFindings(testCase.script)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if testCase.rule == "" {
+				if len(findings) != 0 {
+					t.Fatalf("findings = %v, want none", findings)
+				}
+				return
+			}
+			if !slices.ContainsFunc(findings, func(each metadatautil.ShellFailOpenFinding) bool { return each.Rule == testCase.rule }) {
+				t.Fatalf("findings = %v, want rule %s", findings, testCase.rule)
+			}
+		})
+	}
+}
+
+// The shared evasion corpus, run against the fail-open check. The check reports what may run, so a row that only gates the call, as if false, a function body or a guarded group do, keeps the hit, and a row that turns the call into a comment, a heredoc body or quoted text drops it. Each row states its expectation, so a new row fails here until it does.
+func TestShellFailOpenFindingsUnderTheEvasionCorpus(t *testing.T) {
+	t.Parallel()
+	const anchor = "git fetch origin || true"
+	artifact := "#!/bin/bash\n" + anchor + "\n"
+	// The lint reads every command, reachable or not, so only a row that
+	// turns the anchor into text, a comment, a heredoc or a quoted span, or
+	// renames its command, clears the hit.
+	madeText := map[string]bool{
+		"full-line comment": true, "inline comment after || true": true, "echo-quoted": true, "single heredoc": true,
+		"multi heredoc <<A <<B": true, "arithmetic shift": true, "here-string": true, "line continuation": true,
+		"quoted line span": true, "indented heredoc terminator": true, "escaped closer in a quoted span": true,
+		"heredoc opened as a quote closes": true, "noclobber redirection": true, "quoted span closing into arguments": true,
+		"quoted separator": true, "ANSI-C heredoc delimiter": true, "ANSI-C escape in a heredoc delimiter": true,
+		"single-quoted line break": true, "locale-translated heredoc delimiter": true, "escaped apostrophe in an ANSI-C word": true,
+		"ANSI-C span across a line break": true, "prefix extension": true, "flattened argv": true,
+	}
+	for _, evasion := range Evasions {
+		t.Run(evasion.Name, func(t *testing.T) {
+			t.Parallel()
+			want := !madeText[evasion.Name]
+			mutated := evasion.Rewrite(artifact, anchor)
+			if mutated == artifact {
+				t.Fatalf("evasion %q left the artifact unchanged", evasion.Name)
+			}
+			findings, err := metadatautil.ShellFailOpenFindings(mutated)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(findings) > 0; got != want {
+				t.Fatalf("findings = %v, want a hit %v", findings, want)
+			}
+		})
+	}
+}
+
+// fixtureRepo builds a git repository holding one script and a baseline.
+func fixtureRepo(t *testing.T, script, baseline string) string {
+	t.Helper()
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"scripts/a.sh":                        script,
+		"policy/shell-fail-open-baseline.tsv": baseline,
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return root
+}
+
+// Negative control and ratchet: a planted hit fails, the same hit passes with a baseline row, and a row that is too high or stale fails.
+func TestCheckShellFailOpenRatchet(t *testing.T) {
+	t.Parallel()
+	planted := "#!/bin/bash\ngit fetch origin || true\n"
+	row := "scripts/a.sh\tor-true\t1\tpredates the rule\n"
+	cases := []struct {
+		name, script, baseline, want string
+	}{
+		{"planted violation fails", planted, "", "baseline allows 0"},
+		{"baselined hit passes", planted, row, ""},
+		{"fixed hit leaves headroom", "#!/bin/bash\ngit fetch origin || exit 1\n", row, "stale baseline row"},
+		{"row above the count fails", planted, strings.Replace(row, "\t1\t", "\t2\t", 1), "lower the baseline row to 1"},
+		{"second hit fails", planted + "git gc || true\n", row, "baseline allows 1"},
+		{"row without a reason fails", planted, "scripts/a.sh\tor-true\t1\t\n", "non-empty REASON"},
+		{"unknown rule fails", planted, "scripts/a.sh\tbogus\t1\twhy\n", "unknown rule"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			err := metadatautil.CheckShellFailOpen(fixtureRepo(t, testCase.script, testCase.baseline))
+			if testCase.want == "" {
+				if err != nil {
+					t.Fatalf("error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
+	}
+}
+
+func TestCheckShellFailOpenReadsTheShebangInterpreter(t *testing.T) {
+	t.Parallel()
+	for file, shell := range map[string]bool{"x\n#!/bin/sh -e\ngit fetch || true": true, "x\n#!/usr/bin/env -S BASH_ENV= ENV= bash\ngit fetch || true": true, "x\n#!/usr/bin/env python3\ngit fetch || true": false, "x\n#![no_main]\ngit fetch || true": false, "u.bash\n# a sourced module\ngit fetch || true": true, "z\n#!/bin/zsh\ngit fetch || true": true, "e\n#!/usr/bin/env -S -u FOO sh\ngit fetch || true": true, "q\n#!/usr/bin/env -S -u FOO 'sh'\ngit fetch || true": true, "b\n#!/bin/busybox sh\ngit fetch || true": true, "p.bash\ngit fetch 2>/dev/null; rc=${PIPESTATUS[0]}; echo done": true, "p.zsh\ngit fetch 2>/dev/null; rc=$pipestatus; echo done": true, "q.sh\ngit fetch 2>/dev/null; rc=$?x; echo done": true, "r.sh\ngit fetch 2>/dev/null; rc=${?}; [ \"$rc\" = 0 ] || exit 1": false, "f\n#!/usr/bin/fish\ngit fetch || true": false} {
+		root := fixtureRepo(t, "#!/bin/bash\n", "")
+		name, first, _ := strings.Cut(file, "\n")
+		if err := os.WriteFile(filepath.Join(root, "scripts", name), []byte(first+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("git", "-C", root, "add", ".").CombinedOutput(); err != nil {
+			t.Fatalf("git add: %v\n%s", err, out)
+		}
+		if err := metadatautil.CheckShellFailOpen(root); (err != nil) != shell {
+			t.Errorf("CheckShellFailOpen with %q = %v, want a hit: %v", first, err, shell)
+		}
+	}
+}

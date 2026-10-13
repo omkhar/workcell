@@ -86,6 +86,12 @@ the merge base with `origin/main`.
 
 `policy/workflow-refs-baseline.tsv` records the hits that the tree carries today. A new hit fails. A row with no hit also fails. Remove a row when you fix its hit.
 
+## 2c. Shell scripts must not hide a failed tool
+
+Some idioms turn a failed tool into an empty answer, so a gate passes on nothing. They are a `<(` or `>(` process substitution, and a `$(...)`, `|| true`, `|| :` or stderr sent to `/dev/null` on `find`, `git`, `gh`, `docker` or `getent`. A `$(...)` that runs a variable, a quoted path or `eval` counts as one of those tools. Bash never propagates the status of a process substitution, so every `<(` or `>(` is a hit until a file the walk wrote replaces it.
+
+`scripts/check-shell-portability.sh` rejects each idiom in `scripts/` and `runtime/container/` unless the command, or the command after it, captures the status. `policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
+
 ## 3. Repo policy must not silently widen trust
 
 Workcell masks repository control-plane files on the safe path. It imports only
