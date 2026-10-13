@@ -6,12 +6,23 @@ package metadatautil
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"io/fs"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/omkhar/workcell/internal/rootio"
 )
 
 // CheckValidatorAnchoring requires each validator that anchors on a shared shell reader to run the shared evasion corpus. A validator that reads a command out of file content is bypassed by a comment, a heredoc body or a longer option unless a negative fixture proves otherwise, so the two counts of each reader and its corpus driver must stay equal.
@@ -36,7 +47,309 @@ func CheckValidatorAnchoring(rootDir string) error {
 			return fmt.Errorf("validator anchoring parity: %d call(s) of %s but %d run(s) of the shared evasion corpus; every anchored validator needs one %s run", anchors, pair.reader, corpus, pair.driver)
 		}
 	}
-	return nil
+	return checkTextMatchBaseline(rootDir)
+}
+
+const (
+	textMatchBaselinePath = "policy/validator-anchoring-baseline.tsv"
+	textMatchMaxReported  = 20
+)
+
+// textMatchPackages hold the validators. Some packages keep validators in test
+// files, so test sources are scanned too.
+var textMatchPackages = []string{"internal/adapters", "internal/workcellhardening"}
+
+// checkTextMatchBaseline is a ratchet. Every function in textMatchPackages that
+// matches text needs a baseline row with each match call's identity and a
+// reason, so a match can only go away and cannot be swapped for another.
+func checkTextMatchBaseline(rootDir string) error {
+	found := map[string][]string{}
+	for _, pkg := range textMatchPackages {
+		// An alias in one file is called in another, so read whole packages.
+		packages := map[string]map[string]string{}
+		err := scanHardenedGoSources(rootDir, pkg, true, func(rel string, content []byte) error {
+			dir := path.Dir(rel)
+			if packages[dir] == nil {
+				packages[dir] = map[string]string{}
+			}
+			packages[dir][rel] = string(content)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for dir, sources := range packages {
+			functions, identities, err := TextMatchingFunctions(sources)
+			if err != nil {
+				return err
+			}
+			for at, function := range functions {
+				found[dir+"\t"+function] = append(found[dir+"\t"+function], identities[at])
+			}
+		}
+	}
+	baseline, err := loadTextMatchBaseline(filepath.Join(rootDir, textMatchBaselinePath))
+	if err != nil {
+		return err
+	}
+	var failures []string
+	for key, calls := range found {
+		listed, ok := baseline[key]
+		switch {
+		case !ok:
+			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" matches text; parse the content it sees (ShellInvocations, a closed decoder) or add a baseline row with a reason")
+		case !slices.Equal(listed, slices.Sorted(slices.Values(calls))):
+			failures = append(failures, fmt.Sprintf("%s has match call(s) %s but its baseline row says %s; parse the new match or update the row", strings.Replace(key, "\t", ".", 1), strings.Join(calls, ","), strings.Join(listed, ",")))
+		}
+	}
+	for key := range baseline {
+		if _, ok := found[key]; !ok {
+			failures = append(failures, strings.Replace(key, "\t", ".", 1)+" no longer matches text; remove its stale baseline row")
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	slices.Sort(failures)
+	if extra := len(failures) - textMatchMaxReported; extra > 0 {
+		failures = append(failures[:textMatchMaxReported], fmt.Sprintf("and %d more", extra))
+	}
+	return fmt.Errorf("%s ratchet failed:\n  %s", textMatchBaselinePath, strings.Join(failures, "\n  "))
+}
+
+// textMatchCalls is the CALLS column.
+var textMatchCalls = regexp.MustCompile(`^[0-9a-f]{8}(,[0-9a-f]{8})*$`)
+
+// loadTextMatchBaseline reads rows; a missing reason or identity is an error.
+func loadTextMatchBaseline(baselinePath string) (map[string][]string, error) {
+	content, err := rootio.ReadFileNoFollow(baselinePath, textMatchBaselinePath, hardenedFSMaxSourceBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", textMatchBaselinePath, err)
+	}
+	baseline := map[string][]string{}
+	for number, line := range strings.Split(string(content), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 || strings.TrimSpace(fields[3]) == "" {
+			return nil, fmt.Errorf("%s:%d: expected PACKAGE<TAB>FUNCTION<TAB>CALLS<TAB>REASON", textMatchBaselinePath, number+1)
+		}
+		if !textMatchCalls.MatchString(fields[2]) {
+			return nil, fmt.Errorf("%s:%d: CALLS must list 8-hex match identities, comma-separated", textMatchBaselinePath, number+1)
+		}
+		calls := strings.Split(fields[2], ",")
+		slices.Sort(calls)
+		key := fields[0] + "\t" + fields[1]
+		if _, ok := baseline[key]; ok {
+			return nil, fmt.Errorf("%s:%d: repeated row for %s.%s", textMatchBaselinePath, number+1, fields[0], fields[1])
+		}
+		baseline[key] = calls
+	}
+	return baseline, nil
+}
+
+// matchIdentity names one call in a ratchet baseline: 8 hex digits of the
+// SHA-256 of its function and the call reprinted with no positions, so a reflow
+// keeps it while a changed literal, whitespace included, breaks it. It is the
+// hardened-io rule from PR 799; hardenedCallIdentity replaces it once both merge.
+func matchIdentity(function string, call ast.Node) string {
+	var text strings.Builder
+	_ = printer.Fprint(&text, token.NewFileSet(), call) // a parsed expression always prints
+	return sha256HexString(function + "\x00" + text.String())[:8]
+}
+
+// TextMatchingFunctions returns the function, as Name or Type.Name, and the
+// identity of each strings or bytes Contains, Count, HasPrefix or Index call, or regexp
+// call, in one package's sources keyed by file name. An import alias, a dot
+// import or a function value such as contains := strings.Contains hides none.
+// It does not ask where the text came from, so it never misses a helper. A
+// call with only literal arguments, or on an error message, is skipped.
+// ponytail: this lists matches on decoded fields too, so the baseline is
+// longer than the debt; that is the price of a scan that cannot miss.
+func TextMatchingFunctions(sources map[string]string) ([]string, []string, error) {
+	fileSet := token.NewFileSet()
+	var files []*ast.File
+	var imports []map[string]string
+	names := slices.Sorted(maps.Keys(sources))
+	for _, name := range names {
+		file, err := parser.ParseFile(fileSet, name, sources[name], parser.SkipObjectResolution)
+		if err != nil {
+			return nil, nil, err
+		}
+		// A dot import is under "." and its path, and its functions have bare names.
+		fileImports := map[string]string{}
+		for _, spec := range file.Imports {
+			importPath, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			local := path.Base(importPath)
+			if spec.Name != nil {
+				local = spec.Name.Name
+			}
+			if local == "." {
+				local += importPath
+			}
+			fileImports[local] = path.Base(importPath)
+		}
+		files, imports = append(files, file), append(imports, fileImports)
+	}
+	aliases := matchAliases(files, imports)
+	var functions, identities []string
+	for index, file := range files {
+		collect := func(function string, node ast.Node) {
+			for _, call := range contentMatches(node, imports[index], aliases) {
+				functions, identities = append(functions, function), append(identities, matchIdentity(function, call))
+			}
+		}
+		for _, declaration := range file.Decls {
+			switch typed := declaration.(type) {
+			case *ast.FuncDecl:
+				if typed.Body != nil {
+					collect(receiverPrefix(typed)+typed.Name.Name, typed.Body)
+				}
+			case *ast.GenDecl:
+				for _, spec := range typed.Specs {
+					if value, ok := spec.(*ast.ValueSpec); ok {
+						collect(value.Names[0].Name, value)
+					}
+				}
+			}
+		}
+	}
+	return functions, identities, nil
+}
+
+// matchAliases returns each name in the package bound to a match function value,
+// as var has = strings.HasPrefix binds one, repeated until no name is new.
+// ponytail: scope is ignored, so a shadowing local over-counts; that only lists more.
+func matchAliases(files []*ast.File, imports []map[string]string) map[string]bool {
+	aliases := map[string]bool{}
+	for added := true; added; {
+		added = false
+		bind := func(name ast.Expr, value ast.Expr, imports map[string]string) {
+			if ident, ok := ast.Unparen(name).(*ast.Ident); ok && ident.Name != "_" &&
+				!aliases[ident.Name] && namesMatch(value, imports, aliases) {
+				aliases[ident.Name], added = true, true
+			}
+		}
+		for index, file := range files {
+			ast.Inspect(file, func(node ast.Node) bool {
+				switch typed := node.(type) {
+				case *ast.AssignStmt:
+					for at := range min(len(typed.Lhs), len(typed.Rhs)) {
+						bind(typed.Lhs[at], typed.Rhs[at], imports[index])
+					}
+				case *ast.ValueSpec:
+					for at := range min(len(typed.Names), len(typed.Values)) {
+						bind(typed.Names[at], typed.Values[at], imports[index])
+					}
+				}
+				return true
+			})
+		}
+	}
+	return aliases
+}
+
+// contentMatches returns the text match calls in node that can see content.
+func contentMatches(node ast.Node, imports map[string]string, aliases map[string]bool) []*ast.CallExpr {
+	var calls []*ast.CallExpr
+	ast.Inspect(node, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && !seesNoContent(call) && namesMatch(call.Fun, imports, aliases) {
+			calls = append(calls, call)
+		}
+		return true
+	})
+	return calls
+}
+
+// namesMatch reports whether a callee or a function value names a text match:
+// a package function, a method, or a name in aliases.
+func namesMatch(callee ast.Expr, imports map[string]string, aliases map[string]bool) bool {
+	if ident, ok := ast.Unparen(callee).(*ast.Ident); ok && aliases[ident.Name] {
+		return true
+	}
+	pkg, name := calleeName(callee)
+	if imported, ok := imports[pkg]; ok {
+		pkg = imported
+	}
+	matched := matchesText(pkg, name)
+	for local, imported := range imports {
+		matched = matched || pkg == "" && local[0] == '.' && matchesText(imported, name)
+	}
+	return matched
+}
+
+// seesNoContent reports whether a match call searches an error message, as a
+// test assertion does, or has only literal arguments.
+func seesNoContent(call *ast.CallExpr) bool {
+	if len(call.Args) > 0 {
+		if subject, ok := call.Args[0].(*ast.CallExpr); ok {
+			if _, name := calleeName(subject.Fun); name == "Error" && len(subject.Args) == 0 {
+				return true
+			}
+		}
+	}
+	for _, argument := range call.Args {
+		if _, literal := argument.(*ast.BasicLit); !literal {
+			return false
+		}
+	}
+	return true
+}
+
+// calleeName returns the package or receiver identifier and the name a callee
+// names, such as strings and Contains, or "" and the name of a plain call.
+func calleeName(callee ast.Expr) (string, string) {
+	switch callee := ast.Unparen(callee).(type) {
+	case *ast.Ident:
+		return "", callee.Name
+	case *ast.SelectorExpr:
+		if ident, ok := callee.X.(*ast.Ident); ok {
+			return ident.Name, callee.Sel.Name
+		}
+		return "", callee.Sel.Name
+	}
+	return "", ""
+}
+
+// matchesText reports whether a call matches text: a strings or bytes search,
+// any regexp function, or a method that only a compiled regexp has.
+func matchesText(pkg, name string) bool {
+	switch pkg {
+	case "strings", "bytes":
+		return strings.HasPrefix(name, "Contains") || name == "Count" || name == "HasPrefix" ||
+			strings.HasPrefix(name, "Index") || strings.HasPrefix(name, "LastIndex")
+	case "regexp":
+		return true
+	case "filepath", "path", "slices", "maps":
+		return false
+	}
+	return strings.HasPrefix(name, "Match") || strings.HasPrefix(name, "Find") || strings.HasPrefix(name, "ReplaceAllString")
+}
+
+// receiverPrefix returns "Type." for a method and "" for a function.
+func receiverPrefix(function *ast.FuncDecl) string {
+	if function.Recv == nil || len(function.Recv.List) == 0 {
+		return ""
+	}
+	expression := function.Recv.List[0].Type
+	for {
+		switch typed := expression.(type) {
+		case *ast.StarExpr:
+			expression = typed.X
+		case *ast.IndexExpr:
+			expression = typed.X
+		case *ast.IndexListExpr:
+			expression = typed.X
+		case *ast.Ident:
+			return typed.Name + "."
+		default:
+			return ""
+		}
+	}
 }
 
 // anchoredReaders pairs each shared shell reader with the corpus driver that proves a validator on it. EveryShellCommand reads commands behind a gate, so its driver expects the gated rows to keep the command.
