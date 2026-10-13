@@ -476,15 +476,8 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 					}
 				case *ast.CallExpr:
 					// A writer passed as an argument is held by the callee's parameter, matched by callee name across the package, which only lists more.
-					var callee string
-					switch fn := unparen(n.Fun).(type) {
-					case *ast.Ident:
-						callee = fn.Name
-					case *ast.SelectorExpr:
-						callee = fn.Sel.Name
-					}
 					// Every same-named declaration is a candidate, so each one's parameter at the position is marked.
-					for _, names := range params[callee] {
+					for _, names := range params[calleeName(n.Fun)] {
 						if len(names) == 0 {
 							continue
 						}
@@ -509,15 +502,24 @@ func savedSetenvAliases(files ...*ast.File) (savedSetenv, factories map[string]b
 	}
 }
 
-// calleeName names the function a call expression calls, bare or through a selector; "" otherwise.
+// calleeName names the function a call expression calls, bare or through a
+// selector, under any parentheses and generic instantiations such as
+// (rewrite[int]) or pair[K, V]; "" otherwise.
 func calleeName(fn ast.Expr) string {
-	switch f := unparen(fn).(type) {
-	case *ast.Ident:
-		return f.Name
-	case *ast.SelectorExpr:
-		return f.Sel.Name
+	for {
+		switch f := unparen(fn).(type) {
+		case *ast.Ident:
+			return f.Name
+		case *ast.SelectorExpr:
+			return f.Sel.Name
+		case *ast.IndexExpr:
+			fn = f.X
+		case *ast.IndexListExpr:
+			fn = f.X
+		default:
+			return ""
+		}
 	}
-	return ""
 }
 
 // structFields lists by type name each struct's field names in order, "" for an embedded field, so an unkeyed literal's values map to fields.
@@ -620,21 +622,12 @@ func rewritesProcessPath(file *ast.File, savedSetenv, factories map[string]bool)
 		if !ok || len(call.Args) == 0 {
 			return true
 		}
-		switch fn := unparen(call.Fun).(type) {
-		case *ast.SelectorExpr:
-			if !envWriters[fn.Sel.Name] && !savedSetenv[fn.Sel.Name] {
-				return true
-			}
-		case *ast.Ident:
-			if !savedSetenv[fn.Name] && !envWriters[fn.Name] {
-				return true
-			}
-		case *ast.CallExpr:
+		if fn, ok := unparen(call.Fun).(*ast.CallExpr); ok {
 			// writer()("PATH", dir): the callee is a call of a writer factory.
 			if !factories[calleeName(fn.Fun)] {
 				return true
 			}
-		default:
+		} else if name := calleeName(call.Fun); !envWriters[name] && !savedSetenv[name] {
 			return true
 		}
 		lit, ok := call.Args[0].(*ast.BasicLit)
@@ -1058,5 +1051,30 @@ func TestTestkitRawExecSitesMatchBaseline(t *testing.T) {
 	}
 	if t.Failed() {
 		t.Log("counts:", counts)
+	}
+}
+
+func TestExecRatchetCountsGenericCallees(t *testing.T) {
+	// An instantiated generic callee, such as rewrite[int] or (pair[int, string]), names the generic function.
+	for name, src := range map[string]string{
+		"generic_param.go": `package x
+import ("os"; "os/exec")
+func rewrite[T any](_ T, set func(string, string) error) { set("PATH", "/tmp/fixtures") }
+func a() { rewrite[int](0, os.Setenv); exec.Command("git") }
+`,
+		"generic_list_param.go": `package x
+import ("os"; "os/exec")
+func pair[K, V any](_ K, _ V, set func(string, string) error) { set("PATH", "/tmp/fixtures") }
+func a() { ((pair[int, string]))(0, "", os.Setenv); exec.Command("git") }
+`,
+		"generic_factory.go": `package x
+import ("os"; "os/exec")
+func writer[T any]() func(string, string) error { return os.Setenv }
+func a(dir string) { writer[int]()("PATH", dir); exec.Command("git") }
+`,
+	} {
+		if got := rawExecSites(t, name, src); got != 1 {
+			t.Errorf("%s: rawExecSites = %d, want 1 (git after a PATH rewrite through an instantiated generic helper)", name, got)
+		}
 	}
 }
