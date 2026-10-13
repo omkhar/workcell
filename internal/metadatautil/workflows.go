@@ -105,9 +105,13 @@ func stepRuns(step workflowStep) string {
 // a swapped publisher, a redirected registry, and a weakened shell default.
 const releaseSignerContractSHA256 = "fc05fcaf01de80a2e78889cd04a1e7b861a890f4a1f5ec978420de391c199c81"
 
+// CollectWorkflowJobNames lists every job's check name. It reads job names
+// only, so it decodes openly: a valid key such as run-name or a reusable job's
+// uses must not stop the status-check scan; the security validators keep the
+// closed decodeWorkflow.
 func CollectWorkflowJobNames(content []byte) ([]string, error) {
-	document, err := decodeWorkflow(content)
-	if err != nil {
+	var document workflowDocument
+	if err := yaml.Unmarshal(content, &document); err != nil {
 		return nil, err
 	}
 

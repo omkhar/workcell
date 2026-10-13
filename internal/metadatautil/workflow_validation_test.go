@@ -6,6 +6,7 @@ package metadatautil_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -2181,5 +2182,20 @@ func TestWorkflowValidatorsRejectUnmodelledKeysAndJobConditions(t *testing.T) {
 				t.Fatalf("validate() error = %v, want %q", err, testCase.want)
 			}
 		})
+	}
+}
+
+// TestCollectWorkflowJobNamesAcceptsStandardKeys covers valid workflow keys
+// that the closed validator types do not model: the status-check scan reads
+// job names only, so run-name and a reusable job's uses must not stop it.
+func TestCollectWorkflowJobNamesAcceptsStandardKeys(t *testing.T) {
+	workflow := "name: w\nrun-name: Deploy ${{ github.ref_name }}\non: push\njobs:\n  build:\n    name: Build\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n  call:\n    name: Reusable\n    uses: ./.github/workflows/reusable.yml\n    secrets: inherit\n"
+	names, err := metadatautil.CollectWorkflowJobNames([]byte(workflow))
+	if err != nil {
+		t.Fatalf("CollectWorkflowJobNames() error = %v", err)
+	}
+	slices.Sort(names)
+	if want := []string{"Build", "Reusable"}; !slices.Equal(names, want) {
+		t.Fatalf("names = %q, want %q", names, want)
 	}
 }
