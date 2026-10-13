@@ -195,7 +195,7 @@ forbidden = ["0.0.0.0", "--privileged", "--cap-add ALL", "--cap-add NET_ADMIN", 
 target = "scripts/lib/launcher/egress-endpoints.sh"
 block = "egress_proxy_agent_network_args"
 required = [
-  "EGRESS_PROXY_NETWORK=\"wc-${SESSION_ID}\"",
+  "egress_proxy_names",
   "RUNTIME_NETWORK_ARGS=(--network \"${EGRESS_PROXY_NETWORK}\" --dns 127.0.0.1)",
   ":${EGRESS_PROXY_IP_TOKEN}\")",
 ]

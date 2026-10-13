@@ -14,7 +14,8 @@ import (
 )
 
 // egressProxyGuardedDigest is the SHA-256 of the reviewed definitions of
-// start_egress_proxy and egress_proxy_agent_network_args, header line and
+// egress_proxy_names, start_egress_proxy and egress_proxy_agent_network_args,
+// header line and
 // closing brace included, joined by the separator that guardedFunctionsDigest uses. The parser rules below name the
 // rule that failed, but a static check cannot prove that nothing else runs:
 // bash assembles commands across quotes, loops and later definitions, and every
@@ -22,9 +23,9 @@ import (
 // Colima egress script. Any edit of either body, in any spelling, fails until a
 // reviewer regenerates it. The dry-run and Colima smoke scenarios then check
 // the behavior of the reviewed functions.
-const egressProxyGuardedDigest = "65278bca7124eafea12cfcbf91f71349cb2376000794e9ef02a8154e730b2e96"
+const egressProxyGuardedDigest = "522206960534e89d56cf577a9baf53fe5f3f19b09542c25987dc49642e816c0f"
 
-var egressProxyGuardedFunctions = []string{"start_egress_proxy", "egress_proxy_agent_network_args"}
+var egressProxyGuardedFunctions = []string{"egress_proxy_names", "start_egress_proxy", "egress_proxy_agent_network_args"}
 
 // guardedFunctionsDigest returns the digest of the guarded function bodies.
 func guardedFunctionsDigest(script string) string {
@@ -94,7 +95,10 @@ func ValidateEgressProxySidecar(script string) error {
 }
 
 // ValidateEgressProxySoleRoute requires egress_proxy_agent_network_args to
-// select the per-session network with no resolver, once. The parser skips the
+// call egress_proxy_names once, egress_proxy_names to name the per-session
+// network once, and the route to select that network with no resolver, once.
+// The shared parser reads an array assignment as a subshell opener and drops
+// it, so the route is matched as a whole line of its own. The parser skips the
 // loop body that adds the host aliases, so the array name may appear only in the
 // assignment and in the one alias line: an appended `+=(--network ...)`, a
 // second assignment or a decoy mention fails closed. The dry-run scenario proves
@@ -102,10 +106,11 @@ func ValidateEgressProxySidecar(script string) error {
 func ValidateEgressProxySoleRoute(script string) error {
 	const fail = "Expected the egress proxy sole route to put the agent on the per-session network with no resolver"
 	body := functionBody(script, "egress_proxy_agent_network_args")
-	networks := ShellInvocations(body, `EGRESS_PROXY_NETWORK=wc-${SESSION_ID}`)
-	routes := ShellInvocations(body, `RUNTIME_NETWORK_ARGS=(--network`)
-	if len(networks) != 1 || len(networks[0].Args) != 0 ||
-		len(routes) != 1 || !slices.Equal(routes[0].Args, []string{"${EGRESS_PROXY_NETWORK}", "--dns", "127.0.0.1)"}) ||
+	names := ShellInvocations(body, `egress_proxy_names`)
+	networks := ShellInvocations(functionBody(script, "egress_proxy_names"), `EGRESS_PROXY_NETWORK=wc-${SESSION_ID}`)
+	if len(names) != 1 || len(names[0].Args) != 0 ||
+		len(networks) != 1 || len(networks[0].Args) != 0 ||
+		!slices.Contains(strings.Split(body, "\n"), `  RUNTIME_NETWORK_ARGS=(--network "${EGRESS_PROXY_NETWORK}" --dns 127.0.0.1)`) ||
 		strings.Count(body, "RUNTIME_NETWORK_ARGS") != 2 ||
 		strings.Count(body, `RUNTIME_NETWORK_ARGS+=(--add-host "${endpoint%:*}:${EGRESS_PROXY_IP_TOKEN}")`) != 1 {
 		return errors.New(fail)
