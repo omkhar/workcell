@@ -22,6 +22,16 @@ func TestShellInvocations(t *testing.T) {
 			want:   [][]string{{"one"}, {"two"}},
 		},
 		{
+			name:   "a &> redirection is an argument, not a background operator",
+			script: "oras cp &>/dev/null one\n",
+			want:   [][]string{{"&>/dev/null", "one"}},
+		},
+		{
+			name:   "a here-string operator stays in its word",
+			script: "oras cp <<<one two\n",
+			want:   [][]string{{"<<<one", "two"}},
+		},
+		{
 			name:   "a longer command name is not the requested command",
 			script: "oras cpx one\n",
 		},

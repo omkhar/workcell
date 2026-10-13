@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/omkhar/workcell/internal/aptbroker"
+	"github.com/omkhar/workcell/internal/cliexit"
 )
 
 func main() {
@@ -36,6 +37,10 @@ func serve(arguments []string) {
 	ackFD := flags.Uint("ack-fd", 0, "")
 	if err := flags.Parse(arguments); err != nil {
 		fail(err)
+	}
+	if flags.NArg() != 0 {
+		flags.Usage()
+		fail(&cliexit.ExitCodeError{Code: 2, Message: fmt.Sprintf("unexpected argument: %q", flags.Arg(0))})
 	}
 	timeout, err := helperTimeout(os.Getenv("WORKCELL_APT_BROKER_HELPER_TIMEOUT_SECONDS"))
 	if err != nil {
@@ -77,6 +82,9 @@ func helperTimeout(raw string) (time.Duration, error) {
 
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, serverDiagnostic(err))
+	if ec, ok := cliexit.IsExitCodeError(err); ok {
+		os.Exit(ec.Code)
+	}
 	os.Exit(1)
 }
 

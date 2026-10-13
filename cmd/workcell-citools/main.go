@@ -75,6 +75,7 @@ func subcommands() []subcommand {
 		{"verify-control-plane-manifest", "MANIFEST_PATH", 1, 1, cmdVerifyControlPlaneManifest},
 		{"verify-control-plane-parity", "MANIFEST_PATH", 1, 1, cmdVerifyControlPlaneParity},
 		{"check-workflows", "ROOT_DIR POLICY_PATH", 2, 2, cmdCheckWorkflows},
+		{"check-workflow-refs", "ROOT_DIR", 1, 1, cmdCheckWorkflowRefs},
 		{"check-retention-policy", "ROOT_DIR POLICY_PATH", 2, 2, cmdCheckRetentionPolicy},
 		{"generate-workflow-lane-manifest", "ROOT_DIR POLICY_PATH OUTPUT_PATH", 3, 3, cmdGenerateWorkflowLaneManifest},
 		{"verify-workflow-lane-manifest", "ROOT_DIR POLICY_PATH MANIFEST_PATH", 3, 3, cmdVerifyWorkflowLaneManifest},
@@ -209,6 +210,11 @@ func main() {
 		// the wrong-arity path below and the other workcell Go CLIs (D8).
 		dieUsage(rootUsageError(""))
 	}
+	// Support -h and --help flags at the top level (exit 0)
+	if os.Args[1] == "-h" || os.Args[1] == "--help" {
+		fmt.Println(rootUsageErrorMessage())
+		return
+	}
 	if os.Args[1] == "startup-bench" {
 		os.Exit(startupbench.Run(os.Args[2:], os.Stdout, os.Stderr))
 	}
@@ -250,7 +256,8 @@ func main() {
 	dieUsage(rootUsageError(os.Args[1]))
 }
 
-func rootUsageError(badCommand string) error {
+// knownCommandLines lists every top-level command, one per indented line.
+func knownCommandLines() string {
 	names := make([]string, 0, len(subcommands())+2)
 	for _, sub := range subcommands() {
 		names = append(names, sub.name)
@@ -266,10 +273,18 @@ func rootUsageError(badCommand string) error {
 		lines.WriteString(name)
 		lines.WriteString("\n")
 	}
+	return lines.String()
+}
+
+func rootUsageErrorMessage() string {
+	return fmt.Sprintf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], knownCommandLines())
+}
+
+func rootUsageError(badCommand string) error {
 	if badCommand == "" {
-		return fmt.Errorf("usage: %s <command> [args...]\n\nCommands:\n%s", os.Args[0], lines.String())
+		return fmt.Errorf("%s", rootUsageErrorMessage())
 	}
-	return fmt.Errorf("unknown command: %s\n\nKnown commands:\n%s", badCommand, lines.String())
+	return fmt.Errorf("unknown command: %s\n\n%s", badCommand, rootUsageErrorMessage())
 }
 
 func cmdGenerateControlPlaneManifest(args []string) error {
@@ -297,6 +312,10 @@ func cmdCheckWorkflows(args []string) error {
 
 func cmdCheckRetentionPolicy(args []string) error {
 	return metadatautil.CheckRetentionPolicy(args[0], args[1])
+}
+
+func cmdCheckWorkflowRefs(args []string) error {
+	return metadatautil.CheckWorkflowRefs(args[0])
 }
 
 func cmdGenerateWorkflowLaneManifest(args []string) error {

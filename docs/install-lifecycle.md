@@ -86,6 +86,8 @@ The uninstaller removes a log directly under `/tmp` or `$TMPDIR` if the current 
 Copy required evidence outside each removal path that the dry run reports.
 
 `workcell --gc` removes stale cache, temporary, session-audit, and runtime state.
+A cache root is stale only when nothing under it changed in the last 60 minutes.
+So a running Workcell keeps the cache that it uses.
 It does not provide a dry-run option.
 It can remove Workcell state from another local run.
 Do not run host-wide cleanup as a repository scenario.
