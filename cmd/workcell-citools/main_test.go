@@ -33,6 +33,13 @@ func TestWrongArityExitsWithUsageCode(t *testing.T) {
 	}
 }
 
+func TestHandlerUsageErrorExitsWithItsCode(t *testing.T) {
+	code, stderr := runCitools(t, "flag-inventory", "compare", t.TempDir(), "claude")
+	if code != 2 || !strings.Contains(stderr, "usage:") {
+		t.Fatalf("flag-inventory compare with a missing help file: exit %d, stderr %q; want 2 and usage text", code, stderr)
+	}
+}
+
 func TestNoArgsExitsWithUsageCode(t *testing.T) {
 	assertCitoolsUsageExit(t)
 }
@@ -45,6 +52,10 @@ func TestUpstreamFetchCommandsRejectWrongArity(t *testing.T) {
 	assertCitoolsUsageExit(t, "github-api-get")
 	assertCitoolsUsageExit(t, "github-release-asset", "owner/repository", "asset")
 	assertCitoolsUsageExit(t, "upstream-get", "profile", "one", "two", "three")
+}
+
+func TestPublishPRShapeMarginRejectsWrongArity(t *testing.T) {
+	assertCitoolsUsageExit(t, "publish-pr-shape-margin", "root", "main")
 }
 
 // assertCitoolsUsageExit runs the binary (via the helper-process trick) with

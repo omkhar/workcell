@@ -449,25 +449,20 @@ func currentBranch(ctx *BashContext, workspace string) string {
 	return out
 }
 
-func remoteOriginPushURL(ctx *BashContext, workspace string) (string, error) {
+// runHostGit runs git in workspace with the operator's full Git configuration,
+// as publication does, unlike runCleanGit.
+func runHostGit(ctx *BashContext, workspace string, args ...string) (string, error) {
 	var stdout bytes.Buffer
-	err := RunPublishHostCommandInDir(
-		workspace,
-		&PublishEnv{Path: ctx.TrustedHostPath, Home: ctx.RealHome},
-		[]string{
-			ctx.HostGitBin,
-			"-c", "core.hooksPath=/dev/null",
-			"-C", workspace,
-			"remote", "get-url", "--push", "--all", "origin",
-		},
-		nil,
-		&stdout,
-		io.Discard,
-	)
+	full := append([]string{ctx.HostGitBin, "-c", "core.hooksPath=/dev/null", "-C", workspace}, args...)
+	err := RunPublishHostCommandInDir(workspace, &PublishEnv{Path: ctx.TrustedHostPath, Home: ctx.RealHome}, full, nil, &stdout, io.Discard)
+	return strings.TrimRight(stdout.String(), "\n"), err
+}
+
+func remoteOriginPushURL(ctx *BashContext, workspace string) (string, error) {
+	out, err := runHostGit(ctx, workspace, "remote", "get-url", "--push", "--all", "origin")
 	if err != nil {
 		return "", err
 	}
-	out := strings.TrimRight(stdout.String(), "\n")
 	var pushURLs []string
 	for _, line := range strings.Split(out, "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed != "" {
