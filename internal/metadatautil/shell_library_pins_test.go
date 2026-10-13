@@ -8,25 +8,93 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
+	"strings"
 	"testing"
 )
 
 // TestReviewedShellLibrariesMatchTheirFiles is the gate on the pins: a library
-// edit must update its digest in review, and a pinned library may not itself
-// source, eval or alias, which would hide text from the reader.
+// edit must update its digest and its forwarder list in review, and a pinned
+// library may not source, eval, rebind a name or hold a heredoc the gate does
+// not read, as the reader reads each of its commands.
 func TestReviewedShellLibrariesMatchTheirFiles(t *testing.T) {
-	hiding := regexp.MustCompile(`(?m)^\s*(?:source|\.|eval|alias)\s`)
 	for name, want := range reviewedShellLibraries {
 		data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "lib", name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want {
-			t.Errorf("scripts/lib/%s digest = %s, pinned %s; review the change and update reviewedShellLibraries", name, got, want)
+		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want.digest {
+			t.Errorf("scripts/lib/%s digest = %s, pinned %s; review the change and update reviewedShellLibraries", name, got, want.digest)
 		}
-		if line := hiding.Find(data); line != nil {
-			t.Errorf("scripts/lib/%s runs %q; a pinned library may not source, eval or alias", name, line)
+		forwarders, hidden := readLibrary(string(data))
+		if hidden != "" {
+			t.Errorf("scripts/lib/%s runs %q; a pinned library may not source, eval, rebind a name or hold a heredoc", name, hidden)
+		}
+		if !slices.Equal(forwarders, want.forwarders) {
+			t.Errorf("scripts/lib/%s forwarders = %q, pinned %q", name, forwarders, want.forwarders)
+		}
+	}
+}
+
+// readLibrary reads a library's logical lines as the reader does and returns
+// the sorted functions whose body forwards its caller's words, and the first
+// line that sources, evals or rebinds a name outside such a forward, or that
+// opens a heredoc.
+func readLibrary(text string) (forwarders []string, hidden string) {
+	var current strings.Builder
+	var quotes []byte
+	depth, function, definedAt := 0, "", 0
+	for _, line := range strings.Split(text, "\n") {
+		current.WriteString(line)
+		words, heredocs, quote, rest, continues := shellWords(current.String(), quotes)
+		if continues {
+			joined := current.String()
+			current.Reset()
+			current.WriteString(joined[:len(joined)-1])
+			continue
+		}
+		if last := len(words) - 1; last >= 0 && !words[last].quoted && continuesLine(words[last].text) {
+			current.WriteString(" ")
+			continue
+		}
+		logical := current.String()
+		current.Reset()
+		quotes = rest
+		if quote != 0 || len(heredocs) > 0 {
+			return nil, logical
+		}
+		commands := withoutCasePatternAlternatives(splitCommands(words))
+		if name := definedName(words); name != "" && function == "" {
+			function, definedAt = name, depth
+		}
+		for _, each := range commands {
+			names := commandWords(spelled(each.args))
+			switch {
+			case function != "" && evaluates(names) && forwards(names):
+				forwarders = append(forwarders, function)
+			case evaluates(names) || rebindsCommand(names):
+				if hidden == "" {
+					hidden = logical
+				}
+			}
+		}
+		if depth += braceDepth(commands) - gluedSubshellClosers(commands, logical); function != "" && depth <= definedAt {
+			function = ""
+		}
+	}
+	slices.Sort(forwarders)
+	return slices.Compact(forwarders), hidden
+}
+
+func libraryLineHidesText(line string) bool {
+	_, hidden := readLibrary(line)
+	return hidden != ""
+}
+
+func TestLibraryGateReadsWrappedBuiltins(t *testing.T) {
+	for _, line := range []string{"command source ./shadow.sh", "builtin eval 'f() { :; }'", "alias buildx_cmd=true", "  . ./x.sh"} {
+		if !libraryLineHidesText(line) {
+			t.Errorf("%q is not read as hiding text", line)
 		}
 	}
 }
@@ -47,6 +115,7 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 		"a source with arguments":          {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" extra` + "\nbuildx_cmd build\n", 0},
 		"a pinned library at another root": {head + `source "${HOME}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
 		"eval still stops the reader":      {head + "eval true\nbuildx_cmd build\n", 0},
+		"a library forwarder that evals":   {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nrun_workcell_docker_client_command eval x\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
 			t.Errorf("%s: %d invocations, want %d", name, got, test.want)
@@ -121,10 +190,12 @@ func TestCasePatternAlternativesAreNotCommands(t *testing.T) {
 		script string
 		want   int
 	}{
-		"a pattern with a dot":           {die + "g() {\n  case \"$1\" in\n    '' | . | /*)\n      die bad\n      return 1\n      ;;\n  esac\n}\ng x\nbuildx_cmd build\n", 1},
-		"a top-level pattern with a dot": {"case \"$1\" in\n  . | ..)\n    echo dot\n    ;;\nesac\nbuildx_cmd build\n", 1},
-		"a real source still stops":      {"source x\nbuildx_cmd build\n", 0},
-		"return then exit":               {"f() {\n  if [[ -x x ]]; then\n    return 0\n  fi\n  exit 1\n}\nf\nbuildx_cmd build\n", 1},
+		"a source before a pattern":         {"source ./shadow.sh; case x in '' | . | /*) : ;; esac\nbuildx_cmd build\n", 0},
+		"a pattern with a dot":              {die + "g() {\n  case \"$1\" in\n    '' | . | /*)\n      die bad\n      return 1\n      ;;\n  esac\n}\ng x\nbuildx_cmd build\n", 1},
+		"a top-level pattern with a dot":    {"case \"$1\" in\n  . | ..)\n    echo dot\n    ;;\nesac\nbuildx_cmd build\n", 1},
+		"a real source still stops":         {"source x\nbuildx_cmd build\n", 0},
+		"a quoted pattern with a parameter": {"case \"$1\" in\n  \"${HOME}\")\n    echo home\n    ;;\nesac\nbuildx_cmd build\n", 1},
+		"return then exit":                  {"f() {\n  if [[ -x x ]]; then\n    return 0\n  fi\n  exit 1\n}\nf\nbuildx_cmd build\n", 1},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {
 			t.Errorf("%s: %d invocations, want %d", name, got, test.want)

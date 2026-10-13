@@ -171,15 +171,19 @@ func commandBrace(each command) int {
 // ends at )) rather than at a bare ), so it opens nothing here.
 // withoutCasePatternAlternatives drops the alternatives of a case pattern
 // such as ” | . | /*): the line splits at each | like a pipeline, but the
-// words before the one that ends the pattern with ) are words to match, not
-// commands, and . among them is no source. A line whose command word ends in
-// ) is read as such a pattern; that only drops commands, so it loses
-// invocations rather than inventing them.
+// single words before the one that ends the pattern with ) are words to match,
+// not commands, and . among them is no source. Commands written before the
+// pattern on the line, such as source ./x.sh; case …, stay, since each holds
+// more than one word or ends that run of single words.
 func withoutCasePatternAlternatives(commands []command) []command {
 	for at := len(commands) - 1; at > 0; at-- {
 		if args := commands[at].args; len(args) > 0 && !args[0].quoted && strings.HasSuffix(args[0].text, ")") &&
 			!strings.HasPrefix(args[0].text, "(") && !strings.Contains(args[0].text, "$(") {
-			return commands[at:]
+			start := at
+			for start > 0 && len(commands[start-1].args) == 1 && !commands[start-1].conditional {
+				start--
+			}
+			return append(slices.Clone(commands[:start]), commands[at:]...)
 		}
 	}
 	return commands
@@ -631,7 +635,11 @@ func ShellInvocations(script, commandName string) []Invocation {
 			outside := groupDepth
 			groupDepth += commandBrace(each)
 			names := commandWords(spelled(args))
-			if evaluates(names) && !(prelude && fixedRoot && reviewedLibrarySource(names)) || graph.callsBarrier(names) {
+			if library, reviewed := reviewedLibrarySource(names); reviewed && prelude && fixedRoot {
+				for _, name := range library.forwarders {
+					forwarders[name] = true
+				}
+			} else if evaluates(names) || graph.callsBarrier(names) {
 				// eval and source run text this reader never sees as code, and
 				// that text can define a function or an alias with the command's
 				// name, as eval 'or''as() { :; }' does. No later call is proved to
@@ -894,8 +902,13 @@ func shellWords(line string, stack []byte) (
 // reviewedShellLibraries pins each repository library a script may source
 // without a barrier, by the SHA-256 of its reviewed text. An edit to a library
 // fails TestReviewedShellLibrariesMatchTheirFiles until the pin is reviewed.
-var reviewedShellLibraries = map[string]string{
-	"trusted-docker-client.sh": "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674",
+type reviewedLibrary struct {
+	digest     string   // SHA-256 of the reviewed text
+	forwarders []string // its functions that run their caller's words, as run() { "$@"; } does
+}
+
+var reviewedShellLibraries = map[string]reviewedLibrary{
+	"trusted-docker-client.sh": {digest: "3b5ec8e0c5f46857e31acf4e54b8d398fe54c4fdc097a27d1fddb25a32a4d674", forwarders: []string{"run_workcell_docker_client_command"}},
 }
 
 // canonicalRootDir is the one ROOT_DIR assignment that pins a script's root.
@@ -927,17 +940,21 @@ func preludeSafe(names []string) bool {
 
 var reviewedLibraryPath = regexp.MustCompile(`^\$\{?ROOT_DIR\}?/scripts/lib/([A-Za-z0-9_.-]+\.sh)$`)
 
-// reviewedLibrarySource reports whether the words source exactly one pinned
-// library by its fixed path under ROOT_DIR. Its text is reviewed, so it is
-// not a barrier when only plain assignments ran before it and ROOT_DIR is the
-// canonical root, which nothing earlier could have moved.
-func reviewedLibrarySource(names []string) bool {
+// reviewedLibrarySource returns the pinned library the words source by its
+// fixed path under ROOT_DIR, if any. Its text is reviewed, so the source is
+// no barrier when only commands that cannot move ROOT_DIR ran before it and
+// ROOT_DIR is the canonical root; its forwarders then count as forwarders.
+func reviewedLibrarySource(names []string) (reviewedLibrary, bool) {
 	names = unwrapBuiltins(names[assignmentPrefix(names):])
 	if len(names) != 2 || (names[0] != "source" && names[0] != ".") {
-		return false
+		return reviewedLibrary{}, false
 	}
 	match := reviewedLibraryPath.FindStringSubmatch(names[1])
-	return match != nil && reviewedShellLibraries[match[1]] != ""
+	if match == nil {
+		return reviewedLibrary{}, false
+	}
+	library, ok := reviewedShellLibraries[match[1]]
+	return library, ok
 }
 
 // evaluates reports whether the words run eval, source or ., each of which
@@ -1006,7 +1023,7 @@ func commandWords(names []string) []string {
 	for len(names) > 0 {
 		switch {
 		case slices.Contains([]string{"if", "elif", "then", "else", "while", "until", "do", "!"}, names[0]):
-		case strings.HasSuffix(names[0], ")") && !strings.ContainsAny(names[0], "$`"):
+		case strings.HasSuffix(names[0], ")") && !strings.HasPrefix(names[0], "(") && !strings.Contains(names[0], "$(") && !strings.Contains(names[0], "`"):
 		default:
 			return names
 		}
