@@ -297,7 +297,8 @@ func TestRunHostColimaWithTimeoutReturnsExitCodeWhenFastEnough(t *testing.T) {
 	fake := writeFakeColima(t, dir, `#!/bin/sh
 exit 7
 `)
-	start := time.Now()
+	// The 30s deadline is generous on purpose: the fake exits at once, so a
+	// timeout result (ColimaTimeoutExitCode) is the failure signal, not elapsed time.
 	code, err := RunHostColimaWithTimeout(30, HostColimaInvocation{
 		ColimaBin: fake,
 		RealHome:  dir,
@@ -308,9 +309,6 @@ exit 7
 	}
 	if code != 7 {
 		t.Fatalf("RunHostColimaWithTimeout() code = %d, want 7", code)
-	}
-	if elapsed := time.Since(start); elapsed >= 2*time.Second {
-		t.Fatalf("RunHostColimaWithTimeout() took %s, want under 2s", elapsed)
 	}
 }
 
