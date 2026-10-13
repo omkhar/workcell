@@ -35,42 +35,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=/dev/null
 source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
 
-resolve_trusted_go_bin() {
-  local expected_toolchain=""
-  local toolchain_version=""
-  local toolcache_arch=""
-  local candidate=""
-
-  expected_toolchain="$(awk '$1 == "toolchain" { print $2; exit }' "${ROOT_DIR}/go.mod")"
-  if [[ ! "${expected_toolchain}" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "go.mod must declare one exact Go toolchain." >&2
-    return 2
-  fi
-  toolchain_version="${expected_toolchain#go}"
-  case "$(uname -m)" in
-    arm64 | aarch64) toolcache_arch="arm64" ;;
-    x86_64 | amd64) toolcache_arch="x64" ;;
-    *)
-      echo "GitHub release publication does not support this Go toolchain architecture." >&2
-      return 2
-      ;;
-  esac
-  for candidate in \
-    "/opt/hostedtoolcache/go/${toolchain_version}/${toolcache_arch}/bin/go" \
-    /opt/homebrew/bin/go \
-    /usr/local/go/bin/go \
-    /usr/local/bin/go \
-    /usr/bin/go; do
-    [[ -x "${candidate}" ]] || continue
-    if GOTOOLCHAIN=local GOENV=off "${candidate}" env GOVERSION 2>/dev/null | grep -Fx "${expected_toolchain}" >/dev/null; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-  echo "Go toolchain ${expected_toolchain} is unavailable at a trusted absolute path." >&2
-  return 1
-}
-
 if [[ "${1:-}" == "--self-entrypoint-probe" ]]; then
   head -n 1 "$0" >/dev/null
   echo "publish-github-release-entrypoint-ok"
@@ -107,7 +71,10 @@ if [[ -z "${PUBLISH_TOKEN}" || "${#PUBLISH_TOKEN}" -gt 4096 || "${PUBLISH_TOKEN}
   exit 2
 fi
 
-WORKCELL_GO_BIN="$(resolve_trusted_go_bin)"
+WORKCELL_GO_BIN="$(resolve_exact_toolchain_go_bin "${ROOT_DIR}")" || {
+  echo "The exact Go toolchain from go.mod is unavailable at a trusted absolute path." >&2
+  exit 1
+}
 readonly WORKCELL_GO_BIN
 export -n WORKCELL_GO_BIN 2>/dev/null || true
 
