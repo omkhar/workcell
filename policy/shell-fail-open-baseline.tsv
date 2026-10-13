@@ -85,9 +85,9 @@ scripts/validate-repo.sh	process-substitution	8	process substitution drops the i
 scripts/verify-build-input-manifest.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-control-plane-manifest.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-control-plane-parity.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
-scripts/verify-github-hosted-controls.sh	command-substitution	3	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
-scripts/verify-github-hosted-controls.sh	dev-null	2	2>/dev/null on a find/git/gh/docker/getent call, or on a variable-named call in a substitution; predates the rule, repair by status capture
-scripts/verify-github-hosted-controls.sh	or-true	2	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
+scripts/verify-github-hosted-controls.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call, or of a command a variable or path names, without a status test in the block or with a later command masking it; predates the rule
+scripts/verify-github-hosted-controls.sh	dev-null	1	2>/dev/null on a find/git/gh/docker/getent call, or on a variable-named call in a substitution; predates the rule, repair by status capture
+scripts/verify-github-hosted-controls.sh	or-true	1	|| true on a find/git/gh/docker/getent call, or on a command a variable names; predates the rule, repair by handling the failure
 scripts/verify-github-hosted-controls.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-github-macos-release-test-runners.sh	process-substitution	1	process substitution drops the inner status; predates the rule, repair by status capture or completion sentinel
 scripts/verify-invariants-live.sh	command-substitution	2	substitution of a find/git/gh/docker/getent call without a status test in the block; predates the rule
