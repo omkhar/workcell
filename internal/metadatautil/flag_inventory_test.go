@@ -48,6 +48,31 @@ func TestParseHelpFlags(t *testing.T) {
 	}
 }
 
+func TestParseHelpCommands(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct{ help, want string }{
+		"commander": {"Commands:\n  agents [options]   Manage\n  attach <id>   Open a\n                terminal\n  stop|kill <id>   Stop\n\nOptions:\n  -h, --help\n", "agents attach stop kill"},
+		"yargs":     {"Commands:\n  tool mcp   Manage\n  tool skills <command>  Manage  [aliases: skill, skillz]\n  tool [query..]   Launch  [default]\n\nOptions:\n  -d\n", "mcp skills skill skillz"},
+		"clap":      {"Commands:\n  exec  Run [aliases: e]\n  apply  Apply the diff to your\n         working tree [aliases: a]\n  help  Print\n\nOptions:\n", "exec e apply a help"},
+		"later":     {"Options:\n  -h\nCommands:\n  exec  Run\nOptions:\nCommands:\n  late  Run\n", "exec"},
+		"none":      {"Options:\n  -h\n", ""},
+	}
+	for name, c := range cases {
+		if got, err := ParseHelpCommands(c.help, "tool"); err != nil || strings.Join(got, " ") != c.want {
+			t.Errorf("%s: ParseHelpCommands() = %q, %v, want %q", name, got, err, c.want)
+		}
+	}
+	// An alias list the parser cannot read fails.
+	if got, err := ParseHelpCommands("Commands:\n  exec  Run [aliases: new_cmd]\n", "tool"); err == nil {
+		t.Errorf("ParseHelpCommands() = %q, want an error", got)
+	}
+	// A command line with a name the parser cannot read fails.
+	if got, err := ParseHelpCommands("Commands:\n  exec  Run\n  new_cmd  New\n", "tool"); err == nil {
+		t.Errorf("ParseHelpCommands() = %q, want an error", got)
+	}
+}
+
 const flagInventoryDemoManifest = `schema = 1
 id = "demo"
 tier = "certified"
@@ -60,6 +85,7 @@ provenance = "scripts/verify-demo.sh"
 
 [flags]
 subcommands = ["exec"]
+other_commands = ["help"]
 allow = ["--model"]
 deny = ["--yolo"]
 `
@@ -93,6 +119,16 @@ func TestFlagInventoryRenderAndCheck(t *testing.T) {
 	mustWriteText(t, help, "Commands:\n  exec  Run\n  help  Print help\n\nOptions:\n      --yolo\n  -m, --model <M>\n")
 	if _, err := RenderFlagFixtureFromHelp(root, "planned", []string{help}); err == nil {
 		t.Fatal("rendered a fixture for a planned adapter")
+	}
+	// A command in neither subcommands nor other_commands fails the render.
+	mustWriteText(t, help+".new", "Commands:\n  exec  Run\n  help  Print help\n  install  New\n\nOptions:\n      --yolo\n")
+	if _, err := RenderFlagFixtureFromHelp(root, "demo", []string{help + ".new"}); err == nil || !strings.Contains(err.Error(), `command "install"`) {
+		t.Fatalf("RenderFlagFixtureFromHelp() = %v, want unclassified install", err)
+	}
+	// Help with no command list fails closed when the manifest names commands.
+	mustWriteText(t, help+".none", "Options:\n      --yolo\n")
+	if _, err := RenderFlagFixtureFromHelp(root, "demo", []string{help + ".none"}); err == nil || !strings.Contains(err.Error(), "lists no commands") {
+		t.Fatalf("RenderFlagFixtureFromHelp() = %v, want layout failure", err)
 	}
 	fixture, err := RenderFlagFixtureFromHelp(root, "demo", []string{help})
 	if err != nil || !strings.Contains(string(fixture), "# demo-version: 1.2.3\n") || !strings.HasSuffix(string(fixture), "\n--model\n--yolo\n-m\n") {
@@ -160,7 +196,7 @@ func TestWriteFlagFixtureRefusesSymlinkedParent(t *testing.T) {
 
 	root := writeFlagInventoryRepo(t, "")
 	help := filepath.Join(root, "help.txt")
-	mustWriteText(t, help, "Options:\n  --model <M>\n")
+	mustWriteText(t, help, "Commands:\n  exec  Run\n  help  Print help\n\nOptions:\n  --model <M>\n")
 	if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
 		t.Fatalf("WriteFlagFixture() = %v", err)
 	}

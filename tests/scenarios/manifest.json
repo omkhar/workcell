@@ -25,6 +25,18 @@
       "requires_credentials": false
     },
     {
+      "id": "shared/egress-proxy-smoke",
+      "description": "macOS secretless smoke launches strict Codex with --egress-proxy on Colima: an allowlisted host works through the sidecar, a denied SNI, an IP literal and DNS fail, and the network and sidecar are removed after an attached run and a detached stop",
+      "lane": "secretless",
+      "platform": "macos",
+      "validation_tier": "certification",
+      "manual": false,
+      "providers": ["codex"],
+      "persona": "developer",
+      "test_file": "shared/test-egress-proxy-smoke.sh",
+      "requires_credentials": false
+    },
+    {
       "id": "shared/docker-desktop-launch-smoke",
       "description": "macOS secretless smoke prepares and launches the explicit Docker Desktop compat target against the real runtime and version probes each provider",
       "lane": "secretless",

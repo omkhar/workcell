@@ -38,12 +38,16 @@ container_path = "/opt/workcell/host-inputs/credentials/claude-mcp.json"
 [egress]
 endpoints = ["api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443"]
 
-# Classifies tests/fixtures/flags/claude.txt; the reject_unsafe_claude_args parity test lands next.
+# Classifies tests/fixtures/flags/claude.txt as reject_unsafe_claude_args decides.
+# other_commands names the remaining top-level commands.
 [flags]
 subcommands = [
   "agents", "attach", "auth", "auto-mode", "doctor", "gateway", "import",
   "logs", "mcp", "plugin", "project", "respawn", "rm", "setup-token", "stop",
   "ultrareview",
+]
+other_commands = [
+  "install", "update", "plugins", "kill", "upgrade",
 ]
 allow = [
   "--agent", "--all", "--autocompact", "--ax-screen-reader", "--background",
