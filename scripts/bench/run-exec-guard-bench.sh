@@ -4,8 +4,8 @@
 #
 # Compiles scripts/bench/exec-guard-bench.c and, for each interposed exec/spawn
 # family call, times the guard's ALLOW path (LD_PRELOAD of the built cdylib)
-# against the unhooked libc baseline. The delta is the classification overhead
-# the workcell_exec_guard shim adds per launch. The full measurement is repeated
+# against the unhooked libc baseline. The delta is the guarded-launch overhead
+# (classification plus the child's load of the guard library) the workcell_exec_guard shim adds per launch. The full measurement is repeated
 # for WORKCELL_BENCH_RUNS passes so a reviewer can confirm the numbers are
 # stable across runs (the C5 validation gate).
 #
@@ -22,6 +22,14 @@
 #   CC                         C compiler (default cc)
 set -euo pipefail
 
+# A preload already in force skews the unhooked baseline, and inside a strict
+# Workcell session the loaded guard rejects the baseline's guard-free launch.
+# Run the driver outside any preloaded runtime.
+if [ -n "${LD_PRELOAD:-}" ] || [ -s /etc/ld.so.preload ]; then
+  echo "run-exec-guard-bench: a preload is active (LD_PRELOAD or /etc/ld.so.preload); run outside a Workcell session" >&2
+  exit 2
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.."
 ROOT_DIR="$(cd "${ROOT_DIR}" && pwd)"
 
@@ -29,7 +37,9 @@ MODES="execve execv execvp posix_spawn"
 ITERATIONS="${WORKCELL_BENCH_ITERATIONS:-3000}"
 WARMUP="${WORKCELL_BENCH_WARMUP:-300}"
 RUNS="${WORKCELL_BENCH_RUNS:-2}"
-SO_PATH="${WORKCELL_EXEC_GUARD_SO:-${ROOT_DIR}/runtime/container/rust/target/release/libworkcell_exec_guard.so}"
+# The guard accepts only this preload path in a child environment.
+APPROVED_SO_PATH=/usr/local/lib/libworkcell_exec_guard.so
+SO_PATH="${WORKCELL_EXEC_GUARD_SO:-${APPROVED_SO_PATH}}"
 OUTPUT_PATH="${WORKCELL_BENCH_OUTPUT:-}"
 CC_BIN="${CC:-cc}"
 
@@ -53,9 +63,10 @@ if [ "${OS}" != "Linux" ]; then
     "is Linux-only, running the unhooked baseline only" >&2
 fi
 
-if [ "${HOOKED}" -eq 1 ] && [ ! -f "${SO_PATH}" ]; then
-  echo "run-exec-guard-bench: exec-guard cdylib not found: ${SO_PATH}" >&2
-  echo "  build it first: (cd runtime/container/rust && cargo build --release)" >&2
+if [ "${HOOKED}" -eq 1 ] && { [ "${SO_PATH}" != "${APPROVED_SO_PATH}" ] || [ ! -f "${SO_PATH}" ]; }; then
+  echo "run-exec-guard-bench: the guard needs its cdylib at ${APPROVED_SO_PATH} (got ${SO_PATH})" >&2
+  echo "  build and install it: (cd runtime/container/rust && cargo build --release --locked --offline --lib) &&" >&2
+  echo "  sudo install -m 0644 runtime/container/rust/target/release/libworkcell_exec_guard.so ${APPROVED_SO_PATH}" >&2
   exit 1
 fi
 

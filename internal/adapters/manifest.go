@@ -46,8 +46,12 @@ type Manifest struct {
 // Allow nor Deny; the reject_unsafe_<id>_args parity test lands with the policy.
 type Flags struct {
 	Subcommands []string // allowed subcommands whose --help the inventory also reads
-	Allow       []string
-	Deny        []string
+	// OtherCommands names the remaining top-level commands of the CLI help. The
+	// inventory does not read their help. A help command in neither list fails
+	// the inventory, so a new command is classified before it ships.
+	OtherCommands []string
+	Allow         []string
+	Deny          []string
 }
 
 // Install names where the provider pin lives. The pins themselves stay in
@@ -187,9 +191,10 @@ func parseManifest(path string, content []byte) (Manifest, error) {
 			fields = map[string]any{"endpoints": &m.EgressEndpoints}
 		case "flags":
 			fields = map[string]any{
-				"subcommands": &m.Flags.Subcommands,
-				"allow":       &m.Flags.Allow,
-				"deny":        &m.Flags.Deny,
+				"subcommands":    &m.Flags.Subcommands,
+				"other_commands": &m.Flags.OtherCommands,
+				"allow":          &m.Flags.Allow,
+				"deny":           &m.Flags.Deny,
 			}
 		default:
 			key, ok := strings.CutPrefix(table.Name, "credentials.")
@@ -327,6 +332,11 @@ func validateFlags(f Flags) error {
 	for i, sub := range f.Subcommands {
 		if !subcommandPattern.MatchString(sub) || slices.Contains(f.Subcommands[:i], sub) {
 			return fmt.Errorf("invalid or duplicate flags subcommand %q", sub)
+		}
+	}
+	for i, cmd := range f.OtherCommands {
+		if !subcommandPattern.MatchString(cmd) || slices.Contains(f.OtherCommands[:i], cmd) || slices.Contains(f.Subcommands, cmd) {
+			return fmt.Errorf("invalid or duplicate flags other_commands entry %q", cmd)
 		}
 	}
 	return nil
