@@ -51,6 +51,14 @@ func setsStartupFile(env map[string]string) bool { return env["BASH_ENV"] != "" 
 // githubHostedPosix matches the GitHub-hosted labels a shell-less step surely runs bash on.
 var githubHostedPosix = regexp.MustCompile(`^(?:ubuntu-(?:latest|slim|26\.04|24\.04|22\.04)|ubuntu-(?:26|24|22)\.04-arm|macos-(?:latest|26|15|14|13)(?:-intel|-large|-xlarge)?)$`)
 
+// hostedPosixRunner reports whether runs-on names one githubHostedPosix label, as a scalar or a one-item array.
+func hostedPosixRunner(runsOn yaml.Node) bool {
+	if runsOn.Kind == yaml.SequenceNode && len(runsOn.Content) == 1 {
+		runsOn = *runsOn.Content[0]
+	}
+	return runsOn.Kind == yaml.ScalarNode && githubHostedPosix.MatchString(runsOn.Value)
+}
+
 // stepShell returns a step's shell key, else its job's default, else its workflow's.
 func stepShell(document workflowDocument, job workflowJob, step workflowStep) string {
 	if step.Shell != "" {
@@ -205,8 +213,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				add := func(kind string) {
 					hits = append(hits, workflowRefHit{kind, file, job, stepLabel(index, step)})
 				}
-				if shell := stepShell(documents[file], definition, step); step.Run != "" && !readShell(shell) && (shell != "" ||
-					definition.RunsOn.Kind != yaml.ScalarNode || !githubHostedPosix.MatchString(definition.RunsOn.Value)) {
+				if shell := stepShell(documents[file], definition, step); step.Run != "" && !readShell(shell) && (shell != "" || !hostedPosixRunner(definition.RunsOn)) {
 					add("command-unresolved") // a body in a language this lint does not read, as pwsh
 					continue
 				}
@@ -215,16 +222,14 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
 				for _, words := range EveryShellCommand(step.Run) {
-					// A lint of what may run fails closed on a command it cannot spell, and on an alias definition, which can rename any later command.
-					if words[0] == "eval" {
+					if words[0] == "eval" { // A lint of what may run fails closed on a command it cannot spell, and on an alias definition, which can rename any later command.
 						add("eval-unresolved")
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
 						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] || ghInArguments(words) ||
 						commandName(words[0]) == "find" && slices.ContainsFunc(words, func(w string) bool { return strings.HasPrefix(w, "-exec") || strings.HasPrefix(w, "-ok") }) {
 						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok := shellProgram(words, "$_"); ok {
-						// EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
-						add("command-unresolved")
+						add("command-unresolved") // EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
@@ -248,8 +253,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 			}
 		}
 	}
-	// A second identical hit in one step gets an ordinal, so a new call in a step that already has a baseline row still fails.
-	counts := map[string]int{}
+	counts := map[string]int{} // A second identical hit in one step gets an ordinal, so a new call in a step that already has a baseline row still fails.
 	for i, hit := range hits {
 		counts[hit.key()]++
 		if n := counts[hit.key()]; n > 1 {
