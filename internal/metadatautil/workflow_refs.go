@@ -5,7 +5,10 @@ package metadatautil
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -18,8 +21,22 @@ import (
 
 const (
 	workflowRefsBaselinePath = "policy/workflow-refs-baseline.tsv"
+	workflowActionInputsPath = "tests/fixtures/actions/inputs.tsv"
 	workflowRefsMaxBytes     = 4 << 20
 )
+
+// workflowScriptRef finds ./scripts/... paths in the words of a run body.
+var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
+
+// ghListTakesLimit holds each gh group, aliases included, whose list (or ls)
+// subcommand takes --limit, per gh 2.102 help. Any other list, an extension's
+// or a later gh group's included, cannot be shown bounded, so every call of it
+// is a hit.
+var ghListTakesLimit = map[string]bool{
+	"agent-task": true, "agent-tasks": true, "agent": true, "agents": true, "cache": true, "codespace": true, "cs": true,
+	"discussion": true, "gist": true, "issue": true, "label": true, "org": true, "pr": true, "project": true,
+	"release": true, "repo": true, "ruleset": true, "rs": true, "run": true, "workflow": true,
+}
 
 type workflowRefHit struct{ kind, file, job, step string }
 
@@ -128,7 +145,9 @@ func (h workflowRefHit) key() string {
 	return strings.Join([]string{h.kind, h.file, h.job, h.step}, "\t")
 }
 
-// CheckWorkflowRefs ratchets workflow run: bodies: a hit not in the baseline fails, and so does a baseline row with no hit, so the baseline only shrinks.
+// CheckWorkflowRefs ratchets workflow run: bodies and uses: steps. A hit that
+// is not in the baseline fails, and a baseline row with no hit fails, so the
+// baseline can only shrink.
 func CheckWorkflowRefs(rootDir string) error {
 	hits, err := workflowRefHits(rootDir)
 	if err != nil {
@@ -178,6 +197,26 @@ func readWorkflowRefsBaseline(rootDir string) (map[string]bool, error) {
 	return rows, nil
 }
 
+func readWorkflowActionInputs(rootDir string) (map[string]map[string]bool, error) {
+	data, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, workflowActionInputsPath), "action inputs cache", workflowRefsMaxBytes)
+	if err != nil {
+		return nil, err
+	}
+	actions := map[string]map[string]bool{}
+	for line := range strings.Lines(string(data)) {
+		ref, names, found := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
+		if !found || ref == "" {
+			return nil, fmt.Errorf("%s: malformed row %q", workflowActionInputsPath, line)
+		}
+		inputs := map[string]bool{}
+		for name := range strings.SplitSeq(names, ",") {
+			inputs[strings.ToLower(name)] = true
+		}
+		actions[ref] = inputs
+	}
+	return actions, nil
+}
+
 func loadWorkflowDocuments(rootDir string) (map[string]workflowDocument, []string, error) {
 	paths := workflowYAMLFiles(filepath.Join(rootDir, ".github", "workflows"))
 	slices.Sort(paths)
@@ -224,6 +263,10 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	if err != nil {
 		return nil, err
 	}
+	actions, err := readWorkflowActionInputs(rootDir)
+	if err != nil {
+		return nil, err
+	}
 	var hits []workflowRefHit
 	for _, file := range files {
 		for job, definition := range documents[file].Jobs {
@@ -238,7 +281,17 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 				if startupFileStep(documents[file], definition, step) {
 					add("command-unresolved") // bash sources BASH_ENV, or sh ENV, before the run body
 				}
+				dir, err := stepWorkDir(documents[file], definition, step)
+				if err != nil {
+					return nil, fmt.Errorf("%s job %s: %w", file, job, err)
+				}
+				// A relative path resolves from the step's directory. An
+				// expression or an absolute directory is not under rootDir,
+				// and a cd moves the directory for every later command, so
+				// a path after either is a hit rather than a probe.
+				moved := strings.Contains(dir, "${{") || filepath.IsAbs(dir)
 				for _, words := range EveryShellCommand(step.Run) {
+					moved = moved || words[0] == "cd" || words[0] == "pushd"
 					if words[0] == "eval" { // A lint of what may run fails closed on a command it cannot spell, and on an alias definition, which can rename any later command.
 						add("eval-unresolved")
 					} else if unspelled(words[0]) || (words[0] == "alias" && len(words) > 1) ||
@@ -246,6 +299,31 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						add("command-unresolved") // a file, or a program, the lint does not see
 					} else if _, ok, _ := shellProgram(words, "$_"); ok {
 						add("command-unresolved") // EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
+					}
+					for _, match := range scriptRefs(words) {
+						switch {
+						case strings.ContainsAny(match[len(match)-1:], "$*{["):
+							// a dynamic name cannot be resolved statically
+						case slices.Contains(strings.Split(dir+"/"+match, "/"), ".."):
+							add("script-path-escapes " + match) // never probe outside rootDir
+						case moved:
+							add("script-cwd-unresolved " + match)
+						default:
+							if _, err := rootio.ReadFileNoFollow(filepath.Join(rootDir, dir, match[2:]), "workflow script", workflowRefsMaxBytes); err != nil {
+								if !errors.Is(err, fs.ErrNotExist) {
+									return nil, err
+								}
+								_, err := os.Lstat(filepath.Join(rootDir, dir))
+								switch {
+								case errors.Is(err, fs.ErrNotExist):
+									add("script-cwd-unresolved " + match) // the job makes the directory at run time
+								case err != nil:
+									return nil, err
+								default:
+									add("missing-script " + match)
+								}
+							}
+						}
 					}
 				}
 				for _, args := range commandArgs(step.Run, "gh") {
@@ -255,6 +333,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						}
 					}
 					args = ghSubcommand(args)
+					sub := ghSubcommand(args[min(1, len(args)):]) // gh pr -R o/r list runs pr list
 					switch {
 					case len(args) > 0 && (unspelled(args[0]) || !slices.Contains(ghCommands, args[0])):
 						add("command-unresolved") // the subcommand cannot be spelled, or it may be an alias or extension this lint cannot read
@@ -264,6 +343,26 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						} else if slices.ContainsFunc(args, unspelled) {
 							add("command-unresolved") // an expansion, as ${{ … }} or {--paginate=false,}, can disable pagination
 						}
+					case len(sub) > 0 && (sub[0] == "list" || sub[0] == "ls"):
+						if limit := ghFlagValues(args, "--limit", "-L"); !ghListTakesLimit[args[0]] || len(limit) != 1 || !positiveInt(limit[0]) {
+							add("gh-" + args[0] + "-list-unbounded")
+						}
+						if base := ghFlagValues(args, "--base", "-B"); args[0] == "pr" && (len(base) != 1 || base[0] == "") {
+							add("gh-pr-list-no-base")
+						}
+					}
+				}
+				if step.Uses == "" || strings.HasPrefix(step.Uses, "./") || strings.HasPrefix(step.Uses, "docker://") {
+					continue
+				}
+				inputs, ok := actions[step.Uses]
+				if !ok {
+					add("uses-not-cached " + step.Uses)
+					continue
+				}
+				for key := range step.With {
+					if !inputs[strings.ToLower(key)] {
+						add("with-unknown-input " + step.Uses + " " + key)
 					}
 				}
 			}
@@ -277,6 +376,50 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 		}
 	}
 	return hits, nil
+}
+
+// stepWorkDir returns the directory a step's run: body starts in, relative to
+// the checkout: the step's working-directory, else the job default, else the
+// workflow default.
+func stepWorkDir(document workflowDocument, job workflowJob, step workflowStep) (string, error) {
+	if step.WorkDir != "" {
+		return step.WorkDir, nil
+	}
+	var defaults workflowDefaults
+	if job.Defaults.Kind != 0 {
+		if err := job.Defaults.Decode(&defaults); err != nil {
+			return "", err
+		}
+	}
+	if dir := defaults.Run["working-directory"]; dir != "" {
+		return dir, nil
+	}
+	return document.Def.Run["working-directory"], nil
+}
+
+// scriptRefs returns the ./scripts paths in one command's words that the shell
+// can run. The arguments of echo, printf and :, and an assignment are data, so
+// a path written there is not a reference. EveryShellCommand drops a here-string.
+func scriptRefs(words []string) []string {
+	if slices.Contains([]string{"echo", "printf", ":"}, words[0]) {
+		return nil
+	}
+	var refs []string
+	for _, each := range words {
+		if shellAssignment.MatchString(each) {
+			continue
+		}
+		for _, at := range workflowScriptRef.FindAllStringIndex(each, -1) {
+			// A space after the path inside one word, as in "./scripts/x.sh ",
+			// is part of the file name bash runs, so the reference runs on.
+			if at[1] < len(each) && strings.ContainsRune(" \t", rune(each[at[1]])) {
+				refs = append(refs, each[at[0]:])
+				break
+			}
+			refs = append(refs, each[at[0]:at[1]])
+		}
+	}
+	return refs
 }
 
 // ghPaginates reports whether gh api args turn pagination on in exactly one spelling. A --paginate=false, or a second spelling that can override the first, leaves the call unbounded. Another option's value is not a spelling.
@@ -297,10 +440,15 @@ func ghSubcommand(args []string) []string {
 	return args
 }
 
-// ghFlagTakesValue says whether each known gh api flag takes a value, per gh 2.102 help. A short flag that takes a value in one checked command and none in another, such as -a, stays unknown.
+// ghFlagTakesValue says whether each known gh list and gh api flag takes a
+// value, per gh 2.102 help. A short flag that takes a value in one checked
+// command and none in another, such as -a, stays unknown.
 var ghFlagTakesValue = map[string]bool{
-	"--help": false, "-h": false,
+	"-d": false, "--draft": false, "-w": false, "--web": false, "--help": false, "-h": false,
 	"--paginate": false, "--slurp": false, "-i": false, "--include": false, "--silent": false, "--verbose": false,
+	"--allow-escape-sequences": false, "--answered": false, "--all": false, "--exclude-drafts": false,
+	"--exclude-pre-releases": false, "--archived": false, "--no-archived": false, "--fork": false, "--source": false,
+	"--include-content": false, "--public": false, "--secret": false, "--closed": false, "--parents": false,
 	"-f": true, "--raw-field": true, "-F": true, "--field": true, "-H": true, "--header": true, "-X": true,
 	"--method": true, "-p": true, "--preview": true, "-q": true, "--jq": true, "-t": true, "--template": true,
 	"--cache": true, "--input": true, "--hostname": true,
@@ -333,6 +481,88 @@ func ghFlagValues(args []string, long, short string) []string {
 		return values
 	}
 	return nil
+}
+
+func positiveInt(text string) bool {
+	n, err := strconv.Atoi(text)
+	return err == nil && n > 0
+}
+
+// WorkflowJQProgram is one inline jq program from a workflow run: body. Flags
+// holds the declarations the program needs to compile (--arg and -L).
+type WorkflowJQProgram struct {
+	Where   string
+	Program string
+	Flags   []string
+}
+
+// WorkflowInlineJQPrograms returns every jq program a run: body passes inline,
+// from jq itself and from gh --jq.
+func WorkflowInlineJQPrograms(rootDir string) ([]WorkflowJQProgram, error) {
+	documents, files, err := loadWorkflowDocuments(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	var programs []WorkflowJQProgram
+	for _, file := range files {
+		for job, definition := range documents[file].Jobs {
+			for index, step := range definition.Steps {
+				where := file + " " + job + " " + stepLabel(index, step)
+				for _, args := range commandArgs(step.Run, "jq") {
+					if program, ok := parseJQInvocation(rootDir, where, args); ok {
+						programs = append(programs, program)
+					}
+				}
+				for _, args := range commandArgs(step.Run, "gh") {
+					// another flag's value, such as --search --jq, is not a program
+					for _, program := range ghFlagValues(args, "--jq", "-q") {
+						programs = append(programs, WorkflowJQProgram{Where: where, Program: program})
+					}
+				}
+			}
+		}
+	}
+	return programs, nil
+}
+
+func parseJQInvocation(rootDir, where string, args []string) (WorkflowJQProgram, bool) {
+	var flags []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--arg" || arg == "--argjson" || arg == "--slurpfile" || arg == "--rawfile":
+			if i+2 >= len(args) {
+				return WorkflowJQProgram{}, false
+			}
+			value := ""
+			switch arg {
+			case "--argjson":
+				value = "null"
+			case "--slurpfile", "--rawfile":
+				value = os.DevNull
+			}
+			flags = append(flags, arg, args[i+1], value)
+			i += 2
+		case (arg == "-L" || arg == "--library-path") && i+1 < len(args):
+			flags = append(flags, "-L", filepath.Join(rootDir, args[i+1]))
+			i++
+		case arg == "--indent" && i+1 < len(args):
+			flags = append(flags, arg, args[i+1])
+			i++
+		case arg == "--" && i+1 < len(args):
+			return WorkflowJQProgram{Where: where, Program: args[i+1], Flags: append(flags, arg)}, true
+		case arg == "-f" || arg == "--from-file":
+			return WorkflowJQProgram{}, false // the program is in a file
+		case strings.HasPrefix(arg, "-"):
+			// Every other option goes to jq as written. jq rejects one it does
+			// not know, so an option this parser misreads fails the compile
+			// check instead of hiding the program behind its value.
+			flags = append(flags, arg)
+		default:
+			return WorkflowJQProgram{Where: where, Program: arg, Flags: flags}, true
+		}
+	}
+	return WorkflowJQProgram{}, false
 }
 
 // commandArgs returns the arguments of every command named name in script, bare or by path, as /usr/bin/gh runs gh.

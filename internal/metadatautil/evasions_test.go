@@ -454,7 +454,9 @@ func requireEvasions(t *testing.T, artifact, anchor, want string, accepted map[s
 			}
 			err := validate(mutated)
 			if accepted[evasion.Name] {
-				if err != nil {
+				// A gated row that also rewrites more than the anchor may name
+				// the anchored word again, which a validator may count.
+				if err != nil && !anyRejection[evasion.Name] {
 					t.Fatalf("validate() error = %v, want nil for a gated row", err)
 				}
 			} else if err != nil && anyRejection[evasion.Name] && !strings.Contains(err.Error(), "yaml: line") {

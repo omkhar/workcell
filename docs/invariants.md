@@ -80,11 +80,30 @@ path without `execRetryETXTBSY`. A raw exec runs into ETXTBSY under load.
 go down. A stale-high count also fails, and so does a row above its value at
 the merge base with `origin/main`.
 
-## 2b. Workflow bodies make bounded gh api calls
+## 2b. Workflow bodies reference real scripts and bounded lists
 
-`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a `run:` body has a `gh api` call with no `--paginate`. It also fails when an expansion hides a command word, a `gh` subcommand or the text of an `eval`. It also fails on an `alias` definition, which can rename any later command. It reads the program a shell runs from `-c`, a heredoc or a here-string. It fails when it cannot spell that program, as in `cat x | bash`.
+`scripts/check-workflows.sh` runs `check-workflow-refs`. The check fails when a
+`run:` body calls a `./scripts` path that does not exist or that has a `..`
+component. It fails when a `gh api` call has no `--paginate`. It fails when a
+`gh list` call has no `--limit`.
 
-`policy/workflow-refs-baseline.tsv` records the hits that the tree carries today. A new hit fails. A row with no hit also fails. Remove a row when you fix its hit.
+The check also fails when an expansion hides a command word, a `gh` subcommand
+or the text of an `eval`. It also fails on an `alias` definition, which can
+rename any later command. It reads the program a shell runs from `-c`, a
+heredoc or a here-string. It fails when it cannot spell that program, as in
+`cat x | bash`. It fails when a `with:` key is not an input of the action.
+
+The check fails when a `uses:` pin has no row in
+`tests/fixtures/actions/inputs.tsv`. When a pin changes, replace its row. Write
+the input names from the `action.yml` at the new commit, sorted and
+comma-separated.
+
+A testkit case runs each inline jq program against an empty array. A compile
+error fails the test.
+
+`policy/workflow-refs-baseline.tsv` records the hits that the tree carries
+today. A new hit fails. A row with no hit also fails. Remove a row when you fix
+its hit.
 
 ## 2c. Shell scripts must not hide a failed tool
 
