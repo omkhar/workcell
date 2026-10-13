@@ -13,7 +13,7 @@ internal/adapters	endpointRowAbsent	bf67ade5	unreviewed debt in a test: review t
 internal/adapters	parseManifest	4b830416	unreviewed debt: review the subject, then port or justify
 internal/adapters	rustLaunchTargets	6bc79c7a,a6b612f6,d4e4b3ba	unreviewed debt in a test: review the subject, then port or justify
 internal/adapters	rustTokens	01438f12,316d61f3,5d3a8db4,926f1e1f,9bd99527,aad01d73,bd4608c8,e5ef7ea1,e5ef7ea1	unreviewed debt in a test: review the subject, then port or justify
-internal/adapters	validateFlags	2d22c89e,fd6a16a7	unreviewed debt: review the subject, then port or justify
+internal/adapters	validateFlags	2d22c89e,bdc1c12e,fd6a16a7	unreviewed debt: review the subject, then port or justify
 internal/adapters	validateManifest	245b0a57,258a8901,a88bf6e5	unreviewed debt: review the subject, then port or justify
 internal/workcellhardening	TestCheckSmokeAptBrokerProbeRejectsCommentedOutAssertions	1bd4f673,eb56b0a7	unreviewed debt in a test: review the subject, then port or justify
 internal/workcellhardening	TestExtractGoFunctionBlock	06475d50,ab83bc7c	unreviewed debt in a test: review the subject, then port or justify
