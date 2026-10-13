@@ -248,6 +248,45 @@ func CheckFlagInventory(root string) error {
 	return nil
 }
 
+// RestampFlagFixtures sets each certified fixture's stamp to the current pin
+// and leaves its flags unchanged. Container smoke then proves the flags.
+func RestampFlagFixtures(root string) error {
+	manifests, err := certifiedManifests(root)
+	if err != nil {
+		return err
+	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	for _, m := range manifests {
+		path := FlagFixturePath(root, m.ID)
+		if _, _, err := readFlagFixture(path, m.ID); err != nil {
+			return err
+		}
+		pin, err := adapterPin(root, m)
+		if err != nil {
+			return err
+		}
+		data, err := rootio.ReadFileNoFollow(path, "flag fixture", 1<<20)
+		if err != nil {
+			return err
+		}
+		updated := flagFixtureStampRE.ReplaceAllString(string(data), "# ${1}-version: "+pin)
+		if updated != string(data) {
+			rel, err := rootio.RelativePathWithin(root, path, "flag fixture")
+			if err != nil {
+				return err
+			}
+			if err := rootio.WriteFileAtomic(dir, rel, []byte(updated), 0o600, ".flag-restamp-"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func readFlagFixture(path, id string) (string, []string, error) {
 	// An untrusted checkout can swap the fixture for a symlink to a host file.
 	data, err := rootio.ReadFileNoFollow(path, "flag fixture", 1<<20)

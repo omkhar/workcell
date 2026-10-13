@@ -107,7 +107,7 @@ func writeFlagInventoryRepo(t *testing.T, fixture string) string {
 	return root
 }
 
-func TestFlagInventoryRenderAndCheck(t *testing.T) {
+func TestFlagInventoryRenderCheckAndRestamp(t *testing.T) {
 	t.Parallel()
 
 	root := writeFlagInventoryRepo(t, "")
@@ -150,6 +150,16 @@ func TestFlagInventoryRenderAndCheck(t *testing.T) {
 	if err := CheckFlagInventory(root); err == nil || !strings.Contains(err.Error(), "stamp 1.2.3 does not match the demo pin 1.3.0") {
 		t.Fatalf("CheckFlagInventory() = %v, want stale stamp", err)
 	}
+	if err := RestampFlagFixtures(root); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(FlagFixturePath(root, "demo"))
+	if want := strings.Replace(classified, "1.2.3", "1.3.0", 1); string(got) != want {
+		t.Fatalf("restamped fixture = %q, want %q", got, want)
+	}
+	if err := CheckFlagInventory(root); err != nil {
+		t.Fatalf("CheckFlagInventory() after restamp = %v, want nil", err)
+	}
 }
 
 func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
@@ -170,6 +180,11 @@ func TestCheckFlagInventoryRejectsMalformedFixtures(t *testing.T) {
 		root := writeFlagInventoryRepo(t, fixture)
 		if err := CheckFlagInventory(root); err == nil {
 			t.Errorf("%s: CheckFlagInventory() = nil, want error", name)
+		}
+		if fixture != "" {
+			if err := RestampFlagFixtures(root); err == nil {
+				t.Errorf("%s: RestampFlagFixtures() = nil, want error", name)
+			}
 		}
 	}
 	if err := CheckFlagInventory(writeFlagInventoryRepo(t, good)); err != nil {
