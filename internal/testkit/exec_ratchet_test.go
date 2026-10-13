@@ -547,13 +547,11 @@ func structFields(files []*ast.File) map[string][][]string {
 	return fields
 }
 
-// literalType names the struct type a composite literal builds, through a pointer or a package qualifier; "" when the type is elided.
+// literalType names the struct type a composite literal builds, through a pointer, a package qualifier or generic instantiation; "" when the type is elided.
 func literalType(expr ast.Expr) string {
 	switch t := unparen(expr).(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.SelectorExpr:
-		return t.Sel.Name
+	case *ast.Ident, *ast.SelectorExpr, *ast.IndexExpr, *ast.IndexListExpr:
+		return calleeName(t)
 	case *ast.StarExpr:
 		return literalType(t.X)
 	}
@@ -1071,6 +1069,11 @@ func a() { ((pair[int, string]))(0, "", os.Setenv); exec.Command("git") }
 import ("os"; "os/exec")
 func writer[T any]() func(string, string) error { return os.Setenv }
 func a(dir string) { writer[int]()("PATH", dir); exec.Command("git") }
+`,
+		"generic_struct_literal.go": `package x
+import ("os"; "os/exec")
+type writer[T any] struct{ set func(string, string) error }
+func a(dir string) { w := writer[int]{os.Setenv}; w.set("PATH", dir); exec.Command("git") }
 `,
 	} {
 		if got := rawExecSites(t, name, src); got != 1 {
