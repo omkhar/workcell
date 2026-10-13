@@ -8,7 +8,8 @@
  * benign target (default /bin/true) that the guard classifies as "not
  * protected" and forwards to the real libc entry point. Running the same
  * harness twice -- once with LD_PRELOAD pointed at the built cdylib and once
- * without -- isolates the classification overhead the guard adds per call.
+ * without -- isolates the guarded-launch overhead (classification plus the
+ * child's load of the guard library) the guard adds per call.
  *
  * The harness itself is OS-neutral and compiles on Linux and macOS, but the
  * LD_PRELOAD interposition it measures is Linux-only (the guard reads /proc and
@@ -187,14 +188,11 @@ int main(int argc, char **argv) {
     base = base != NULL ? base + 1 : target;
     char *const child_argv[] = {(char *)base, NULL};
 
-    /* The guard is already resident in THIS process (loaded via LD_PRELOAD at
-     * our own startup), so its exec/spawn hooks still fire after this. Removing
-     * LD_PRELOAD from the environment the measured children inherit stops each
-     * child from re-loading the .so, so the hooked-vs-unhooked delta isolates
-     * the guard's classification cost rather than also charging every child the
-     * dynamic loader's one-time cost of mapping the preload. This is a no-op for
-     * the unhooked baseline (LD_PRELOAD is unset there). */
-    unsetenv("LD_PRELOAD");
+    /* The measured children keep LD_PRELOAD. The guard refuses a child exec
+     * whose environment does not carry exactly the approved preload, so each
+     * hooked child also pays the loader's cost to map the guard, as every
+     * guarded child does in the runtime. The unhooked baseline has no
+     * LD_PRELOAD. */
 
     for (long i = 0; i < warmup; i++) {
         if (launch_once(mode, target, child_argv) != 0) {

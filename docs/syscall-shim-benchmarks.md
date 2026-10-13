@@ -1,7 +1,7 @@
 # Syscall-shim performance baselines
 
 The Linux `workcell_exec_guard` library checks each intercepted process launch.
-This page records the added classification latency on the allow path.
+This page records the guarded-launch overhead on the allow path.
 
 The result is a relative Linux CI measurement. It is not an absolute performance
 guarantee for an operator host.
@@ -43,15 +43,19 @@ target and completes all allow-path classification.
 1. Plain libc without the guard.
 2. The same operation with the guard preloaded.
 
-The reported delta is the added classification time.
+The reported delta is the guarded-launch overhead. It is the end-to-end cost to
+start a guarded child. It covers the guard's classification and the child's
+load of the guard library. It is not classifier latency alone.
 
 ### Runner caveats
 
-The harness removes `LD_PRELOAD` before it starts each measured child. The guard
-stays loaded in the harness, so its hooks still run.
+The measured children keep `LD_PRELOAD`. The guard refuses a child exec that
+does not carry exactly the approved preload, `/usr/local/lib/libworkcell_exec_guard.so`.
+So each guarded sample also includes the child cost to load the shared library,
+as each guarded child in the runtime pays it.
 
-This method excludes the child cost to load the shared library. Each guarded
-child process also pays that cost.
+The results below predate this change. They exclude that load cost, so new
+captures report a larger delta.
 
 The scheduled workflow uses 5,000 measured samples, 500 warm-up samples, and two
 complete runs for each mode.
@@ -104,6 +108,8 @@ Run this benchmark only on Linux:
 ```sh
 (cd runtime/container/rust && \
   cargo build --release --locked --offline --lib)
+sudo install -m 0644 runtime/container/rust/target/release/libworkcell_exec_guard.so \
+  /usr/local/lib/libworkcell_exec_guard.so
 ./scripts/bench/run-exec-guard-bench.sh
 ```
 
