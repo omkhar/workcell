@@ -162,7 +162,8 @@ func matchIdentity(function string, call ast.Node) string {
 // TextMatchingFunctions returns the function, as Name or Type.Name, and the
 // identity of each strings or bytes Contains, Count, HasPrefix or Index call, or regexp
 // call, in one package's sources keyed by file name. An import alias, a dot
-// import or a function value such as contains := strings.Contains hides none.
+// import or a function value such as contains := strings.Contains hides none;
+// the value itself also counts where it is assigned, passed or returned.
 // It does not ask where the text came from, so it never misses a helper. A
 // call with only literal arguments, or on an error message, is skipped.
 // ponytail: this lists matches on decoded fields too, so the baseline is
@@ -253,16 +254,44 @@ func matchAliases(files []*ast.File, imports []map[string]string) map[string]boo
 	return aliases
 }
 
-// contentMatches returns the text match calls in node that can see content.
-func contentMatches(node ast.Node, imports map[string]string, aliases map[string]bool) []*ast.CallExpr {
-	var calls []*ast.CallExpr
+// contentMatches returns the text match calls in node that can see content,
+// and each match passed as a function value: an argument, an assigned or
+// returned value, or a literal element. A helper that calls its function
+// parameter then cannot hide the match its caller hands it.
+func contentMatches(node ast.Node, imports map[string]string, aliases map[string]bool) []ast.Node {
+	var matches []ast.Node
+	values := func(expressions ...ast.Expr) {
+		for _, value := range expressions {
+			if pair, ok := value.(*ast.KeyValueExpr); ok {
+				value = pair.Value
+			}
+			switch ast.Unparen(value).(type) {
+			case *ast.Ident, *ast.SelectorExpr:
+				if namesMatch(value, imports, aliases) {
+					matches = append(matches, value)
+				}
+			}
+		}
+	}
 	ast.Inspect(node, func(node ast.Node) bool {
-		if call, ok := node.(*ast.CallExpr); ok && !seesNoContent(call) && namesMatch(call.Fun, imports, aliases) {
-			calls = append(calls, call)
+		switch typed := node.(type) {
+		case *ast.CallExpr:
+			if !seesNoContent(typed) && namesMatch(typed.Fun, imports, aliases) {
+				matches = append(matches, typed)
+			}
+			values(typed.Args...)
+		case *ast.AssignStmt:
+			values(typed.Rhs...)
+		case *ast.ValueSpec:
+			values(typed.Values...)
+		case *ast.CompositeLit:
+			values(typed.Elts...)
+		case *ast.ReturnStmt:
+			values(typed.Results...)
 		}
 		return true
 	})
-	return calls
+	return matches
 }
 
 // namesMatch reports whether a callee or a function value names a text match:

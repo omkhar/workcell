@@ -153,30 +153,34 @@ func TestTextMatchingFunctions(t *testing.T) {
 		body string
 		want []string
 	}{
-		"read then contains":    {"func f() { b, _ := os.ReadFile(p); _ = bytes.Contains(b, x) }", []string{"f"}},
-		"read then has prefix":  {"func f() { s := readText(p); _ = strings.HasPrefix(s, x) }", []string{"f"}},
-		"read then index":       {"func f() { s := readRepoFile(p); _ = strings.Index(s, x) }", []string{"f"}},
-		"read then regexp":      {"func f() { s := readText(p); _ = regexp.MustCompile(x).MatchString(s) }", []string{"f", "f"}},
-		"one name per match":    {"func f() { _ = strings.Contains(a, x); _ = strings.HasPrefix(a, y) }", []string{"f", "f"}},
-		"aliased strings":       {"import str \"strings\"\nfunc f() { _ = str.Contains(a, x) }", []string{"f"}},
-		"aliased regexp":        {"import re \"regexp\"\nfunc f() { _ = re.MustCompile(x) }", []string{"f"}},
-		"dot import":            {"import . \"strings\"\nfunc f() { _ = Contains(a, x) }", []string{"f"}},
-		"read then compiled re": {"func f() { s := readText(p); _ = re.FindStringSubmatch(s) }", []string{"f"}},
-		"exec then contains":    {"func f() { o, _ := exec.Command(x).Output(); _ = bytes.Contains(o, y) }", []string{"f"}},
-		"match in a closure":    {"func f() { s := readText(p); g := func() bool { return strings.Contains(s, x) }; _ = g }", []string{"f"}},
-		"generic receiver":      {"func (c *box[T]) f() { s := readText(p); _ = strings.Contains(s, x) }", []string{"box.f"}},
-		"match before read":     {"func f() { _ = strings.Contains(a, x); _ = readText(p) }", []string{"f"}},
-		"read nested in match":  {"func f() bool { return strings.Contains(string(readRepoFile(p)), x) }", []string{"f"}},
-		"helper gets content":   {"func f(workflow string) error { if !strings.Contains(workflow, x) { return e }; return nil }", []string{"f"}},
-		"package-level matcher": {"var holds = func(text string) bool { return strings.HasPrefix(text, x) }", []string{"holds"}},
-		"literal pattern":       {"var re = regexp.MustCompile(`^a$`)\nfunc f() *regexp.Regexp { return regexp.MustCompile(\"b\") }", nil},
-		"error message":         {"func f() { _ = strings.Contains(err.Error(), x) }", nil},
-		"filepath match":        {"func f() { s := readText(p); _, _ = filepath.Match(s, x) }", nil},
-		"split is not a search": {"func f() { s := readText(p); _ = strings.Split(s, x) }", nil},
-		"text about the call":   {"func f() { _ = readText(p) // strings.Contains(s, x)\n}", nil},
-		"function value alias":  {"func f() { contains := strings.Contains; _ = contains(a, x) }", []string{"f"}},
-		"alias of an alias":     {"func f() { c := strings.Contains; var d = c; _ = d(a, x) }", []string{"f"}},
-		"method value alias":    {"var match = regexp.MustCompile(`x`).MatchString\nfunc f() { _ = match(s) }", []string{"f"}},
+		"read then contains":         {"func f() { b, _ := os.ReadFile(p); _ = bytes.Contains(b, x) }", []string{"f"}},
+		"read then has prefix":       {"func f() { s := readText(p); _ = strings.HasPrefix(s, x) }", []string{"f"}},
+		"read then index":            {"func f() { s := readRepoFile(p); _ = strings.Index(s, x) }", []string{"f"}},
+		"read then regexp":           {"func f() { s := readText(p); _ = regexp.MustCompile(x).MatchString(s) }", []string{"f", "f"}},
+		"one name per match":         {"func f() { _ = strings.Contains(a, x); _ = strings.HasPrefix(a, y) }", []string{"f", "f"}},
+		"aliased strings":            {"import str \"strings\"\nfunc f() { _ = str.Contains(a, x) }", []string{"f"}},
+		"aliased regexp":             {"import re \"regexp\"\nfunc f() { _ = re.MustCompile(x) }", []string{"f"}},
+		"dot import":                 {"import . \"strings\"\nfunc f() { _ = Contains(a, x) }", []string{"f"}},
+		"read then compiled re":      {"func f() { s := readText(p); _ = re.FindStringSubmatch(s) }", []string{"f"}},
+		"exec then contains":         {"func f() { o, _ := exec.Command(x).Output(); _ = bytes.Contains(o, y) }", []string{"f"}},
+		"match in a closure":         {"func f() { s := readText(p); g := func() bool { return strings.Contains(s, x) }; _ = g }", []string{"f"}},
+		"generic receiver":           {"func (c *box[T]) f() { s := readText(p); _ = strings.Contains(s, x) }", []string{"box.f"}},
+		"match before read":          {"func f() { _ = strings.Contains(a, x); _ = readText(p) }", []string{"f"}},
+		"read nested in match":       {"func f() bool { return strings.Contains(string(readRepoFile(p)), x) }", []string{"f"}},
+		"helper gets content":        {"func f(workflow string) error { if !strings.Contains(workflow, x) { return e }; return nil }", []string{"f"}},
+		"package-level matcher":      {"var holds = func(text string) bool { return strings.HasPrefix(text, x) }", []string{"holds"}},
+		"literal pattern":            {"var re = regexp.MustCompile(`^a$`)\nfunc f() *regexp.Regexp { return regexp.MustCompile(\"b\") }", nil},
+		"error message":              {"func f() { _ = strings.Contains(err.Error(), x) }", nil},
+		"filepath match":             {"func f() { s := readText(p); _, _ = filepath.Match(s, x) }", nil},
+		"split is not a search":      {"func f() { s := readText(p); _ = strings.Split(s, x) }", nil},
+		"text about the call":        {"func f() { _ = readText(p) // strings.Contains(s, x)\n}", nil},
+		"function value alias":       {"func f() { contains := strings.Contains; _ = contains(a, x) }", []string{"f", "f"}},
+		"alias of an alias":          {"func f() { c := strings.Contains; var d = c; _ = d(a, x) }", []string{"f", "f", "f"}},
+		"method value alias":         {"var match = regexp.MustCompile(`x`).MatchString\nfunc f() { _ = match(s) }", []string{"match", "f"}},
+		"matcher passed to a helper": {"func f() bool { return contains(text, x, strings.Contains) }", []string{"f"}},
+		"method value as argument":   {"func f() { apply(s, re.MatchString) }", []string{"f"}},
+		"matcher in a literal":       {"var matchers = []func(string, string) bool{strings.HasPrefix}", []string{"matchers"}},
+		"matcher returned":           {"func f() func(string, string) bool { return strings.Contains }", []string{"f"}},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -196,7 +200,7 @@ func TestTextMatchingFunctionsResolvesAnAliasFromAnotherFile(t *testing.T) {
 		"a.go": "package p\n\nimport \"strings\"\n\nvar has = strings.HasPrefix\n",
 		"b.go": "package p\n\nfunc f(s string) bool { return has(s, x) }\n",
 	})
-	if err != nil || strings.Join(got, ",") != "f" {
-		t.Fatalf("TextMatchingFunctions() = %v, %v, want [f]", got, err)
+	if err != nil || strings.Join(got, ",") != "has,f" {
+		t.Fatalf("TextMatchingFunctions() = %v, %v, want [has f]", got, err)
 	}
 }
