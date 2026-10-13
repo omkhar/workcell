@@ -203,7 +203,7 @@ else
       exit 2
     }
     base_rows="$(printf '%s\n' "${base_text}" | awk -F'\t' '!/^#/ { print $1 FS $2 FS $3 }' | sort)"
-    claim_unbased="$(comm -23 "${claim_base}" <(printf '%s\n' "${base_rows}"))"
+    claim_unbased="$(printf '%s\n' "${base_rows}" | comm -23 "${claim_base}" -)"
     while IFS= read -r row; do
       [[ -n "${row}" ]] || continue
       rule="${row#*$'\t'}"
