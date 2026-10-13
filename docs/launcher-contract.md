@@ -334,7 +334,8 @@ connections cannot fill the VM disk. The oldest lines rotate out.
 
 `stop_egress_proxy` saves the proxy deny lines to
 `<sessions-dir>/<session>.egress-deny.jsonl`, beside the session record.
-The save stages the lines in a private directory and publishes
+`session delete` removes the file with the record and keeps it under
+`--record-only`. The save stages the lines in a private directory and publishes
 them with the staged, fsynced, owner-only rename of
 `publish-session-capture-file`.
 
@@ -342,6 +343,13 @@ A failed save prints a warning and leaves the earlier file unchanged. Then
 `stop_egress_proxy` removes the sidecar and the network, also after a failed
 save. The launcher cleanup calls it, and the detached session monitor calls it
 after the agent exits.
+
+`stop_egress_proxy_for_session` runs the same cleanup for a session whose
+monitor is gone. It derives both names from the session ID and does nothing for
+a session without a proxy network. A failed network lookup fails the command.
+`session stop` calls it when the monitor is dead. `session delete` calls it
+before it plans the artifacts, and fails when the network is still there after
+the cleanup. `session delete --dry-run` only lists `egress_proxy`.
 
 ## Change Rule
 
