@@ -49,9 +49,10 @@ const (
 	// curve for the next ~5 years of npm metadata.
 	providerBumpMaxJSONBytes = 16 << 20 // 16 MiB
 	// providerBumpMaxNPMStreamBytes caps the bytes read from an npm packument.
-	// The packument is streamed, so memory stays small at any size; the full
-	// @openai/codex document passed 16 MiB in October 2026 and still grows.
-	providerBumpMaxNPMStreamBytes = 256 << 20 // 256 MiB
+	// The packument is streamed, but the token walk still holds each scalar
+	// literal whole, so this cap also bounds the largest literal held. The
+	// full @openai/codex document was 17.5 MB in October 2026 and still grows.
+	providerBumpMaxNPMStreamBytes = 64 << 20 // 64 MiB
 	copilotReleaseMaxPages        = 10
 )
 
@@ -1137,6 +1138,8 @@ func compareStableVersions(left, right stableVersion) int {
 // decodeNPMRegistryMetadata reads only dist-tags and time from an npm packument and skips every other value token by token, so the versions object is never held in memory.
 func decodeNPMRegistryMetadata(body io.Reader, metadata *npmRegistryMetadata) error {
 	dec := json.NewDecoder(body)
+	// UseNumber keeps skipped numbers such as 1e1000000 as text, not float64.
+	dec.UseNumber()
 	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
 		return fmt.Errorf("npm packument is not a JSON object: %v", err)
 	}

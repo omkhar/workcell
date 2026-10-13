@@ -2588,3 +2588,16 @@ func TestStableCandidatesFromRegistryStreamsLargePackuments(t *testing.T) {
 		t.Fatalf("candidates = %v, want [1.2.3]", candidates)
 	}
 }
+
+// TestDecodeNPMRegistryMetadataSkipsOutOfRangeNumbers proves a valid number
+// that overflows float64 in a skipped value does not fail the decode.
+func TestDecodeNPMRegistryMetadataSkipsOutOfRangeNumbers(t *testing.T) {
+	var metadata npmRegistryMetadata
+	body := `{"versions":{"1.2.3":{"size":1e1000000}},"dist-tags":{"latest":"1.2.3"},"time":{"1.2.3":"2026-01-02T00:00:00Z"}}`
+	if err := decodeNPMRegistryMetadata(strings.NewReader(body), &metadata); err != nil {
+		t.Fatalf("decodeNPMRegistryMetadata() error = %v", err)
+	}
+	if metadata.DistTags["latest"] != "1.2.3" || metadata.Time["1.2.3"] != "2026-01-02T00:00:00Z" {
+		t.Fatalf("metadata = %#v, want latest 1.2.3 with its time", metadata)
+	}
+}
