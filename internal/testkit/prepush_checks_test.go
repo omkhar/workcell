@@ -250,21 +250,7 @@ func TestFastPrePushRejectsDeletedNonMarkdownLinkTarget(t *testing.T) {
 func TestFastPrePushSkipsGoGatesWithoutGo(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
 	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
-	bin := filepath.Join(f.tmpDir, "nogo-bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, tool := range []string{"git", "mktemp", "rm", "dirname", "bash", "env", "grep", "sort", "xargs", "tr", "awk"} {
-		path, err := exec.LookPath(tool)
-		if err != nil {
-			t.Skipf("%s unavailable: %v", tool, err)
-		}
-		if err := os.Symlink(path, filepath.Join(bin, tool)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeExecFile(t, filepath.Join(bin, "codespell"), []byte("#!/bin/bash\nexit 0\n"), 0o755)
-	output, err := f.hook("PATH=" + bin)
+	output, err := f.hook("PATH=" + noGoPath(t, f))
 	if err != nil {
 		t.Fatalf("fast pre-push failed without Go: %v\n%s", err, output)
 	}
@@ -508,4 +494,38 @@ func stageDocLinksChecker(t *testing.T, f *prePushChecksFixture) string {
 	stub := filepath.Join(t.TempDir(), "citools")
 	writeExecFile(t, stub, []byte("#!/bin/sh\n"), 0o755)
 	return stub
+}
+
+// TestFastPrePushRunsTheRealLinkCheckWithoutGo runs the real link checker in
+// the hook without Go: the claim probe needs workcell-citools, so the checker
+// skips only that probe and still checks the links.
+func TestFastPrePushRunsTheRealLinkCheckWithoutGo(t *testing.T) {
+	f := newPrePushChecksFixture(t, "")
+	stageDocLinksChecker(t, f)
+	f.commitFile("doc.md", "A clean sentence.\n", fixtureSubject)
+	output, err := f.hook("PATH=" + noGoPath(t, f))
+	if err != nil || !strings.Contains(output, "doc claims skipped") {
+		t.Fatalf("fast pre-push without Go did not skip only the claim probe: %v\n%s", err, output)
+	}
+}
+
+// noGoPath returns a PATH that holds the tools the hook and the link checker
+// use, but no go, and a codespell stub.
+func noGoPath(t *testing.T, f *prePushChecksFixture) string {
+	t.Helper()
+	bin := filepath.Join(f.tmpDir, "nogo-bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"git", "mktemp", "rm", "dirname", "bash", "env", "grep", "sort", "xargs", "tr", "awk", "sed", "comm", "cut", "cat", "find", "head", "wc", "basename", "realpath", "uname"} {
+		path, err := exec.LookPath(tool)
+		if err != nil {
+			continue // the hook and checker fail on a missing tool they need, so the test still fails
+		}
+		if err := os.Symlink(path, filepath.Join(bin, tool)); err != nil && !os.IsExist(err) {
+			t.Fatal(err)
+		}
+	}
+	writeExecFile(t, filepath.Join(bin, "codespell"), []byte("#!/bin/bash\nexit 0\n"), 0o755)
+	return bin
 }

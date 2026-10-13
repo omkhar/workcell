@@ -127,6 +127,25 @@ while IFS= read -r doc; do
   fi
 done <<<"${docs_listing}"
 
+# report_and_exit fails on any noted issue, or prints the OK summary ending in
+# the phrase it is given.
+report_and_exit() {
+  if [[ "${failures}" -gt 0 ]]; then
+    echo "check-doc-links: FAILED with ${failures} issue(s)" >&2
+    exit 1
+  fi
+  echo "check-doc-links: OK (${#md_files[@]} markdown files; relative links, docs/ orphans, and $1)"
+  exit 0
+}
+
+# The pre-push hook sets DOC_CLAIMS_SKIP=1 when go is missing, because the
+# claim probe runs workcell-citools; CONTRIBUTING.md promises the hook works
+# without Go. CI and the gates always have Go, so they run the probe.
+if [[ "${DOC_CLAIMS_SKIP:-0}" == 1 ]]; then
+  echo "check-doc-links: go is missing; skipping the doc-claims probe." >&2
+  report_and_exit "doc claims skipped"
+fi
+
 # --- Doc claim enforcement check ----------------------------------------------
 # A code span naming scripts/..., internal/... or .github/workflows/... (a
 # leading ./ is dropped) must exist. Hits that exist today sit in
@@ -226,8 +245,4 @@ while IFS= read -r row; do
   note "stale doc-claims baseline row (fixed; delete it): ${row//$'\t'/ | }"
 done <<<"${claim_stale}"
 
-if [[ "${failures}" -gt 0 ]]; then
-  echo "check-doc-links: FAILED with ${failures} issue(s)" >&2
-  exit 1
-fi
-echo "check-doc-links: OK (${#md_files[@]} markdown files; relative links, docs/ orphans, and doc claims clean)"
+report_and_exit "doc claims clean"
