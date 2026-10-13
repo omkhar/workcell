@@ -115,6 +115,11 @@ func TestReviewedLibrarySourceIsNotABarrier(t *testing.T) {
 		"a source with arguments":          {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh" extra` + "\nbuildx_cmd build\n", 0},
 		"a pinned library at another root": {head + `source "${HOME}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
 		"eval still stops the reader":      {head + "eval true\nbuildx_cmd build\n", 0},
+		"an indexed ROOT_DIR first":        {"#!/bin/bash\nROOT_DIR[0]=/tmp/evil\n" + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"the canonical root after":         {"#!/bin/bash\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\n" + canonicalRootDir + "\nbuildx_cmd build\n", 0},
+		"the canonical root in a comment":  {"#!/bin/bash\n# " + canonicalRootDir + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a substituted ROOT_DIR after":     {head + `ROOT_DIR="$(echo /tmp/evil)"` + "\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
+		"a read of ROOT_DIR first":         {head + "read -r ROOT_DIR\n" + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nbuildx_cmd build\n", 0},
 		"a library forwarder that evals":   {head + `source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"` + "\nrun_workcell_docker_client_command eval x\nbuildx_cmd build\n", 0},
 	} {
 		if got := len(ShellInvocations(test.script, "buildx_cmd")); got != test.want {

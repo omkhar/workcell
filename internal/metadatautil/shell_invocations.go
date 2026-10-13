@@ -459,10 +459,12 @@ func ShellInvocations(script, commandName string) []Invocation {
 	helperCalls := map[string][]helperCall{}
 	graph := helperGraph{barrierFunctions, forwarders, helperCalls}
 	// prelude holds while only commands that cannot move ROOT_DIR have run
-	// (see preludeSafe), and fixedRoot when the script assigns ROOT_DIR once,
-	// the canonical way, in any spelling the text shows (=, := or +=).
-	// Together they let a source of a reviewed library pass.
-	prelude, fixedRoot := true, len(rootDirAssignment.FindAllString(script, -1)) == 1 && strings.Contains(script, canonicalRootDir+"\n")
+	// (see preludeSafe). fixedRoot holds when the first command, in execution
+	// order, that names ROOT_DIR is the canonical assignment on a line of its
+	// own and no command since has named it, as ROOT_DIR[0]=… or read
+	// ROOT_DIR would move it. Together they let a source of a reviewed
+	// library pass.
+	prelude, fixedRoot, rootNamed := true, false, false
 	// rewritten lists the functions whose body rewrites its positional
 	// parameters with set or shift, so what "$@" runs is not what the caller
 	// passed and the forwarder is a barrier instead.
@@ -625,6 +627,10 @@ func ShellInvocations(script, commandName string) []Invocation {
 			}
 			continue
 		}
+		if namesRoot(logical, commands) {
+			fixedRoot = !rootNamed && control == 0 && depth == 0 && strings.TrimSpace(logical) == canonicalRootDir
+			rootNamed = true
+		}
 		nested := control > 0
 		for _, each := range commands {
 			args := each.args
@@ -635,7 +641,8 @@ func ShellInvocations(script, commandName string) []Invocation {
 			outside := groupDepth
 			groupDepth += commandBrace(each)
 			names := commandWords(spelled(args))
-			if library, reviewed := reviewedLibrarySource(names); reviewed && prelude && fixedRoot {
+			library, reviewed := reviewedLibrarySource(names)
+			if reviewed && prelude && fixedRoot {
 				for _, name := range library.forwarders {
 					forwarders[name] = true
 				}
@@ -914,8 +921,6 @@ var reviewedShellLibraries = map[string]reviewedLibrary{
 // canonicalRootDir is the one ROOT_DIR assignment that pins a script's root.
 const canonicalRootDir = `ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"`
 
-var rootDirAssignment = regexp.MustCompile(`ROOT_DIR(?::?=|\+=)`)
-
 // preludeSafe reports whether a command before a reviewed source leaves
 // ROOT_DIR as the script set it: an assignment, set, trap (eval-like DEBUG
 // traps are barriers already), exec, a test, a closing word, or a declaration
@@ -936,6 +941,19 @@ func preludeSafe(names []string) bool {
 		})
 	}
 	return false
+}
+
+// namesRoot reports whether a logical line names ROOT_DIR other than as one
+// reviewed library source. The text is read, not the words, because the
+// reader keeps no word for an assignment such as ROOT_DIR="$(…)", and
+// ROOT_DIR[0]=…, read ROOT_DIR or a comment all count.
+func namesRoot(logical string, commands []command) bool {
+	if len(commands) == 1 {
+		if _, reviewed := reviewedLibrarySource(commandWords(spelled(commands[0].args))); reviewed {
+			return false
+		}
+	}
+	return strings.Contains(logical, "ROOT_DIR")
 }
 
 var reviewedLibraryPath = regexp.MustCompile(`^\$\{?ROOT_DIR\}?/scripts/lib/([A-Za-z0-9_.-]+\.sh)$`)
