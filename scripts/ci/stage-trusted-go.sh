@@ -24,12 +24,16 @@ goroot="$(GOTOOLCHAIN="${toolchain}" go env GOROOT)"
   echo "The fetched toolchain at ${goroot} is not ${toolchain}." >&2
   exit 1
 }
-# Build and check the tree in a root-only directory beside the target, then
-# rename it into place, so a partial copy is never found at the target.
+# Build and check the tree in a directory beside the target that only root
+# can enter, then rename it into place, so a partial copy is never found at
+# the target. cp -a keeps the runner's ownership, so the directory opens to
+# the runner (mktemp makes it 0700) only after the tree is root's and
+# read-only, for the version check.
 stage="$(sudo mktemp -d "${target%/*}/.go-stage.XXXXXX")"
 sudo cp -a "${goroot}" "${stage}/go"
 sudo chown -R root:root "${stage}/go"
 sudo chmod -R go-w "${stage}/go"
+sudo chmod 0755 "${stage}"
 [[ "$(GOTOOLCHAIN=local "${stage}/go/bin/go" env GOVERSION)" == "${toolchain}" ]]
 sudo sync
 sudo mv -T "${stage}/go" "${target}"
