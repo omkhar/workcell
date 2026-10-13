@@ -55,6 +55,8 @@ func TestCheckWorkflowRefs(t *testing.T) {
 		{"baseline row needs a reason", runStep("true"), "gh-api-unbounded\tw.yml\tj\ts\t\n", "want kind, file, job, step, reason"},
 		{"gh api pagination disabled", runStep("gh api --paginate=false repos/x"), "", "gh-api-unbounded"},
 		{"gh api pagination overridden", runStep("gh api --paginate repos/x --paginate=false"), "", "gh-api-unbounded"},
+		{"gh api behind sudo -k", runStep("sudo -k gh api repos/o/r/issues"), "", "gh-api-unbounded"},
+		{"gh api behind sudo --reset-timestamp", runStep("sudo --reset-timestamp gh api repos/o/r/issues"), "", "gh-api-unbounded"},
 		{"gh api behind --hostname", runStep("gh --hostname github.com api repos/x"), "", "gh-api-unbounded"},
 		{"gh api behind a short global flag", runStep("gh -X GET api repos/x"), "", "gh-api-unbounded"},
 		{"called function body is read", runStep("f() {\n  gh api repos/x\n}\ntrap f EXIT"), "", "gh-api-unbounded"},

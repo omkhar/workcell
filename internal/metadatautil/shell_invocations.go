@@ -2036,8 +2036,8 @@ func flattenedCommands(text string) [][]string {
 
 // sudoRunsNothing reports a sudo mode that runs no command, as sudo -e or -l.
 func sudoRunsNothing(option string) bool {
-	return !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "elvVkK") ||
-		slices.Contains([]string{"--edit", "--list", "--validate", "--version", "--help", "--remove-timestamp", "--reset-timestamp"}, option)
+	return !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "elvVK") ||
+		slices.Contains([]string{"--edit", "--list", "--validate", "--version", "--help", "--remove-timestamp"}, option)
 }
 
 // findExecBodies returns each command that find runs for a match: the words
