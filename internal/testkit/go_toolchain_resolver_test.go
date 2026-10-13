@@ -20,7 +20,7 @@ func TestResolveExactToolchainGoBinReturnsTheSwitchedGo(t *testing.T) {
 	for path, body := range map[string]string{
 		// The bootstrap go is older; only the switch reaches go1.27.1.
 		filepath.Join(dir, "bootstrap", "bin", "go"): `case "${GOTOOLCHAIN}:$2" in
-  go1.27.1:GOROOT) echo "` + switched + `" ;;
+  go1.27.1:GOROOT) printf '%s\n' "${FAKE_SWITCHED}" ;;
   go1.27.1:GOVERSION) echo go1.27.1 ;;
   *) echo go1.26.0 ;;
 esac`,
@@ -34,18 +34,23 @@ esac`,
 		}
 	}
 	// accept_go_bin maps the fixed /usr/local/go candidate to the bootstrap
-	// go and accepts any other existing go as is.
+	// go and accepts any other existing go as is. Paths reach the script
+	// through the environment, since a hostile TMPDIR may hold $ or `.
 	code, output := runBashProbe(t, `set -euo pipefail
-source "`+filepath.Join(repoRoot(t), "scripts", "lib", "go-run-env.sh")+`"
+source "${FAKE_LIB}"
 accept_go_bin() {
   case "$1" in
-    /usr/local/go/bin/go) echo "`+filepath.Join(dir, "bootstrap", "bin", "go")+`" ;;
-    "`+dir+`"/*) echo "$1" ;;
+    /usr/local/go/bin/go) printf '%s\n' "${FAKE_DIR}/bootstrap/bin/go" ;;
+    "${FAKE_DIR}"/*) printf '%s\n' "$1" ;;
     *) return 1 ;;
   esac
 }
-resolve_exact_toolchain_go_bin "`+dir+`"
-`, nil)
+resolve_exact_toolchain_go_bin "${FAKE_DIR}"
+`, map[string]string{
+		"FAKE_DIR":      dir,
+		"FAKE_LIB":      filepath.Join(repoRoot(t), "scripts", "lib", "go-run-env.sh"),
+		"FAKE_SWITCHED": switched,
+	})
 	if want := filepath.Join(switched, "bin", "go"); code != 0 || strings.TrimSpace(output) != want {
 		t.Fatalf("resolve_exact_toolchain_go_bin: exit=%d output=%q, want %q", code, output, want)
 	}
