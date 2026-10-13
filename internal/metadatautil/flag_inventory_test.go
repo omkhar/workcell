@@ -212,19 +212,28 @@ func TestWriteFlagFixtureRefusesSymlinkedParent(t *testing.T) {
 	root := writeFlagInventoryRepo(t, "")
 	help := filepath.Join(root, "help.txt")
 	mustWriteText(t, help, "Commands:\n  exec  Run\n  help  Print help\n\nOptions:\n  --model <M>\n")
-	if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
-		t.Fatalf("WriteFlagFixture() = %v", err)
+	flags := filepath.Dir(FlagFixturePath(root, "demo"))
+	// A missing fixture directory is created, and a second write replaces the file.
+	if err := os.RemoveAll(flags); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := WriteFlagFixture(root, "demo", []string{help}); err != nil {
+			t.Fatalf("WriteFlagFixture() = %v", err)
+		}
 	}
 	info, err := os.Stat(FlagFixturePath(root, "demo"))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("fixture stat = %v; want mode 0600", err)
+	}
+	if entries, _ := os.ReadDir(flags); len(entries) != 1 {
+		t.Fatalf("staged sibling left behind: %v", entries)
 	}
 	if err := CompareFlagFixture(root, "demo", []string{help}); err != nil {
 		t.Fatalf("CompareFlagFixture() after write = %v", err)
 	}
 	// An untrusted checkout can point the fixture directory outside itself.
 	outside := t.TempDir()
-	flags := filepath.Dir(FlagFixturePath(root, "demo"))
 	if err := os.RemoveAll(flags); err != nil {
 		t.Fatal(err)
 	}

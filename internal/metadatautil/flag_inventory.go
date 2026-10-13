@@ -181,10 +181,20 @@ func RenderFlagFixtureFromHelp(root, id string, helpPaths []string) ([]byte, err
 }
 
 // WriteFlagFixture renders adapter id's fixture and replaces it through a
-// no-follow parent, so a symlinked directory cannot redirect the write.
+// no-follow parent, so a symlinked directory cannot redirect the write. It
+// creates and syncs a missing fixture directory, as the old mkdir -p did.
 func WriteFlagFixture(root, id string, helpPaths []string) error {
 	fixture, err := RenderFlagFixtureFromHelp(root, id, helpPaths)
 	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(FlagFixturePath(root, id))
+	grandparent, _, err := rootio.OpenParentDirectoryNoFollow(dir)
+	if err != nil {
+		return err
+	}
+	defer grandparent.Close()
+	if err := rootio.MkdirAllSyncedAt(grandparent, filepath.Base(dir), 0o755); err != nil {
 		return err
 	}
 	parent, path, err := rootio.OpenParentDirectoryNoFollow(FlagFixturePath(root, id))
