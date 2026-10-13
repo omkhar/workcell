@@ -192,9 +192,13 @@ resolve_exact_toolchain_go_bin() {
     # this candidate happens to be, through the checksum-verified toolchain
     # switch every other lane uses. Callers then build with GOTOOLCHAIN=local,
     # so hand on the switched toolchain's own go, under the same storage rule.
-    goroot="$(GOTOOLCHAIN="${expected_toolchain}" "${accepted}" env GOROOT 2>/dev/null)" || continue
+    if ! goroot="$(GOTOOLCHAIN="${expected_toolchain}" "${accepted}" env GOROOT 2>/dev/null)"; then
+      continue
+    fi
     switched="$(accept_go_bin "${goroot}/bin/go" "${repo_root}" 1)" || continue
-    actual_toolchain="$(GOTOOLCHAIN=local "${switched}" env GOVERSION 2>/dev/null)" || continue
+    if ! actual_toolchain="$(GOTOOLCHAIN=local "${switched}" env GOVERSION 2>/dev/null)"; then
+      continue
+    fi
     if [[ "${actual_toolchain}" == "${expected_toolchain}" ]]; then
       printf '%s\n' "${switched}"
       return 0

@@ -19,11 +19,22 @@ if [[ -e "${target}" ]]; then
   echo "${target} already exists; refusing to replace it." >&2
   exit 1
 fi
-goroot="$(GOTOOLCHAIN="${toolchain}" go env GOROOT)"
-[[ "$(GOTOOLCHAIN=local "${goroot}/bin/go" env GOVERSION)" == "${toolchain}" ]] || {
-  echo "The fetched toolchain at ${goroot} is not ${toolchain}." >&2
-  exit 1
+# require_toolchain GO ends the script unless GO runs and reports the
+# go.mod toolchain.
+require_toolchain() {
+  local version=""
+  if ! version="$(GOTOOLCHAIN=local "$1" env GOVERSION)"; then
+    exit 1
+  fi
+  if [[ "${version}" != "${toolchain}" ]]; then
+    echo "The toolchain at $1 is not ${toolchain}." >&2
+    exit 1
+  fi
 }
+if ! goroot="$(GOTOOLCHAIN="${toolchain}" go env GOROOT)"; then
+  exit 1
+fi
+require_toolchain "${goroot}/bin/go"
 # Build and check the tree in a directory beside the target that only root
 # can enter, then rename it into place, so a partial copy is never found at
 # the target. cp -a keeps the runner's ownership, so the directory opens to
@@ -34,10 +45,10 @@ sudo cp -a "${goroot}" "${stage}/go"
 sudo chown -R root:root "${stage}/go"
 sudo chmod -R go-w "${stage}/go"
 sudo chmod 0755 "${stage}"
-[[ "$(GOTOOLCHAIN=local "${stage}/go/bin/go" env GOVERSION)" == "${toolchain}" ]]
+require_toolchain "${stage}/go/bin/go"
 sudo sync
 sudo mv -T "${stage}/go" "${target}"
 sudo rmdir "${stage}"
 sudo sync
-[[ "$(GOTOOLCHAIN=local "${target}/bin/go" env GOVERSION)" == "${toolchain}" ]]
+require_toolchain "${target}/bin/go"
 echo "Staged ${toolchain} at ${target}."
