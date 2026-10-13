@@ -73,36 +73,6 @@ resolve_trusted_tool() {
   return 1
 }
 
-resolve_trusted_go_bin() {
-  local expected_toolchain=""
-  local actual_toolchain=""
-  local toolchain_arch=""
-  local candidate=""
-  expected_toolchain="$(/usr/bin/awk '$1 == "toolchain" { print $2; exit }' "${ROOT_DIR}/go.mod")"
-  [[ "${expected_toolchain}" =~ ^go[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-  case "$(/usr/bin/uname -m)" in
-    arm64 | aarch64) toolchain_arch="arm64" ;;
-    x86_64 | amd64) toolchain_arch="x64" ;;
-    *) return 1 ;;
-  esac
-  for candidate in \
-    "/opt/hostedtoolcache/go/${expected_toolchain#go}/${toolchain_arch}/bin/go" \
-    /opt/homebrew/bin/go /usr/local/go/bin/go /usr/local/bin/go /usr/bin/go; do
-    [[ -x "${candidate}" ]] || continue
-    # Probe the toolchain the build will actually run under, not the version
-    # this candidate happens to be: hosted runners cache only older Go
-    # releases, so the pinned toolchain is reached the way every other lane
-    # reaches it, through the checksum-verified toolchain switch driven from
-    # a binary on a trusted path.
-    actual_toolchain="$(GOTOOLCHAIN="${expected_toolchain}" "${candidate}" env GOVERSION 2>/dev/null)" || continue
-    if [[ "${actual_toolchain}" == "${expected_toolchain}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-  done
-  return 1
-}
-
 readonly GITHUB_API_VERSION="2026-03-10"
 github_api() {
   if [[ -n "${AUDIT_TOKEN}" ]]; then
@@ -120,7 +90,7 @@ github_repo_view() {
   "${GH_BIN}" repo view --json nameWithOwner --jq .nameWithOwner
 }
 
-GO_BIN="$(resolve_trusted_go_bin)" || {
+GO_BIN="$(resolve_exact_toolchain_go_bin "${ROOT_DIR}")" || {
   echo "The exact Go toolchain from go.mod is unavailable at a trusted path." >&2
   exit 1
 }

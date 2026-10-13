@@ -42,13 +42,9 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	for _, component := range components {
-		nextFD, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		_ = unix.Close(fd)
-		if openErr != nil {
-			return nil, "", openErr
-		}
-		fd = nextFD
+	fd, err = openDirectoryChain(fd, components)
+	if err != nil {
+		return nil, "", err
 	}
 	parentFile := os.NewFile(uintptr(fd), parent)
 	if parentFile == nil {
@@ -56,6 +52,48 @@ func OpenParentDirectoryNoFollow(path string) (*os.File, string, error) {
 		return nil, "", fmt.Errorf("open parent directory: %s", parent)
 	}
 	return parentFile, cleaned, nil
+}
+
+// OpenDirectoryAtNoFollow opens the directory at relative under parent. Each
+// component is opened relative to the previous descriptor with O_NOFOLLOW, so
+// a symlink anywhere on the path is refused even when its target stays under
+// parent. The caller closes the directory.
+func OpenDirectoryAtNoFollow(parent *os.File, relative string) (*os.File, error) {
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return nil, err
+	}
+	// F_DUPFD_CLOEXEC rather than dup, for the reason MkdirAllSyncedAt gives.
+	fd, err := unix.FcntlInt(parent.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	fd, err = openDirectoryChain(fd, components)
+	if err != nil {
+		return nil, err
+	}
+	name := filepath.Join(parent.Name(), filepath.Join(components...))
+	file := os.NewFile(uintptr(fd), name)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("open directory: %s", name)
+	}
+	return file, nil
+}
+
+// openDirectoryChain opens each component below fd as a directory without
+// following a symlink. It always consumes fd: it returns the last descriptor,
+// or closes every descriptor it holds and returns the error.
+func openDirectoryChain(fd int, components []string) (int, error) {
+	for _, component := range components {
+		nextFD, err := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		_ = unix.Close(fd)
+		if err != nil {
+			return -1, err
+		}
+		fd = nextFD
+	}
+	return fd, nil
 }
 
 // ReadFileNoFollow reads one regular file through a descriptor-relative,
@@ -180,6 +218,16 @@ func RemoveAllAtNoFollow(parent *os.File, name string) error {
 
 // removeAllAt removes one name. An observed name came from a directory read, so
 // its disappearance means a rename outside the tree and fails the removal.
+//
+// Residual risk, accepted: a subdirectory is opened by name under its parent
+// descriptor and then emptied through that descriptor, and POSIX cannot pin a
+// directory against a rename, so a process that can write the tree could move
+// an opened subdirectory elsewhere before its contents are removed; the move
+// is detected only when the emptied name is checked before its unlink. The
+// trees this removes are owned by the certifier uid in a directory no other
+// uid can write, so that process is the same uid or root, both of which
+// already control the certifier; a hostile same-uid process is outside the
+// threat model, as recorded for scripts/lib/owned-root.sh.
 func removeAllAt(dirFD int, name string, observed bool) error {
 	unlinkErr := unix.Unlinkat(dirFD, name, 0)
 	if unlinkErr == nil {
@@ -199,6 +247,14 @@ func removeAllAt(dirFD int, name string, observed bool) error {
 			return fmt.Errorf("entry vanished during removal: %s", name)
 		}
 		return nil
+	}
+	if errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) {
+		// An unreadable directory cannot be emptied, but an empty one is still
+		// removable through its parent; a non-empty one fails closed here.
+		if rmErr := unix.Unlinkat(dirFD, name, unix.AT_REMOVEDIR); rmErr == nil {
+			return nil
+		}
+		return err
 	}
 	if err != nil {
 		return unlinkErr

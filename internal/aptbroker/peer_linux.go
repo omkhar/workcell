@@ -17,7 +17,7 @@ import (
 func validateServerSupport() error { return nil }
 
 func peerUID(connection *net.UnixConn) (uint32, error) {
-	uid, err := socketPeerUID(connection)
+	uid, err := SocketPeerUID(connection)
 	if err != nil {
 		return 0, err
 	}
@@ -27,7 +27,8 @@ func peerUID(connection *net.UnixConn) (uint32, error) {
 	return uid, nil
 }
 
-func socketPeerUID(connection *net.UnixConn) (uint32, error) {
+// SocketPeerUID returns the uid of the process on the other end of connection.
+func SocketPeerUID(connection *net.UnixConn) (uint32, error) {
 	raw, err := connection.SyscallConn()
 	if err != nil {
 		return 0, err

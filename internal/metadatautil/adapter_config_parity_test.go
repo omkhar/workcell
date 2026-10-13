@@ -29,6 +29,18 @@ func TestCodexAdapterConfigParity(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
 	base := loadTOMLDocument(t, filepath.Join(root, "adapters", "codex", ".codex", "config.toml"))
 	managed := loadTOMLDocument(t, filepath.Join(root, "adapters", "codex", "managed_config.toml"))
+	requirements := loadTOMLDocument(t, filepath.Join(root, "adapters", "codex", "requirements.toml"))
+
+	// requirements.toml is the fourth Codex file: its feature pins and web
+	// search allowance must agree with both config layers.
+	for name, document := range map[string]map[string]any{"base": base, "managed": managed} {
+		if !reflect.DeepEqual(document["features"], requirements["features"]) {
+			t.Errorf("requirements.toml and the %s config disagree on features:\n%s: %#v\nrequirements: %#v", name, name, document["features"], requirements["features"])
+		}
+		if !reflect.DeepEqual(requirements["allowed_web_search_modes"], []any{document["web_search"]}) {
+			t.Errorf("requirements.toml allowed_web_search_modes %#v must equal the %s web_search %#v", requirements["allowed_web_search_modes"], name, document["web_search"])
+		}
+	}
 
 	// Every key the managed baseline declares must match the repo-local base
 	// config, so the local and managed deployments do not drift.  The base

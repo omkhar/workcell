@@ -48,6 +48,7 @@ func newGitHooksFixture(t *testing.T) *gitHooksFixture {
 	for _, relative := range []string{
 		filepath.Join(".githooks", "commit-msg"),
 		filepath.Join(".githooks", "pre-push"),
+		filepath.Join("scripts", "githooks", "pre-push"),
 	} {
 		source, err := os.ReadFile(filepath.Join(repo, relative))
 		if err != nil {
@@ -75,6 +76,8 @@ func (f *gitHooksFixture) env() []string {
 		"TMPDIR=" + f.tmpDir,
 		"LC_ALL=C",
 		"GIT_CONFIG_NOSYSTEM=1",
+		// The signature tests do not stage the repo gates the fast hook runs.
+		"WORKCELL_SKIP_PREPUSH_CHECKS=1",
 	}
 }
 

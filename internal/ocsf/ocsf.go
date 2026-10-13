@@ -50,8 +50,8 @@ const OCSFSchemaVersion = "1.3.0"
 // "3": the session-summary event gained the session.parent_session_id attribute.
 //
 // "4": the launch event gained the audit.vm_cpu, audit.vm_memory_gib,
-// audit.vm_disk_gib, audit.container_cpu, and audit.container_memory
-// attributes, and the session_fork event became a recognized lifecycle event
+// audit.vm_disk_gib, audit.container_cpu, audit.container_memory,
+// audit.provider_arg_count, and audit.workspace_head attributes, and the session_fork event became a recognized lifecycle event
 // with audit.snapshot_id, audit.parent, and audit.children. The
 // session_snapshot record gained audit.snapshot_workspace and
 // audit.snapshot_head.
