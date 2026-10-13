@@ -7,10 +7,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
@@ -79,6 +81,13 @@ type Proxy struct {
 	allow  *Allowlist
 	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial   func(ctx context.Context, addr netip.AddrPort) (net.Conn, error)
+
+	// TLS termination; set by Terminate. upstreamRoots nil means system roots.
+	terminate     map[string][]TerminateRule
+	ca            *SessionCA
+	broker        Broker
+	transport     *http.Transport
+	upstreamRoots *x509.CertPool
 
 	slots chan struct{} // one token per live connection
 	shed  chan uint16   // ports of shed connections awaiting a deny line
@@ -153,6 +162,10 @@ func (p *Proxy) handle(client net.Conn, port uint16) {
 	host, replay, reason := p.route(client, port)
 	if reason != "" {
 		p.deny(host, port, reason)
+		return
+	}
+	if _, ok := p.terminate[host]; ok && port == tlsPort {
+		p.serveTerminated(client, host, replay)
 		return
 	}
 	upstream, reason := p.connect(host, port)
