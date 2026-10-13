@@ -75,7 +75,7 @@ func ValidateContainerSmokeFlagInventory(script string) error {
 	// word the reader is asked for. ponytail: fold into PR 803's shared rule.
 	names := []string{"buildx_cmd"}
 	for line := range strings.Lines(strings.ReplaceAll(script, "\\\n", "")) {
-		words, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
+		words, _, _, _, _, _ := shellWords(strings.TrimSuffix(line, "\n"), nil)
 		for _, each := range splitCommands(words) {
 			args := texts(each.args)
 			if run := assignmentRun(args); run > 0 && run < len(args) && args[run] == "buildx_cmd" {
