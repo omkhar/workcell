@@ -73,3 +73,46 @@ func TestScanHardenedGoSourcesRefusesASwappedDirectory(t *testing.T) {
 		t.Fatal("expected a directory swapped for a symlink to be refused")
 	}
 }
+
+// The walk must classify each entry through the open directory descriptor. A
+// path lookup after the directory is renamed and its path is swapped for a
+// symlink would see the decoy's regular file "sub" and skip the real child
+// directory, so its sources would evade the scan.
+func TestWalkHardenedGoSourcesClassifiesThroughTheOpenDescriptor(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkg", "sub"), 0o755); err != nil {
+		t.Fatalf("create the fixture directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "sub", "s.go"), []byte("package sub\n"), 0o600); err != nil {
+		t.Fatalf("write the fixture: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "decoy"), 0o755); err != nil {
+		t.Fatalf("create the decoy: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "decoy", "sub"), nil, 0o600); err != nil {
+		t.Fatalf("write the decoy: %v", err)
+	}
+	opened, err := os.Open(filepath.Join(dir, "pkg"))
+	if err != nil {
+		t.Fatalf("open the fixture: %v", err)
+	}
+	defer opened.Close()
+	if err := os.Rename(filepath.Join(dir, "pkg"), filepath.Join(dir, "pkg-real")); err != nil {
+		t.Fatalf("rename the opened directory: %v", err)
+	}
+	if err := os.Symlink("decoy", filepath.Join(dir, "pkg")); err != nil {
+		t.Fatalf("swap the path for a symlink: %v", err)
+	}
+	var visited []string
+	err = walkHardenedGoSources(opened, "pkg", func(rel string, _ []byte) error {
+		visited = append(visited, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(visited) != 1 || visited[0] != "pkg/sub/s.go" {
+		t.Fatalf("expected the original child source to be scanned, found %v", visited)
+	}
+}

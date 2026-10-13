@@ -8,7 +8,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/omkhar/workcell/internal/rootio"
+	"golang.org/x/sys/unix"
 )
 
 // CheckHardenedFS rejects a raw os file call in a trust-boundary package.
@@ -370,24 +370,32 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int
 }
 
 // walkHardenedGoSources hands visit each non-test Go source below dir, in
-// name order, skipping testdata. Each child directory is opened relative to
-// dir without following a symlink, and each source is read relative to dir
-// with rootio's no-follow leaf read, so no name is resolved twice. A symlink
-// entry fails the walk whatever its name: skipping one would hide a symlinked
-// package directory, whose sources Go still builds through the link.
+// name order, skipping testdata. Each entry is classified by fstatat on dir's
+// descriptor without following a symlink. The type that ReadDir reports is not
+// trusted: on a filesystem that returns DT_UNKNOWN, such as NFS, ReadDir
+// resolves it by path, and a swapped path would classify a decoy. Each child
+// directory is opened relative to dir without following a symlink, and each
+// source is read relative to dir with rootio's no-follow leaf read, so no name
+// is resolved twice. A symlink entry fails the walk whatever its name:
+// skipping one would hide a symlinked package directory, whose sources Go
+// still builds through the link.
 func walkHardenedGoSources(dir *os.File, rel string, visit func(rel string, content []byte) error) error {
-	entries, err := dir.ReadDir(-1)
+	names, err := dir.Readdirnames(-1)
 	if err != nil {
 		return err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	for _, entry := range entries {
-		base := entry.Name()
+	sort.Strings(names)
+	for _, base := range names {
 		name := rel + "/" + base
-		if entry.Type()&fs.ModeSymlink != 0 {
+		var info unix.Stat_t
+		if err := unix.Fstatat(int(dir.Fd()), base, &info, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return fmt.Errorf("stat %s: %w", name, err)
+		}
+		kind := info.Mode & unix.S_IFMT
+		if kind == unix.S_IFLNK {
 			return fmt.Errorf("%s is a symlink; the hardened filesystem rule cannot scan behind it", name)
 		}
-		if entry.IsDir() {
+		if kind == unix.S_IFDIR {
 			if base == "testdata" {
 				continue
 			}
