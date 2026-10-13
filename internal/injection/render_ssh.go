@@ -197,7 +197,9 @@ func parseSSHDirective(line string) (string, string, bool) {
 		remainder = strings.TrimPrefix(strings.TrimLeftFunc(stripped[idx:], unicode.IsSpace), "=")
 	}
 	directive = strings.ToLower(strings.ReplaceAll(directive, "\"", ""))
-	if directive == "" {
+	// Removing quotes can join invalid bytes into a whitespace rune, as in
+	// "\xc2\"\xa0"; no ssh keyword holds whitespace, so that line is not one.
+	if directive == "" || strings.IndexFunc(directive, unicode.IsSpace) >= 0 {
 		return "", "", false
 	}
 	return directive, strings.Join(strings.Fields(remainder), " "), true

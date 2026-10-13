@@ -5404,10 +5404,20 @@ cleanup_workcell_cache_root() {
   local cache_root=""
   local stale_minutes="${2:-}"
 
+  local recent=""
+
   cache_root="$1"
   [[ -d "${cache_root}" ]] || return 0
   stale_minutes="$(workcell_nonnegative_integer_or_default "${stale_minutes:-${WORKCELL_GC_STALE_MINUTES:-60}}" 60)"
-  workcell_path_is_stale_minutes "${cache_root}" "${stale_minutes}" || return 0
+  # A cache root is stale only when nothing under it changed within the
+  # threshold, so a running Workcell that writes the cache keeps it. The root's
+  # own mtime moves only when a direct entry changes. A failed walk keeps it.
+  if [[ "${stale_minutes}" -gt 0 ]]; then
+    if ! recent="$(find "${cache_root}" -mmin "-${stale_minutes}" -print -quit 2>/dev/null)"; then
+      return 0
+    fi
+    [[ -z "${recent}" ]] || return 0
+  fi
   make_workcell_tree_user_writable "${cache_root}"
   rm -rf "${cache_root}"
 }

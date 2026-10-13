@@ -4,7 +4,8 @@
 # network calls and no dependencies beyond git, awk, sed, and grep so it can run
 # host-side in the docs CI lane. Kept bash-3.2 compatible (no mapfile, no
 # associative arrays) because the host baseline is macOS /bin/bash 3.2; see
-# scripts/lib/shellproto.sh.
+# scripts/lib/shellproto.sh. An optional argument names the checkout to check;
+# the default is this script's own repository.
 #
 # Scope (intentional limits, documented so they read as choices, not gaps):
 # - Only space-free inline links of the form [text](target) are checked;
@@ -18,7 +19,7 @@
 #   links. Target existence is the robust, high-value core.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ROOT_DIR="$(cd "${1:-$(dirname "${BASH_SOURCE[0]}")/..}" && pwd -P)"
 cd "${ROOT_DIR}"
 
 bt='`'

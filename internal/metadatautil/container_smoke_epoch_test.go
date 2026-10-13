@@ -40,3 +40,38 @@ func TestValidateContainerSmokeBuildEpochRejectsEvasions(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateContainerSmokeFlagInventoryRejectsEvasions(t *testing.T) {
+	script, _ := os.ReadFile(filepath.Join("..", "..", "scripts", "container-smoke.sh")) // an unreadable script fails below
+	for src, pass := range map[string]bool{string(script): true, strings.Replace(string(script), "-t \"${IMAGE_TAG}\"", "--label \"k= -t ${IMAGE_TAG} decoy\" -t \"${IMAGE_TAG}-other\"", 1): false, strings.Replace(string(script), "  --load \\\n", "  --load --load=false \\\n", 1): false, strings.Replace(string(script), "runtime/container/Dockerfile\" \\\n", "runtime/container/Dockerfile\" --file /tmp/decoy.Dockerfile \\\n", 1): false, strings.Replace(string(script), "\n# Fail on a CLI flag", "\nSOURCE_DATE_EPOCH=\"${BUILD_SOURCE_DATE_EPOCH}\" buildx_cmd build --load -t \"${IMAGE_TAG}\" -f /tmp/decoy.Dockerfile \"${ROOT_DIR}\"\n# Fail on a CLI flag", 1): false} {
+		if err := metadatautil.ValidateContainerSmokeFlagInventory(src); (err == nil) != pass {
+			t.Fatalf("validator = %v, want pass %v", err, pass)
+		}
+	}
+	// A later build that retags the image under any tag spelling decides it.
+	retag := func(build string) string {
+		return strings.Replace(string(script), "\n# Fail on a CLI flag", "\n"+build+"\n# Fail on a CLI flag", 1)
+	}
+	for src, pass := range map[string]bool{
+		strings.Replace(string(script), `-t "${IMAGE_TAG}"`, `--tag="${IMAGE_TAG}"`, 1):        true,
+		retag(`buildx_cmd build --load -t "${IMAGE_TAG}" -f /tmp/o .`):                         false,
+		retag(`buildx_cmd build --load --tag $IMAGE_TAG -f /tmp/o .`):                          false,
+		retag(`buildx_cmd build --load -t"$IMAGE_TAG" -f /tmp/o .`):                            false,
+		retag(`buildx_cmd build --load --tag=${IMAGE_TAG} -f /tmp/o .`):                        false,
+		retag(`buildx_cmd build --load -t workcell:smoke -f /tmp/o .`):                         false,
+		retag(`buildx_cmd build --load -t docker.io/library/workcell:smoke -f /tmp/o .`):       false,
+		retag(`buildx_cmd build --load -t index.docker.io/library/workcell:smoke -f /tmp/o .`): false,
+		retag(`buildx_cmd build --load -t library/workcell:smoke -f /tmp/o .`):                 false,
+		retag(`buildx_cmd build --load -t other/workcell:smoke -f /tmp/o .`):                   true,
+		retag(`buildx_cmd build --load -t index.workcell:smoke -f /tmp/o .`):                   true,
+		retag(`UNRELATED=1 buildx_cmd build --load -t workcell:smoke -f /tmp/other .`):         false,
+		retag("A=1 \\\n  B=2 buildx_cmd build --load -t workcell:smoke -f /tmp/other ."):       false,
+		retag(`A="1 2" buildx_cmd build --load -t workcell:smoke -f /tmp/other .`):             false,
+	} {
+		if err := metadatautil.ValidateContainerSmokeFlagInventory(src); (err == nil) != pass {
+			t.Errorf("validator = %v, want pass %v", err, pass)
+		}
+	}
+	RequireRejectsAllEvasions(t, string(script), "WORKCELL_GO_BIN=\"${GO_BIN}\" \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
+	RequireRejectsAllEvasions(t, string(script), "SOURCE_DATE_EPOCH=\"${BUILD_SOURCE_DATE_EPOCH}\" buildx_cmd build \\\n", "flag inventory", metadatautil.ValidateContainerSmokeFlagInventory)
+}

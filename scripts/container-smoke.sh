@@ -24,14 +24,14 @@ export PATH="${TRUSTED_HOST_PATH}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GO_BIN="${WORKCELL_GO_BIN:-}"
-# shellcheck source=/dev/null
-source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
-IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
-DOCKER_CONTEXT_NAME="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT:-}"
 # Smoke tests image behavior, not release bytes. A per-commit epoch reaches
 # every runtime-image RUN layer and defeats the BuildKit cache, so default to
 # a fixed epoch. verify-reproducible-build.sh keeps the commit epoch.
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/lib/trusted-docker-client.sh"
+IMAGE_TAG="${WORKCELL_IMAGE_TAG:-workcell:smoke}"
+DOCKER_CONTEXT_NAME="${WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT:-}"
 HOST_UID="${WORKCELL_TEST_HOST_UID:-$(id -u)}"
 HOST_GID="${WORKCELL_TEST_HOST_GID:-$(id -g)}"
 HOST_USER="${WORKCELL_TEST_HOST_USER:-$(id -un)}"
@@ -865,6 +865,13 @@ SOURCE_DATE_EPOCH="${BUILD_SOURCE_DATE_EPOCH}" buildx_cmd build \
   -t "${IMAGE_TAG}" \
   -f "${ROOT_DIR}/runtime/container/Dockerfile" \
   "${ROOT_DIR}" >/dev/null
+
+# Fail on a CLI flag that no adapter manifest classifies.
+resolve_go_bin
+WORKCELL_GO_BIN="${GO_BIN}" \
+  WORKCELL_IMAGE_TAG="${IMAGE_TAG}" \
+  WORKCELL_CONTAINER_SMOKE_DOCKER_CONTEXT="${DOCKER_CONTEXT_NAME}" \
+  "${ROOT_DIR}/scripts/check-flag-inventory.sh"
 
 mkdir -p "${ROOT_DIR}/tmp"
 align_path_for_mapped_runtime_user "${ROOT_DIR}/tmp" 0644 0755
