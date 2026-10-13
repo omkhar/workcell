@@ -47,7 +47,8 @@ if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null; then
   exit 1
 fi
 
-# CONTRIBUTING.md promises this hook works without Go; doc language needs it.
+# CONTRIBUTING.md promises this hook works without Go; doc language and the
+# doc-claims probe in the link check need it.
 have_go=0
 if command -v go >/dev/null; then
   have_go=1
@@ -141,7 +142,11 @@ gate_commit() {
   else
     # Each checker takes the detached tree as its root and reads it as data.
     if [[ "${markdown_changed}" -eq 1 || "${target_removed}" -eq 1 ]]; then
-      run_gate "doc links" "${SCRIPTS}/check-doc-links.sh" "${checkout}"
+      if [[ "${have_go}" -eq 1 ]]; then
+        run_gate "doc links" "${SCRIPTS}/check-doc-links.sh" "${checkout}"
+      else
+        run_gate "doc links" env DOC_CLAIMS_SKIP=1 "${SCRIPTS}/check-doc-links.sh" "${checkout}"
+      fi
     fi
     if [[ "${markdown_changed}" -eq 1 && "${have_go}" -eq 1 ]]; then
       run_gate "doc language" "${SCRIPTS}/check-doc-language.sh" "${checkout}"
