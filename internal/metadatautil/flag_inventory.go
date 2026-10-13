@@ -29,7 +29,9 @@ var (
 	// match uses syntax the parser does not read, so the inventory fails instead
 	// of dropping or truncating a name.
 	helpOptionLikePattern = regexp.MustCompile(`^ {0,6}-{1,2}\S`)
-	flagFixtureStampRE    = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
+	// helpAliasesPattern matches the clap and yargs alias list of a command.
+	helpAliasesPattern = regexp.MustCompile(`\[aliases: ([a-z][a-z0-9, -]*)\]`)
+	flagFixtureStampRE = regexp.MustCompile(`(?m)^# ([a-z][a-z0-9-]*)-version: ([0-9]+\.[0-9]+\.[0-9]+)$`)
 )
 
 // FlagFixturePath is the checked-in inventory of one adapter.
@@ -67,6 +69,42 @@ func ParseHelpFlags(help string) ([]string, error) {
 	}
 	slices.Sort(flags)
 	return slices.Compact(flags), nil
+}
+
+// ParseHelpCommands returns the command names in the first "Commands:" block of
+// CLI help (clap, commander, and yargs layouts). Top-level help comes first in
+// the probe output, so that block is the top-level command list. The result
+// holds every alias spelling ("stop|kill", "[aliases: e]") beside its command.
+func ParseHelpCommands(help, binary string) ([]string, error) {
+	pattern := regexp.MustCompile(`^ {2}(?:` + regexp.QuoteMeta(binary) + ` )?([a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]*)*)(?: |$)`)
+	var commands []string
+	in := false
+	for _, line := range strings.Split(help, "\n") {
+		switch {
+		case !in:
+			in = strings.TrimSpace(line) == "Commands:"
+		case line != "" && line[0] != ' ':
+			return commands, nil
+		default:
+			// "gemini [query..]" is the default command, not a subcommand.
+			match := pattern.FindStringSubmatch(line)
+			switch {
+			case match == nil && len(line) > 2 && line[1] == ' ' && line[2] != ' ':
+				return nil, fmt.Errorf("help command line %q uses syntax the inventory does not read", line)
+			case match != nil && match[1] != binary:
+				commands = append(commands, strings.Split(match[1], "|")...)
+			}
+			// clap and yargs print aliases at the end of the first or a later line.
+			if match := helpAliasesPattern.FindStringSubmatch(line); match != nil {
+				for _, alias := range strings.Split(match[1], ",") {
+					commands = append(commands, strings.TrimSpace(alias))
+				}
+			} else if strings.Contains(line, "[aliases:") {
+				return nil, fmt.Errorf("help command line %q has an alias list the inventory does not read", line)
+			}
+		}
+	}
+	return commands, nil
 }
 
 // RenderFlagFixture renders the fixture for adapter m at the pinned version.
@@ -119,6 +157,18 @@ func RenderFlagFixtureFromHelp(root, id string, helpPaths []string) ([]byte, err
 		}
 		help.Write(data)
 		help.WriteByte('\n')
+	}
+	commands, err := ParseHelpCommands(help.String(), m.Binary)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", id, err)
+	}
+	if len(commands) == 0 && len(m.Flags.Subcommands)+len(m.Flags.OtherCommands) > 0 {
+		return nil, fmt.Errorf("%s help lists no commands; the help layout changed", id)
+	}
+	for _, command := range commands {
+		if !slices.Contains(m.Flags.Subcommands, command) && !slices.Contains(m.Flags.OtherCommands, command) {
+			return nil, fmt.Errorf("%s help lists command %q; add it to [flags] subcommands or other_commands in adapters/%s/adapter.toml", id, command, id)
+		}
 	}
 	flags, err := ParseHelpFlags(help.String())
 	if err != nil {
