@@ -428,6 +428,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
 
+      # The runner image makes /opt world-writable, so its tool-cache go fails
+      # the trusted-go storage rule; stage the go.mod toolchain root-owned.
+      - name: Stage a root-owned Go toolchain
+        run: ./scripts/ci/stage-trusted-go.sh
+
       - name: Verify GitHub-hosted controls
         env:
           WORKCELL_HOSTED_CONTROLS_REQUIRED: "1"
@@ -1946,6 +1951,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/check-release-tag-signature.sh --github-repo "${GITHUB_REPOSITORY}" --repo-root "${GITHUB_WORKSPACE}" --tag "${RELEASE_TAG}" --expected-commit "${RELEASE_COMMIT}" --expected-tag-object "${RELEASE_TAG_OBJECT}"
+
+      # The runner image makes /opt world-writable, so its tool-cache go fails
+      # the trusted-go storage rule; stage the go.mod toolchain root-owned.
+      - name: Stage a root-owned Go toolchain
+        run: ./scripts/ci/stage-trusted-go.sh
 
       - name: Recheck hosted controls and publish GitHub release assets
         env:

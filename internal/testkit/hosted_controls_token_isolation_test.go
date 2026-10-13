@@ -217,9 +217,16 @@ func prepareHostedControlCommandGraphFixture(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	fixture := string(source)
-	fixture = strings.Replace(fixture, `GO_BIN="$(resolve_trusted_go_bin)"`, `GO_BIN=`+ShellQuote(filepath.Join(binDir, "go")), 1)
-	fixture = strings.Replace(fixture, `GH_BIN="$(resolve_trusted_tool /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)"`, `GH_BIN=`+ShellQuote(filepath.Join(binDir, "gh")), 1)
-	fixture = strings.Replace(fixture, `JQ_BIN="$(resolve_trusted_tool /opt/homebrew/bin/jq /usr/local/bin/jq /usr/bin/jq)"`, `JQ_BIN=`+ShellQuote(filepath.Join(binDir, "jq")), 1)
+	for from, to := range map[string]string{
+		`GO_BIN="$(resolve_exact_toolchain_go_bin "${ROOT_DIR}")"`:                            `GO_BIN=` + ShellQuote(filepath.Join(binDir, "go")),
+		`GH_BIN="$(resolve_trusted_tool /opt/homebrew/bin/gh /usr/local/bin/gh /usr/bin/gh)"`: `GH_BIN=` + ShellQuote(filepath.Join(binDir, "gh")),
+		`JQ_BIN="$(resolve_trusted_tool /opt/homebrew/bin/jq /usr/local/bin/jq /usr/bin/jq)"`: `JQ_BIN=` + ShellQuote(filepath.Join(binDir, "jq")),
+	} {
+		if !strings.Contains(fixture, from) {
+			t.Fatalf("verify-github-hosted-controls.sh no longer holds %q; update this fixture stub", from) // a missed stub silently runs the real tool
+		}
+		fixture = strings.Replace(fixture, from, to, 1)
+	}
 	writeCanonicalFixture(t, filepath.Join(root, "scripts", "verify-github-hosted-controls.sh"), []byte(fixture), 0o755)
 }
 

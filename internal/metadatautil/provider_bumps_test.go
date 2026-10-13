@@ -2569,3 +2569,35 @@ func TestProviderResolversNeverDowngradeBelowCurrentPin(t *testing.T) {
 		t.Fatalf("Gemini selection = %#v, want bump to 0.61.0", gemini)
 	}
 }
+
+// TestStableCandidatesFromRegistryStreamsLargePackuments proves a packument
+// larger than the 16 MiB JSON cap still yields its dist-tags and time: the
+// versions object comes first and is skipped, not held.
+func TestStableCandidatesFromRegistryStreamsLargePackuments(t *testing.T) {
+	filler := strings.Repeat("a", 20<<20)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"name":"pkg","versions":{"1.2.3":{"readme":"`+filler+`","files":[[1,{"a":[]}]]}},"dist-tags":{"latest":"1.2.3"},"time":{"created":"2026-01-01T00:00:00Z","1.2.3":"2026-01-02T00:00:00Z"}}`)
+	}))
+	defer server.Close()
+	candidates, _, err := stableCandidatesFromRegistry(server.URL, time.Time{}, "", server.Client())
+	if err != nil {
+		t.Fatalf("stableCandidatesFromRegistry() error = %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].Raw != "1.2.3" {
+		t.Fatalf("candidates = %v, want [1.2.3]", candidates)
+	}
+}
+
+// TestDecodeNPMRegistryMetadataSkipsOutOfRangeNumbers proves a valid number
+// that overflows float64 in a skipped value does not fail the decode.
+func TestDecodeNPMRegistryMetadataSkipsOutOfRangeNumbers(t *testing.T) {
+	var metadata npmRegistryMetadata
+	body := `{"versions":{"1.2.3":{"size":1e1000000}},"dist-tags":{"latest":"1.2.3"},"time":{"1.2.3":"2026-01-02T00:00:00Z"}}`
+	if err := decodeNPMRegistryMetadata(strings.NewReader(body), &metadata); err != nil {
+		t.Fatalf("decodeNPMRegistryMetadata() error = %v", err)
+	}
+	if metadata.DistTags["latest"] != "1.2.3" || metadata.Time["1.2.3"] != "2026-01-02T00:00:00Z" {
+		t.Fatalf("metadata = %#v, want latest 1.2.3 with its time", metadata)
+	}
+}
