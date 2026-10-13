@@ -401,6 +401,13 @@ var goHelperMutations = []mutationCase{
 		label:        "egress proxy refuses an unswapped placeholder",
 		command:      goCmd("test", "./internal/egressproxy", "-run", "TestTerminateRefusesUnswappedPlaceholder", "-count=1"),
 	},
+	{
+		relativePath: "internal/credbroker/cli.go",
+		original:     `cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C"}`,
+		replacement:  `cmd.Env = os.Environ()`,
+		label:        "credential broker scrubs the Keychain tool environment",
+		command:      goCmd("test", "./internal/credbroker", "-run", "TestResolveSourceRunsFixedSecurityWithScrubbedEnv", "-count=1"),
+	},
 }
 
 var rustMutations = []mutationCase{
