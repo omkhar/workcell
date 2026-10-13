@@ -235,19 +235,14 @@ func TestFastPrePushRunsDocLinksOnDeletedMarkdown(t *testing.T) {
 
 func TestFastPrePushRejectsDeletedNonMarkdownLinkTarget(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
-	links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
-	f.run("add", "scripts/check-doc-links.sh")
+	stub := stageDocLinksChecker(t, f)
 	f.commitFile("img.png", "image\n", fixtureSubject)
 	f.commitFile("doc.md", "See [the image](img.png).\n", fixtureSubject)
 	f.run("update-ref", "refs/remotes/origin/main", "HEAD")
 	f.run("rm", "--quiet", "img.png")
 	f.run("commit", "--quiet", "-m", fixtureSubject)
-	output, err := f.hook()
-	if err == nil || !strings.Contains(output, "doc links failed") {
+	output, err := f.hook("DOC_CLAIMS_CITOOLS=" + stub)
+	if err == nil || !strings.Contains(output, "broken link: doc.md -> img.png") {
 		t.Fatalf("deleting a non-Markdown link target skipped the link check: %v\n%s", err, output)
 	}
 }
@@ -295,18 +290,13 @@ func TestFastPrePushIgnoresWorkingTreeEdits(t *testing.T) {
 
 func TestFastPrePushIgnoresUntrackedLinkTarget(t *testing.T) {
 	f := newPrePushChecksFixture(t, "")
-	links, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-doc-links.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeExecFile(t, filepath.Join(f.root, "scripts", "check-doc-links.sh"), links, 0o755)
-	f.run("add", "scripts/check-doc-links.sh")
+	stub := stageDocLinksChecker(t, f)
 	f.commitFile("doc.md", "See [the target](target.md).\n", fixtureSubject)
 	if err := os.WriteFile(filepath.Join(f.root, "target.md"), []byte("Untracked target.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	output, err := f.hook()
-	if err == nil || !strings.Contains(output, "doc links failed") {
+	output, err := f.hook("DOC_CLAIMS_CITOOLS=" + stub)
+	if err == nil || !strings.Contains(output, "broken link: doc.md -> target.md") {
 		t.Fatalf("an untracked target.md satisfied the link check: %v\n%s", err, output)
 	}
 }
@@ -497,4 +487,25 @@ func TestRunCodespellPrintsOffendingLines(t *testing.T) {
 	if !strings.Contains(output, "doc.md:1: recieve ==> receive") {
 		t.Errorf("offending line missing from the output:\n%s", output)
 	}
+}
+
+// stageDocLinksChecker commits check-doc-links.sh and the helpers it loads from
+// its own tree into the fixture, and returns a stub for the workcell-citools
+// claim probe, so a test reaches the link check itself.
+func stageDocLinksChecker(t *testing.T, f *prePushChecksFixture) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.root, "scripts", "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"check-doc-links.sh", "lib/go-run-env.sh", "lib/md-unfenced.awk", "lib/doc-claims.awk"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeExecFile(t, filepath.Join(f.root, "scripts", name), data, 0o755)
+	}
+	f.run("add", "scripts")
+	stub := filepath.Join(t.TempDir(), "citools")
+	writeExecFile(t, stub, []byte("#!/bin/sh\n"), 0o755)
+	return stub
 }
