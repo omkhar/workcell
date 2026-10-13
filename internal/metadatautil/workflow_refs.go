@@ -228,7 +228,7 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 						words[0] == "source" || words[0] == "." || unmodeledWrappers[commandName(words[0])] || ghInArguments(words) ||
 						commandName(words[0]) == "find" && slices.ContainsFunc(words, func(w string) bool { return strings.HasPrefix(w, "-exec") || strings.HasPrefix(w, "-ok") }) {
 						add("command-unresolved") // a file, or a program, the lint does not see
-					} else if _, ok := shellProgram(words, "$_"); ok {
+					} else if _, ok, _ := shellProgram(words, "$_"); ok {
 						add("command-unresolved") // EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
 					}
 				}
