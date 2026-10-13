@@ -258,6 +258,17 @@
       "persona": "swe",
       "test_file": "claude-swe/test-hook-parametric.sh",
       "requires_credentials": false
+    },
+    {
+      "id": "shared/lane-owned-roots",
+      "description": "Two concurrent lanes each refuse to delete the other's owner-marked temp root and remove only their own; unmarked and foreign-owned roots are refused",
+      "lane": "secretless",
+      "platform": "any",
+      "manual": false,
+      "providers": ["codex", "claude", "copilot", "gemini"],
+      "persona": "developer",
+      "test_file": "shared/test-lane-owned-roots.sh",
+      "requires_credentials": false
     }
   ]
 }

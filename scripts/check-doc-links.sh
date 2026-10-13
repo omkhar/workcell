@@ -4,7 +4,8 @@
 # network calls and no dependencies beyond git, awk, sed, grep and Go (for the
 # claim probe) so it can run host-side in the docs CI lane. Kept bash-3.2
 # compatible (no mapfile, no associative arrays) because the host baseline is
-# macOS /bin/bash 3.2; see scripts/lib/shellproto.sh.
+# macOS /bin/bash 3.2; see scripts/lib/shellproto.sh. An optional argument
+# names the checkout to check; the default is this script's own repository.
 #
 # Scope (intentional limits, documented so they read as choices, not gaps):
 # - Only space-free inline links of the form [text](target) are checked;
@@ -18,10 +19,13 @@
 #   links. Target existence is the robust, high-value core.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# TOOL_DIR is this script's own tree; the helpers and the probe run from it, so
+# a checked checkout is read as data and none of its code runs.
+TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ROOT_DIR="$(cd "${1:-${TOOL_DIR}}" && pwd -P)"
 cd "${ROOT_DIR}"
 # shellcheck source=scripts/lib/go-run-env.sh
-source "${ROOT_DIR}/scripts/lib/go-run-env.sh"
+source "${TOOL_DIR}/scripts/lib/go-run-env.sh"
 
 bt='`'
 failures=0
@@ -96,7 +100,7 @@ for f in "${md_files[@]}"; do
   done < <(
     # Strip fenced code blocks, then inline code spans, so example markdown
     # (fenced or `inline`) is not treated as a navigable link.
-    awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
+    awk -f "${TOOL_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
       sed -E "s/${bt}[^${bt}]*${bt}//g" |
       grep -oE '\]\([^) ]+\)' |
       sed -E 's/^\]\(//; s/\)$//' || true
@@ -142,13 +146,13 @@ trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_cited}"' 
 # workcell-citools doc-claims probes each cited path through no-follow
 # descriptors, since bash has no openat.
 for f in "${md_files[@]}"; do
-  awk -f "${ROOT_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
-    awk -v doc="${f}" -f "${ROOT_DIR}/scripts/lib/doc-claims.awk"
+  awk -f "${TOOL_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
+    awk -v doc="${f}" -f "${TOOL_DIR}/scripts/lib/doc-claims.awk"
 done >"${claim_cited}"
 if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
   "${DOC_CLAIMS_CITOOLS}" doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
 else
-  run_go_in_repo "${ROOT_DIR}" run ./cmd/workcell-citools doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
+  run_go_in_repo "${TOOL_DIR}" run ./cmd/workcell-citools doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
 fi
 
 # A rule is declared when a comment line of the baseline text names it.

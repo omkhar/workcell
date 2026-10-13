@@ -262,11 +262,13 @@ fi
 REAL_HOME="$(
   printf '%s\n' ~
 )"
-CODEX_VERIFY_HOME="$(mktemp -d)"
-BARRIER_VERIFY_ROOT="$(mktemp -d)"
+source "${ROOT_DIR}/scripts/lib/owned-root.sh"
+VERIFY_RUN_ROOT="$(workcell_owned_root_create "${TMPDIR:-/tmp}" workcell-verify)"
+CODEX_VERIFY_HOME="$(mktemp -d "${VERIFY_RUN_ROOT}/codex.XXXXXX")"
+BARRIER_VERIFY_ROOT="$(mktemp -d "${VERIFY_RUN_ROOT}/barrier.XXXXXX")"
 BROWSER_PROFILE_FIXTURE=""
 COLIMA_PROFILE_FIXTURE=""
-INSTALL_VERIFY_HOME="$(mktemp -d)"
+INSTALL_VERIFY_HOME="$(mktemp -d "${VERIFY_RUN_ROOT}/install.XXXXXX")"
 ROOT_DRY_RUN_PROFILE_NAME="$(
   workspace="$(cd "${ROOT_DIR}" && pwd -P)"
   slug="$(printf '%s' "${workspace##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/^$/workspace/' | cut -c1-10)"
@@ -724,6 +726,7 @@ run_safe_remove_self_test() {
 
 if [[ "${1:-}" == "--self-safe-remove-probe" ]]; then
   run_safe_remove_self_test
+  workcell_owned_root_remove "${VERIFY_RUN_ROOT}"
   echo "verify-invariants-safe-remove-ok"
   exit 0
 fi
@@ -747,9 +750,7 @@ cleanup() {
   delete_verify_colima_profile "${TRANSCRIPT_LOG_PROFILE:-}"
   delete_verify_colima_profile "${BROKEN_DEBUG_POINTER_PROFILE:-}"
   delete_verify_colima_profile "${UNMANAGED_PROFILE_NAME:-}"
-  remove_tree_safely "${CODEX_VERIFY_HOME}"
-  remove_tree_safely "${BARRIER_VERIFY_ROOT}"
-  remove_tree_safely "${INSTALL_VERIFY_HOME}"
+  workcell_owned_root_remove "${VERIFY_RUN_ROOT}"
   if [[ -n "${BROWSER_PROFILE_FIXTURE}" ]] && [[ -d "${BROWSER_PROFILE_FIXTURE}" ]]; then
     rmdir "${BROWSER_PROFILE_FIXTURE}" 2>/dev/null || true
   fi
@@ -4203,12 +4204,12 @@ if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/host-inputs/credentials/gemin
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if ! printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq "^direct_mount=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$"; then
+if ! grep -Eq "^direct_mount=${REAL_HOME}/Library/Caches/colima/workcell-host-inputs/workcell-injections\\.[^:]*/direct-mounts/[0-9a-f]{16}:/opt/workcell/host-inputs/credentials/gemini.env:ro$" <<<"${STAGING_PROBE_OUTPUT}"; then
   echo "Expected staging probe to restage direct credential mounts under the injection bundle root" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Fq "direct_mount=${AUTH_STATUS_ROOT}/gemini.env:/opt/workcell/host-inputs/credentials/gemini.env:ro"; then
+if grep -Fq "direct_mount=${AUTH_STATUS_ROOT}/gemini.env:/opt/workcell/host-inputs/credentials/gemini.env:ro" <<<"${STAGING_PROBE_OUTPUT}"; then
   echo "Expected staging probe to avoid binding the original host credential path directly into the runtime" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
@@ -4223,7 +4224,7 @@ if [[ "${STAGING_PROBE_OUTPUT}" != *'/opt/workcell/workspace-control-plane:ro'* 
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
 fi
-if printf '%s\n' "${STAGING_PROBE_OUTPUT}" | grep -Eq '^(direct_mount|shadow_mount|workspace_import_mount)=/tmp/workcell-docker\.'; then
+if grep -Eq '^(direct_mount|shadow_mount|workspace_import_mount)=/tmp/workcell-docker\.' <<<"${STAGING_PROBE_OUTPUT}"; then
   echo "Expected staging probe mount sources to avoid the temporary Docker client sandbox home" >&2
   printf '%s\n' "${STAGING_PROBE_OUTPUT}" >&2
   exit 1
@@ -4529,14 +4530,24 @@ if "${ROOT_DIR}/scripts/workcell" \
 fi
 grep -q -- '--debug-log, --file-trace-log, and --audit-transcript apply only to launched sessions.' /tmp/workcell-nonlaunch-debug-log.out
 
+WORKCELL_GC_CACHE_ROOT_HARNESS="${BARRIER_VERIFY_ROOT}/workcell-gc-cache-root-harness.sh"
+{
+  printf 'set -euo pipefail\n'
+  for gc_function in workcell_nonnegative_integer_or_default make_workcell_tree_user_writable cleanup_workcell_cache_root; do
+    extract_top_level_bash_function "${ROOT_DIR}/scripts/workcell" "${gc_function}"
+    printf '\n'
+  done
+  cat "${ROOT_DIR}/verify/invariants/harnesses/gc/workcell-gc-cache-root.sh"
+} >"${WORKCELL_GC_CACHE_ROOT_HARNESS}"
+bash "${WORKCELL_GC_CACHE_ROOT_HARNESS}"
+
 # The live lane runs in parallel and writes the shared Go cache under REAL_HOME.
 # --gc cannot use another home: Workcell reads the home from the account
-# identity before it reads HOME. A threshold of 3000000 minutes (5.7 years)
-# stays below the age of the 2020 fixtures, so they stay stale. It stays above
-# the age of any cache root that a tool first released in 2026 can own, so --gc
-# does not remove the cache root while the live lane writes it.
-GC_FIXTURE_STALE_MINUTES=3000000
-if ! WORKCELL_GC_STALE_MINUTES="${GC_FIXTURE_STALE_MINUTES}" "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
+# identity before it reads HOME, and the launcher shebang clears the
+# environment, so no threshold variable reaches it. --gc keeps a cache root
+# that holds an entry changed within its threshold, so the live lane's writes
+# keep the shared Go cache (see the gc cache-root harness).
+if ! "${ROOT_DIR}/scripts/workcell" --gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc.out 2>&1; then
   echo "Expected --gc to succeed" >&2
   exit 1
 fi
@@ -4544,7 +4555,7 @@ grep -q 'Cleaned stale Workcell injection, session-audit, broken latest-log poin
 test ! -f "${REAL_HOME}/.colima/${BROKEN_DEBUG_POINTER_PROFILE}/workcell.latest-debug-log"
 test ! -e "${GC_TEMP_FIXTURE}"
 test ! -e "${GC_TEMP_TREE_FIXTURE}"
-if ! WORKCELL_GC_STALE_MINUTES="${GC_FIXTURE_STALE_MINUTES}" "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
+if ! "${ROOT_DIR}/scripts/workcell" gc --workspace "${BARRIER_VERIFY_ROOT}/missing-workspace-for-gc" >/tmp/workcell-gc-subcommand.out 2>&1; then
   echo "Expected gc subcommand alias to succeed" >&2
   exit 1
 fi
@@ -4563,11 +4574,13 @@ rm -rf "${PREMERGE_HARNESS_ROOT}"
 mkdir -p \
   "${PREMERGE_HARNESS_ROOT}/scripts" \
   "${PREMERGE_HARNESS_ROOT}/scripts/ci" \
+  "${PREMERGE_HARNESS_ROOT}/scripts/lib" \
   "${PREMERGE_HARNESS_ROOT}/tools/validator" \
   "${PREMERGE_HARNESS_ROOT}/.git" \
   "${PREMERGE_FAKEBIN}" \
   "${PREMERGE_DEFAULT_HOME}"
 install -m 0755 "${ROOT_DIR}/scripts/pre-merge.sh" "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh"
+install -m 0644 "${ROOT_DIR}/scripts/lib/go-run-env.sh" "${PREMERGE_HARNESS_ROOT}/scripts/lib/go-run-env.sh"
 cat >"${PREMERGE_HARNESS_ROOT}/scripts/with-validation-snapshot.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -4805,6 +4818,9 @@ case "${1-}" in
       find scripts tests tools -type f -print0 | LC_ALL=C sort -z
     )
     ;;
+  branch)
+    printf '%s\n' "${WORKCELL_FAKE_GIT_BRANCH-feature/harness}"
+    ;;
   init|config|add|commit)
     ;;
   *)
@@ -4824,8 +4840,21 @@ fi
 exit 0
 EOF
 chmod 0755 "${PREMERGE_FAKEBIN}/docker"
+# The shape-margin lookup is the only Go call pre-merge makes itself; the
+# harness answers it with the first-publication margin. pre-merge accepts a go
+# only outside the repository, so this one sits beside the harness root.
+PREMERGE_TRUSTED_GO="${BARRIER_VERIFY_ROOT}/premerge-trusted-go/go"
+mkdir -p "${PREMERGE_TRUSTED_GO%/go}"
+cat >"${PREMERGE_TRUSTED_GO}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'go %s credentials=%s\n' "$*" "${GH_TOKEN-}${GITHUB_TOKEN-}${GH_CONFIG_DIR-}${SSH_AUTH_SOCK-}" >>"${PREMERGE_LOG}"
+printf '0.66\n'
+EOF
+chmod 0755 "${PREMERGE_TRUSTED_GO}"
 
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT='?? stray.txt' \
@@ -4836,6 +4865,7 @@ fi
 grep -q 'clean worktree, including untracked files' /tmp/workcell-premerge-dirty.out
 
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT='?? stray.txt' \
@@ -4849,6 +4879,7 @@ grep -q -- '--local-include-untracked requires --local-snapshot worktree.' /tmp/
 : >"${PREMERGE_LOG}"
 : >"${PREMERGE_DISPATCH_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   HOME="${PREMERGE_DEFAULT_HOME}" \
   XDG_CACHE_HOME='' \
   PREMERGE_LOG="${PREMERGE_LOG}" \
@@ -4858,8 +4889,13 @@ if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
   WORKCELL_FAKE_GIT_TREE_OID='1111111111111111111111111111111111111111' \
   WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
+  GH_TOKEN=harness-secret \
+  GITHUB_TOKEN=harness-secret \
+  GH_CONFIG_DIR="${PREMERGE_DEFAULT_HOME}" \
+  SSH_AUTH_SOCK=/nonexistent/agent.sock \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
-  --local-snapshot head </dev/null >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
+  --local-snapshot head \
+  --publish-branch feature/publication </dev/null >/tmp/workcell-premerge-local-snapshot.out 2>&1; then
   echo "Expected --local-snapshot head pre-merge harness to succeed on a dirty worktree" >&2
   cat /tmp/workcell-premerge-local-snapshot.out >&2
   exit 1
@@ -4869,7 +4905,9 @@ grep -q "WORKCELL_VALIDATION_SNAPSHOT_PARENT=${PREMERGE_DEFAULT_SNAPSHOT_PARENT}
 for expected in \
   'ci-plan.sh --profile pr-parity --event pull_request --base main --format json' \
   'check-workflows.sh ' \
-  'ci/job-pr-shape.sh --base main' \
+  "go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main feature/publication" \
+  '--publish-branch feature/publication --shape-margin 0.66' \
+  'ci/job-pr-shape.sh --base main --margin 0.66' \
   'ci/job-validate.sh --profile pr-parity --skip-host-invariants' \
   'verify-invariants.sh --live-lane-only' \
   'live-lane colima-start-timeout=360' \
@@ -4880,6 +4918,9 @@ for expected in \
   grep -q -- "${expected}" "${PREMERGE_LOG}"
 done
 test "$(grep -c '^verify-invariants.sh ' "${PREMERGE_LOG}")" = 2
+# The trusted go ran the lookup without the GitHub or SSH credentials, for the
+# publication branch rather than the checked-out feature/harness.
+grep -q "^go run ./cmd/workcell-citools publish-pr-shape-margin ${PREMERGE_HARNESS_ROOT} main feature/publication credentials=\$" "${PREMERGE_LOG}"
 grep -q '^live-lane-output$' /tmp/workcell-premerge-local-snapshot.out
 grep -q '^\[pre-merge\] live invariants lane passed$' /tmp/workcell-premerge-local-snapshot.out
 for lane in check-workflows job-pr-shape job-validate job-docs container-smoke verify-reproducible-build live-invariants; do
@@ -4895,6 +4936,7 @@ fi
 for expected in \
   '"profile": "pr-parity"' \
   '"base_branch": "main"' \
+  '"publish_branch": "feature/publication"' \
   '"base_ref": "refs/remotes/origin/main"' \
   '"base_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   '"head_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
@@ -4914,9 +4956,75 @@ test "$(jq -r '.timings.total_seconds' "${PREMERGE_HARNESS_ROOT}/.git/workcell-p
 rm -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json" \
   "${PREMERGE_HARNESS_ROOT}/.git/workcell-fake-tree-sequence-index"
 
+# A repo-core snapshot plans no shape job, so it makes no GitHub margin lookup.
+: >"${PREMERGE_LOG}"
+if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
+  HOME="${PREMERGE_DEFAULT_HOME}" \
+  XDG_CACHE_HOME='' \
+  PREMERGE_LOG="${PREMERGE_LOG}" \
+  WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+  WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n' \
+  WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
+  "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+  --profile repo-core \
+  --local-snapshot head </dev/null >/tmp/workcell-premerge-repo-core-snapshot.out 2>&1; then
+  echo "Expected a repo-core --local-snapshot head pre-merge run to succeed" >&2
+  cat /tmp/workcell-premerge-repo-core-snapshot.out >&2
+  exit 1
+fi
+# Without --publish-branch the snapshot gets the checked-out branch.
+grep -q -- '--mode head -- env WORKCELL_PREMERGE_LOCAL_SNAPSHOT_ACTIVE=1 ./scripts/pre-merge.sh --profile repo-core --local-snapshot head --publish-branch feature/harness$' "${PREMERGE_LOG}"
+grep -q 'ci/job-validate.sh --profile repo-core --skip-host-invariants' "${PREMERGE_LOG}"
+if grep -q -e 'publish-pr-shape-margin' -e '--shape-margin' -e '^ci/job-pr-shape.sh ' "${PREMERGE_LOG}"; then
+  echo "Expected a repo-core snapshot run to skip the PR shape margin lookup" >&2
+  cat "${PREMERGE_LOG}" >&2
+  exit 1
+fi
+
+# A go inside the repository never runs, first on PATH or as WORKCELL_GO_BIN,
+# so it cannot read the credentials pre-merge was started with. Nor does a
+# WORKCELL_GO_BIN in a directory another user can write, since that user could
+# swap it between the check and the exec.
+PREMERGE_WORKSPACE_GO="${PREMERGE_HARNESS_ROOT}/workspace-bin/go"
+mkdir -p "${PREMERGE_WORKSPACE_GO%/go}"
+cat >"${PREMERGE_WORKSPACE_GO}" <<'EOF'
+#!/usr/bin/env bash
+printf 'workspace go ran with GH_TOKEN=%s\n' "${GH_TOKEN-}" >>"${PREMERGE_LOG}"
+printf '1.0\n'
+EOF
+chmod 0755 "${PREMERGE_WORKSPACE_GO}"
+PREMERGE_SHARED_GO="${BARRIER_VERIFY_ROOT}/premerge-shared-go/go"
+mkdir -p "${PREMERGE_SHARED_GO%/go}"
+install -m 0755 "${PREMERGE_WORKSPACE_GO}" "${PREMERGE_SHARED_GO}"
+chmod 0777 "${PREMERGE_SHARED_GO%/go}"
+for workspace_go_bin in '' "${PREMERGE_WORKSPACE_GO}" "${PREMERGE_SHARED_GO}"; do
+  : >"${PREMERGE_LOG}"
+  PATH="${PREMERGE_WORKSPACE_GO%/go}:${PREMERGE_FAKEBIN}:${PATH}" \
+    WORKCELL_GO_BIN="${workspace_go_bin}" \
+    HOME="${PREMERGE_DEFAULT_HOME}" \
+    XDG_CACHE_HOME='' \
+    PREMERGE_LOG="${PREMERGE_LOG}" \
+    GH_TOKEN=harness-secret \
+    WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
+    WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n' \
+    WORKCELL_VALIDATION_SNAPSHOT_PARENT='' \
+    "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
+    --local-snapshot head </dev/null >/tmp/workcell-premerge-workspace-go.out 2>&1 || true
+  if grep -q '^workspace go ran' "${PREMERGE_LOG}" || grep -q -- '--shape-margin 1.0' "${PREMERGE_LOG}"; then
+    echo "Expected pre-merge to refuse an untrusted go (WORKCELL_GO_BIN='${workspace_go_bin}')" >&2
+    cat "${PREMERGE_LOG}" /tmp/workcell-premerge-workspace-go.out >&2
+    exit 1
+  fi
+  if [[ -n "${workspace_go_bin}" ]]; then
+    grep -q "WORKCELL_GO_BIN must be an absolute go outside the repository that only root or this user can replace: ${workspace_go_bin}" /tmp/workcell-premerge-workspace-go.out
+  fi
+done
+
 # A failed live lane fails the gate after the other lanes, with no evidence.
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_PREMERGE_TEST_LIVE_STATUS=7 \
@@ -4932,6 +5040,7 @@ test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 # A failed lane stops the running live lane and waits for its cleanup.
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
@@ -4960,6 +5069,7 @@ test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 (
   trap '' PIPE
   PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+    WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
     PREMERGE_LOG="${PREMERGE_LOG}" \
     WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
     WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
@@ -4977,6 +5087,7 @@ grep -q "^live-lane-cleanup pid=${PREMERGE_LIVE_PID}$" "${PREMERGE_LOG}"
 # EXIT trap can stop it.
 set -m
 PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_PREMERGE_TEST_LIVE_HANG=1 \
@@ -5004,6 +5115,7 @@ test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
@@ -5016,6 +5128,7 @@ test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
@@ -5031,6 +5144,7 @@ test ! -f "${PREMERGE_HARNESS_ROOT}/.git/workcell-parity/pr-parity.json"
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
@@ -5044,6 +5158,7 @@ grep -q 'Unknown option: --remote' /tmp/workcell-premerge-remote-removed.out
 
 : >"${PREMERGE_LOG}"
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
@@ -5057,6 +5172,7 @@ grep -q 'Unknown option: --remote-heavy' /tmp/workcell-premerge-remote-heavy-rem
 
 : >"${PREMERGE_LOG}"
 if ! PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   WORKCELL_FAKE_GIT_STATUS_OUTPUT=$' M README.md\n?? stray.txt\n' \
@@ -5108,6 +5224,7 @@ chmod 0755 "${FILE_TRACE_SENSITIVITY_HARNESS}"
 rm -f "${FILE_TRACE_SENSITIVITY_HARNESS}"
 
 if PATH="${PREMERGE_FAKEBIN}:${PATH}" \
+  WORKCELL_GO_BIN="${PREMERGE_TRUSTED_GO}" \
   PREMERGE_LOG="${PREMERGE_LOG}" \
   WORKCELL_FAKE_GIT_ROOT="${PREMERGE_HARNESS_ROOT}" \
   "${PREMERGE_HARNESS_ROOT}/scripts/pre-merge.sh" \
