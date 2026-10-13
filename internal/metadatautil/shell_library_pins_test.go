@@ -46,7 +46,7 @@ func readLibrary(text string) (forwarders []string, hidden string) {
 	depth, function, definedAt := 0, "", 0
 	for _, line := range strings.Split(text, "\n") {
 		current.WriteString(line)
-		words, heredocs, quote, rest, continues := shellWords(current.String(), quotes)
+		words, heredocs, quote, rest, continues, _ := shellWords(current.String(), quotes)
 		if continues {
 			joined := current.String()
 			current.Reset()
