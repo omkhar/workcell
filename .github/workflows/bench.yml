@@ -2,7 +2,8 @@ name: Bench
 
 # Optional, non-PR-blocking microbenchmark lane for the workcell_exec_guard
 # LD_PRELOAD shim (runtime/container/rust). It builds the exec-guard cdylib,
-# then times the guard's ALLOW-path classification overhead on the interposed
+# then times the guarded-launch overhead (classification plus child library
+# load) on the interposed
 # exec/spawn family calls against the unhooked libc baseline
 # (scripts/bench/run-exec-guard-bench.sh), repeating the measurement across two
 # runs to demonstrate the numbers are stable. Results are printed to the job log

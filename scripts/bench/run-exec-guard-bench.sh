@@ -4,8 +4,8 @@
 #
 # Compiles scripts/bench/exec-guard-bench.c and, for each interposed exec/spawn
 # family call, times the guard's ALLOW path (LD_PRELOAD of the built cdylib)
-# against the unhooked libc baseline. The delta is the classification overhead
-# the workcell_exec_guard shim adds per launch. The full measurement is repeated
+# against the unhooked libc baseline. The delta is the guarded-launch overhead
+# (classification plus the child's load of the guard library) the workcell_exec_guard shim adds per launch. The full measurement is repeated
 # for WORKCELL_BENCH_RUNS passes so a reviewer can confirm the numbers are
 # stable across runs (the C5 validation gate).
 #

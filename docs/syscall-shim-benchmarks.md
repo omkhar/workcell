@@ -1,7 +1,7 @@
 # Syscall-shim performance baselines
 
 The Linux `workcell_exec_guard` library checks each intercepted process launch.
-This page records the added classification latency on the allow path.
+This page records the guarded-launch overhead on the allow path.
 
 The result is a relative Linux CI measurement. It is not an absolute performance
 guarantee for an operator host.
@@ -43,7 +43,9 @@ target and completes all allow-path classification.
 1. Plain libc without the guard.
 2. The same operation with the guard preloaded.
 
-The reported delta is the added classification time.
+The reported delta is the guarded-launch overhead. It is the end-to-end cost to
+start a guarded child. It covers the guard's classification and the child's
+load of the guard library. It is not classifier latency alone.
 
 ### Runner caveats
 

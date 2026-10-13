@@ -8,7 +8,8 @@
  * benign target (default /bin/true) that the guard classifies as "not
  * protected" and forwards to the real libc entry point. Running the same
  * harness twice -- once with LD_PRELOAD pointed at the built cdylib and once
- * without -- isolates the classification overhead the guard adds per call.
+ * without -- isolates the guarded-launch overhead (classification plus the
+ * child's load of the guard library) the guard adds per call.
  *
  * The harness itself is OS-neutral and compiles on Linux and macOS, but the
  * LD_PRELOAD interposition it measures is Linux-only (the guard reads /proc and
