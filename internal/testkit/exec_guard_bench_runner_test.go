@@ -1,37 +1,25 @@
 package testkit
 
 import (
-	"os"
+	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strings"
 	"testing"
 )
 
-// TestExecGuardBenchBaselineDropsAnInheritedPreload runs run_bench from the
-// exec-guard bench driver with an LD_PRELOAD already set, as in a Workcell
-// session: the unhooked baseline must run without it, and the hooked run
-// must carry only the guard.
-func TestExecGuardBenchBaselineDropsAnInheritedPreload(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "bench", "run-exec-guard-bench.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	function := regexp.MustCompile(`(?ms)^run_bench\(\) \{\n.*?^\}\n`).Find(script)
-	if function == nil {
-		t.Fatal("run_bench is missing from run-exec-guard-bench.sh")
-	}
-	// The stub records into a file: on Linux, ld.so reports the missing
-	// preload objects on stderr, which the probe's output also carries.
-	dir := t.TempDir()
-	bin, record := filepath.Join(dir, "bench"), filepath.Join(dir, "record")
-	if err := os.WriteFile(bin, []byte("#!/bin/bash\nprintf 'preload=[%s]\\n' \"${LD_PRELOAD:-}\" >>\"${RECORD}\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	code, output := runBashProbe(t, string(function)+`run_bench x 0
-run_bench x 1
-`, map[string]string{"LD_PRELOAD": "/inherited.so", "BIN": bin, "SO_PATH": "/guard.so", "BENCH_PATH": "/usr/bin:/bin", "RECORD": record})
-	recorded, err := os.ReadFile(record)
-	if want := "preload=[]\npreload=[/guard.so]\n"; code != 0 || err != nil || string(recorded) != want {
-		t.Fatalf("run_bench: exit=%d record=%q (%v), want %q\n%s", code, recorded, err, want, output)
+// TestExecGuardBenchRefusesAnActivePreload runs the exec-guard bench driver
+// with LD_PRELOAD already set, as in a Workcell session: it must stop before
+// it measures, since the preload would skew the unhooked baseline and the
+// loaded guard would reject the baseline's guard-free launch.
+func TestExecGuardBenchRefusesAnActivePreload(t *testing.T) {
+	script := filepath.Join(repoRoot(t), "scripts", "bench", "run-exec-guard-bench.sh")
+	output, err := execRetryETXTBSY(func() *exec.Cmd {
+		cmd := exec.Command("bash", script)
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "LD_PRELOAD=/inherited.so"}
+		return cmd
+	})
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 || !strings.Contains(string(output), "run outside a Workcell session") {
+		t.Fatalf("run-exec-guard-bench.sh with LD_PRELOAD set: err=%v\n%s", err, output)
 	}
 }

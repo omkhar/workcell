@@ -22,6 +22,14 @@
 #   CC                         C compiler (default cc)
 set -euo pipefail
 
+# A preload already in force skews the unhooked baseline, and inside a strict
+# Workcell session the loaded guard rejects the baseline's guard-free launch.
+# Run the driver outside any preloaded runtime.
+if [ -n "${LD_PRELOAD:-}" ] || [ -s /etc/ld.so.preload ]; then
+  echo "run-exec-guard-bench: a preload is active (LD_PRELOAD or /etc/ld.so.preload); run outside a Workcell session" >&2
+  exit 2
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.."
 ROOT_DIR="$(cd "${ROOT_DIR}" && pwd)"
 
@@ -86,9 +94,7 @@ run_bench() {
   if [ "$2" -eq 1 ]; then
     PATH="${BENCH_PATH}" LD_PRELOAD="${SO_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
   else
-    # An inherited LD_PRELOAD, as in a Workcell session, would load the guard
-    # into the baseline too.
-    /usr/bin/env -u LD_PRELOAD PATH="${BENCH_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
+    PATH="${BENCH_PATH}" "${BIN}" "$1" "${ITERATIONS}" "${WARMUP}" "${TARGET}"
   fi
 }
 
