@@ -101,7 +101,7 @@ func ghInArguments(words []string) bool {
 var interpreters = map[string]bool{"python": true, "python3": true, "perl": true, "ruby": true, "node": true, "php": true}
 
 // unmodeledWrappers run a program after options, or in a language, this lint
-// does not read; source /dev/stdin is read as the here-document it runs.
+// does not read.
 var unmodeledWrappers = map[string]bool{
 	"pwsh": true, "powershell": true, "cmd": true, "setarch": true,
 	"chrt": true, "taskset": true, "doas": true, "su": true, "runuser": true, "chroot": true,

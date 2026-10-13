@@ -124,14 +124,10 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	case "zsh":
 		return "$_", true // zsh reads .zshenv, under any ZDOTDIR, before -c
 	case "sh", "bash", "dash", "ksh":
-	case "source", ".":
-		// source /dev/stdin runs the here-document fed to it in the current
-		// shell; any other operand is a file this reader does not see.
-		if len(words) > 1 && slices.Contains([]string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}, words[1]) {
-			return stdin, true
-		}
-		return "", false
 	default:
+		// source runs its file, /dev/stdin included, in the current shell
+		// with the caller's functions and traps, which a child-shell read
+		// does not share, so it stays for a lint to fail closed on.
 		return "", false
 	}
 	// Options come first, and -- may end them. c or s anywhere in a short
