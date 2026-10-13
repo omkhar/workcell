@@ -48,7 +48,12 @@ const (
 	// for hostile/misbehaving upstreams and tracks the projected growth
 	// curve for the next ~5 years of npm metadata.
 	providerBumpMaxJSONBytes = 16 << 20 // 16 MiB
-	copilotReleaseMaxPages   = 10
+	// providerBumpMaxNPMStreamBytes caps the bytes read from an npm packument.
+	// The packument is streamed, but the token walk still holds each scalar
+	// literal whole, so this cap also bounds the largest literal held. The
+	// full @openai/codex document was 17.5 MB in October 2026 and still grows.
+	providerBumpMaxNPMStreamBytes = 64 << 20 // 64 MiB
+	copilotReleaseMaxPages        = 10
 )
 
 var (
@@ -892,7 +897,7 @@ func selectClaudeStable(currentVersion string, cutoff time.Time, maxVersion stri
 
 func stableCandidatesFromRegistry(registryURL string, cutoff time.Time, maxVersion string, client *http.Client) ([]stableVersion, []ProviderBumpSkippedRelease, error) {
 	var metadata npmRegistryMetadata
-	if err := fetchJSON(client, registryURL, &metadata); err != nil {
+	if _, err := fetchDecoded(client, registryURL, providerBumpMaxNPMStreamBytes, func(body io.Reader) error { return decodeNPMRegistryMetadata(body, &metadata) }); err != nil {
 		return nil, nil, err
 	}
 	latestRaw := metadata.DistTags["latest"]
@@ -1130,12 +1135,65 @@ func compareStableVersions(left, right stableVersion) int {
 	return left.Patch - right.Patch
 }
 
+// decodeNPMRegistryMetadata reads only dist-tags and time from an npm packument and skips every other value token by token, so the versions object is never held in memory.
+func decodeNPMRegistryMetadata(body io.Reader, metadata *npmRegistryMetadata) error {
+	dec := json.NewDecoder(body)
+	// UseNumber keeps skipped numbers such as 1e1000000 as text, not float64.
+	dec.UseNumber()
+	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
+		return fmt.Errorf("npm packument is not a JSON object: %v", err)
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch key {
+		case "dist-tags":
+			err = dec.Decode(&metadata.DistTags)
+		case "time":
+			err = dec.Decode(&metadata.Time)
+		default:
+			err = skipJSONValue(dec)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	_, err := dec.Token()
+	return err
+}
+
+// skipJSONValue consumes one JSON value, however deep, one token at a time.
+func skipJSONValue(dec *json.Decoder) error {
+	for depth := 0; ; {
+		token, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch token {
+		case json.Delim('{'), json.Delim('['):
+			depth++
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
+}
+
 func fetchJSON(client *http.Client, targetURL string, target any) error {
 	_, err := fetchJSONResponse(client, targetURL, target)
 	return err
 }
 
 func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.Header, error) {
+	return fetchDecoded(client, targetURL, providerBumpMaxJSONBytes, func(body io.Reader) error { return json.NewDecoder(body).Decode(target) })
+}
+
+// fetchDecoded owns the provider-bump HTTP request: the timeout, the GitHub API auth, the status check, and a cap of limit bytes on the body that decode reads.
+func fetchDecoded(client *http.Client, targetURL string, limit int64, decode func(io.Reader) error) (http.Header, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), providerBumpHTTPTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
@@ -1162,7 +1220,7 @@ func fetchJSONResponse(client *http.Client, targetURL string, target any) (http.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("fetch %s: unexpected status %d: %s", targetURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, providerBumpMaxJSONBytes)).Decode(target); err != nil {
+	if err := decode(io.LimitReader(resp.Body, limit)); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", targetURL, err)
 	}
 	return resp.Header.Clone(), nil
