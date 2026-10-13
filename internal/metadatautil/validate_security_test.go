@@ -366,6 +366,9 @@ func TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks(t *testing.T) {
 		"recheck failure ignored with a fallback": func(content string) string {
 			return strings.Replace(content, recheck+"\n", recheck+" || true\n", 1)
 		},
+		"recheck step skipped by a condition": func(content string) string {
+			return strings.Replace(content, recheck+"\n", "        if: false\n"+recheck+"\n", 1)
+		},
 		"recheck missing its commit binding": func(content string) string {
 			return strings.Replace(content, ` --expected-commit "${RELEASE_COMMIT}"`, "", 1)
 		},
