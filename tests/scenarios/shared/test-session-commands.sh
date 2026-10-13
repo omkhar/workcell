@@ -2730,6 +2730,8 @@ session_delete_cleanup_output="$(
     : >"${PROFILE_DIR}/docker.sock"
     mkdir -p "${SESSION_AUDIT_DIR}"
     printf "{\"version\":1}\n" >"${AUDIT_SEAL_PATH}"
+    EGRESS_DENY_LOG="${RECORD_PATH%.json}.egress-deny.jsonl"
+    printf "{\"host\":\"example.com\"}\n" >"${EGRESS_DENY_LOG}"
     cat >"${RECORD_PATH}" <<EOF_JSON
 {
   "version": 1,
@@ -2777,6 +2779,13 @@ EOF_JSON
         ps)
           return 0
           ;;
+        network)
+          # A proxy network outlived its session until the delete removes it.
+          case "$2" in
+            ls) [[ -e "${PROFILE_DIR}/proxy-network-removed" ]] || printf "wc-detached-fixture\n" ;;
+            rm) : >"${PROFILE_DIR}/proxy-network-removed" ;;
+          esac
+          ;;
         *)
           return 1
           ;;
@@ -2789,11 +2798,12 @@ EOF_JSON
     test ! -e "${SESSION_AUDIT_DIR}"
     test ! -e "${TRANSCRIPT_LOG}"
     test ! -e "${AUDIT_SEAL_PATH}"
+    test ! -e "${EGRESS_DENY_LOG}"
   ' _ "${WORKCELL_FUNCTIONS_COPY}" "${SESSION_DELETE_CLEANUP_ROOT}" "${SESSION_DELETE_CLEANUP_RECORD}"
 )"
 grep -q '^session_id=detached-fixture$' <<<"${session_delete_cleanup_output}"
 grep -q '^deleted=1$' <<<"${session_delete_cleanup_output}"
-grep -q '^removed=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_cleanup_output}"
+grep -q '^removed=record,container,egress_proxy,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal,egress_deny_log$' <<<"${session_delete_cleanup_output}"
 grep -q '^kept=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^missing=none$' <<<"${session_delete_cleanup_output}"
 grep -q '^unavailable=none$' <<<"${session_delete_cleanup_output}"
@@ -2801,6 +2811,7 @@ grep -q '^transport|wcl-detached-fixture|inspect --format ' "${SESSION_DELETE_CL
 grep -q '^transport|wcl-detached-fixture|rm -f workcell-session-fixture$' "${SESSION_DELETE_CLEANUP_RECORD}"
 grep -Fqx 'transport|wcl-detached-fixture|ps -a --format {{.Names}}' \
   "${SESSION_DELETE_CLEANUP_RECORD}"
+grep -Fqx 'transport|wcl-detached-fixture|network rm wc-detached-fixture' "${SESSION_DELETE_CLEANUP_RECORD}"
 
 SESSION_DELETE_MISSING_CONTAINER_RECORD="${DETACHED_STATE_DIR}/session-delete.missing-container.record"
 session_delete_missing_container_state="$(
@@ -2971,6 +2982,9 @@ EOF_JSON
         ps)
           return 0
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -3040,6 +3054,9 @@ EOF_JSON
           fi
           return 1
           ;;
+        network)
+          return 0
+          ;;
         *)
           return 1
           ;;
@@ -3088,7 +3105,7 @@ EOF_JSON
     run_profile_docker_command() {
       local profile="$1"; shift
       printf "transport|%s|%s\n" "${profile}" "$*" >>"${RECORD_FILE}"
-      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; *) return 1 ;; esac
+      case "$1" in inspect) printf "stopped\n" ;; rm) return 0 ;; network) return 0 ;; *) return 1 ;; esac
     }
     session_delete_main --id detached-fixture
     test ! -e "${RECORD_PATH}"
@@ -3240,6 +3257,9 @@ EOF_JSON
         inspect)
           printf "stopped\n"
           ;;
+        network)
+          printf "wc-detached-fixture\n"
+          ;;
         *)
           return 1
           ;;
@@ -3256,7 +3276,11 @@ EOF_JSON
 )"
 grep -q '^deleted=0$' <<<"${session_delete_dry_run_output}"
 grep -q '^dry_run=1$' <<<"${session_delete_dry_run_output}"
-grep -q '^would_remove=record,container,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
+grep -q '^would_remove=record,container,egress_proxy,session_audit_dir,debug_log,file_trace_log,transcript_log,audit_seal$' <<<"${session_delete_dry_run_output}"
+if grep -Eq '^transport\|wcl-detached-fixture\|(network (rm|disconnect)|logs) ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
+  echo "session delete --dry-run changed the egress proxy resources" >&2
+  exit 1
+fi
 if grep -q '^transport|wcl-detached-fixture|rm -f ' "${SESSION_DELETE_DRY_RUN_RECORD}"; then
   echo "session delete --dry-run unexpectedly removed a container" >&2
   exit 1
