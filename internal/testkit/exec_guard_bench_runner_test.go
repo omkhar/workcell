@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -21,14 +20,18 @@ func TestExecGuardBenchBaselineDropsAnInheritedPreload(t *testing.T) {
 	if function == nil {
 		t.Fatal("run_bench is missing from run-exec-guard-bench.sh")
 	}
-	bin := filepath.Join(t.TempDir(), "bench")
-	if err := os.WriteFile(bin, []byte("#!/bin/bash\nprintf 'preload=[%s]\\n' \"${LD_PRELOAD:-}\"\n"), 0o700); err != nil {
+	// The stub records into a file: on Linux, ld.so reports the missing
+	// preload objects on stderr, which the probe's output also carries.
+	dir := t.TempDir()
+	bin, record := filepath.Join(dir, "bench"), filepath.Join(dir, "record")
+	if err := os.WriteFile(bin, []byte("#!/bin/bash\nprintf 'preload=[%s]\\n' \"${LD_PRELOAD:-}\" >>\"${RECORD}\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	code, output := runBashProbe(t, string(function)+`run_bench x 0
 run_bench x 1
-`, map[string]string{"LD_PRELOAD": "/inherited.so", "BIN": bin, "SO_PATH": "/guard.so", "BENCH_PATH": "/usr/bin:/bin"})
-	if want := "preload=[]\npreload=[/guard.so]"; code != 0 || strings.TrimSpace(output) != want {
-		t.Fatalf("run_bench: exit=%d output=%q, want %q", code, output, want)
+`, map[string]string{"LD_PRELOAD": "/inherited.so", "BIN": bin, "SO_PATH": "/guard.so", "BENCH_PATH": "/usr/bin:/bin", "RECORD": record})
+	recorded, err := os.ReadFile(record)
+	if want := "preload=[]\npreload=[/guard.so]\n"; code != 0 || err != nil || string(recorded) != want {
+		t.Fatalf("run_bench: exit=%d record=%q (%v), want %q\n%s", code, recorded, err, want, output)
 	}
 }
