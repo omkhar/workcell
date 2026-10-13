@@ -4428,6 +4428,9 @@ session_delete_main() {
   local remove_transcript_log=0
   local remove_audit_seal=0
   local audit_seal_path=""
+  local remove_egress_deny_log=0
+  local egress_deny_log_path=""
+  local proxy_network=""
   local session_audit_dir=""
   local -a removed=()
   local -a kept=()
@@ -4514,6 +4517,25 @@ session_delete_main() {
         ;;
     esac
   fi
+  # A lost launcher or monitor can leave the egress proxy sidecar and network
+  # behind. Plan their removal like any artifact, and remove them before the
+  # artifact plan is read, so the deny log the stop saves joins the plan. A dry
+  # run only looks. stop_egress_proxy only warns, so a network that is still
+  # there after it fails the delete.
+  if [[ "${record_only}" -eq 0 ]] && [[ -n "${SESSION_META_CONTAINER_NAME}" ]]; then
+    proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" || exit 1
+    if [[ -n "${proxy_network}" ]]; then
+      planned_remove+=("egress_proxy")
+      if [[ "${dry_run}" -eq 0 ]]; then
+        stop_egress_proxy_for_session "${SESSION_META_PROFILE}" "${session_id}" || exit 1
+        if ! proxy_network="$(egress_proxy_network_for_session "${SESSION_META_PROFILE}" "${session_id}")" ||
+          [[ -n "${proxy_network}" ]]; then
+          echo "session delete could not confirm the egress proxy cleanup: ${session_id}" >&2
+          exit 1
+        fi
+      fi
+    fi
+  fi
   if session_audit_dir="$(session_delete_resolve_dir_artifact "session_audit_dir" "${SESSION_META_SESSION_AUDIT_DIR}")"; then
     if [[ -e "${session_audit_dir}" ]]; then
       if [[ "${record_only}" -eq 1 ]]; then
@@ -4575,6 +4597,17 @@ session_delete_main() {
       planned_remove+=("audit_seal")
     fi
   fi
+  # The egress proxy deny log sits beside the record the same way, so it follows
+  # the same rule: removed with the full delete, kept under --record-only.
+  egress_deny_log_path="${record_path%.json}.egress-deny.jsonl"
+  if [[ -e "${egress_deny_log_path}" ]]; then
+    if [[ "${record_only}" -eq 1 ]]; then
+      kept+=("egress_deny_log")
+    else
+      remove_egress_deny_log=1
+      planned_remove+=("egress_deny_log")
+    fi
+  fi
 
   if [[ "${#planned_remove[@]}" -eq 0 ]]; then
     planned_remove=("record")
@@ -4633,6 +4666,12 @@ session_delete_main() {
   if [[ "${remove_audit_seal}" -eq 1 ]]; then
     rm -f -- "${audit_seal_path}" || {
       echo "session delete failed to remove the recorded audit_seal artifact: ${session_id}" >&2
+      exit 1
+    }
+  fi
+  if [[ "${remove_egress_deny_log}" -eq 1 ]]; then
+    rm -f -- "${egress_deny_log_path}" || {
+      echo "session delete failed to remove the recorded egress_deny_log artifact: ${session_id}" >&2
       exit 1
     }
   fi
