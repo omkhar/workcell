@@ -25,8 +25,26 @@ The fixes are below.
 - Provider wrappers now trust only root-owned runtime state files (#749).
 - The decoder for audit records now rejects NUL bytes (#739).
 
+### Added
+
+- Container smoke now checks the option inventory of each certified provider
+  CLI. It fails when the CLI help shows an option or a top-level command that
+  the adapter manifest does not classify.
+
 ### Fixed
 
+- The Claude policy now rejects the `upgrade` alias of `update`.
+- The Copilot policy now rejects `--assisted-approval`.
+- The Codex policy now rejects `--approve-for-me`, its hidden alias
+  `--not-so-yolo`, and `--ignore-rules`. It also rejects an
+  `approvals_reviewer` config override.
+- The Claude and Codex policies now reject the `--flag=value` form of each
+  denied option.
+- The Gemini policy now rejects the glued short form (`-y` followed by text)
+  and the attached long form (`--yolo=true`) of its autonomy override.
+- The Gemini policy now rejects `-s`, `--allowed-tools`, `--policy`,
+  `--admin-policy`, and `--include-directories`, their camel-case spellings,
+  and `y` or `s` inside a short option group. Text after `--` stays prompt text.
 - The provider pin updater no longer moves a pin back to an older release when
   the cool-off window grows. It keeps the current pin and reports the older
   candidate as held (`current-newer-than-cooled-candidate`).

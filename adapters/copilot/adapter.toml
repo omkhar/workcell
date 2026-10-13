@@ -34,11 +34,15 @@ endpoints = [
   "github.com:443",
 ]
 
-# Classifies tests/fixtures/flags/copilot.txt; the reject_unsafe_copilot_args parity test lands next.
+# Classifies tests/fixtures/flags/copilot.txt as reject_unsafe_copilot_args decides.
+# other_commands names the remaining top-level commands.
 [flags]
 subcommands = [
   "app", "version", "workflow", "sessions", "memories", "instruction", "lsp",
   "completion",
+]
+other_commands = [
+  "login", "help", "init", "update", "plugin", "mcp", "skill",
 ]
 allow = [
   "--auto-tier", "--banner", "--context",
