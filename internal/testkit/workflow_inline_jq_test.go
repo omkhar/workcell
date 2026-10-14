@@ -22,9 +22,11 @@ func jqCompiles(t *testing.T, program metadatautil.WorkflowJQProgram) error {
 		t.Fatalf("jq is required to execute workflow jq programs: %v", err)
 	}
 	args := append(append([]string{}, program.Flags...), program.Program)
-	command := exec.Command(jq, args...)
-	command.Stdin = strings.NewReader("[]")
-	output, err := command.CombinedOutput()
+	output, err := execRetryETXTBSY(func() *exec.Cmd {
+		command := exec.Command(jq, args...)
+		command.Stdin = strings.NewReader("[]")
+		return command
+	})
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) && exitError.ExitCode() != 2 && exitError.ExitCode() != 3 {
 		return nil
