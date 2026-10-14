@@ -18,6 +18,7 @@ const usageText = `Usage: workcell session start [launch-options] [-- provider-a
        workcell session export --id SESSION_ID [--format json|ocsf] [--output PATH]
        workcell session verify --id SESSION_ID
        workcell session snapshot --id SESSION_ID
+       workcell session fork --id SESSION_ID [--snapshot SNAPSHOT_ID] --count N
 
 Commands:
   start
@@ -81,6 +82,13 @@ Commands:
   snapshot
     --id SESSION_ID           Capture the session workspace into the host-owned snapshot store
 
+  fork
+    --id SESSION_ID           Start detached isolated child sessions from a snapshot of SESSION_ID
+    --snapshot SNAPSHOT_ID    Use this signed snapshot (default: take a new snapshot first)
+    --count N                 Number of children, from 1 to 8
+    --allow-arbitrary-command --ack-arbitrary-command=YYYY-MM-DD -- COMMAND...
+                              Required when the parent ran an arbitrary command
+
 Notes:
   - session commands run on the host and do not start the Workcell runtime.
   - records are durable host-side metadata for detached, completed, or aborted launches.
@@ -105,6 +113,9 @@ Notes:
     tree as a commit on the recorded git head in a host-owned store that no
     container mounts, and appends a session_snapshot audit record. Snapshots stay
     until the operator removes them; see the manual page.
+  - ` + "`" + `session fork` + "`" + ` reads the snapshot commit and the parent launch settings
+    only from signed audit records, never from a store ref. Each child records
+    parent_session_id, and the parent gets one session_fork audit record.
   - ` + "`" + `session delete` + "`" + ` never rewrites the shared profile audit log.
   - ` + "`" + `session delete` + "`" + ` cleans only explicitly recorded session-owned artifacts and
     refuses running sessions or running session containers.
