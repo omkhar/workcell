@@ -157,6 +157,7 @@ internal/metadatautil	parseCodexSubcommandVariant	0b030a0e,112f2816,16fd2ec4,1bb
 internal/metadatautil	parseCodexSubcommands	679bbb08,679bbb08,69a610e6,737500b7,83943b5d,83943b5d,8a613a58,8a613a58	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseDebianBootstrapManifest	3628cc0e,b0a76141	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseFlagFixture	9313fcd8,bb3556d6,e91b6bff	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseJQInvocation	6214cf24	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseOperatorWorkflow	1cac3ece	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseStableVersion	dabcc20c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.loadCIReproBuildJob	d666d2a3,eb3871b0	unreviewed debt: review the subject, then port or justify
@@ -225,6 +226,7 @@ internal/metadatautil	scopeGuardLockResolvedRE	4db60d5f	unreviewed debt: review 
 internal/metadatautil	scopeGuardLockRootDepRE	fa166e49	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scopeGuardLockVersionRE	0d2a7fa2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scopeGuardSplitLF	4f546323	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scriptRef	96b9da97	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	selectCopilotStable	605dc4a7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	sentenceWords	e91bc492	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	shebangInterpreter	92689fd9,9a831542	unreviewed debt: review the subject, then port or justify
@@ -301,6 +303,7 @@ internal/metadatautil	withoutCasePatternAlternatives	4cbda5fb,517edb33	unreviewe
 internal/metadatautil	workflowLaneMatchesAnyPath	d4258ee2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowLanePathPattern	12b057e2,80c898e9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowLaneRequiredLabels	af99a851	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	workflowRefHits	67df4185,a8f1f86a,b5a33b9b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
