@@ -120,20 +120,20 @@ func isCommandPrefixWord(text string) bool {
 	return false
 }
 
-// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs as a script, and whether it runs one: the -c body, or stdin with -s or no script operand, which is $_ for a stream the reader cannot see.
-func shellProgram(words []string, stdin string) (string, bool) {
+// shellProgram returns the program a sh, bash, dash, ksh or zsh command runs as a script, and whether it runs one: the -c body, or stdin with -s or no script operand, which is $_ for a stream the reader cannot see. When the shell runs a script file instead, file is that operand.
+func shellProgram(words []string, stdin string) (program string, runs bool, file string) {
 	if len(words) == 0 {
-		return "", false
+		return "", false, ""
 	}
 	switch commandName(words[0]) {
 	case "zsh":
-		return "$_", true // zsh reads .zshenv, under any ZDOTDIR, before -c
+		return "$_", true, "" // zsh reads .zshenv, under any ZDOTDIR, before -c
 	case "sh", "bash", "dash", "ksh":
 	default:
 		// source runs its file, /dev/stdin included, in the current shell
 		// with the caller's functions and traps, which a child-shell read
 		// does not share, so it stays for a lint to fail closed on.
-		return "", false
+		return "", false, ""
 	}
 	// Options come first, and -- may end them. c or s anywhere in a short
 	// cluster, as in -lc or -es, counts. Each o or O in a cluster, and
@@ -148,7 +148,7 @@ func shellProgram(words []string, stdin string) (string, bool) {
 			break
 		}
 		if option == "--rcfile" || option == "--init-file" || option == "--login" || strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "--") && strings.ContainsAny(option[1:], "il") {
-			return "$_", true // a startup file, rc or profile, runs before the program
+			return "$_", true, "" // a startup file, rc or profile, runs before the program
 		}
 		if !strings.HasPrefix(option, "-") && !strings.HasPrefix(option, "+") {
 			break // the first operand
@@ -164,15 +164,15 @@ func shellProgram(words []string, stdin string) (string, bool) {
 	}
 	switch {
 	case noExec:
-		return "", false
+		return "", false, ""
 	case body && i < len(words):
-		return words[i], true
+		return words[i], true, ""
 	case body:
-		return "", false // bash -c with no body runs nothing
+		return "", false, "" // bash -c with no body runs nothing
 	case fromStdin || i >= len(words) || slices.Contains([]string{"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}, words[i]):
-		return stdin, true
+		return stdin, true, ""
 	}
-	return "", false // the operand names a script file
+	return "", false, words[i] // the operand names a script file
 }
 
 func commandBrace(each command) int {
@@ -1921,7 +1921,7 @@ func flattenedCommands(text string) [][]string {
 	var emit func(words []string, stdin string)
 	emit = func(words []string, stdin string) {
 		words = wrappedCommand(words)
-		program, shell := shellProgram(words, stdin)
+		program, shell, _ := shellProgram(words, stdin)
 		script, spelled := spelledProgram(program)
 		if text := strings.Join(words[1:], " "); words[0] == "eval" && !strings.ContainsAny(text, "$`") {
 			found = append(found, flattenedCommands(text)...) // eval runs its words as a script
@@ -1979,7 +1979,7 @@ func flattenedCommands(text string) [][]string {
 			dropTarget = shellRedirect.FindString(piece[at:]) == piece[at:]
 		}
 	}
-	joined, test := "", false
+	joined, test, closer := "", false, ""
 	for line := range strings.Lines(text) {
 		words, _, _, _, continues, _ := shellWords(joined+strings.TrimSuffix(line, "\n"), nil)
 		if continues {
@@ -1990,6 +1990,26 @@ func flattenedCommands(text string) [][]string {
 		joined = ""
 		for _, each := range words {
 			each.text = strings.ReplaceAll(each.text, string(quotedNewline), "\n")
+			// An array member, the words from name=( up to ), and an arithmetic
+			// command, the words from (( up to )), name no command, even across
+			// lines. Any closer ends the span, so a quoted one ends it early and
+			// a word in it reads as a command, which fails closed.
+			if open := shellArrayOpen.FindString(each.text); closer == "" && open != "" && !test && !pending {
+				add(strings.TrimSuffix(open, "("))
+				closer, each.text = ")", each.text[len(open):]
+			} else if closer == "" && !each.quoted && !test && !pending && strings.HasPrefix(each.text, "((") {
+				closer, each.text = "))", each.text[2:]
+			}
+			if closer != "" {
+				at := strings.Index(each.text, closer)
+				if at < 0 {
+					continue
+				}
+				each.text, closer = each.text[at+len(closer):], ""
+				if each.text == "" {
+					continue
+				}
+			}
 			switch {
 			case test || !each.quoted && each.text == "[[":
 				// [[ reads its words up to ]] as one expression: an operator,
@@ -1998,6 +2018,9 @@ func flattenedCommands(text string) [][]string {
 				add(each.text)
 			case each.quoted && strings.HasPrefix(each.text, "<<<"):
 				stdin = each.text[3:] // <<<'text' is one word
+			case each.quoted && pending && strings.HasSuffix(each.text, ")"):
+				discard() // a quoted last pattern, as in "a" | "b")
+				pending = false
 			case each.quoted:
 				add(each.text)
 			case each.text == "case":
@@ -2046,6 +2069,9 @@ func flattenedCommands(text string) [][]string {
 	end()
 	return found
 }
+
+// shellArrayOpen matches the start of an array assignment, name=( or name+=(.
+var shellArrayOpen = regexp.MustCompile(shellAssignment.String() + `\(`)
 
 // sudoRunsNothing reports a sudo mode that runs no command, as sudo -e or -l.
 func sudoRunsNothing(option string) bool {
