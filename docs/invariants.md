@@ -147,6 +147,20 @@ retrieval overrides.
 A future Antigravity adapter must mask its settings, plugins, MCP files, hooks,
 and instructions before it can claim support.
 
+## 3a. Documentation claims resolve to gates
+
+`scripts/check-doc-links.sh` reads every Markdown file. A code span that names
+a path under `scripts/`, `internal/` or `.github/workflows/` must exist. The
+check drops a leading `./` first. A path with a `..` or symlink component
+fails, and the check does not look it up. Go probes each path through no-follow
+descriptors.
+
+The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
+today, one row per hit: path, rule, subject and reason. A new hit fails.
+A row with no hit fails. `scripts/check-doc-links.sh` also fails on a row
+that the file at the merge base does not hold. The one exception is a rule
+that the baseline at the merge base does not name.
+
 ## 4. Network posture is explicit
 
 `strict`, `development`, `build`, and `breakglass` are separate modes. Workcell
@@ -162,6 +176,18 @@ replaces rules for all active containers in that profile. The replacement is
 atomic for each address family. The old default-deny chain stays in force until
 the complete new chain replaces it. Other targets use their own network
 controls. The launch summary states the result in `egress_enforcement=`.
+
+`--egress-proxy` routes a strict Colima session through a per-session proxy
+sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
+`hardening-profile-conformance` check enforces them:
+
+- `egress-proxy-sole-route` (`[egress_proxy_sole_route]`): the agent joins only
+  the internal network `wc-<session>` with `--dns 127.0.0.1`. Each allowlisted
+  host maps to the proxy address, never to a resolved upstream address.
+- `egress-proxy-hardening` (`[egress_proxy]`): the sidecar uses the agent
+  conformance flags. It drops all capabilities, uses `no-new-privileges` and a
+  read-only root, runs as a non-root user, and has PID and memory limits. It
+  listens only on its internal-network address, never on `0.0.0.0`.
 
 The injection policy can add or deny endpoints through `[network]`. It cannot
 disable the default policy or change `NETWORK_POLICY`. See

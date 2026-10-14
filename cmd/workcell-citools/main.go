@@ -113,6 +113,7 @@ func subcommands() []subcommand {
 		{"check-pinned-inputs", "REPO_ROOT MAX_DEBIAN_SNAPSHOT_AGE_DAYS", 2, 2, cmdCheckPinnedInputs},
 		{"check-validator-anchoring", "REPO_ROOT", 1, 1, cmdCheckValidatorAnchoring},
 		{"check-doc-language", "REPO_ROOT", 1, 1, cmdCheckDocLanguage},
+		{"doc-claims", "REPO_ROOT", 1, 1, cmdDocClaims},
 		{"check-generated-artifacts", "REPO_ROOT", 1, 1, cmdCheckGeneratedArtifacts},
 		{"check-shell-portability", "REPO_ROOT", 1, 1, cmdCheckShellPortability},
 		{"check-shell-fail-open", "REPO_ROOT", 1, 1, cmdCheckShellFailOpen},
@@ -604,6 +605,10 @@ func cmdCheckDocLanguage(args []string) error {
 	return metadatautil.CheckDocLanguage(args[0])
 }
 
+func cmdDocClaims(args []string) error {
+	return metadatautil.DocClaimHits(args[0], os.Stdin, os.Stdout)
+}
+
 func cmdCheckGeneratedArtifacts(args []string) error {
 	return metadatautil.CheckGeneratedArtifacts(args[0])
 }
@@ -865,7 +870,19 @@ func cmdGitConfigBlocklistParity(args []string) error {
 // in the reviewed policy/hardening-profile.toml artifact, failing (exit 1 via
 // die()) with a message identifying the first drifted section/literal.
 func cmdHardeningProfileConformance(args []string) error {
-	return hardeningprofile.Check(args[0])
+	if err := hardeningprofile.Check(args[0]); err != nil {
+		return err
+	}
+	// The profile scan matches text. The parsed checks prove that the sidecar
+	// command and the agent route really run, so a quoted decoy cannot pass.
+	script, err := os.ReadFile(filepath.Join(args[0], "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	if err != nil {
+		return err
+	}
+	if err := metadatautil.ValidateEgressProxySidecar(string(script)); err != nil {
+		return err
+	}
+	return metadatautil.ValidateEgressProxySoleRoute(string(script))
 }
 
 // cmdWorkcellCheckBatch runs several migrated static checks in one
