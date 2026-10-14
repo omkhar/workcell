@@ -424,12 +424,9 @@ func declaresRetryHelper(file *ast.File) bool {
 	return found
 }
 
-// factoryName returns a factory call's callee, reading a method such as m.factory() by name.
+// factoryName returns a factory call's callee as an identifier, reading a method such as m.factory() or an instantiation such as factory[int]() by name.
 func factoryName(call *ast.CallExpr) ast.Expr {
-	if sel, ok := unparen(call.Fun).(*ast.SelectorExpr); ok {
-		return sel.Sel
-	}
-	return unparen(call.Fun)
+	return ast.NewIdent(calleeName(call.Fun))
 }
 
 // unparen strips parentheses, so (exec.Command) and (run) read as what they wrap.
@@ -586,14 +583,14 @@ func collectCommandAliases(aliases, factories map[any]bool, params map[string][]
 				add(factories, n.Name.Name)
 			}
 		case *ast.CompositeLit: // a struct field given a command constructor, by key or by position
-			typ, _ := unparen(n.Type).(*ast.Ident)
+			typ := literalType(n.Type)
 			for i, elt := range n.Elts {
 				if kv, ok := elt.(*ast.KeyValueExpr); ok {
 					if key, ok := kv.Key.(*ast.Ident); ok && isAlias(kv.Value) {
 						add(aliases, commandField(key.Name))
 					}
-				} else if typ != nil && isAlias(elt) {
-					for _, names := range fields[typ.Name] {
+				} else if typ != "" && isAlias(elt) {
+					for _, names := range fields[typ] {
 						if i < len(names) {
 							add(aliases, commandField(names[i]))
 						}
@@ -665,6 +662,8 @@ func commandValueIn(file *ast.File, execCommandName func(ast.Expr) string, isCmd
 			return isCommand(v.X)
 		case *ast.IndexExpr:
 			return isCommand(v.X)
+		case *ast.TypeAssertExpr: // boxed.(*exec.Cmd) is a command; x.(type) has no Type
+			return v.Type != nil && mentionsCmd(v.Type) || isCommand(v.X)
 		case *ast.Ident:
 			return holders[holderKey(file, v)]
 		case *ast.SelectorExpr:
@@ -1580,6 +1579,36 @@ func a(dir string) { w := writer[int]{os.Setenv}; w.set("PATH", dir); exec.Comma
 	} {
 		if got := rawExecSites(t, name, src); got != 1 {
 			t.Errorf("%s: rawExecSites = %d, want 1 (git after a PATH rewrite through an instantiated generic helper)", name, got)
+		}
+	}
+}
+
+func TestExecRatchetCountsGenericProvenance(t *testing.T) {
+	for name, c := range map[string]struct {
+		src  string
+		want int
+	}{
+		"generic_command_factory.go": {`package x
+import "os/exec"
+func factory[T any]() func(string, ...string) *exec.Cmd { return exec.Command }
+func a(fixture string) { factory[int]()(fixture) }
+`, 2},
+		"generic_command_literal.go": {`package x
+import "os/exec"
+type runner[T any] struct{ run func(string, ...string) *exec.Cmd }
+func a(fixture string) { r := runner[int]{exec.Command}; r.run(fixture) }
+`, 2},
+		"boxed_command_path.go": {`package x
+import "os/exec"
+func a(fixture string) {
+	var boxed any = exec.Command("/bin/true")
+	boxed.(*exec.Cmd).Path = fixture
+	boxed.(*exec.Cmd).Run()
+}
+`, 1},
+	} {
+		if got := rawExecSites(t, name, c.src); got != c.want {
+			t.Errorf("%s: rawExecSites = %d, want %d (the reference, plus the call through the generic or boxed provenance)", name, got, c.want)
 		}
 	}
 }
