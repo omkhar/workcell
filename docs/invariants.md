@@ -64,7 +64,7 @@ check and the open. `internal/rootio` opens through a verified parent handle
 and refuses to follow a symlink.
 
 `scripts/check-hardened-fs.sh` rejects a reference to a raw `os` pathname call
-in a trust-boundary package. A function value counts, because it carries the
+in a trust-boundary package, `testdata` included. A function value counts, because it carries the
 same authority as the direct call. `os.Lstat` stays permitted, because it does
 not follow the final symlink.
 

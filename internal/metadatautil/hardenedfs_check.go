@@ -47,7 +47,9 @@ import (
 func CheckHardenedFS(rootDir string) error {
 	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, pkg := range hardenedFSPackages {
-		err := scanHardenedGoSources(rootDir, pkg, false, false, func(rel string, content []byte) error {
+		// Go builds a testdata package that non-test code imports by path, so
+		// this check reads testdata too.
+		err := scanHardenedGoSources(rootDir, pkg, false, true, func(rel string, content []byte) error {
 			fileFindings, scanErr := HardenedFSFindings(string(content))
 			if scanErr != nil {
 				return fmt.Errorf("%s: %w", rel, scanErr)
