@@ -37,6 +37,7 @@ import (
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/publishpr"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/scenarios"
 	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
@@ -118,6 +119,7 @@ func subcommands() []subcommand {
 		{"check-shell-portability", "REPO_ROOT", 1, 1, cmdCheckShellPortability},
 		{"check-shell-fail-open", "REPO_ROOT", 1, 1, cmdCheckShellFailOpen},
 		{"check-hardened-fs", "REPO_ROOT", 1, 1, cmdCheckHardenedFS},
+		{"check-hardened-io", "REPO_ROOT", 1, 1, cmdCheckHardenedIO},
 		{"verify-reproducible-build", "OCI_EXPORT_A OCI_EXPORT_B REPRO_PLATFORMS REPRO_MANIFEST_PATH SOURCE_DATE_EPOCH", 5, 5, cmdVerifyReproducibleBuild},
 		{"generate-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS OUTPUT_PATH SOURCE_DATE_EPOCH", 4, 4, cmdGenerateReproducibleBuildManifest},
 		{"verify-reproducible-build-manifest", "OCI_EXPORT REPRO_PLATFORMS MANIFEST_PATH", 3, 3, cmdVerifyReproducibleBuildManifest},
@@ -627,6 +629,10 @@ func cmdCheckHardenedFS(args []string) error {
 	return metadatautil.CheckHardenedFS(args[0])
 }
 
+func cmdCheckHardenedIO(args []string) error {
+	return metadatautil.CheckHardenedIO(args[0])
+}
+
 func cmdCheckPinnedInputs(args []string) error {
 	maxAge, err := strconv.Atoi(args[1])
 	if err != nil {
@@ -877,7 +883,8 @@ func cmdHardeningProfileConformance(args []string) error {
 	}
 	// The profile scan matches text. The parsed checks prove that the sidecar
 	// command and the agent route really run, so a quoted decoy cannot pass.
-	script, err := os.ReadFile(filepath.Join(args[0], "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	const endpoints = "scripts/lib/launcher/egress-endpoints.sh"
+	script, err := rootio.ReadFileNoFollow(filepath.Join(args[0], endpoints), endpoints, 1<<20)
 	if err != nil {
 		return err
 	}

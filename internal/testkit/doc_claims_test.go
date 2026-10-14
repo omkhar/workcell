@@ -58,8 +58,13 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		}
 		sources[rel] = string(body)
 	}
+	// The old scanner cut a claim to its first 100 characters, so a suffix
+	// change kept the old key. The key here is that cut form.
+	longClaim := "The launcher rejects every unsafe input that reaches the provider wrapper from any operator-supplied flag or file and every MCP file."
+	cutKey := longClaim[:100]
+	cutKey = cutKey[:strings.LastIndex(cutKey, " ")]
 	// The comment lines of a baseline name the rules it governs.
-	rules := "# Rules: missing-path escaping-path unwired-script\n"
+	rules := "# Rules: missing-path escaping-path unwired-script unanchored-claim\n"
 	cases := []struct {
 		name     string
 		doc      string
@@ -113,6 +118,25 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"inline triple backticks are not a fence", "```inline``` text.\nSee `scripts/nope.sh` here.\n", "", "", "", "missing-path"},
 		{"inline triple backticks keep links checked", "```inline``` text.\nSee [x](missing.md).\n", "", "", "", "broken link"},
 		{"fenced path is skipped", "```bash\nSee `scripts/nope.sh` here.\n```\n", "", "", "", ""},
+		{"unanchored claim", "The launcher rejects bad input.\n", "", "", "", "unanchored-claim"},
+		{"blocks claim", "Workcell blocks operator launch.\n", "", "", "", "unanchored-claim"},
+		{"denies claim", "Workcell denies repository MCP files.\n", "", "", "", "unanchored-claim"},
+		{"prevents claim", "The mount prevents writes.\n", "", "", "", "unanchored-claim"},
+		{"enforces claim", "The wrapper enforces the policy.\n", "", "", "", "unanchored-claim"},
+		{"fails claim", "The check fails closed.\n", "", "", "", "unanchored-claim"},
+		{"requires claim", "The launcher requires a pinned image.\n", "", "", "", "unanchored-claim"},
+		{"guarantees claim", "The seal guarantees integrity.\n", "", "", "", "unanchored-claim"},
+		{"claim wrapped across lines", "The policy is enforced\nby the launcher.\n", "", "", "", "unanchored-claim"},
+		{"fenced claim is skipped", "```bash\nThe launcher rejects bad input.\n```\n", "", "", "", ""},
+		{"anchored claim", "The launcher rejects bad input.\nIt runs `scripts/gate.sh` first.\n", "", "", "", ""},
+		{"anchor in a one-line HTML comment", "The launcher rejects bad input.\n<!-- `scripts/gate.sh` -->\n", "", "", "", "unanchored-claim"},
+		{"anchor in a multi-line HTML comment", "The launcher rejects bad input.\n<!--\nsee `scripts/gate.sh`\n-->\n", "", "", "", "unanchored-claim"},
+		{"HTML comment splits an enforcement word", "The launcher re<!--\nhidden\n-->jects bad input.\n", "", "", "", "unanchored-claim"},
+		{"anchor after an HTML comment", "The launcher rejects bad input.\n<!-- x --> It runs `scripts/gate.sh` first.\n", "", "", "", ""},
+		{"claim three lines away", "The launcher rejects bad input.\n\n\nIt runs `scripts/gate.sh` first.\n", "", "", "", "unanchored-claim"},
+		{"baselined claim", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", ""},
+		{"long claim keeps its full text", longClaim + "\n", "", "README.md\tunanchored-claim\t" + cutKey + "\tx\n", "", "unbaselined doc claim hit"},
+		{"tilde-fenced claim is skipped", "~~~\nThe launcher rejects bad input.\n~~~\n", "", "", "", ""},
 		{"baselined hit", "See `scripts/nope.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", ""},
 		{"stale baseline row", "Nothing here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "", "stale doc-claims baseline"},
 		{"baseline growth", "See `scripts/nope.sh` here.\nSee `scripts/nope2.sh` here.\n", "", "README.md\tmissing-path\tscripts/nope.sh\tx\nREADME.md\tmissing-path\tscripts/nope2.sh\tx\n", "README.md\tmissing-path\tscripts/nope.sh\tx\n", "not at the merge base"},
