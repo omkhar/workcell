@@ -346,7 +346,7 @@ after the agent exits.
 
 `stop_egress_proxy_for_session` runs the same cleanup for a session whose
 monitor is gone. It derives both names from the session ID and does nothing for
-a session without a proxy network. A failed network lookup fails the command.
+a session without a proxy network. A failed network lookup fails the command in `scripts/workcell`.
 `session stop` calls it when the monitor is dead. `session delete` calls it
 before it plans the artifacts, and fails when the network is still there after
 the cleanup. `session delete --dry-run` only lists `egress_proxy`.

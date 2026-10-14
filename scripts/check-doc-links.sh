@@ -150,7 +150,9 @@ fi
 # A code span naming scripts/..., internal/... or .github/workflows/... (a
 # leading ./ is dropped) must exist. validate-repo.sh, a scripts/ci/job-*.sh or
 # a workflow must run a cited scripts/*.sh path as a command, so a doc cannot
-# cite a gate that nothing runs. Hits that exist today sit in
+# cite a gate that nothing runs. A sentence with an enforcement word (the claim
+# function in scripts/lib/doc-claims.awk lists them) needs such a span within 2
+# lines. Hits that exist today sit in
 # policy/doc-claims-baseline.tsv (PATH, RULE, SUBJECT, REASON), whose comment
 # lines name every rule. A new hit fails. A baseline row with no hit fails too,
 # and every row must exist at the merge base with origin/main (or main), so the
@@ -162,19 +164,22 @@ claims_baseline="${DOC_CLAIMS_BASELINE:-${ROOT_DIR}/policy/doc-claims-baseline.t
 claim_hits="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 claim_base="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
 claim_cited="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
-trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_cited}"' EXIT
+claim_found="$(mktemp "${TMPDIR:-/tmp}/check-doc-claims.XXXXXX")"
+trap 'rm -f "${link_records}" "${claim_hits}" "${claim_base}" "${claim_cited}" "${claim_found}"' EXIT
 
 # workcell-citools doc-claims probes each cited path through no-follow
 # descriptors, since bash has no openat, and lists the scripts a lane runs.
+# doc-claims.awk appends its unanchored-claim hits, which name no path, itself.
 for f in "${md_files[@]}"; do
   awk -f "${TOOL_DIR}/scripts/lib/md-unfenced.awk" "${f}" |
-    awk -v doc="${f}" -f "${TOOL_DIR}/scripts/lib/doc-claims.awk"
+    awk -v doc="${f}" -v claims="${claim_found}" -f "${TOOL_DIR}/scripts/lib/doc-claims.awk"
 done >"${claim_cited}"
 if [[ -n "${DOC_CLAIMS_CITOOLS:-}" ]]; then
   "${DOC_CLAIMS_CITOOLS}" doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
 else
   run_go_in_repo "${TOOL_DIR}" run ./cmd/workcell-citools doc-claims "${ROOT_DIR}" <"${claim_cited}" >"${claim_hits}"
 fi
+cat "${claim_found}" >>"${claim_hits}"
 
 # A rule is declared when a comment line of the baseline text names it.
 declares_rule() {

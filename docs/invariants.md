@@ -69,7 +69,8 @@ same authority as the direct call. `os.Lstat` stays permitted, because it does
 not follow the final symlink.
 
 `policy/hardened-fs-baseline.tsv` records the calls that the tree carries
-today. A count that does not match its baseline fails the check. Replace a call
+today. A count that does not match its baseline fails
+`internal/metadatautil/hardenedfs_check.go`. Replace a call
 with the matching `internal/rootio` primitive, then lower the count in the same
 change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
@@ -124,7 +125,7 @@ Some idioms turn a failed tool into an empty answer, so a gate passes on nothing
 
 Bash never propagates the status of a process substitution, and a `# fail-closed:` comment does not cover one. Only `wait "$!"` after a `done < <(` loop or a `NAME_completed` sentinel captures it. No job in the loop may run in the background before that `wait`. For a sentinel, the producer ends with `&& printf '\0'`. The loop sets the flag to 1 only on that empty record. The next command fails unless the flag is 1.
 
-`policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails the check. Repair a hit, then lower the count in the same change.
+`policy/shell-fail-open-baseline.tsv` records the hits that the tree carries today. A count that does not match its baseline fails `internal/metadatautil/shellfailopen_check.go`. Repair a hit, then lower the count in the same change.
 
 ## 2d. Validators anchor to decoded structure
 
@@ -141,9 +142,10 @@ does not hide the package. A call through a function value such as
 
 `policy/validator-anchoring-baseline.tsv` holds one row per function: package,
 function, an identity per match call, and the reason that the match is safe or
-still debt. A function with no row fails. A row whose identities differ fails,
-so a new or a swapped match in a listed function fails too. A row whose function
-no longer matches this way fails. Port a debt row, then delete it in the same
+still debt. `internal/metadatautil/validator_anchoring.go` fails a function
+with no row. It fails a row whose identities differ,
+so a new or a swapped match in a listed function fails too. It fails a row whose
+function no longer matches this way. Port a debt row, then delete it in the same
 change.
 
 ## 3. Repo policy must not silently widen trust
@@ -216,10 +218,14 @@ runs. The check reads every command that a lane can run, so a command after
 does not count. A workflow path starts from the working directory of its step,
 and a `cd` before it moves that directory.
 
-A lane fails the check when it can change what a later command runs. An
-`alias` does this, and so does a source of a path outside `${ROOT_DIR}`. A
-program name that the check cannot read also fails. The check does not follow
-a symlink to a lane file.
+`internal/metadatautil/lane_scripts.go` reads the lanes. A lane fails the
+check when it can change what a later command runs. An `alias` does this, and
+so does a source of a path outside `${ROOT_DIR}`. A program name that the check
+cannot read also fails. The check does not follow a symlink to a lane file.
+
+A sentence that claims enforcement needs such a span within two lines, and
+it can wrap across lines. `scripts/lib/doc-claims.awk` lists the trigger
+words.
 
 The baseline `policy/doc-claims-baseline.tsv` holds the hits that exist
 today, one row per hit: path, rule, subject and reason. A new hit fails.
@@ -245,7 +251,7 @@ controls. The launch summary states the result in `egress_enforcement=`.
 
 `--egress-proxy` routes a strict Colima session through a per-session proxy
 sidecar. Two sections of `policy/hardening-profile.toml` gate it, and the
-`hardening-profile-conformance` check enforces them:
+`hardening-profile-conformance` check, which `scripts/verify-invariants.sh` runs, enforces them:
 
 - `egress-proxy-sole-route` (`[egress_proxy_sole_route]`): the agent joins only
   the internal network `wc-<session>` with `--dns 127.0.0.1`. Each allowlisted
