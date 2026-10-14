@@ -19,7 +19,7 @@ internal/metadatautil	ApplyProviderBumpPlan	24b3ab93,5305b6f7,6d79321a,6ebdc620,
 internal/metadatautil	CheckProviderBumpPolicy	1f13431f,af3fe681,c21ac8c0,d846cb62	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	CheckRetentionPolicy	d283c5af	the prefix checks a decoded workflow step uses: value
 internal/metadatautil	CheckShellPortability	eab50892	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	CheckUpstreamRefreshScope	03a42954,13de3ebe,19cf00e3,3140ab17,3c71477a,3c71477a,3d34c7b7,5bec43b9,61eb9cc2,6351c261,65156731,67813576,68617029,7173acc9,ab416dac,b08c600f,bf1787ce,c1c5200f,d2041db9,d2041db9,d8e0dee3,dc63b5b6,e15530d0,fa353cdb	the prefix reads the unified-diff line marker of a patch
+internal/metadatautil	CheckUpstreamRefreshScope	03a42954,13de3ebe,19cf00e3,3140ab17,3c71477a,3c71477a,3d34c7b7,5bec43b9,61eb9cc2,6351c261,65156731,67813576,68617029,7173acc9,ab416dac,b08c600f,bf1787ce,c1c5200f,d2041db9,d2041db9,d8e0dee3,dc63b5b6,e15530d0,edc059cd,fa353cdb	the prefix reads the unified-diff line marker of a patch
 internal/metadatautil	CheckV1ContractFreezeGitHistory	955393cb,b52743e3	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ControlPlaneParityRows	5c9accb0	the prefix checks a decoded manifest path
 internal/metadatautil	ExtractClaudeSHA	12673cae,434decf4,52c2bb79	debt: regexp over Dockerfile text; read the parsed RUN case arm
@@ -44,7 +44,7 @@ internal/metadatautil	TestCheckPinnedInputsRejectsToolPinPolicyDrift	31639267,85
 internal/metadatautil	TestCheckPinnedInputsRejectsUnboundReleaseTagRechecks	541549b9,dd1f04de	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestCheckPinnedInputsRequiresRootOwnedCodexArtifacts	c15d78d5	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestCheckPublicContractRejectsTableMovedToScalar	fe8d55b6	unreviewed debt in a test: review the subject, then port or justify
-internal/metadatautil	TestFlagInventoryRenderAndCheck	a92b664d	unreviewed debt in a test: review the subject, then port or justify
+internal/metadatautil	TestFlagInventoryRenderCheckAndRestamp	7ec6e521	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateControlPlaneManifestIncludesSupportedAdapterPrefixes	5170f81d	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestGenerateWorkflowLaneManifestExpandsMatrixAndPathFilters	4370e2b0	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	TestPlanWorkflowLanesRespectsPathsLabelsAndGitHubOnlyModes	49487938,49487938	unreviewed debt in a test: review the subject, then port or justify
@@ -91,6 +91,7 @@ internal/metadatautil	codexCommandAttributeItems	209bec69,22f5aeea	unreviewed de
 internal/metadatautil	codexVariantCommandNames	4c900721,7ab1096f,83e03340,dbaa0f45	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	commandBrace	48b32f79	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	commandLooksUp	1c3163b8,c9d7dfbd	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	commandName	86476538	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	commandWords	89820ff5,a3f98e42,f129b634	the match drops the leading control keywords and a case pattern from the parsed argv words of one command
 internal/metadatautil	countCalls	8a596b86,ca8a38dc	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	debianPackageFromStanza	658d8d7e,ac83194f,c982a4d7,ebe11386	unreviewed debt: review the subject, then port or justify
@@ -117,7 +118,7 @@ internal/metadatautil	functionDefinition	3504f8e9,f3e2f47e	unreviewed debt: revi
 internal/metadatautil	functionScopedMatches	063efee0,2282fb4d,8151ca87,cb6c1dce	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	generatedArtifactDeclaration	3bbb3be3,9014412e,f0e50061	the prefix reads the generated-artifact header tag line
 internal/metadatautil	ghFlagValues	3add82e6,75f53652	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	ghInArguments	19c23e89,2f6adc1f,59574716,94392967	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	ghInArguments	19c23e89,59574716	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ghSubcommand	3b0c6e9f,4d48cba3,cb7683d1	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	githubAPIToken	0fa8eac8	the search rejects a line break in a token file
 internal/metadatautil	githubReleaseAssetAPIURL	05654428,8efb2ac8,c5dae623	the patterns check API JSON field values, not repo content
@@ -152,6 +153,7 @@ internal/metadatautil	parenBalance	17bfe4f0,7a0f620b	the count reads the unquote
 internal/metadatautil	parseCodexSubcommandVariant	0b030a0e,112f2816,16fd2ec4,1bb382e0,b8b71cab	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseCodexSubcommands	679bbb08,679bbb08,69a610e6,737500b7,83943b5d,83943b5d,8a613a58,8a613a58	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseDebianBootstrapManifest	3628cc0e,b0a76141	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	parseFlagFixture	9313fcd8,bb3556d6,e91b6bff	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseOperatorWorkflow	1cac3ece	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	parseStableVersion	dabcc20c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	pinnedInputsCheck.loadCIReproBuildJob	d666d2a3,eb3871b0	unreviewed debt: review the subject, then port or justify
@@ -175,7 +177,6 @@ internal/metadatautil	pinnedInputsCheck.validateWorkflowPolicy	20114f66,729ab531
 internal/metadatautil	preloadAssignments	46f1dfca,cd8fdbb9,cd8fdbb9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	preludeSafe	7d62ff7e,85178304,c256efb6,e008b096	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	providerBumpGitHubAPIToken	4be1497a	the search rejects a line break in a token file
-internal/metadatautil	readFlagFixture	272a6637,7cc54c4b,c066fe69	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readShell	e658e59c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	readWorkflowRefsBaseline	d664b530	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	rebindsCommand	419dfc3d	the = test tells an alias definition from an alias listing among parsed command words
@@ -205,6 +206,7 @@ internal/metadatautil	requireToolchainDirective	50b138d9	unreviewed debt: review
 internal/metadatautil	requireUniformWorkflowEnv	1bd24a7f,7dc2b398,baa9c486,cc424436,d22b541c	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	requireYAMLKey	26888f8a,99b8adc7,fc925d12	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	resolveRequirementPath	77876af9	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	restampFlagFixture	75b05b87	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	reviewedLibrarySource	8a4712f0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	rewriteAptBrokerDockerfile	9e5c7dbc	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	rewritesParameters	604a9e2e,72dcf36c	the prefix tests tell an option from an operand of one parsed set command
@@ -213,6 +215,7 @@ internal/metadatautil	rustupChecksumRequest	82097558	unreviewed debt: review the
 internal/metadatautil	sanitizedScriptEnvironment	1a8ceb50,2fada460	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scanDebianPackageStanzas	6c69f878,f89ede85	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scanDocLanguage	07905f3a,103fdf3f,1ce242b0,33dee461,92ab844e,9c21c578,b4dbdf15,e0bbc22e,f65b939e	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	scopeGuardFlagStampOf	b2828d84,d41f08d7	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scopeGuardLockProblem	a2aec4e9,bb6c3c04,becf82f2,c1db2e6b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scopeGuardLockResolvedRE	4db60d5f	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	scopeGuardLockRootDepRE	fa166e49	unreviewed debt: review the subject, then port or justify
@@ -250,8 +253,9 @@ internal/metadatautil	spelledProgram	d6917967	unreviewed debt: review the subjec
 internal/metadatautil	stepCondition	05fe93c8,0cfb9063,1251aa19,60ede516,a8e4f0a4,c9b391af,cc4b3040,ebe07d86	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	stripComments	0327796f,78ef8599,8189b49d,cee7c880	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	structJSONFields	1fb782aa,332ad09a,f7b30984	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	sudoRunsNothing	09069ab7,f5b36190	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	unreadEnvWrite	383da956,58b54700,650e41bd,bb25cde9	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	unspelled	04b4983d,17b26b32,2a00f0ec,a42d7189	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	unspelled	17b26b32,2a00f0ec,338b0d27,a42d7189	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	unwrapBuiltins	0a1d8783	the prefix test drops the option words in front of the command word of one parsed argv
 internal/metadatautil	updateCodexSubcommandFixture	49f8c82f,575a0f43,665b67ac,9017f67f,a5ff1cfb,b1f61de5,f97dbf16	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	upstreamRefreshReviewedUses	5dceb713	unreviewed debt: review the subject, then port or justify
@@ -282,7 +286,7 @@ internal/metadatautil	withoutCasePatternAlternatives	4cbda5fb,517edb33	unreviewe
 internal/metadatautil	workflowLaneMatchesAnyPath	d4258ee2	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowLanePathPattern	12b057e2,80c898e9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	workflowLaneRequiredLabels	af99a851	unreviewed debt: review the subject, then port or justify
-internal/metadatautil	workflowRefHits	6aedb90b,a6654656,bfaba0be	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	workflowRefHits	6aedb90b	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	wrappedCommand	3e44657e,53923640,6a96b240,6c88352a,8949f85e,b0f0a35b,c83453df,cd42118c,ce48222a,e200d8a8	unreviewed debt: review the subject, then port or justify
 internal/testkit	CountFlagOccurrences	2ead6b89,3510eb61,6083783a	unreviewed debt: review the subject, then port or justify
 internal/testkit	ExecFixtureDir	96522838	unreviewed debt: review the subject, then port or justify
@@ -392,7 +396,7 @@ internal/testkit	TestSudoWrapperHandsUnprivilegedInvocationsToTheBrokerClient	3d
 internal/testkit	TestUninstallKeepsTrustedDockerSandboxOfRunningProcess	5a401a06	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUninstallRemovesWorkcellStateWithoutRequiringGo	daddad46,e22b4b4d	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUninstallTempCleanupStaysInsideOverrideRootAndKeepsLiveSandboxes	101eaa3c,675325b2,b4243935	unreviewed debt in a test: review the subject, then port or justify
-internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump	23e0dda8,44dfc196,8a0a3452,938331d3,ab9cd680,bed2078b,d1c6b473,df17d8ee,ed39895b	unreviewed debt in a test: review the subject, then port or justify
+internal/testkit	TestUpdateProviderPinsStagesCodexNamespaceAndLockfileBeforePublishingBump	23e0dda8,44dfc196,7bce7e06,8a0a3452,938331d3,ab9cd680,bed2078b,d1c6b473,df17d8ee,ed39895b	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdateUpstreamPinsDoesNotRequireCurlVersion	6e2335fb,97445655	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdateUpstreamPinsUsesValidatedProviderPlanStatus	248da40e	unreviewed debt in a test: review the subject, then port or justify
 internal/testkit	TestUpdaterFixtureCurlRejectsUnexpectedReleaseProbeArguments	edeb6dc4	unreviewed debt in a test: review the subject, then port or justify
