@@ -25,9 +25,6 @@ const (
 	workflowRefsMaxBytes     = 4 << 20
 )
 
-// workflowScriptRef finds ./scripts/... paths in the words of a run body.
-var workflowScriptRef = regexp.MustCompile(`\./scripts/[A-Za-z0-9_./-]+[$*{\[]?`)
-
 // ghListTakesLimit holds each gh group, aliases included, whose list (or ls)
 // subcommand takes --limit, per gh 2.102 help. Any other list, an extension's
 // or a later gh group's included, cannot be shown bounded, so every call of it
@@ -300,9 +297,9 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 					} else if _, ok, _ := shellProgram(words, "$_"); ok {
 						add("command-unresolved") // EveryShellCommand reads each shell program it can spell in place of the shell, so a shell left here runs one it cannot.
 					}
-					for _, match := range scriptRefs(words) {
+					if match := scriptRef(words); match != "" {
 						switch {
-						case strings.ContainsAny(match[len(match)-1:], "$*{["):
+						case unspelled(match):
 							// a dynamic name cannot be resolved statically
 						case slices.Contains(strings.Split(dir+"/"+match, "/"), ".."):
 							add("script-path-escapes " + match) // never probe outside rootDir
@@ -378,29 +375,18 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	return hits, nil
 }
 
-// scriptRefs returns the ./scripts paths in one command's words that the shell
-// can run. The arguments of echo, printf and :, and an assignment are data, so
-// a path written there is not a reference. EveryShellCommand drops a here-string.
-func scriptRefs(words []string) []string {
-	if slices.Contains([]string{"echo", "printf", ":"}, words[0]) {
-		return nil
+// scriptRef returns the ./scripts path one command runs: its command word, or
+// the script operand of a shell, whole as the reader parsed it. Any other
+// argument is data, as the operand of test -e is.
+func scriptRef(words []string) string {
+	ref := words[0]
+	if _, _, file := shellProgram(words, "$_"); file != "" {
+		ref = file
 	}
-	var refs []string
-	for _, each := range words {
-		if shellAssignment.MatchString(each) {
-			continue
-		}
-		for _, at := range workflowScriptRef.FindAllStringIndex(each, -1) {
-			// A space after the path inside one word, as in "./scripts/x.sh ",
-			// is part of the file name bash runs, so the reference runs on.
-			if at[1] < len(each) && strings.ContainsRune(" \t", rune(each[at[1]])) {
-				refs = append(refs, each[at[0]:])
-				break
-			}
-			refs = append(refs, each[at[0]:at[1]])
-		}
+	if !strings.HasPrefix(ref, "./scripts/") {
+		return ""
 	}
-	return refs
+	return ref
 }
 
 // ghPaginates reports whether gh api args turn pagination on in exactly one spelling. A --paginate=false, or a second spelling that can override the first, leaves the call unbounded. Another option's value is not a spelling.
