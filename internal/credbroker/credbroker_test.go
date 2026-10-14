@@ -318,7 +318,9 @@ func TestServeExitsWhenSSHForwardDies(t *testing.T) {
 }
 
 func TestServeStopsSSHForwardOnCancel(t *testing.T) {
-	dir := fakeSSH(t, `echo $$ > "$(dirname "$0")/pid"; exec sleep 30`+"\n")
+	// The rename publishes the pid whole: a reader polling for the file never
+	// sees it empty between the redirect and the write.
+	dir := fakeSSH(t, `d="$(dirname "$0")"; echo $$ > "$d/pid.tmp"; mv "$d/pid.tmp" "$d/pid"; exec sleep 30`+"\n")
 	path := filepath.Join(socketDir(t), "b.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
