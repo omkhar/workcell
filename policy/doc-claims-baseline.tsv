@@ -208,9 +208,17 @@ docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bund
 docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
 docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
 docs/install.md	unwired-script	scripts/install.sh	the install lanes run the bundled copy under ${bundle_dir}, not this checkout path
+docs/invariants.md	unanchored-claim	A compile error fails the test.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	A new hit fails.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	A row with no hit also fails.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	For an unprivileged caller it hands the invocation to `workcell-apt-broker-client`, which admits the package helper and refuses every other command.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	It also fails on an `alias` definition, which can rename any later command.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	It also rejects `--privileged` and `seccomp=unconfined`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	It disables custom instructions and blocks skill and dynamic retrieval overrides.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	It fails when a `with:` key is not an input of the action.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	It fails when it cannot spell that program, as in `cat x | bash`.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	The check also fails when an expansion hides a command word, a `gh` subcommand or the text of an `eval`.	claim predates the rule; cite the enforcing path or drop the claim
+docs/invariants.md	unanchored-claim	The check fails when a `uses:` pin has no row in `tests/fixtures/actions/inputs.tsv`.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	The server rejects any other name and any unlisted value, and builds the helper environment itself.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	Workcell also refuses the workspace when it cannot list the workspace, a Git directory, or its modules.	claim predates the rule; cite the enforcing path or drop the claim
 docs/invariants.md	unanchored-claim	Workcell refuses a safe-path workspace in these cases.	claim predates the rule; cite the enforcing path or drop the claim

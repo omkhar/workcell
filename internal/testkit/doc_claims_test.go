@@ -131,6 +131,7 @@ func TestDocClaimsNegativeControls(t *testing.T) {
 		{"anchored claim", "The launcher rejects bad input.\nIt runs `scripts/gate.sh` first.\n", "", "", "", ""},
 		{"anchor in a one-line HTML comment", "The launcher rejects bad input.\n<!-- `scripts/gate.sh` -->\n", "", "", "", "unanchored-claim"},
 		{"anchor in a multi-line HTML comment", "The launcher rejects bad input.\n<!--\nsee `scripts/gate.sh`\n-->\n", "", "", "", "unanchored-claim"},
+		{"HTML comment splits an enforcement word", "The launcher re<!--\nhidden\n-->jects bad input.\n", "", "", "", "unanchored-claim"},
 		{"anchor after an HTML comment", "The launcher rejects bad input.\n<!-- x --> It runs `scripts/gate.sh` first.\n", "", "", "", ""},
 		{"claim three lines away", "The launcher rejects bad input.\n\n\nIt runs `scripts/gate.sh` first.\n", "", "", "", "unanchored-claim"},
 		{"baselined claim", "The launcher rejects bad input.\n", "", "README.md\tunanchored-claim\tThe launcher rejects bad input.\tx\n", "", ""},

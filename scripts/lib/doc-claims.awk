@@ -106,9 +106,14 @@ function flush(upto, rest, start, len, k, first, last, s) {
 # An HTML comment is hidden from readers, so it can neither anchor a claim nor
 # make one. It is cut here, in this scanner only, because md-unfenced.awk also
 # feeds the link check, which keeps checking links inside comments. Each line
-# stays, so line numbers hold; a comment that never closes hides the rest.
+# stays, so line numbers hold; a comment that never closes hides the rest. A
+# line that is empty only because a comment spans it is skip[], not a blank
+# line, and the text after a closer is glue[] to the text before the opener, as
+# rendered, so a comment inside a word does not split the word.
 {
   out = ""
+  glue[NR] = hidden
+  wasopen = hidden
   while ($0 != "") {
     if (hidden) {
       i = index($0, "-->")
@@ -125,23 +130,32 @@ function flush(upto, rest, start, len, k, first, last, s) {
     }
   }
   $0 = out
+  skip[NR] = out ~ /^[[:space:]]*$/ && (wasopen || hidden)
 }
 { line[NR] = $0 }
+skip[NR] && para == "" { next }
+skip[NR] { pat[NR] = length(para) + 1; plast = NR; next }
 /^[[:space:]]*$/ { scan(para); para = ""; next }
 {
   if (para == "") pfirst = NR
-  pat[NR] = length(para) + (para == "" ? 1 : 2)
-  para = para (para == "" ? "" : " ") $0
+  sep = (para == "" || glue[NR]) ? "" : " "
+  pat[NR] = length(para) + length(sep) + 1
+  para = para sep $0
   plast = NR
 }
 END {
   scan(para)
   for (i = 1; i <= NR + 1; i++) {
+    if (skip[i]) {
+      at[i] = length(text) + 1
+      continue
+    }
     if (i > NR || line[i] ~ /^[[:space:]]*$/ || line[i] ~ /^[[:space:]]*([-*+>|#]|[0-9]+[.)])/) {
       if (text != "") flush(i)
       if (i > NR || line[i] ~ /^[[:space:]]*$/) continue
     }
     if (text == "") block_start = i
+    if (glue[i]) sub(/ $/, "", text)
     at[i] = length(text) + 1
     text = text line[i] " "
   }
