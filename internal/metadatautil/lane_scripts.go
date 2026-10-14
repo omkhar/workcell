@@ -27,9 +27,10 @@ var (
 // workflows, and a lane script counts as run itself. A leading ${ROOT_DIR}/,
 // $ROOT_DIR/ or ./ is dropped, so every spelling of one script is one path. Any
 // other variable names another directory, so its path is not a repository
-// script. A workflow path resolves from the step's working directory, and a
-// relative path after a cd, or under an expression or absolute directory,
-// resolves to no repository script. EveryShellCommand reads each body, so a
+// script, and neither does an absolute path. A workflow path resolves from the
+// step's working directory, and a relative path after a cd, a pushd or a
+// source in any lane, or under an expression or absolute directory, resolves
+// to no repository script. EveryShellCommand reads each body, so a
 // comment, a heredoc body or quoted text wires nothing, while a command behind
 // a guard, after an exit or in an uncalled function still wires its script.
 func LaneScripts(rootDir string) ([]string, error) {
@@ -40,7 +41,6 @@ func LaneScripts(rootDir string) ([]string, error) {
 	defer root.Close()
 	type laneRun struct {
 		dir, body string
-		workflow  bool
 	}
 	var runs []laneRun
 	var scripts []string
@@ -68,7 +68,7 @@ func LaneScripts(rootDir string) ([]string, error) {
 					if err != nil {
 						return nil, fmt.Errorf("%s job %s: %w", rel, name, err)
 					}
-					runs = append(runs, laneRun{dir, step.Run, true})
+					runs = append(runs, laneRun{dir, step.Run})
 				}
 			}
 		}
@@ -83,11 +83,15 @@ func LaneScripts(rootDir string) ([]string, error) {
 			if _, _, file := shellProgram(words, "$_"); file != "" {
 				name = file // bash scripts/x.sh runs x.sh
 			}
-			moved = moved || run.workflow && (name == "cd" || name == "pushd")
+			// A cd or pushd, or a sourced body this reader does not see, may move
+			// the directory, so a later relative path names no known script.
+			if cmd := unwrapBuiltins(words[assignmentPrefix(words):]); len(cmd) > 0 {
+				moved = moved || slices.Contains([]string{"cd", "pushd", "source", "."}, cmd[0])
+			}
 			prefix := laneScriptRoot.FindStringSubmatch(name)
 			name = name[len(prefix[0]):]
 			if prefix[1] == "" {
-				if moved {
+				if moved || path.IsAbs(name) {
 					continue
 				}
 				name = path.Join(run.dir, name)

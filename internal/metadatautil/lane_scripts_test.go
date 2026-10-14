@@ -19,11 +19,13 @@ func TestLaneScripts(t *testing.T) {
 	for rel, body := range map[string]string{
 		"scripts/validate-repo.sh": "\"${ROOT_DIR}/scripts/a.sh\"\necho scripts/b.sh\n\"${ARTIFACT_DIR}/scripts/g.sh\"\n$ROOT_DIR/scripts/h.sh\n",
 		"scripts/ci/job-x.sh":      "./scripts/c.sh\n",
+		"scripts/ci/job-cd.sh":     "cd /tmp\nscripts/p.sh\n",
+		"scripts/ci/job-src.sh":    "source \"${ROOT_DIR}/scripts/lib/x.sh\"\nscripts/r.sh\n",
 		".github/workflows/x.yml": "jobs:\n  x:\n    steps:\n      - run: ./scripts/d.sh --flag\n      - run: echo scripts/e.sh\n" +
 			"      - run: scripts/j.sh\n        working-directory: other\n      - run: |\n          cd other\n          scripts/l.sh\n" +
 			"  w:\n    defaults:\n      run:\n        working-directory: other\n    steps:\n      - run: scripts/k.sh\n",
 		".github/workflows/z.yaml": "defaults:\n  run:\n    working-directory: sub\njobs:\n  z:\n    steps:\n      - run: ../scripts/m.sh\n" +
-			"      - run: scripts/n.sh\n        working-directory: .\n",
+			"      - run: scripts/n.sh\n        working-directory: .\n      - run: /scripts/q.sh\n        working-directory: .\n",
 		".github/workflows/notes.md": "./scripts/f.sh\n",
 	} {
 		path := filepath.Join(root, rel)
@@ -38,7 +40,7 @@ func TestLaneScripts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"scripts/a.sh", "scripts/c.sh", "scripts/ci/job-x.sh", "scripts/d.sh", "scripts/h.sh", "scripts/m.sh", "scripts/n.sh", "scripts/validate-repo.sh"}
+	want := []string{"scripts/a.sh", "scripts/c.sh", "scripts/ci/job-cd.sh", "scripts/ci/job-src.sh", "scripts/ci/job-x.sh", "scripts/d.sh", "scripts/h.sh", "scripts/m.sh", "scripts/n.sh", "scripts/validate-repo.sh"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("LaneScripts() = %q, want %q", got, want)
 	}
