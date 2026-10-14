@@ -259,42 +259,45 @@ func CheckFlagInventory(root string) error {
 }
 
 // RestampFlagFixtures sets each certified fixture's stamp to the current pin
-// and leaves its flags unchanged. Container smoke then proves the flags.
+// and leaves its flags unchanged. Container smoke then proves the flags. It
+// reads, validates and replaces each fixture through one no-follow parent
+// descriptor, so a swapped symlink cannot redirect the replacement.
 func RestampFlagFixtures(root string) error {
 	manifests, err := certifiedManifests(root)
 	if err != nil {
 		return err
 	}
-	dir, err := os.OpenRoot(root)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
 	for _, m := range manifests {
-		path := FlagFixturePath(root, m.ID)
-		if _, _, err := readFlagFixture(path, m.ID); err != nil {
-			return err
-		}
 		pin, err := adapterPin(root, m)
 		if err != nil {
 			return err
 		}
-		data, err := rootio.ReadFileNoFollow(path, "flag fixture", 1<<20)
-		if err != nil {
+		if err := restampFlagFixture(FlagFixturePath(root, m.ID), m.ID, pin); err != nil {
 			return err
-		}
-		updated := flagFixtureStampRE.ReplaceAllString(string(data), "# ${1}-version: "+pin)
-		if updated != string(data) {
-			rel, err := rootio.RelativePathWithin(root, path, "flag fixture")
-			if err != nil {
-				return err
-			}
-			if err := rootio.WriteFileAtomic(dir, rel, []byte(updated), 0o600, ".flag-restamp-"); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
+}
+
+func restampFlagFixture(path, id, pin string) error {
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(path)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(cleaned)
+	data, err := rootio.ReadFileAtNoFollow(parent, name, "flag fixture", 1<<20)
+	if err != nil {
+		return err
+	}
+	if _, _, err := parseFlagFixture(path, id, data); err != nil {
+		return err
+	}
+	updated := flagFixtureStampRE.ReplaceAllString(string(data), "# ${1}-version: "+pin)
+	if updated == string(data) {
+		return nil
+	}
+	return rootio.WriteFileAtomicAtNoFollow(parent, name, []byte(updated), 0o600, ".flag-restamp-")
 }
 
 func readFlagFixture(path, id string) (string, []string, error) {
@@ -303,6 +306,10 @@ func readFlagFixture(path, id string) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	return parseFlagFixture(path, id, data)
+}
+
+func parseFlagFixture(path, id string, data []byte) (string, []string, error) {
 	stamps := flagFixtureStampRE.FindAllStringSubmatch(string(data), -1)
 	if len(stamps) != 1 || stamps[0][1] != id {
 		return "", nil, fmt.Errorf("%s: want exactly one \"# %s-version: X.Y.Z\" stamp", path, id)

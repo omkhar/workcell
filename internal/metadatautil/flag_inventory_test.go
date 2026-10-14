@@ -257,3 +257,30 @@ func TestFlagInventoryRealRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRestampFlagFixturesRefusesSymlinkedParent(t *testing.T) {
+	t.Parallel()
+
+	const good = "# demo-version: 1.2.3\n--model\n--yolo\n"
+	root := writeFlagInventoryRepo(t, good)
+	mustWriteText(t, filepath.Join(root, "runtime", "container", "Dockerfile"), "FROM scratch\nARG DEMO_VERSION=1.3.0\n")
+	// An untrusted checkout can point tests/fixtures at another directory in
+	// the checkout, which os.Root would follow.
+	fixtures := filepath.Join(root, "tests", "fixtures")
+	outside := filepath.Join(root, "decoy")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(fixtures, filepath.Join(outside, "fixtures")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "decoy", "fixtures"), fixtures); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestampFlagFixtures(root); err == nil {
+		t.Fatal("RestampFlagFixtures() = nil, want a refused symlinked parent")
+	}
+	if got, _ := os.ReadFile(filepath.Join(outside, "fixtures", "flags", "demo.txt")); string(got) != good {
+		t.Fatalf("outside fixture = %q, want it unchanged", got)
+	}
+}
