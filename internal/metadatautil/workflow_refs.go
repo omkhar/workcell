@@ -378,25 +378,6 @@ func workflowRefHits(rootDir string) ([]workflowRefHit, error) {
 	return hits, nil
 }
 
-// stepWorkDir returns the directory a step's run: body starts in, relative to
-// the checkout: the step's working-directory, else the job default, else the
-// workflow default.
-func stepWorkDir(document workflowDocument, job workflowJob, step workflowStep) (string, error) {
-	if step.WorkDir != "" {
-		return step.WorkDir, nil
-	}
-	var defaults workflowDefaults
-	if job.Defaults.Kind != 0 {
-		if err := job.Defaults.Decode(&defaults); err != nil {
-			return "", err
-		}
-	}
-	if dir := defaults.Run["working-directory"]; dir != "" {
-		return dir, nil
-	}
-	return document.Def.Run["working-directory"], nil
-}
-
 // scriptRefs returns the ./scripts paths in one command's words that the shell
 // can run. The arguments of echo, printf and :, and an assignment are data, so
 // a path written there is not a reference. EveryShellCommand drops a here-string.
