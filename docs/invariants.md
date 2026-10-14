@@ -75,7 +75,8 @@ change. New code states its
 reason at the call with a `// hardened-fs-exempt: <reason>` comment.
 
 The same script also rejects a narrower set of calls in all non-test Go under
-`cmd/` and `internal/`. The set is `os.ReadFile`, `os.WriteFile`, `os.Open`,
+`cmd/` and `internal/`, `testdata` included. Go builds a `testdata` package that
+other code imports by path. The set is `os.ReadFile`, `os.WriteFile`, `os.Open`,
 `os.OpenFile`, `os.Create`, `os.Stat`, `os.RemoveAll` and `filepath.Glob`.
 Only `internal/rootio` is exempt. Each failure names the `internal/rootio`
 replacement.

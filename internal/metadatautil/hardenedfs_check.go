@@ -47,7 +47,7 @@ import (
 func CheckHardenedFS(rootDir string) error {
 	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, pkg := range hardenedFSPackages {
-		err := scanHardenedGoSources(rootDir, pkg, false, func(rel string, content []byte) error {
+		err := scanHardenedGoSources(rootDir, pkg, false, false, func(rel string, content []byte) error {
 			fileFindings, scanErr := HardenedFSFindings(string(content))
 			if scanErr != nil {
 				return fmt.Errorf("%s: %w", rel, scanErr)
@@ -77,8 +77,8 @@ func CheckHardenedFS(rootDir string) error {
 
 // scanHardenedGoSources hands visit each Go source under pkg, named relative
 // to the repository. Test sources are visited only when withTests is set. A
-// testdata directory is skipped.
-func scanHardenedGoSources(rootDir, pkg string, withTests bool, visit func(rel string, content []byte) error) error {
+// testdata directory is skipped unless withTestdata is set.
+func scanHardenedGoSources(rootDir, pkg string, withTests, withTestdata bool, visit func(rel string, content []byte) error) error {
 	// Reach the package root through descriptors opened one component at a
 	// time from "/" with O_NOFOLLOW. A pathname open follows a symlinked
 	// ancestor such as <repo>/internal, so the scan would read a tree outside
@@ -96,7 +96,7 @@ func scanHardenedGoSources(rootDir, pkg string, withTests bool, visit func(rel s
 	// The walk lists and reads through descriptors opened from this one, so
 	// no name is resolved again by path.
 	scanned := 0
-	err = walkHardenedGoSources(top, pkg, withTests, func(rel string, content []byte) error {
+	err = walkHardenedGoSources(top, pkg, withTests, withTestdata, func(rel string, content []byte) error {
 		scanned++
 		return visit(rel, content)
 	})
@@ -514,16 +514,16 @@ func hardenedFSExemptLines(fileSet *token.FileSet, file *ast.File) map[int][]int
 }
 
 // walkHardenedGoSources hands visit each non-test Go source below dir, in
-// name order, skipping testdata. Each entry is classified by fstatat on dir's
-// descriptor without following a symlink. The type that ReadDir reports is not
-// trusted: on a filesystem that returns DT_UNKNOWN, such as NFS, ReadDir
+// name order, skipping testdata unless withTestdata is set. Each entry is
+// classified by fstatat on dir's descriptor without following a symlink. The
+// type that ReadDir reports is not trusted: on a filesystem that returns DT_UNKNOWN, such as NFS, ReadDir
 // resolves it by path, and a swapped path would classify a decoy. Each child
 // directory is opened relative to dir without following a symlink, and each
 // source is read relative to dir with rootio's no-follow leaf read, so no name
 // is resolved twice. A symlink entry fails the walk whatever its name:
 // skipping one would hide a symlinked package directory, whose sources Go
 // still builds through the link.
-func walkHardenedGoSources(dir *os.File, rel string, withTests bool, visit func(rel string, content []byte) error) error {
+func walkHardenedGoSources(dir *os.File, rel string, withTests, withTestdata bool, visit func(rel string, content []byte) error) error {
 	names, err := dir.Readdirnames(-1)
 	if err != nil {
 		return err
@@ -540,14 +540,14 @@ func walkHardenedGoSources(dir *os.File, rel string, withTests bool, visit func(
 			return fmt.Errorf("%s is a symlink; the hardened filesystem rule cannot scan behind it", name)
 		}
 		if kind == unix.S_IFDIR {
-			if base == "testdata" {
+			if base == "testdata" && !withTestdata {
 				continue
 			}
 			child, openErr := rootio.OpenDirectoryAtNoFollow(dir, base)
 			if openErr != nil {
 				return fmt.Errorf("open %s: %w", name, openErr)
 			}
-			walkErr := walkHardenedGoSources(child, name, withTests, visit)
+			walkErr := walkHardenedGoSources(child, name, withTests, withTestdata, visit)
 			_ = child.Close()
 			if walkErr != nil {
 				return walkErr

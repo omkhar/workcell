@@ -118,6 +118,7 @@ func TestCheckHardenedIORatchet(t *testing.T) {
 		{name: "a stale row fails", path: "cmd/tool/main.go", source: "package tool\n", baseline: row, wantErr: "stale baseline row"},
 		{name: "internal/rootio is allowed", path: "internal/rootio/io.go", source: "package rootio\n\nimport \"os\"\n\nfunc f() { os.Open(p) }\n"},
 		{name: "a test source is out of scope", path: "cmd/tool/main_test.go", source: glob},
+		{name: "a planted call in a testdata package fails", path: "internal/x/testdata/fixture/fixture.go", source: "package fixture\n\nimport \"os\"\n\nfunc f() { os.ReadFile(p) }\n", wantErr: "use rootio.ReadFileNoFollow"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

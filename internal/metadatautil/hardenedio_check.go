@@ -26,7 +26,9 @@ import (
 func CheckHardenedIO(rootDir string) error {
 	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, tree := range []string{"cmd", "internal"} {
-		err := scanHardenedGoSources(rootDir, tree, false, func(rel string, content []byte) error {
+		// Go builds a testdata package that non-test code imports by path, so
+		// this check reads testdata too.
+		err := scanHardenedGoSources(rootDir, tree, false, true, func(rel string, content []byte) error {
 			if strings.HasPrefix(rel, hardenedIOAllowedTree) {
 				return nil
 			}

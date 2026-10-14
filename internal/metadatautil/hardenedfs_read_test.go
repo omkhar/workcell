@@ -25,7 +25,7 @@ func TestScanHardenedGoSourcesRefusesASwappedLeaf(t *testing.T) {
 		t.Fatalf("create the swapped leaf: %v", err)
 	}
 	var visited []string
-	err := scanHardenedGoSources(dir, "sub", false, func(rel string, content []byte) error {
+	err := scanHardenedGoSources(dir, "sub", false, false, func(rel string, content []byte) error {
 		if string(content) != "package sub\n" {
 			t.Fatalf("read %s = %q", rel, content)
 		}
@@ -55,7 +55,7 @@ func TestScanHardenedGoSourcesRefusesASwappedDirectory(t *testing.T) {
 		}
 	}
 	swapped := false
-	err := scanHardenedGoSources(dir, "pkg", false, func(rel string, _ []byte) error {
+	err := scanHardenedGoSources(dir, "pkg", false, false, func(rel string, _ []byte) error {
 		if swapped {
 			return nil
 		}
@@ -105,7 +105,7 @@ func TestWalkHardenedGoSourcesClassifiesThroughTheOpenDescriptor(t *testing.T) {
 		t.Fatalf("swap the path for a symlink: %v", err)
 	}
 	var visited []string
-	err = walkHardenedGoSources(opened, "pkg", false, func(rel string, _ []byte) error {
+	err = walkHardenedGoSources(opened, "pkg", false, false, func(rel string, _ []byte) error {
 		visited = append(visited, rel)
 		return nil
 	})

@@ -3,8 +3,8 @@
 # One row per source file and raw call: PATH<TAB>SYMBOL<TAB>CALLS<TAB>REASON.
 # CALLS lists one identity per call: a hash of the enclosing function name, the
 # headers of the enclosing control flow and the call's source text. The check
-# covers non-test Go under cmd/ and internal/, except internal/rootio. It
-# fails on an unlisted call and on a stale identity.
+# covers non-test Go under cmd/ and internal/, testdata included, except
+# internal/rootio. It fails on an unlisted call and on a stale identity.
 # Replace a call with the internal/rootio primitive that the failure names,
 # drop its identity, and delete the row when the list is empty. A new call
 # needs its identity in a row with a reason, and review of that entry.

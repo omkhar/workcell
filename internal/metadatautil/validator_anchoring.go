@@ -66,7 +66,7 @@ func checkTextMatchBaseline(rootDir string) error {
 	for _, pkg := range textMatchPackages {
 		// An alias in one file is called in another, so read whole packages.
 		packages := map[string]map[string]string{}
-		err := scanHardenedGoSources(rootDir, pkg, true, func(rel string, content []byte) error {
+		err := scanHardenedGoSources(rootDir, pkg, true, false, func(rel string, content []byte) error {
 			dir := path.Dir(rel)
 			if packages[dir] == nil {
 				packages[dir] = map[string]string{}
