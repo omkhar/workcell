@@ -252,7 +252,7 @@ start_egress_proxy() {
 # stop_egress_proxy saves the proxy's deny lines (its stdout, one JSON object
 # per line) beside the session record, as <sessions-dir>/<session>.egress-deny.jsonl.
 # The sessions directory already holds the record, so the save creates no
-# directory. The save
+# directory, and session delete removes the file with the record. The save
 # stages the logs in a private directory and publishes them through the same
 # staged, fsynced, owner-only rename as the other session captures, so a failed
 # or partial collection never replaces the final file. A failed save warns and
@@ -274,18 +274,16 @@ stop_egress_proxy() {
   fi
   [[ -z "${staged_dir}" ]] || rm -rf "${staged_dir}"
   run_profile_docker_command "${profile}" rm -f "${EGRESS_PROXY_CONTAINER}" >/dev/null 2>&1 ||
-    echo "workcell: warning: could not remove the egress proxy sidecar ${EGRESS_PROXY_CONTAINER}." >&2
+    echo "workcell: warning: could not remove the egress proxy sidecar ${EGRESS_PROXY_CONTAINER}; session delete removes it." >&2
   run_profile_docker_command "${profile}" network rm "${EGRESS_PROXY_NETWORK}" >/dev/null 2>&1 ||
-    echo "workcell: warning: could not remove the egress proxy network ${EGRESS_PROXY_NETWORK}." >&2
+    echo "workcell: warning: could not remove the egress proxy network ${EGRESS_PROXY_NETWORK}; session delete removes it." >&2
 }
 
-# stop_egress_proxy_for_session runs the same save and cleanup for a session
-# whose monitor died before its own cleanup ran. The names derive from the
-# session id, so the stop command needs no monitor state. A session that never
-# started a proxy has no such network and is left alone. A failed lookup is
-# not proof of absence: it fails the stop so the sidecar is never silently
-# left behind.
-stop_egress_proxy_for_session() {
+# egress_proxy_network_for_session prints the proxy network name of a session
+# when that network exists, and nothing when it does not. It changes nothing,
+# so a delete preview can use it. A failed lookup is not proof of absence: it
+# fails, so the sidecar is never silently left behind.
+egress_proxy_network_for_session() {
   local profile="$1"
   local SESSION_ID="$2"
   local EGRESS_PROXY_NETWORK="" EGRESS_PROXY_CONTAINER=""
@@ -297,6 +295,21 @@ stop_egress_proxy_for_session() {
     echo "workcell: could not list networks to find the egress proxy of ${SESSION_ID}." >&2
     return 1
   }
-  grep -qx -- "${EGRESS_PROXY_NETWORK}" <<<"${networks}" || return 0
+  ! grep -qx -- "${EGRESS_PROXY_NETWORK}" <<<"${networks}" || printf '%s\n' "${EGRESS_PROXY_NETWORK}"
+}
+
+# stop_egress_proxy_for_session runs the same save and cleanup for a session
+# whose monitor died before its own cleanup ran. The names derive from the
+# session id, so the stop command needs no monitor state. A session that never
+# started a proxy has no such network and is left alone.
+stop_egress_proxy_for_session() {
+  local profile="$1"
+  local SESSION_ID="$2"
+  local EGRESS_PROXY_NETWORK="" EGRESS_PROXY_CONTAINER=""
+  local network=""
+
+  network="$(egress_proxy_network_for_session "${profile}" "${SESSION_ID}")" || return 1
+  [[ -n "${network}" ]] || return 0
+  egress_proxy_names
   stop_egress_proxy "${profile}"
 }

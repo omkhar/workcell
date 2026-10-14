@@ -164,6 +164,7 @@ workflows = [
   "session_export",
   "session_verify",
   "session_snapshot",
+  "session_fork",
   "session_delete",
 ]
 evidence = [
@@ -172,6 +173,7 @@ evidence = [
   "internal/host/sessions/sessions_test.go",
   "internal/sessionctl/verify_test.go",
   "internal/sessionctl/snapshot_test.go",
+  "internal/sessionctl/fork_test.go",
   "internal/host/auditseal/auditseal_test.go",
 ]
 docs = [
