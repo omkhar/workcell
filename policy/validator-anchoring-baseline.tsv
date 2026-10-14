@@ -16,6 +16,7 @@ internal/adapters	rustTokens	01438f12,316d61f3,5d3a8db4,926f1e1f,9bd99527,aad01d
 internal/adapters	validateFlags	2d22c89e,bdc1c12e,fd6a16a7	unreviewed debt: review the subject, then port or justify
 internal/adapters	validateManifest	245b0a57,258a8901,a88bf6e5	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	ApplyProviderBumpPlan	24b3ab93,5305b6f7,6d79321a,6ebdc620,742074a1,a5aa29e9,a78c8e9b,db99510a,fc5c811b	the pattern checks a version field of the decoded JSON plan
+internal/metadatautil	CheckHardenedIO	79a072eb	the prefix checks a repository path, not file content
 internal/metadatautil	CheckProviderBumpPolicy	1f13431f,af3fe681,c21ac8c0,d846cb62	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	CheckRetentionPolicy	d283c5af	the prefix checks a decoded workflow step uses: value
 internal/metadatautil	CheckShellPortability	eab50892	unreviewed debt: review the subject, then port or justify
@@ -126,6 +127,7 @@ internal/metadatautil	ghSubcommand	3b0c6e9f,4d48cba3,cb7683d1	unreviewed debt: r
 internal/metadatautil	githubAPIToken	0fa8eac8	the search rejects a line break in a token file
 internal/metadatautil	githubReleaseAssetAPIURL	05654428,8efb2ac8,c5dae623	the patterns check API JSON field values, not repo content
 internal/metadatautil	goLanguageVersionFromToolchain	14ed36af	unreviewed debt: review the subject, then port or justify
+internal/metadatautil	hardenedFSImportNames	b021fc13	the search finds the last slash of an import path, not file content
 internal/metadatautil	helperGraph.reaches	5aba8db9,fc9cebdc	the digit test tells a first-parameter forwarder word from an all-parameters one among parsed command words
 internal/metadatautil	heredocDelimiter	029b3cac	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	heredocsAsHereStrings	f0ef57f3	unreviewed debt: review the subject, then port or justify
@@ -137,7 +139,7 @@ internal/metadatautil	isListEntry	10421324,f92e0ad1	unreviewed debt: review the 
 internal/metadatautil	isShellSource	5798c4c9	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	joinFirstWords	80fea3c8	unreviewed debt in a test: review the subject, then port or justify
 internal/metadatautil	loadDocLanguageBaseline	5939fd27	the prefix skips a TSV comment line
-internal/metadatautil	loadHardenedFSBaseline	ceadbad1	the prefix skips a TSV comment line
+internal/metadatautil	loadHardenedBaseline	7d0fa33e,a3ef0e02	the prefix skips a TSV comment line
 internal/metadatautil	loadShellFailOpenBaseline	ec489ec0	unreviewed debt: review the subject, then port or justify
 internal/metadatautil	loadTextMatchBaseline	4eeca9bb,d6395a28	the prefix skips a TSV comment line, and the pattern checks one TSV field
 internal/metadatautil	mapStringSetKeys	22e4373c,a9ce114c	unreviewed debt: review the subject, then port or justify

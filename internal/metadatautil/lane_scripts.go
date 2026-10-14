@@ -37,7 +37,12 @@ var (
 // comment, a heredoc body, quoted text or an uncalled function wires nothing,
 // while a command behind a guard or after an exit still wires its script.
 func LaneScripts(rootDir string) ([]string, error) {
-	root, err := os.Open(rootDir)
+	parent, cleaned, err := rootio.OpenParentDirectoryNoFollow(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	root, err := rootio.OpenDirAtNoFollow(parent, filepath.Base(cleaned))
+	_ = parent.Close()
 	if err != nil {
 		return nil, err
 	}
