@@ -5,6 +5,9 @@
 # and race a rename. policy/hardened-fs-baseline.tsv ratchets the calls the tree
 # carries today, and new code states its case with a
 # "// hardened-fs-exempt: <reason>" comment at the call.
+# check-hardened-io then covers all non-test Go under cmd/ and internal/ for
+# the calls agents reach for first; policy/hardened-io-baseline.tsv ratchets
+# them, one reasoned row per file and call.
 # shellcheck source=scripts/lib/trusted-entrypoint.sh
 # shellcheck disable=SC2312 # repo-wide bootstrap; the path is the running script's own directory
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/trusted-entrypoint.sh"
@@ -43,3 +46,4 @@ resolve_go_bin() {
 resolve_go_bin
 
 (cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-hardened-fs "${ROOT_DIR}")
+(cd "${ROOT_DIR}" && "${GO_BIN}" run ./cmd/workcell-citools check-hardened-io "${ROOT_DIR}")

@@ -139,7 +139,7 @@ terminal session without a seal does not meet this requirement.
 
 `workcell session snapshot` signs the session head after it appends the
 `session_snapshot` record. It signs a running session too. A later record of a
-running session moves the head, so `session verify` fails. It passes again
+running session moves the head, so `session verify` (`internal/host/auditseal/auditseal.go`) fails. It passes again
 after the next snapshot, the next fork, or the end of the session signs the
 new head.
 
@@ -151,7 +151,7 @@ snapshot commit from a store ref. After it starts the children, fork appends
 one `session_fork` record and signs the parent head again.
 
 The snapshot record names the workspace and git head that the capture used.
-Fork refuses a snapshot when they differ from the signed launch record.
+Fork (`internal/sessionctl/fork.go`) refuses a snapshot when they differ from the signed launch record.
 
 ## Limits and provider coverage
 
