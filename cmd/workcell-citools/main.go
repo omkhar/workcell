@@ -37,6 +37,7 @@ import (
 	"github.com/omkhar/workcell/internal/paritytree"
 	"github.com/omkhar/workcell/internal/pathutil"
 	"github.com/omkhar/workcell/internal/publishpr"
+	"github.com/omkhar/workcell/internal/rootio"
 	"github.com/omkhar/workcell/internal/scenarios"
 	"github.com/omkhar/workcell/internal/startupbench"
 	"github.com/omkhar/workcell/internal/workcellhardening"
@@ -880,7 +881,8 @@ func cmdHardeningProfileConformance(args []string) error {
 	}
 	// The profile scan matches text. The parsed checks prove that the sidecar
 	// command and the agent route really run, so a quoted decoy cannot pass.
-	script, err := os.ReadFile(filepath.Join(args[0], "scripts", "lib", "launcher", "egress-endpoints.sh"))
+	const endpoints = "scripts/lib/launcher/egress-endpoints.sh"
+	script, err := rootio.ReadFileNoFollow(filepath.Join(args[0], endpoints), endpoints, 1<<20)
 	if err != nil {
 		return err
 	}

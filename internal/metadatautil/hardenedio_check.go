@@ -26,7 +26,7 @@ import (
 func CheckHardenedIO(rootDir string) error {
 	found := map[hardenedFSKey][]HardenedFSFinding{}
 	for _, tree := range []string{"cmd", "internal"} {
-		err := scanHardenedGoSources(rootDir, tree, func(rel string, content []byte) error {
+		err := scanHardenedGoSources(rootDir, tree, false, func(rel string, content []byte) error {
 			if strings.HasPrefix(rel, hardenedIOAllowedTree) {
 				return nil
 			}
