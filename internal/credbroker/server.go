@@ -357,7 +357,7 @@ func (s *server) record(request Request, key, result string) error {
 	return nil
 }
 
-// requireAncestryWritableOnlyBy refuses a socket directory when any ancestor
+// requireAncestryWritableOnlyBy refuses a socket or log directory when any ancestor
 // could be renamed or replaced by a uid other than root or uid: every
 // ancestor must be a real directory owned by root or uid, either not group or
 // world writable or sticky, since a sticky directory lets another uid add
@@ -378,12 +378,12 @@ func requireAncestryWritableOnlyBy(dir string, uid uint32) error {
 			return err
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("credential broker socket ancestor %s is not a directory", current)
+			return fmt.Errorf("credential broker ancestor %s is not a directory", current)
 		}
 		owner := fileUID(info)
 		mode := info.Mode()
 		if (owner != 0 && owner != uid) || (mode.Perm()&0o022 != 0 && mode&os.ModeSticky == 0) {
-			return fmt.Errorf("credential broker socket ancestor %s is writable by another uid", current)
+			return fmt.Errorf("credential broker ancestor %s is writable by another uid", current)
 		}
 		if err := rejectDirectoryACL(current); err != nil {
 			return err
@@ -405,7 +405,7 @@ func rejectDirectoryACL(dir string) error {
 	}
 	defer file.Close()
 	if err := rootio.RejectExtendedACL(int(file.Fd())); err != nil {
-		return fmt.Errorf("credential broker socket ancestor %s: %w", dir, err)
+		return fmt.Errorf("credential broker ancestor %s: %w", dir, err)
 	}
 	return nil
 }
