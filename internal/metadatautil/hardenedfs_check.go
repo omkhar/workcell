@@ -340,10 +340,19 @@ func hardenedCallIdentity(_ *token.FileSet, _, scope string, selector *ast.Selec
 			expr = call
 		}
 	}
-	var text strings.Builder
-	_ = printer.Fprint(&text, token.NewFileSet(), expr) // a parsed expression always prints
-	sum := sha256.Sum256([]byte(scope + "\x00" + text.String()))
+	sum := sha256.Sum256([]byte(scope + "\x00" + hardenedPrint(expr)))
 	return hex.EncodeToString(sum[:4])
+}
+
+// hardenedPrint reprints node with no positions, or returns the empty string
+// for an absent one.
+func hardenedPrint(node ast.Node) string {
+	if node == nil {
+		return ""
+	}
+	var text strings.Builder
+	_ = printer.Fprint(&text, token.NewFileSet(), node) // a parsed node always prints
+	return text.String()
 }
 
 // applyHardenedFSExemptions clears the reference each exemption sits beside.
